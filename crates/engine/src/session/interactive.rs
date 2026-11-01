@@ -165,6 +165,7 @@ impl Session {
         if !prompt.accept.select {
             return Ok(Some(input));
         }
+        self.pick_area = None;
         if self.select_mode.is_some() {
             return self.select_mode_input(input);
         }
@@ -200,7 +201,9 @@ impl Session {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
                     let crossing = p.x < pw.corner.x;
-                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+                    let bx = Bounds2::new(pw.corner, p);
+                    let hs = select::select_window(self.doc()?, &space, bx, crossing);
+                    self.pick_area = Some(select::PickArea { area: select::SelectArea::Box(bx), crossing });
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
                 match select::pick(self.doc()?, &space, p, ap) {
@@ -260,6 +263,7 @@ impl Session {
         match input {
             Input::Point(p) => {
                 if mode.push(p) {
+                    self.pick_area = mode.area();
                     return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
                 }
             }
@@ -267,7 +271,10 @@ impl Session {
                 mode.pts.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick)),
+            Input::Enter => {
+                self.pick_area = mode.area();
+                return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
+            }
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
@@ -509,6 +516,8 @@ impl Session {
         let mut common = self.current_common();
         let (kinds, mut out) = match (self.lisp_preview(cursor), &self.running) {
             (Some(k), _) => (k, Vec::new()),
+            // A typed fence or polygon at any command's "Select objects" shows its lines so far.
+            (None, Some(_)) if let Some(m) = &self.select_mode => (m.preview(cursor), Vec::new()),
             (None, Some(r)) => (r.machine.preview(self, cursor), r.machine.preview_objects(self, cursor)),
             (None, None) => (Vec::new(), Vec::new()),
         };
