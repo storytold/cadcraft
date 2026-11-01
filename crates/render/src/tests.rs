@@ -276,6 +276,23 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+/// #666: on screen, filled glyphs outside the area being looked at are left out (the canvas
+/// builds again when the view leaves it); plots and builds without a view keep every glyph.
+#[test]
+fn glyphs_outside_the_view_are_left_out_of_screen_builds_only() {
+    let Some(font) = system_font() else { return };
+    let d = text_doc(font, "OH");
+    let tris = |o: &Options| build(&d, &Space::Model, o).prims.iter().filter(|p| p.kind == Kind::Tris).count();
+    let all = tris(&Options::default());
+    assert!(all > 0);
+    let near = Options { view: Some(Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(3.0, 2.0))), ..Options::default() };
+    assert_eq!(tris(&near), all, "a view over the text keeps it");
+    let far = Options { view: Some(Bounds2::new(Vec2::new(100.0, 100.0), Vec2::new(110.0, 110.0))), ..Options::default() };
+    assert_eq!(tris(&far), 0, "a view far from the text leaves its glyphs out");
+    let plot = build_plot(&d, &Space::Model, &far);
+    assert_eq!(plot.prims.iter().filter(|p| p.kind == Kind::Tris).count(), all, "plots keep every glyph");
+}
+
 #[test]
 fn truetype_text_is_filled_or_outlined() {
     let Some(font) = system_font() else { return };
