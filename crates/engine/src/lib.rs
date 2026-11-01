@@ -237,7 +237,23 @@ impl Session {
         if let Ok(st) = self.state_mut() {
             let mut seen = std::collections::HashSet::new();
             st.selection = sel.into_iter().filter(|h| seen.insert(*h)).collect();
+            // Windows keep only the objects still selected.
+            let kept: std::collections::HashSet<Handle> = st.selection.iter().copied().collect();
+            st.selection_windows.retain_mut(|(_, hs)| {
+                hs.retain(|h| kept.contains(h));
+                !hs.is_empty()
+            });
         }
+    }
+
+    /// The selection windows that picked the current selection's objects (see
+    /// [`DocState::selection_windows`]), or `None` when the drawing changed since they were drawn.
+    pub fn selection_windows(&self) -> Option<Vec<(Bounds2, Vec<Handle>)>> {
+        let Ok(st) = self.state() else { return Some(Vec::new()) };
+        if st.selection_windows.is_empty() {
+            return Some(Vec::new());
+        }
+        std::sync::Weak::ptr_eq(&st.selection_windows_doc, &Arc::downgrade(&st.doc)).then(|| st.selection_windows.clone())
     }
 
     /// Message on the command line history.

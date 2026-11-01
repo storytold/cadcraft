@@ -199,6 +199,207 @@ fn move_with_pickfirst_and_window_selection() {
     assert!(g[1].near(Vec2::new(5.0, 5.0), 1e-9));
 }
 
+/// #832: a crossing window drawn with no command running, then STRETCH, stretches like
+/// STRETCH's own crossing window: only the vertices inside move. An object then added by a
+/// pick moves whole, and a selection made by picks alone moves whole.
+#[test]
+fn stretch_uses_a_pickfirst_crossing_window() {
+    let rect = |s: &mut Session| {
+        s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
+        s.doc().unwrap().model.last().unwrap().handle
+    };
+    let verts = |s: &Session, h: Handle| -> Vec<(f64, f64)> {
+        match &s.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::LwPolyline(p) => p.vertices.iter().map(|v| (v.p.x, v.p.y)).collect(),
+            _ => panic!(),
+        }
+    };
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    let a = rect(&mut s);
+    s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();
+    let c = s.doc().unwrap().model.last().unwrap().handle;
+    // Right to left over the rectangle's right side: a crossing window.
+    s.idle_click(Vec2::new(12.0, 6.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, -1.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    // The circle joins by a pick.
+    s.idle_click(Vec2::new(31.0, 0.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a, c]);
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("5,0").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(verts(&s, a), [(0.0, 0.0), (15.0, 0.0), (15.0, 5.0), (0.0, 5.0)]);
+    match &s.doc().unwrap().entity(c).unwrap().kind {
+        EntityKind::Circle(ci) => assert!((ci.center.x - 35.0).abs() < 1e-9, "the picked circle moves whole"),
+        _ => panic!(),
+    }
+
+    // Picked, not windowed: moves whole.
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    let b = rect(&mut s);
+    s.idle_click(Vec2::new(10.0, 2.0), false).unwrap();
+    assert_eq!(s.selection(), vec![b]);
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("5,0").unwrap();
+    assert_eq!(verts(&s, b), [(5.0, 0.0), (15.0, 0.0), (15.0, 5.0), (5.0, 5.0)]);
+}
+
+/// A crossing window that brings a whole group (PICKSTYLE 1) stretches only what it hit: the
+/// group's other members move whole.
+#[test]
+fn stretch_moves_a_windowed_groups_other_members_whole() {
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
+    let a = s.doc().unwrap().model.last().unwrap().handle;
+    s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();
+    let c = s.doc().unwrap().model.last().unwrap().handle;
+    s.execute("group", &json!({ "name": "G", "handles": [a.hex(), c.hex()] })).unwrap();
+    s.idle_click(Vec2::new(12.0, 6.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, -1.0), false).unwrap();
+    assert_eq!(s.selection().len(), 2, "the window brings the whole group");
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("5,0").unwrap();
+    match &s.doc().unwrap().entity(a).unwrap().kind {
+        EntityKind::LwPolyline(p) => {
+            let xs: Vec<f64> = p.vertices.iter().map(|v| v.p.x).collect();
+            assert_eq!(xs, [0.0, 15.0, 15.0, 0.0], "the windowed side stretches");
+        }
+        _ => panic!(),
+    }
+    match &s.doc().unwrap().entity(c).unwrap().kind {
+        EntityKind::Circle(ci) => assert!((ci.center.x - 35.0).abs() < 1e-9, "the group's other member moves whole"),
+        _ => panic!(),
+    }
+}
+
+/// #832: with a pickfirst selection made by several windows, each object stretches only by the
+/// windows that selected it: a window over part of an object it did not select leaves that
+/// object's vertices alone.
+#[test]
+fn stretch_moves_an_objects_vertices_only_by_its_own_windows() {
+    let verts = |s: &Session, h: Handle| -> Vec<(f64, f64)> {
+        match &s.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::LwPolyline(p) => p.vertices.iter().map(|v| (v.p.x, v.p.y)).collect(),
+            _ => panic!(),
+        }
+    };
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(15.0, 2.5), height: 40.0 });
+    s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
+    let a = s.doc().unwrap().model.last().unwrap().handle;
+    s.cmdline("PLINE 20,0 30,0 30,5 20,5 C").unwrap();
+    let b = s.doc().unwrap().model.last().unwrap().handle;
+    // Right to left over the first rectangle's left side: a crossing window selects it.
+    s.idle_click(Vec2::new(2.0, 6.0), false).unwrap();
+    s.idle_click(Vec2::new(-2.0, -1.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    // Left to right around the second rectangle and the first one's right side: a window
+    // selects only what it encloses (the second rectangle).
+    s.idle_click(Vec2::new(5.0, -1.0), false).unwrap();
+    s.idle_click(Vec2::new(31.0, 6.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a, b]);
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("5,0").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(verts(&s, a), [(5.0, 0.0), (10.0, 0.0), (10.0, 5.0), (5.0, 5.0)], "only its own window's vertices");
+    assert_eq!(verts(&s, b), [(25.0, 0.0), (35.0, 0.0), (35.0, 5.0), (25.0, 5.0)]);
+}
+
+/// UNDO forgets the windows of the selection it drops: an object picked afterwards stretches
+/// whole, not by a window from before the UNDO.
+/// An object picked first keeps moving whole when a later crossing window also takes it in,
+/// as in STRETCH's own selection; after a grip edit the windows no longer apply and STRETCH asks
+/// for objects again.
+#[test]
+fn a_pick_beats_a_later_window_and_an_edit_drops_the_windows() {
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.cmdline("LINE 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    let l = s.doc().unwrap().model.last().unwrap().handle;
+    s.idle_click(Vec2::new(5.0, 0.0), false).unwrap();
+    assert_eq!(s.selection(), vec![l]);
+    // A crossing window over the line's right end.
+    s.idle_click(Vec2::new(12.0, 1.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, -1.0), false).unwrap();
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("0,3").unwrap();
+    match &s.doc().unwrap().entity(l).unwrap().kind {
+        EntityKind::Line(ln) => assert!(ln.a.y == 3.0 && ln.b.y == 3.0, "the picked line moves whole: {ln:?}"),
+        _ => panic!(),
+    }
+
+    s.set_selection(Vec::new());
+    s.idle_click(Vec2::new(12.0, 4.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, 2.0), false).unwrap();
+    assert_eq!(s.selection(), vec![l]);
+    assert!(s.selection_windows().is_some_and(|w| w.len() == 1));
+    s.grip_edit(l, 1, Vec2::new(20.0, 3.0), crate::grips::GripMode::Stretch).unwrap();
+    assert_eq!(s.selection_windows(), None, "the drawing changed after the window");
+    s.cmdline("STRETCH").unwrap();
+    assert!(s.prompt_text().contains("Select objects"), "{}", s.prompt_text());
+}
+
+/// The Block Editor starts and ends with nothing selected, and with no selection windows left
+/// over to stretch by.
+#[test]
+fn the_block_editor_forgets_the_selection_windows() {
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    let l = s.execute("line", &json!({ "points": [[20, 0], [22, 0]] })).unwrap()["handles"][0].clone();
+    s.execute("block", &json!({ "name": "B", "base": [20, 0], "handles": [l] })).unwrap();
+    s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
+    s.idle_click(Vec2::new(12.0, 6.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, -1.0), false).unwrap();
+    assert!(s.selection_windows().is_some_and(|w| w.len() == 1));
+    s.execute("bedit", &json!({ "name": "B" })).unwrap();
+    assert_eq!(s.selection_windows(), Some(Vec::new()), "entering the Block Editor");
+    s.state_mut().unwrap().selection_windows.push((cadcraft_geom::Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0)), Vec::new()));
+    s.execute("bclose", &json!({ "save": false })).unwrap();
+    assert_eq!(s.selection_windows(), Some(Vec::new()), "leaving it");
+}
+
+#[test]
+fn undo_forgets_the_selection_windows() {
+    let mut s = Session::new();
+    s.viewport_px = (1000.0, 1000.0);
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
+    let a = s.doc().unwrap().model.last().unwrap().handle;
+    s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();
+    s.idle_click(Vec2::new(12.0, 6.0), false).unwrap();
+    s.idle_click(Vec2::new(8.0, -1.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    s.undo().unwrap();
+    assert_eq!(s.selection_windows(), Some(Vec::new()));
+    s.idle_click(Vec2::new(10.0, 2.0), false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    s.cmdline("STRETCH").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cmdline("5,0").unwrap();
+    match &s.doc().unwrap().entity(a).unwrap().kind {
+        EntityKind::LwPolyline(p) => {
+            let v: Vec<(f64, f64)> = p.vertices.iter().map(|v| (v.p.x, v.p.y)).collect();
+            assert_eq!(v, [(5.0, 0.0), (15.0, 0.0), (15.0, 5.0), (5.0, 5.0)], "a picked object moves whole");
+        }
+        _ => panic!(),
+    }
+}
+
 #[test]
 fn erase_all_and_selection_keywords() {
     let mut s = Session::new();
