@@ -225,6 +225,8 @@ fn a_distance_too_large_to_measure_is_refused_and_not_kept() {
     s.input(Input::Point(Vec2::new(-1e308, 0.0))).unwrap();
     s.input(Input::Point(Vec2::new(1e308, 0.0))).unwrap();
     assert!(s.log.last().is_some_and(|l| l.contains("the distance is too large")), "{:?}", s.log.last());
+    // LASTPOINT stays at the first point, as after a measurement.
+    assert_eq!(lastpoint(&s), (-1e308, 0.0));
     s.cancel();
     s.cmdline("dist").unwrap();
     s.input(Input::Point(Vec2::new(-1e308, 0.0))).unwrap();

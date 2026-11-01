@@ -885,6 +885,8 @@ impl Interactive for DistM {
                 let (za, zb) = if self.first_source.is_some() || s.picked_viewport.is_some() { (0.0, 0.0) } else { (z_at(s, a), z_at(s, b)) };
                 let (a, b) = (Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
                 if !(b - a).len().is_finite() {
+                    // The first point stays LASTPOINT, as after a measurement.
+                    s.last_point = first;
                     return Err(bad("dist", "the distance is too large"));
                 }
                 let t = dist_text(s, a, b);
