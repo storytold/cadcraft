@@ -203,6 +203,7 @@ fn csv(columns: &[String], rows: &[Vec<Cell>], sep: char) -> String {
 fn write_file(path: &str, text: &str) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::consent::check_write(path).map_err(|e| EngineError::Other(e.to_string()))?;
         std::fs::write(path, text).map_err(|e| EngineError::Other(format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]

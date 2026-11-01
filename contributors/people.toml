@@ -93,9 +93,13 @@ real_name = "Doan Huynh Huu Khuong"
 display_name = "Doan Huynh Huu Khuong"
 sync_github_name = false
 
-
 [people.dylanmtaylor]
 sync_github_name = true
 
 [people.GULERTOLGA]
 sync_github_name = true
+
+[people.lucabyte42-lab]
+real_name = "Luca Vignali"
+display_name = "Luca Vignali"
+sync_github_name = false

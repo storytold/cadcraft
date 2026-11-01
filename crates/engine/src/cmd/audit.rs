@@ -47,6 +47,7 @@ fn run_drawingrecovery(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "discard" => {
             let f = pick()?;
+            crate::consent::check_write(&f.path).map_err(|e| bad("drawingrecovery", e.to_string()))?;
             discard_file(&f.path);
             Ok(json!({ "files": recoverable_files() }))
         }

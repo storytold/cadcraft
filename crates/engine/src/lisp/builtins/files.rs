@@ -32,7 +32,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
-    } else if !can_write(&path) {
+    } else if !can_write(&path) || crate::consent::check_write(&path).is_err() {
         return Ok(Flow::Value(Value::Nil));
     }
     let id = ctx.env.next_file;
@@ -100,6 +100,10 @@ fn can_write(_path: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn write_text_file(path: &str, text: &str, append: bool) {
     use std::io::Write;
+    // Opened in a call that allowed it, closed in one that doesn't: nothing is written.
+    if crate::consent::check_write(path).is_err() {
+        return;
+    }
     let f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(path);
     if let Ok(mut f) = f {
         let _ = f.write_all(text.as_bytes());

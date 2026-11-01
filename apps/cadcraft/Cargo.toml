@@ -15,6 +15,15 @@ workspace = true
 cadcraft-engine = { workspace = true }
 cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
+cadcraft-assistant = { workspace = true }
+fantastico-sdk = { workspace = true }
+# The AI Assistant's host (`assistant_host`): the FANTASTICO account as a connection of the shared
+# Craft AI layer, its key in the system keychain, each request a job of the layer. The layer is
+# provisional, so it is pinned to the revision `craft-ai-fantastico` is built against.
+craft-ai-core = { git = "https://github.com/storytold/craft-ai-integrations", rev = "ea85917afe35afcd48a6d19a27daca0621c74db2" }
+craft-ai-client = { git = "https://github.com/storytold/craft-ai-integrations", rev = "ea85917afe35afcd48a6d19a27daca0621c74db2" }
+craft-ai-native = { git = "https://github.com/storytold/craft-ai-integrations", rev = "ea85917afe35afcd48a6d19a27daca0621c74db2" }
+craft-ai-fantastico = { git = "https://github.com/Byte42-it/craft-ai-fantastico", rev = "26fafe01f6aa35f765a84422f30baeccdfd329a0" }
 # For the shared per-session control-token helper (control_server.rs authentication).
 cadcraft-mcp = { workspace = true }
 eframe = { workspace = true, features = ["clipboard", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }

@@ -1,0 +1,19 @@
+[package]
+name = "cadcraft-assistant"
+description = "CADCraft assistant: an LLM agent loop that drives CADCraft through its MCP tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+# No network code: the host supplies the model endpoint as a `Provider`.
+[dependencies]
+cadcraft-engine = { workspace = true }
+cadcraft-mcp = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+cadcraft-io = { workspace = true }

@@ -16,6 +16,7 @@ mod tools;
 
 pub use backend::{Backend, Headless, Remote};
 pub use server::{PROTOCOL_VERSION, Server};
+pub use tools::{call_tool, tool_definitions};
 
 #[cfg(test)]
 mod tests;

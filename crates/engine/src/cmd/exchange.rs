@@ -94,6 +94,7 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
 /// named after `path`, like SAVE and TABLEEXPORT do. EXPORT and PLOT (PUBLISH, EXPORTPDF) use it.
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(super) fn deliver_file(cmd: &str, path: &str, bytes: &[u8], hook: Option<super::file::DeliverHook>) -> Result<()> {
+    crate::consent::check_write(path).map_err(|e| bad(cmd, e.to_string()))?;
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let mime = match extension(&name).as_str() {
         "svg" => "image/svg+xml",

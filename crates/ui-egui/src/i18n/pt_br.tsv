@@ -1257,3 +1257,69 @@
 	Check for Updates…	Verificar atualizações…
 	CADCraft is up to date.	O CADCraft está atualizado.
 	Could not check for updates.	Não foi possível verificar atualizações.
+# AI Assistant
+	AI Assistant	Assistente de IA
+	Hi! I'm the AI Assistant. Tell me what to draw or change in the drawing, and I'll do it with CADCraft's commands.	Olá! Sou o assistente de IA. Diga o que desenhar ou alterar no desenho e eu faço com os comandos do CADCraft.
+	To start, connect your {service} account: paste its account key (it starts with {prefix}). The key stays on this computer and is never shown again.	Para começar, conecte sua conta {service}: cole a chave da conta (ela começa com {prefix}). A chave fica neste computador e nunca mais é exibida.
+	Checking the key…	Verificando a chave…
+	Connected to account {conto}.	Conectado à conta {conto}.
+	What shall I draw?	O que devo desenhar?
+	Declined: {tool}	Recusado: {tool}
+	The AI Assistant is not available in this version yet.	O assistente de IA ainda não está disponível nesta versão.
+	Credit available: {usd} USD	Crédito disponível: {usd} USD
+	New conversation	Nova conversa
+	Working…	Trabalhando…
+	The assistant wants to run {tool}.	O assistente quer executar {tool}.
+	Allow	Permitir
+	Decline	Recusar
+	Ask the assistant…	Pergunte ao assistente…
+	Send	Enviar
+	Account key	Chave da conta
+	Connect	Conectar
+	A key is already set on this computer	Já existe uma chave definida neste computador
+	This is not an account key: an account key starts with ck-fant-	Isto não é uma chave de conta: uma chave de conta começa com ck-fant-
+	FANTASTICO does not recognise this key	O FANTASTICO não reconhece esta chave
+	FANTASTICO cannot be reached: check the internet connection	Não é possível acessar o FANTASTICO: verifique a conexão com a internet
+	The credit on your FANTASTICO account has run out: top it up to continue	O crédito da sua conta FANTASTICO acabou: recarregue para continuar
+	No account key is set	Nenhuma chave de conta definida
+	The stored account key is not readable	A chave de conta salva não pode ser lida
+	AI Assistant settings	Configurações do assistente de IA
+	Assistant language	Idioma do assistente
+	Automatic (the language you write in)	Automático (o idioma em que você escreve)
+	Suggested by the account ({model})	Sugerido pela conta ({model})
+	Suggested by the account	Sugerido pela conta
+	Search models…	Pesquisar modelos…
+	Loading models…	Carregando modelos…
+	The models could not be loaded	Não foi possível carregar os modelos
+	Account	Conta
+	Connected account: {conto}	Conta conectada: {conto}
+	Reading the account…	Lendo a conta…
+	Change account key	Alterar a chave da conta
+	New account key	Nova chave da conta
+	Running {command}…	Executando {command}…
+	Running a script…	Executando um script…
+	Looking up commands…	Consultando os comandos…
+	Looking at the drawing…	Examinando o desenho…
+	Starting a new drawing…	Criando um novo desenho…
+	Opening a drawing…	Abrindo um desenho…
+	Saving the drawing…	Salvando o desenho…
+	Cancelling…	Cancelando…
+	The assistant wants to start a new drawing: the current one will be closed.	O assistente quer criar um novo desenho: o atual será fechado.
+	The assistant wants to open {path}.	O assistente quer abrir {path}.
+	The assistant wants to open a drawing.	O assistente quer abrir um desenho.
+	The assistant wants to save the drawing to {path}.	O assistente quer salvar o desenho em {path}.
+	The assistant wants to save the drawing.	O assistente quer salvar o desenho.
+	The assistant wants to run a command that writes or reads {path}.	O assistente quer executar um comando que grava ou lê {path}.
+	The assistant wants to run a command that can write files: {command}	O assistente quer executar um comando que pode gravar arquivos: {command}
+	The assistant wants to run a command that can write files.	O assistente quer executar um comando que pode gravar arquivos.
+	The assistant wants to close a drawing: what isn't saved is lost.	O assistente quer fechar um desenho: o que não foi salvo é perdido.
+	The assistant ran out of steps for this turn and stopped; the drawing keeps what it did.	O assistente esgotou os passos deste turno e parou; o desenho mantém o que ele fez.
+	Start a new conversation? The messages so far will be cleared.	Iniciar uma nova conversa? As mensagens até agora serão apagadas.
+	Keep	Manter
+	Refresh credit	Atualizar o crédito
+	Get an account key or top up your credit at {site}	Obtenha uma chave de conta ou recarregue seu crédito em {site}
+	Top up credit	Recarregar crédito
+	Change key	Alterar chave
+	The account key was changed: now connected to account {conto}.	A chave da conta foi alterada: agora conectado à conta {conto}.
+	To answer, the AI Assistant sends your requests, what it reads from the drawing and what its commands return to {service} ({destination}) and to the provider of the chosen model. Allow this for CADCraft?	Para responder, o Assistente de IA envia seus pedidos, o que ele lê do desenho e o que seus comandos retornam para {service} ({destination}) e para o provedor do modelo escolhido. Permitir isso para o CADCraft?
+	Nothing was sent: the AI Assistant needs your agreement first.	Nada foi enviado: o Assistente de IA precisa primeiro da sua autorização.

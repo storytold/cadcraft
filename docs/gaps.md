@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated; previously minor: A2: the engine-level guard landed, 8–14 → 3–6 h; previously minor: A2: commands given a file ask first; previously minor: BEDIT in the Block Editor switches blocks: F3 updated; previously minor: A2 widened: the assistant's confirmations are not a sandbox, an engine-level guard on its file writes is missing, 3–6 → 8–14 h; previously minor: A2 narrowed: Window ▸ AI Assistant and `cadcraft-cli ask` on a FANTASTICO account through the shared Craft AI layer, see [assistant.md](assistant.md); previously minor: Named Viewports dialog: U11 narrowed; MVIEW Restore and PURGE of multiline styles had landed: F15 and F21 corrected) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first). A PR names the rows it closes in its
@@ -143,7 +143,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | # | Gap | Est. |
 |---|---|---|
 | A1 | Smart Blocks equivalents (placement suggestions, replace, detect and convert, search), using local open models | 25–50 + model licensing |
-| A2 | An in-app assistant (AutoCAD has Autodesk Assistant); CADCraft's MCP server already lets any agent drive it, including read-only structured queries of the current selection (`query_entities selected:true`) | 10–20 |
+| A2 | In-app assistant (AutoCAD has Autodesk Assistant): **landed** as Window ▸ AI Assistant and `cadcraft-cli ask`, an agent over the MCP tools on any model of a FANTASTICO account. The palette goes through the shared Craft AI layer (key in the system keychain, agreement before the first request, one undo step per turn); the CLI reads `$FANTASTICO_KEY` and calls the account directly, see [assistant.md](assistant.md). The engine refuses the file writes and closes the user didn't approve for each call. Missing: streamed replies, a Stop button, the web build, the layer's other providers | 3–6 |
 | A3 | Markup Assist (import markups from PDFs/images) | 10–20 |
 
 ## Revision history
@@ -151,6 +151,10 @@ Detail: [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-30 | minor | QSAVE asks before replacing a file with content the DWG writer can't keep, and ISAVEBAK keeps the previous file as `.bak`: row 1 narrowed, FF1 and F20 updated |
+| 2026-10-29 | minor | A2: the engine refuses the assistant's file writes and closes the user didn't approve for the call; 8–14 → 3–6 h |
+| 2026-10-29 | minor | A2: the assistant's commands given a file (EXPORT, WBLOCK, PLOT…) ask first; the engine-level guard is still missing |
+| 2026-10-29 | minor | A2 widened: an engine-level guard on the files the assistant writes is missing (its confirmations read the calls, they are not a sandbox); 3–6 → 8–14 h |
+| 2026-10-27 | minor | A2 narrowed: the AI Assistant (Window ▸ AI Assistant, `cadcraft-cli ask`) on a FANTASTICO account through the shared Craft AI layer; 10–20 → 3–6 h |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-26 | minor | BEDIT in the Block Editor (typed, Edit Block, or the Edit Block Definition dialog) switches to another block as AutoCAD's does, asking whether to save the changes not saved yet; the JSON form takes `save`: F3 evidence |

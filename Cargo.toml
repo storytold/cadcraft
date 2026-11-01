@@ -32,6 +32,7 @@ craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }
+cadcraft-assistant = { path = "crates/assistant" }
 
 # foundation
 thiserror = "2"
@@ -42,6 +43,8 @@ log = "0.4"
 # All date/time conversion goes through chrono (no hand-rolled calendar code beyond the 400-year range extension; AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 rayon = "1"
+# The AI Assistant's model endpoint (desktop app and CLI only).
+fantastico-sdk = "0.2"
 
 # rendering / formats
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }

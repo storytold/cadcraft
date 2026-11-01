@@ -333,6 +333,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::consent::check_write(_path).map_err(|e| bad(cmd, e.to_string()))?;
                         let tmp = format!("{_path}.cadcraft-tmp");
                         std::fs::write(&tmp, text.as_bytes()).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         std::fs::rename(&tmp, _path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;

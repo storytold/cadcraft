@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** trivial (progress log: proxy objects keep their class through a save, #1812; previously minor: HATCHEDIT boundary add/remove progress) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-29 · **Change:** minor (AI features 35–75 → 30–65 h: the engine-level guard for the assistant landed, A2; previously minor: AI features 30–65 → 35–75 h: the assistant's file writes need an engine-level guard, A2; previously minor: the AI Assistant on the shared Craft AI layer, A2: AI features 20% → 35%) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -57,7 +57,7 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
 | Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
-| AI features | 20% | 40–80 | [gaps.md](docs/gaps.md#ai-features) |
+| AI features | 35% | 30–65 | [gaps.md](docs/gaps.md#ai-features) |
 
 ## Features
 
@@ -119,6 +119,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-27 | The AI Assistant ([docs/assistant.md](docs/assistant.md)): Window ▸ AI Assistant opens a palette where a request in plain words is carried out with CADCraft's own commands on the active drawing, one undo step per turn, asking before it starts a new drawing, opens or saves; `cadcraft-cli ask` does the same from a terminal. It runs on any model of a FANTASTICO account through the shared Craft AI layer: the account is a connection every Craft app shares, its key in the system keychain, and nothing is sent before the user agrees. AI features 20% → 35% |
 | 2026-10-21 | DXF save keeps each proxy object's and proxy entity's class: its class number (group 91) is renumbered to the rewritten CLASSES instead of naming another class, so AutoCAD's visual styles in an R14 file no longer come back as SCALE or MLEADERSTYLE (#1812) |
 | 2026-10-14 | HATCHEDIT adds boundaries from internal points or closed objects and removes selected loops in the dialog, command line and JSON command; associative links and undo are covered by tests. |
 | 2026-10-12 | TRIM: a pick after a closed polyline's last cut keeps only the complementary run instead of an extra circuit of the outline (#726) |
@@ -136,6 +137,9 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | minor | AI features 35–75 → 30–65 h: the engine-level guard for the assistant landed (A2) |
+| 2026-10-29 | minor | AI features 30–65 → 35–75 h: the assistant's file writes need an engine-level guard (A2) |
+| 2026-10-27 | minor | The AI Assistant on the shared Craft AI layer (A2): AI features 20% → 35% |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |
 | 2026-10-12 | trivial | Progress log: closed-polyline TRIM (#726) |

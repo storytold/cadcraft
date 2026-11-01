@@ -5,6 +5,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use cadcraft_engine::Session;
+use cadcraft_engine::consent::Consent;
 use serde_json::{Value, json};
 
 /// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
@@ -16,6 +17,12 @@ pub trait Backend {
     fn has_ui(&self) -> bool;
     /// Describe the backend connection for client-facing status.
     fn describe(&self) -> String;
+    /// [`Backend::call`] allowing at most `consent` (see `cadcraft_engine::consent`): the engine
+    /// refuses the file writes and closes it leaves out. By default the call runs on this thread,
+    /// as [`Headless`] does; a backend that runs it elsewhere carries the consent there.
+    fn call_with(&mut self, method: &str, params: Value, consent: Consent) -> Result<Value, String> {
+        cadcraft_engine::consent::with(consent, || self.call(method, params))
+    }
 }
 
 /// A running CADCraft app reached through its loopback control port.
@@ -250,6 +257,14 @@ fn unauthorized(v: &Value) -> bool {
 }
 
 impl Backend for Remote {
+    /// The app on the other end runs the call, where a consent can't follow it: anything short of
+    /// everything is refused.
+    fn call_with(&mut self, method: &str, params: Value, consent: Consent) -> Result<Value, String> {
+        if consent != (Consent { write_files: true, close_drawings: true }) {
+            return Err("a call with limited consent can't run in another CADCraft".into());
+        }
+        self.call(method, params)
+    }
     /// Send a control request with the token when available. A refused token is read again and the
     /// request resent once, only when the app says it did not run it.
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
@@ -416,6 +431,7 @@ impl Backend for Headless {
                 let png =
                     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
                 if let Some(path) = str_p("path") {
+                    cadcraft_engine::consent::check_write(&path).map_err(|e| e.to_string())?;
                     std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
                 }
                 Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))

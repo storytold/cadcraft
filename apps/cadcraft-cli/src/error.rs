@@ -24,6 +24,9 @@ pub(crate) enum CliError {
     NotUnicode(std::path::PathBuf),
     #[error("cannot connect to {addr}: {source}")]
     McpConnect { addr: String, source: std::io::Error },
+    /// `ask`: no key, no prompt, the account refused, or the assistant's turn failed.
+    #[error("{0}")]
+    Ask(String),
 }
 
 pub(crate) type Result<T = (), E = CliError> = std::result::Result<T, E>;

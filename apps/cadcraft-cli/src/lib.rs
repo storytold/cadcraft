@@ -9,6 +9,7 @@ use cadcraft_engine::Session;
 use serde_json::json;
 
 mod args;
+mod ask;
 mod commands;
 mod convert;
 mod error;
@@ -22,6 +23,7 @@ mod sample;
 #[cfg(test)]
 use args::Framing;
 use args::{Command, parse};
+use ask::ask;
 use clap::CommandFactory;
 use commands::commands;
 use convert::convert;
@@ -99,6 +101,7 @@ where
         Command::Run(a) => a.settings.apply(),
         Command::Mcp(a) => a.settings.apply(),
         Command::Sample(a) => a.settings.apply(),
+        Command::Ask(a) => a.settings.apply(),
         Command::Info(_) | Command::Commands(_) | Command::Perf(_) => {}
     }
     let mut io = Streams::new(out, err);
@@ -110,6 +113,7 @@ where
         Command::Mcp(a) => mcp(a),
         Command::Perf(a) => perf(a.target.as_ref(), &mut io),
         Command::Sample(a) => sample(a, &mut io),
+        Command::Ask(a) => ask(a, &mut io),
     };
     let mut code = 0;
     if let Err(e) = result {

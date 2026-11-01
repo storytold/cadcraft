@@ -5,6 +5,7 @@
 
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::{IoHooks, set_io};
+use cadcraft_engine::consent::{self, Consent};
 use cadcraft_engine::doc::{Drawing, EntityKind, Handle};
 use serde_json::json;
 
@@ -69,6 +70,21 @@ fn objects_are_written_from_the_base_point_and_erased() {
     assert_eq!(read(&path), ["LINE -5,-5", "CIRCLE"]);
     assert!(!alive(&s, a) && !alive(&s, b) && alive(&s, c));
     assert!(s.log.iter().any(|l| l == "Current settings: Object conversion=Delete"), "{:?}", s.log);
+}
+
+/// A call that may not write files gets no file, and -WBLOCK erases nothing it didn't write.
+#[test]
+fn without_consent_nothing_is_written_or_erased() {
+    let (mut s, a, b, _) = drawing();
+    let dir = TempDir::new("dash-wblock-consent");
+    let path = file(&dir, "WB.dwg");
+    let call = json!({ "path": path, "handles": [a.hex()] });
+    let e = consent::with(Consent::NONE, || s.execute("wblock", &call)).unwrap_err();
+    assert!(e.to_string().contains("not allowed"), "{e}");
+    let script = format!("(command \"_.-WBLOCK\" \"{path}\" \"\" '(5.0 5.0) {} {} \"\")", ent(a), ent(b));
+    consent::with(Consent::NONE, || s.cmdline(&script)).ok();
+    assert!(!std::path::Path::new(&path).exists());
+    assert!(alive(&s, a) && alive(&s, b), "{:?}", s.log);
 }
 
 #[test]
