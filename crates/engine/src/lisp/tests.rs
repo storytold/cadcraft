@@ -1039,3 +1039,12 @@ fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
     });
     assert_eq!(r, Some(4.0));
 }
+
+#[test]
+fn atof_out_of_range_exponent_reads_whole_token() {
+    let mut s = Session::new();
+    // Overflow must not fall back to a shorter prefix such as "1e40".
+    assert_eq!(ok(&mut s, "(> (atof \"1e400\") 1e300)"), "T");
+    assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
+    assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
+}

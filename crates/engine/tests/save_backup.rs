@@ -72,7 +72,7 @@ fn each_save_keeps_the_previous_file_as_bak() {
 
     add_circle(&mut s, 5.0);
     s.execute("qsave", &json!({})).unwrap();
-    assert_eq!(files(&dir), ["Plan.bak", "Plan.dxf"]);
+    assert_eq!(files(&dir), ["Plan.dxf", "Plan.dxf.bak"]);
     assert_eq!((circles(&path), circles(&backup_path(&path))), (2, 1), "the .bak is the previous save");
 
     add_circle(&mut s, 10.0);
@@ -118,7 +118,7 @@ fn a_damaged_file_never_replaces_a_good_backup_and_isavebak_0_keeps_none() {
     add_circle(&mut s, 15.0);
     s.execute("qsave", &json!({})).unwrap();
     assert_eq!((circles(&path), circles(&backup_path(&path))), (6, 1));
-    assert_eq!(files(&dir), ["Plan.bak", "Plan.dxf"]);
+    assert_eq!(files(&dir), ["Plan.dxf", "Plan.dxf.bak"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -293,4 +293,14 @@ fn the_backup_a_save_promises_is_the_one_it_writes() {
     cadcraft_engine::autosave::set_isavebak(false);
     assert!(!save_keeps_current(&path), "backups off");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `plan.dwg` and `plan.dxf` in one folder keep their own backups, in the DWG's letter case.
+#[test]
+fn drawings_sharing_a_name_keep_their_own_backups() {
+    let name = |p: &str| backup_path(std::path::Path::new(p)).to_string_lossy().into_owned();
+    assert_eq!(name("x/plan.dwg"), "x/plan.bak");
+    assert_eq!(name("x/plan.DWG"), "x/plan.BAK");
+    assert_eq!(name("x/plan.dxf"), "x/plan.dxf.bak");
+    assert_eq!(name("x/plan.dwt"), "x/plan.dwt.bak");
 }
