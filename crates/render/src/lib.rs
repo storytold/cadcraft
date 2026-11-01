@@ -291,10 +291,14 @@ impl Builder<'_> {
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        match self.shared_budget {
+        let ok = match self.shared_budget {
             Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
             None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+        };
+        if !ok {
+            self.list.truncated = true;
         }
+        ok
     }
 }
 
