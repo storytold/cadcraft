@@ -50,6 +50,9 @@ pub(super) fn run_areas(s: &mut Session, _p: &Value) -> Result<Value> {
 /// extreme window would shrink the viewport's short side below what a viewport can be.
 const MAX_PROPORTION: f64 = 1e4;
 
+/// The shortest side, in paper units, a viewport may be left with by a window that gives it a new proportion.
+const MIN_VIEWPORT_SIDE: f64 = 1e-6;
+
 /// Whether the viewport can take window `w`'s proportion: neither side is thousands of times the other.
 pub(super) fn proportion_ok(w: Bounds2) -> bool {
     let a = w.width() / w.height();
@@ -66,6 +69,16 @@ pub(super) fn fit_viewport(s: &mut Session, h: Handle, w: Bounds2) -> Result<()>
     // side to nothing, and a viewport that small is no longer listed or selectable.
     if !proportion_ok(w) {
         return Err(bad("layout.setarea", "the window is too long or too tall for a viewport to take its proportion"));
+    }
+    // The rectangle the viewport would have, worked out before anything changes: neither side may fall
+    // below what a viewport can be (`window()` skips smaller ones), so it stays listed and selectable.
+    if let Some(cadcraft_doc::EntityKind::Viewport(v)) = s.doc()?.entity(h).map(|e| &e.kind)
+        && v.clip.is_none()
+    {
+        let k = (v.width / ww).min(v.height / wh);
+        if !(ww * k >= MIN_VIEWPORT_SIDE && wh * k >= MIN_VIEWPORT_SIDE) {
+            return Err(bad("layout.setarea", "the window would leave the viewport too small to use"));
+        }
     }
     s.doc_mut()?.modify_entity(h, |e| {
         let EntityKind::Viewport(v) = &mut e.kind else { return };

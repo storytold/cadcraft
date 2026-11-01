@@ -286,3 +286,26 @@ fn extreme_proportions_are_refused_and_change_nothing() {
     // Without `adapt` a long window is fine for layout.new: the viewport keeps the printable area's shape.
     s.execute("layout.new", &json!({"name": "Long", "window": [[0, 0], [1e11, 1e-8]]})).unwrap();
 }
+
+/// A viewport that is already tiny can't take a window whose proportion would leave a side below what a
+/// viewport can be: refused before anything changes.
+#[test]
+fn a_window_that_would_leave_a_tiny_viewport_too_small_is_refused() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "A", "window": [[0, 0], [40, 20]]})).unwrap();
+    let h = areas(&mut s)[0]["handle"].as_str().unwrap().to_string();
+    let hh = cadcraft_doc::Handle::parse_hex(&h).unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(hh, |e| {
+            if let cadcraft_doc::EntityKind::Viewport(v) = &mut e.kind {
+                v.width = 1e-5;
+                v.height = 1e-5;
+            }
+        })
+        .unwrap();
+    let before = (areas(&mut s), viewport_of(&s, "A"));
+    // 1e4 : 1 is within the proportion limit, but the short side would be 1e-9.
+    assert!(s.execute("layout.setarea", &json!({"handle": h, "window": [[0, 0], [1e4, 1]]})).is_err());
+    assert_eq!((areas(&mut s), viewport_of(&s, "A")), before, "nothing changed");
+}
