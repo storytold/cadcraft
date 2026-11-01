@@ -487,7 +487,7 @@ impl Spline {
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
-        if !self.is_valid() || !(a.is_finite() && b.is_finite()) {
+        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
             return 0.0;
         }
         let (lo, hi) = self.domain();

@@ -1,7 +1,7 @@
 //! Drawing → DXF (AC1015 / R2000 structure, readable by every DXF consumer since 2000). Later
-//! versions keep that structure (the groups they add are optional, DXF Reference) and differ in
-//! `$ACADVER`, from 2004 in the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller
-//! picks the text encoding) and MULTILEADER entities (older files get LEADER + MTEXT).
+//! versions keep that structure and differ in `$ACADVER`, from 2004 in CLASS instance counts and
+//! the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller picks the text encoding) and
+//! MULTILEADER entities (older files get LEADER + MTEXT).
 
 use std::collections::HashMap;
 
@@ -33,6 +33,7 @@ pub(crate) use blocks::is_generated_arrow;
 pub(crate) use blocks::table_block_entities;
 use ctx::Ctx;
 use entity::entity;
+pub(crate) use header::code_page;
 use sections::tags_for;
 
 struct W {
@@ -146,7 +147,7 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
         layers: HashMap::new(),
         reactors: HashMap::new(),
     };
-    let cx = Ctx { target: Version::R2018, ..Ctx::default() };
+    let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);
     let mut tags = w.t.into_iter();

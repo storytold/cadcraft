@@ -225,6 +225,8 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         ui.end_row();
         autosave_row(ui, changes);
         ui.end_row();
+        backup_row(ui, changes);
+        ui.end_row();
         savefile_row(ui, changes);
         ui.end_row();
     });
@@ -282,6 +284,15 @@ fn autosave_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     let max = cadcraft_engine::autosave::MAX_SAVETIME;
     if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).labelled_by(minutes_caption.id).changed() {
         changes.insert("SAVETIME".into(), json!(minutes));
+    }
+}
+
+/// ISAVEBAK: keep the previous file as `<name>.bak` when saving over a drawing.
+fn backup_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Backup copy"));
+    let mut bak = cadcraft_engine::autosave::isavebak();
+    if ui.checkbox(&mut bak, crate::tl!("Create backup copy with each save")).changed() {
+        changes.insert("ISAVEBAK".into(), json!(i32::from(bak)));
     }
 }
 

@@ -265,10 +265,15 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     app.ui.interface_language = preference;
     let shown = app.language();
     if shown != preference.resolve(&app.system_languages) {
-        app.set_status(if preference.resolve(&app.system_languages) == "ko" {
-            "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
-        } else {
-            "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese."
+        app.set_status(match preference.resolve(&app.system_languages) {
+            "ko" => {
+                "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
+            }
+            "vi" => {
+                "No installed interface font has the Vietnamese letters, so the interface stays in English. Install one that does (Segoe UI, Arial, DejaVu Sans or Noto Sans) to use Vietnamese."
+            }
+            "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
+            _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
     Some(Ok(json!({"interfaceLanguage": preference.code(), "shown": shown})))
@@ -290,6 +295,16 @@ fn run_close_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resul
 
 fn should_pick_file_path(id: &str, params: &Value) -> bool {
     if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() }
+}
+
+/// A user's QSAVE: a drawing with no file yet picks one, and saving over a file that would lose
+/// content asks first. `None` lets the engine save. JSON calls carry params and never get here;
+/// they report the loss in their result instead.
+fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
+    if app.session.state().is_ok_and(|s| s.path.is_none()) {
+        return run_ui_command(app, "ui.saveas", &Value::Null);
+    }
+    app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -370,7 +385,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
-        "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
+        "qsave" if no_path => return user_qsave(app),
         // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
         // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
         // params, never get here and never open a dialog.
@@ -520,7 +535,7 @@ fn saveas_params(ui: &crate::UiState, session: &cadcraft_engine::Session, path: 
 
 fn set_save_format(app: &mut CadApp, format: crate::SaveFormat) -> Value {
     app.ui.save_format = format;
-    app.session.echo(format!("New drawings will be saved as {}", format.as_str().to_ascii_uppercase()));
+    app.session.echo(format!("Save As will suggest {}", format.as_str().to_ascii_uppercase()));
     json!({ "saveFormat": format.as_str() })
 }
 
@@ -780,18 +795,20 @@ pub fn run_transparent(app: &mut CadApp, id: &str) {
     }
 }
 
-/// Keyboard shortcuts and function keys.
-pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
+/// CADCraft's keyboard shortcuts and function keys, each with the command it runs. Every shortcut a
+/// command shows (its registry `key`, or a UI command's) must be here, or pressing it does nothing.
+pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)> {
     use egui::{Key, KeyboardShortcut, Modifiers};
     let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    let pairs: &[(KeyboardShortcut, &str)] = &[
+    vec![
         (sc(cmd_shift, Key::A), "pickstyle"),
         (sc(cmd_shift, Key::Z), "redo"),
         (sc(cmd, Key::Z), "u"),
         (sc(cmd, Key::Y), "redo"),
         (sc(cmd, Key::N), "new"),
+        (sc(cmd, Key::W), "close"),
         (sc(cmd, Key::O), "ui.open"),
         (sc(cmd_shift, Key::S), "ui.saveas"),
         (sc(cmd, Key::S), "qsave"),
@@ -816,7 +833,15 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(Modifiers::NONE, Key::F10), "polar"),
         (sc(Modifiers::NONE, Key::F11), "otrack"),
         (sc(Modifiers::NONE, Key::F12), "dynmode"),
-    ];
+    ]
+}
+
+/// Keyboard shortcuts and function keys.
+pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
+    use egui::{Key, KeyboardShortcut, Modifiers};
+    let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
+    let cmd = Modifiers::COMMAND;
+    let pairs = builtin_shortcuts();
     crate::clipboard::mirror(app, ctx);
     if app.closing.is_some() {
         return;
@@ -831,7 +856,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
     let mut fire = crate::clipboard::shortcut_commands(app, ctx);
     ctx.input_mut(|i| {
-        for (s, id) in pairs {
+        for (s, id) in &pairs {
             if i.consume_shortcut(s) && !fire.contains(id) {
                 fire.push(*id);
             }
@@ -883,6 +908,46 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked)
+    }
+
+    /// A registry shortcut ("Cmd+Shift+Z", "F8") as egui reads it.
+    fn parse_shortcut(s: &str) -> Option<egui::KeyboardShortcut> {
+        let mut m = egui::Modifiers::NONE;
+        let (mods, key) = s.rsplit_once('+').unwrap_or(("", s));
+        for part in mods.split('+').filter(|p| !p.is_empty()) {
+            match part {
+                "Cmd" => m |= egui::Modifiers::COMMAND,
+                "Shift" => m |= egui::Modifiers::SHIFT,
+                "Alt" => m |= egui::Modifiers::ALT,
+                _ => return None,
+            }
+        }
+        Some(egui::KeyboardShortcut::new(m, egui::Key::from_name(key)?))
+    }
+
+    #[test]
+    fn every_shown_shortcut_runs_its_command() {
+        // Handled outside the table: Delete by the command line (it erases the selection only when
+        // the line is empty), Cmd+8 before it (QuickCalc's own field keeps focus), Cmd+Q by the
+        // macOS app menu, the only place that shows it.
+        let elsewhere = [("Delete", "erase.selection"), ("Cmd+8", "ui.toggle.quickcalc"), ("Cmd+Q", "ui.quit")];
+        let table = super::builtin_shortcuts();
+        let shown = cadcraft_engine::command_specs()
+            .iter()
+            .filter_map(|c| Some((c.shortcut?, c.id)))
+            .chain(super::UI_COMMANDS.iter().filter_map(|(id, _, _, sc)| Some(((*sc)?, *id))));
+        let mut missing = Vec::new();
+        for (key, id) in shown {
+            if elsewhere.contains(&(key, id)) {
+                continue;
+            }
+            let sc = parse_shortcut(key).unwrap_or_else(|| panic!("{id}: unreadable shortcut {key}"));
+            // The table may run a command's UI form (`ui.open` for `open`), which does the same.
+            if !table.iter().any(|(s, i)| *s == sc && (*i == id || i.strip_prefix("ui.") == Some(id))) {
+                missing.push(format!("{key} {id}"));
+            }
+        }
+        assert!(missing.is_empty(), "shown but not run: {missing:?}");
     }
 
     #[test]
