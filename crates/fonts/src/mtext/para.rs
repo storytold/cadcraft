@@ -471,7 +471,7 @@ impl<'a> LineBuilder<'a> {
             width,
             height,
             lines: Vec::new(),
-            line: PLine { width: (first.left + first.first).max(0.0), ..Default::default() },
+            line: PLine { width: (first.length(first.left, 1, height) + first.length(first.first, 0, height)).max(0.0), ..Default::default() },
             paragraph: 0,
             pending_space: None,
             last_format: 0,

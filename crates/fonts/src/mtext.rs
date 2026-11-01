@@ -198,6 +198,7 @@ fn num(a: &str) -> Option<f64> {
 /// `\fArial|b1|i0|c0|p34;` → the font, trying a bold/italic face first.
 /// Strip known font-file suffixes when looking up built-in styled substitutions.
 fn font_substitute_stem(name: &str) -> &str {
+    let name = crate::ttf::file_name(name);
     match name.rsplit_once('.') {
         Some((stem, ext)) if ["ttf", "otf", "shx"].iter().any(|suffix| ext.eq_ignore_ascii_case(suffix)) => stem,
         _ => name,
@@ -824,7 +825,13 @@ mod tests {
 
     #[test]
     fn styled_iso_font_file_names_resolve_to_styled_substitutes() {
-        for (name, style) in [("isocpeur.ttf", "italic"), ("isocpeur.TTF", "bold"), ("isocpeur.otf", "bold italic")] {
+        for (name, style) in [
+            ("isocpeur.ttf", "italic"),
+            ("isocpeur.TTF", "bold"),
+            ("isocpeur.otf", "bold italic"),
+            (r"C:\Windows\Fonts\isocpeur.ttf", "italic"),
+            ("/old machine/fonts/isocpeur.TTF", "bold italic"),
+        ] {
             let stem = font_substitute_stem(name);
             let substitutes = crate::iso_substitutes(&format!("{stem} {style}"));
             assert!(!substitutes.is_empty(), "missing styled substitution for {name} {style}");

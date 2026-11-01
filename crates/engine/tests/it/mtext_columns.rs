@@ -49,10 +49,10 @@ fn json_columns_and_lists() {
     s.execute("mtext", &json!({"at": [0, 0], "text": "one\ntwo\nthree", "height": 1, "width": 5, "list": "number", "columns": {"type": "static", "count": 2, "gutter": 1, "height": 2}}))
         .unwrap();
     let t = last_mtext(&s);
-    assert_eq!(t.contents, "\\pxi-3,l3,t3;1.\tone\\P2.\ttwo\\P3.\tthree");
+    assert_eq!(t.contents, "\\pi-3,l3,t3;1.\tone\\P2.\ttwo\\P3.\tthree");
     assert_eq!(t.columns.as_ref().map(|c| c.count), Some(2));
     s.execute("mtext", &json!({"at": [0, 0], "text": "a\tb", "indent": 2, "tabs": [6, 4], "align": "right"})).unwrap();
-    assert_eq!(last_mtext(&s).contents, "\\pxi0,l2,qr,t4,6;a\tb");
+    assert_eq!(last_mtext(&s).contents, "\\pi0,l2,qr,t4,6;a\tb");
     // Columns need a column width and a height; unknown list styles are refused.
     assert!(s.execute("mtext", &json!({"at": [0, 0], "text": "x", "columns": {"type": "static", "height": 2}})).is_err());
     assert!(s.execute("mtext", &json!({"at": [0, 0], "text": "x", "width": 4, "columns": {"type": "static"}})).is_err());
@@ -124,4 +124,17 @@ fn scale_scales_multileader_text_width_and_columns() {
     let c = t.columns.unwrap();
     assert_eq!((t.height, t.width), (4.0, 20.0));
     assert_eq!((c.kind, c.count, c.gutter, c.height, c.heights), (MTextColumnType::Static, 2, 2.0, 10.0, vec![6.0, 8.0]));
+}
+
+#[test]
+fn json_paragraph_indents_stay_in_drawing_units_at_larger_text_heights() {
+    let mut s = Session::new();
+    s.execute("mtext", &json!({"at": [0, 0], "text": "LABEL", "height": 3, "indent": 2})).unwrap();
+    let indented = last_mtext(&s);
+    s.execute("mtext", &json!({"at": [0, 0], "text": "LABEL", "height": 3})).unwrap();
+    let plain = last_mtext(&s);
+    let min_x = |t: &MText| {
+        cadcraft_engine::render::layout_mtext_entity(s.doc().unwrap(), t).strokes.iter().flatten().map(|p| p.x).fold(f64::INFINITY, f64::min)
+    };
+    assert!((min_x(&indented) - min_x(&plain) - 2.0).abs() < 1e-9);
 }

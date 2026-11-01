@@ -53,7 +53,7 @@ fn simple_glyph(pts: &[(i16, i16)]) -> Vec<u8> {
 
 /// A TrueType font with glyphs .notdef (empty), A and B, and OS/2 `fsType`. `hmtx` holds
 /// `metrics` of the three metrics `hhea` declares.
-fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
+fn test_font(fs_type: u16, metrics: usize, alias: bool) -> Vec<u8> {
     let glyphs = [Vec::new(), simple_glyph(&[(50, 0), (550, 0), (300, 700)]), simple_glyph(&[(50, 0), (550, 0), (550, 700), (50, 700)])];
     let mut glyf = Vec::new();
     let mut loca = Vec::new();
@@ -94,7 +94,11 @@ fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
     }
     // cmap: format 4, 'A'..'B' → 1..2.
     let mut sub = Vec::new();
-    let segs: [(u16, u16, u16); 2] = [(0x41, 0x42, 1u16.wrapping_sub(0x41)), (0xFFFF, 0xFFFF, 1)];
+    let segs = if alias {
+        vec![(0x41, 0x41, 1u16.wrapping_sub(0x41)), (0x42, 0x42, 1u16.wrapping_sub(0x42)), (0xFFFF, 0xFFFF, 1)]
+    } else {
+        vec![(0x41, 0x42, 1u16.wrapping_sub(0x41)), (0xFFFF, 0xFFFF, 1)]
+    };
     be16(&mut sub, 4);
     be16(&mut sub, (16 + segs.len() * 8) as u16);
     be16(&mut sub, 0);
@@ -102,17 +106,17 @@ fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
     for v in [4u16, 1, 0] {
         be16(&mut sub, v);
     }
-    for s in segs {
+    for s in &segs {
         be16(&mut sub, s.1);
     }
     be16(&mut sub, 0);
-    for s in segs {
+    for s in &segs {
         be16(&mut sub, s.0);
     }
-    for s in segs {
+    for s in &segs {
         be16(&mut sub, s.2);
     }
-    for _ in segs {
+    for _ in &segs {
         be16(&mut sub, 0);
     }
     let mut cmap = Vec::new();
@@ -153,9 +157,10 @@ fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0, 3));
-        cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002, 3));
-        cadcraft_fonts::ttf::register("cadcraft-pdf-short-hmtx.ttf", test_font(0, 1));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0, 3, false));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002, 3, false));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-short-hmtx.ttf", test_font(0, 1, false));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-alias.ttf", test_font(0, 3, true));
     });
 }
 
@@ -223,6 +228,43 @@ fn font_files(doc: &Doc) -> usize {
 }
 
 #[test]
+fn font_paths_use_the_same_installed_face_and_preserve_the_drawing_style() {
+    for path in [r"C:\Windows\Fonts\CADCRAFT-PDF-TEST.TTF", "/old machine/fonts/cadcraft-pdf-test.ttf", r"..\Fonts\cadcraft-pdf-test.ttf"] {
+        let mut d = drawing();
+        style(&mut d, "Portable", path);
+        text(&mut d, &Space::Model, "Portable", (10.0, 20.0), "AB", (0.3, 0.8, 0.2));
+        assert_eq!(cadcraft_fonts::ttf::find(path), cadcraft_fonts::ttf::find("cadcraft-pdf-test.ttf"));
+
+        let first = pdf(&d, &Space::Model, json!({}));
+        assert_eq!(font_files(&first), 1);
+        assert_eq!(codes(&first).len(), 2);
+
+        let saved = cadcraft_io::write_dxf(&d);
+        let back = cadcraft_io::read_dxf(saved.as_bytes()).expect("portable font round-trip");
+        assert_eq!(back.text_styles.iter().find(|s| s.name == "Portable").unwrap().font, path);
+        let reopened = pdf(&back, &Space::Model, json!({}));
+        assert_eq!(codes(&reopened), codes(&first));
+    }
+}
+
+#[test]
+fn shared_glyphs_keep_original_unicode_with_actual_text() {
+    let mut d = drawing();
+    style(&mut d, "Alias", "cadcraft-pdf-alias.ttf");
+    text(&mut d, &Space::Model, "Alias", (10.0, 20.0), "ABBA", (0.0, 1.0, 0.0));
+    let doc = pdf(&d, &Space::Model, json!({}));
+    let glyph_codes = codes(&doc);
+    assert_eq!(glyph_codes.len(), 4);
+    assert!(glyph_codes.iter().all(|c| *c == glyph_codes[0]), "all characters share one glyph");
+    let map = pdf_read::to_unicode_map(doc.pages[0].fonts[0].to_unicode.as_deref().unwrap());
+    assert!(map.contains(&(glyph_codes[0], "A".into())));
+    // The backend retains A in ToUnicode and wraps each B occurrence with ActualText.
+    // Restoring the old writer's manual spans would duplicate the backend's spans.
+    assert_eq!(doc.content().matches("/ActualText").count(), 2, "{}", doc.content());
+    assert_eq!(doc.content().matches("/ActualText(B)").count(), 2, "{}", doc.content());
+}
+
+#[test]
 fn truetype_text_is_embedded_as_text() {
     let mut d = drawing();
     text(&mut d, &Space::Model, "Real", (0.0, 0.0), "ABBA", (0.0, 1.0, 0.0));
@@ -266,7 +308,7 @@ fn the_subset_is_a_valid_truetype_font() {
     let face = cadcraft_fonts::ttf::Face::new(std::sync::Arc::new(file.clone()), 0).expect("the subset parses");
     assert_eq!(cadcraft_fonts::subset::embedding(&face), cadcraft_fonts::subset::Embedding::Allowed);
     // Glyph A kept, B (unused) left out: the subset is smaller than the font.
-    assert!(file.len() < test_font(0, 3).len());
+    assert!(file.len() < test_font(0, 3, false).len());
 }
 
 #[test]

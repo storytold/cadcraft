@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(
                 "{at, text, height?, width?, attach?: 1..9 | justify?: TL..BR, rotation?, style?, lineSpacing?, lineSpacingExact?, \
                  list?: bullet|number|lower|upper, indent?, firstIndent?, rightIndent?, tabs?: [..], align?: left|center|right|justify|distributed, \
-                 columns?: {type: static|dynamic, count?, gutter?, height, heights?, reversed?}} (indents and tabs in text heights; width = one column)",
+                 columns?: {type: static|dynamic, count?, gutter?, height, heights?, reversed?}} (indents and tabs in drawing units; width = one column)",
             )
             .interactive(|_| Ok(Box::new(MTextM::default()))),
     ]
