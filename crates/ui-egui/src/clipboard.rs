@@ -42,6 +42,9 @@ pub fn mirror(app: &CadApp, ctx: &egui::Context) {
 /// The commands the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
 /// own last copy (another CADCraft's) becomes the clipboard first.
 pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
+    if ctx.egui_wants_keyboard_input() || app.cmd.expanded {
+        return Vec::new();
+    }
     let (events, shift) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();

@@ -102,11 +102,19 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "quick",
         "vpscale",
         "options/dialog",
+        "closing",
+        "xdedit",
+        "context_menu",
+        "plotstyles",
+        "spacemouse",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     for module in modules {
-        files.push(src.join(format!("{module}.rs")));
+        let p = src.join(format!("{module}.rs"));
+        if p.exists() {
+            files.push(p);
+        }
         module_files(&src.join(module), &mut files);
     }
     let mut missing = BTreeSet::new();
@@ -172,8 +180,11 @@ fn assert_primary_locale_aliases() {
 }
 
 fn assert_portuguese_and_spanish_aliases() {
-    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
+    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
+    }
+    for tag in ["pt-PT", "pt_PT.UTF-8", "PT-pt"] {
+        assert_eq!(locale_language(tag), Some("pt-PT"), "{tag}");
     }
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
@@ -535,6 +546,30 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
         missing
     });
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
+}
+
+#[test]
+fn dutch_catalog_locale_preferences_and_contexts() {
+    assert_eq!(Preference::parse("nl"), Some(Preference::Dutch));
+    assert_eq!(Preference::Dutch.code(), "nl");
+    assert_eq!(Preference::Dutch.name(), "Nederlands");
+    for locale in ["nl", "nl-NL", "nl-BE", "nl_NL.UTF-8", "NL-be"] {
+        assert_eq!(locale_language(locale), Some("nl"));
+    }
+    assert_eq!(Preference::Dutch.resolve(&["en-US".into()]), "nl");
+    let saved = serde_json::to_string(&Preference::Dutch).unwrap();
+    assert_eq!(saved, "\"nl\"");
+    assert_eq!(serde_json::from_str::<Preference>(&saved).unwrap(), Preference::Dutch);
+    assert_eq!(tr("nl", "Layer"), "Laag");
+    assert_eq!(tr_menu("nl", "View"), "Beeld");
+    assert_eq!(tr("nl", "View"), "Weergave");
+    with_language("nl", || {
+        assert_eq!(t("Open"), "Openen");
+        assert_eq!(count(1, "{n} contributor", "{n} contributors"), "1 bijdrager");
+        assert_eq!(count(0, "{n} contributor", "{n} contributors"), "0 bijdragers");
+        assert_eq!(count(2, "{n} contributor", "{n} contributors"), "2 bijdragers");
+    });
+    assert_eq!(t("Open"), "Open", "language must not leak outside a render scope");
 }
 
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.
