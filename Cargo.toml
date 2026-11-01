@@ -112,4 +112,4 @@ egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc7
 egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 # storytold/winit a517b38 plus W30 (the launcher's activation token, storytold/winit#14); back to
 # storytold/winit once that merges.
-winit = { git = "https://github.com/bmh129/winit.git", rev = "61c97492efc335233bc81b83e6985cf5e9ef26f6" }
+winit = { git = "https://github.com/bmh129/winit.git", rev = "b452532426f26c00ef5f9104d72484b70d797623" }
