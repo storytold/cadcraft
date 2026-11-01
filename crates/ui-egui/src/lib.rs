@@ -317,8 +317,8 @@ pub struct CadApp {
 /// The numeric keypad's decimal key types a point at the command line, whatever the system's
 /// language: with a German (or any decimal-comma) layout it sends a comma, and a comma separates
 /// coordinates here (`10,20`), so `2,5` typed on the keypad would be a point instead of a number.
-/// The main keyboard's comma stays. Text fields and prompts that collect text never see this, so a
-/// keypad comma typed into MText or a dialog stays a comma ([`cmdline::keyboard`]).
+/// The main keyboard's comma stays. Text fields and prompts that take text never see this, so a
+/// keypad comma typed into MText, a dialog or a list of names stays a comma ([`cmdline::keyboard`]).
 ///
 /// The keypad key is told apart by its physical key: egui-winit (desktop) maps none for
 /// `KeyCode::NumpadDecimal`, and of the other keys that could type a comma only the ISO/JIS extra
