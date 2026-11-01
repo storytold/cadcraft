@@ -296,6 +296,14 @@ fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
         EntityKind::MText(t) => Some(t.insert.z),
         EntityKind::Insert(i) => Some(i.insert.z),
         EntityKind::Face3d(f) => face_z(&f.corners, p).or_else(|| along(&f.corners, true)),
+        // Drawn as its faces' visible edges: the Z on the nearest one.
+        EntityKind::PolyfaceMesh(m) => m
+            .faces3d()
+            .iter()
+            .flat_map(cadcraft_doc::Face3d::visible_edges)
+            .map(|(a, b)| on_segment(a, b))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(z, _)| z),
         _ => None,
     }
 }
@@ -430,11 +438,7 @@ fn xdlist_app_matches(app_name: &str, filter: &str) -> bool {
     }
     let a_low = app_name.to_ascii_lowercase();
     let f_low = f.to_ascii_lowercase();
-    if let Some(prefix) = f_low.strip_suffix('*') {
-        a_low.starts_with(prefix)
-    } else {
-        a_low == f_low || a_low.contains(&f_low)
-    }
+    if let Some(prefix) = f_low.strip_suffix('*') { a_low.starts_with(prefix) } else { a_low == f_low || a_low.contains(&f_low) }
 }
 
 fn xdata_code_label(code: i32) -> &'static str {
@@ -1089,11 +1093,7 @@ impl Interactive for XdListM {
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        if !self.sel.done {
-            self.sel.prompt()
-        } else {
-            Prompt::new("Application name", Accept::TEXT).default("*")
-        }
+        if !self.sel.done { self.sel.prompt() } else { Prompt::new("Application name", Accept::TEXT).default("*") }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.sel.done {
@@ -1120,9 +1120,7 @@ impl Interactive for XdListM {
 /// (`ACAD`, `CADCRAFT`, or `AcDb*`).
 pub fn is_system_xdata_app(app: &str) -> bool {
     let a = app.trim();
-    a.eq_ignore_ascii_case("ACAD")
-        || a.eq_ignore_ascii_case("CADCRAFT")
-        || a.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("AcDb"))
+    a.eq_ignore_ascii_case("ACAD") || a.eq_ignore_ascii_case("CADCRAFT") || a.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("AcDb"))
 }
 
 fn run_xdedit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1199,10 +1197,7 @@ fn run_xdedit(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("xdedit", "no such object"));
     }
     for app_name in apps {
-        std::sync::Arc::make_mut(&mut d.foreign)
-            .records
-            .entry(("APPID".to_string(), app_name.to_ascii_uppercase()))
-            .or_default();
+        std::sync::Arc::make_mut(&mut d.foreign).records.entry(("APPID".to_string(), app_name.to_ascii_uppercase())).or_default();
     }
     d.modify_entity(h, |e| {
         let mut kept: Vec<cadcraft_doc::RawTag> = Vec::new();
@@ -1546,53 +1541,26 @@ mod tests {
         assert!(s.execute("xdedit", &json!({})).is_err());
 
         let line = s.execute("line", &json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).ok();
-        let h_str = line
-            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
-            .unwrap_or_default();
+        let h_str = line.and_then(|v| v["handles"][0].as_str().map(str::to_string)).unwrap_or_default();
         let line2 = s.execute("line", &json!({ "points": [[0.0, 5.0], [10.0, 5.0]] })).ok();
-        let h2_str = line2
-            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
-            .unwrap_or_default();
+        let h2_str = line2.and_then(|v| v["handles"][0].as_str().map(str::to_string)).unwrap_or_default();
 
         // Multi-handle request or empty 1001 application name is rejected.
-        assert!(
-            s.execute(
-                "xdedit",
-                &json!({ "handles": [&h_str, &h2_str], "xdata": [{ "code": 1001, "value": "Lumi_KLIC" }] })
-            )
-            .is_err()
-        );
-        assert!(
-            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "   " }] }))
-                .is_err()
-        );
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str, &h2_str], "xdata": [{ "code": 1001, "value": "Lumi_KLIC" }] })).is_err());
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "   " }] })).is_err());
 
         // Missing or invalid code/value, system app, or orphan tag before 1001 is rejected.
-        assert!(
-            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "value": "bad" }] }))
-                .is_err()
-        );
-        assert!(
-            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": true }] }))
-                .is_err()
-        );
-        assert!(
-            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "ACAD" }] }))
-                .is_err()
-        );
-        assert!(
-            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": "ORPHAN=1" }] }))
-                .is_err()
-        );
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "value": "bad" }] })).is_err());
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": true }] })).is_err());
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "ACAD" }] })).is_err());
+        assert!(s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": "ORPHAN=1" }] })).is_err());
     }
 
     #[test]
     fn xdedit_preserves_system_xdata_and_xdlist_filters_by_app() {
         let mut s = Session::default();
         let line = s.execute("line", &json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).ok();
-        let h_str = line
-            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
-            .unwrap_or_default();
+        let h_str = line.and_then(|v| v["handles"][0].as_str().map(str::to_string)).unwrap_or_default();
         let h = Handle::parse_hex(&h_str).unwrap_or(Handle(1));
         if let Ok(d) = s.doc_mut() {
             let _ = d.modify_entity(h, |e| {
@@ -1646,12 +1614,7 @@ mod tests {
         assert!(!filtered_msg.contains("OTHER_APP"));
 
         // Verify system XData is still intact on the entity.
-        let xdata = s
-            .doc()
-            .ok()
-            .and_then(|d| d.entity(h))
-            .map(|e| e.common.xdata.clone())
-            .unwrap_or_default();
+        let xdata = s.doc().ok().and_then(|d| d.entity(h)).map(|e| e.common.xdata.clone()).unwrap_or_default();
         assert!(xdata.iter().any(|t| t.code == 1001 && t.value == "ACAD"));
         assert!(xdata.iter().any(|t| t.code == 1001 && t.value == "AcDbBlockRepBTag"));
     }

@@ -246,6 +246,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         }
         EntityKind::Solid(s) | EntityKind::Trace(s) => set_xy(s.corners.get_mut(index)?, to),
         EntityKind::Face3d(f) => set_xy(f.corners.get_mut(index)?, to),
+        EntityKind::PolyfaceMesh(m) => set_xy(m.vertices.get_mut(index)?, to),
         EntityKind::Region(_) => return Some(translated(kind, delta)),
         EntityKind::Viewport(v) => {
             let opposite = *grips.get((index + 2) % 4)?;
@@ -265,14 +266,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
     Some(k)
 }
 
-fn stretch_image(
-    kind: &EntityKind,
-    img: &cadcraft_doc::Image,
-    index: usize,
-    from: Vec2,
-    to: Vec2,
-    delta: Vec2,
-) -> Option<EntityKind> {
+fn stretch_image(kind: &EntityKind, img: &cadcraft_doc::Image, index: usize, from: Vec2, to: Vec2, delta: Vec2) -> Option<EntityKind> {
     let corners = img.corners();
     if index == 4 {
         return Some(translated(kind, delta));

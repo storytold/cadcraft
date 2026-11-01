@@ -28,7 +28,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, paint_images, paint_preview_images, selection_area_fill};
+use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, paint_images, paint_preview_images, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -329,9 +329,7 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
     {
         if let Some(last) = app.canvas.pan_last {
             let delta = at - last;
-            if p.mods.shift
-                && app.session.state().ok().is_some_and(|st| matches!(st.edit_space(), cadcraft_doc::Space::Model))
-            {
+            if p.mods.shift && app.session.state().ok().is_some_and(|st| matches!(st.edit_space(), cadcraft_doc::Space::Model)) {
                 let _ = app.session.orbit_drag(f64::from(delta.x), f64::from(delta.y));
             } else if let Ok(st) = app.session.state_mut() {
                 let view = st.view();
@@ -477,12 +475,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     }
 }
 
-fn paint_pointer_overlay(
-    frame: &mut CanvasPaint<'_>,
-    paper_rect: Option<Rect>,
-    surround: Color32,
-    sheet: Option<cadcraft_render::Sheet>,
-) {
+fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, surround: Color32, sheet: Option<cadcraft_render::Sheet>) {
     let app = &mut *frame.app;
     let ui = &mut *frame.ui;
     let painter = frame.painter;
@@ -688,8 +681,9 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
             let filter = app.session.settings.previewfilter;
             let edit_space = st.edit_space();
             let pick_orbit = if matches!(edit_space, cadcraft_doc::Space::Model) { st.orbit } else { cadcraft_render::Orbit3d::default() };
-            app.canvas.hover = cadcraft_engine::select::pick_in_orbit(&st.doc, &edit_space, pick_orbit, w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
-                .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
+            app.canvas.hover =
+                cadcraft_engine::select::pick_in_orbit(&st.doc, &edit_space, pick_orbit, w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
+                    .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
             app.canvas.hover_at = hover_pos;
         }
     } else {
@@ -835,13 +829,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let current_orbit = app
         .session
         .state()
-        .map(|s| {
-            if matches!(s.space, cadcraft_doc::Space::Paper(_)) && s.mspace.is_none() {
-                cadcraft_render::Orbit3d::default()
-            } else {
-                s.orbit
-            }
-        })
+        .map(|s| if matches!(s.space, cadcraft_doc::Space::Paper(_)) && s.mspace.is_none() { cadcraft_render::Orbit3d::default() } else { s.orbit })
         .unwrap_or_default();
 
     let pressed_primary = collect_prompt_clicks(
@@ -1038,8 +1026,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
                 xf_paper.to_screen(Vec2::new(sh.printable.min.x, sh.printable.max.y)),
                 xf_paper.to_screen(Vec2::new(sh.printable.max.x, sh.printable.min.y)),
             );
-            let pts = [pa.left_top(), pa.right_top(), pa.right_bottom(), pa.left_bottom(), pa.left_top()];
-            painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
+            painter.extend(dashed_rect(painter.clip_rect(), pa, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
             (Rgb(t.paper.r(), t.paper.g(), t.paper.b()), Some(paper))
         }
         None => {
@@ -1138,11 +1125,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
-    let preview_orbit = if app.session.running.as_ref().is_some_and(|r| r.id.starts_with("zoom")) {
-        cadcraft_render::Orbit3d::default()
-    } else {
-        current_orbit
-    };
+    let preview_orbit =
+        if app.session.running.as_ref().is_some_and(|r| r.id.starts_with("zoom")) { cadcraft_render::Orbit3d::default() } else { current_orbit };
     let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
         (Some(c), true) => app.session.drag(c),
         _ => None,
@@ -1150,12 +1134,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     if let Some((drag, extra)) = drag {
         if let Ok(st) = app.session.state() {
             let mut drag_imgs: Vec<cadcraft_doc::Entity> = if drag.clipboard {
-                app.session
-                    .clipboard
-                    .iter()
-                    .filter(|e| matches!(e.kind, cadcraft_doc::EntityKind::Image(_)))
-                    .cloned()
-                    .collect()
+                app.session.clipboard.iter().filter(|e| matches!(e.kind, cadcraft_doc::EntityKind::Image(_))).cloned().collect()
             } else {
                 drag.handles
                     .iter()
@@ -1197,8 +1176,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
         if crossing {
-            let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-            painter.extend(Shape::dashed_line(&pts, st, 5.0, 3.0));
+            painter.extend(dashed_rect(painter.clip_rect(), r, st, 5.0, 3.0));
         } else {
             painter.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
         }

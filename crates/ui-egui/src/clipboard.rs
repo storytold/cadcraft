@@ -81,11 +81,7 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
                     || t.starts_with('!')
                     || cadcraft_engine::is_bare_lisp_prefix(t);
                 let is_img = !is_own && !is_dxf && !typing_in_cmd && try_load_os_clipboard_image(app);
-                let paste_to_cmd = !is_own
-                    && !is_dxf
-                    && !is_img
-                    && !t.is_empty()
-                    && (app.session.clipboard.is_empty() || typing_in_cmd);
+                let paste_to_cmd = !is_own && !is_dxf && !is_img && !t.is_empty() && (app.session.clipboard.is_empty() || typing_in_cmd);
                 if paste_to_cmd {
                     app.cmd.buffer.push_str(&clean);
                     app.cmd.note_typing();
@@ -103,10 +99,7 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
 pub fn sync_os_clipboard_for_paste(app: &mut CadApp) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let has_os_text = arboard::Clipboard::new()
-            .ok()
-            .and_then(|mut cb| cb.get_text().ok())
-            .is_some_and(|t| !t.trim().is_empty());
+        let has_os_text = arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).is_some_and(|t| !t.trim().is_empty());
         if !has_os_text {
             let _ = try_load_os_clipboard_image(app);
             return;

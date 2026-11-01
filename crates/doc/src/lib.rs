@@ -144,6 +144,10 @@ pub struct Drawing {
     pub image_assets: BTreeMap<String, std::sync::Arc<Vec<u8>>>,
     /// Embedded OLE object payloads for OLE2FRAME entities.
     pub ole_items: BTreeMap<String, OleItem>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
 }
 
 impl Default for Drawing {
@@ -205,6 +209,7 @@ impl Drawing {
             skipped_records: BTreeMap::new(),
             image_assets: BTreeMap::new(),
             ole_items: BTreeMap::new(),
+            portable_fonts: false,
         }
     }
 

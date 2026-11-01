@@ -391,7 +391,12 @@ fn sub_entget(h: Handle, parent: &Entity, index: usize) -> Option<Value> {
             let att = ins.attribs.get(index)?;
             items.push(Value::cons(Value::Int(0), Value::str("ATTRIB")));
             items.push(Value::cons(Value::Int(8), Value::str(&parent.common.layer)));
-            items.push(Value::list(vec![Value::Int(10), Value::Real(att.text.insert.x), Value::Real(att.text.insert.y), Value::Real(att.text.insert.z)]));
+            items.push(Value::list(vec![
+                Value::Int(10),
+                Value::Real(att.text.insert.x),
+                Value::Real(att.text.insert.y),
+                Value::Real(att.text.insert.z),
+            ]));
             items.push(Value::cons(Value::Int(40), Value::Real(att.text.height)));
             items.push(Value::cons(Value::Int(1), Value::str(&att.text.value)));
             items.push(Value::cons(Value::Int(2), Value::str(&att.tag)));
@@ -746,28 +751,12 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn textbox(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let list = &a[0];
-    let text = list
-        .iter()
-        .find(|v| v.car().as_number() == Some(1.0))
-        .map(|v| to_text(&v.cdr(), false))
-        .unwrap_or_default();
+    let text = list.iter().find(|v| v.car().as_number() == Some(1.0)).map(|v| to_text(&v.cdr(), false)).unwrap_or_default();
     let default_h = ctx.s.doc().ok().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
-    let h = list
-        .iter()
-        .find(|v| v.car().as_number() == Some(40.0))
-        .and_then(|v| v.cdr().as_number())
-        .unwrap_or(default_h)
-        .max(1e-6);
-    let wf = list
-        .iter()
-        .find(|v| v.car().as_number() == Some(41.0))
-        .and_then(|v| v.cdr().as_number())
-        .unwrap_or(1.0);
+    let h = list.iter().find(|v| v.car().as_number() == Some(40.0)).and_then(|v| v.cdr().as_number()).unwrap_or(default_h).max(1e-6);
+    let wf = list.iter().find(|v| v.car().as_number() == Some(41.0)).and_then(|v| v.cdr().as_number()).unwrap_or(1.0);
     let w = (text.chars().count() as f64) * h * 0.85 * wf;
-    Ok(Flow::Value(Value::list(vec![
-        Value::point(&[0.0, 0.0, 0.0]),
-        Value::point(&[w, h, 0.0]),
-    ])))
+    Ok(Flow::Value(Value::list(vec![Value::point(&[0.0, 0.0, 0.0]), Value::point(&[w, h, 0.0])])))
 }
 
 pub fn layoutlist(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {

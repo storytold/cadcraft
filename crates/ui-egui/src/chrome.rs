@@ -246,11 +246,7 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
             .iter()
             .enumerate()
             .map(|(i, d)| {
-                let label = if d.read_only {
-                    format!("{} [RO]", d.title)
-                } else {
-                    d.title.clone()
-                };
+                let label = if d.read_only { format!("{} [RO]", d.title) } else { d.title.clone() };
                 (i, label, d.is_dirty(), i == app.session.active)
             })
             .collect();

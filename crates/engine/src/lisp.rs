@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, Handle};
 
-use crate::{Input, Prompt, Session};
+use crate::{Input, Prompt, Session, undoctl};
 use eval::{Ctx, Machine, Need, Outcome};
 use value::{Sym, Value};
 
@@ -113,6 +113,8 @@ pub struct LispState {
     active: bool,
     /// True while `lisp_drive` has taken `run` out to step the VM.
     pub(crate) executing: bool,
+    /// The running routine's own undo steps (also while its machine is out of `run`).
+    steps: RoutineSteps,
     /// Files loaded by APPLOAD, by name, for `(load name)` where there is no file system.
     files: HashMap<String, String>,
     /// Files explicitly loaded by the user via `Session::lisp_load`, replayed into newly opened drawings.
@@ -127,6 +129,19 @@ pub struct LispState {
     acad_loaded: bool,
     /// Memory caps (lowered by tests).
     pub(crate) limits: Limits,
+}
+
+/// What U and REDO inside the running routine take back: the commands it ran, each as the drawing
+/// was before it, last last. The routine is still one undo step once it ends.
+#[derive(Default)]
+struct RoutineSteps {
+    /// The drawing the routine runs in.
+    uid: u64,
+    undo: std::collections::VecDeque<crate::Snapshot>,
+    redo: std::collections::VecDeque<crate::Snapshot>,
+    /// Where the routine's undo step starts, when U or REDO inside it went on to the drawing's
+    /// own steps; else where the routine started.
+    base: Option<(Arc<Drawing>, Vec<Handle>)>,
 }
 
 /// What a run may use (see [`value`]'s memory notes).
@@ -256,6 +271,7 @@ impl Session {
         let before = Some((st.doc.clone(), st.selection.clone()));
         let uid = st.uid;
         self.lisp.active = true;
+        self.lisp.steps = RoutineSteps { uid, ..RoutineSteps::default() };
         self.lisp.run = Some(Box::new(Run {
             machine,
             uid,
@@ -336,7 +352,7 @@ impl Session {
                 Ok(o) => o,
                 Err(p) => {
                     // A panic inside a built-in: put the drawing back as the routine found it.
-                    if let Some((doc, sel)) = &run.before
+                    if let Some((doc, sel)) = self.lisp.steps.base.as_ref().or(run.before.as_ref())
                         && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
                     {
                         st.doc = doc.clone();
@@ -434,6 +450,7 @@ impl Session {
     fn lisp_end(&mut self, result: std::result::Result<Value, String>) {
         let Some(run) = self.lisp.run.take() else { return };
         self.lisp.active = false;
+        let steps = std::mem::take(&mut self.lisp.steps);
         let mut env = self.lisp.envs.remove(&run.uid).unwrap_or_default();
         self.lisp_flush(&mut env, true);
         self.lisp.envs.insert(run.uid, env);
@@ -443,7 +460,7 @@ impl Session {
                 self.echo(text);
             }
         }
-        if let Some((doc, sel)) = run.before
+        if let Some((doc, sel)) = steps.base.or(run.before)
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
@@ -503,6 +520,7 @@ impl Session {
             self.lisp_error(LispError::quit(msg));
         } else if self.lisp.active {
             self.lisp.active = false;
+            self.lisp.steps = RoutineSteps::default();
             self.echo(format!("; error: {msg}"));
             self.lisp_last = Some(Err(msg));
         } else {
@@ -592,6 +610,67 @@ impl Session {
         self.lisp.active
     }
 
+    /// A command the running routine ran changed the drawing (`snap` holds it as it was): U inside
+    /// the routine takes it back, as AutoCAD's does, while the routine stays one undo step. UNDO
+    /// Control One keeps only the last, None none.
+    pub(crate) fn lisp_record_step(&mut self, snap: crate::Snapshot) {
+        let Some(uid) = self.routine_steps() else { return };
+        let mut control = undoctl::Control::All;
+        // A command ends what REDO could bring back, the drawing's own steps too.
+        if let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid) {
+            st.redo.clear();
+            control = st.undo_ctl.control;
+        }
+        let steps = &mut self.lisp.steps;
+        steps.redo.clear();
+        match control {
+            undoctl::Control::None => steps.undo.clear(),
+            undoctl::Control::One => {
+                steps.undo.clear();
+                steps.undo.push_back(snap);
+            }
+            // As many as the drawing keeps.
+            undoctl::Control::All => {
+                steps.undo.push_back(snap);
+                if steps.undo.len() > undoctl::MAX_UNDO {
+                    steps.undo.pop_front();
+                }
+            }
+        }
+    }
+
+    /// U (or with `redo`, REDO) inside the running routine: take its last command back (or bring
+    /// back what U took). None when it has none left, and the drawing's own steps go on from there.
+    pub(crate) fn lisp_take_back(&mut self, redo: bool) -> Option<String> {
+        let uid = self.routine_steps()?;
+        let st = self.docs.iter_mut().find(|d| d.uid == uid)?;
+        let steps = &mut self.lisp.steps;
+        let (from, to) = if redo { (&mut steps.redo, &mut steps.undo) } else { (&mut steps.undo, &mut steps.redo) };
+        let cur = st.swap_in(from.pop_back()?);
+        let label = cur.label.clone();
+        to.push_back(cur);
+        Some(label)
+    }
+
+    /// U or REDO inside the running routine went on to the drawing's steps before it: the
+    /// routine's own undo step starts from the drawing as that left it, and REDO brings back that
+    /// step before what U took back of the routine's.
+    pub(crate) fn lisp_rebase(&mut self) {
+        if self.routine_steps().is_none() {
+            return;
+        }
+        if let Ok(st) = self.state() {
+            self.lisp.steps.base = Some((st.doc.clone(), st.selection.clone()));
+            self.lisp.steps.redo.clear();
+        }
+    }
+
+    /// The active drawing's uid when a routine runs in it.
+    fn routine_steps(&self) -> Option<u64> {
+        let uid = self.state().ok()?.uid;
+        (self.lisp.active && self.lisp.steps.uid == uid).then_some(uid)
+    }
+
     /// The commands the active drawing's LISP defines (`c:` functions), uppercase and sorted.
     pub fn lisp_commands(&self) -> Vec<String> {
         let Ok(uid) = self.state().map(|s| s.uid) else { return Vec::new() };
@@ -616,13 +695,10 @@ impl Session {
         if let Some(f) = self.lisp.envs.get(&uid).map(|e| e.get(&cname)).filter(|f| matches!(f, Value::Func(_) | Value::Subr(_))) {
             return Some(f);
         }
-        self.lisp
-            .envs
-            .values()
-            .find_map(|e| {
-                let f = e.get(&cname);
-                matches!(f, Value::Func(_) | Value::Subr(_)).then_some(f)
-            })
+        self.lisp.envs.values().find_map(|e| {
+            let f = e.get(&cname);
+            matches!(f, Value::Func(_) | Value::Subr(_)).then_some(f)
+        })
     }
 
     /// Replay any LISP files loaded via [`Session::lisp_load`] into the active drawing if not yet loaded there.

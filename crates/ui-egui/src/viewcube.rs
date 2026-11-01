@@ -112,7 +112,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         (None, _) => resp,
     };
     let press_pos = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos());
-    let (pressed_on, pressed_zone) = press_pos.map_or((None, None), |o| l.part_at_in_orbit(o, current_orbit));
+    let latch_id = resp.id.with("pressed_part");
+    let (mut pressed_on, pressed_zone) = press_pos.map_or((None, None), |o| l.part_at_in_orbit(o, current_orbit));
+    if resp.drag_started() {
+        ui.data_mut(|d| d.insert_temp(latch_id, pressed_on));
+    } else if resp.dragged() {
+        pressed_on = ui.data(|d| d.get_temp::<Option<Part>>(latch_id)).flatten();
+    }
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<Option<Part>>(latch_id));
+    }
     if resp.clicked() {
         match pressed_on {
             Some(Part::Face) => {
@@ -140,10 +149,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
                         (cadcraft_geom::Vec3::new(-1.0, 0.0, 0.0), 90.0_f64),
                     ] {
                         if proj.project_ring_point(dir, l.ring).distance(click_pos) <= 14.0 {
-                            let _ = app.run(
-                                "3dorbit",
-                                json!({ "yaw": target_yaw, "pitch": current_orbit.pitch.to_degrees() }),
-                            );
+                            let _ = app.run("3dorbit", json!({ "yaw": target_yaw, "pitch": current_orbit.pitch.to_degrees() }));
                             break;
                         }
                     }

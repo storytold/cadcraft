@@ -702,6 +702,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Μία από τις εφαρμογές Crafting Apps της ομάδας και της κοινότητας ArtCraft.
 	Only in this drawing: {n}	Μόνο σε αυτό το σχέδιο: {n}
 	Only in {name}: {n}	Μόνο στο {name}: {n}
+	Oops	Επαναφορά διαγραμμένων αντικειμένων
 	Open	Άνοιγμα
 	Open (⌘O)	Άνοιγμα (⌘O)
 	Open a drawing first.	Ανοίξτε πρώτα ένα σχέδιο.
@@ -1621,3 +1622,5 @@ menu	View	Προβολή
 	in use by {user} on {machine} ({time})	σε χρήση από {user} σε {machine} ({time})
 	in use by {user} ({time})	σε χρήση από {user} ({time})
 	Save changes to block "{name}"?	Αποθήκευση αλλαγών στο μπλοκ «{name}»;
+	New AppID (e.g. CAD_XDATA)	Νέο AppID (π.χ. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Δημιουργία εφαρμογής CAD_XDATA

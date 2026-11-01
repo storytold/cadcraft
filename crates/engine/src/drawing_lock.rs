@@ -45,7 +45,7 @@ pub fn dwl2_path(drawing_path: &Path) -> PathBuf {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{LockInfo, Path, PathBuf, dwl2_path, dwl_path};
+    use super::{LockInfo, Path, PathBuf, dwl_path, dwl2_path};
 
     /// RAII guard that holds a drawing lock and deletes `.dwl` and `.dwl2` on drop.
     #[derive(Debug)]
@@ -95,15 +95,11 @@ mod native {
     }
 
     fn current_user() -> String {
-        std::env::var("USERNAME")
-            .or_else(|_| std::env::var("USER"))
-            .unwrap_or_else(|_| "User".to_string())
+        std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "User".to_string())
     }
 
     fn current_machine() -> String {
-        std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .unwrap_or_else(|_| "localhost".to_string())
+        std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "localhost".to_string())
     }
 
     fn xml_escape(s: &str) -> String {
@@ -176,10 +172,7 @@ mod native {
 
         let user = current_user();
         let machine = current_machine();
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let dt = chrono::DateTime::from_timestamp(secs, 0);
         let date_text = dt.map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string()).unwrap_or_default();
         let iso_date = dt.map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string()).unwrap_or_default();

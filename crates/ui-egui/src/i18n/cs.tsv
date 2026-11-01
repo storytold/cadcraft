@@ -583,6 +583,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Jedna z aplikací Crafting Apps od týmu ArtCraft a komunity.
 	Only in this drawing: {n}	Pouze v tomto výkresu: {n}
 	Only in {name}: {n}	Pouze v {name}: {n}
+	Oops	Obnovit vymazané objekty
 	Open (⌘O)	Otevřít (⌘O)
 	Open Sample Drawing	Otevřít ukázkový výkres
 	Open sample drawing	Otevřít ukázku výkresu
@@ -1624,3 +1625,5 @@ menu	Modify	Modifikace
 	in use by {user} on {machine} ({time})	používá {user} na {machine} ({time})
 	in use by {user} ({time})	používá {user} ({time})
 	Save changes to block "{name}"?	Uložit změny v bloku „{name}“?
+	New AppID (e.g. CAD_XDATA)	Nové AppID (např. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Vytvořit aplikaci CAD_XDATA

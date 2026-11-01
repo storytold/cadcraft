@@ -25,12 +25,7 @@ impl Session {
         if orbit.is_top() {
             Ok(d.extents(&space))
         } else {
-            Ok(cadcraft_render::build(
-                d,
-                &space,
-                &cadcraft_render::Options { orbit, text: true, fill: true, ..Default::default() },
-            )
-            .bounds)
+            Ok(cadcraft_render::build(d, &space, &cadcraft_render::Options { orbit, text: true, fill: true, ..Default::default() }).bounds)
         }
     }
 

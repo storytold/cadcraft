@@ -411,24 +411,16 @@ impl ImageAttachM {
 
     fn load_size_and_cache(&mut self, s: &mut Session) {
         let doc_path = s.drawing_path();
-        let bytes = s
-            .doc()
-            .ok()
-            .and_then(|d| d.get_image_asset(&self.path).map(|b| b.to_vec()))
-            .or_else(|| {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if let Some(f) = find_image_file(&self.path, doc_path.as_deref()) {
-                        std::fs::read(f).ok()
-                    } else {
-                        std::fs::read(&self.path).ok()
-                    }
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    None
-                }
-            });
+        let bytes = s.doc().ok().and_then(|d| d.get_image_asset(&self.path).map(|b| b.to_vec())).or_else(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(f) = find_image_file(&self.path, doc_path.as_deref()) { std::fs::read(f).ok() } else { std::fs::read(&self.path).ok() }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        });
         if let Some(b) = bytes {
             self.size = probe_image_size_from_bytes(&b).unwrap_or(Vec2::new(100.0, 100.0));
             if let Ok(d) = s.doc_mut() {

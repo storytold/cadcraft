@@ -128,6 +128,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             tolerance: 2f64.powi(band) * 0.5,
             min_dash: 2f64.powi(band) * 2.0,
             text: true,
+            linetypes: true,
             fill: true,
             lineweights: lwdisplay,
             view_height: st.paper_view().height,
@@ -137,6 +138,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             transparency,
             cancel: None,
             orbit: st.orbit,
+            orbit_viewport: Some(h),
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
@@ -286,7 +288,8 @@ impl VpHighlight {
         };
         if self.key != Some(key) {
             let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).map(|e| e.as_ref());
-            self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, orbit: st.orbit, ..Default::default() });
+            self.list =
+                cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, orbit: st.orbit, ..Default::default() });
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
         }

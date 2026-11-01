@@ -271,12 +271,7 @@ pub fn osnap_in_orbit_with_proj(
             }
         }
         cands3.extend(flat.into_iter().map(|(m, p)| (m, p, elev)));
-        near_prims.extend(
-            ent_prims
-                .into_iter()
-                .filter(|p| prim_near_in_orbit(p, elev, orbit, view_cursor, aperture))
-                .map(|p| (p, elev)),
-        );
+        near_prims.extend(ent_prims.into_iter().filter(|p| prim_near_in_orbit(p, elev, orbit, view_cursor, aperture)).map(|p| (p, elev)));
         let mut push_block = |ins: &Insert, z0: f64| {
             block_leaves_z(d, ins, &Mat3::IDENTITY, z0, 1.0, 0, &mut budget, &[], &mut |k, m, z| {
                 let mut leaf_cands: Vec<(u32, Vec2)> = Vec::new();
@@ -284,12 +279,7 @@ pub fn osnap_in_orbit_with_proj(
                 let mut sink = Sink { osmode, aperture, probe: all, cands: &mut leaf_cands, near: &mut leaf_prims };
                 sink.object(k, Some(m));
                 cands3.extend(leaf_cands.into_iter().map(|(md, pt)| (md, pt, z)));
-                near_prims.extend(
-                    leaf_prims
-                        .into_iter()
-                        .filter(|p| prim_near_in_orbit(p, z, orbit, view_cursor, aperture))
-                        .map(|p| (p, z)),
-                );
+                near_prims.extend(leaf_prims.into_iter().filter(|p| prim_near_in_orbit(p, z, orbit, view_cursor, aperture)).map(|p| (p, z)));
             });
         };
         if let EntityKind::Insert(ins) = &e.kind {
@@ -497,12 +487,7 @@ fn push_orbit_base_snaps(near_prims: &[(Prim, f64)], bp: Vec2, osmode: u32, cand
     }
 }
 
-fn nearest_hit_in_orbit(
-    near_prims: &[(Prim, f64)],
-    orbit: cadcraft_render::Orbit3d,
-    view_cursor: Vec2,
-    aperture: f64,
-) -> Option<(SnapHit, Vec2)> {
+fn nearest_hit_in_orbit(near_prims: &[(Prim, f64)], orbit: cadcraft_render::Orbit3d, view_cursor: Vec2, aperture: f64) -> Option<(SnapHit, Vec2)> {
     let mut nb: Option<(f64, Vec2, Vec2)> = None;
     let mut consider = |c: Vec2, z: f64| {
         if !c.is_finite() || !z.is_finite() {
@@ -533,11 +518,7 @@ fn nearest_hit_in_orbit(
 /// `z = 0` work plane so `orbit.project(point.to3(0.0))` lands on `pr`. Returns `None` when
 /// `z != 0` and the work plane is viewed edge-on.
 pub(crate) fn work_plane_point(orbit: cadcraft_render::Orbit3d, w: Vec2, z: f64, pr: Vec2) -> Option<Vec2> {
-    if z.abs() <= 1e-12 {
-        Some(w)
-    } else {
-        orbit.unproject_xy(pr)
-    }
+    if z.abs() <= 1e-12 { Some(w) } else { orbit.unproject_xy(pr) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -731,13 +712,7 @@ pub(crate) fn gather(
 }
 
 /// The primitives within `aperture` of the 2D view-plane `view_cursor` under `orbit`, with their elevation.
-pub(crate) fn gather_in_orbit(
-    d: &Drawing,
-    space: &Space,
-    orbit: cadcraft_render::Orbit3d,
-    view_cursor: Vec2,
-    aperture: f64,
-) -> Vec<(Prim, f64)> {
+pub(crate) fn gather_in_orbit(d: &Drawing, space: &Space, orbit: cadcraft_render::Orbit3d, view_cursor: Vec2, aperture: f64) -> Vec<(Prim, f64)> {
     let Some(store) = d.space(space) else { return Vec::new() };
     let handles = crate::select::orbit_near_handles(d, space, orbit, view_cursor, aperture);
     let mut near_prims: Vec<(Prim, f64)> = Vec::new();
@@ -765,24 +740,14 @@ pub(crate) fn gather_in_orbit(
                 sink.dimension(d, dm, &mut budget, &[]);
             }
         }
-        near_prims.extend(
-            ent_prims
-                .into_iter()
-                .filter(|p| prim_near_in_orbit(p, elev, orbit, view_cursor, aperture))
-                .map(|p| (p, elev)),
-        );
+        near_prims.extend(ent_prims.into_iter().filter(|p| prim_near_in_orbit(p, elev, orbit, view_cursor, aperture)).map(|p| (p, elev)));
         let mut push_block = |ins: &Insert, z0: f64| {
             block_leaves_z(d, ins, &Mat3::IDENTITY, z0, 1.0, 0, &mut budget, &[], &mut |k, m, z| {
                 let mut leaf_cands: Vec<(u32, Vec2)> = Vec::new();
                 let mut leaf_prims: Vec<Prim> = Vec::new();
                 let mut sink = Sink { osmode: mode::NEA, aperture, probe: all, cands: &mut leaf_cands, near: &mut leaf_prims };
                 sink.object(k, Some(m));
-                near_prims.extend(
-                    leaf_prims
-                        .into_iter()
-                        .filter(|p| prim_near_in_orbit(p, z, orbit, view_cursor, aperture))
-                        .map(|p| (p, z)),
-                );
+                near_prims.extend(leaf_prims.into_iter().filter(|p| prim_near_in_orbit(p, z, orbit, view_cursor, aperture)).map(|p| (p, z)));
             });
         };
         if let EntityKind::Insert(ins) = &e.kind {
@@ -1896,18 +1861,9 @@ mod tests {
         use cadcraft_geom::Vec3;
         let mut d = Drawing::new_metric();
         // Line on the z = 0 work plane from (0, 0, 0) to (10, 0, 0), and an elevated line at z = 8.
-        d.add(
-            &Space::Model,
-            Common::default(),
-            EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }),
-        )
-        .unwrap();
-        d.add(
-            &Space::Model,
-            Common::default(),
-            EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 8.0), b: Vec3::new(10.0, 0.0, 8.0) }),
-        )
-        .unwrap();
+        d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })).unwrap();
+        d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 8.0), b: Vec3::new(10.0, 0.0, 8.0) }))
+            .unwrap();
         let front = cadcraft_render::Orbit3d { yaw: 0.0, pitch: std::f64::consts::FRAC_PI_2, ..Default::default() };
         assert!(front.is_edge_on());
         let hit = osnap_in_orbit(&d, &Space::Model, front, front.project(Vec3::new(10.0, 0.0, 0.0)), 1.0, mode::END, None, false);

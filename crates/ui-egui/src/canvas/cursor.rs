@@ -160,7 +160,7 @@ pub(super) fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, orbit: cadcr
             }
         }
         if app.session.running.as_ref().is_some_and(|r| r.id == "stretch") {
-            return orbit.unproject_xy(raw).unwrap_or(raw);
+            return raw;
         }
         return raw;
     }
@@ -262,11 +262,7 @@ pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Po
     let st = Stroke::new(1.0, ink);
     let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
     let picking_in_cmd = pickbox && app.session.current_prompt().is_some_and(|pr| pr.picks_objects());
-    let pb = if pickbox {
-        pickbox_half(app.session.settings.pickbox).or(picking_in_cmd.then_some(1.5))
-    } else {
-        None
-    };
+    let pb = if pickbox { pickbox_half(app.session.settings.pickbox).or(picking_in_cmd.then_some(1.5)) } else { None };
     let gap = pb.unwrap_or(0.0);
     // At a command prompt that selects objects, AutoCAD shows only the pickbox square (no
     // crosshair lines); when idle or once a selection window corner is picked, the crosshair

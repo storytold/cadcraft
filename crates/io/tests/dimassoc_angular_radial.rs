@@ -288,3 +288,50 @@ fn standard_dimassoc_associates_in_dxf_and_dwg() {
     let back = read(&dwg, "case.dwg").unwrap();
     assert_standard_assoc(&c, &back, "DWG");
 }
+
+/// Every source object names each DIMASSOC that follows it once, before its owner group.
+#[test]
+fn dimension_sources_carry_their_persistent_reactors() {
+    let c = case();
+    let text = write_dxf(&c.d);
+    let all = records(&text);
+    for dimension in [c.hd, c.hr, c.ha, c.hl] {
+        let assoc = dimassoc(&text, dimension).expect("DIMASSOC");
+        let reactor = string(&assoc, 5).expect("DIMASSOC handle");
+        for reference in point_refs(&assoc) {
+            // Both objects of an intersection need the link back. Repeated snaps to one
+            // object must not write the same DIMASSOC reactor twice.
+            for source in [string(&reference, 331), string(&reference, 332)].into_iter().flatten() {
+                let geometry = all.iter().find(|r| string(r, 5) == Some(source)).expect("referenced geometry");
+                let start = geometry.iter().position(|(code, value)| *code == 102 && value == "{ACAD_REACTORS").expect("source reactor group");
+                let end =
+                    start + 1 + geometry.iter().skip(start + 1).position(|(code, value)| *code == 102 && value == "}").expect("reactor group end");
+                assert_eq!(geometry[start + 1..end].iter().filter(|(code, value)| *code == 330 && value == reactor).count(), 1);
+                assert_eq!(start, 2, "reactors immediately follow the entity handle");
+                assert_eq!(geometry.get(end + 1).map(|(code, _)| *code), Some(330), "entity owner follows reactors");
+                assert_eq!(geometry.iter().filter(|(code, value)| *code == 102 && value == "{ACAD_REACTORS").count(), 1);
+            }
+        }
+    }
+}
+
+/// Malformed self-links must not duplicate the reactor the dimension already carries.
+#[test]
+fn a_self_referential_dimension_writes_its_reactor_once() {
+    let mut c = case();
+    assert!(c.d.model.modify(c.hl, |e| {
+        let EntityKind::Dimension(dm) = &mut e.kind else { panic!("dimension") };
+        for reference in &mut dm.assoc {
+            reference.handle = c.hl;
+        }
+    }));
+    let text = write_dxf(&c.d);
+    let assoc = dimassoc(&text, c.hl).expect("DIMASSOC");
+    let reactor = string(&assoc, 5).expect("DIMASSOC handle");
+    let all = records(&text);
+    let handle = c.hl.hex();
+    let dimension = all.iter().find(|r| string(r, 5) == Some(&handle)).expect("dimension record");
+    let start = dimension.iter().position(|(code, value)| *code == 102 && value == "{ACAD_REACTORS").expect("reactor group");
+    let end = start + 1 + dimension.iter().skip(start + 1).position(|(code, value)| *code == 102 && value == "}").expect("reactor group end");
+    assert_eq!(dimension[start + 1..end].iter().filter(|(code, value)| *code == 330 && value == reactor).count(), 1);
+}

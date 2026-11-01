@@ -1196,10 +1196,15 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     group(ui, &hdr);
                     ui.horizontal(|ui| {
                         ui.add_space(12.0);
-                        if ui.small_button(crate::tl!("✏ Edit XData (XDEDIT)")).on_hover_text(crate::tl!("Open visual XData Editor dialog")).clicked() {
+                        if ui.small_button(crate::tl!("✏ Edit XData (XDEDIT)")).on_hover_text(crate::tl!("Open visual XData Editor dialog")).clicked()
+                        {
                             open_xdedit = true;
                         }
-                        if ui.small_button(crate::tl!("📋 Copy Values")).on_hover_text(crate::tl!("Copy XData values (Key,Value) to clipboard")).clicked() {
+                        if ui
+                            .small_button(crate::tl!("📋 Copy Values"))
+                            .on_hover_text(crate::tl!("Copy XData values (Key,Value) to clipboard"))
+                            .clicked()
+                        {
                             let text = crate::xdedit::XdEditState::from_entity(&e).format_plain_text();
                             ui.ctx().copy_text(text);
                             copied_xdata = true;

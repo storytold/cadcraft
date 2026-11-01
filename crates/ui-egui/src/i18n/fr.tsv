@@ -490,6 +490,7 @@
 	On	Activé
 	On/Off	Activer/Désactiver
 	One of the Crafting Apps by the ArtCraft team and community.	L'une des applications Crafting Apps de l'équipe et de la communauté ArtCraft.
+	Oops	Restaurer les objets effacés
 	Open (⌘O)	Ouvrir (⌘O)
 	Open Sample Drawing	Ouvrir un dessin d'exemple
 	Open sample drawing	Ouvrir un dessin d'exemple
@@ -1621,3 +1622,5 @@
 	in use by {user} on {machine} ({time})	utilisé par {user} sur {machine} ({time})
 	in use by {user} ({time})	utilisé par {user} ({time})
 	Save changes to block "{name}"?	Enregistrer les modifications apportées au bloc « {name} » ?
+	New AppID (e.g. CAD_XDATA)	Nouvel AppID (ex. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Créer l'application CAD_XDATA

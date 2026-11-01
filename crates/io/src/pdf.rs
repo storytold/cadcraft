@@ -508,8 +508,37 @@ struct SheetPage {
     label: String,
 }
 
+/// `o` with a layout's saved page setup filled in where the options don't say: its plot window,
+/// scale to fit or saved scale, and centring (#2493). Explicit options win; model space has no
+/// saved setup.
+pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
+    let mut o = o.clone();
+    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
+    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot of the sheet.
+    if o.fit == Some(false) && o.scale.is_none() {
+        o.window = None;
+        return o;
+    }
+    let saved = paper::saved_plot(page);
+    // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
+    o.window = saved.window;
+    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+    if o.fit.is_none() && o.scale.is_none() && saved.fit {
+        o.fit = Some(true);
+    }
+    if o.scale.is_none() {
+        o.scale = saved.scale;
+    }
+    if o.center.is_none() && saved.window.is_some() {
+        o.center = Some(saved.center);
+    }
+    o
+}
+
 /// Plot one space.
 fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String)]) -> Result<SheetPage> {
+    let saved = with_saved_setup(d, space, o);
+    let o = &saved;
     let page = page_for(d, space, o)?;
     let unit_mm = paper::page_unit_mm(d, &page);
     let sheet = Sheet::from_page(&page, unit_mm);
@@ -520,6 +549,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         tolerance: 0.001,
         min_dash: 0.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights,
         view_height: 0.0,
@@ -528,10 +558,11 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         skip_viewport: None,
         cancel: None,
         orbit: cadcraft_render::Orbit3d::default(),
+        orbit_viewport: None,
     };
     let k = unit_mm * PT_PER_MM;
-    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
-    let fit = o.fit.unwrap_or(window.is_some() || matches!(space, Space::Model));
+    let window = o.window.filter(|w| !w.is_empty());
+    let fit = o.fit.unwrap_or(matches!(space, Space::Model));
     // Chord tolerance: about 0.05 mm on paper.
     let est = plot_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, fit, o.scale);
     let tol = 0.05 / unit_mm / est.max(1e-300);
@@ -541,8 +572,11 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
-    let map = if fit || matches!(space, Space::Model) {
-        let (from, to) = placement(space, &b, fit, &sheet, o);
+    // A layout plotted over a window is placed like model space: the window on the printable area.
+    let placed = fit || window.is_some() || matches!(space, Space::Model);
+    let map = if placed {
+        let by = if window.is_some() { &Space::Model } else { space };
+        let (from, to) = placement(by, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {
         Map { from: Vec2::ZERO, s, to: Vec2::ZERO, k }
@@ -551,11 +585,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let mut list = list;
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     let media = sheet.size * k;
-    let clip_pt = if fit || matches!(space, Space::Model) {
-        Bounds2::new(sheet.printable.min * k, sheet.printable.max * k)
-    } else {
-        Bounds2::new(Vec2::ZERO, media)
-    };
+    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
     if o.layers {
@@ -988,4 +1018,87 @@ fn uri(url: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod saved_setup_tests {
+    use super::*;
+    use cadcraft_doc::{Common, EntityKind, Layout, Line};
+    use cadcraft_geom::Vec3;
+    use serde_json::json;
+
+    /// A layout drawn in mm at A1 size (frame 20,5 - 836,589) whose page setup is A4 landscape
+    /// plotting that window, as in #2493.
+    fn drawing(scale_to_fit: bool, scale: f64) -> Drawing {
+        let mut d = Drawing::new_metric();
+        let mut l = Layout::new("L1", 3);
+        l.page = PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [0.0; 4],
+            plot_area: "window".into(),
+            plot_window: [20.0, 5.0, 836.0, 589.0],
+            scale_to_fit,
+            scale,
+            center: true,
+            ..PageSetup::default()
+        };
+        d.layouts.push(l);
+        let line = EntityKind::Line(Line { a: Vec3::new(20.0, 5.0, 0.0), b: Vec3::new(836.0, 589.0, 0.0) });
+        d.add(&Space::Paper("L1".into()), Common::default(), line).unwrap();
+        d
+    }
+
+    fn map(d: &Drawing, opts: serde_json::Value) -> Map {
+        sheet(d, &Space::Paper("L1".into()), &PdfOptions::from_json(&opts), &[]).unwrap().map
+    }
+
+    /// A layout plotted with no options uses its saved scale to fit and plot window, not 1:1.
+    #[test]
+    fn a_layout_plots_its_saved_window_scaled_to_fit_by_default() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({}));
+        let want = (297.0_f64 / 816.0).min(210.0 / 584.0);
+        assert!((m.s - want).abs() < 1e-9, "scale {} not {want}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9, "window centre, got {:?}", m.from);
+        assert!(m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "page centre, got {:?}", m.to);
+    }
+
+    /// The options still win: `fit: false` is the plain 1:1 plot, and a `scale` is used as given.
+    #[test]
+    fn explicit_options_override_the_saved_setup() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"fit": false}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+        let m = map(&d, json!({"fit": false, "scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+    }
+
+    /// A saved scale (not scale to fit) is used by default, with the window centred on the page.
+    #[test]
+    fn a_layout_plots_at_its_saved_scale_by_default() {
+        let d = drawing(false, 0.3394);
+        let m = map(&d, json!({}));
+        assert!((m.s - 0.3394).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "{:?} {:?}", m.from, m.to);
+    }
+
+    /// A page setup with nothing saved to fit plots as it always did.
+    #[test]
+    fn a_layout_without_a_saved_window_or_scale_is_unchanged() {
+        let mut d = drawing(false, 1.0);
+        d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "layout".into();
+        let m = map(&d, json!({}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+    }
+
+    /// An explicit `scale` beats a saved scale to fit, in the PDF as in the preview.
+    #[test]
+    fn an_explicit_scale_overrides_the_saved_scale_to_fit() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
 }

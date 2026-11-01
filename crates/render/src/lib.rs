@@ -147,14 +147,7 @@ impl Orbit3d {
         }
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (
-            self.yaw.to_bits(),
-            self.pitch.to_bits(),
-            self.pivot.x.to_bits(),
-            self.pivot.y.to_bits(),
-            self.pivot.z.to_bits(),
-        )
-            .hash(&mut h);
+        (self.yaw.to_bits(), self.pitch.to_bits(), self.pivot.x.to_bits(), self.pivot.y.to_bits(), self.pivot.z.to_bits()).hash(&mut h);
         h.finish()
     }
 
@@ -298,11 +291,7 @@ impl Builder<'_> {
     /// The 3D orbit active for `ctx`: 2D Top for ordinary paper-space geometry, and
     /// [`Options::orbit`] for model space (including model space seen through a layout viewport).
     fn active_orbit(&self, ctx: &Ctx) -> Orbit3d {
-        if self.paper && ctx.top != VIEWPORT_CONTENT {
-            Orbit3d::default()
-        } else {
-            self.opts.orbit
-        }
+        if self.paper && ctx.top != VIEWPORT_CONTENT { Orbit3d::default() } else { self.opts.orbit }
     }
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
@@ -440,11 +429,7 @@ impl Builder<'_> {
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
     fn shaped(&mut self, ctx: &Ctx, color: Ink, lw: f32, sh: &cadcraft_fonts::Shaped) {
         let on_screen = !self.plotting && self.opts.min_dash > 0.0;
-        let stroke_lw = if on_screen && lw * 3.78 <= 1.35 {
-            -1.0
-        } else {
-            lw
-        };
+        let stroke_lw = if on_screen && lw * 3.78 <= 1.35 { -1.0 } else { lw };
         for s in &sh.strokes {
             self.polyline(ctx, color, stroke_lw, s);
         }
@@ -521,11 +506,7 @@ impl Builder<'_> {
         self.list.verts.push(self.project_pt(ctx, base, 0.0));
         let d2 = ctx.xf.apply_vec(dir);
         let orbit = self.active_orbit(ctx);
-        let d_proj = if orbit.is_top() {
-            d2.normalized()
-        } else {
-            orbit.project_vec(cadcraft_geom::Vec3::new(d2.x, d2.y, 0.0)).normalized()
-        };
+        let d_proj = if orbit.is_top() { d2.normalized() } else { orbit.project_vec(cadcraft_geom::Vec3::new(d2.x, d2.y, 0.0)).normalized() };
         self.list.verts.push(d_proj);
         self.list.prims.push(DPrim {
             handle: ctx.top,

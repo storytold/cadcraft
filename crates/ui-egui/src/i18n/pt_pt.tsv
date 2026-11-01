@@ -603,6 +603,7 @@
 	On	Ativado
 	On/Off	Ativar/desativar
 	One of the Crafting Apps by the ArtCraft team and community.	Um dos Crafting Apps da equipe e da comunidade ArtCraft.
+	Oops	Restaurar objetos eliminados
 	Only in this drawing: {n}	Somente neste desenho: {n}
 	Only in {name}: {n}	Somente em {name}: {n}
 	Open	Abrir
@@ -1615,3 +1616,11 @@
 	in use by {user} on {machine} ({time})	em uso por {user} em {machine} ({time})
 	in use by {user} ({time})	em uso por {user} ({time})
 	Save changes to block "{name}"?	Guardar alterações no bloco "{name}"?
+menu	View	Ver
+menu	Draw	Desenhar
+menu	Dimension	Cota
+menu	Modify	Modificar
+	Backup copy	Cópia de segurança
+	Create backup copy with each save	Criar cópia de segurança ao guardar
+	New AppID (e.g. CAD_XDATA)	Novo AppID (ex. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Criar aplicação CAD_XDATA

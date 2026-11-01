@@ -5,19 +5,13 @@
 use std::sync::Arc;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{
-    Block, Entity, EntityKind, HAlign, Handle, Insert, Line, Lineweight, LwPolyline, Polyline3d,
-    RawTag, Space, Text, VAlign,
-};
+use cadcraft_doc::{Block, Entity, EntityKind, HAlign, Handle, Insert, Line, Lineweight, LwPolyline, Polyline3d, RawTag, Space, Text, VAlign};
 use cadcraft_geom::{Mat3, PolyVertex, Polyline, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::{bad, str_param};
 use crate::lisp::value::{Value as Lv, to_text};
-use crate::{
-    Accept, CommandSpec, DotNetPickState, EngineError, Input, Interactive, Prompt, Result, Session,
-    Step,
-};
+use crate::{Accept, CommandSpec, DotNetPickState, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Maximum size in bytes of an external block `.dwg` file loaded by `dotnet.bridge` (`insert_block`).
 #[cfg(not(target_arch = "wasm32"))]
@@ -196,11 +190,7 @@ fn acad_object_name(k: &EntityKind) -> &'static str {
 /// Serialize a drawing entity into the JSON wire format expected by `cadcraft-nethost`.
 fn dotnet_entity_json(d: &cadcraft_doc::Drawing, e: &Entity) -> Value {
     let b = cadcraft_doc::entity_bounds(d, e, 0);
-    let bounds = if b.is_empty() {
-        json!([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    } else {
-        json!([[b.min.x, b.min.y, 0.0], [b.max.x, b.max.y, 0.0]])
-    };
+    let bounds = if b.is_empty() { json!([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]) } else { json!([[b.min.x, b.min.y, 0.0], [b.max.x, b.max.y, 0.0]]) };
     let mut coords = Vec::new();
     let mut start_pt = [0.0, 0.0, 0.0];
     let mut end_pt = [0.0, 0.0, 0.0];
@@ -278,12 +268,7 @@ fn dotnet_entity_json(d: &cadcraft_doc::Drawing, e: &Entity) -> Value {
         _ => {}
     }
     let aci = i32::from(e.common.color.to_aci());
-    let xdata: Vec<Value> = e
-        .common
-        .xdata
-        .iter()
-        .map(|t| json!({ "code": t.code, "value": t.value }))
-        .collect();
+    let xdata: Vec<Value> = e.common.xdata.iter().map(|t| json!({ "code": t.code, "value": t.value })).collect();
     json!({
         "handle": e.handle.hex(),
         "objectName": acad_object_name(&e.kind),
@@ -315,20 +300,10 @@ fn vec3_from_json(v: Option<&Value>) -> Vec3 {
 
 /// Sanitize a block name so it cannot traverse directories when probing sibling `.dwg` files.
 fn sanitize_block_name(raw: &str) -> String {
-    let stem = std::path::Path::new(raw)
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| raw.to_string());
-    let cleaned: String = stem
-        .chars()
-        .filter(|c| !matches!(c, '/' | '\\' | ':' | '\0'))
-        .collect();
+    let stem = std::path::Path::new(raw).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| raw.to_string());
+    let cleaned: String = stem.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '\0')).collect();
     let trimmed = cleaned.trim();
-    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
-        "SYMBOL".into()
-    } else {
-        trimmed.to_string()
-    }
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." { "SYMBOL".into() } else { trimmed.to_string() }
 }
 
 /// Handle a `dotnet.bridge` RPC operation from an out-of-process `.NET` plugin.
@@ -346,11 +321,7 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 None => {
                     let dir = std::env::temp_dir().to_string_lossy().into_owned();
-                    let name = if st.title.ends_with(".dwg") || st.title.ends_with(".dxf") {
-                        st.title.clone()
-                    } else {
-                        format!("{}.dwg", st.title)
-                    };
+                    let name = if st.title.ends_with(".dwg") || st.title.ends_with(".dxf") { st.title.clone() } else { format!("{}.dwg", st.title) };
                     (dir, name)
                 }
             };
@@ -423,11 +394,7 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
             let mut incoming: Vec<RawTag> = Vec::new();
             let mut apps_updated: Vec<String> = Vec::new();
             for item in arr {
-                let code = item
-                    .get("code")
-                    .and_then(Value::as_i64)
-                    .and_then(|c| i32::try_from(c).ok())
-                    .unwrap_or(1000);
+                let code = item.get("code").and_then(Value::as_i64).and_then(|c| i32::try_from(c).ok()).unwrap_or(1000);
                 let val = match item.get("value") {
                     Some(Value::String(st)) => st.clone(),
                     Some(Value::Number(n)) => n.to_string(),
@@ -474,16 +441,7 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
             let layer = str_param(p, "layer").map(str::to_string).unwrap_or_else(|| d.header.str("CLAYER", "0").to_string());
             d.ensure_layer(&layer);
             let h = d.new_handle();
-            let mut ent = Entity::new(
-                h,
-                EntityKind::LwPolyline(LwPolyline {
-                    vertices,
-                    closed,
-                    const_width,
-                    elevation: 0.0,
-                    plinegen: false,
-                }),
-            );
+            let mut ent = Entity::new(h, EntityKind::LwPolyline(LwPolyline { vertices, closed, const_width, elevation: 0.0, plinegen: false }));
             ent.common.layer = layer;
             if let Some(st) = d.space_mut(&space) {
                 st.push(ent);
@@ -588,11 +546,7 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
             let zs = p.get("zscale").and_then(Value::as_f64).filter(|v| v.is_finite() && *v != 0.0).unwrap_or(1.0);
             let rot = p.get("rotation").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0);
             let dll_dir = str_param(p, "dllDir").unwrap_or("");
-            let space = if p.get("paperSpace").and_then(Value::as_bool).unwrap_or(false) && s.space().is_paper() {
-                s.space()
-            } else {
-                Space::Model
-            };
+            let space = if p.get("paperSpace").and_then(Value::as_bool).unwrap_or(false) && s.space().is_paper() { s.space() } else { Space::Model };
             let d = s.doc_mut()?;
             if d.block(&bname).is_none() {
                 let mut imported = false;
@@ -636,18 +590,9 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
                     let h1 = d.new_handle();
                     let h2 = d.new_handle();
                     let h3 = d.new_handle();
-                    blk.entities.push(Entity::new(
-                        h1,
-                        EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 0.75 }),
-                    ));
-                    blk.entities.push(Entity::new(
-                        h2,
-                        EntityKind::Line(Line { a: Vec3::new(-1.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }),
-                    ));
-                    blk.entities.push(Entity::new(
-                        h3,
-                        EntityKind::Line(Line { a: Vec3::new(0.0, -1.0, 0.0), b: Vec3::new(0.0, 1.0, 0.0) }),
-                    ));
+                    blk.entities.push(Entity::new(h1, EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 0.75 })));
+                    blk.entities.push(Entity::new(h2, EntityKind::Line(Line { a: Vec3::new(-1.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) })));
+                    blk.entities.push(Entity::new(h3, EntityKind::Line(Line { a: Vec3::new(0.0, -1.0, 0.0), b: Vec3::new(0.0, 1.0, 0.0) })));
                     d.blocks.insert(bname.clone(), Arc::new(blk));
                 }
             }
@@ -801,16 +746,8 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let d = s.doc_mut()?;
             let new_h = d.new_handle();
-            let mut ent = Entity::new(
-                new_h,
-                EntityKind::LwPolyline(LwPolyline {
-                    vertices: verts,
-                    closed,
-                    const_width: 0.0,
-                    elevation: 0.0,
-                    plinegen: false,
-                }),
-            );
+            let mut ent =
+                Entity::new(new_h, EntityKind::LwPolyline(LwPolyline { vertices: verts, closed, const_width: 0.0, elevation: 0.0, plinegen: false }));
             ent.common.layer = layer;
             if let Some(st) = d.space_mut(&space) {
                 st.push(ent);
@@ -847,33 +784,18 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "begin_pick" => {
             let mode = str_param(p, "mode").unwrap_or("point").to_string();
-            let prompt = str_param(p, "prompt")
-                .unwrap_or("Specify point")
-                .trim_start_matches(['\r', '\n'])
-                .trim_end_matches([':', ' '])
-                .to_string();
+            let prompt = str_param(p, "prompt").unwrap_or("Specify point").trim_start_matches(['\r', '\n']).trim_end_matches([':', ' ']).to_string();
             let base = p.get("base").and_then(super::point_value);
             if s.running.is_some() {
                 s.cancel();
             }
-            s.dotnet_pick = DotNetPickState {
-                status: "waiting".into(),
-                point: None,
-                handle: None,
-                handles: Vec::new(),
-                value: None,
-            };
+            s.dotnet_pick = DotNetPickState { status: "waiting".into(), point: None, handle: None, handles: Vec::new(), value: None };
             let st = s.state()?;
             let before = st.doc.clone();
             let selection_before = st.selection.clone();
             s.running = Some(crate::Running {
                 id: "dotnet.pick".into(),
-                machine: Box::new(DotNetPickM {
-                    mode,
-                    prompt,
-                    base,
-                    picked: Vec::new(),
-                }),
+                machine: Box::new(DotNetPickM { mode, prompt, base, picked: Vec::new() }),
                 before,
                 selection_before,
             });
@@ -1094,9 +1016,7 @@ mod tests {
         )
         .unwrap();
 
-        let sel = s
-            .execute("dotnet.bridge", &json!({ "op": "select_all", "app": "MY_APP" }))
-            .unwrap();
+        let sel = s.execute("dotnet.bridge", &json!({ "op": "select_all", "app": "MY_APP" })).unwrap();
         assert_eq!(sel["handles"].as_array().unwrap().len(), 1);
 
         let poly3d = s

@@ -74,9 +74,7 @@ fn hit(xf: &Xf, g: &DynGrip, gs: f32, p: Pos2) -> bool {
 /// Draw the grips of the selected dynamic references; the one under the cursor warm, the one
 /// being dragged hot.
 pub(crate) fn draw(app: &mut CadApp, painter: &Painter, xf: &Xf, rect: Rect, hover: Option<Pos2>) {
-    if app.session.state().ok().is_some_and(|st| {
-        matches!(st.edit_space(), cadcraft_engine::doc::Space::Model) && !st.orbit.is_top()
-    }) {
+    if app.session.state().ok().is_some_and(|st| matches!(st.edit_space(), cadcraft_engine::doc::Space::Model) && !st.orbit.is_top()) {
         return;
     }
     let t = Tokens::get();
@@ -103,9 +101,7 @@ pub(crate) fn draw(app: &mut CadApp, painter: &Painter, xf: &Xf, rect: Rect, hov
 /// The dynamic grip under `hover`, if any: (reference, grip).
 pub(crate) fn at(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, DynGrip)> {
     let p = hover?;
-    if app.session.state().ok().is_some_and(|st| {
-        matches!(st.edit_space(), cadcraft_engine::doc::Space::Model) && !st.orbit.is_top()
-    }) {
+    if app.session.state().ok().is_some_and(|st| matches!(st.edit_space(), cadcraft_engine::doc::Space::Model) && !st.orbit.is_top()) {
         return None;
     }
     let gs = app.session.settings.gripsize as f32;

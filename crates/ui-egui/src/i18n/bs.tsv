@@ -585,6 +585,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Jedna od Crafting aplikacija ArtCraft tima i zajednice.
 	Only in this drawing: {n}	Samo u ovom crtežu: {n}
 	Only in {name}: {n}	Samo u {name}: {n}
+	Oops	Vrati obrisane objekte
 	Open (⌘O)	Otvori (⌘O)
 	Open Sample Drawing	Otvori primjer crteža
 	Open sample drawing	Otvori primjer crteža
@@ -1625,3 +1626,5 @@ menu	Modify	Izmijeni
 	Drawing file is write-protected ({info}). Opened read-only.	Datoteka crteža je zaštićena od pisanja ({info}). Otvoreno samo za čitanje.
 	in use by {user} on {machine} ({time})	koristi {user} na {machine} ({time})
 	in use by {user} ({time})	koristi {user} ({time})
+	New AppID (e.g. CAD_XDATA)	Novi AppID (npr. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Kreiraj CAD_XDATA aplikaciju

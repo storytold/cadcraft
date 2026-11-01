@@ -353,10 +353,9 @@ impl Interactive for StretchM {
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt {
-                picks_one: self.removing,
-                ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT)
-            },
+            (StretchPhase::Select, None) => {
+                Prompt { picks_one: self.removing, ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT) }
+            }
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),
@@ -391,11 +390,7 @@ impl Interactive for StretchM {
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         let orbit = s.edit_orbit();
         let vline = |p: Vec2, q: Vec2| {
-            if orbit.is_top() || orbit.is_edge_on() {
-                Some(line(p, q))
-            } else {
-                Some(line(orbit.unproject_xy(p)?, orbit.unproject_xy(q)?))
-            }
+            if orbit.is_top() || orbit.is_edge_on() { Some(line(p, q)) } else { Some(line(orbit.unproject_xy(p)?, orbit.unproject_xy(q)?)) }
         };
         let rect = |a: Vec2| -> Vec<EntityKind> {
             let (b, d) = (Vec2::new(c.x, a.y), Vec2::new(a.x, c.y));

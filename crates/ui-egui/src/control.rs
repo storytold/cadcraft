@@ -500,7 +500,8 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Some(path) = s("path") else { return err("missing path") };
             wrap(app.run("open", json!({"path": path})))
         }
-        "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
+        // Never `null` params: those mean a user's Save, which may pick a file or ask.
+        "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, if p.is_null() { json!({}) } else { p.clone() })),
         "app.quit" => {
             // Programmatic calls never open dialogs: quit without the unsaved-changes prompt.
             app.quit_confirmed = true;

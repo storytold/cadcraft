@@ -585,6 +585,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	ArtCraft 팀과 커뮤니티가 만드는 Crafting Apps 제품군의 하나입니다.
 	Only in this drawing: {n}	이 도면에만 있음: {n}개
 	Only in {name}: {n}	{name}에만 있음: {n}개
+	Oops	지운 객체 복원
 	Open (⌘O)	열기(⌘O)
 	Open Sample Drawing	예제 도면 열기
 	Open sample drawing	예제 도면 열기
@@ -1624,3 +1625,5 @@ menu	Modify	수정
 	in use by {user} on {machine} ({time})	{machine}의 {user} 사용 중({time})
 	in use by {user} ({time})	{user} 사용 중({time})
 	Save changes to block "{name}"?	블록 "{name}"의 변경 사항을 저장하시겠습니까?
+	New AppID (e.g. CAD_XDATA)	새 AppID (예: CAD_XDATA)
+	+ Create CAD_XDATA Application	+ CAD_XDATA 작성

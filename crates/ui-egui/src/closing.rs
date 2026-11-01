@@ -274,7 +274,10 @@ pub fn lock_prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.add_space(2.0);
         ui.label(RichText::new(&holder_desc).color(t.text_dim));
         ui.add_space(4.0);
-        ui.label(RichText::new(crate::tl!("The drawing will be opened in read-only mode. Changes cannot be saved to the original file.")).color(t.text_dim));
+        ui.label(
+            RichText::new(crate::tl!("The drawing will be opened in read-only mode. Changes cannot be saved to the original file."))
+                .color(t.text_dim),
+        );
         ui.add_space(12.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = vec2(120.0, 24.0);
@@ -291,9 +294,7 @@ pub fn lock_prompt(app: &mut CadApp, ctx: &egui::Context) {
     });
     if let Some(keep_open) = choice {
         app.lock_prompt = None;
-        if !keep_open
-            && let Some(i) = app.doc_index(prompt.doc_uid)
-        {
+        if !keep_open && let Some(i) = app.doc_index(prompt.doc_uid) {
             let _ = app.run("close", json!({ "index": i }));
         }
         ctx.request_repaint();

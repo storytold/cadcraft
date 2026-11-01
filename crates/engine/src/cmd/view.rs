@@ -762,11 +762,8 @@ impl Interactive for OrbitM {
         "3DORBIT"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        Prompt::new(
-            "Press and drag to orbit 3D view, or choose preset (Esc or Enter to exit)",
-            Accept::TEXT,
-        )
-        .kw(&["Top", "Front", "Right", "Left", "Back", "SEiso", "SWiso", "Reset"])
+        Prompt::new("Press and drag to orbit 3D view, or choose preset (Esc or Enter to exit)", Accept::TEXT)
+            .kw(&["Top", "Front", "Right", "Left", "Back", "SEiso", "SWiso", "Reset"])
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {

@@ -229,11 +229,7 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
     if !text.contains('\t') || text.len() > 4 << 20 {
         return false;
     }
-    let raw_rows: Vec<Vec<&str>> = text
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.trim_end_matches('\r').split('\t').collect())
-        .collect();
+    let raw_rows: Vec<Vec<&str>> = text.lines().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end_matches('\r').split('\t').collect()).collect();
     if raw_rows.is_empty() {
         return false;
     }
@@ -258,10 +254,8 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
                 col_widths[c_idx] = needed;
             }
             if r_idx > 0 && !trimmed.is_empty() {
-                let is_short_or_num = chars <= 4.0
-                    || trimmed
-                        .chars()
-                        .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ',' | '-' | '+' | '/' | ' '));
+                let is_short_or_num =
+                    chars <= 4.0 || trimmed.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ',' | '-' | '+' | '/' | ' '));
                 if !is_short_or_num {
                     col_center[c_idx] = false;
                 }
@@ -290,13 +284,7 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
                     } else {
                         String::new()
                     };
-                    cadcraft_doc::TableCell {
-                        text: raw.into(),
-                        merged: None,
-                        style,
-                        formula: None,
-                        text_height: None,
-                    }
+                    cadcraft_doc::TableCell { text: raw.into(), merged: None, style, formula: None, text_height: None }
                 })
                 .collect()
         })
@@ -307,14 +295,7 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
         color: cadcraft_color::Color::True(cadcraft_color::Rgb(0, 0, 0)),
         lineweight: cadcraft_doc::Lineweight::Mm100(18),
     };
-    let borders = cadcraft_doc::CellBorders {
-        top: border,
-        inside_h: border,
-        bottom: border,
-        left: border,
-        inside_v: border,
-        right: border,
-    };
+    let borders = cadcraft_doc::CellBorders { top: border, inside_h: border, bottom: border, left: border, inside_v: border, right: border };
     let header_cs = cadcraft_doc::CellStyle {
         name: cadcraft_doc::CellStyle::HEADER.into(),
         text_style: "EXCEL_ISO".into(),
@@ -343,11 +324,7 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
         precision: 2,
         merge: false,
     };
-    let data_center_cs = cadcraft_doc::CellStyle {
-        name: "DataCenter".into(),
-        align: 5,
-        ..data_cs.clone()
-    };
+    let data_center_cs = cadcraft_doc::CellStyle { name: "DataCenter".into(), align: 5, ..data_cs.clone() };
     let ts = cadcraft_doc::TableStyle {
         name: "EXCEL_TABLE".into(),
         text_height: text_h,
@@ -358,11 +335,7 @@ fn load_tsv_table(s: &mut Session, text: &str) -> bool {
     };
 
     let mut defs = Drawing::new_metric();
-    defs.text_styles.push(cadcraft_doc::TextStyle {
-        name: "EXCEL_ISO".into(),
-        font: "isocp.shx".into(),
-        ..cadcraft_doc::TextStyle::default()
-    });
+    defs.text_styles.push(cadcraft_doc::TextStyle { name: "EXCEL_ISO".into(), font: "isocp.shx".into(), ..cadcraft_doc::TextStyle::default() });
     defs.table_styles.push(ts);
 
     let table = cadcraft_doc::Table {

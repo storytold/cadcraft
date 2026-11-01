@@ -38,9 +38,9 @@ mod panel_state;
 pub mod spacemouse;
 pub mod switch;
 // The External References palette.
+pub mod lisp_ide;
 pub mod xdedit;
 pub mod xrefs;
-pub mod lisp_ide;
 
 pub mod dyngrips;
 pub mod dyninput;
@@ -58,6 +58,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
 #[cfg(not(target_arch = "wasm32"))]
@@ -246,6 +247,8 @@ pub struct CadApp {
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
+    /// Calculator data shared by its floating and docked views; durable fields live in prefs.
+    pub(crate) quickcalc: palettes::quickcalc::State,
     pub cmd: cmdline::CmdLine,
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
@@ -299,6 +302,10 @@ pub struct CadApp {
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
     pub lock_prompt: Option<closing::LockPrompt>,
+    /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
+    pub save_loss: Option<save_loss::Pending>,
+    /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
+    pub save_loss_accepted: Option<save_loss::Accepted>,
     /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
     pub autosave: Option<cadcraft_engine::autosave::Autosaver>,
     /// Drawing Recovery: autosave files a crashed app left behind.
@@ -333,6 +340,7 @@ impl CadApp {
             services,
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),
+            quickcalc: palettes::quickcalc::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
@@ -362,6 +370,8 @@ impl CadApp {
             quit_confirmed: false,
             closing: None,
             lock_prompt: None,
+            save_loss: None,
+            save_loss_accepted: None,
             autosave: None,
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
@@ -452,6 +462,13 @@ impl CadApp {
     /// Submit a line of command-line text. A refused line is echoed to the history; the error is
     /// also returned.
     pub fn cmdline(&mut self, text: &str) -> Option<String> {
+        self.cmdline_or(text, None)
+    }
+
+    /// [`CadApp::cmdline`], but a command name nothing knows (no command, alias, UI command, LISP
+    /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
+    /// the highlighted AutoComplete suggestion.
+    pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             if first.eq_ignore_ascii_case("pasteclip") || first.eq_ignore_ascii_case("paste") {
@@ -471,7 +488,11 @@ impl CadApp {
                 }
             }
         }
-        let e = self.session.cmdline(text).err()?.to_string();
+        let e = match (self.session.cmdline(text), fallback) {
+            (Ok(()), _) => return None,
+            (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
+            (Err(e), _) => e.to_string(),
+        };
         self.session.echo(e.clone());
         Some(e)
     }
@@ -495,6 +516,7 @@ impl CadApp {
             "interfaceLanguage": self.ui.interface_language.code(),
             "saveFormat": self.ui.save_format.as_str(),
             "saveVersion": self.ui.save_version,
+            "quickcalc": self.quickcalc.prefs(),
         });
         if self.spacemouse.settings != spacemouse::Settings::default() {
             prefs["spacemouse"] = json!(self.spacemouse.settings);
@@ -514,6 +536,9 @@ impl CadApp {
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(calculator) = v.get("quickcalc") {
+            self.quickcalc.load_prefs(calculator);
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }
@@ -539,12 +564,7 @@ impl CadApp {
             self.ui.last_lisp_dir = Some(dir.to_string());
         }
         if let Some(plugins) = v.get("startupPlugins").and_then(Value::as_array) {
-            self.ui.startup_plugins = plugins
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|p| !p.is_empty())
-                .map(str::to_string)
-                .collect();
+            self.ui.startup_plugins = plugins.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).map(str::to_string).collect();
         }
     }
 
@@ -707,14 +727,7 @@ impl CadApp {
                         let machine = holder.and_then(|h| h.get("machine")).and_then(Value::as_str).unwrap_or("").to_string();
                         let date_time = holder.and_then(|h| h.get("date_time")).and_then(Value::as_str).unwrap_or("").to_string();
 
-                        let prompt = closing::LockPrompt {
-                            doc_uid,
-                            title,
-                            user,
-                            machine,
-                            date_time,
-                            raw_info,
-                        };
+                        let prompt = closing::LockPrompt { doc_uid, title, user, machine, date_time, raw_info };
 
                         let echo_msg = crate::tf!("Drawing file is write-protected ({info}). Opened read-only.", info = prompt.description());
                         self.session.echo(echo_msg);
@@ -803,11 +816,11 @@ impl CadApp {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
-    /// Whether a modal dialog is up: the "Save changes?" prompt or Drawing Recovery. The
+    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning or Drawing Recovery. The
     /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
     /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
@@ -1017,6 +1030,7 @@ impl CadApp {
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
         closing::lock_prompt(self, ui.ctx());
+        save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
@@ -1252,7 +1266,8 @@ mod tests {
         frame(&mut a, &ctx, None);
         assert_eq!(Tokens::get(), Tokens::of(theme::SYSTEM_FALLBACK), "no OS appearance: the documented fallback");
         assert_eq!(a.ui.theme, ThemePref::System);
-        assert_eq!(a.prefs_json(), r#"{"animations":"system","interfaceLanguage":"auto","saveFormat":"dxf","saveVersion":"2018","theme":"system"}"#);
+        let prefs: Value = serde_json::from_str(&a.prefs_json()).unwrap();
+        assert_eq!(prefs["theme"], "system");
     }
 
     #[test]

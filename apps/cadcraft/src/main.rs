@@ -19,14 +19,14 @@ mod desktop_theme;
 mod env;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
-#[cfg(target_os = "windows")]
-mod windows_theme;
 mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod spacemouse;
 mod system_animations;
+#[cfg(target_os = "windows")]
+mod windows_theme;
 mod workspace;
 
 use cadcraft_engine::Session;
@@ -260,6 +260,34 @@ fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
     filters
 }
 
+/// The main window: its size, title bar, placement and rendering needs.
+fn window_options() -> eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("CADCraft")
+        .with_inner_size([1600.0, 1000.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true)
+        .with_app_id(APP_ID);
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
+    eframe::NativeOptions {
+        viewport,
+        persist_window: false,
+        // The window opens centred on its screen, not cascaded from the top-left corner (#1129).
+        // Wayland compositors place windows themselves.
+        centered: true,
+        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
+        // system-font discovery as a hidden fallback.
+        system_font_fallback: false,
+        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
+        stencil_buffer: STENCIL_BITS,
+        ..Default::default()
+    }
+}
+
 const APP_ID: &str = "ai.storyteller.cadcraft";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
@@ -318,32 +346,11 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
-    #[allow(unused_mut)]
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("CADCraft")
-        .with_inner_size([1600.0, 1000.0])
-        .with_min_inner_size([900.0, 560.0])
-        .with_drag_and_drop(true)
-        .with_app_id(APP_ID);
-    #[cfg(target_os = "macos")]
-    {
-        viewport = viewport
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false);
-    }
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        viewport,
-        persist_window: false,
-        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
-        // system-font discovery as a hidden fallback.
-        system_font_fallback: false,
-        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
-        ..Default::default()
+        ..window_options()
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -477,7 +484,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop};
+    use super::{filters_for_save, follow_desktop, window_options};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -493,6 +500,14 @@ mod tests {
             let exts: Vec<_> = filters_for_save(name).iter().map(|(_, e)| *e).collect();
             assert!(exts.contains(&"dwg") && exts.contains(&"dxf"), "{name}");
         }
+    }
+
+    /// #1129: the window opens centred, not cascaded from the top-left corner.
+    #[test]
+    fn the_window_opens_centred() {
+        let o = window_options();
+        assert!(o.centered, "centred on launch");
+        assert!(!o.persist_window, "no saved position to restore instead");
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;

@@ -581,6 +581,7 @@
 	On	Aan
 	On/Off	Aan/Uit
 	One of the Crafting Apps by the ArtCraft team and community.	Een van de Crafting Apps door het ArtCraft-team en de community.
+	Oops	Verwijderde objecten herstellen
 	Only in this drawing: {n}	Alleen in deze tekening: {n}
 	Only in {name}: {n}	Alleen in {name}: {n}
 	Open (⌘O)	Openen (⌘O)
@@ -1619,3 +1620,7 @@ menu	Modify	Wijzigen
 	in use by {user} on {machine} ({time})	in gebruik door {user} op {machine} ({time})
 	in use by {user} ({time})	in gebruik door {user} ({time})
 	Save changes to block "{name}"?	Wijzigingen opslaan in blok "{name}"?
+	Backup copy	Reservekopie
+	Create backup copy with each save	Maak een reservekopie bij elk opslaan
+	New AppID (e.g. CAD_XDATA)	Nieuwe AppID (bijv. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ CAD_XDATA applicatie aanmaken

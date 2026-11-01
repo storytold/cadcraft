@@ -320,11 +320,7 @@ impl CubeProjector {
                 Color32::from_rgb(base_r, base_g, base_b)
             };
 
-            painter.add(Shape::convex_polygon(
-                vec![p00, p10, p11, p01],
-                fill,
-                Stroke::new(1.1, Color32::from_rgb(0x4b, 0x50, 0x58)),
-            ));
+            painter.add(Shape::convex_polygon(vec![p00, p10, p11, p01], fill, Stroke::new(1.1, Color32::from_rgb(0x4b, 0x50, 0x58))));
 
             // Draw AutoCAD-style dashed subdivision lines along the edges/corners of visible faces.
             self.paint_face_subdivisions(painter, face);
