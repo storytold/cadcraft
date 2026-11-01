@@ -47,6 +47,7 @@ pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
 pub mod layers;
+pub mod layout_mode;
 pub mod managers;
 pub mod menus;
 pub mod modal;

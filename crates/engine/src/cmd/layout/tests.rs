@@ -88,6 +88,7 @@ fn new_layout_from_the_menu_asks_for_a_name() {
     s.cmdline("Layout1").unwrap();
     assert!(s.running.is_some(), "a taken name asks again");
     s.cmdline("Sheet A").unwrap();
+    // The name is all it asks: no model area, no tab change.
     assert!(s.running.is_none());
     s.start("layout.new").unwrap();
     s.cmdline("").unwrap();
@@ -95,6 +96,141 @@ fn new_layout_from_the_menu_asks_for_a_name() {
     assert!(d.layout("Sheet A").is_some() && d.layout("Layout3").is_some(), "Enter takes the default name");
 }
 
+/// LAYOUT.NEWAREA asks the name, then the area; Enter takes the whole drawing.
+#[test]
+fn new_layout_from_area_asks_a_name_then_the_area() {
+    let mut s = session_with_model();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet A").unwrap();
+    assert!(s.running.is_some() && s.current_prompt().is_some_and(|p| p.message.contains("first corner of the model area")));
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.doc().unwrap().layout("Sheet A").is_some());
+}
+
+/// The viewport of layout `name`.
+fn only_viewport(s: &Session, name: &str) -> Viewport {
+    let v = viewports(s, name);
+    assert_eq!(v.len(), 1, "one viewport");
+    v.into_iter().next().map(|(_, v)| v).unwrap()
+}
+
+/// A `window` zooms the new layout's viewport to that part of the model.
+#[test]
+fn a_new_layout_can_show_a_window_of_the_model() {
+    let mut s = session_with_model();
+    s.execute("layout.new", &json!({"name": "Sheet W", "window": [[10, 10], [30, 20]]})).unwrap();
+    let v = only_viewport(&s, "Sheet W");
+    assert!(v.view_center.dist(Vec2::new(20.0, 15.0)) < 1e-9, "centred on the window: {:?}", v.view_center);
+    let aspect = v.width / v.height;
+    assert!(v.view_height >= 10.0 && v.view_height * aspect >= 20.0, "the whole window is in view");
+    assert!(v.view_height <= (10.0_f64).max(20.0 / aspect) * 1.02 + 1e-9, "and not much more: {}", v.view_height);
+    // Without a window the viewport shows the model extents, as before.
+    s.execute("layout.new", &json!({"name": "Sheet E"})).unwrap();
+    let e = only_viewport(&s, "Sheet E");
+    assert!(e.view_height > v.view_height * 2.0, "extents are larger than the window");
+}
+
+/// A window without area, or not two corners, is an error that leaves no layout behind.
+#[test]
+fn a_bad_layout_window_adds_no_layout() {
+    let mut s = session_with_model();
+    let before = s.doc().unwrap().layouts.len();
+    for w in [
+        json!([[1, 1], [1, 9]]),
+        json!([[1, 1], [9, 1]]),
+        json!([[1, 1]]),
+        json!("all"),
+        json!([[1, 1], ["a", 2]]),
+        json!([[f64::MAX, 0], [-f64::MAX, 1]]),
+    ] {
+        assert!(s.execute("layout.new", &json!({"name": "Bad", "window": w})).is_err(), "{w}");
+    }
+    assert_eq!(s.doc().unwrap().layouts.len(), before, "no layout is left behind");
+}
+
+/// The interactive command shows the Model tab, takes two corners and shows the new layout.
+#[test]
+fn new_layout_picks_the_model_area_in_the_model_tab() {
+    let mut s = session_with_model();
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet P").unwrap();
+    assert_eq!(s.space(), Space::Model, "the Model tab is shown to pick the area");
+    s.cmdline("10,10").unwrap();
+    assert!(s.current_prompt().is_some_and(|p| p.message == "Specify opposite corner"));
+    // A window without width re-asks for the first corner and adds nothing.
+    s.cmdline("10,30").unwrap();
+    assert!(s.current_prompt().is_some_and(|p| p.message.contains("first corner")), "{:?}", s.current_prompt().map(|p| p.message));
+    assert!(s.doc().unwrap().layout("Sheet P").is_none());
+    s.cmdline("10,10").unwrap();
+    s.cmdline("30,20").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.space(), Space::Paper("Sheet P".into()), "the new layout is shown");
+    let v = only_viewport(&s, "Sheet P");
+    assert!(v.view_center.dist(Vec2::new(20.0, 15.0)) < 1e-9, "{:?}", v.view_center);
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().layout("Sheet P").is_none(), "one undo step");
+}
+
+/// A tab shown while the corners are picked ends the command instead of reading points in that space.
+#[test]
+fn new_layout_ends_if_another_tab_is_shown_while_picking() {
+    let mut s = session_with_model();
+    let before = s.doc().unwrap().layouts.len();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet T").unwrap();
+    assert_eq!(s.space(), Space::Model);
+    // A tab shown meanwhile: the next point must not be taken for a model corner.
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.cmdline("10,10").unwrap();
+    assert!(s.running.is_none(), "the command ended");
+    assert_eq!(s.layout_space(), Space::Paper("Layout1".into()), "the tab that was shown stays");
+    assert_eq!(s.doc().unwrap().layouts.len(), before, "no layout was added");
+}
+
+/// The opposite-corner prompt is a window corner, so ortho does not bend it.
+#[test]
+fn the_opposite_corner_is_not_bent_by_ortho() {
+    let mut s = session_with_model();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet O").unwrap();
+    s.cmdline("10,10").unwrap();
+    let p = s.current_prompt().unwrap();
+    assert!(p.corner && p.base == Some(Vec2::new(10.0, 10.0)), "a window's opposite corner prompt");
+}
+
+/// Esc puts back the tab the command started in and adds no layout.
+#[test]
+fn cancelling_new_layout_puts_the_tab_back() {
+    let mut s = session_with_model();
+    s.execute("layout.set", &json!({"name": "Layout2"})).unwrap();
+    let before = s.doc().unwrap().layouts.len();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet C").unwrap();
+    assert_eq!(s.space(), Space::Model);
+    s.cancel();
+    assert!(s.running.is_none());
+    assert_eq!(s.space(), Space::Paper("Layout2".into()), "back in the tab it started in: {:?}", s.log);
+    assert_eq!(s.doc().unwrap().layouts.len(), before);
+    // Esc at the name prompt changes nothing either.
+    s.start("layout.newarea").unwrap();
+    s.cancel();
+    assert_eq!(s.space(), Space::Paper("Layout2".into()));
+}
+
+/// Esc after the user chose another tab leaves that tab shown, not the one the command started in.
+#[test]
+fn cancelling_new_layout_keeps_a_tab_chosen_meanwhile() {
+    let mut s = session_with_model();
+    s.execute("layout.set", &json!({"name": "Layout2"})).unwrap();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet K").unwrap();
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.cancel();
+    assert!(s.running.is_none());
+    assert_eq!(s.space(), Space::Paper("Layout1".into()), "the tab chosen meanwhile stays: {:?}", s.log);
+}
 #[test]
 fn mview_arrangements_and_interactive() {
     let mut s = session_with_model();

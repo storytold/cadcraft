@@ -32,6 +32,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.panel.quickcalc", "QuickCalc", &[], None),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
+    ("ui.toggle.layoutmode", "Layout Mode", &["View", "Layout Mode"], None),
     ("ui.animations.system", "Use System Setting", &["View", "Accessibility", "Animation Effects", "Use System Setting"], None),
     ("ui.animations.on", "On", &["View", "Accessibility", "Animation Effects", "On"], None),
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
@@ -229,6 +230,10 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
         }
         "ui.toggle.cmdline" => {
             toggle(&mut app.ui.show_command_line, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.layoutmode" => {
+            toggle(&mut app.canvas.layout.on, params);
             Ok(Value::Null)
         }
         "ui.toggle.systemcursor" => {
