@@ -160,7 +160,7 @@
 	Delete	Supprimer
 	Delete Column	Supprimer la colonne
 	Delete Constraints	Supprimer les contraintes
-	Delete Dimension Style	Supprimer le style de cotation
+	Delete Dimension Style	Supprimer le style de cote
 	Delete Duplicate Objects	Supprimer les objets en double
 	Delete Layer	Supprimer le calque
 	Delete Layer State	Supprimer l'état des calques
@@ -172,17 +172,17 @@
 	Description	Description
 	Deselect All	Désélectionner tout
 	Diameter	Diamètre
-	Dim style	Style de cotation
+	Dim style	Style de cote
 	Dimension	Cotation
-	Dimension Space	Espace entre cotations
-	Dimension Style Override	Substitution de style de cotation
-	Dimension Style...	Style de cotation...
-	Dimension Text Edit	Modifier le texte de cotation
-	Dimension style	Style de cotation
+	Dimension Space	Espacement des cotes
+	Dimension Style Override	Substitution de style de cote
+	Dimension Style...	Style de cote...
+	Dimension Text Edit	Modifier le texte de cote
+	Dimension style	Style de cote
 	Dimensional Constraint	Contrainte dimensionnelle
 	Dimensional Constraint Parameters	Paramètres de contraintes dimensionnelles
 	Dimensional Constraints	Contraintes dimensionnelles
-	Disassociate Dimensions	Dissocier les cotations
+	Disassociate Dimensions	Dissocier les cotes
 	Display name	Nom d'affichage
 	Distance	Distance
 	Divide	Diviser
@@ -200,7 +200,7 @@
 	Drawing Limits	Limites du dessin
 	Drawing Utilities	Utilitaires de dessin
 	Drawings (DWG, DXF)	Dessins (DWG, DXF)
-	Dynamic Dimensions	Cotations dynamiques
+	Dynamic Dimensions	Cotes dynamiques
 	Dynamic Input	Saisie dynamique
 	Dynamic Input (F12)	Saisie dynamique (F12)
 	E	Est
@@ -233,9 +233,9 @@
 	Enter degree of spline	Entrez le degré de la spline
 	Enter delta angle	Entrez l'écart d'angle
 	Enter delta length or	Entrez l'écart de longueur ou
-	Enter dimension text	Entrez le texte de cotation
-	Enter dimension text (<> = measurement)	Entrez le texte de cotation (<> = mesure)
-	Enter dimension value or [name=expression]	Entrez la valeur de cotation ou [name=expression]
+	Enter dimension text	Entrez le texte de cote
+	Enter dimension text (<> = measurement)	Entrez le texte de cote (<> = mesure)
+	Enter dimension value or [name=expression]	Entrez la valeur de cote ou [name=expression]
 	Enter dimension variable name to override	Entrez le nom de la variable de cotation à substituer
 	Enter justification type	Entrez le type de justification
 	Enter leader text	Entrez le texte du repère
@@ -254,10 +254,10 @@
 	Enter rectangle length	Entrez la longueur du rectangle
 	Enter rectangle width	Entrez la largeur du rectangle
 	Enter scale factor	Entrez le facteur d'échelle
-	Enter text	Entrer le texte
-	Enter text (use \P for new paragraphs)	Entrer le texte (utilisez \P pour les nouveaux paragraphes)
-	Enter the number of segments	Entrer le nombre de segments
-	Enter twist direction of helix	Entrer le sens de vrillage de l'hélice
+	Enter text	Entrez le texte
+	Enter text (use \P for new paragraphs)	Entrez le texte (utilisez \P pour les nouveaux paragraphes)
+	Enter the number of segments	Entrez le nombre de segments
+	Enter twist direction of helix	Entrez le sens de vrillage de l'hélice
 	Entire drawing	Tout le dessin
 	Equal	Égalité
 	Erase	Effacer
@@ -482,8 +482,8 @@
 	Object Snap	Accrochage aux objets
 	Object Snap (F3)	Accrochage aux objets (F3)
 	Object Snap On (F3)	Activer l'accrochage aux objets (F3)
-	Object Snap Tracking	Suivi de l'accrochage aux objets
-	Object Snap Tracking (F11)	Suivi de l'accrochage aux objets (F11)
+	Object Snap Tracking	Repérage par accrochage aux objets
+	Object Snap Tracking (F11)	Repérage par accrochage aux objets (F11)
 	Object type:	Type d'objet :
 	Off	Désactivé
 	Offset	Décalage
@@ -538,7 +538,7 @@
 	New STB	Nouvelle STB
 	New style	Nouveau style
 	Reset Panel Layout	Réinitialiser la disposition des panneaux
-	Use for this layout	Utiliser pour cet espace
+	Use for this layout	Utiliser pour cette présentation
 	Display plot styles	Afficher les styles de tracé
 	No plot style tables.	Aucune table de styles de tracé.
 	A built-in table: editing it keeps an edited copy in the drawing.	Table intégrée : sa modification conserve une copie modifiée dans le dessin.
@@ -559,9 +559,9 @@
 	Point Filters	Filtres de points
 	Point Style...	Style de point...
 	Polar Array	Réseau polaire
-	Polar Tracking	Recherche polaire
-	Polar Tracking (F10)	Recherche polaire (F10)
-	Polar Tracking On (F10)	Activer la recherche polaire (F10)
+	Polar Tracking	Repérage polaire
+	Polar Tracking (F10)	Repérage polaire (F10)
+	Polar Tracking On (F10)	Activer le repérage polaire (F10)
 	Polar: {distance} < {angle}°	Polaire : {distance} < {angle}°
 	Polygon	Polygone
 	Polygonal	Polygonal
@@ -644,78 +644,78 @@
 	Search for parameter	Rechercher un paramètre
 	Second and next points:	Deuxième point et points suivants :
 	Select	Sélectionner
-	Select 2D polyline	Sélectionner une polyligne 2D
+	Select 2D polyline	Sélectionnez une polyligne 2D
 	Select All	Sélectionner tout
 	Select Objects	Sélectionner les objets
-	Select a 2D polyline.	Sélectionner une polyligne 2D.
-	Select a block reference.	Sélectionner une référence de bloc.
-	Select a circle or arc.	Sélectionner un cercle ou un arc.
-	Select a closed polyline	Sélectionner une polyligne fermée
-	Select a closed polyline, circle, ellipse or closed spline.	Sélectionner une polyligne fermée, un cercle, une ellipse ou une spline fermée.
-	Select a closed polyline.	Sélectionner une polyligne fermée.
-	Select a curve as the path.	Sélectionner une courbe comme trajectoire.
-	Select a dimension constraint type	Sélectionner un type de contrainte dimensionnelle
-	Select a line object	Sélectionner une ligne
-	Select a line object.	Sélectionner une ligne.
-	Select a line or an arc.	Sélectionner une ligne ou un arc.
-	Select a line or polyline segment	Sélectionner une ligne ou un segment de polyligne
-	Select a line, arc or open polyline.	Sélectionner une ligne, un arc ou une polyligne ouverte.
-	Select a line, arc, circle, polyline, ellipse or spline as the path.	Sélectionner une ligne, un arc, un cercle, une polyligne, une ellipse ou une spline comme trajectoire.
-	Select a line, circle, arc or polyline segment.	Sélectionner une ligne, un cercle, un arc ou un segment de polyligne.
-	Select a line.	Sélectionner une ligne.
+	Select a 2D polyline.	Sélectionnez une polyligne 2D.
+	Select a block reference.	Sélectionnez une référence de bloc.
+	Select a circle or arc.	Sélectionnez un cercle ou un arc.
+	Select a closed polyline	Sélectionnez une polyligne fermée
+	Select a closed polyline, circle, ellipse or closed spline.	Sélectionnez une polyligne fermée, un cercle, une ellipse ou une spline fermée.
+	Select a closed polyline.	Sélectionnez une polyligne fermée.
+	Select a curve as the path.	Sélectionnez une courbe comme trajectoire.
+	Select a dimension constraint type	Sélectionnez un type de contrainte dimensionnelle
+	Select a line object	Sélectionnez une ligne
+	Select a line object.	Sélectionnez une ligne.
+	Select a line or an arc.	Sélectionnez une ligne ou un arc.
+	Select a line or polyline segment	Sélectionnez une ligne ou un segment de polyligne
+	Select a line, arc or open polyline.	Sélectionnez une ligne, un arc ou une polyligne ouverte.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Sélectionnez une ligne, un arc, un cercle, une polyligne, une ellipse ou une spline comme trajectoire.
+	Select a line, circle, arc or polyline segment.	Sélectionnez une ligne, un cercle, un arc ou un segment de polyligne.
+	Select a line.	Sélectionnez une ligne.
 	Add to Working Set	Ajouter au jeu de travail
 	Edit Reference In-Place	Modifier la référence sur place
 	Save Reference Edits	Enregistrer les modifications de la référence
 	Working Set	Jeu de travail
 	Xref and Block In-place Editing	Édition sur place des xrefs et des blocs
-	Select a polyline.	Sélectionner une polyligne.
-	Select a text, mtext, attribute definition or dimension.	Sélectionner un texte, un texte multiligne, une définition d'attribut ou une cote.
-	Select an annotation object	Sélectionner un objet d'annotation
-	Select an arc or circle	Sélectionner un arc ou un cercle
-	Select an arc.	Sélectionner un arc.
-	Select an object	Sélectionner un objet
-	Select an object to change or	Sélectionner un objet à modifier ou
-	Select an object to measure or	Sélectionner un objet à mesurer ou
-	Select an object.	Sélectionner un objet.
-	Select an open curve.	Sélectionner une courbe ouverte.
-	Select an open line, arc, polyline, ellipse arc or spline.	Sélectionner une ligne, un arc, une polyligne, un arc elliptique ou une spline ouverts.
-	Select arc or circle	Sélectionner un arc ou un cercle
-	Select arc or polyline arc segment	Sélectionner un arc ou un segment d'arc de polyligne
-	Select arc style	Sélectionner un style d'arc
-	Select arc, circle, line	Sélectionner un arc, un cercle, une ligne
-	Select at least two objects to join.	Sélectionner au moins deux objets à joindre.
-	Select circle or arc to add center mark	Sélectionner un cercle ou un arc pour ajouter une marque de centre
-	Select closed objects (regions, closed polylines, circles).	Sélectionner des objets fermés (régions, polylignes fermées, cercles).
-	Select first line	Sélectionner la première ligne
-	Select first line or arc	Sélectionner la première ligne ou le premier arc
-	Select first object	Sélectionner le premier objet
-	Select first object or	Sélectionner le premier objet ou
-	Select first point	Sélectionner le premier point
-	Select nested objects to copy or	Sélectionner des objets imbriqués à copier ou
-	Select object	Sélectionner un objet
-	Select object to dimension	Sélectionner un objet à coter
-	Select object to divide	Sélectionner un objet à diviser
-	Select object to extend or shift-select to trim	Sélectionner un objet à prolonger ou sélectionner avec Maj pour rogner
-	Select object to measure	Sélectionner un objet à mesurer
-	Select object to offset	Sélectionner un objet à décaler
-	Select object to trim or shift-select to extend	Sélectionner un objet à rogner ou sélectionner avec Maj pour prolonger
-	Select objects	Sélectionner les objets
-	Select objects (crossing window first corner)	Sélectionner les objets (premier coin de la fenêtre de capture)
-	Select objects to array.	Sélectionner les objets à répartir en réseau.
-	Select objects to stretch by crossing-window or crossing-polygon...	Sélectionner les objets à étirer par fenêtre de capture ou polygone de capture...
-	Select objects:	Sélectionner les objets :
-	Select one polyline (Multiple is available through the JSON form).	Sélectionner une polyligne (l'option Multiple est disponible via le formulaire JSON).
-	Select path curve	Sélectionner la courbe de trajectoire
-	Select point or object	Sélectionner un point ou un objet
-	Select polyline or	Sélectionner une polyligne ou
-	Select second line	Sélectionner la deuxième ligne
-	Select second line or shift-select to apply corner	Sélectionner la deuxième ligne ou sélectionner avec Maj pour former le coin
-	Select second object	Sélectionner le deuxième objet
-	Select second object or shift-select to apply corner	Sélectionner le deuxième objet ou sélectionner avec Maj pour former le coin
-	Select second point	Sélectionner le deuxième point
-	Select spline	Sélectionner une spline
-	Select symmetry line	Sélectionner l'axe de symétrie
-	Select two points	Sélectionner deux points
+	Select a polyline.	Sélectionnez une polyligne.
+	Select a text, mtext, attribute definition or dimension.	Sélectionnez un texte, un texte multiligne, une définition d'attribut ou une cote.
+	Select an annotation object	Sélectionnez un objet d'annotation
+	Select an arc or circle	Sélectionnez un arc ou un cercle
+	Select an arc.	Sélectionnez un arc.
+	Select an object	Sélectionnez un objet
+	Select an object to change or	Sélectionnez un objet à modifier ou
+	Select an object to measure or	Sélectionnez un objet à mesurer ou
+	Select an object.	Sélectionnez un objet.
+	Select an open curve.	Sélectionnez une courbe ouverte.
+	Select an open line, arc, polyline, ellipse arc or spline.	Sélectionnez une ligne, un arc, une polyligne, un arc elliptique ou une spline ouverts.
+	Select arc or circle	Sélectionnez un arc ou un cercle
+	Select arc or polyline arc segment	Sélectionnez un arc ou un segment d'arc de polyligne
+	Select arc style	Sélectionnez un style d'arc
+	Select arc, circle, line	Sélectionnez un arc, un cercle, une ligne
+	Select at least two objects to join.	Sélectionnez au moins deux objets à joindre.
+	Select circle or arc to add center mark	Sélectionnez un cercle ou un arc pour ajouter une marque de centre
+	Select closed objects (regions, closed polylines, circles).	Sélectionnez des objets fermés (régions, polylignes fermées, cercles).
+	Select first line	Sélectionnez la première ligne
+	Select first line or arc	Sélectionnez la première ligne ou le premier arc
+	Select first object	Sélectionnez le premier objet
+	Select first object or	Sélectionnez le premier objet ou
+	Select first point	Sélectionnez le premier point
+	Select nested objects to copy or	Sélectionnez des objets imbriqués à copier ou
+	Select object	Sélectionnez un objet
+	Select object to dimension	Sélectionnez un objet à coter
+	Select object to divide	Sélectionnez un objet à diviser
+	Select object to extend or shift-select to trim	Sélectionnez un objet à prolonger ou sélectionnez avec Maj pour rogner
+	Select object to measure	Sélectionnez un objet à mesurer
+	Select object to offset	Sélectionnez un objet à décaler
+	Select object to trim or shift-select to extend	Sélectionnez un objet à rogner ou sélectionnez avec Maj pour prolonger
+	Select objects	Sélectionnez les objets
+	Select objects (crossing window first corner)	Sélectionnez les objets (premier coin de la fenêtre de capture)
+	Select objects to array.	Sélectionnez les objets à répartir en réseau.
+	Select objects to stretch by crossing-window or crossing-polygon...	Sélectionnez les objets à étirer par fenêtre de capture ou polygone de capture...
+	Select objects:	Sélectionnez les objets :
+	Select one polyline (Multiple is available through the JSON form).	Sélectionnez une polyligne (l'option Multiple est disponible via le formulaire JSON).
+	Select path curve	Sélectionnez la courbe de trajectoire
+	Select point or object	Sélectionnez un point ou un objet
+	Select polyline or	Sélectionnez une polyligne ou
+	Select second line	Sélectionnez la deuxième ligne
+	Select second line or shift-select to apply corner	Sélectionnez la deuxième ligne ou sélectionnez avec Maj pour former le coin
+	Select second object	Sélectionnez le deuxième objet
+	Select second object or shift-select to apply corner	Sélectionnez le deuxième objet ou sélectionnez avec Maj pour former le coin
+	Select second point	Sélectionnez le deuxième point
+	Select spline	Sélectionnez une spline
+	Select symmetry line	Sélectionnez l'axe de symétrie
+	Select two points	Sélectionnez deux points
 	Selection Cycling	Cycle de sélection
 	Send to Back	Envoyer à l'arrière-plan
 	Set Current	Définir comme courant
@@ -746,18 +746,18 @@
 	Snap and Grid	Accrochage et grille
 	Solid	Solide
 	Sort	Trier
-	Specify a point	Spécifier un point
-	Specify a scale for the hatch pattern	Spécifier une échelle pour le motif de hachures
-	Specify a second extension line origin	Spécifier l'origine de la deuxième ligne d'attache
-	Specify an angle for the hatch pattern	Spécifier un angle pour le motif de hachures
-	Specify angle end point	Spécifier le point final de l'angle
-	Specify angle of dimension line	Spécifier l'angle de la ligne de cote
-	Specify angle of dimension text	Spécifier l'angle du texte de cote
-	Specify angle start point	Spécifier le point de départ de l'angle
-	Specify angle vertex	Spécifier le sommet de l'angle
-	Specify angle vertex point	Spécifier le point du sommet de l'angle
-	Specify arc length dimension location	Spécifier l'emplacement de la cote de longueur d'arc
-	Specify axis endpoint of ellipse	Spécifier l'extrémité de l'axe de l'ellipse
+	Specify a point	Spécifiez un point
+	Specify a scale for the hatch pattern	Spécifiez une échelle pour le motif de hachures
+	Specify a second extension line origin	Spécifiez l'origine de la deuxième ligne d'attache
+	Specify an angle for the hatch pattern	Spécifiez un angle pour le motif de hachures
+	Specify angle end point	Spécifiez le point final de l'angle
+	Specify angle of dimension line	Spécifiez l'angle de la ligne de cote
+	Specify angle of dimension text	Spécifiez l'angle du texte de cote
+	Specify angle start point	Spécifiez le point de départ de l'angle
+	Specify angle vertex	Spécifiez le sommet de l'angle
+	Specify angle vertex point	Spécifiez le point du sommet de l'angle
+	Specify arc length dimension location	Spécifiez l'emplacement de la cote de longueur d'arc
+	Specify axis endpoint of ellipse	Spécifiez l'extrémité de l'axe de l'ellipse
 	Specify base diameter	Spécifiez le diamètre de la base
 	Specify base point	Spécifiez le point de base
 	Specify base point or	Spécifiez le point de base ou
@@ -768,7 +768,7 @@
 	Specify center of polygon	Spécifiez le centre du polygone
 	Specify center point for circle	Spécifiez le point central du cercle
 	Specify center point of arc	Spécifiez le point central de l'arc
-	Specify center point of array	Spécifiez le point central de la matrice
+	Specify center point of array	Spécifiez le point central du réseau
 	Specify center point of base	Spécifiez le point central de la base
 	Specify corner of viewport	Spécifiez le coin de la fenêtre
 	Specify corner of window, enter a scale factor (nX or nXP)	Spécifiez le coin de la fenêtre, entrez un facteur d'échelle (nX ou nXP)
@@ -896,7 +896,7 @@
 	Sweep	Balayage
 	Switch Drawing	Changer de dessin
 	Switch Layout	Changer de présentation
-	Switch between model space in a viewport and paper space	Basculer entre l'espace modèle dans une fenêtre et l'espace papier
+	Switch between model space in a viewport and paper space	Basculer entre l'espace objet dans une fenêtre et l'espace papier
 	Symmetric	Symétrie
 	Synchronize Attributes	Synchroniser les attributs
 	Toggle PICKADD (off: each pick replaces the selection)	Basculer PICKADD (désactivé : chaque sélection remplace la sélection existante)

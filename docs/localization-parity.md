@@ -59,7 +59,7 @@ plus native review by a human; extending the catalog to the remaining English-on
 | Spanish | es | 0 (0%) | 0% | Latin: yes | no | none | 3–5 h |
 | Hindi | hi | 0 (0%) | 0% | Devanagari: no shaping | no | none | 3–5 h + 15–25 h shaping (shared with Arabic) |
 | Arabic | ar | 0 (0%) | 0% | Drawing text shaped and laid out right to left (#287); the UI is not mirrored | no | none | 3–5 h + 15–25 h RTL UI |
-| French | fr | ≈ 900 catalog rows (gaps reported, English fallback) | partial | Latin: yes | contributed by @pechnikov2026-star (#624); no native review yet | partial | 2–4 h |
+| French | fr | ≈ 900 catalog rows (gaps reported, English fallback) | partial | Latin: yes | contributed by @pechnikov2026-star (#624); terminology consistency pass by @YannFR81 (French road designer, AutoCAD user) | partial | 2–4 h |
 | Russian | ru | ≈ 900 catalog rows (gaps reported, English fallback) | partial | Cyrillic: yes (bundled egui fonts) | contributed by @pechnikov2026-star (#624); no native review yet | partial | 2–4 h |
 | Portuguese (Brazil) | pt-BR | 1,231 catalog rows; reference catalog and marked UI literals covered (no gaps reported) | dialogs and tooltips yes; command reference searchable in Portuguese | Latin: yes (bundled egui fonts; accented letters tested) | catalog by @WladmirJunior, completed with AI assistance by @RicSchonfelder; terminology reviewed by a native speaker (@ffishman) | complete current catalog; English-only interface gaps remain | line-by-line proofreading + shared English-only UI work |
 | Indonesian | id | 0 (0%) | 0% | Latin: yes | no | none | 3–5 h |
