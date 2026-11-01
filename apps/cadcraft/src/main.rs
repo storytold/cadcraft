@@ -127,7 +127,8 @@ impl eframe::App for App {
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
     }
-    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    /// Preferences (the interface theme) survive restarts; eframe saves the window state itself
+    /// (`persist_window`); egui state is not kept.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.cad.profile_json());
         storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.cad.prefs_json());
@@ -194,8 +195,20 @@ fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
     filters
 }
 
-/// The main window: its size, title bar, placement and rendering needs.
-fn window_options() -> eframe::NativeOptions {
+/// Whether eframe's storage file (`app.ron`, a map of keys to strings) holds a saved main window
+/// state. An unreadable or malformed file counts as none, as it does for eframe.
+fn saved_window(app_ron: &str) -> bool {
+    ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
+}
+
+/// The window state from the last session is saved and will be restored (#2595).
+fn restores_window() -> bool {
+    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+}
+
+/// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
+/// saved by the last session is restored instead of opening centred.
+fn window_options(restoring: bool) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
@@ -206,10 +219,13 @@ fn window_options() -> eframe::NativeOptions {
             .with_titlebar_shown(false)
             .with_title_shown(false)
             .with_app_id(APP_ID),
-        persist_window: false,
-        // The window opens centred on its screen, not cascaded from the top-left corner (#1129).
+        // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
+        // restored window on the monitors that are connected now.
+        persist_window: true,
+        // The first launch opens centred on its screen, not cascaded from the top-left corner
+        // (#1129); later launches go back where the window was (eframe would centre over that).
         // Wayland compositors place windows themselves.
-        centered: true,
+        centered: !restoring,
         // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
         // system-font discovery as a hidden fallback.
         system_font_fallback: false,
@@ -220,6 +236,9 @@ fn window_options() -> eframe::NativeOptions {
 }
 
 const APP_ID: &str = "ai.storyteller.cadcraft";
+
+/// The key eframe saves the main window state under in its storage.
+const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
@@ -281,7 +300,7 @@ fn main() -> eframe::Result {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options()
+        ..window_options(restores_window())
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -393,7 +412,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, window_options};
+    use super::{filters_for_save, follow_desktop, saved_window, window_options};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -411,12 +430,30 @@ mod tests {
         }
     }
 
-    /// #1129: the window opens centred, not cascaded from the top-left corner.
+    /// #1129: the first launch opens centred, not cascaded from the top-left corner.
     #[test]
-    fn the_window_opens_centred() {
-        let o = window_options();
+    fn the_first_launch_opens_centred() {
+        let o = window_options(false);
         assert!(o.centered, "centred on launch");
-        assert!(!o.persist_window, "no saved position to restore instead");
+        assert!(o.persist_window, "the window state is saved for the next launch");
+    }
+
+    /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
+    #[test]
+    fn a_saved_window_reopens_where_it_was() {
+        let o = window_options(true);
+        assert!(!o.centered, "centring would move a restored window");
+        assert!(o.persist_window);
+    }
+
+    /// Only a readable `app.ron` with a window entry counts as a saved window state.
+    #[test]
+    fn a_saved_window_is_read_from_app_ron() {
+        assert!(saved_window(r#"{"cadcraft.prefs": "{}", "window": "(maximized: true)"}"#));
+        assert!(!saved_window(r#"{"cadcraft.prefs": "{\"window\":1}"}"#), "a value mentioning it is not the key");
+        assert!(!saved_window(""));
+        assert!(!saved_window("{\"window\": "), "truncated");
+        assert!(!saved_window("not ron at all"));
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;

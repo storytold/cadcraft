@@ -632,6 +632,7 @@ dependencies = [
  "muda",
  "objc2-app-kit 0.3.2",
  "rfd",
+ "ron",
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",
