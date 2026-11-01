@@ -88,6 +88,27 @@ fn massprop_self_check_reports_skipped_objects() {
     assert_eq!(sc["implausible"], json!([]));
 }
 
+/// REGION typed with nothing selected asks for objects, as in AutoCAD, instead of reporting
+/// "0 Region(s) created."; with objects already selected it converts them at once.
+#[test]
+fn typed_region_asks_for_objects() {
+    let mut s = Session::new();
+    let r = h(&s.execute("rectang", &json!({"p1": [0, 0], "p2": [10, 4]})).unwrap());
+    s.set_selection(Vec::new());
+    s.cmdline("region").unwrap();
+    assert!(s.running.is_some(), "REGION should ask for objects: {}", s.prompt_text());
+    s.cmdline("l").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(matches!(s.doc().unwrap().entity(r).unwrap().kind, EntityKind::Region(_)));
+    // Preselected objects are converted at once.
+    let c = h(&s.execute("circle", &json!({"center": [20, 0], "radius": 2})).unwrap());
+    s.set_selection(vec![c]);
+    s.cmdline("region").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(matches!(s.doc().unwrap().entity(c).unwrap().kind, EntityKind::Region(_)));
+}
+
 /// Make `hd` invisible: it no longer counts towards the drawing extents.
 fn hide(s: &mut Session, hd: Handle) {
     s.doc_mut().unwrap().modify_entity(hd, |e| e.common.visible = false).unwrap();
