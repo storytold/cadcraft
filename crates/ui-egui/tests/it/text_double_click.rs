@@ -56,15 +56,16 @@ fn double_click_on_text_starts_textedit_for_that_object() {
         let mut h = harness();
         double_click(&mut h, at);
         let s = &h.state().session;
-        assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("textedit"), "object {i}");
+        assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("textedit.object"), "object {i}");
+        assert!(s.text_editor().is_some(), "object {i}: the in-place editor opens");
         let p = s.current_prompt().unwrap();
         assert_eq!(p.message, "Enter new text", "object {i}: the clicked text is already picked");
         assert_eq!(p.default.as_deref(), Some(old), "object {i}");
         h.state_mut().session.input(Input::Text(new.into())).unwrap();
         h.run_steps(2);
         assert_eq!(text_at(&h, i), new);
-        // TEXTEDIT goes on asking for objects (its Multiple mode), as AutoCAD's does.
-        assert_eq!(h.state().session.current_prompt().unwrap().message, "Select an annotation object");
+        // A double-click edits that one object: the command ends with it.
+        assert!(h.state().session.running.is_none(), "object {i}");
     }
 }
 
@@ -73,17 +74,17 @@ fn double_clicked_text_takes_ime_composition_and_commit() {
     let mut h = harness();
     double_click(&mut h, Vec2::new(4.0, 1.2));
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Enter new text");
-    // Composition is shown, not saved; the commit is inserted exactly once (#1761).
+    assert!(h.state().session.text_editor().is_some(), "the in-place editor has the keyboard");
+    // Composition is shown in the editor, not saved; the commit is inserted exactly once and
+    // replaces the text the editor opened with selected (#1761).
     h.event(Event::Ime(ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None }));
     h.run_steps(1);
-    assert_eq!(h.state().cmd.preedit, "zhong");
-    assert!(h.state().cmd.buffer.is_empty());
+    assert_eq!(text_at(&h, 0), "HELLO");
+    assert!(h.state().cmd.buffer.is_empty(), "nothing reaches the command line");
     h.event(Event::Ime(ImeEvent::Commit("中文".into())));
     h.run_steps(1);
-    assert!(h.state().cmd.preedit.is_empty());
-    assert_eq!(h.state().cmd.buffer, "中文");
     h.key_press(Key::Enter);
-    h.run_steps(1);
+    h.run_steps(2);
     assert_eq!(text_at(&h, 0), "中文");
 }
 
@@ -94,4 +95,18 @@ fn double_click_elsewhere_starts_no_command() {
         double_click(&mut h, at);
         assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), None, "{at:?}");
     }
+}
+
+#[test]
+fn double_click_on_a_block_reference_opens_the_block_editor() {
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let c = app.run("circle", json!({ "center": [30, 20], "radius": 2 })).unwrap()["handle"].as_str().unwrap().to_string();
+        app.run("block", json!({ "name": "Wheel", "base": [30, 20], "handles": [c] })).unwrap();
+        app.run("insert", json!({ "name": "Wheel", "at": [30, 20] })).unwrap();
+    }
+    h.run_steps(3);
+    double_click(&mut h, Vec2::new(32.0, 20.0));
+    assert!(h.state().session.state().unwrap().block_edit.is_some(), "the Block Editor is open");
 }

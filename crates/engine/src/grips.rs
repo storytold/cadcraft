@@ -74,6 +74,20 @@ fn poly_grip(p: &LwPolyline, index: usize) -> Option<PolyGrip> {
     None
 }
 
+/// The further parts of a broken table move on their own: grip `index` (after the first) of a
+/// broken table moves its part by `delta`. Whether it was one.
+fn move_table_part(k: &mut EntityKind, index: usize, delta: Vec2) -> bool {
+    let (Some(i), EntityKind::Table(t)) = (index.checked_sub(1), k) else { return false };
+    let Some(b) = &mut t.breaks else { return false };
+    if b.offsets.len() <= i {
+        b.offsets.resize(i + 1, Vec2::ZERO);
+    }
+    if let Some(o) = b.offsets.get_mut(i) {
+        *o += delta;
+    }
+    true
+}
+
 /// The shape after dragging grip `index` to `to` (STRETCH mode). `None` when the grip does not
 /// exist or the result would be degenerate.
 pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityKind> {
@@ -84,18 +98,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
     let from = *grips.get(index)?;
     let delta = to - from;
     let mut k = kind.clone();
-    // The further parts of a broken table move on their own.
-    if index > 0
-        && let EntityKind::Table(t) = &mut k
-        && let Some(b) = &mut t.breaks
-    {
-        let i = index - 1;
-        if b.offsets.len() <= i {
-            b.offsets.resize(i + 1, Vec2::ZERO);
-        }
-        if let Some(o) = b.offsets.get_mut(i) {
-            *o += delta;
-        }
+    if move_table_part(&mut k, index, delta) {
         return Some(k);
     }
     match &mut k {
@@ -188,10 +191,33 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
                         d.user_text_pos = false;
                     }
                 }
-                _ => {
-                    set_xy(&mut d.text_mid, to);
-                    d.user_text_pos = true;
-                }
+                _ => match d.kind {
+                    // Stretch: the dimension line follows the text across, and the text keeps its
+                    // place along the line (relative to the arrowheads). Move with Dim Line also
+                    // slides it along.
+                    DimKind::Linear { .. } | DimKind::Aligned => {
+                        let u = match d.kind {
+                            DimKind::Linear { rotation } => Vec2::from_angle(rotation),
+                            _ => (d.p14.xy() - d.p13.xy()).normalized(),
+                        };
+                        let n = u.perp();
+                        let from = *grips.get(3)?;
+                        let shift = n * (to - from).dot(n);
+                        if !shift.is_finite() {
+                            return None;
+                        }
+                        let q = d.defpt.xy() + shift;
+                        set_xy(&mut d.defpt, q);
+                        if d.user_text_pos {
+                            let t = d.text_mid.xy() + shift;
+                            set_xy(&mut d.text_mid, t);
+                        }
+                    }
+                    _ => {
+                        set_xy(&mut d.text_mid, to);
+                        d.user_text_pos = true;
+                    }
+                },
             }
             d.block = None;
         }
@@ -210,7 +236,12 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
                     idx += 1;
                 }
             }
-            if !done {
+            if !done && m.text_grip() == Some(index) {
+                // The text grip moves the text alone (Move with Leader takes the landing along).
+                if let Some(t) = &mut m.text {
+                    set_xy(&mut t.insert, to);
+                }
+            } else if !done {
                 // The landing grip moves the landing and its content.
                 let ld = m.landing.xy() + delta;
                 set_xy(&mut m.landing, ld);
@@ -333,6 +364,122 @@ fn shift_params(e: &mut cadcraft_doc::Ellipse, by: f64) {
     }
 }
 
+/// The grip points of an object as the drawing shows it: a dimension's text grip sits on its
+/// text where the dimension places it (its stored text position is only kept once the user
+/// moves the text).
+pub fn grip_points(d: &cadcraft_doc::Drawing, kind: &EntityKind) -> Vec<Vec2> {
+    let mut g = kind.grips();
+    if let EntityKind::Dimension(dm) = kind {
+        // The text as drawn: a file's dimension shows its own block, whose text may sit away
+        // from where CADCraft would put it.
+        let file_text = dm.block.as_ref().and_then(|b| d.blocks.get(b)).and_then(|b| {
+            b.entities.iter().find_map(|e| match &e.kind {
+                EntityKind::MText(t) => Some(t.insert.xy()),
+                EntityKind::Text(t) => Some(t.justify_point()),
+                _ => None,
+            })
+        });
+        if let Some(t) = g.get_mut(3) {
+            let p = match file_text {
+                Some(p) => p,
+                None if dm.user_text_pos => *t,
+                None => cadcraft_render::dimension_in(d, dm).text_pos,
+            };
+            if p.is_finite() {
+                *t = p;
+            }
+        }
+        // A linear or aligned dimension's line grip sits where the line meets the second
+        // extension line (any point of the line places it), clear of the text grip.
+        let u = match dm.kind {
+            DimKind::Linear { rotation } => Some(Vec2::from_angle(rotation)),
+            DimKind::Aligned => Some((dm.p14.xy() - dm.p13.xy()).normalized()).filter(|u| *u != Vec2::ZERO),
+            _ => None,
+        };
+        if let (Some(u), Some(l)) = (u, g.get_mut(2)) {
+            let p = dm.defpt.xy() + u * (dm.p14.xy() - dm.defpt.xy()).dot(u);
+            if p.is_finite() {
+                *l = p;
+            }
+        }
+    }
+    g
+}
+
+/// A file's dimensions whose text the file shows away from where CADCraft would put it (moved
+/// along the line in AutoCAD without the user-position flag): their text keeps that place, so
+/// editing them later doesn't make it jump.
+pub(crate) fn adopt_file_dim_text(d: &mut cadcraft_doc::Drawing) {
+    let spaces = std::iter::once(cadcraft_doc::Space::Model).chain(d.layouts.iter().map(|l| cadcraft_doc::Space::Paper(l.name.clone())));
+    let mut moved: Vec<(Handle, Vec2)> = Vec::new();
+    for space in spaces.collect::<Vec<_>>() {
+        let Some(st) = d.space(&space) else { continue };
+        for e in st.iter() {
+            let EntityKind::Dimension(dm) = &e.kind else { continue };
+            if dm.user_text_pos || !matches!(dm.kind, DimKind::Linear { .. } | DimKind::Aligned) {
+                continue;
+            }
+            let Some(block) = dm.block.as_ref().and_then(|b| d.blocks.get(b)) else { continue };
+            let Some(shown) = block.entities.iter().find_map(|x| match &x.kind {
+                EntityKind::MText(t) if t.attach == 5 => Some(t.insert.xy()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let ours = cadcraft_render::dimension_in(d, &cadcraft_doc::Dimension { block: None, ..dm.clone() });
+            if shown.is_finite() && ours.text_height > 0.0 && shown.dist(ours.text_pos) > ours.text_height {
+                moved.push((e.handle, shown));
+            }
+        }
+    }
+    for (h, p) in moved {
+        let _ = d.modify_entity(h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                set_xy(&mut dm.text_mid, p);
+                dm.user_text_pos = true;
+            }
+        });
+    }
+}
+
+/// [`grip_action`] with the drawing at hand: Move with Dim Line also slides the text along the
+/// line to the point (the preview shows the same).
+pub fn grip_action_in(
+    d: &cadcraft_doc::Drawing,
+    kind: &EntityKind,
+    index: usize,
+    action: GripAction,
+    to: Option<Vec2>,
+    value: Option<f64>,
+) -> Option<EntityKind> {
+    let mut k = grip_action(kind, index, action, to, value)?;
+    if let (GripAction::MoveWithDimLine, Some(to)) = (action, to) {
+        text_along_line(d, &mut k, to);
+    }
+    Some(k)
+}
+
+/// Move with Dim Line, once the dimension line runs through the picked point: the text sits on
+/// it (above it, as the style places text) where the point is along it.
+pub fn text_along_line(d: &cadcraft_doc::Drawing, kind: &mut EntityKind, to: Vec2) {
+    let EntityKind::Dimension(dm) = kind else { return };
+    let u = match dm.kind {
+        DimKind::Linear { rotation } => Vec2::from_angle(rotation),
+        DimKind::Aligned => (dm.p14.xy() - dm.p13.xy()).normalized(),
+        _ => return,
+    };
+    if u == Vec2::ZERO || !u.is_finite() {
+        return;
+    }
+    dm.user_text_pos = false;
+    let home = cadcraft_render::dimension_in(d, dm).text_pos;
+    let at = home + u * (to - home).dot(u);
+    if at.is_finite() {
+        set_xy(&mut dm.text_mid, at);
+        dm.user_text_pos = true;
+    }
+}
+
 /// A multifunctional grip option besides Stretch (the menu a polyline, line or arc grip shows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -349,6 +496,24 @@ pub enum GripAction {
     Lengthen,
     /// Arc midpoint: change the radius, keeping the center and angles.
     Radius,
+    /// Dimension text: move the dimension line with the text.
+    MoveWithDimLine,
+    /// Dimension text: move the text alone (DIMTMOVE 2 for this dimension).
+    MoveTextOnly,
+    /// Dimension text: move the text with a leader to the dimension line (DIMTMOVE 1).
+    /// Multileader text: the landing follows the text.
+    MoveWithLeader,
+    /// Dimension text: above the dimension line (DIMTAD 1), in its default place.
+    AboveDimLine,
+    /// Dimension text: centred on the dimension line (DIMTAD 0), in its default place.
+    CenterVertically,
+    /// Dimension text: back to its default place.
+    ResetTextPosition,
+    /// Spline with fit data: a new fit point next to this one (before or after it, whichever
+    /// keeps the fit points' path shorter), the curve refitted through it.
+    AddFitPoint,
+    /// Spline with fit data: remove this fit point (both copies of a kink), refitting the curve.
+    RemoveFitPoint,
 }
 
 impl GripAction {
@@ -361,6 +526,14 @@ impl GripAction {
             GripAction::ToLine => "conVert to line",
             GripAction::Lengthen => "Lengthen",
             GripAction::Radius => "Radius",
+            GripAction::MoveWithDimLine => "move with Dim line",
+            GripAction::MoveTextOnly => "move Text only",
+            GripAction::MoveWithLeader => "move with Leader",
+            GripAction::AboveDimLine => "Above dim line",
+            GripAction::CenterVertically => "center Vertically",
+            GripAction::ResetTextPosition => "Reset text position",
+            GripAction::AddFitPoint => "Add fit point",
+            GripAction::RemoveFitPoint => "Remove fit point",
         }
     }
     /// The grip menu label.
@@ -372,6 +545,14 @@ impl GripAction {
             GripAction::ToLine => "Convert to Line",
             GripAction::Lengthen => "Lengthen",
             GripAction::Radius => "Radius",
+            GripAction::MoveWithDimLine => "Move with Dim Line",
+            GripAction::MoveTextOnly => "Move Text Only",
+            GripAction::MoveWithLeader => "Move with Leader",
+            GripAction::AboveDimLine => "Above Dim Line",
+            GripAction::CenterVertically => "Center Vertically",
+            GripAction::ResetTextPosition => "Reset Text Position",
+            GripAction::AddFitPoint => "Add Fit Point",
+            GripAction::RemoveFitPoint => "Remove Fit Point",
         }
     }
     /// The mode name on the command line ("** ADD VERTEX **").
@@ -383,12 +564,64 @@ impl GripAction {
             GripAction::ToLine => "** CONVERT TO LINE **",
             GripAction::Lengthen => "** LENGTHEN **",
             GripAction::Radius => "** RADIUS **",
+            GripAction::MoveWithDimLine => "** MOVE WITH DIM LINE **",
+            GripAction::MoveTextOnly => "** MOVE TEXT ONLY **",
+            GripAction::MoveWithLeader => "** MOVE WITH LEADER **",
+            GripAction::AboveDimLine => "** ABOVE DIM LINE **",
+            GripAction::CenterVertically => "** CENTER VERTICALLY **",
+            GripAction::ResetTextPosition => "** RESET TEXT POSITION **",
+            GripAction::AddFitPoint => "** ADD FIT POINT **",
+            GripAction::RemoveFitPoint => "** REMOVE FIT POINT **",
         }
     }
     /// Whether the option needs a point (or value); the others act at once.
     pub fn needs_point(self) -> bool {
-        !matches!(self, GripAction::RemoveVertex | GripAction::ToLine)
+        !matches!(
+            self,
+            GripAction::RemoveVertex
+                | GripAction::ToLine
+                | GripAction::AboveDimLine
+                | GripAction::CenterVertically
+                | GripAction::ResetTextPosition
+                | GripAction::RemoveFitPoint
+        )
     }
+}
+
+/// Most fit points a grip can add to a spline.
+const MAX_FIT_POINTS: usize = 10_000;
+
+/// Fewest fit points a spline keeps: two when open, three when closed.
+fn min_fit_points(sp: &cadcraft_geom::Spline) -> usize {
+    if sp.closed { 3 } else { 2 }
+}
+
+/// The fit points without point `i` and its repeats (a kink is a repeated point).
+fn fit_without(fit: &[Vec2], i: usize) -> Vec<Vec2> {
+    let Some(at) = fit.get(i).copied() else { return fit.to_vec() };
+    fit.iter().copied().filter(|q| !q.near(at, 1e-12)).collect()
+}
+
+/// The fit points with `to` added next to point `i`: before or after it (after its repeats),
+/// whichever makes the path through the fit points shorter, so a point added beside the first
+/// or last fit point goes on the end it is nearer to, and one between two points goes between
+/// them. `None` for a point that already is a fit point or an index out of range.
+fn fit_with(fit: &[Vec2], i: usize, to: Vec2, closed: bool) -> Option<Vec<Vec2>> {
+    let at = *fit.get(i)?;
+    if fit.iter().any(|q| q.near(to, 1e-12)) || fit.len() >= MAX_FIT_POINTS {
+        return None;
+    }
+    let after = i + 1 + fit.iter().skip(i + 1).take_while(|q| q.near(at, 1e-12)).count();
+    let length = |pts: &[Vec2]| {
+        let open: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum();
+        let close = if closed { pts.first().zip(pts.last()).map_or(0.0, |(a, b)| a.dist(*b)) } else { 0.0 };
+        open + close
+    };
+    let mut before_pts = fit.to_vec();
+    before_pts.insert(i.min(before_pts.len()), to);
+    let mut after_pts = fit.to_vec();
+    after_pts.insert(after.min(after_pts.len()), to);
+    Some(if length(&before_pts) < length(&after_pts) - 1e-12 { before_pts } else { after_pts })
 }
 
 /// The multifunctional options of grip `index` of `kind` (empty when it has only Stretch):
@@ -408,6 +641,36 @@ pub fn grip_actions(kind: &EntityKind, index: usize) -> Vec<GripAction> {
         EntityKind::Line(_) if index == 0 || index == 2 => vec![GripAction::Lengthen],
         EntityKind::Arc(_) if index == 0 || index == 2 => vec![GripAction::Lengthen],
         EntityKind::Arc(_) if index == 1 => vec![GripAction::Radius],
+        // The text grip of a dimension.
+        EntityKind::Dimension(d) if index == 3 => {
+            let mut v = Vec::new();
+            if matches!(d.kind, DimKind::Linear { .. } | DimKind::Aligned) {
+                v.push(GripAction::MoveWithDimLine);
+            }
+            v.extend([
+                GripAction::MoveTextOnly,
+                GripAction::MoveWithLeader,
+                GripAction::AboveDimLine,
+                GripAction::CenterVertically,
+                GripAction::ResetTextPosition,
+            ]);
+            v
+        }
+        // The text grip of a multileader.
+        EntityKind::MLeader(m) if m.text_grip() == Some(index) => {
+            vec![GripAction::MoveWithLeader, GripAction::MoveTextOnly, GripAction::ResetTextPosition]
+        }
+        // A fit point grip of a spline with fit data.
+        EntityKind::Spline(sp) if index < sp.fit.len() => {
+            let mut v = Vec::new();
+            if sp.fit.len() < MAX_FIT_POINTS {
+                v.push(GripAction::AddFitPoint);
+            }
+            if fit_without(&sp.fit, index).len() >= min_fit_points(sp) {
+                v.push(GripAction::RemoveFitPoint);
+            }
+            v
+        }
         _ => Vec::new(),
     }
 }
@@ -458,6 +721,17 @@ pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Opti
             }
             p.vertices.get_mut(i)?.bulge = bulge;
         }
+        (EntityKind::Spline(sp), GripAction::AddFitPoint) => {
+            let fit = fit_with(&sp.fit, index, to?, sp.closed)?;
+            *sp = sp.refit(&fit, sp.closed);
+        }
+        (EntityKind::Spline(sp), GripAction::RemoveFitPoint) => {
+            let fit = fit_without(&sp.fit, index);
+            if fit.len() < min_fit_points(sp) {
+                return None;
+            }
+            *sp = sp.refit(&fit, sp.closed);
+        }
         (EntityKind::LwPolyline(p), GripAction::ToLine) => {
             let PolyGrip::Mid(i) = poly_grip(p, index)? else { return None };
             p.vertices.get_mut(i)?.bulge = 0.0;
@@ -480,6 +754,49 @@ pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Opti
             let q = fixed + dir * new_len;
             set_xy(if index == 0 { &mut l.a } else { &mut l.b }, q);
         }
+        (EntityKind::Dimension(d), GripAction::MoveWithDimLine) => {
+            // The dimension line moves through the point; the text goes back to its place on it
+            // ([`text_along_line`] then slides it along to the point).
+            let to = to?;
+            let u = match d.kind {
+                DimKind::Linear { rotation } => Vec2::from_angle(rotation),
+                _ => (d.p14.xy() - d.p13.xy()).normalized(),
+            };
+            if u == Vec2::ZERO {
+                return None;
+            }
+            let n = u.perp();
+            let q = d.defpt.xy() + n * (to - d.defpt.xy()).dot(n);
+            set_xy(&mut d.defpt, q);
+            d.user_text_pos = false;
+            // The text stays on the line wherever along it it goes (DIMTMOVE 0 for this one).
+            d.overrides.insert("textMove".into(), serde_json::json!(0));
+            d.block = None;
+        }
+        (EntityKind::Dimension(d), GripAction::MoveTextOnly | GripAction::MoveWithLeader) => {
+            let to = to?;
+            set_xy(&mut d.text_mid, to);
+            d.user_text_pos = true;
+            d.overrides.insert("textMove".into(), serde_json::json!(if action == GripAction::MoveTextOnly { 2 } else { 1 }));
+            d.block = None;
+        }
+        (EntityKind::Dimension(d), GripAction::AboveDimLine | GripAction::CenterVertically) => {
+            d.overrides.insert("textAbove".into(), serde_json::json!(if action == GripAction::AboveDimLine { 1 } else { 0 }));
+            d.user_text_pos = false;
+            d.block = None;
+        }
+        (EntityKind::Dimension(d), GripAction::ResetTextPosition) => {
+            d.user_text_pos = false;
+            d.block = None;
+        }
+        (EntityKind::MLeader(m), GripAction::MoveWithLeader) => m.move_with_leader(to?),
+        (EntityKind::MLeader(m), GripAction::MoveTextOnly) => {
+            let to = to?;
+            if let Some(t) = &mut m.text {
+                set_xy(&mut t.insert, to);
+            }
+        }
+        (EntityKind::MLeader(m), GripAction::ResetTextPosition) => m.reset_text(),
         (EntityKind::Arc(a), GripAction::Lengthen) => {
             let c = a.center.xy();
             let ang = match (value, to) {
@@ -553,7 +870,8 @@ impl Session {
 
     /// Grip points of an object (the indices `grip_edit` takes).
     pub fn grips_of(&self, handle: Handle) -> Result<Vec<Vec2>> {
-        self.doc()?.entity(handle).map(|e| e.kind.grips()).ok_or_else(|| EngineError::Other("no such object".into()))
+        let d = self.doc()?;
+        d.entity(handle).map(|e| grip_points(d, &e.kind)).ok_or_else(|| EngineError::Other("no such object".into()))
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
+use super::{ArrowGeom, Arrowhead, DimStyle, Dimension, NumFormat, TextFont, Vec2, arrowhead, format_decimal, format_linear};
 
 /// Format a linear measurement per the style (plain text).
 pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
@@ -49,7 +49,38 @@ pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str)
         let alt = format_linear(v * st.alt_factor, &af).1;
         s += &format!(" [{}]", post(&st.alt_post, &alt));
     }
-    inspected(apply_override(&s, d), d)
+    inspected(apply_override(&s, d, Some(linear_formula_value(meas, st))), d)
+}
+
+/// A measurement rounded as the dimension shows it (`decimals` places), for a formula's `<>`:
+/// `=<>/2` of a 1250 dimension is 625, not 624.99995.
+pub(super) fn shown_value(v: f64, decimals: u8) -> f64 {
+    let k = 10f64.powi(i32::from(decimals.min(8)));
+    let r = (v * k).round() / k;
+    if r.is_finite() { r } else { v }
+}
+
+/// What a formula's `<>` stands for in a linear dimension: the measurement (`meas`, drawing
+/// units) times DIMLFAC, rounded by DIMRND and then to the resolution the dimension shows
+/// (decimal places, or 1/2^n of a unit in architectural and fractional units).
+pub(crate) fn linear_formula_value(meas: f64, st: &DimStyle) -> f64 {
+    let v = meas * st.linear_factor;
+    let v = if st.round > 0.0 && st.round.is_finite() { (v / st.round).round() * st.round } else { v };
+    if matches!(st.linear_unit, 4 | 5) {
+        let k = 2f64.powi(i32::from(st.decimals.min(8)));
+        let r = (v * k).round() / k;
+        if r.is_finite() { r } else { v }
+    } else {
+        shown_value(v, st.decimals)
+    }
+}
+
+/// What a formula's `<>` stands for in an angular dimension: the angle in degrees, rounded to
+/// the decimal places shown in decimal degrees; in other angle units (degrees/minutes/seconds,
+/// grads, radians, surveyor's) the exact angle.
+pub(crate) fn angular_formula_value(radians: f64, st: &DimStyle) -> f64 {
+    let deg = radians.to_degrees();
+    if st.angular_unit == 0 { shown_value(deg, st.angular_decimals) } else { deg }
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
@@ -78,8 +109,28 @@ fn post(template: &str, meas: &str) -> String {
     }
 }
 
+/// The first number in a formatted measurement (`R12.5` → 12.5, `1 250,5` → 1250.5).
+fn measured_number(base: &str) -> Option<f64> {
+    let s: String = base
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit() && *c != '-' && *c != '.')
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | ' '))
+        .collect();
+    s.replace(' ', "").replace(',', ".").parse().ok()
+}
+
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
-pub(super) fn apply_override(base: &str, d: &Dimension) -> String {
+/// `value`: the measurement as a number (in the dimension's units, degrees for an angle), which a
+/// formula's `<>` stands for; read back from the formatted text when not given.
+pub(super) fn apply_override(base: &str, d: &Dimension, value: Option<f64>) -> String {
+    // A formula: worked out with `<>` as the measurement.
+    if let Some(f) = d.marks.formula.as_deref().filter(|f| crate::textformula::is_formula(f)) {
+        let measured = value.filter(|v| v.is_finite()).or_else(|| measured_number(base));
+        let env = crate::textformula::Env { measured, now: crate::textformula::local_now(), ..Default::default() };
+        if let Some(v) = crate::textformula::evaluate(f, &env) {
+            return v;
+        }
+    }
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
@@ -129,6 +180,53 @@ pub struct DimText {
     pub fixed_height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    /// User arrowheads: blocks of the drawing named by DIMBLK / DIMBLK1 / DIMBLK2, by name, as
+    /// unit-size geometry with the tip at the origin pointing along +x.
+    pub user_arrows: Vec<(String, ArrowGeom)>,
+}
+
+/// An end marker: one of the arrowheads drawn in code, or a user arrowhead block.
+#[derive(Clone, Copy)]
+pub(super) enum Head<'a> {
+    Std(Arrowhead),
+    User(&'a ArrowGeom),
+}
+
+impl Head<'_> {
+    pub(super) fn is_tick(self) -> bool {
+        match self {
+            Head::Std(a) => a.is_tick(),
+            Head::User(_) => false,
+        }
+    }
+    pub(super) fn geom(self, tip: Vec2, dir: Vec2, size: f64) -> ArrowGeom {
+        match self {
+            Head::Std(a) => arrowhead(a, tip, dir, size),
+            Head::User(g) => {
+                let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+                let size = if size.is_finite() { size.abs() } else { 0.0 };
+                let n = dir.perp();
+                let at = |p: &Vec2| tip + dir * (p.x * size) + n * (p.y * size);
+                ArrowGeom { lines: g.lines.iter().map(|l| l.iter().map(at).collect()).collect(), tris: g.tris.iter().map(at).collect() }
+            }
+        }
+    }
+    pub(super) fn inset(self, size: f64) -> f64 {
+        match self {
+            Head::Std(a) => a.inset(size),
+            Head::User(_) => 0.0,
+        }
+    }
+}
+
+/// The end marker a DIMBLK name gives: a user arrowhead block when the drawing has one by that
+/// name, else the built-in arrowhead.
+pub(super) fn head<'a>(name: &str, font: &'a DimText) -> Head<'a> {
+    let n = name.trim();
+    match font.user_arrows.iter().find(|(k, _)| !n.is_empty() && k.eq_ignore_ascii_case(n)) {
+        Some((_, g)) => Head::User(g),
+        None => Head::Std(Arrowhead::parse(n)),
+    }
 }
 
 #[cfg(test)]

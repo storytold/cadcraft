@@ -10,6 +10,9 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn text(value: &str) -> EntityKind {
     EntityKind::Text(Text {
+        backwards: false,
+        upside_down: false,
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.5,

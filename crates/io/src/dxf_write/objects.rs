@@ -49,7 +49,15 @@ pub(super) fn group_obj(w: &mut W, g: &Group, h: &str, dict: &str, written: &std
 /// A MLEADERSTYLE object (DXF Reference, OBJECTS: MLEADERSTYLE): MText content and straight
 /// ByBlock leaders with the style's landing gap, dogleg length, arrow size, text style and
 /// text height.
-pub(super) fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, byblock_ltype: Option<&str>, text_style: Option<String>) {
+pub(super) fn mleader_style_obj(
+    w: &mut W,
+    s: &MLeaderStyle,
+    h: &str,
+    dict: &str,
+    byblock_ltype: Option<&str>,
+    text_style: Option<String>,
+    arrow: Option<String>,
+) {
     // ByBlock as a 32-bit colour value (0xC1000000).
     const BYBLOCK: i64 = -1_056_964_608;
     w.s(0, "MLEADERSTYLE");
@@ -75,6 +83,9 @@ pub(super) fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str
     w.i(291, 1);
     w.f(43, s.dogleg);
     w.s(3, "");
+    if let Some(a) = arrow {
+        w.s(341, &a);
+    }
     w.f(44, s.arrow_size);
     w.s(300, "");
     if let Some(ts) = text_style {

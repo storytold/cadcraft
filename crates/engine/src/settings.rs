@@ -78,6 +78,9 @@ pub struct Settings {
     /// with their boundaries (stored, not used yet).
     pub pickstyle: u8,
     pub gripsize: f64,
+    /// GRIPSNAP (CADCraft): with no command running, the crosshair locks onto a grip of the
+    /// selection under it, as onto a snap point.
+    pub gripsnap: bool,
     pub cursorsize: f64,
     /// MAXARRAY: the most objects one array command creates (items × selected objects).
     pub maxarray: u64,
@@ -171,6 +174,7 @@ impl Default for Settings {
             pickdrag: true,
             pickstyle: 1,
             gripsize: 5.0,
+            gripsnap: true,
             cursorsize: 5.0,
             maxarray: 100_000,
             isodraft: false,

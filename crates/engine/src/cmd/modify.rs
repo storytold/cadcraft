@@ -34,7 +34,7 @@ use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::transform_entities;
 use transform::{run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
-pub(crate) use trim::{Edges, extend, trim};
+pub(crate) use trim::{Edges, edge_segments_owned, extend, extend_result, prim_to_segments, trim, trim_edges, trim_result};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

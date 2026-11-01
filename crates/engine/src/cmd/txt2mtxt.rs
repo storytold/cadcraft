@@ -97,6 +97,8 @@ fn convert(s: &mut Session, hs: &[Handle], o: &Txt2MtxtOptions) -> Result<(Vec<H
     let contents = items.iter().map(|(_, k, _)| contents(k, height)).collect::<Vec<_>>().join(sep);
     let width = if o.wrap { items.iter().map(|(_, k, _)| line_width(k)).fold(0.0, f64::max) } else { 0.0 };
     let m = MText {
+        frame: false,
+        formula: None,
         insert: v3(corner),
         height,
         width,
@@ -186,6 +188,9 @@ fn single(t: &Text) -> MText {
         _ => 2,
     };
     MText {
+        frame: false,
+        // The text's formula carries over (its result is the contents).
+        formula: t.formula.clone(),
         insert: v3(t.justify_point()),
         height: t.height,
         width: 0.0,
