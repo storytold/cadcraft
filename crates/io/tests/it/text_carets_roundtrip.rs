@@ -95,6 +95,15 @@ fn carets_are_written_escaped_and_read_back() {
 }
 
 #[test]
+fn a_caret_before_a_space_or_at_the_end_round_trips() {
+    let mut d = Drawing::new_metric();
+    d.add(&Space::Model, Common::default(), EntityKind::Text(text("x^ y^"))).unwrap();
+    let dxf = write_dxf(&d);
+    assert!(dxf.contains("x^  y^ "), "{dxf}");
+    assert_eq!(all_strings(&read_dxf(dxf.as_bytes()).unwrap()), ["x^ y^"]);
+}
+
+#[test]
 fn entget_shows_plain_carets_and_entmake_takes_them() {
     let mut d = Drawing::new_metric();
     d.add(&Space::Model, Common::default(), EntityKind::Text(text("x^ y 10^2"))).unwrap();
