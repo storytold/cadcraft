@@ -677,6 +677,12 @@ fn textedit_edits_a_multileader() {
     assert!(
         matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.as_ref().map(|t| (t.contents.as_str(), t.height)) == Some(("via the palette", 0.5)))
     );
+    // Several lines are stored as MTEXT paragraph breaks (\P) through TEXTEDIT and the palette,
+    // and other MTEXT codes are kept as written.
+    s.execute("textedit", &json!({"handle": m, "text": "line one\n{\\fArial|b1;line two}"})).unwrap();
+    assert!(matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.as_ref().unwrap().contents == "line one\\P{\\fArial|b1;line two}"));
+    s.execute("properties.set", &json!({"handles": [m], "text": "a\nb"})).unwrap();
+    assert!(matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.as_ref().unwrap().contents == "a\\Pb"));
     // A block multileader has no text to edit.
     let sq = h(&s.execute("pline", &json!({"vertices": [[-1, -1], [1, -1], [1, 1], [-1, 1]], "closed": true})).unwrap());
     s.execute("block", &json!({"name": "TAG", "base": [-1, -1], "handles": [sq], "keep": "delete"})).unwrap();
