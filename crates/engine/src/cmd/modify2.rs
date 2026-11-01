@@ -80,6 +80,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Array", "Path Array"])
             .params("{handles?, path (handle), count? (default 6) | spacing?, align?: bool (default true)}")
             .interactive(|_| Ok(Box::new(PathArrayM::default()))),
+        CommandSpec::new("updatefield", "Update Fields", run_updatefield)
+            .menu(&["Tools", "Update Fields"])
+            .params("{} (works out every text formula and known field again: dates, file name)"),
         CommandSpec::new("textedit", "Edit Text...", run_textedit)
             .menu(&["Modify", "Object", "Edit Text..."])
             .alias(&["ed", "ddedit"])
@@ -154,7 +157,7 @@ pub(super) use patharray::PathArrayM;
 use patharray::run_arraypath;
 use pedit::{PPhase, PeditM, run_pedit};
 use selop::{SelKind, SelOp, run_chspace, run_flatten, run_reverse};
-use textedit::{TextEditM, run_textedit};
+use textedit::{TextEditM, run_textedit, run_updatefield};
 use trimext::{ellipse_kind, ellipse_of};
 pub(crate) use trimext::{extend_other, trim_other};
 

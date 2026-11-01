@@ -201,3 +201,148 @@ fn json_forms_take_fence_crossing_edge_mode_and_mode() {
     assert_eq!(r["extended"], 1);
     assert_eq!(lines(&s), vec![((0.0, 0.0), (10.0, 0.0)), ((10.0, -5.0), (10.0, 5.0))]);
 }
+
+/// The handle of the line with these ends.
+fn handle_of(s: &Session, seg: Seg) -> cadcraft_engine::doc::Handle {
+    s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .find(|e| matches!(&e.kind, EntityKind::Line(l) if ((r(l.a.x), r(l.a.y)), (r(l.b.x), r(l.b.y))) == seg))
+        .unwrap()
+        .handle
+}
+
+#[test]
+fn objects_selected_before_trim_are_its_cutting_edges_and_stay_highlighted() {
+    let mut s = ladder();
+    let edge = handle_of(&s, ((0.0, -5.0), (0.0, 5.0)));
+    s.set_selection(vec![edge]);
+    s.cmdline("TRIM").unwrap();
+    assert_eq!(s.selection(), [edge], "the edge stays selected (highlighted) while TRIM runs");
+    // Only the x = 0 line cuts: the y = 0 line loses its left part, the x = 10 line doesn't cut.
+    s.script("-2,0\n").unwrap();
+    assert_eq!(s.selection(), [edge]);
+    assert!(lines(&s).contains(&((0.0, 0.0), (15.0, 0.0))), "{:?}", lines(&s));
+    s.script("\n").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.selection().is_empty(), "the highlight ends with the command");
+    // Cancelling ends it too.
+    s.set_selection(vec![edge]);
+    s.cmdline("EXTEND").unwrap();
+    assert_eq!(s.selection(), [edge]);
+    s.cancel();
+    assert!(s.selection().is_empty());
+}
+
+#[test]
+fn a_pick_in_empty_space_draws_a_fence_line_and_trims_what_it_crosses() {
+    let mut s = ladder();
+    // Quick mode. From empty space at 5,-3 to 5,3: both horizontal lines are cut between the edges.
+    s.script("TRIM 5,-3\n").unwrap();
+    assert_eq!(s.current_prompt().map(|p| p.message), Some("Specify end point of the fence line".into()));
+    s.script("5,3\n\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(
+        lines(&s),
+        with_edges(&[((-5.0, 0.0), (0.0, 0.0)), ((-5.0, 2.0), (0.0, 2.0)), ((10.0, 0.0), (15.0, 0.0)), ((10.0, 2.0), (15.0, 2.0))])
+    );
+}
+
+/// The glow under the cursor: its polylines' points (rounded).
+fn glow_points(s: &Session, at: (f64, f64)) -> Option<(Vec<Vec<(f64, f64)>>, bool)> {
+    let (ents, removing) = s.glow(cadcraft_engine::geom::Vec2::new(at.0, at.1))?;
+    let pts = ents
+        .iter()
+        .filter_map(|e| if let EntityKind::LwPolyline(p) = &e.kind { Some(p.vertices.iter().map(|v| (r(v.p.x), r(v.p.y))).collect()) } else { None })
+        .collect();
+    Some((pts, removing))
+}
+
+#[test]
+fn trim_glows_the_part_a_pick_takes_away() {
+    let mut s = ladder();
+    s.cmdline("TRIM").unwrap();
+    let (pts, removing) = glow_points(&s, (5.0, 0.0)).expect("a glow over the line");
+    assert!(removing);
+    assert_eq!(pts.len(), 1);
+    let run = &pts[0];
+    let (lo, hi) = run.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+    assert!((lo - 0.0).abs() < 1e-3 && (hi - 10.0).abs() < 1e-3, "{lo} {hi}");
+    assert!(run.iter().all(|p| p.1 == 0.0));
+    // Nothing under the cursor: no glow. Nothing changes in the drawing.
+    assert!(s.glow(cadcraft_engine::geom::Vec2::new(5.0, 30.0)).is_none());
+    assert_eq!(lines(&s).len(), 4);
+}
+
+#[test]
+fn extend_glows_the_part_a_pick_adds() {
+    let mut s = session(&["0,0 5,0", "10,-5 10,5"]);
+    s.cmdline("EXTEND").unwrap();
+    let (pts, removing) = glow_points(&s, (4.0, 0.0)).expect("a glow over the line");
+    assert!(!removing);
+    let (lo, hi) = pts.iter().flatten().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+    assert!((lo - 5.0).abs() < 1e-2 && (hi - 10.0).abs() < 1e-3, "{lo} {hi}");
+}
+
+#[test]
+fn trim_cuts_a_hatch_area() {
+    use cadcraft_engine::doc::{Common, Hatch, HatchLoop, Space};
+    use cadcraft_engine::geom::{PolyVertex, Vec2};
+    let mut s = session(&["4,-5 4,15"]);
+    let vertices = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].iter().map(|(x, y)| PolyVertex::new(Vec2::new(*x, *y))).collect();
+    let hatch = Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops: vec![HatchLoop { vertices, outer: true, sources: Vec::new() }],
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: None,
+        origin: Vec2::ZERO,
+        background: None,
+        pattern_lines: Vec::new(),
+    };
+    let h = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Hatch(hatch)).unwrap();
+    s.execute("trim", &json!({ "handle": h.hex(), "pick": [2.0, 5.0] })).unwrap();
+    let left: Vec<_> =
+        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).collect();
+    assert_eq!(left.len(), 1);
+    let xs: Vec<f64> = left[0].loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p.x)).collect();
+    assert!(xs.iter().all(|x| *x >= 4.0 - 1e-6), "{xs:?}");
+    assert!(xs.iter().any(|x| (*x - 10.0).abs() < 1e-6));
+}
+
+#[test]
+fn lines_inside_a_block_cut_a_hatch() {
+    use cadcraft_engine::doc::{Common, Hatch, HatchLoop, Space};
+    use cadcraft_engine::geom::{PolyVertex, Vec2};
+    let mut s = Session::new();
+    // A block whose line crosses the hatch at x = 4.
+    let l = s.execute("line", &json!({ "points": [[4, -5], [4, 15]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
+    s.execute("block", &json!({ "name": "DIVIDER", "base": [0, 0], "handles": [l], "keep": "convert" })).unwrap();
+    let vertices = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].iter().map(|(x, y)| PolyVertex::new(Vec2::new(*x, *y))).collect();
+    let hatch = Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops: vec![HatchLoop { vertices, outer: true, sources: Vec::new() }],
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: None,
+        origin: Vec2::ZERO,
+        background: None,
+        pattern_lines: Vec::new(),
+    };
+    let h = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Hatch(hatch)).unwrap();
+    // Quick mode: a hatch no edge crossed would be erased.
+    s.execute("trim", &json!({ "handle": h.hex(), "pick": [2.0, 5.0], "mode": "quick" })).unwrap();
+    let left: Vec<_> =
+        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).collect();
+    assert_eq!(left.len(), 1, "trimmed, not erased");
+    assert!(left[0].loops.iter().flat_map(|l| l.vertices.iter()).all(|v| v.p.x >= 4.0 - 1e-6));
+}
