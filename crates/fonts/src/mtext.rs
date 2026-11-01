@@ -995,6 +995,21 @@ mod tests {
         assert_eq!(flat, ["ภาษา1/2ภาษา", "ไทย"]);
     }
 
+    /// A Thai run that would fit a line at the left indent but not after a first-line indent or a
+    /// leading tab still breaks between its words instead of running out of the column. The indent
+    /// is well over the slack: with no Thai font the stroke font's pieces are narrower than the run
+    /// (each loses its trailing letter gap).
+    #[test]
+    fn thai_wraps_after_first_line_indent_and_tab() {
+        let text = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคา";
+        let wide = lay(text, 0.0).bounds.width();
+        for contents in [format!("\\pi4,l0;{text}"), format!("\\pxt4;\t{text}")] {
+            let l = lay(&contents, wide + 1.0);
+            assert!(l.lines.len() >= 2, "{contents}: {:?}", l.lines);
+            assert_eq!(l.lines.concat().trim_start(), text, "{contents}: {:?}", l.lines);
+        }
+    }
+
     /// Text that fits at its spaces keeps those line breaks: a note from the sample drawing
     /// (frame, box section 50x50 mm, painted white) at every column width from one word up never
     /// breaks inside ทาสีขาว or any other spaced word, in the plain and the paragraph layout.
