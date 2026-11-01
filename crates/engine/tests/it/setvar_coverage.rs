@@ -19,6 +19,7 @@ fn defaults_are_the_ones_the_commands_use() {
     for (name, v) in [
         ("POLYSIDES", json!(4)),
         ("OFFSETDIST", json!(-1.0)),
+        ("OFFSETGAPTYPE", json!(0)),
         ("TRIMMODE", json!(1)),
         ("PROJMODE", json!(1)),
         ("EDGEMODE", json!(0)),
@@ -73,6 +74,7 @@ fn bad_values_and_unknown_names_are_refused() {
         ("POLYSIDES", json!(2)),
         ("POLYSIDES", json!(5000)),
         ("TRIMMODE", json!(3)),
+        ("OFFSETGAPTYPE", json!(3)),
         ("LWDEFAULT", json!(26)),
         ("HPSCALE", json!(0)),
         ("HPNAME", json!("NO-SUCH-PATTERN")),
