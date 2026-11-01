@@ -176,6 +176,7 @@
 	Dim style	标注样式
 	Dimension	标注
 	Dimension Space	标注间距
+	Dimension Style	标注样式
 	Dimension Style Override	标注样式替代
 	Dimension Style...	标注样式...
 	Dimension Text Edit	编辑标注文字
@@ -612,6 +613,7 @@
 	Region/Mass Properties	面域/质量特性
 	Relative	相对
 	Remove Leader	删除引线
+	Remove Style Overrides	删除样式替代
 	Remove the viewport override	移除视口替代
 	Rename Dimension Style	重命名标注样式
 	Rename Layer	重命名图层
@@ -637,6 +639,7 @@
 	Save (⌘S)	保存 (⌘S)
 	Save As	另存为
 	Save As...	另存为...
+	Save as New Style...	另存为新样式...
 	Save Layer State	保存图层状态
 	Save State	保存状态
 	Scale	缩放
@@ -723,6 +726,7 @@
 	Set Current Text Style	设置当前文字样式
 	Set Layer Properties	设置图层特性
 	Set Properties	设置特性
+	Describe Properties	描述特性
 	Set Table Cell	设置表格单元格
 	Set Variable	设置变量
 	Set View	设置视图
