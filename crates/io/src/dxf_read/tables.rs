@@ -4,6 +4,7 @@ use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
     VportConfig, VportTile, records,
 };
+use cadcraft_fonts::windows::windows_font;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -66,9 +67,9 @@ fn annotative(tags: &[Tag]) -> bool {
 }
 
 /// A text style's font: CADCraft's own font name from `CADCRAFT` xdata (`1000 FONT`, name)
-/// while the font file is still the `txt` written for other readers; the TrueType family of the
-/// style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD stores TrueType
-/// styles); otherwise the file.
+/// while the font file is still the `txt` or Windows font written for other readers; the TrueType
+/// family of the style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD
+/// stores TrueType styles); otherwise the file.
 fn style_font(tags: &[Tag], file: String) -> String {
     if file.trim().is_empty()
         && let Some(face) =
@@ -82,8 +83,9 @@ fn style_font(tags: &[Tag], file: String) -> String {
         _ => None,
     });
     let stem = file.trim().to_ascii_lowercase();
+    let base = stem.rsplit(['/', '\\']).next().unwrap_or_default();
     match own {
-        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx") => name,
+        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx" || windows_font(&name) == Some(base)) => name,
         _ => file,
     }
 }
