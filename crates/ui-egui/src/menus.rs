@@ -10,6 +10,8 @@ pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools"
 
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
+/// The last item of File ▸ Open Recent.
+pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
 const RECENT_CLEAR: &str = "ui.recent.clear";
 
@@ -634,7 +636,7 @@ pub fn recent_entries(app: &CadApp) -> Vec<Entry> {
         .map(|(i, path)| Entry::Item { label: file_name(path), id: format!("{RECENT_ITEM}{i}"), shortcut: None, enabled: true })
         .collect();
     let enabled = !app.ui.recent_files.is_empty();
-    entries.push(Entry::Item { label: "Clear Recent Files".into(), id: RECENT_CLEAR.into(), shortcut: None, enabled });
+    entries.push(Entry::Item { label: CLEAR_RECENT.into(), id: RECENT_CLEAR.into(), shortcut: None, enabled });
     entries
 }
 
