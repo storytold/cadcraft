@@ -288,6 +288,15 @@ fn a_library_is_added_listed_placed_and_removed() {
     h.run_steps(3);
     assert!(h.state().status.is_none(), "{:?}", h.state().status);
     h.state_mut().session.input(cadcraft_engine::Input::Cancel).unwrap();
+    h.run_steps(3);
+
+    // One undo takes the placed block away, a second the definition the palette imported.
+    assert_eq!(references(h.state()), 1);
+    h.state_mut().run("undo", serde_json::Value::Null).unwrap();
+    assert_eq!(references(h.state()), 0);
+    assert!(h.state().session.doc().unwrap().block("Valve").is_some());
+    h.state_mut().run("undo", serde_json::Value::Null).unwrap();
+    assert!(h.state().session.doc().unwrap().block("Valve").is_none());
 
     // Removing the library empties the list again.
     h.get_by_label("Remove valves.dxf").click();
@@ -406,7 +415,7 @@ fn open_palette(mut app: CadApp) -> Harness<'static, CadApp> {
 }
 
 #[test]
-fn escape_in_the_middle_of_a_drop_places_nothing_and_frees_the_options() {
+fn escape_while_placing_places_nothing_and_frees_the_options() {
     let mut h = open_palette(drawing());
     h.get_by_label("Door").click();
     h.run_steps(3);

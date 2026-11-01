@@ -21,6 +21,33 @@ fn enter_at_the_insertion_point_ends_insert() {
     assert_eq!(s.last_finished, None, "ending it this way is cancelling it");
 }
 
+/// A cancelled INSERT leaves the drawing as it was: it takes no undo step, or the next undo would
+/// seem to do nothing (Repeat Placement always ends this way). A placed block keeps its name.
+#[test]
+fn a_cancelled_insert_takes_no_undo_step() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "A", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+    let steps = s.state().unwrap().undo.len();
+
+    s.start("insert").unwrap();
+    s.input(Input::Text("A".into())).unwrap();
+    s.input(Input::Cancel).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), steps);
+    assert_eq!(s.doc().unwrap().header.str("INSNAME", ""), "");
+
+    s.start("insert").unwrap();
+    s.input(Input::Text("A".into())).unwrap();
+    s.input(Input::Keyword("Scale".into())).unwrap();
+    s.input(Input::Text("1".into())).unwrap();
+    s.input(Input::Keyword("Rotate".into())).unwrap();
+    s.input(Input::Text("0".into())).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), steps + 1);
+    assert_eq!(s.doc().unwrap().header.str("INSNAME", ""), "A");
+}
+
 /// How the last command ended: by itself, with what it added; a cancelled one changes nothing.
 #[test]
 fn the_last_finished_command_says_whether_it_added_objects() {

@@ -1038,7 +1038,7 @@ fn libraries_bar(ui: &mut egui::Ui, st: &mut State, act: &mut Option<Act>) {
     });
 }
 
-/// The tiles of the icon views; a click or a drag sets `act`.
+/// The tiles or rows of the gallery; a click sets `act`.
 fn gallery(ui: &mut egui::Ui, view: View, items: &[&Item], act: &mut Option<Act>, selected: &mut Option<String>, painting: &mut Painting<'_>) {
     let t = crate::theme::Tokens::get();
     let on_menu = |ui: &mut egui::Ui, item: &Item, act: &mut Option<Act>| {
@@ -1341,6 +1341,25 @@ mod tests {
         let rotation = d.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.rotation) } else { None });
         let rotation = rotation.expect("an insert");
         assert!((rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "{rotation}");
+    }
+
+    /// The scale set in the palette is the one the placed block gets, the same on every axis or not.
+    #[test]
+    fn the_scale_options_reach_the_placed_block() {
+        for scale in [[2.0; 3], [2.0, 3.0, 4.0]] {
+            let mut s = Session::new();
+            s.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
+            make_block(&mut s, "B");
+            let mut app = CadApp::new(s, Services::default());
+            let st = State { scale_on_screen: false, scale, ..State::default() };
+            assert!(insert(&mut app, &item("B"), &st, false));
+            app.session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(1.0, 1.0))).unwrap();
+            assert_eq!(app.session.prompt_text(), "Command:", "the options answered every prompt");
+            let d = app.session.doc().unwrap();
+            let placed = d.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.scale) } else { None });
+            let placed = placed.expect("an insert");
+            assert_eq!([placed.x, placed.y, placed.z], scale);
+        }
     }
 
     /// A name INSERT refuses ends the placement: the scale and rotation answers are not read as

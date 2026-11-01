@@ -697,6 +697,9 @@ impl InsertM {
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
+            // Written here, not when the name is given: a cancelled INSERT leaves the drawing as
+            // it was, so it takes no undo step that would undo nothing visible.
+            s.doc_mut()?.header.set_str("INSNAME", &n);
             return Ok(Step::Done);
         }
         Ok(Step::Continue)
@@ -728,7 +731,6 @@ impl InsertM {
                 })
                 .collect()
         };
-        s.doc_mut()?.header.set_str("INSNAME", &b.name);
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
