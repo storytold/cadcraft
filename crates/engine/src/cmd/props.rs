@@ -205,24 +205,29 @@ struct LeftOut {
 }
 
 impl LeftOut {
-    /// `hs` without the objects that can't be edited, and how many those were.
+    /// `hs` without the objects that can't be edited, each object once, and how many those were. A
+    /// handle that names no object is an error, before anything changes.
     fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
         let d = s.doc()?;
+        let mut seen = std::collections::HashSet::new();
         let mut out = LeftOut::default();
-        let hs = hs
-            .into_iter()
-            .filter(|h| {
-                if super::blocks::refedit::locked(d, *h) {
-                    out.outside += 1;
-                } else if super::curves::is_locked(s, *h) {
-                    out.locked += 1;
-                } else {
-                    return true;
-                }
-                false
-            })
-            .collect();
-        Ok((hs, out))
+        let mut free = Vec::new();
+        for h in hs {
+            if d.entity(h).is_none() {
+                return Err(cadcraft_doc::DocError::NoEntity(h).into());
+            }
+            if !seen.insert(h) {
+                continue;
+            }
+            if super::blocks::refedit::locked(d, h) {
+                out.outside += 1;
+            } else if super::curves::is_locked(s, h) {
+                out.locked += 1;
+            } else {
+                free.push(h);
+            }
+        }
+        Ok((free, out))
     }
 
     /// `{changed, locked}`, and a message saying how many were left out when any were.

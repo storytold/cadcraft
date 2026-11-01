@@ -52,6 +52,20 @@ fn objects_on_locked_layers_are_left_out() {
     assert_eq!(counts(&r), (Some(1), Some(2)), "{r}");
     assert_eq!(r["message"], "2 objects were on a locked layer.");
     assert_eq!(layers(&s), ["L2", "L1", "L1"]);
+    // An object listed twice counts once.
+    let r = s.execute("properties.set", &json!({ "handles": [a.hex(), a.hex(), b.hex(), b.hex()], "color": 6 })).unwrap();
+    assert_eq!(counts(&r), (Some(1), Some(1)), "{r}");
+    assert_eq!(r["message"], "1 object was on a locked layer.");
+}
+
+/// A handle that names no object is refused before anything changes.
+#[test]
+fn a_missing_object_is_refused_before_any_change() {
+    let (mut s, [a, b, _]) = locked_drawing();
+    let undo = s.state().unwrap().undo.len();
+    assert!(s.execute("properties.set", &json!({ "handles": [a.hex(), b.hex(), "FFFFF"], "color": 7 })).is_err());
+    assert_eq!(colors(&s), [Color::ByLayer; 3]);
+    assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step");
 }
 
 #[test]
@@ -111,4 +125,7 @@ fn during_refedit_objects_outside_the_working_set_are_left_out() {
     assert_eq!(d.entity(copy).unwrap().common.color, Color::Index(5));
     assert_eq!(d.entity(other).unwrap().common.color, Color::ByLayer);
     assert!(d.refedit.is_some(), "the edit goes on");
+    // A handle that names no object isn't counted as outside the working set: it's refused.
+    assert!(s.execute("properties.set", &json!({ "handles": [copy.hex(), "FFFFF"], "color": 6 })).is_err());
+    assert_eq!(s.doc().unwrap().entity(copy).unwrap().common.color, Color::Index(5));
 }
