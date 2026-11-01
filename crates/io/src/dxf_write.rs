@@ -84,6 +84,8 @@ impl W {
     fn dimval(&mut self, code: i32, v: DimVal, xdata: bool) {
         match v {
             DimVal::Real(x) => self.f(if xdata { 1040 } else { code }, x),
+            DimVal::Angle(a) if xdata => self.f(1040, a.to_radians()),
+            DimVal::Angle(a) => self.f(code, a),
             DimVal::Int(i) => self.i(if xdata { 1070 } else { code }, i),
             DimVal::Str(t) => {
                 if xdata || !t.is_empty() {

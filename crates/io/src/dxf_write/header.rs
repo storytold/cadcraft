@@ -77,6 +77,11 @@ fn dim_header_vars(w: &mut W, d: &Drawing) {
                     w.s(9, format!("${var}"));
                     w.f(40, x);
                 }
+                // $DIMJOGANG holds radians (the DIMSTYLE group holds degrees).
+                Some(DimVal::Angle(a)) => {
+                    w.s(9, format!("${var}"));
+                    w.f(40, a.to_radians());
+                }
                 Some(DimVal::Int(i)) if i16::try_from(i).is_ok() => {
                     w.s(9, format!("${var}"));
                     w.i(70, i);
