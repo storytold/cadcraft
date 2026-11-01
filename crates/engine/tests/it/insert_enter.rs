@@ -1,0 +1,78 @@
+//! Enter or Space at INSERT's insertion point prompt asks again, as in AutoCAD 2027; Escape ends
+//! the command (the Blocks palette's Repeat Placement stops this way).
+
+use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::{Input, Session};
+use serde_json::json;
+
+#[test]
+fn enter_at_the_insertion_point_asks_again() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "A", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+
+    s.start("insert").unwrap();
+    s.input(Input::Text("A".into())).unwrap();
+    assert!(s.prompt_text().starts_with("INSERT Specify insertion point"), "{}", s.prompt_text());
+    s.input(Input::Enter).unwrap();
+    assert!(s.prompt_text().starts_with("INSERT Specify insertion point"), "{}", s.prompt_text());
+    s.input(Input::Cancel).unwrap();
+    assert_eq!(s.prompt_text(), "Command:");
+    assert_eq!(s.doc().unwrap().model.iter().count(), 0, "nothing is placed");
+    assert_eq!(s.last_finished, None, "ending it this way is cancelling it");
+}
+
+/// A cancelled INSERT leaves the drawing as it was: it takes no undo step, or the next undo would
+/// seem to do nothing (Repeat Placement always ends this way). A placed block keeps its name.
+#[test]
+fn a_cancelled_insert_takes_no_undo_step() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "A", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+    let steps = s.state().unwrap().undo.len();
+
+    s.start("insert").unwrap();
+    s.input(Input::Text("A".into())).unwrap();
+    s.input(Input::Cancel).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), steps);
+    assert_eq!(s.doc().unwrap().header.str("INSNAME", ""), "");
+
+    s.start("insert").unwrap();
+    s.input(Input::Text("A".into())).unwrap();
+    s.input(Input::Keyword("Scale".into())).unwrap();
+    s.input(Input::Text("1".into())).unwrap();
+    s.input(Input::Keyword("Rotate".into())).unwrap();
+    s.input(Input::Text("0".into())).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), steps + 1);
+    assert_eq!(s.doc().unwrap().header.str("INSNAME", ""), "A");
+}
+
+/// How the last command ended: by itself, with what it added; a cancelled one changes nothing.
+#[test]
+fn the_last_finished_command_says_whether_it_added_objects() {
+    let mut s = Session::new();
+    s.start("line").unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let line = (s.commands_started, true);
+    assert_eq!(s.last_finished, Some(line));
+    s.start("circle").unwrap();
+    s.input(Input::Cancel).unwrap();
+    assert_eq!(s.last_finished, Some(line));
+}
+
+/// A transparent command runs inside the current one: it does not count as a new command.
+#[test]
+fn only_a_command_of_its_own_counts_as_started() {
+    let mut s = Session::new();
+    s.start("line").unwrap();
+    let started = s.commands_started;
+    s.start("'zoom").unwrap();
+    assert_eq!(s.commands_started, started);
+    s.start("circle").unwrap();
+    assert_eq!(s.commands_started, started + 1);
+}

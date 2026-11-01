@@ -40,6 +40,8 @@ pub mod switch;
 // The External References palette.
 pub mod xrefs;
 
+pub mod blocks_palette;
+
 pub mod dyngrips;
 pub mod dyninput;
 pub mod gpu;

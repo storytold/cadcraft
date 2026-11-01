@@ -1248,3 +1248,30 @@ menu	Modify	수정
 	Check for Updates…	업데이트 확인…
 	CADCraft is up to date.	CADCraft가 최신 버전입니다.
 	Could not check for updates.	업데이트를 확인하지 못했습니다.
+	Add a drawing file as a block library	도면 파일을 블록 라이브러리로 추가
+	Add a folder of drawings or a drawing file to use its blocks.	블록을 사용하려면 도면이 들어 있는 폴더나 도면 파일을 추가하세요.
+	Block Libraries	블록 라이브러리
+	Block Library	블록 라이브러리
+	Blocks Palette	블록 팔레트
+	Click a block, then pick its insertion point.	블록을 클릭한 다음 삽입점을 지정하세요.
+	Current Drawing	현재 도면
+	Details	자세히
+	Extra Large Icons	매우 큰 아이콘
+	Folder or file	폴더 또는 파일
+	Import Library Block	라이브러리 블록 가져오기
+	Insert and Explode	삽입 후 분해
+	Large Icons	큰 아이콘
+	Libraries	라이브러리
+	Medium Icons	보통 아이콘
+	No block matches the filter.	필터와 일치하는 블록이 없습니다.
+	This block is already in the drawing, so its definition is used.	이 블록은 이미 도면에 있으므로 기존 정의를 사용합니다.
+	Open Library...	라이브러리 열기...
+	Read the library again	라이브러리 다시 읽기
+	Reading the library...	라이브러리를 읽는 중...
+	Refresh	새로 고침
+	Remove from the list	목록에서 제거
+	Repeat Placement	배치 반복
+	Small Icons	작은 아이콘
+	This drawing has no blocks.	이 도면에는 블록이 없습니다.
+	This library has no drawings or blocks.	이 라이브러리에는 도면이나 블록이 없습니다.
+	Only the first {n} are shown.	처음 {n}개만 표시됩니다.

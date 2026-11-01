@@ -1452,3 +1452,30 @@ menu	Modify	Hiệu chỉnh
 	Change Properties	Đổi thuộc tính
 	Font	Phông chữ
 	Save Layout as Template	Lưu layout thành mẫu
+	Add a drawing file as a block library	Thêm tệp bản vẽ làm thư viện block
+	Add a folder of drawings or a drawing file to use its blocks.	Thêm thư mục chứa bản vẽ hoặc tệp bản vẽ để dùng các block của nó.
+	Block Libraries	Thư viện block
+	Block Library	Thư viện block
+	Blocks Palette	Bảng block
+	Click a block, then pick its insertion point.	Nhấp vào một block, rồi chỉ định điểm chèn của nó.
+	Current Drawing	Bản vẽ hiện hành
+	Details	Chi tiết
+	Extra Large Icons	Biểu tượng cực lớn
+	Folder or file	Thư mục hoặc tệp
+	Import Library Block	Nhập block từ thư viện
+	Insert and Explode	Chèn và phân rã
+	Large Icons	Biểu tượng lớn
+	Libraries	Thư viện
+	Medium Icons	Biểu tượng cỡ vừa
+	No block matches the filter.	Không có block nào khớp với bộ lọc.
+	This block is already in the drawing, so its definition is used.	Khối này đã có trong bản vẽ nên định nghĩa của nó được dùng.
+	Open Library...	Mở thư viện...
+	Read the library again	Đọc lại thư viện
+	Reading the library...	Đang đọc thư viện...
+	Refresh	Làm mới
+	Remove from the list	Xóa khỏi danh sách
+	Repeat Placement	Lặp lại việc đặt
+	Small Icons	Biểu tượng nhỏ
+	This drawing has no blocks.	Bản vẽ này không có block.
+	This library has no drawings or blocks.	Thư viện này không có bản vẽ hay block.
+	Only the first {n} are shown.	Chỉ hiển thị {n} mục đầu tiên.

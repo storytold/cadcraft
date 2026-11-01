@@ -83,6 +83,11 @@ pub struct Session {
     pub doc_epoch: u64,
     pub settings: Settings,
     pub running: Option<Running>,
+    /// How many commands were started, nested transparent ones left out.
+    pub commands_started: u64,
+    /// The last command that ended by itself, not cancelled: its number in `commands_started`, and
+    /// whether it took new handles (it added to the drawing, and nothing took that back).
+    pub last_finished: Option<(u64, bool)>,
     /// A script is running ([`Session::script`]); a SCRIPT command inside it is refused.
     in_script: bool,
     /// The command suspended while a transparent command (`'ZOOM`, `'PAN`…) prompts inside it;
@@ -168,6 +173,8 @@ impl Session {
             doc_epoch: 0,
             settings: Settings::default(),
             running: None,
+            commands_started: 0,
+            last_finished: None,
             in_script: false,
             suspended: None,
             log: Vec::new(),

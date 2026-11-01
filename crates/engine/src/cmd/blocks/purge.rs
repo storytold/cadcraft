@@ -114,17 +114,30 @@ fn json_key(kind: Kind) -> &'static str {
     }
 }
 
+/// Most objects PURGE's scan reads, as the scan of used layers does.
+const MAX_SCAN: usize = 5_000_000;
+
+fn all_entities(d: &Drawing) -> impl Iterator<Item = &std::sync::Arc<cadcraft_doc::Entity>> {
+    d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()))
+}
+
 fn entities(d: &Drawing) -> impl Iterator<Item = &std::sync::Arc<cadcraft_doc::Entity>> {
-    d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter())).take(5_000_000)
+    all_entities(d).take(MAX_SCAN)
+}
+
+/// Whether the scan reads the whole drawing: past its limit, what is in use can look unused.
+pub(in crate::cmd) fn scan_reads_everything(d: &Drawing) -> bool {
+    all_entities(d).nth(MAX_SCAN).is_none()
+}
+
+/// Whether a dimension override sets an arrowhead block.
+pub(in crate::cmd) fn is_arrow_override(key: &str) -> bool {
+    cadcraft_doc::DimStyle::field_name(key).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock")
 }
 
 /// The arrowhead block names a dimension's overrides set.
 pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iterator<Item = String> + '_ {
-    dm.overrides
-        .iter()
-        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock"))
-        .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string()))
-        .filter(|n| !n.is_empty())
+    dm.overrides.iter().filter(|(k, _)| is_arrow_override(k)).filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())).filter(|n| !n.is_empty())
 }
 
 /// Upper-case names of blocks reachable from model space, the layouts and dimensions, and the
@@ -151,10 +164,9 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
             _ => {}
         }
     }
-    let mut guard = 0;
+    // Each block is walked once, so this ends, cycles included.
     while let Some(n) = frontier.pop() {
-        guard += 1;
-        if guard > 100_000 || !used.insert(n.to_ascii_uppercase()) {
+        if !used.insert(n.to_ascii_uppercase()) {
             continue;
         }
         if let Some(b) = d.block(&n) {
@@ -178,6 +190,33 @@ fn is(name: &str, list: &[&str]) -> bool {
     list.iter().any(|n| n.eq_ignore_ascii_case(name))
 }
 
+/// The linetypes an object names besides its own: its attributes' overrides, its dimension
+/// overrides, and the copy of its style a multiline keeps.
+fn linetypes_inside(e: &cadcraft_doc::Entity) -> Vec<String> {
+    let mut out: Vec<String> = super::object_attribs(e).iter().filter_map(|a| a.props.linetype.clone()).collect();
+    match &e.kind {
+        EntityKind::Dimension(dm) => out.extend(
+            dm.overrides
+                .iter()
+                .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| matches!(f, "dimLinetype" | "extLinetype1" | "extLinetype2")))
+                .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())),
+        ),
+        EntityKind::MLine(m) => out.extend(m.def.elements.iter().map(|e| e.linetype.clone())),
+        _ => {}
+    }
+    out
+}
+
+/// The linetypes named by objects, layers, dimension styles and multiline styles.
+fn linetypes_in_use(d: &Drawing) -> impl Iterator<Item = String> + '_ {
+    let objects = entities(d).map(|e| e.common.linetype.clone());
+    let inside = entities(d).flat_map(|e| linetypes_inside(e));
+    let layers = d.layers.iter().map(|l| l.linetype.clone());
+    let dims = d.dim_styles.iter().flat_map(|t| [t.dim_linetype.clone(), t.ext_linetype1.clone(), t.ext_linetype2.clone()]);
+    let mlines = d.mline_styles.iter().flat_map(|t| t.elements.iter().map(|e| e.linetype.clone()));
+    objects.chain(inside).chain(layers).chain(dims).chain(mlines)
+}
+
 /// Names of the unused objects of a named kind, in table order. This is PURGE's scan; `USAGE`
 /// reads it too, without purging anything.
 pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
@@ -197,7 +236,7 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
                 .collect()
         }
         Kind::Linetypes => {
-            let used = lower(&mut entities(d).map(|e| e.common.linetype.clone()).chain(d.layers.iter().map(|l| l.linetype.clone())));
+            let used = lower(&mut linetypes_in_use(d));
             let cur = d.header.str("CELTYPE", "ByLayer");
             d.linetypes
                 .iter()
@@ -218,6 +257,7 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
             let used = lower(&mut entities(d).filter_map(|e| match &e.kind {
                 EntityKind::Dimension(dm) => Some(dm.style.clone()),
                 EntityKind::Tolerance(t) => Some(t.style.clone()),
+                EntityKind::Leader(l) => Some(l.style.clone()),
                 _ => None,
             }));
             let cur = d.header.str("DIMSTYLE", "Standard");

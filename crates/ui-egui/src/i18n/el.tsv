@@ -1339,3 +1339,30 @@ menu	View	Προβολή
 	Check for Updates…	Έλεγχος για ενημερώσεις…
 	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
 	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Add a drawing file as a block library	Προσθήκη αρχείου σχεδίου ως βιβλιοθήκης μπλοκ
+	Add a folder of drawings or a drawing file to use its blocks.	Προσθέστε έναν φάκελο με σχέδια ή ένα αρχείο σχεδίου για να χρησιμοποιήσετε τα μπλοκ του.
+	Block Libraries	Βιβλιοθήκες μπλοκ
+	Block Library	Βιβλιοθήκη μπλοκ
+	Blocks Palette	Παλέτα μπλοκ
+	Click a block, then pick its insertion point.	Κάντε κλικ σε ένα μπλοκ και μετά ορίστε το σημείο εισαγωγής του.
+	Current Drawing	Τρέχον σχέδιο
+	Details	Λεπτομέρειες
+	Extra Large Icons	Πολύ μεγάλα εικονίδια
+	Folder or file	Φάκελος ή αρχείο
+	Import Library Block	Εισαγωγή μπλοκ βιβλιοθήκης
+	Insert and Explode	Εισαγωγή και διάσπαση
+	Large Icons	Μεγάλα εικονίδια
+	Libraries	Βιβλιοθήκες
+	Medium Icons	Μεσαία εικονίδια
+	No block matches the filter.	Κανένα μπλοκ δεν ταιριάζει με το φίλτρο.
+	This block is already in the drawing, so its definition is used.	Αυτό το μπλοκ υπάρχει ήδη στο σχέδιο, οπότε χρησιμοποιείται ο ορισμός του.
+	Open Library...	Άνοιγμα βιβλιοθήκης...
+	Read the library again	Επανάγνωση της βιβλιοθήκης
+	Reading the library...	Ανάγνωση της βιβλιοθήκης...
+	Refresh	Ανανέωση
+	Remove from the list	Αφαίρεση από τη λίστα
+	Repeat Placement	Επανάληψη τοποθέτησης
+	Small Icons	Μικρά εικονίδια
+	This drawing has no blocks.	Αυτό το σχέδιο δεν έχει μπλοκ.
+	This library has no drawings or blocks.	Αυτή η βιβλιοθήκη δεν έχει σχέδια ή μπλοκ.
+	Only the first {n} are shown.	Εμφανίζονται μόνο τα πρώτα {n}.

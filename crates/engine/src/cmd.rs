@@ -32,6 +32,7 @@ mod overkill;
 mod pline_opts;
 pub mod plotters;
 mod props;
+pub use blocks::library::{clear_library_cache, list_library, read_library_file};
 pub use draw2::breakline::BreaklineOptions;
 pub use props::MatchProps;
 pub(crate) use props::UNIT_RANGES;

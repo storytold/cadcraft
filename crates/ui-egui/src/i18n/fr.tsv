@@ -1018,3 +1018,31 @@
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	Add a drawing file as a block library	Ajouter un fichier de dessin comme bibliothèque de blocs
+	Add a folder of drawings or a drawing file to use its blocks.	Ajoutez un dossier de dessins ou un fichier de dessin pour utiliser ses blocs.
+	Block Libraries	Bibliothèques de blocs
+	Block Library	Bibliothèque de blocs
+	Blocks Palette	Palette des blocs
+	Click a block, then pick its insertion point.	Cliquez sur un bloc, puis indiquez son point d'insertion.
+	Current Drawing	Dessin courant
+	Details	Détails
+	Extra Large Icons	Très grandes icônes
+	Folder or file	Dossier ou fichier
+	Import Library Block	Importer un bloc de bibliothèque
+	Insert and Explode	Insérer et décomposer
+	Large Icons	Grandes icônes
+	Libraries	Bibliothèques
+	Medium Icons	Icônes moyennes
+	No block matches the filter.	Aucun bloc ne correspond au filtre.
+	This block is already in the drawing, so its definition is used.	Ce bloc est déjà dans le dessin ; sa définition est utilisée.
+	Open Library...	Ouvrir une bibliothèque...
+	Read the library again	Relire la bibliothèque
+	Reading the library...	Lecture de la bibliothèque...
+	Refresh	Actualiser
+	Remove from the list	Retirer de la liste
+	Repeat Placement	Répéter le placement
+	Small Icons	Petites icônes
+	This drawing has no blocks.	Ce dessin ne contient aucun bloc.
+	This library has no drawings or blocks.	Cette bibliothèque ne contient ni dessin ni bloc.
+	Options	Options
+	Only the first {n} are shown.	Seuls les {n} premiers sont affichés.
