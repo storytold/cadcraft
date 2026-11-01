@@ -136,6 +136,13 @@ pub struct UiState {
     pub system_title_bar: bool,
 }
 
+/// Whether the app draws the window frame: the desktop leaves it to the app (`controls`), and
+/// either `CADCRAFT_TITLEBAR=app` forces it or Use system title bar is off. The desktop app's
+/// `main` decides how the window opens with this, and [`CadApp::draws_window_frame`] after.
+pub fn app_draws_frame(controls: bool, forced: bool, system_title_bar: bool) -> bool {
+    controls && (forced || !system_title_bar)
+}
+
 /// A DXF/DWG file version (2000 … 2018).
 pub use cadcraft_engine::cmd::file::Version as SaveVersion;
 
@@ -254,6 +261,8 @@ pub struct CadApp {
     /// Set when the desktop leaves the window frame to the app (GNOME on Wayland): a title row
     /// carries these window buttons and the window's edges resize it.
     pub window_controls: Option<window_controls::Layout>,
+    /// `CADCRAFT_TITLEBAR=app`: draw the window buttons whatever Use system title bar says.
+    pub frame_forced: bool,
     /// Whether the window currently has the app's frame rather than winit's (`None` until the
     /// desktop app says how the window opened, or the first frame).
     pub app_frame_shown: Option<bool>,
@@ -345,6 +354,7 @@ impl CadApp {
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             window_controls: None,
+            frame_forced: false,
             app_frame_shown: None,
             control_rx: None,
             capture_geometry: None,
@@ -877,9 +887,9 @@ impl CadApp {
     }
 
     /// Whether the app draws the window buttons and resize edges: the desktop leaves the frame to
-    /// the app and Use system title bar is off.
+    /// the app, and Use system title bar is off or `CADCRAFT_TITLEBAR=app` overrides it.
     pub fn draws_window_frame(&self) -> bool {
-        self.window_controls.is_some() && !self.ui.system_title_bar
+        app_draws_frame(self.window_controls.is_some(), self.frame_forced, self.ui.system_title_bar)
     }
 
     /// The window buttons to draw this frame: none where the desktop draws the frame, and none in

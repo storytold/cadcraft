@@ -269,8 +269,13 @@ fn use_x11(display: bool, setting: Switch, x11_libraries_load: impl FnOnce() -> 
 /// `WAYLAND_DISPLAY` or `WAYLAND_SOCKET` is set and not empty (an X11-only session).
 #[cfg(all(unix, not(target_os = "macos")))]
 fn runs_on_x11(forced: bool, wayland_display: Option<&std::ffi::OsStr>, wayland_socket: Option<&std::ffi::OsStr>) -> bool {
-    let set = |v: Option<&std::ffi::OsStr>| v.is_some_and(|v| !v.is_empty());
     forced || !(set(wayland_display) || set(wayland_socket))
+}
+
+/// Whether a display variable names something: set and not empty, as winit reads them.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn set(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty())
 }
 
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
@@ -342,7 +347,7 @@ fn main() -> eframe::Result {
     // misbehaves; 0, off or unset leaves it off. The X11 libraries are only recommended by the
     // packages, so without them the setting is ignored rather than failing.
     #[cfg(all(unix, not(target_os = "macos")))]
-    let force_x11 = use_x11(std::env::var_os("DISPLAY").is_some(), vars.x11, x11_libraries_load);
+    let force_x11 = use_x11(set(std::env::var_os("DISPLAY").as_deref()), vars.x11, x11_libraries_load);
     #[cfg(all(unix, not(target_os = "macos")))]
     if force_x11 {
         options.event_loop_builder = Some(Box::new(|b| {
@@ -360,7 +365,9 @@ fn main() -> eframe::Result {
     #[cfg(not(all(unix, not(target_os = "macos"))))]
     let x11 = false;
     let window_controls = decorations::app_drawn(x11, vars.titlebar.as_deref());
-    let app_frame = window_controls.is_some() && !restored.as_ref().is_some_and(|ui| ui.system_title_bar);
+    let frame_forced = decorations::forces_app(vars.titlebar.as_deref());
+    let app_frame =
+        cadcraft_ui_egui::app_draws_frame(window_controls.is_some(), frame_forced, restored.as_ref().is_some_and(|ui| ui.system_title_bar));
     if app_frame {
         options.viewport = options.viewport.with_decorations(false);
     }
@@ -403,6 +410,7 @@ fn main() -> eframe::Result {
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.app_frame_shown = window_controls.as_ref().map(|_| app_frame);
             app.window_controls = window_controls;
+            app.frame_forced = frame_forced;
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
@@ -483,6 +491,17 @@ mod tests {
         assert!(!runs_on_x11(false, some("wayland-0"), None));
         assert!(!runs_on_x11(false, some(""), some("3")), "WAYLAND_SOCKET alone");
         assert!(runs_on_x11(true, some("wayland-0"), None), "CADCRAFT_X11=1 through XWayland");
+    }
+
+    /// An empty `DISPLAY` names no X server, so `CADCRAFT_X11=1` can't force X11 with it.
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn an_empty_display_is_no_display() {
+        use super::set;
+        use std::ffi::OsStr;
+        assert!(set(Some(OsStr::new(":0"))));
+        assert!(!set(Some(OsStr::new(""))));
+        assert!(!set(None));
     }
 
     #[test]

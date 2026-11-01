@@ -213,8 +213,8 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
     // Only where the app draws the window buttons (GNOME on Wayland); elsewhere the desktop draws
-    // the frame.
-    if app.window_controls.is_some() {
+    // the frame. `CADCRAFT_TITLEBAR=app` overrides the setting, so it isn't offered then.
+    if app.window_controls.is_some() && !app.frame_forced {
         ui.add_space(6.0);
         let mut system = app.ui.system_title_bar;
         if ui.checkbox(&mut system, crate::tl!("Use system title bar")).changed() {
