@@ -211,6 +211,9 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|v| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("properties.set", "thickness must be a finite number")))
         .transpose()?;
     let lw = p.get("lineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
+    // A new text is worked out like a typed one: a formula becomes the text's formula, other
+    // text drops the one it had.
+    let formula_env = crate::textformula::env(s);
     let d = s.doc_mut()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
@@ -232,21 +235,30 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
+        // A dimension's measurement, which `<>` in a new formula stands for.
+        let formula_env = match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Dimension(dm)) => crate::textformula::Env { measured: crate::textformula::measured(d, dm), ..formula_env.clone() },
+            _ => formula_env.clone(),
+        };
         d.modify_entity(*h, |e| {
             set_common_properties(e, p, &common);
-            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
+            if apply_kind_properties(e, p, dim_style.as_ref(), &dim_over) {
+                crate::textformula::apply(&mut e.kind, &formula_env, true);
+            }
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
 }
 
+/// Set the kind's own properties; whether a text was given (a new value, worked out as typed).
 fn apply_kind_properties(
     entity: &mut cadcraft_doc::Entity,
     params: &Value,
     dim_style: Option<&String>,
     dim_overrides: &serde_json::Map<String, Value>,
-) {
+) -> bool {
     let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    let mut new_text = false;
     match &mut entity.kind {
         EntityKind::Line(l) => {
             if let Some(v) = params.get("start") {
@@ -301,6 +313,7 @@ fn apply_kind_properties(
         EntityKind::Text(t) => {
             if let Some(v) = str_param(params, "text") {
                 t.value = v.to_string();
+                new_text = true;
             }
             if let Some(x) = num("height").filter(|x| *x > 0.0) {
                 t.height = x;
@@ -323,6 +336,7 @@ fn apply_kind_properties(
         EntityKind::MText(t) => {
             if let Some(v) = str_param(params, "text") {
                 t.contents = v.replace('\n', "\\P");
+                new_text = true;
             }
             if let Some(x) = num("height").filter(|x| *x > 0.0) {
                 t.height = x;
@@ -343,10 +357,11 @@ fn apply_kind_properties(
             }
         }
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
-        EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
+        EntityKind::Dimension(dimension) => new_text = set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
         _ => {}
     }
+    new_text
 }
 
 fn set_insert_properties(insert: &mut cadcraft_doc::Insert, params: &Value) {
@@ -390,15 +405,19 @@ fn set_insert_properties(insert: &mut cadcraft_doc::Insert, params: &Value) {
     }
 }
 
+/// Set a dimension's properties; whether its text was replaced (like typing over it: a formula
+/// becomes the formula, other text drops it).
 fn set_dimension_properties(
     dimension: &mut cadcraft_doc::Dimension,
     params: &Value,
     style: Option<&String>,
     overrides: &serde_json::Map<String, Value>,
-) {
+) -> bool {
+    let mut new_text = false;
     if let Some(v) = str_param(params, "textOverride") {
         dimension.text = v.to_string();
         dimension.block = None;
+        new_text = true;
     }
     if let Some(st) = style {
         dimension.style.clone_from(st);
@@ -408,6 +427,7 @@ fn set_dimension_properties(
         dimension.overrides.extend(overrides.clone());
         dimension.block = None;
     }
+    new_text
 }
 
 fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
