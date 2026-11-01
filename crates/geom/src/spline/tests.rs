@@ -220,13 +220,34 @@ fn tessellate_spans_measures_narrow_knot_spans() {
     assert!((a - b).abs() <= 1e-4 * a.abs().max(1.0), "{a} {b}");
 }
 
+/// The square (0,0) (100,0) (100,100) (0,100) as a degree-1 spline: `edge` spans of width 1
+/// along the bottom, then two spans a millionth wide up the right side and across the top.
+fn square_with_narrow_spans(edge: usize) -> Spline {
+    let mut control: Vec<Vec2> = (0..=edge).map(|i| Vec2::new(100.0 * i as f64 / edge as f64, 0.0)).collect();
+    control.extend([Vec2::new(100.0, 100.0), Vec2::new(0.0, 100.0)]);
+    let end = edge as f64;
+    let mut knots: Vec<f64> = (0..=edge).map(|i| i as f64).collect();
+    knots.insert(0, 0.0);
+    knots.extend([end + 1e-6, end + 2e-6, end + 2e-6]);
+    Spline { degree: 1, knots, control, ..Spline::default() }
+}
+
 #[test]
-fn tessellate_spans_keeps_its_cap() {
-    // More spans than two samples each allow: the even grid, capped, as `bounds` falls back.
-    let control: Vec<Vec2> = (0..3000).map(|i| Vec2::new(i as f64, (i % 2) as f64)).collect();
-    let s = Spline::from_control(control, 1);
+fn tessellate_spans_covers_every_span_however_many() {
+    // Up to `MAX_SAMPLES` spans the count stays within the cap, at least one segment per span.
+    let s = square_with_narrow_spans(3000);
     assert!(s.is_valid());
-    assert!(s.tessellate_spans(1e-9).len() <= MAX_SAMPLES + 1);
+    let pts = s.tessellate_spans(1e-9);
+    assert!(pts.len() <= MAX_SAMPLES + 1, "{}", pts.len());
+    assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
+    // Past it, one segment each: the narrow spans are measured, not stepped over by a grid.
+    let s = square_with_narrow_spans(MAX_SAMPLES + 500);
+    assert!(s.is_valid());
+    assert!(crate::shoelace(&s.samples(MAX_SAMPLES).collect::<Vec<_>>()).abs() < 0.6e4);
+    let pts = s.tessellate_spans(1e-9);
+    assert_eq!(pts.len(), s.control.len());
+    assert!(pts.iter().zip(&s.control).all(|(p, c)| p.near(*c, 1e-9)));
+    assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
     // A few spans: their share of the count, at least eight segments each, end included.
     let s = Spline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)], 1);
     assert_eq!(s.tessellate_spans(1.0).len(), 2 * 8 + 1);

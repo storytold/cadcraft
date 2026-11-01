@@ -140,6 +140,25 @@ fn area_of_a_spline_counts_its_narrow_knot_spans() {
 }
 
 #[test]
+fn area_of_a_spline_with_more_spans_than_samples_counts_each() {
+    // The square (0,0) (100,0) (100,100) (0,100) as a degree-1 spline: 5000 spans along the bottom,
+    // then two a millionth wide up the right side and across the top. Area 10000, perimeter (the
+    // open spline's length) 300.
+    let mut control: Vec<Vec2> = (0..=5000).map(|i| Vec2::new(i as f64 / 50.0, 0.0)).collect();
+    control.extend([Vec2::new(100.0, 100.0), Vec2::new(0.0, 100.0)]);
+    let mut knots: Vec<f64> = (0..=5000).map(f64::from).collect();
+    knots.insert(0, 0.0);
+    knots.extend([5000.0 + 1e-6, 5000.0 + 2e-6, 5000.0 + 2e-6]);
+    let spline = Spline { degree: 1, knots, control, ..Spline::default() };
+    let mut s = Session::new();
+    let space = s.space();
+    let h = s.doc_mut().unwrap().add(&space, Common::default(), EntityKind::Spline(spline)).unwrap();
+    lisp(&mut s, &format!("(command \"_.AREA\" \"_O\" (list (handent \"{}\") '(50.0 0.0)))", h.hex()));
+    assert!(close(var(&s, "AREA"), 1e4), "{}", var(&s, "AREA"));
+    assert!(close(var(&s, "PERIMETER"), 300.0), "{}", var(&s, "PERIMETER"));
+}
+
+#[test]
 fn dist_sets_the_distance_and_leaves_lastpoint_at_the_first_point() {
     let mut s = Session::new();
     lisp(&mut s, "(command \"_.DIST\" '(0.5 0.25) '(0.53 0.29))");
