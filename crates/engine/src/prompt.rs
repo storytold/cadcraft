@@ -183,16 +183,7 @@ impl Prompt {
         }
         let mut s = self.message.clone();
         if !self.keywords.is_empty() {
-            // A question offers its answers ("Fix any errors detected? [Yes/No]"), and so does a
-            // prompt for an option ([`NO_OR`]); anything else offers options besides what it asks
-            // for ("Specify next point or [Undo]").
-            s.push_str(if self.message.is_empty() {
-                "["
-            } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
-                " ["
-            } else {
-                " or ["
-            });
+            s.push_str(self.keyword_lead());
             s.push_str(&self.keywords.join("/"));
             s.push(']');
         }
@@ -201,6 +192,20 @@ impl Prompt {
         }
         s.push(':');
         s
+    }
+    /// What goes between the message and its keywords. A question offers its answers ("Fix any
+    /// errors detected? [Yes/No]"), and so does a prompt for an option ([`NO_OR`]): " [". Anything
+    /// else offers options besides what it asks for ("Specify next point or [Undo]"): " or [". With
+    /// no message, "[". The command line in the window draws the keywords itself and takes this
+    /// too.
+    pub fn keyword_lead(&self) -> &'static str {
+        if self.message.is_empty() {
+            "["
+        } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
+            " ["
+        } else {
+            " or ["
+        }
     }
     /// Match typed text against keywords: full word or the capitalised shortcut, case-insensitive.
     pub fn match_keyword(&self, text: &str) -> Option<String> {
