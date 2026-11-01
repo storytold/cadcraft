@@ -102,7 +102,9 @@ fn assert_field_on_attribute(dxf: &[u8], text: &str) {
     let var = fields.iter().find(|r| first(r, 5) == first(text_field, 360)).expect("the variable field");
     assert_eq!(first(var, 330), first(text_field, 5));
     assert_eq!(first(var, 301), Some(text), "cached result");
-    assert_eq!(first(var, 302), Some(text), "cached formatted result");
+    let formatted = var.iter().skip_while(|t| t.1 != "ACFD_FIELD_VALUE").find(|t| t.0 == 302).map(|t| t.1.as_str());
+    assert_eq!(formatted, Some(text), "cached formatted result");
+    assert_eq!(first(var, 302), Some(""), "the result before the value stays empty, as AutoCAD writes it");
     assert_eq!(first(var, 98), Some(text.chars().count().to_string().as_str()), "cached length");
 }
 

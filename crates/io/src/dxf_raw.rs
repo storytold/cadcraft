@@ -1309,17 +1309,35 @@ fn retarget_text_field(o: &mut ForeignObject, text: &str) {
     {
         t.value = format!("{sum}.0");
     }
-    let owner = o.tags.iter().find(|t| t.code == 330).cloned();
+    // The owner is the first 330 outside any 102 group (a reactor's 330 sits inside one), and a
+    // field that already reacts to something keeps the group it has.
+    let (mut depth, mut owner, mut reacts) = (0usize, None, false);
+    for t in &o.tags {
+        match t.code {
+            102 if t.value.starts_with('{') => {
+                depth = depth.saturating_add(1);
+                reacts |= t.value.eq_ignore_ascii_case("{ACAD_REACTORS");
+            }
+            102 => depth = depth.saturating_sub(1),
+            330 if depth == 0 && owner.is_none() => owner = Some(t.clone()),
+            _ => {}
+        }
+    }
     let at = o.tags.iter().position(|t| t.code == 5).map_or(0, |i| i + 1);
-    if let Some(owner) = owner {
+    if let (Some(owner), false) = (owner, reacts) {
         let group = |code, value: &str| RawTag { code, value: value.to_string() };
         o.tags.splice(at..at, [group(102, "{ACAD_REACTORS"), owner, group(102, "}")]);
     }
 }
 
 /// The cached result of a placed attribute's variable field follows the text it shows: the
-/// result and its length, and the file name in the cached path (AutoCAD evaluates it again).
+/// result and its length, and the file name in the cached path (AutoCAD evaluates it again). Only
+/// the file name field (`\AcVar Filename`) follows the text; any other variable field is left as it is.
 fn retarget_variable_field(o: &mut ForeignObject, text: &str) {
+    let filename = o.tags.iter().any(|t| t.code == 2 && t.value.to_ascii_lowercase().contains("\\acvar filename"));
+    if !filename {
+        return;
+    }
     let mut in_value = false;
     for t in &mut o.tags {
         match t.code {
@@ -1328,9 +1346,74 @@ fn retarget_variable_field(o: &mut ForeignObject, text: &str) {
                 let dir = t.value.rfind(['\\', '/']).map_or(0, |i| i + 1);
                 t.value = format!("{}{text}.dwg", t.value.get(..dir).unwrap_or_default());
             }
-            301 | 302 => t.value = text.to_string(),
-            98 => t.value = text.chars().count().to_string(),
+            301 | 302 if in_value => t.value = text.to_string(),
+            98 if in_value => t.value = text.chars().count().to_string(),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod field_tests {
+    use super::*;
+
+    fn tag(code: i32, value: &str) -> RawTag {
+        RawTag { code, value: value.to_string() }
+    }
+
+    fn field(tags: Vec<RawTag>) -> ForeignObject {
+        ForeignObject { handle: Handle(0x10), kind: "FIELD".into(), tags }
+    }
+
+    fn count(o: &ForeignObject, code: i32, value: &str) -> usize {
+        o.tags.iter().filter(|t| t.code == code && t.value == value).count()
+    }
+
+    /// A `_text` field that already reacts to something keeps its one reactors group, and the
+    /// owner it is given is the 330 outside that group.
+    #[test]
+    fn a_text_field_with_reactors_gets_no_second_group() {
+        let mut o = field(vec![tag(5, "10"), tag(102, "{ACAD_REACTORS"), tag(330, "AA"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
+        retarget_text_field(&mut o, "X");
+        assert_eq!(count(&o, 102, "{ACAD_REACTORS"), 1);
+        assert_eq!(o.tags.iter().filter(|t| t.code == 330).count(), 2, "no reactor handle was copied");
+    }
+
+    /// Without reactors, the group names the owner, not a handle inside some other group.
+    #[test]
+    fn a_text_field_reacts_to_its_owner() {
+        let mut o = field(vec![tag(5, "10"), tag(102, "{OTHER"), tag(330, "AA"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
+        retarget_text_field(&mut o, "X");
+        let at = o.tags.iter().position(|t| t.value == "{ACAD_REACTORS");
+        assert_eq!(at.and_then(|i| o.tags.get(i + 1)).map(|t| t.value.as_str()), Some("BB"));
+    }
+
+    /// Only the file name field follows the text, and only the cache after `ACFD_FIELD_VALUE`: the
+    /// results before it stay empty, as in a file AutoCAD wrote.
+    #[test]
+    fn only_the_filename_field_is_retargeted() {
+        let cache = || {
+            vec![
+                tag(1, "AcVar"),
+                tag(302, ""),
+                tag(7, "ACFD_FIELD_VALUE"),
+                tag(1, "C:\\Dir\\OLD.dwg"),
+                tag(302, "OLD"),
+                tag(301, "OLD"),
+                tag(98, "3"),
+            ]
+        };
+        let mut name = field([vec![tag(2, "\\AcVar Filename \\f \"%tc1%fn2\"")], cache()].concat());
+        retarget_variable_field(&mut name, "NEW-1");
+        let get = |o: &ForeignObject, code| o.tags.iter().filter(|t| t.code == code).map(|t| t.value.clone()).collect::<Vec<_>>();
+        assert_eq!(get(&name, 302), ["", "NEW-1"]);
+        assert_eq!(get(&name, 301), ["NEW-1"]);
+        assert_eq!(get(&name, 98), ["5"]);
+        assert_eq!(get(&name, 1), ["AcVar", "C:\\Dir\\NEW-1.dwg"]);
+
+        let mut other = field([vec![tag(2, "\\AcVar Author")], cache()].concat());
+        let before = other.tags.clone();
+        retarget_variable_field(&mut other, "NEW-1");
+        assert_eq!(other.tags, before, "another variable field is left alone");
     }
 }
