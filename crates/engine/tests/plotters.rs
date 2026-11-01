@@ -223,7 +223,8 @@ fn paper_margins_are_checked_against_their_own_axis() {
     assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
     // Setting the same sheet again without margins keeps them: the stored margins belong to the
     // portrait sheet and turn back before the per-axis check.
-    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200}})).unwrap();
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200}}))
+        .unwrap();
     let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
     let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
     assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
