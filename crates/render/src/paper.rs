@@ -87,7 +87,19 @@ impl PaperSize {
 /// Look up a paper size by canonical name or alias (case-insensitive; spaces, underscores, hyphens
 /// and parentheses are ignored, so `B5 (JIS)`, `b5-jis` and `b5jis` are one name).
 pub fn paper_size(name: &str) -> Option<&'static PaperSize> {
-    let norm = |s: &str| s.chars().filter(|c| !c.is_whitespace() && !matches!(c, '_' | '-' | '(' | ')')).collect::<String>().to_ascii_lowercase();
+    // Full-width forms are what a Japanese keyboard or IME produces (`Ｂ５ (ＪＩＳ)`), so fold them
+    // to ASCII before the rest of the normalisation: U+FF01..U+FF5E are ASCII + 0xFEE0.
+    let norm = |s: &str| {
+        s.chars()
+            .map(|c| match c {
+                '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+                '\u{3000}' => ' ',
+                _ => c,
+            })
+            .filter(|c| !c.is_whitespace() && !matches!(c, '_' | '-' | '(' | ')'))
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
     let n = norm(name);
     if n.is_empty() {
         return None;
@@ -239,5 +251,24 @@ mod tests {
         let hostile = PageSetup { width_mm: f64::NAN, height_mm: -1.0, margins_mm: [1e9; 4], ..PageSetup::default() };
         let s = Sheet::from_page(&hostile, 0.0);
         assert!(s.size.x > 0.0 && s.printable == s.bounds());
+    }
+}
+
+#[cfg(test)]
+mod wide_name_tests {
+    use super::*;
+
+    /// A name typed on a Japanese keyboard arrives in full-width forms (`Ｂ５ (ＪＩＳ)`); it must
+    /// resolve to the same sheet as `B5 (JIS)`.
+    #[test]
+    fn full_width_names_resolve_like_their_ascii_forms() {
+        for (wide, ascii) in [("Ｂ５ (ＪＩＳ)", "B5 (JIS)"), ("Ａ４", "A4"), ("Ｂ４", "B4")] {
+            let w = paper_size(wide).unwrap_or_else(|| panic!("{wide}"));
+            let a = paper_size(ascii).unwrap_or_else(|| panic!("{ascii}"));
+            assert_eq!(w.name, a.name, "{wide} vs {ascii}");
+        }
+        // The Japanese spellings still work, and the ideographic space is a separator.
+        assert_eq!(paper_size("はがき").map(|p| p.name), paper_size("Japanese Postcard").map(|p| p.name));
+        assert_eq!(paper_size("　Ｂ５　").map(|p| p.name), Some(paper_size("B5").unwrap().name));
     }
 }
