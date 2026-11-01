@@ -26,8 +26,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(prompts::LayoutM::default()))),
         CommandSpec::new("layout.new", "New Layout", run_new)
             .menu(&["Insert", "Layout", "New Layout"])
+            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name only; LAYOUT.NEWAREA also asks the area)")
+            .interactive(|_| Ok(Box::new(NewLayoutM))),
+        CommandSpec::new("layout.newarea", "New Layout from Area...", run_new)
+            .menu(&["Insert", "Layout", "New Layout from Area..."])
             .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name, then the area)")
-            .interactive(|_| Ok(Box::new(NewLayoutM::default()))),
+            .interactive(|_| Ok(Box::new(NewLayoutAreaM::default()))),
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
@@ -202,12 +206,35 @@ fn default_page(d: &Drawing) -> PageSetup {
     p
 }
 
-/// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one),
+/// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one).
+struct NewLayoutM;
+
+impl Interactive for NewLayoutM {
+    fn name(&self) -> &'static str {
+        "LAYOUT"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let next = s.doc().map(next_layout_name).unwrap_or_else(|_| "Layout1".into());
+        Prompt::new("Enter name of new layout", Accept::TEXT).default(next)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let p = match i {
+            Input::Text(t) if !t.trim().is_empty() => json!({ "name": t.trim() }),
+            Input::Text(_) | Input::Enter => json!({}),
+            _ => return Ok(Step::Continue),
+        };
+        // A taken or invalid name is an error: the session reports it and asks again.
+        run_new(s, &p)?;
+        Ok(Step::Done)
+    }
+}
+
+/// LAYOUT.NEWAREA from the menu or command line: asks for the name (Enter takes the next free one),
 /// then for the part of the model the new layout shows. The Model tab is shown for that, so it
 /// can be zoomed and panned first; two corners pick the area (Enter takes the whole drawing). The
 /// new layout is then shown, zoomed to that area.
 #[derive(Default)]
-struct NewLayoutM {
+struct NewLayoutAreaM {
     /// The checked name, once it has been asked.
     name: Option<String>,
     /// The first corner of the model area.
@@ -216,7 +243,7 @@ struct NewLayoutM {
     from: Option<Space>,
 }
 
-impl NewLayoutM {
+impl NewLayoutAreaM {
     /// Show tab `space` (`layout.set`).
     fn show(s: &mut Session, space: &Space) -> Result<()> {
         let set = find_command("layout.set").ok_or_else(|| crate::EngineError::UnknownCommand("layout.set".into()))?;
@@ -225,7 +252,7 @@ impl NewLayoutM {
     }
 }
 
-impl Interactive for NewLayoutM {
+impl Interactive for NewLayoutAreaM {
     fn name(&self) -> &'static str {
         "LAYOUT"
     }
@@ -250,7 +277,7 @@ impl Interactive for NewLayoutM {
                 _ => return Ok(Step::Continue),
             };
             // A taken or invalid name is an error: the session reports it and asks again.
-            let name = check_name("layout.new", s.doc()?, &name, None)?;
+            let name = check_name("layout.newarea", s.doc()?, &name, None)?;
             // The area is picked in the Model tab, where the drawing can be zoomed and panned.
             self.from = Some(s.layout_space());
             Self::show(s, &Space::Model)?;

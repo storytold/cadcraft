@@ -107,7 +107,12 @@ fn layout_tab_menu() {
 
     let n = layout_names(&app).len();
     choose(&mut app, &model, "New Layout");
-    // The next free name is taken; the part of the model to show is asked in the Model tab.
+    assert_eq!(layout_names(&app).len(), n + 1);
+    assert!(matches!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper(_)), "the new layout is current");
+
+    // "New Layout from Area..." takes the next free name, then asks for the part of the model to show.
+    let n = layout_names(&app).len();
+    choose(&mut app, &model, "New Layout from Area...");
     assert!(app.session.prompt_text().contains("first corner of the model area"), "{}", app.session.prompt_text());
     assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Model);
     app.cmdline("");
@@ -116,7 +121,7 @@ fn layout_tab_menu() {
 
     // Esc at the area prompt creates nothing and returns to the tab it started in.
     let g = sm::layout_tab_entries(&app, "Sheet A");
-    choose(&mut app, &g, "New Layout");
+    choose(&mut app, &g, "New Layout from Area...");
     assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Model);
     app.session.cancel();
     assert_eq!(layout_names(&app).len(), n + 1, "cancelled: no layout added");

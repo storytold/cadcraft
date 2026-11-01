@@ -88,15 +88,24 @@ fn new_layout_from_the_menu_asks_for_a_name() {
     s.cmdline("Layout1").unwrap();
     assert!(s.running.is_some(), "a taken name asks again");
     s.cmdline("Sheet A").unwrap();
-    // The name is taken; the model area to show is asked next. Enter takes the whole drawing.
-    assert!(s.running.is_some() && s.current_prompt().is_some_and(|p| p.message.contains("first corner of the model area")));
-    s.cmdline("").unwrap();
+    // The name is all it asks: no model area, no tab change.
     assert!(s.running.is_none());
     s.start("layout.new").unwrap();
     s.cmdline("").unwrap();
-    s.cmdline("").unwrap();
     let d = s.doc().unwrap();
     assert!(d.layout("Sheet A").is_some() && d.layout("Layout3").is_some(), "Enter takes the default name");
+}
+
+/// LAYOUT.NEWAREA asks the name, then the area; Enter takes the whole drawing.
+#[test]
+fn new_layout_from_area_asks_a_name_then_the_area() {
+    let mut s = session_with_model();
+    s.start("layout.newarea").unwrap();
+    s.cmdline("Sheet A").unwrap();
+    assert!(s.running.is_some() && s.current_prompt().is_some_and(|p| p.message.contains("first corner of the model area")));
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.doc().unwrap().layout("Sheet A").is_some());
 }
 
 /// The viewport of layout `name`.
@@ -145,7 +154,7 @@ fn a_bad_layout_window_adds_no_layout() {
 fn new_layout_picks_the_model_area_in_the_model_tab() {
     let mut s = session_with_model();
     s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cmdline("Sheet P").unwrap();
     assert_eq!(s.space(), Space::Model, "the Model tab is shown to pick the area");
     s.cmdline("10,10").unwrap();
@@ -169,7 +178,7 @@ fn new_layout_picks_the_model_area_in_the_model_tab() {
 fn new_layout_ends_if_another_tab_is_shown_while_picking() {
     let mut s = session_with_model();
     let before = s.doc().unwrap().layouts.len();
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cmdline("Sheet T").unwrap();
     assert_eq!(s.space(), Space::Model);
     // A tab shown meanwhile: the next point must not be taken for a model corner.
@@ -184,7 +193,7 @@ fn new_layout_ends_if_another_tab_is_shown_while_picking() {
 #[test]
 fn the_opposite_corner_is_not_bent_by_ortho() {
     let mut s = session_with_model();
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cmdline("Sheet O").unwrap();
     s.cmdline("10,10").unwrap();
     let p = s.current_prompt().unwrap();
@@ -197,7 +206,7 @@ fn cancelling_new_layout_puts_the_tab_back() {
     let mut s = session_with_model();
     s.execute("layout.set", &json!({"name": "Layout2"})).unwrap();
     let before = s.doc().unwrap().layouts.len();
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cmdline("Sheet C").unwrap();
     assert_eq!(s.space(), Space::Model);
     s.cancel();
@@ -205,7 +214,7 @@ fn cancelling_new_layout_puts_the_tab_back() {
     assert_eq!(s.space(), Space::Paper("Layout2".into()), "back in the tab it started in: {:?}", s.log);
     assert_eq!(s.doc().unwrap().layouts.len(), before);
     // Esc at the name prompt changes nothing either.
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cancel();
     assert_eq!(s.space(), Space::Paper("Layout2".into()));
 }
@@ -215,7 +224,7 @@ fn cancelling_new_layout_puts_the_tab_back() {
 fn cancelling_new_layout_keeps_a_tab_chosen_meanwhile() {
     let mut s = session_with_model();
     s.execute("layout.set", &json!({"name": "Layout2"})).unwrap();
-    s.start("layout.new").unwrap();
+    s.start("layout.newarea").unwrap();
     s.cmdline("Sheet K").unwrap();
     s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
     s.cancel();
