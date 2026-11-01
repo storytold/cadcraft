@@ -57,7 +57,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     );
     let te = state_id().with("field");
     let mut done = None;
-    egui::Area::new(state_id().with("area")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+    // The estimate above places the first frame; from then on the field's own size keeps it in
+    // the drawing area (a large font's field is taller than its letters).
+    egui::Area::new(state_id().with("area")).order(egui::Order::Foreground).fixed_pos(pos).constrain_to(xf.rect).show(ctx, |ui| {
         egui::Frame::NONE.fill(tk.panel).stroke(Stroke::new(1.0, tk.accent)).inner_margin(egui::Margin::same(2)).show(ui, |ui| {
             // Named by the prompt it answers, for screen readers (the field has no caption).
             let r = ui
