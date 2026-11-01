@@ -112,7 +112,7 @@ connectivity (including islands made of separate lines, #163). Caps: 60,000 segm
 islands. Each traced edge keeps the input polyline it came from, so the circular runs of a
 loop traced around a point become arcs again with their corners on the exact curves
 (`engine/src/cmd/hatch/arcs.rs`, #1167): a hatched circle is two half circles and its area is
-exact. Missing: ellipses and splines in traced boundaries (they stay tessellated), island
+exact. BOUNDARY uses the same tracing, so its polylines keep the arcs too, as AutoCAD's do. Missing: ellipses and splines in traced boundaries (they stay tessellated), island
 detection modes beyond the default, boundary sets, and retained associative boundaries for every case. Pattern
 lines are scanline families clipped against the tessellated loops (`render/src/hatch.rs`).
 
