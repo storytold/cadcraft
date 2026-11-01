@@ -94,11 +94,13 @@ fn a_polyface_mesh_too_large_for_its_record_is_saved_as_3d_faces() {
 
 #[test]
 fn faces_naming_missing_vertices_are_dropped_on_read() {
-    // The second face names vertex 9 of a 4-vertex mesh, the third has only two corners.
+    // Added faces: one names vertex 9 of a 4-vertex mesh, one has only two corners, one has two
+    // before its first 0 (which ends the face).
     let text = POLYFACE_DXF.replace(
         "0\nSEQEND\n",
         "0\nVERTEX\n5\n38\n8\n0\n10\n0\n20\n0\n30\n0\n70\n128\n71\n1\n72\n2\n73\n9\n\
-0\nVERTEX\n5\n39\n8\n0\n10\n0\n20\n0\n30\n0\n70\n128\n71\n1\n72\n2\n0\nSEQEND\n",
+0\nVERTEX\n5\n39\n8\n0\n10\n0\n20\n0\n30\n0\n70\n128\n71\n1\n72\n2\n\
+0\nVERTEX\n5\n3A\n8\n0\n10\n0\n20\n0\n30\n0\n70\n128\n71\n1\n72\n2\n74\n3\n0\nSEQEND\n",
     );
     let d = read_dxf(text.as_bytes()).unwrap();
     assert_eq!(mesh(&d), expected(), "only the faces that name its vertices");

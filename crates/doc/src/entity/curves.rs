@@ -93,12 +93,12 @@ impl PolyfaceMesh {
     pub fn faces3d(&self) -> Vec<Face3d> {
         self.faces.iter().filter_map(|f| self.face3d(f)).collect()
     }
-    /// One face record as a 3D face: `None` when it names fewer than three vertices or one
-    /// outside the vertex list.
+    /// One face record as a 3D face: `None` when it names fewer than three vertices before a 0,
+    /// or one outside the vertex list.
     pub fn face3d(&self, f: &[i32; 4]) -> Option<Face3d> {
         let mut corners: Vec<Vec3> = Vec::with_capacity(4);
         let mut hidden = 0u8;
-        for &ix in f.iter().filter(|&&ix| ix != 0) {
+        for &ix in f.iter().take_while(|&&ix| ix != 0) {
             let at = usize::try_from(ix.unsigned_abs()).ok().and_then(|n| n.checked_sub(1));
             let p = *at.and_then(|n| self.vertices.get(n))?;
             if ix < 0 {
