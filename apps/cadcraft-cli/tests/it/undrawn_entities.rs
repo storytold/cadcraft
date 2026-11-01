@@ -70,9 +70,10 @@ fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
     assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
-/// An OLE2FRAME's frame outline is drawn, so an image export doesn't call it undrawn (#2422).
+/// An OLE2FRAME's frame outline is drawn, so an image export doesn't call it an undrawn entity (#2422); it
+/// says once that the OLE content inside the frame is not drawn (review on #2587).
 #[test]
-fn an_ole_frame_is_not_reported_as_undrawn() {
+fn an_ole_frame_is_noted_as_frame_only() {
     let scratch = Scratch::new("ole");
     let dir = scratch.0.clone();
     let input = dir.join("ole.dxf");
@@ -80,5 +81,8 @@ fn an_ole_frame_is_not_reported_as_undrawn() {
     std::fs::write(&input, ole).unwrap();
     let out = cli(&["convert", input.to_str().unwrap(), dir.join("out.png").to_str().unwrap()]);
     assert!(out.status.success());
-    assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("entity not drawn") && !err.contains("entities not drawn"), "{err}");
+    let notes: Vec<&str> = err.lines().filter(|l| l.contains("OLE")).collect();
+    assert_eq!(notes, [format!("{}: 1 OLE object shown as the frame only (the OLE content is not drawn)", input.display())], "{err}");
 }
