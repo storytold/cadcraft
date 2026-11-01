@@ -66,8 +66,13 @@ impl MultilineAttrib {
     /// This text placed by `m` (a block reference's transform, for its attribute made from a
     /// definition).
     pub fn transformed(&self, m: &Mat3) -> MultilineAttrib {
+        self.transformed_dz(m, 0.0)
+    }
+
+    /// [`MultilineAttrib::transformed`] with an additional translation along Z.
+    pub fn transformed_dz(&self, m: &Mat3, dz: f64) -> MultilineAttrib {
         let mut k = EntityKind::MText(self.mtext.clone());
-        k.transform(m);
+        k.transform_dz(m, dz);
         let mtext = if let EntityKind::MText(t) = k { t } else { self.mtext.clone() };
         MultilineAttrib { mtext, read_as: self.read_as.clone() }
     }
@@ -76,8 +81,13 @@ impl MultilineAttrib {
 impl Attrib {
     /// Move a multiline attribute's text by `m` along with the attribute (nothing for others).
     pub fn transform_multiline(&mut self, m: &Mat3) {
+        self.transform_multiline_dz(m, 0.0);
+    }
+
+    /// [`Attrib::transform_multiline`] with an additional translation along Z.
+    pub fn transform_multiline_dz(&mut self, m: &Mat3, dz: f64) {
         if let Some(ml) = &mut self.multiline {
-            *ml = ml.transformed(m);
+            *ml = ml.transformed_dz(m, dz);
         }
     }
 
