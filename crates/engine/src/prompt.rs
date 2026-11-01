@@ -1,7 +1,7 @@
 //! Interactive commands: prompts, inputs and the command-line coordinate grammar.
 
 use cadcraft_doc::{EntityKind, Handle};
-use cadcraft_geom::{Mat3, Vec2};
+use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde::Serialize;
 
 use crate::{Result, Session};
@@ -41,6 +41,10 @@ pub struct Prompt {
     /// prompt (a point with no base yet, e.g. the first point of a line). Elsewhere a deferred
     /// pick arrives as the plain point it was picked at.
     pub deferred: bool,
+    /// A point in a 3D command prompt. Typed coordinates are parsed in the active UCS and
+    /// converted to WCS; native picks carry a WCS point.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub point3d: bool,
     /// The base is a rectangle's first corner (ZOOM Window, PLOTWINDOW, RECTANG, ARRAYRECT's unit
     /// cell): ortho does not bend the opposite corner, so the rectangle keeps its area.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -128,6 +132,11 @@ impl Prompt {
         self.deferred = true;
         self
     }
+    /// Accept a full 3D point (the `point3d` field).
+    pub fn point3d(mut self) -> Self {
+        self.point3d = true;
+        self
+    }
     pub fn default(mut self, d: impl Into<String>) -> Self {
         self.default = Some(d.into());
         self
@@ -196,6 +205,8 @@ impl Prompt {
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum Input {
     Point(Vec2),
+    /// A world-coordinate point picked or entered by a 3D tool.
+    Point3(Vec3),
     /// A deferred tangent/perpendicular snap, only sent to prompts that accept it
     /// (`Prompt.deferred`).
     Deferred(crate::snap::Deferred),

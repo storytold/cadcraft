@@ -44,8 +44,9 @@ impl Session {
         Ok(())
     }
 
-    /// An idle click that picked `h`, with [`Self::idle_click`]'s PICKADD and Shift rules.
-    fn idle_pick(&mut self, h: Handle, shift: bool) {
+    /// Apply idle selection to a resolved visible hit, including picks from a 3D projection.
+    /// Uses [`Self::idle_click`]'s group expansion, PICKADD and Shift rules.
+    pub fn idle_pick(&mut self, h: Handle, shift: bool) {
         let pickadd = self.settings.pickadd;
         // With group selection the object's selectable groups come (or go) with it.
         let hs = cmd::groups::expand(self, vec![h]);

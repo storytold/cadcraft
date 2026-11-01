@@ -1,18 +1,19 @@
-//! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG or PDF), IMPORT (the objects of another
-//! DXF/DWG file), PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
-//! ATTACH, SHARE and 3DORBIT are registered so the tool bar and command line say they are not
-//! available yet.
+//! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG, PDF, OBJ/STL/glTF/GLB/3MF meshes of the
+//! 3D faces, or STEP/IGES exact solids), IMPORT (the objects and groups of another
+//! DXF/DWG/OBJ/STL/glTF/GLB/3MF/STEP/IGES file), PREVIEW (a picture of the plot) and
+//! PUBLISH (plot several sheets at once). ATTACH and SHARE are registered so the tool bar and
+//! command line say they are not available yet.
 //!
 //! Files go through the host's io hooks ([`super::file::io`]) like OPEN and SAVEAS, so the engine
 //! stays I/O-agnostic; the JSON forms never open dialogs (the UI asks for files when these
 //! commands come from a menu, the tool bar or the command line).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_color::Rgb;
-use cadcraft_doc::{Drawing, Entity, EntityKind, PageSetup, Space};
-use cadcraft_geom::{Bounds2, Mat3, Vec2};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Group, Handle, PageSetup, Space};
+use cadcraft_geom::{Bounds2, Mat3, Vec2, Vec3};
 use cadcraft_render::paper::{self, Sheet};
 use cadcraft_render::raster::{RasterOptions, View};
 use serde_json::{Value, json};
@@ -23,7 +24,7 @@ use super::{CommandSpec, bad, point_value, str_param};
 use crate::{EngineError, Result, Session};
 
 /// Formats EXPORT writes (the io layer picks the writer from the extension).
-pub const EXPORT_FORMATS: &[&str] = &["dxf", "dwg", "svg", "png", "pdf"];
+pub const EXPORT_FORMATS: &[&str] = &["dxf", "dwg", "svg", "png", "pdf", "obj", "stl", "gltf", "glb", "3mf", "step", "iges"];
 /// Default and largest plot preview width, in pixels.
 const PREVIEW_PX: u64 = 1200;
 const MAX_PREVIEW_PX: u64 = 4096;
@@ -35,11 +36,11 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, OBJ, STL, glTF, GLB, 3MF, STEP or IGES; the name's extension picks the reader), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks, groups, notes?}: groups are kept, so exact STEP/IGES/DXF solids stay exact and editable (moved and scaled with the import)"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf|obj|stl|gltf|glb|3mf|step|iges (default: the path's extension)} → {format, bytes, path? | data}: obj, stl, gltf, glb and 3mf exchange 3D faces as triangle meshes; STEP exchanges persisted exact closed solids; IGES exchanges exact type 186 solids with planar faces and linear edges. A png is drawn through the 3D camera (depth-tested, at most 2048 px a side) when VIEW3D/3DORBIT set one; an svg stays flat")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
@@ -65,10 +66,6 @@ pub fn specs() -> Vec<CommandSpec> {
         })
         .params("not available yet")
         .noundo(),
-        CommandSpec::new("3dorbit", "Orbit", |_, _| Err(EngineError::Other("3DORBIT is not available yet: CADCraft draws in 2D (plan view) only".into())))
-            .alias(&["3do", "orbit"])
-            .params("not available yet")
-            .noundo(),
     ]
 }
 
@@ -99,6 +96,13 @@ pub(super) fn deliver_file(cmd: &str, path: &str, bytes: &[u8], hook: Option<sup
         "svg" => "image/svg+xml",
         "png" => "image/png",
         "pdf" => "application/pdf",
+        "obj" => "model/obj",
+        "stl" => "model/stl",
+        "gltf" => "model/gltf+json",
+        "glb" => "model/gltf-binary",
+        "3mf" => "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        "step" | "stp" => "application/step",
+        "iges" | "igs" => "application/iges",
         _ => "application/octet-stream",
     };
     let deliver = hook.ok_or_else(|| bad(cmd, "files can't be written in this build; omit `path` to get the file as base64 `data`"))?;
@@ -114,10 +118,22 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         Some(f) => f.trim().trim_start_matches('.').to_ascii_lowercase(),
         None => path.map(extension).unwrap_or_default(),
     };
+    let format = match format.as_str() {
+        "stp" => "step".to_owned(),
+        "igs" => "iges".to_owned(),
+        _ => format,
+    };
     if !EXPORT_FORMATS.contains(&format.as_str()) {
-        return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
+        return Err(bad(
+            "export",
+            "`format` must be dxf, dwg, svg, png, pdf, obj, stl, gltf, glb, 3mf, step or iges (or give a `path` with one of those extensions)",
+        ));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
+    // A png follows the 3D camera when one is set; every other format goes through the io layer.
+    let bytes = match if format == "png" { super::view3d::render_png(s, 2400, 1600)? } else { None } {
+        Some(png) => png,
+        None => (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?,
+    };
     match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
@@ -174,26 +190,96 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
         d.blocks.insert(to.clone(), Arc::new(nb));
     }
     let mut handles = Vec::new();
+    let mut adopted = HashMap::new();
     for e in src.model.iter() {
+        let from = e.handle;
         let mut e = adopt(d, e, &renames);
         if moved {
             e.kind.transform(&m);
         }
         d.ensure_layer(&e.common.layer);
         handles.push(e.handle);
+        adopted.insert(from, e.handle);
         if let Some(st) = d.space_mut(&space) {
             st.push(e);
         }
     }
+    let (groups, notes) = import_groups(d, src, &adopted, moved.then_some(m))?;
     s.set_selection(handles.clone());
-    Ok(json!({
+    let mut r = json!({
         "imported": handles.len(),
         "handles": handles.iter().map(|h| h.hex()).collect::<Vec<_>>(),
         "layers": layers,
         "styles": styles,
         "blocks": renames.len(),
+        "groups": groups,
         "message": format!("{} objects imported from {file}", handles.len()),
-    }))
+    });
+    if !notes.is_empty() {
+        r["notes"] = json!(notes);
+    }
+    Ok(r)
+}
+
+/// Copy `src`'s groups of model-space objects onto their imported copies (`adopted`: source
+/// handle → new handle), under names this drawing doesn't use yet. An exact solid's record is
+/// copied with its faces and stays valid, its fingerprint follows face order and coordinates,
+/// not handles; when the import moved or scaled the faces (`moved`), the exact body is
+/// transformed the same way and attached again. Returns the groups added and any notes.
+fn import_groups(d: &mut Drawing, src: &Drawing, adopted: &HashMap<Handle, Handle>, moved: Option<Mat3>) -> Result<(usize, Vec<String>)> {
+    let mut used: HashSet<String> = d.groups.iter().map(|g| g.name.to_ascii_uppercase()).collect();
+    let mut unnamed = 0usize;
+    let mut added = 0usize;
+    let mut notes = Vec::new();
+    // The import's plane transform as a 3D affine map (Z is kept, as for the faces).
+    let affine = match moved {
+        Some(m) => Some(super::xform3d::affine_of(&|p: Vec3| m.apply(p.xy()).to3(p.z))?),
+        None => None,
+    };
+    for g in &src.groups {
+        let members: Vec<Handle> = g.members.iter().filter_map(|h| adopted.get(h).copied()).collect();
+        if members.is_empty() {
+            continue;
+        }
+        if d.groups.len() >= super::groups::MAX_GROUPS {
+            notes.push(format!("{} source groups were not kept: the drawing has too many groups", src.groups.len() - added));
+            break;
+        }
+        let name = if g.name.starts_with('*') || g.name.trim().is_empty() {
+            loop {
+                unnamed += 1;
+                let n = format!("*A{unnamed}");
+                if !used.contains(&n) {
+                    break n;
+                }
+            }
+        } else {
+            let mut n = g.name.clone();
+            let mut i = 1usize;
+            while used.contains(&n.to_ascii_uppercase()) && i <= super::groups::MAX_GROUPS {
+                i += 1;
+                n = format!("{}_{i}", g.name);
+            }
+            n
+        };
+        used.insert(name.to_ascii_uppercase());
+        d.groups.push(Group { name, description: g.description.clone(), selectable: g.selectable, members: members.clone() });
+        added += 1;
+        if let Some(affine) = affine
+            && g.description == super::solids::SOLID_GROUP
+            && members.len() == g.members.len()
+            && let Ok(Some(body)) = cadcraft_doc::brep::read(src, &g.members)
+        {
+            let attached = body.transformed(affine).map_err(|e| e.to_string()).and_then(|b| cadcraft_doc::brep::attach(d, &members, &b));
+            if let Err(e) = attached {
+                for h in &members {
+                    d.modify_entity(*h, |e| cadcraft_doc::brep::strip(&mut e.common)).map_err(|e| bad("import", e.to_string()))?;
+                }
+                notes.push(format!("an exact solid was imported as a mesh only: {e}"));
+            }
+        }
+    }
+    Ok((added, notes))
 }
 
 fn read_file(_path: &str) -> Result<Vec<u8>> {
@@ -631,6 +717,59 @@ mod tests {
         assert!(st.path.is_none() && st.title == "Drawing1", "the drawing keeps its name");
     }
 
+    #[test]
+    fn export_takes_mesh_formats_and_mimes() {
+        for format in ["obj", "stl", "gltf", "glb", "3mf", "step", "iges"] {
+            assert!(EXPORT_FORMATS.contains(&format));
+        }
+        static MESHES: std::sync::Mutex<Vec<(String, String, usize)>> = std::sync::Mutex::new(Vec::new());
+        fn record_mesh(name: &str, mime: &str, bytes: &[u8]) -> std::result::Result<(), String> {
+            MESHES.lock().map_err(|e| e.to_string())?.push((name.into(), mime.into(), bytes.len()));
+            Ok(())
+        }
+        deliver_file("export", "dir/Part.obj", b"v 0 0 0", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.stl", b"solid", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.gltf", b"{}", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.glb", b"glTF", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.3mf", b"PK", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.step", b"ISO-10303-21", Some(record_mesh)).unwrap();
+        deliver_file("export", "Part.iges", b"IGES", Some(record_mesh)).unwrap();
+        let got = MESHES.lock().unwrap().clone();
+        assert!(got.contains(&("Part.obj".to_string(), "model/obj".to_string(), 7)));
+        assert!(got.contains(&("Part.stl".to_string(), "model/stl".to_string(), 5)));
+        assert!(got.contains(&("Part.gltf".to_string(), "model/gltf+json".to_string(), 2)));
+        assert!(got.contains(&("Part.glb".to_string(), "model/gltf-binary".to_string(), 4)));
+        assert!(got.contains(&("Part.3mf".to_string(), "application/vnd.ms-package.3dmanufacturing-3dmodel+xml".to_string(), 2)));
+        assert!(got.contains(&("Part.step".to_string(), "application/step".to_string(), 12)));
+        assert!(got.contains(&("Part.iges".to_string(), "application/iges".to_string(), 4)));
+        if !our_hooks() {
+            return;
+        }
+        let mut s = session();
+        for f in ["obj", "stl", "gltf", "glb", "3mf", "step", "iges"] {
+            let r = s.execute("export", &json!({ "format": f })).unwrap();
+            assert_eq!(r["format"], f);
+            assert_eq!(base64_decode(r["data"].as_str().unwrap()).unwrap(), format!("export.{f}:2").into_bytes());
+        }
+    }
+
+    #[test]
+    fn png_export_follows_the_3d_camera() {
+        if !our_hooks() {
+            return;
+        }
+        let mut s = session();
+        let flat = s.execute("export", &json!({ "format": "png" })).unwrap();
+        assert_eq!(base64_decode(flat["data"].as_str().unwrap()).unwrap(), b"export.png:2");
+        s.execute("view3d", &json!({ "preset": "seiso" })).unwrap();
+        let r = s.execute("export", &json!({ "format": "png" })).unwrap();
+        let png = base64_decode(r["data"].as_str().unwrap()).unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        s.execute("plan", &json!({})).unwrap();
+        let r = s.execute("export", &json!({ "format": "png" })).unwrap();
+        assert_eq!(base64_decode(r["data"].as_str().unwrap()).unwrap(), b"export.png:2");
+    }
+
     fn line(a: (f64, f64), b: (f64, f64)) -> EntityKind {
         EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })
     }
@@ -798,9 +937,9 @@ mod tests {
     }
 
     #[test]
-    fn attach_share_and_orbit_say_they_are_not_available_yet() {
+    fn attach_and_share_say_they_are_not_available_yet() {
         let mut s = session();
-        for c in ["attach", "share", "3dorbit", "orbit"] {
+        for c in ["attach", "share"] {
             let e = s.execute(&resolve_alias(c), &Value::Null).unwrap_err().to_string();
             assert!(e.contains("not available yet"), "{c}: {e}");
         }

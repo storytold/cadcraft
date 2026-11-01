@@ -34,6 +34,24 @@ impl Session {
     /// Record that which drawing is open or active changed (screenshot binding).
     pub fn bump_doc_epoch(&mut self) {
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
+        self.sync_camera();
+    }
+
+    /// The 3D camera is per drawing: put `view3d` away under the drawing it belonged to and take
+    /// the active drawing's own (a drawing never shown in 3D has none). Every change of the open
+    /// or active drawing bumps the epoch, so this runs at all of them.
+    fn sync_camera(&mut self) {
+        let now = self.docs.get(self.active).map(|d| d.uid);
+        if now == self.camera_owner {
+            return;
+        }
+        if let (Some(old), Some(v)) = (self.camera_owner, self.view3d) {
+            self.cameras.insert(old, v);
+        }
+        let live: std::collections::HashSet<u64> = self.docs.iter().map(|d| d.uid).collect();
+        self.cameras.retain(|uid, _| live.contains(uid));
+        self.view3d = now.and_then(|uid| self.cameras.remove(&uid));
+        self.camera_owner = now;
     }
 
     /// A command still waiting for input belongs to the drawing it started in: end it there

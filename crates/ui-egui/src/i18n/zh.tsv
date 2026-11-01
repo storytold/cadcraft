@@ -1349,6 +1349,8 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	Check for Updates	检查更新
+	Release updates are disabled for this development build.	此开发版本已禁用正式版更新。
 # Menu and command labels the October 2026 update missed (#1129).
 	Align Multileaders	对齐多重引线
 	Analyze Usage	分析使用情况
@@ -1380,3 +1382,27 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+# 3D modeling menus and commands (#2544).
+	3D Move	三维移动
+	3D Rotate	三维旋转
+	3D Scale	三维缩放
+	3D Views	三维视图
+	Chamfer Edges	倒角边
+	Chamfer Solid Edges	实体倒角边
+	Constrained Orbit	受约束的动态观察
+	Coordinates	坐标
+	Exact Solid	精确实体
+	Fillet Edges	圆角边
+	Fillet Solid Edges	实体圆角边
+	Inspect Exact Solid	检查精确实体
+	Plan View	平面视图
+	Refine Display	优化显示
+	Refine Solid Display	优化实体显示
+	Scale Exact Solid	缩放精确实体
+	Section	截面
+	Section Solid	实体截面
+	Shell	抽壳
+	Shell Solid	实体抽壳
+	Slice	剖切
+	Slice Solid	剖切实体
+	User Coordinate System	用户坐标系

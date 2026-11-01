@@ -29,6 +29,10 @@ pub struct DocState {
     pub mspace: Option<Handle>,
     pub views: Vec<(Space, View)>,
     pub view_history: Vec<View>,
+    /// Active UCS for point entry and drafting in this drawing.
+    pub active_ucs: super::ucs::Frame,
+    /// Previous active UCS, for UCS Previous.
+    pub previous_ucs: super::ucs::Frame,
     pub uid: u64,
     /// The drawing is saved as binary DXF (it was opened from one, or last saved as one).
     pub binary_dxf: bool,
@@ -58,6 +62,8 @@ impl DocState {
             mspace: None,
             views: Vec::new(),
             view_history: Vec::new(),
+            active_ucs: super::ucs::Frame::WORLD,
+            previous_ucs: super::ucs::Frame::WORLD,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,

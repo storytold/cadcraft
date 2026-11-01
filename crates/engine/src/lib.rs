@@ -33,13 +33,14 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod ucs;
 pub mod undoctl;
 pub mod units;
 
 use std::sync::Arc;
 
 use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Space};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -92,6 +93,8 @@ pub struct Session {
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
+    /// LASTPOINT with its elevation, retained for relative XYZ entry in 3D prompts.
+    pub last_point3: Vec3,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -146,6 +149,30 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// The 3D view camera; `None` is the 2D plan view (3DORBIT / VIEW3D / PLAN).
+    pub view3d: Option<View3d>,
+    /// Projection, visual style, light and material controls for the active session's 3D view.
+    pub render3d: cadcraft_render::Render3dOptions,
+    /// The 3D cameras of the drawings that are not active, by [`DocState::uid`]; `view3d` is the
+    /// active drawing's own ([`Session::bump_doc_epoch`] swaps them when the active drawing changes).
+    cameras: std::collections::HashMap<u64, View3d>,
+    /// The drawing `view3d` belongs to.
+    camera_owner: Option<u64>,
+}
+
+/// A 3D view camera in radians: azimuth around Z, elevation above XY. `orbiting` means a
+/// primary-button drag in the canvas turns the camera (3DORBIT).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View3d {
+    pub azimuth: f64,
+    pub elevation: f64,
+    pub orbiting: bool,
+}
+
+impl Default for View3d {
+    fn default() -> Self {
+        View3d { azimuth: -std::f64::consts::FRAC_PI_4, elevation: std::f64::consts::FRAC_PI_6, orbiting: true }
+    }
 }
 
 impl Default for Session {
@@ -173,6 +200,7 @@ impl Session {
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
+            last_point3: Vec3::ZERO,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),
@@ -197,6 +225,10 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             pick_hint: None,
+            view3d: None,
+            render3d: cadcraft_render::Render3dOptions::default(),
+            cameras: std::collections::HashMap::new(),
+            camera_owner: None,
         }
     }
 

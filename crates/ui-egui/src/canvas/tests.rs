@@ -137,6 +137,35 @@ fn prim_index_matches_a_scan_and_follows_list_rebuilds() {
     assert_eq!(ix.prims(2, &b, &hs(&[9, 3])), vec![0, 1]);
 }
 
+#[test]
+fn perspective_projector_matches_curved_display_geometry_at_each_zoom_tolerance() {
+    use cadcraft_doc::{Common, Drawing, EntityKind, Space};
+    use cadcraft_geom::{Spline, Vec3};
+    use cadcraft_render::view3d::{Camera3d, Projection3d, Render3dOptions, build_3d_with_options};
+
+    let mut drawing = Drawing::new_metric();
+    // An asymmetric curve makes its sampled planar bounds sensitive to tessellation detail.
+    let spline = Spline::from_control(vec![Vec2::new(-17.0, 4.0), Vec2::new(-5.0, 83.0), Vec2::new(62.0, -31.0), Vec2::new(137.0, 22.0)], 3);
+    let first = spline.eval(spline.domain().0);
+    let handle = drawing.add(&Space::Model, Common::default(), EntityKind::Spline(spline)).unwrap();
+    let camera = Camera3d { azimuth: -0.8, elevation: 0.45 };
+    let render = Render3dOptions { projection: Projection3d::Perspective, ..Default::default() };
+
+    let mut projected_at_scales = Vec::new();
+    for scale in [0.2, 30.0] {
+        let options = preview_options(scale);
+        let projector = projector3d_for(&drawing, camera, render, &options);
+        let displayed = build_3d_with_options(&drawing, &Space::Model, &options, camera, render);
+        let primitive = displayed.prims.iter().find(|p| p.handle == handle).expect("spline is displayed");
+        let first_displayed = displayed.points(primitive).first().copied().expect("spline has tessellated points");
+        let expected = projector.project(Vec3::new(first.x, first.y, 0.0)).0;
+        assert!(first_displayed.dist(expected) < 1e-8, "display/picker projector diverged at scale {scale}");
+        projected_at_scales.push((options.tolerance.to_bits(), expected));
+    }
+
+    assert_ne!(projected_at_scales[0].0, projected_at_scales[1].0, "zoom changes preview tessellation tolerance");
+}
+
 fn wheel(unit: egui::MouseWheelUnit, dy: f32, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::MouseWheel { unit, delta: vec2(0.0, dy), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
 }
@@ -229,4 +258,193 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
+}
+
+/// Exercise the actual canvas depth-pick path, including the idle selection it feeds to edits.
+#[test]
+fn depth_pick_keeps_solids_whole_and_honors_selection_settings() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let a = app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [4, 4, 4]})).unwrap();
+    let b = app.session.execute("box", &json!({"p1": [8, 0, 0], "p2": [12, 4, 4]})).unwrap();
+    let members = |r: &serde_json::Value| -> Vec<Handle> {
+        r["handles"].as_array().unwrap().iter().map(|h| Handle::parse_hex(h.as_str().unwrap()).unwrap()).collect()
+    };
+    let (a, b) = (members(&a), members(&b));
+    app.canvas.xf = Some(Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(20.0, 10.0)), center: Vec2::ZERO, scale: 1.0 });
+    app.canvas.depth_image = Some(cadcraft_render::depth3d::Image { width: 2, height: 1, rgba: vec![255; 8], handles: vec![Some(a[0]), Some(b[0])] });
+    let (pa, pb) = (Some(pos2(5.0, 5.0)), Some(pos2(15.0, 5.0)));
+    select_depth(&mut app, pa, false);
+    assert_eq!(app.session.selection().len(), a.len(), "an idle face pick selects the solid");
+    let moved = app.session.execute("move3d", &json!({"offset": [0, 0, 3]})).unwrap();
+    assert_eq!(moved["moved"].as_u64(), Some(a.len() as u64));
+    app.session.undo().unwrap();
+    select_depth(&mut app, pa, false);
+    let erased = app.session.execute("erase", &json!({})).unwrap();
+    assert_eq!(erased["erased"].as_u64(), Some(a.len() as u64));
+    assert!(a.iter().all(|h| app.session.doc().unwrap().entity(*h).is_none()));
+    app.session.undo().unwrap();
+    assert!(a.iter().all(|h| app.session.doc().unwrap().entity(*h).is_some()));
+
+    select_depth(&mut app, pa, false);
+    select_depth(&mut app, pb, false); // Default PICKADD adds.
+    assert_eq!(app.session.selection().len(), a.len() + b.len());
+    select_depth(&mut app, pa, true); // Shift removes the entire group.
+    assert_eq!(app.session.selection().len(), b.len());
+    app.session.settings.pickadd = false;
+    select_depth(&mut app, pa, false);
+    assert_eq!(app.session.selection().len(), a.len());
+    select_depth(&mut app, pb, true); // With PICKADD off, Shift adds.
+    assert_eq!(app.session.selection().len(), a.len() + b.len());
+    select_depth(&mut app, pb, true);
+    assert_eq!(app.session.selection().len(), a.len());
+    app.session.settings.pickstyle = 0;
+    select_depth(&mut app, pb, false);
+    assert_eq!(app.session.selection(), vec![b[0]], "explicit group-selection-off permits face edits");
+}
+
+#[test]
+fn projection_changes_refit_without_resetting_zoom_for_material_edits() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [10,20,30], "p2": [14,23,32]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    let ctx = egui::Context::default();
+    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0 };
+    ensure_list(&mut app, &xf, &[], &ctx);
+    let orthographic = app.session.state().unwrap().view();
+    app.session.execute("view3d", &json!({"projection": "perspective"})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    let perspective = app.session.state().unwrap().view();
+    assert!((perspective.center - orthographic.center).len() > 10.0);
+    assert!((perspective.center - app.canvas.list.as_ref().unwrap().bounds.center()).len() < 1e-10);
+    app.session.zoom_about(2.0, perspective.center).unwrap();
+    let zoomed = app.session.state().unwrap().view();
+    app.session.execute("view3d", &json!({"materialColor": [110,170,215]})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    assert_eq!(app.session.state().unwrap().view(), zoomed, "appearance controls preserve navigation");
+}
+
+#[test]
+fn viewport_label_follows_3d_and_plan_modes() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let ctx = egui::Context::default();
+    let at = pos2(700.0, 450.0);
+    assert!(painted_text(&mut app, &ctx, at).contains("+  |  Top  |  2D Wireframe"));
+    app.session.execute("view3d", &serde_json::json!({"preset": "seiso"})).unwrap();
+    let text = painted_text(&mut app, &ctx, at);
+    assert!(text.contains("+  |  Orthographic  |  Shaded"));
+    assert!(!text.contains("+  |  Top  |  2D Wireframe"));
+    app.session.execute("plan", &serde_json::json!({})).unwrap();
+    assert!(painted_text(&mut app, &ctx, at).contains("+  |  Top  |  2D Wireframe"));
+}
+
+/// The 3D camera belongs to the model tab. On a layout tab the canvas draws in 2D, so hover
+/// (and with it selection, grips and window drags) takes the 2D paths instead of the depth
+/// image a layout never builds (#2544 review).
+#[test]
+fn layout_tabs_hover_in_2d_while_the_model_tab_keeps_its_camera() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [10, 10, 10]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    assert!(showing_3d(&app));
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    assert!(app.session.view3d.is_some(), "the camera stays with the drawing");
+    assert!(!showing_3d(&app), "a layout tab shows the 2D sheet");
+    let line = app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    let h = Handle::parse_hex(line["handles"][0].as_str().or(line["handle"].as_str()).unwrap()).unwrap();
+    let ctx = egui::Context::default();
+    painted_text(&mut app, &ctx, pos2(5.0, 5.0));
+    let xf = app.canvas.xf.unwrap();
+    let on_line = xf.to_screen(Vec2::new(5.0, 2.0));
+    painted_text(&mut app, &ctx, on_line);
+    painted_text(&mut app, &ctx, on_line + vec2(0.5, 0.0));
+    assert_eq!(app.canvas.hover, Some(h), "the layout object under the cursor is found in 2D");
+}
+
+/// A 3DORBIT left on belongs to the model tab's 3D view: on a layout tab a click still goes to
+/// the prompt and a drag doesn't turn the camera (#2544 re-review).
+#[test]
+fn orbit_mode_does_not_capture_layout_clicks_or_drags() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [10, 10, 10]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso", "orbit": true})).unwrap();
+    assert!(app.session.view3d.is_some_and(|v| v.orbiting));
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    // A sheet object under the press point, so the drag starts a selection window rather than
+    // the click-click window an empty press begins.
+    app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    app.session.set_selection(Vec::new());
+    let ctx = egui::Context::default();
+    let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    };
+    frame(&mut app, vec![egui::Event::PointerMoved(pos2(5.0, 5.0))]);
+    let xf = app.canvas.xf.unwrap();
+    let camera = app.session.view3d.unwrap();
+    // A drag across the sheet leaves the camera alone.
+    let (a, b) = (xf.to_screen(Vec2::new(3.0, 2.0)), xf.to_screen(Vec2::new(6.0, 3.0)));
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut app, vec![egui::Event::PointerMoved(a), button(a, true)]);
+    for k in 1..=5 {
+        frame(&mut app, vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / 5.0))]);
+    }
+    assert!(app.canvas.drag_window, "a layout drag opens a selection window");
+    frame(&mut app, vec![button(b, false)]);
+    let after = app.session.view3d.unwrap();
+    assert_eq!((after.azimuth, after.elevation), (camera.azimuth, camera.elevation), "a layout drag doesn't orbit");
+    // A click at a point prompt is taken as the point.
+    app.session.set_selection(Vec::new());
+    app.session.start("line").unwrap();
+    let before = app.session.prompt_text();
+    let at = xf.to_screen(Vec2::new(4.0, 4.0));
+    frame(&mut app, vec![egui::Event::PointerMoved(at)]);
+    frame(&mut app, vec![button(at, true)]);
+    frame(&mut app, vec![button(at, false)]);
+    assert_ne!(app.session.prompt_text(), before, "the click reached the LINE prompt");
+}
+
+/// A 3D point prompt on a layout tab takes the 2D point under the cursor (on the UCS plane), not
+/// a point found through the model tab's 3D camera, which the sheet doesn't show (#2544
+/// re-review).
+#[test]
+fn layout_clicks_at_3d_prompts_use_the_sheet_point() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("view3d", &json!({"preset": "seiso", "orbit": false})).unwrap();
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    let line = app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    let h = Handle::parse_hex(line["handles"][0].as_str().or(line["handle"].as_str()).unwrap()).unwrap();
+    let ctx = egui::Context::default();
+    let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    };
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut app, vec![egui::Event::PointerMoved(pos2(5.0, 5.0))]);
+    let xf = app.canvas.xf.unwrap();
+    app.session.settings.osmode = 0;
+    app.session.set_selection(vec![h]);
+    app.session.start("move3d").unwrap();
+    for at in [Vec2::new(4.0, 5.0), Vec2::new(6.0, 6.0)] {
+        let p = xf.to_screen(at);
+        frame(&mut app, vec![egui::Event::PointerMoved(p)]);
+        assert!(app.canvas.cursor3d.is_none(), "no camera-ray point on a layout tab");
+        frame(&mut app, vec![button(p, true)]);
+        frame(&mut app, vec![button(p, false)]);
+    }
+    app.session.input(cadcraft_engine::Input::Enter).unwrap();
+    let cadcraft_doc::EntityKind::Line(moved) = &app.session.doc().unwrap().entity(h).unwrap().kind else { panic!("line") };
+    assert!((moved.a.x - 3.0).abs() < 1e-6 && (moved.a.y - 3.0).abs() < 1e-6, "moved by the clicked sheet offset: {:?}", moved.a);
 }

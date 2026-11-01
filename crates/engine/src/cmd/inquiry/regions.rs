@@ -11,6 +11,7 @@ use cadcraft_geom::{Line, Vec2, line_line, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase, SelectRun};
+use super::super::solids::{self, BoolOp};
 use super::super::{CommandSpec, bad, targets};
 
 use super::SelfCheck;
@@ -22,17 +23,17 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("union", "Union", run_union)
             .menu(&["Modify", "Solid Editing", "Union"])
             .alias(&["uni"])
-            .params("{handles?} (regions)")
+            .params("{handles?} (regions, or 3D solids: the result replaces them with one solid)")
             .interactive(|_| Ok(Box::new(SelectRun::new("union", "UNION")))),
         CommandSpec::new("subtract", "Subtract", run_subtract)
             .menu(&["Modify", "Solid Editing", "Subtract"])
             .alias(&["su"])
-            .params("{from: [handles], remove: [handles]} (regions)")
+            .params("{from: [handles], remove: [handles]} (regions, or 3D solids: the removed solids are cut out of the first)")
             .interactive(|_| Ok(Box::new(SubtractM::default()))),
         CommandSpec::new("intersect", "Intersect", run_intersect)
             .menu(&["Modify", "Solid Editing", "Intersect"])
             .alias(&["in"])
-            .params("{handles?} (regions)")
+            .params("{handles?} (regions, or 3D solids: the result is the common volume; solids that do not overlap are an error)")
             .interactive(|_| Ok(Box::new(SelectRun::new("intersect", "INTERSECT")))),
         CommandSpec::new("massprop", "Region/Mass Properties", run_massprop)
             .menu(&["Tools", "Inquiry", "Region/Mass Properties"])
@@ -149,6 +150,10 @@ fn apply(s: &mut Session, keep: Handle, r: Region, erase: &[Handle]) -> Result<(
 }
 
 fn fold(s: &mut Session, hs: &[Handle], op: Op) -> Result<Value> {
+    if solids::classify_solids(s.doc()?, hs)? {
+        let (id, bop) = if op == Op::Union { ("union", BoolOp::Union) } else { ("intersect", BoolOp::Intersect) };
+        return solids::solid_boolean(s, id, bop, hs, &[]);
+    }
     let rs = regions(s, hs)?;
     let Some(((h0, first), rest)) = rs.split_first() else { return Err(other("Select at least one region.")) };
     let mut acc = first.clone();
@@ -179,6 +184,10 @@ fn handles(p: &Value, key: &str) -> Result<Vec<Handle>> {
 }
 
 fn subtract(s: &mut Session, from: &[Handle], remove: &[Handle]) -> Result<Value> {
+    let both: Vec<Handle> = from.iter().chain(remove).copied().collect();
+    if solids::classify_solids(s.doc()?, &both)? {
+        return solids::solid_boolean(s, "subtract", BoolOp::Subtract, from, remove);
+    }
     let (a, b) = (regions(s, from)?, regions(s, remove)?);
     let Some(((h0, first), rest)) = a.split_first() else { return Err(other("Select regions to subtract from.")) };
     let mut acc = first.clone();
