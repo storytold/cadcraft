@@ -253,9 +253,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
         }
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         // An OLE object's content is not drawn, but its frame is, so the frame counts (#2422).
-        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => {
-            ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points)
-        }
+        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points),
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {
