@@ -12,6 +12,7 @@ use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 use crate::CadApp;
 use crate::theme::Tokens;
 
+mod area_fill;
 mod cursor;
 mod cycle;
 mod draw;
@@ -23,6 +24,7 @@ mod pick;
 mod viewport;
 mod widgets;
 
+use area_fill::{area_preview_fill, AreaPreviewCache};
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
@@ -75,6 +77,8 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    /// AREA's fixed selected-edge validation, reused across cursor movements.
+    area_preview_cache: AreaPreviewCache,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -1077,6 +1081,11 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
     }
+    // Do not retain AREA validation across separate commands. The exact
+    // coordinates in the cache key also cover Undo and changed selections.
+    if app.session.active_command_id() != Some("area") {
+        app.canvas.area_preview_cache.clear();
+    }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
     let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
@@ -1096,6 +1105,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
+            // Paint translucent AREA fill below the unchanged rubber-band outline.
+            if let Some(mesh) = area_preview_fill(app.session.active_command_id(), &ents, &xf, &mut app.canvas.area_preview_cache) {
+                painter.add(Shape::mesh(mesh));
+            }
             let list = rebuilt_preview(&st.doc, ents.iter(), scale);
             draw_list(painter, &xf, &list, bg, false);
         }
