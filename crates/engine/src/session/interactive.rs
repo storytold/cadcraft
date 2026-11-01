@@ -487,6 +487,36 @@ impl Session {
         self.picking_objects() && self.settings.selectionpreview & bit != 0
     }
 
+    /// The selected annotative objects at their other scales, drawn faded while they are selected
+    /// (SELECTIONANNODISPLAY): each at that scale's size and position, as
+    /// [`cadcraft_doc::anno_others`] gives them. In model space the current scale is CANNOSCALE;
+    /// inside an active viewport it is the viewport's scale. Empty with SELECTIONANNODISPLAY 0. At
+    /// most [`MAX_ANNO_OTHERS`] selected objects are looked at.
+    pub fn selection_anno_others(&self) -> Vec<Entity> {
+        let Ok(st) = self.state() else { return Vec::new() };
+        if !self.settings.selectionannodisplay {
+            return Vec::new();
+        }
+        let d = &st.doc;
+        let vp_scale = st.anno_view();
+        let mut out = Vec::new();
+        for h in st.selection.iter().take(crate::MAX_ANNO_OTHERS) {
+            match vp_scale {
+                Some(f) => {
+                    if let Some(e) = d.model.get(*h) {
+                        out.extend(cadcraft_doc::anno_others(e, f, d.anno_all_visible()));
+                    }
+                }
+                None => {
+                    if let Some(e) = d.entity(*h) {
+                        out.extend(d.anno_others(e));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Whether selected objects show grips while `selected` objects are selected (GRIPS,
     /// GRIPOBJLIMIT).
     pub fn shows_grips(&self, selected: usize) -> bool {

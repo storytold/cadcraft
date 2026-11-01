@@ -1,4 +1,4 @@
-use super::{DimVal, Handle, HashMap, K, Vec3, Version, dxf_ext};
+use super::{DimVal, Drawing, Entity, Handle, HashMap, K, MLeader, Tag, Vec3, Version, W, dxf_ext};
 
 /// The `DIMASSOC` object of an associative dimension (stored in the dimension's extension
 /// dictionary under `ACAD_DIMASSOC`).
@@ -58,6 +58,8 @@ pub(super) struct Ctx {
     pub(super) frozen_341: bool,
     /// MTEXT columns as the legacy groups 75..79 even from R2018 (the groups AutoLISP lists).
     pub(super) legacy_columns: bool,
+    /// Annotative text, MText and dimensions: their annotation scale contexts.
+    pub(super) anno: crate::dxf_anno::Plan,
 }
 
 impl Ctx {
@@ -65,6 +67,26 @@ impl Ctx {
     /// older files get LEADER + MTEXT/INSERT.
     pub(super) fn native_mleader(&self) -> bool {
         self.target >= Version::R2007
+    }
+    /// Annotative object `e` as its groups are written: at its default annotation scale (`None`:
+    /// not written with contexts, as it is).
+    pub(super) fn at_default(&self, e: &Entity) -> Option<Entity> {
+        self.anno.objs.get(&e.handle).map(|o| crate::dxf_anno::at_scale(e, crate::dxf_anno::default_factor(o)))
+    }
+    /// A native MULTILEADER's groups after its `AcDbMLeader` marker.
+    pub(super) fn mleader_tags(&self, d: &Drawing, m: &MLeader) -> Vec<Tag> {
+        let refs = crate::dxf_mleader::Refs {
+            style: self.mleader_style(&m.style),
+            text_style: m.text.as_ref().and_then(|t| self.style(&t.style)),
+            block: m.block.as_ref().and_then(|b| self.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
+        };
+        crate::dxf_mleader::entity_tags(d, m, &refs)
+    }
+    /// `AcadAnnotative` xdata of an object written with contexts.
+    pub(super) fn anno_xdata(&self, w: &mut W, e: &Entity) {
+        if self.anno.objs.contains_key(&e.handle) {
+            w.xdata(crate::dxf_anno::xdata());
+        }
     }
     pub(super) fn style(&self, name: &str) -> Option<String> {
         self.styles.get(&name.to_ascii_uppercase()).cloned()
