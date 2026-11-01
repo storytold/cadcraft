@@ -505,10 +505,9 @@ fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
         st.fmt.add_tab(range.clone(), to_units(m.x), TabKind::Left);
     } else if bg.secondary_clicked()
         && let Some(m) = hover
+        && st.fmt.remove_tab(range.clone(), to_units(m.x), 0.6 * base_h, base_h)
     {
-        if st.fmt.remove_tab(range.clone(), to_units(m.x), 0.6 * base_h, base_h) {
-            st.fmt.paragraph_lengths_to_drawing_units(range, base_h);
-        }
+        st.fmt.paragraph_lengths_to_drawing_units(range, base_h);
     }
     bg.on_hover_text(crate::tl!("Click the ruler to add a tab stop, right-click to remove one"));
 }

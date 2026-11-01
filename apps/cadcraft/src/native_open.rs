@@ -1,7 +1,7 @@
 //! Finder's Open Documents Apple event, independent of winit's application delegate.
 //!
-//! The owner authorized this module's small Objective-C boundary on 2026-10-13. Unsafe is
-//! denied elsewhere in the application and forbidden in the document/engine/render crates.
+//! This module contains the Open Documents Objective-C boundary. Unsafe code is denied
+//! elsewhere in the application and forbidden in the document/engine/render crates.
 #![allow(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -27,6 +27,12 @@ struct Pending {
     paths: VecDeque<PathBuf>,
     error: Option<String>,
     context: Option<egui::Context>,
+}
+
+impl Pending {
+    fn next_path(&mut self, busy: bool) -> Option<PathBuf> {
+        if busy { None } else { self.paths.pop_front() }
+    }
 }
 
 define_class!(
@@ -92,7 +98,10 @@ impl Handler {
 }
 
 fn file_path(s: &str) -> Option<PathBuf> {
-    url::Url::parse(s).ok()?.to_file_path().ok()
+    let path = url::Url::parse(s).ok()?.to_file_path().ok()?;
+    // Open Documents is a drawing entry point, not APPLOAD: open_path also executes LISP.
+    let ext = path.extension()?.to_str()?;
+    (ext.eq_ignore_ascii_case("dxf") || ext.eq_ignore_ascii_case("dwg")).then_some(path)
 }
 
 /// Retains the event handler for the lifetime of the application.
@@ -131,20 +140,31 @@ impl NativeOpen {
 
     pub fn poll(&self, app: &mut CadApp) {
         let Some(handler) = &self.handler else { return };
-        // Release the callback queue before OPEN runs (file import may pump a native dialog).
-        let (paths, error) = {
+        // Admit only one native import at a time, including files already opening through
+        // another entry point. Keep the bounded queue intact while the worker is busy.
+        let (path, error) = {
             let mut pending = handler.ivars().borrow_mut();
-            (std::mem::take(&mut pending.paths), pending.error.take())
+            (pending.next_path(app.opening.busy()), pending.error.take())
         };
-        for path in paths {
-            let existing = app.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| std::path::Path::new(p) == path));
+        if let Some(path) = path {
+            let path = path.canonicalize().unwrap_or(path);
+            let existing = app.session.docs.iter().position(|d| {
+                d.path.as_deref().is_some_and(|p| {
+                    let p = std::path::Path::new(p);
+                    p.canonicalize().unwrap_or_else(|_| p.to_path_buf()) == path
+                })
+            });
             if let Some(index) = existing {
                 // Finder can deliver the same drawing again, including one restored at
                 // launch. Select it without re-importing over any unsaved work.
                 let _ = app.run("document.switch", serde_json::json!({ "index": index }));
                 app.ui.start_tab = false;
             } else {
-                app.open_path(&path.to_string_lossy());
+                app.open_path(&path);
+            }
+            // Existing documents need no worker to keep frames coming for the next path.
+            if let Some(ctx) = &handler.ivars().borrow().context {
+                ctx.request_repaint();
             }
         }
         if let Some(error) = error {
@@ -167,7 +187,7 @@ impl Drop for NativeOpen {
 
 #[cfg(test)]
 mod tests {
-    use super::file_path;
+    use super::{Pending, file_path};
     use std::path::PathBuf;
 
     #[test]
@@ -175,5 +195,21 @@ mod tests {
         assert_eq!(file_path("file:///tmp/Plano%20Isome%CC%81trico%2520.dwg"), Some(PathBuf::from("/tmp/Plano Isome\u{301}trico%20.dwg")));
         assert_eq!(file_path("https://example.com/plan.dwg"), None);
         assert_eq!(file_path("not a url"), None);
+        assert_eq!(file_path("file:///tmp/Drawing.DXF"), Some(PathBuf::from("/tmp/Drawing.DXF")));
+        for name in ["routine.lsp", "routine.LSP", "drawing.dxf.lsp", "drawing.txt", "drawing"] {
+            assert_eq!(file_path(&format!("file:///tmp/{name}")), None);
+        }
+    }
+
+    #[test]
+    fn pending_drawings_wait_for_the_active_import_and_keep_their_order() {
+        let mut pending = Pending::default();
+        pending.paths.extend([PathBuf::from("first.dxf"), PathBuf::from("second.dwg")]);
+        assert_eq!(pending.next_path(true), None);
+        assert_eq!(pending.paths.len(), 2);
+        assert_eq!(pending.next_path(false), Some(PathBuf::from("first.dxf")));
+        assert_eq!(pending.next_path(true), None);
+        assert_eq!(pending.next_path(false), Some(PathBuf::from("second.dwg")));
+        assert_eq!(pending.next_path(false), None);
     }
 }

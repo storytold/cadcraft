@@ -323,7 +323,7 @@ fn put_xdata(d: &mut Drawing, mut xdata: HashMap<Handle, Vec<RawTag>>) {
 
 /// Keep what `secs` holds that the reader did not model in `d.foreign`.
 pub(crate) fn read(secs: &[Section<&[Tag]>], d: &mut Drawing) {
-    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(&s.tags)).unwrap_or_default();
+    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(s.tags)).unwrap_or_default();
     let (classes, tables, blocks, entities, objects) = (get("CLASSES"), get("TABLES"), get("BLOCKS"), get("ENTITIES"), get("OBJECTS"));
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
     let ents = entity_types(d);
@@ -845,6 +845,18 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
     all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_))).map(|e| e.handle.hex()).collect()
 }
 
+/// Rewrite a proxy's class number before appending its retained object record.
+fn append_object(map: &Map, object: &ForeignObject, number: Option<i64>, out: &mut Vec<Tag>) {
+    if let Some(n) = number {
+        let mut tags: Vec<Tag> = object.tags.iter().map(tag).collect();
+        set_class_number(&mut tags, n);
+        let object = ForeignObject { tags: tags.iter().map(raw).collect(), ..object.clone() };
+        map.object(&object, out);
+    } else {
+        map.object(object, out);
+    }
+}
+
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
 pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     let f = d.foreign.as_ref();
@@ -1002,15 +1014,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
             for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
                 let number = is_proxy(&o.kind).then(|| renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str()))))).flatten();
-                match number {
-                    Some(n) => {
-                        let mut ts: Vec<Tag> = o.tags.iter().map(tag).collect();
-                        set_class_number(&mut ts, n);
-                        let o = ForeignObject { tags: ts.iter().map(raw).collect(), ..o.clone() };
-                        map.object(&o, &mut out);
-                    }
-                    None => map.object(o, &mut out),
-                }
+                append_object(&map, o, number, &mut out);
                 queue.extend(out.drain(..));
             }
         }
@@ -1032,7 +1036,11 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         }
         queue.extend(out.drain(..));
     }
-    let mut out = Vec::from(queue);
+    *tags = finish_output(Vec::from(queue));
+}
+
+/// Complete table metadata and the handle seed after merging the retained records.
+fn finish_output(mut out: Vec<Tag>) -> Vec<Tag> {
     if out.capacity() > out.len() + out.len() / 10 {
         out.shrink_to_fit();
     }
@@ -1043,7 +1051,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     {
         *t = Tag::s(5, format!("{top:X}"));
     }
-    *tags = out;
+    out
 }
 
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of
@@ -1215,7 +1223,8 @@ fn add_appids(out: &mut Vec<Tag>) {
         return;
     }
     // Only inspect the TABLES section: entities need no APPID metadata.
-    let Some(start) = out.windows(2).position(|w| matches!(w, [a, b] if a.code == 0 && a.str() == "SECTION" && b.code == 2 && b.str() == "TABLES")) else {
+    let Some(start) = out.windows(2).position(|w| matches!(w, [a, b] if a.code == 0 && a.str() == "SECTION" && b.code == 2 && b.str() == "TABLES"))
+    else {
         return;
     };
     let end = out.iter().enumerate().skip(start + 2).find(|(_, t)| t.code == 0 && t.str() == "ENDSEC").map_or(out.len(), |(i, _)| i + 1);

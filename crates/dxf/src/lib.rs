@@ -282,10 +282,14 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
     let mut count = 0;
     while count < max_tags {
         let Some(code) = pairs.next() else { break };
-        if code.trim().is_empty() { continue; }
+        if code.trim().is_empty() {
+            continue;
+        }
         let Some(value) = pairs.next() else { break };
         count += 1;
-        if value == "EOF" && code.trim().parse::<i32>() == Ok(0) { break; }
+        if value == "EOF" && code.trim().parse::<i32>() == Ok(0) {
+            break;
+        }
     }
     let mut tags = Vec::with_capacity(count);
     let mut lines = text.lines().enumerate();
@@ -297,11 +301,12 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
         }
         let code: i32 = ct.parse().map_err(|_| DxfError::BadCode { line: ln + 1, text: ct.chars().take(40).collect() })?;
         let Some((_, val)) = lines.next() else { return Err(DxfError::Eof) };
+        // The exact reservation may already be full: reject before push could double it.
+        if tags.len() == max_tags {
+            return Err(DxfError::TooLarge { tags: tags.len().saturating_add(1), limit: max_tags });
+        }
         let v = typed(code, val);
         tags.push(Tag { code, value: v });
-        if tags.len() > max_tags {
-            return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
-        }
         if code == 0 && tags.last().is_some_and(|t| t.str() == "EOF") {
             break;
         }
@@ -649,7 +654,9 @@ pub fn record_slices(tags: &[Tag]) -> Vec<(String, &[Tag])> {
     let mut out = Vec::new();
     let mut open: Option<(String, usize)> = None;
     for (i, t) in tags.iter().enumerate() {
-        if t.code != 0 { continue; }
+        if t.code != 0 {
+            continue;
+        }
         if let Some((kind, start)) = open.take() {
             out.push((kind, tags.get(start..i).unwrap_or(&[])));
         }
@@ -661,12 +668,18 @@ pub fn record_slices(tags: &[Tag]) -> Vec<(String, &[Tag])> {
     out
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_parser_enforces_the_exact_reserved_tag_limit() {
+        let src = "1\nA\n70\n1\n0\nEOF\n";
+        assert!(matches!(parse_ascii_with_limit(src, 2), Err(DxfError::TooLarge { tags: 3, limit: 2 })));
+        let tags = parse_ascii_with_limit(src, 3).unwrap();
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags.capacity(), 3);
+    }
 
     #[test]
     fn borrowed_sections_and_records_retain_original_tags() {

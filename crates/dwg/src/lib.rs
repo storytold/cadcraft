@@ -512,12 +512,14 @@ mod native {
     /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
     /// (AC1018).
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
+        check_dxf_size(dxf.len())?;
         convert(dxf.to_vec(), None)
     }
 
     /// Convert DXF bytes into a DWG file of `version`, a code from [`super::VERSIONS`] ("AC1032"),
     /// whatever version the DXF declares.
     pub fn dxf_to_dwg_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
+        check_dxf_size(dxf.len())?;
         dxf_to_dwg_owned_as(dxf.to_vec(), version)
     }
 
@@ -539,7 +541,9 @@ mod native {
     /// Some acadrust versions number only the active layout, leaving inactive IDs at zero.
     fn viewport_ids(doc: &mut acadrust::CadDocument) {
         use acadrust::tables::TableEntry;
-        let blocks: Vec<_> = doc.block_records.iter()
+        let blocks: Vec<_> = doc
+            .block_records
+            .iter()
             .filter(|b| b.name().to_ascii_uppercase().starts_with("*PAPER_SPACE"))
             .map(|b| b.entity_handles.clone())
             .collect();
@@ -548,7 +552,9 @@ mod native {
             for handle in handles {
                 if let Some(acadrust::entities::EntityType::Viewport(v)) = doc.get_entity_mut(handle) {
                     id = id.saturating_add(1);
-                    if v.id == 0 { v.id = id; }
+                    if v.id == 0 {
+                        v.id = id;
+                    }
                 }
             }
         }
@@ -599,18 +605,24 @@ mod native {
         }
     }
 
-    fn convert(dxf: Vec<u8>, version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
+    /// Check borrowed inputs before allocating their owned conversion buffer.
+    fn check_dxf_size(len: usize) -> Result<(), String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
         // interrupted once it starts (CWE-789). This bounds the large-input variant; the decoder
         // runs inside `catch_unwind` so a decode failure is reported rather than crashing.
-        if dxf.len() > Limits::DEFAULT.max_dxf_bytes {
+        if len > Limits::DEFAULT.max_dxf_bytes {
             return Err(format!(
                 "DXF: the input is {}, larger than the {} CADCraft converts to DWG",
-                mb(dxf.len() as u64),
+                mb(len as u64),
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
+        Ok(())
+    }
+
+    fn convert(dxf: Vec<u8>, version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
+        check_dxf_size(dxf.len())?;
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(dxf)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
@@ -743,6 +755,14 @@ mod native {
             let mut doc = acadrust::CadDocument::new();
             assert!(doc.add_entity(EntityType::Table(Box::new(t))).is_ok());
             doc
+        }
+
+        #[test]
+        fn conversion_size_limit_is_checked_without_allocating_the_input() {
+            let limit = Limits::DEFAULT.max_dxf_bytes;
+            assert!(check_dxf_size(limit).is_ok());
+            assert!(check_dxf_size(limit + 1).is_err());
+            assert!(check_dxf_size(usize::MAX).is_err());
         }
 
         /// Overlapping whole-table ranges can't make the merge pass visit more than its budget (#1934).

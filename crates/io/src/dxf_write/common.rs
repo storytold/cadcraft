@@ -1,7 +1,7 @@
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
-    VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Insert, Lineweight, Text, Transparency, VAlign, Vec3,
+    Version, W, dxf_ext,
 };
 
 /// `AcadAnnotative` xdata marking an annotative style.

@@ -841,11 +841,21 @@ fn non_unicode_output_names() {
         (vec!["convert".into(), b.clone().into(), latin1("svg").into()], latin1("svg")),
         (vec!["run".into(), "--sample".into(), "--save".into(), latin1("dwg").into()], latin1("dwg")),
     ];
+    // Some Unix filesystems (including APFS) reject non-UTF-8 names themselves.
+    let probe = latin1("probe");
+    let filesystem_error = std::fs::write(&probe, b"").err();
+    let _ = std::fs::remove_file(&probe);
     for (args, path) in cases {
         let (code, err) = run(args.clone());
-        assert_eq!(code, 0, "{args:?}: {err}");
-        assert!(path.exists(), "{path:?}");
-        assert!(std::fs::metadata(&path).expect("stat output").len() > 0, "{path:?}");
+        if let Some(e) = &filesystem_error {
+            assert_eq!(code, 1, "{args:?}: {err}");
+            assert!(err.contains(&e.to_string()), "the filesystem error is reported: {err}");
+            assert!(!path.exists());
+        } else {
+            assert_eq!(code, 0, "{args:?}: {err}");
+            assert!(path.exists(), "{path:?}");
+            assert!(std::fs::metadata(&path).expect("stat output").len() > 0, "{path:?}");
+        }
     }
     // An input with such a name is still refused.
     let (code, err) = run(vec!["info".into(), latin1("dxf").into()]);

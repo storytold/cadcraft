@@ -129,7 +129,7 @@ pub(super) fn read_blocks(
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
     for (k, tg) in records(tags) {
-        objs.add(&k, &tg);
+        objs.add(&k, tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
@@ -139,7 +139,8 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
             // An unvisited AutoCAD layout has zero media dimensions and no sheet viewport.
-            let pending = plot.fd(44, 0.0) == 0.0 && plot.fd(45, 0.0) == 0.0
+            let pending = plot.fd(44, 0.0) == 0.0
+                && plot.fd(45, 0.0) == 0.0
                 && plot.s(4).is_none_or(|n| n.is_empty())
                 && t.s(331).is_none_or(|h| Handle::parse_hex(&h).is_none_or(|h| h.0 == 0));
             layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), pending));

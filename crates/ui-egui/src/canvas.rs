@@ -1051,7 +1051,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         && let Ok(st) = app.session.state()
     {
         let gs = app.session.settings.gripsize as f32;
-        app.canvas.grips.paint(&st.doc, st.uid, st.revision, &sel, xf, gs, &painter, &app.canvas.hot_grips, hover_pos);
+        app.canvas.grips.paint(
+            grips::Frame { d: &st.doc, uid: st.uid, revision: st.revision, sel: &sel, xf, gs, hot: &app.canvas.hot_grips, hover: hover_pos },
+            painter,
+        );
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
     } else {
         app.canvas.grips = grips::Cache::default();

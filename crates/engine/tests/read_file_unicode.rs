@@ -17,7 +17,7 @@ fn read_file_refuses_a_name_that_is_not_unicode() {
     let good = dir.join("good.dxf");
     let bad = dir.join(OsString::from_vec(b"bad-\xff.dxf".to_vec()));
     std::fs::write(&good, b"0\nEOF\n").unwrap();
-    std::fs::write(&bad, b"0\nEOF\n").unwrap();
+    // Validation precedes file access; APFS cannot create this byte sequence.
     let e = read_file(&bad).err().expect("a non-Unicode name is refused");
     assert!(e.contains("not valid Unicode") && e.contains("bad-"), "{e}");
     assert!(read_file(&good).is_ok());

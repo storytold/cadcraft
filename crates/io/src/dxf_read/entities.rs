@@ -384,7 +384,7 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
 pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section<&[Tag]>]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return out };
-    let recs = records(&objects.tags);
+    let recs = records(objects.tags);
     let entries = |tags: &[Tag]| {
         let mut v: Vec<(String, String)> = Vec::new();
         let mut name: Option<String> = None;

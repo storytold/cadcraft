@@ -121,6 +121,19 @@ struct Mark {
     color: Color32,
 }
 
+/// Drawing, view and interaction used to draw the current grip overlay.
+#[derive(Clone, Copy)]
+pub(super) struct Frame<'a> {
+    pub d: &'a Drawing,
+    pub uid: u64,
+    pub revision: u64,
+    pub sel: &'a [Handle],
+    pub xf: Xf,
+    pub gs: f32,
+    pub hot: &'a [(Handle, usize)],
+    pub hover: Option<Pos2>,
+}
+
 #[derive(Default)]
 pub(super) struct Cache {
     key: Option<Key>,
@@ -130,19 +143,9 @@ pub(super) struct Cache {
 }
 
 impl Cache {
-    pub(super) fn paint(
-        &mut self,
-        d: &Drawing,
-        uid: u64,
-        revision: u64,
-        sel: &[Handle],
-        xf: Xf,
-        gs: f32,
-        painter: &Painter,
-        hot: &[(Handle, usize)],
-        hover: Option<Pos2>,
-    ) {
-        if let Some(mesh) = self.mesh(d, uid, revision, sel, xf, gs, painter.ctx(), hot, hover) {
+    pub(super) fn paint(&mut self, frame: Frame<'_>, painter: &Painter) {
+        let Frame { d, sel, xf, gs, hot, hover, .. } = frame;
+        if let Some(mesh) = self.mesh(frame, painter.ctx()) {
             painter.add(Shape::Mesh(mesh));
         } else {
             let t = Tokens::get();
@@ -153,18 +156,8 @@ impl Cache {
     }
 
     /// None above the memory budget: use the existing uncached drawing path, keeping all grips.
-    fn mesh(
-        &mut self,
-        d: &Drawing,
-        uid: u64,
-        revision: u64,
-        sel: &[Handle],
-        xf: Xf,
-        gs: f32,
-        ctx: &egui::Context,
-        hot: &[(Handle, usize)],
-        hover: Option<Pos2>,
-    ) -> Option<Arc<Mesh>> {
+    fn mesh(&mut self, frame: Frame<'_>, ctx: &egui::Context) -> Option<Arc<Mesh>> {
+        let Frame { d, uid, revision, sel, xf, gs, hot, hover } = frame;
         let sel = sel.get(..sel.len().min(200)).unwrap_or_default();
         let key = (uid, revision, xf, gs, ctx.pixels_per_point(), ctx.tessellation_options(|o| *o));
         let t = Tokens::get();
@@ -266,7 +259,8 @@ mod tests {
             assert_eq!(ctx.pixels_per_point(), dpi);
             for hot in [vec![], vec![(h, 0)], vec![(h, 2), (h, 4)]] {
                 let hover = xf().to_screen(Vec2::new(1.0, 0.0));
-                let actual = cache.mesh(&d, 1, 1, &[h], xf(), 5.0, &ctx, &hot, Some(hover)).unwrap();
+                let actual =
+                    cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[h], xf: xf(), gs: 5.0, hot: &hot, hover: Some(hover) }, &ctx).unwrap();
                 let mut expected = Mesh::default();
                 let mut tess = Tessellator::new(ctx.pixels_per_point(), ctx.tessellation_options(|o| *o), [1, 1], Vec::new());
                 tess.set_clip_rect(xf().rect);
@@ -297,9 +291,9 @@ mod tests {
         let (mut d, h) = contour(20_000);
         let ctx = egui::Context::default();
         let mut cache = Cache::default();
-        let first = cache.mesh(&d, 1, 1, &[h], xf(), 5.0, &ctx, &[], None).unwrap();
+        let first = cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[h], xf: xf(), gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert_eq!(cache.marks.len(), 39_999);
-        let same = cache.mesh(&d, 1, 1, &[h], xf(), 5.0, &ctx, &[], None).unwrap();
+        let same = cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[h], xf: xf(), gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert!(Arc::ptr_eq(&first, &same));
         d.modify_entity(h, |e| {
             if let EntityKind::LwPolyline(p) = &mut e.kind {
@@ -307,13 +301,15 @@ mod tests {
             }
         })
         .unwrap();
-        let edited = cache.mesh(&d, 1, 2, &[h], xf(), 5.0, &ctx, &[], None).unwrap();
+        let edited = cache.mesh(Frame { d: &d, uid: 1, revision: 2, sel: &[h], xf: xf(), gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert_ne!(first.vertices, edited.vertices);
-        let zoomed = cache.mesh(&d, 1, 2, &[h], Xf { scale: 2.0, ..xf() }, 5.0, &ctx, &[], None).unwrap();
+        let zoomed =
+            cache.mesh(Frame { d: &d, uid: 1, revision: 2, sel: &[h], xf: Xf { scale: 2.0, ..xf() }, gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert_ne!(edited.vertices, zoomed.vertices);
-        let new_document = cache.mesh(&d, 2, 2, &[h], Xf { scale: 2.0, ..xf() }, 5.0, &ctx, &[], None).unwrap();
+        let new_document =
+            cache.mesh(Frame { d: &d, uid: 2, revision: 2, sel: &[h], xf: Xf { scale: 2.0, ..xf() }, gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert!(!Arc::ptr_eq(&zoomed, &new_document));
-        let empty = cache.mesh(&d, 2, 2, &[], xf(), 5.0, &ctx, &[], None).unwrap();
+        let empty = cache.mesh(Frame { d: &d, uid: 2, revision: 2, sel: &[], xf: xf(), gs: 5.0, hot: &[], hover: None }, &ctx).unwrap();
         assert!(empty.is_empty());
         assert!(cache.marks.is_empty());
     }
@@ -324,10 +320,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut cache = Cache::default();
         let view = Xf { scale: 0.1, center: Vec2::new(50.0, 1000.0), ..xf() };
-        assert!(cache.mesh(&d, 1, 1, &[h], view, 5.0, &ctx, &[], None).is_none());
+        assert!(cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[h], xf: view, gs: 5.0, hot: &[], hover: None }, &ctx).is_none());
         assert!(cache.marks.is_empty());
         assert!(cache.key.is_some());
-        assert!(cache.mesh(&d, 1, 1, &[h], view, 5.0, &ctx, &[], None).is_none());
-        assert!(cache.mesh(&d, 1, 1, &[], view, 5.0, &ctx, &[], None).unwrap().is_empty());
+        assert!(cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[h], xf: view, gs: 5.0, hot: &[], hover: None }, &ctx).is_none());
+        assert!(cache.mesh(Frame { d: &d, uid: 1, revision: 1, sel: &[], xf: view, gs: 5.0, hot: &[], hover: None }, &ctx).unwrap().is_empty());
     }
 }

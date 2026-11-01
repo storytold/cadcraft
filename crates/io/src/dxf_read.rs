@@ -115,16 +115,16 @@ fn read_tags_budgeted(tags: &[Tag], mut table_cells_left: usize) -> Result<Drawi
     count_skipped(&mut skipped, "(no section)", outside_sections(tags));
     for s in &secs {
         match s.name.as_str() {
-            "HEADER" => header(&s.tags, &mut d),
-            "TABLES" => tables(&s.tags, &mut d, &mut rx),
-            "BLOCKS" => blocks.extend(read_blocks(&s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
+            "HEADER" => header(s.tags, &mut d),
+            "TABLES" => tables(s.tags, &mut d, &mut rx),
+            "BLOCKS" => blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&records(&s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(&records(s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
-            "OBJECTS" => read_objects(&s.tags, &mut objs, &mut layout_objs),
+            "OBJECTS" => read_objects(s.tags, &mut objs, &mut layout_objs),
             _ => {}
         }
     }
@@ -135,7 +135,9 @@ fn read_tags_budgeted(tags: &[Tag], mut table_cells_left: usize) -> Result<Drawi
     place_blocks(&mut d, blocks, &mut rx, &paper_block_for, &first_layout);
     place_entities(&mut d, entities, &rx, &paper_block_for, &first_layout);
     // A native blank layout with content should not be initialized again on activation.
-    for l in &mut d.layouts { l.needs_initialization &= l.entities.is_empty(); }
+    for l in &mut d.layouts {
+        l.needs_initialization &= l.entities.is_empty();
+    }
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
     crate::dxf_image::resolve(&secs, &mut d);
