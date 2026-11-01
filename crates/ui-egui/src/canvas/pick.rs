@@ -48,7 +48,9 @@ pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
 pub(super) fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
     let st = app.session.state().ok()?;
     let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
-    let h = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, aperture)?;
+    let edit_space = st.edit_space();
+    let orbit = if matches!(edit_space, cadcraft_doc::Space::Model) { st.orbit } else { cadcraft_render::Orbit3d::default() };
+    let h = cadcraft_engine::select::pick_in_orbit(&st.doc, &edit_space, orbit, w, aperture)?;
     matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Hatch(_)).then_some(h)
 }
 
