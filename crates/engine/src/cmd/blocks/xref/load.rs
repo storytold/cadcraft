@@ -208,13 +208,50 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     }
     let (files, refused) = candidates(path, host, chosen);
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.into_iter().find(|p| p.is_file());
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p)));
     #[cfg(target_arch = "wasm32")]
     let found: Option<PathBuf> = {
         let _ = files;
         None
     };
     found.ok_or(refused.map_or(Missing::NotFound, Missing::Refused))
+}
+
+/// Upper bound on directory entries scanned per path component by [`case_insensitive`].
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_CASE_SCAN: usize = 10_000;
+
+/// The existing file `p` names when its letters' case is ignored, on file systems that don't
+/// ignore it themselves. Drawings made on Windows often store a reference as `PLAN.DWG` for
+/// `Plan.dwg`; Windows finds it, and so should Linux. Each missing component is matched against
+/// its folder's entries; an exact match always wins, and an ambiguous one finds nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn case_insensitive(p: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        let Component::Normal(name) = c else {
+            out.push(c.as_os_str());
+            continue;
+        };
+        let exact = out.join(name);
+        if exact.exists() {
+            out = exact;
+            continue;
+        }
+        let want = name.to_str()?.to_lowercase();
+        let mut hits = std::fs::read_dir(if out.as_os_str().is_empty() { Path::new(".") } else { &out })
+            .ok()?
+            .take(MAX_CASE_SCAN)
+            .flatten()
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.to_lowercase() == want));
+        let hit = hits.next()?;
+        if hits.next().is_some() {
+            return None;
+        }
+        out.push(hit.file_name());
+    }
+    out.is_file().then_some(out)
 }
 
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
