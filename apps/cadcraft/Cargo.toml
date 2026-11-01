@@ -50,6 +50,8 @@ muda = { version = "0.21", default-features = false }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }
+# Safe main-thread Apple event bridge for Finder/Dock document opening.
+fmv-macos-events = "=0.1.0"
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]

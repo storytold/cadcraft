@@ -54,6 +54,7 @@ pub mod opening;
 pub mod options;
 pub mod palettes;
 pub mod parametric;
+mod pdf_import;
 pub mod plotstyles;
 pub mod quick;
 pub mod save_loss;
@@ -210,10 +211,15 @@ impl Default for UiState {
     }
 }
 
+/// Desktop PDF importer supplied by the host; opens one 1-based page as a new drawing.
+pub type PdfImporter = fn(&std::path::Path, usize) -> Result<cadcraft_doc::Drawing, String>;
+
 /// Host services (file pickers, clipboard) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
+    pub import_pdf: Option<PdfImporter>,
+    pub pick_pdf: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Pick a `.lsp` file for APPLOAD, starting in the given folder (empty for the default one).
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
@@ -243,6 +249,8 @@ pub struct CadApp {
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
+    pdf_import: Option<pdf_import::Pending>,
+    pdf_reports: std::collections::VecDeque<pdf_import::Report>,
     pub integrated_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
@@ -330,6 +338,8 @@ impl CadApp {
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
+            pdf_import: None,
+            pdf_reports: std::collections::VecDeque::new(),
             integrated_titlebar: false,
             control_rx: None,
             capture_geometry: None,
@@ -529,6 +539,14 @@ impl CadApp {
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
     pub fn open_path(&mut self, path: &Path) {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+            if self.services.import_pdf.is_some() {
+                self.pdf_import = Some(pdf_import::Pending { path: path.to_path_buf(), page: 1 });
+            } else {
+                self.open_failed("PDF import is not available in this build");
+            }
+            return;
+        }
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {
@@ -554,13 +572,16 @@ impl CadApp {
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (_, outcome) in self.opening.poll() {
+        for (path, outcome) in self.opening.poll() {
             let r = match outcome {
                 Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             if let Err(e) = &r {
                 self.session.echo(e.clone());
+            }
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                self.pdf_reports.push_back(pdf_import::Report::from_result(&path, &r));
             }
             self.opened(r);
         }
@@ -890,6 +911,8 @@ impl CadApp {
         self.opening.show(ui.ctx());
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, ui.ctx());
+        pdf_import::show(self, ui.ctx());
+        pdf_import::show_report(self, ui.ctx());
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());

@@ -21,6 +21,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dock", "Arrange Panel", &[], None),
     ("ui.dock.reset", "Reset Panel Layout", &["Window", "Reset Panel Layout"], None),
     ("ui.open", "Open...", &[], Some("Cmd+O")),
+    ("ui.pdfimport", "Import vector PDF as new drawing...", &["File", "Import vector PDF as new drawing..."], None),
     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
     ("ui.saveas", "Save As...", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
@@ -307,6 +308,23 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
+fn user_saveas(app: &mut CadApp) -> Result<Value, String> {
+    let title = app.session.state().map(|s| s.title.clone()).ok();
+    let format = if app.session.state().is_ok_and(|s| s.imported_pdf && s.path.is_none()) { crate::SaveFormat::Dwg } else { app.ui.save_format };
+    let name = format.suggested_name(title.as_deref());
+    if let Some(path) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
+        return app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &path)).map_err(|e| e.to_string());
+    }
+    Ok(Value::Null)
+}
+
+fn user_open(app: &mut CadApp) -> Result<Value, String> {
+    if let Some(path) = app.services.pick_open.as_ref().and_then(|f| f()) {
+        app.open_path(std::path::Path::new(&path));
+    }
+    Ok(Value::Null)
+}
+
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = route_ui_subsystems(app, id, params) {
         return Some(result);
@@ -331,13 +349,13 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         return Some(result);
     }
     let r = match id {
-        "ui.open" | "open" if no_path => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f());
-            if let Some(p) = picked {
-                app.open_path(std::path::Path::new(&p));
+        "ui.pdfimport" if no_path => {
+            if let Some(path) = app.services.pick_pdf.as_ref().and_then(|f| f()) {
+                app.open_path(std::path::Path::new(&path));
             }
             Ok(Value::Null)
         }
+        "ui.open" | "open" if no_path => user_open(app),
         // APPLOAD typed or chosen from a menu: the `.lsp` file picker, starting where the last
         // one came from. JSON calls carry `path` and never open one. A picked file is loaded as a
         // typed name is, through the interactive command, so a routine it starts that asks for a
@@ -377,14 +395,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
-        "ui.saveas" | "saveas" if no_path => {
-            let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
-            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
-                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
-        }
+        "ui.saveas" | "saveas" if no_path => user_saveas(app),
         "qsave" if no_path => return user_qsave(app),
         // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
         // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry

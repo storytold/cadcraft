@@ -122,9 +122,6 @@ pub struct CanvasState {
     /// The polar or object snap tracking path(s) the cursor is on.
     pub track: Option<snap::tracking::Track>,
     pan_last: Option<Pos2>,
-    /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
-    /// scrolling then pans and pinch zooms. A notched mouse wheel clears it so the wheel zooms.
-    scroll_pans: bool,
     /// Hot grips (object, grip index): the ones Shift+clicked while idle, then the ones the
     /// running GRIP edit works on (the engine's grip modes take them from there).
     pub hot_grips: Vec<(Handle, usize)>,
@@ -220,7 +217,6 @@ pub struct SnapCycle {
 #[derive(Clone, Copy)]
 struct PointerInput {
     hover_pos: Option<Pos2>,
-    scroll: egui::Vec2,
     mods: egui::Modifiers,
     middle_down: bool,
     pressed_primary: bool,
@@ -242,13 +238,6 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     let inside = p.hover_pos.is_some_and(|at| nav.rect.contains(at) && ui.ctx().layer_id_at(at) == Some(ui.layer_id()) && nav.response.hovered());
     let on_menu = p.hover_pos.is_some_and(|at| over_canvas_menu(app, at));
     app.session.ctrl_down = p.mods.ctrl;
-    ui.input(|i| {
-        for event in &i.raw.events {
-            if let egui::Event::MouseWheel { unit, .. } = event {
-                app.canvas.scroll_pans = cfg!(target_os = "macos") && *unit == egui::MouseWheelUnit::Point;
-            }
-        }
-    });
     handle_scroll_zoom(app, ui, nav, inside);
     handle_button_navigation(app, nav, inside);
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
@@ -270,21 +259,11 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
 
 fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>, inside: bool) {
     let p = nav.pointer;
-    if inside
-        && app.canvas.scroll_pans
-        && p.scroll != egui::Vec2::ZERO
-        && let Ok(st) = app.session.state_mut()
-    {
-        let view = st.view();
-        st.set_view_quiet(cadcraft_engine::View {
-            center: view.center - Vec2::new(f64::from(p.scroll.x) / nav.xf.scale, -f64::from(p.scroll.y) / nav.xf.scale),
-            height: view.height,
-        });
-    }
     let opts = ui.ctx().options(|o| o.input_options);
+    // macOS sends smooth mouse wheels in point units, indistinguishable from a trackpad
+    // at this layer. Treat vertical wheel input as zoom; pinch and middle-drag remain separate.
     let wheel = ui.input(|i| wheel_zoom_points(&i.raw.events, &opts, nav.rect.height()));
     if inside
-        && !app.canvas.scroll_pans
         && wheel != 0.0
         && let Some(at) = p.hover_pos
     {
@@ -750,7 +729,6 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // ---------- input ----------
     let pointer = ui.input(|i| PointerInput {
         hover_pos: i.pointer.hover_pos(),
-        scroll: i.smooth_scroll_delta,
         mods: i.modifiers,
         middle_down: i.pointer.middle_down(),
         pressed_primary: i.pointer.primary_clicked(),

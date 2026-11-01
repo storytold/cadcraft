@@ -14,6 +14,8 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(target_os = "macos")]
+mod apple_events;
 mod control_server;
 mod desktop_theme;
 mod env;
@@ -42,6 +44,9 @@ struct App {
     workspace_error: Option<String>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
+    /// Native Finder and Dock document and quit events.
+    #[cfg(target_os = "macos")]
+    apple_events: fmv_macos_events::Inbox,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
     #[cfg(target_os = "macos")]
     menus_in_window: bool,
@@ -100,6 +105,7 @@ impl eframe::App for App {
                 if let Some(m) = &mut self.native_menu {
                     m.poll(&mut self.cad, ctx);
                 }
+                apple_events::poll(&self.apple_events, &mut self.cad, ctx);
             }
             self.spacemouse.poll(&mut self.cad, ctx);
             // After `cad.logic`, so a control command's workspace change is saved in the same frame.
@@ -157,10 +163,16 @@ pub fn install_io() {
 
 fn services() -> Services {
     Services {
+        pick_pdf: Some(Box::new(|| rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        import_pdf: Some(|path, page| {
+            let bytes = cadcraft_engine::capped_read::read_capped(path, 256 << 20).map_err(|e| format!("PDF import: {}: {e}", path.display()))?;
+            cadcraft_io::import_pdf(&bytes, page).map_err(|e| format!("PDF import: {e}"))
+        }),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
+                .add_filter("Vector PDF", &["pdf"])
                 .add_filter(i18n::t("All files"), &["*"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
@@ -300,6 +312,11 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
+    // Register before the event loop so a Finder launch event is caught.
+    #[cfg(target_os = "macos")]
+    let apple_events = apple_events::AppleEvents::install();
+    #[cfg(target_os = "macos")]
+    let apple_events = &apple_events;
     eframe::run_native(
         "CADCraft",
         options,
@@ -354,6 +371,12 @@ fn main() -> eframe::Result {
             for f in &files {
                 app.open_path(f);
             }
+            #[cfg(target_os = "macos")]
+            let apple_events = {
+                let inbox = apple_events.connect(&cc.egui_ctx);
+                apple_events::poll(&inbox, &mut app, &cc.egui_ctx);
+                inbox
+            };
             if app.session.docs.is_empty() {
                 // In the units the profile asks for (MEASUREINIT, restored above).
                 let metric = app.session.settings.measureinit;
@@ -372,6 +395,8 @@ fn main() -> eframe::Result {
                 workspace_error,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
+                #[cfg(target_os = "macos")]
+                apple_events,
                 #[cfg(target_os = "macos")]
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]

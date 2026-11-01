@@ -180,6 +180,62 @@ fn a_wheel_notch_zooms_whole_in_its_own_frame() {
     assert!(smoothed < raw, "egui's smoothed delta lags behind: {smoothed} of {raw}");
 }
 
+/// High-resolution wheels on macOS can arrive as point/trackpad events. They must zoom
+/// around the cursor just like a notched wheel, without continuing to zoom on later frames.
+#[test]
+fn point_and_line_wheel_zoom_about_the_cursor_only_over_the_canvas() {
+    fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        ctx.run_ui(input, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    }
+    for (unit, source, amount) in [
+        (egui::MouseWheelUnit::Line, egui::MouseWheelSource::Wheel, 1.0),
+        (egui::MouseWheelUnit::Point, egui::MouseWheelSource::Trackpad, 24.0),
+        (egui::MouseWheelUnit::Point, egui::MouseWheelSource::Momentum, 24.0),
+    ] {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.system_animations = Some(false);
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, vec![]);
+        let rect = app.canvas.rect.unwrap();
+        let at = pos2(rect.left() + rect.width() * 0.65, rect.top() + rect.height() * 0.40);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        }
+        let before = app.session.state().unwrap().view();
+        let world_before = app.canvas.xf.unwrap().to_world(at);
+        let event =
+            |dy| egui::Event::MouseWheel { unit, source, delta: vec2(0.0, dy), phase: egui::TouchPhase::Move, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, &ctx, vec![event(amount)]);
+        let zoomed = app.session.state().unwrap().view();
+        assert!(zoomed.height < before.height, "{unit:?}/{source:?}: {before:?} -> {zoomed:?}");
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.session.state().unwrap().view().height, zoomed.height, "wheel was applied again");
+        let world_after = app.canvas.xf.unwrap().to_world(at);
+        assert!((world_before - world_after).len() < 1e-6, "zoom must preserve the world point under the cursor");
+        frame(&mut app, &ctx, vec![event(-amount)]);
+        let restored = app.session.state().unwrap().view();
+        assert!((restored.height - before.height).abs() < 1e-9, "reverse wheel direction must zoom out");
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pos2(5.0, 5.0))]);
+        }
+        let outside = app.session.state().unwrap().view();
+        frame(&mut app, &ctx, vec![event(amount)]);
+        assert_eq!(app.session.state().unwrap().view().height, outside.height, "scroll outside the canvas changed the drawing");
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        }
+        let before_pinch = app.session.state().unwrap().view().height;
+        frame(&mut app, &ctx, vec![egui::Event::Zoom(1.2)]);
+        assert!(app.session.state().unwrap().view().height < before_pinch, "pinch must still zoom");
+    }
+}
+
 /// The text painted by one frame of the app at `pointer`.
 pub(crate) fn painted_text(app: &mut CadApp, ctx: &egui::Context, pointer: Pos2) -> String {
     fn collect(shape: &Shape, text: &mut String) {
