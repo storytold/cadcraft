@@ -107,7 +107,8 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed_token(&format!("{r}"), false),
                 lisp::value::Value::Str(s) => self.typed_token(&s, false),
                 other => match other.as_point() {
-                    Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
+                    // A point from LISP is in the current UCS, as typed coordinates are.
+                    Some(p) => self.input(Input::Point(self.input_ucs().to_wcs(Vec2::new(p[0], p[1])))),
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -129,7 +130,8 @@ impl Session {
             return self.input(Input::Keyword(k));
         }
         if prompt.accept.point {
-            if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
+            self.note_tilted_ucs();
+            if let Some(p) = self.parse_typed_point(tt, self.last_point) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
                 return self.input(Input::Point(p));
             }

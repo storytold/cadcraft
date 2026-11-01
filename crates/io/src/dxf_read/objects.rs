@@ -1,7 +1,7 @@
 use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
-use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2};
+use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Ucs, Vec2, Vec3};
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]
@@ -22,6 +22,8 @@ pub(super) struct Objects {
     groups: Vec<(String, Vec<Tag>)>,
     /// Saved paper-space views of layouts: (layout name, view).
     layout_views: Vec<(String, (Vec2, f64))>,
+    /// Layouts' current UCSs: (layout name, origin, X axis, Y axis, named UCS record handle).
+    layout_ucss: Vec<(String, Vec3, Vec3, Vec3, Option<String>)>,
     /// SORTENTSTABLE objects: (owning block record handle, entity handle → sort handle).
     pub(super) sortents: Vec<(String, HashMap<Handle, u64>)>,
     /// WIPEOUTVARIABLES: the drawing's WIPEOUTFRAME (0 = frames hidden, 1 = shown).
@@ -70,10 +72,17 @@ impl Objects {
                     self.sortents.push(t);
                 }
             }
-            "LAYOUT" if self.layout_views.len() < MAX_OBJECTS => {
+            "LAYOUT" if self.layout_views.len() < MAX_OBJECTS && self.layout_ucss.len() < MAX_OBJECTS => {
                 let start = tags.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
-                if let (Some(name), Some(view)) = (T(tags.get(start..).unwrap_or(&[])).s(1), layout_view(tags)) {
+                let own = T(tags.get(start..).unwrap_or(&[]));
+                if let (Some(name), Some(view)) = (own.s(1), layout_view(tags)) {
                     self.layout_views.push((name, view));
+                }
+                // Its current UCS (groups 13, 16, 17; 345 when it is a named UCS).
+                if let Some(name) = own.s(1)
+                    && [13, 16, 17].iter().all(|c| own.f(*c).is_some())
+                {
+                    self.layout_ucss.push((name, own.p(13), own.p(16), own.p(17), own.s(345)));
                 }
             }
             _ => {}
@@ -92,6 +101,49 @@ impl Objects {
             text.push_str(&t.str());
         }
         Some(text)
+    }
+
+    /// Model space's UCS name ($UCSNAME, or CADCraft's copy when the file lost it, as through
+    /// DWG): kept only while the current UCS is still exactly that named UCS, else unnamed.
+    fn apply_ucs_name(&self, d: &mut Drawing) {
+        let header_name = d.header.str("UCSNAME", "").trim().to_string();
+        let name = if header_name.is_empty() {
+            self.xrecord_text(crate::dxf_ext::UCS_NAME_KEY).map(|n| n.trim().to_string()).unwrap_or_default()
+        } else {
+            header_name.clone()
+        };
+        let frame = (d.header.point("UCSORG"), d.header.point("UCSXDIR"), d.header.point("UCSYDIR"));
+        let named = match frame {
+            (Some(o), Some(x), Some(y)) => crate::dxf_ext::named_ucs(&d.ucss, &name, o, x, y).map(|u| u.name.clone()),
+            _ => None,
+        };
+        match named {
+            Some(n) => d.header.set_str("UCSNAME", &n),
+            None if !header_name.is_empty() => d.header.set_str("UCSNAME", ""),
+            None => {}
+        }
+    }
+
+    /// Layouts' UCSs: the World UCS, unusable axes or no such layout leave it unset.
+    fn apply_layout_ucss(&self, d: &mut Drawing, rx: &Rx) {
+        for (name, origin, x, y, named) in &self.layout_ucss {
+            let usable = origin.is_finite() && crate::dxf_ext::usable_axes(*x, *y);
+            // The named UCS group 345 points at, only while the layout's frame is still that
+            // record's: a valid frame with a stale reference is kept, unnamed.
+            let ucs_name = named
+                .as_ref()
+                .and_then(|h| rx.ucss.get(&h.trim().to_ascii_uppercase()))
+                .and_then(|n| crate::dxf_ext::named_ucs(&d.ucss, n, *origin, *x, *y))
+                .map(|u| u.name.clone())
+                .unwrap_or_default();
+            let world = origin.len() <= 1e-12 && (*x - Vec3::new(1.0, 0.0, 0.0)).len() <= 1e-12 && (*y - Vec3::new(0.0, 1.0, 0.0)).len() <= 1e-12;
+            if !usable || (world && ucs_name.is_empty()) {
+                continue;
+            }
+            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+                l.ucs = Some(Ucs { name: ucs_name, origin: *origin, x_axis: *x, y_axis: *y });
+            }
+        }
     }
 
     fn apply_table_styles(&self, d: &mut Drawing) {
@@ -180,6 +232,7 @@ impl Objects {
         if let Some(style) = self.xrecord_text(crate::dxf_ext::MLEADER_STYLE_KEY).filter(|s| !s.trim().is_empty()) {
             d.header.set_str("CMLEADERSTYLE", &style);
         }
+        self.apply_ucs_name(d);
         self.apply_table_styles(d);
         self.apply_table_style_fixes(d, rx);
         // Parametric constraints and parameters.
@@ -212,6 +265,7 @@ impl Objects {
                 l.view = Some(*view);
             }
         }
+        self.apply_layout_ucss(d, rx);
         self.apply_groups(d);
         // Standard associativity, for dimensions without CADCraft's exact links.
         for tags in &self.dimassocs {

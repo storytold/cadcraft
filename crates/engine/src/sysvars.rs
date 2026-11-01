@@ -178,6 +178,19 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The current UCS of the space commands act on (paper space has its own per layout),
+        // set by the UCS command.
+        "UCSNAME" | "UCSORG" | "UCSXDIR" | "UCSYDIR" | "WORLDUCS" => {
+            let (u, name) = s.ucs_named();
+            let p = |v: cadcraft_geom::Vec3| json!([v.x, v.y, v.z]);
+            match n.as_str() {
+                "UCSNAME" => json!(name),
+                "UCSORG" => p(u.origin),
+                "UCSXDIR" => p(u.x),
+                "UCSYDIR" => p(u.y),
+                _ => json!(i32::from(u.is_world())),
+            }
+        }
         "EXTMIN" | "EXTMAX" => {
             let d = s.doc().ok()?;
             let e = d.extents(&s.space());
@@ -255,6 +268,11 @@ const READ_ONLY: &[&str] = &[
     "EXTMAX",
     "UNDOCTL",
     "UNDOMARKS",
+    "UCSNAME",
+    "UCSORG",
+    "UCSXDIR",
+    "UCSYDIR",
+    "WORLDUCS",
 ];
 
 pub fn is_read_only(name: &str) -> bool {

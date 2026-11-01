@@ -3,12 +3,12 @@ use super::blocks::{arrow_block_entities, dim_block_entities, dim_block_plan, re
 use super::common::annotative_xdata;
 use super::ctx::{AssocObj, Ctx};
 use super::entity::{entity, hatch_reactors};
-use super::header::{code_page, header_vars};
+use super::header::{code_page, header_vars, model_ucs};
 use super::layout::{paper_views, record_head, sheet_first, table_head, vport_table};
 use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
     Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
-    TableStyle, Tag, Vec2, Vec3, Version, W, dxf_ext,
+    TableStyle, Tag, Ucs, Vec2, Vec3, Version, W, dxf_ext,
 };
 
 struct TableWritePlan<'a> {
@@ -161,7 +161,8 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     // UCS: named user coordinate systems (DXF Reference, UCS).
     let th = table_head(w, "UCS", d.ucss.len());
     for u in &d.ucss {
-        record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        let h = record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        w.ucss.insert(u.name.to_ascii_uppercase(), h);
         w.s(2, &u.name);
         w.i(70, 0);
         w.p(10, u.origin);
@@ -171,6 +172,13 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
+    // The active VPORT's named UCS (written before this table had handles).
+    for (i, name) in std::mem::take(&mut w.vport_ucs) {
+        let h = w.ucss.get(&name).cloned();
+        if let (Some(h), Some(t)) = (h, w.t.get_mut(i)) {
+            *t = Tag::s(345, h);
+        }
+    }
     let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
@@ -243,7 +251,15 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W {
+            t: Vec::new(),
+            next: 0,
+            pstyles: HashMap::new(),
+            layers: HashMap::new(),
+            ucss: HashMap::new(),
+            vport_ucs: Vec::new(),
+            reactors: HashMap::new(),
+        };
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -383,6 +399,8 @@ struct LayoutWriteData<'a> {
     flags: i64,
     page: &'a PageSetup,
     view: Option<(Vec2, f64)>,
+    /// The layout's current UCS (none for model space, whose UCS is in the header).
+    ucs: Option<&'a Ucs>,
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
@@ -458,12 +476,21 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(12, Vec3::ZERO);
     w.p(14, Vec3::ZERO);
     w.p(15, Vec3::ZERO);
+    // The layout's current UCS: origin, X and Y axes, orthographic type, then (after the
+    // block record) the named UCS it is.
+    // Usable by the rule the reader applies, so what is written reads back.
+    let u = data.ucs.filter(|u| u.origin.is_finite() && dxf_ext::usable_axes(u.x_axis, u.y_axis));
     w.f(146, 0.0);
-    w.p(13, Vec3::ZERO);
-    w.p(16, Vec3::new(1.0, 0.0, 0.0));
-    w.p(17, Vec3::new(0.0, 1.0, 0.0));
+    w.p(13, u.map_or(Vec3::ZERO, |u| u.origin));
+    w.p(16, u.map_or(Vec3::new(1.0, 0.0, 0.0), |u| u.x_axis));
+    w.p(17, u.map_or(Vec3::new(0.0, 1.0, 0.0), |u| u.y_axis));
     w.i(76, 0);
     w.s(330, brh);
+    // The named UCS it is, only while its frame is still that record's (as for model space).
+    let named = u.and_then(|u| dxf_ext::named_ucs(&d.ucss, &u.name, u.origin, u.x_axis, u.y_axis));
+    if let Some(h) = named.and_then(|u| w.ucss.get(&u.name.to_ascii_uppercase())).cloned() {
+        w.s(345, h);
+    }
     // The saved paper-space view (centre, height) as CADCraft xdata.
     if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
         w.s(1001, dxf_ext::APP);
@@ -523,7 +550,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None },
+        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, ucs: None },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
@@ -538,6 +565,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 flags: 1,
                 page: &l.page,
                 view: l.view,
+                ucs: l.ucs.as_ref(),
             },
         );
     }
@@ -892,6 +920,8 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         next: d.handseed.max(0x100).saturating_add(0x1000),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
         reactors: hatch_reactors(d),
     };
     // Pre-allocate handles for block records.
@@ -948,6 +978,10 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     xrecords.push((dxf_ext::HANDSEED_KEY, w.h(), vec![format!("{:X}", d.handseed)]));
     if let Some(name) = d.header.get("CMLEADERSTYLE").and_then(HVal::as_str) {
         xrecords.push((dxf_ext::MLEADER_STYLE_KEY, w.h(), vec![name.to_string()]));
+    }
+    let ucs_name = model_ucs(d).name;
+    if !ucs_name.is_empty() {
+        xrecords.push((dxf_ext::UCS_NAME_KEY, w.h(), vec![ucs_name]));
     }
     if let Some(chunks) = dxf_ext::constraint_chunks(&d.constraints, &d.parametric) {
         xrecords.push((dxf_ext::CONSTRAINTS_KEY, w.h(), chunks));

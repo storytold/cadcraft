@@ -44,6 +44,7 @@ mod tolerance;
 mod trimextend;
 mod txt2mtxt;
 pub use txt2mtxt::Txt2MtxtOptions;
+mod ucs;
 mod utility;
 mod view;
 
@@ -180,6 +181,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(qselect::specs());
         v.extend(selecttools::specs());
         v.extend(view::specs());
+        v.extend(ucs::specs());
         v.extend(draw::specs());
         v.extend(draw2::specs());
         v.extend(annotate::specs());

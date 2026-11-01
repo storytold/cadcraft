@@ -302,6 +302,9 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
             "LAYER" => {
                 rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
             }
+            "UCS" => {
+                rx.ucss.insert(handle.trim().to_ascii_uppercase(), name);
+            }
             _ => {}
         }
     }
