@@ -101,6 +101,10 @@ pub(super) fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass
     if let Some(v) = transparency_440(e.common.transparency) {
         w.i(440, v);
     }
+    // ByBlock is the plot style name type 1 (ByLayer, 0, is the default and left out).
+    if e.common.plot_style.trim().eq_ignore_ascii_case("byblock") {
+        w.i(380, 1);
+    }
     // A named plot style (not ByLayer/ByBlock): its placeholder object.
     if let Some(h) = w.pstyles.get(&e.common.plot_style.trim().to_ascii_uppercase()).cloned() {
         w.s(390, h);
