@@ -894,9 +894,14 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
+    shape_dir(face, s, height, width_factor, oblique, None)
+}
+
+/// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
+pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     face.font()?;
     if crate::complex::needed(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique)
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique, base_rtl)
     {
         return Some(sh);
     }
@@ -934,7 +939,7 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
     if crate::complex::needed(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0)
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0, None)
     {
         return Some(sh.width);
     }

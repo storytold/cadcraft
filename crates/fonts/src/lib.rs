@@ -147,6 +147,12 @@ fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
 /// (radians). Characters the stroke font lacks are drawn from an installed font that has them
 /// (glyph outlines, sized like TrueType text), else as a missing-glyph box.
 pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    shape_stroke_dir(s, height, width_factor, oblique, None)
+}
+
+/// [`shape_stroke`] in the direction `base_rtl` (`None`: that of the line's first strong
+/// character).
+pub fn shape_stroke_dir(s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let sc = h / stroke::CAP;
@@ -157,7 +163,7 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
     let mut over_start: Option<f64> = None;
     let mut gap = stroke::GAP * sc * wf;
     if complex::needed(s)
-        && let Some(sh) = complex::shape(None, s, h, wf, oblique)
+        && let Some(sh) = complex::shape(None, s, h, wf, oblique, base_rtl)
     {
         return sh;
     }
@@ -250,7 +256,7 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
     if complex::needed(s) {
         let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
         let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
-        if let Some(sh) = complex::shape(None, s, h, wf, 0.0) {
+        if let Some(sh) = complex::shape(None, s, h, wf, 0.0, None) {
             return sh.width;
         }
     }
@@ -417,13 +423,23 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    shape_line_dir(font, s, height, width_factor, oblique, None)
+}
+
+/// [`shape_line`] in the direction `base_rtl` (`None`: that of the line's first strong
+/// character).
+pub fn shape_line_dir(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Shaped {
     if let TextFont::Outline(face) = font
-        && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
+        && let Some(sh) = ttf::shape_dir(face, s, height, width_factor, oblique, base_rtl)
     {
         return sh;
     }
-    shape_stroke(s, height, width_factor, oblique)
+    shape_stroke_dir(s, height, width_factor, oblique, base_rtl)
 }
+
+/// Single-line TEXT (and attributes) runs left to right, as AutoCAD lays it out: neutral
+/// characters before a right-to-left word ("- " in "- פרוייקט") stay on its left (#2500).
+const TEXT_BASE_RTL: Option<bool> = Some(false);
 
 /// Width of one line in `font`.
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
@@ -551,7 +567,7 @@ fn frame(font: &TextFont, s: &str, p: &TextParams) -> (Vec2, Vec2, f64, Vec2) {
         let rot = p.align_pt.map_or(rot, |p2| p.insert.angle_to(p2));
         return (p.insert, Vec2::ZERO, rot, Vec2::new(1.0, 1.0));
     }
-    let sh = shape_line(font, s, height, p.width_factor, p.oblique);
+    let sh = shape_line_dir(font, s, height, p.width_factor, p.oblique, TEXT_BASE_RTL);
     let origin = match (p.h, p.v) {
         (Align::Left, VAlign::Baseline) => p.insert,
         _ => p.align_pt.unwrap_or(p.insert),
@@ -582,7 +598,7 @@ pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
             }
         }
     }
-    let mut sh = shape_line(font, s, height, wf, p.oblique);
+    let mut sh = shape_line_dir(font, s, height, wf, p.oblique, TEXT_BASE_RTL);
     let width = sh.width;
     // Every justification but baseline-left (and aligned/fit, which span both points) is placed by
     // its alignment point (DXF group 11); the insertion point (group 10) is then a computed point.
@@ -624,6 +640,23 @@ pub fn place_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A TEXT that starts with neutral characters before a Hebrew word ("- פרוייקט") keeps them
+    /// on the left, as AutoCAD draws it; the line's own direction (first strong character) would
+    /// put the dash on the right (#2500).
+    #[test]
+    fn text_runs_left_to_right_whatever_its_first_strong_character() {
+        let s = "- \u{05E4}\u{05E8}\u{05D5}\u{05D9}\u{05E7}\u{05D8}";
+        let dash = shape_stroke("-", 1.0, 1.0, 0.0).strokes;
+        assert!(!dash.is_empty());
+        let has_dash_first = |strokes: &[Vec<Vec2>]| dash.iter().all(|d| strokes.iter().any(|st| st == d));
+        let (text, _) = place(&TextFont::Stroke, s, &TextParams::new(Vec2::ZERO, 1.0));
+        assert!(has_dash_first(&text.strokes), "the dash starts the TEXT");
+        // The line on its own (MTEXT pieces) still takes its direction from its first strong
+        // character: right to left here, the dash after the word.
+        let line = shape_stroke(s, 1.0, 1.0, 0.0);
+        assert!(!has_dash_first(&line.strokes), "the dash ends a right-to-left line");
+    }
 
     #[test]
     fn every_ascii_printable_has_a_glyph() {
