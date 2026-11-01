@@ -70,6 +70,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
     let mut keep = *open;
     let mut commit = false;
     let mut cancel = false;
+    // The field's undo history is keyed by drawing and handle: two edits on the same drawing
+    // must not share a Ctrl+Z trail, and neither must an edit on two different drawings.
+    let field = egui::Id::unique("textedit_field").with(st.uid).with(&st.handle);
     egui::Window::new(crate::tl!("Edit Text"))
         .id(egui::Id::unique("Edit Text"))
         .open(&mut keep)
@@ -79,9 +82,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
         .show(ctx, |ui| {
             let head = format!("{} · {}", crate::i18n::t(&st.kind), st.handle);
             ui.label(RichText::new(head).color(t.text_faint).small());
-            let r = ui.add(egui::TextEdit::multiline(&mut st.text).desired_width(f32::INFINITY).desired_rows(3).hint_text(crate::tl!("Text")));
+            let r =
+                ui.add(egui::TextEdit::multiline(&mut st.text).id(field).desired_width(f32::INFINITY).desired_rows(3).hint_text(crate::tl!("Text")));
             // Ctrl+Enter commits from inside the field, so a multiline text can keep plain Enter.
-            if r.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
+            if r.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)) {
                 commit = true;
             }
             ui.horizontal(|ui| {
@@ -124,9 +128,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
     *open = keep;
     // The state lives exactly as long as the window does: a closed window leaves nothing
     // behind, so reopening it reads the drawing's text instead of an edit the user cancelled.
+    // The field's own persisted state goes with it — otherwise the undo history would offer a
+    // previous object's text to whoever is edited next.
     if keep {
         ctx.data_mut(|d| d.insert_temp(sid, st));
     } else {
-        ctx.data_mut(|d| d.remove_temp::<State>(sid));
+        ctx.data_mut(|d| {
+            d.remove_temp::<State>(sid);
+            d.remove::<egui::text_edit::TextEditState>(field);
+        });
     }
 }
