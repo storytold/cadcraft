@@ -81,6 +81,9 @@ pub(super) fn run_measure(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(from) = point_param(p, "from") {
         let past_half = match curves::entity(s, h)?.kind {
             EntityKind::Circle(_) => false,
+            // At an arc's centre, where a bare name given from AutoLISP stands (its DXF group 10
+            // point), every point of it is as near: AutoCAD measures from its end.
+            EntityKind::Arc(a) if from.dist(a.center.xy()) <= a.radius * 1e-9 => true,
             // A spline by its own parameter: its tessellation drops zero-length pieces, so the
             // segment count is not the spline's parameter range.
             EntityKind::Spline(sp) => {
