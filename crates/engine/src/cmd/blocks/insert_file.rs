@@ -109,7 +109,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(&mut d, e, &renames);
+            let e = adopt(&mut d, src, e, &renames);
             nb.entities.push(e);
         }
         d.blocks.insert(to.clone(), Arc::new(nb));
@@ -118,7 +118,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
     b.base = src.header.point("INSBASE").filter(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite()).unwrap_or_default();
     let mut ents = Vec::new();
     for e in src.model.iter() {
-        let e = adopt(&mut d, e, &renames);
+        let e = adopt(&mut d, src, e, &renames);
         d.ensure_layer(&e.common.layer);
         ents.push(e);
     }
@@ -183,9 +183,20 @@ fn block_names(d: &Drawing, src: &Drawing, defining: &str) -> BTreeMap<String, S
 
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
 /// links to other source objects (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn adopt(d: &mut Drawing, src: &Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
     let mut e = e.clone();
+    let old = e.handle;
     e.handle = d.new_handle();
+    // An attribute definition keeps its field: its extension dictionary and the objects in it.
+    if matches!(e.kind, EntityKind::AttDef(_))
+        && let Some(root) = src.foreign.entities.get(&old).and_then(|x| x.xdict)
+    {
+        let tree = src.foreign.tree(root);
+        let fresh: Vec<Handle> = (0..tree.len() + 2).map(|_| d.new_handle()).collect();
+        let foreign = Arc::make_mut(&mut d.foreign);
+        foreign.adopt_tree(&src.foreign, &tree, &fresh, e.handle);
+        foreign.entities.entry(e.handle).or_default().xdict = fresh.first().copied();
+    }
     match &mut e.kind {
         EntityKind::Insert(i) => {
             if let Some(n) = renames.get(&i.block) {
