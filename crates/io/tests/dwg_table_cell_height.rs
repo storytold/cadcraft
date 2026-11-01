@@ -36,7 +36,7 @@ fn check(d: &Drawing) {
     assert_eq!(t.style, "Small");
     assert_eq!(t.text_height, 0.0625);
     for cell in &t.cells[0][..2] {
-        assert!(cell.text_height.is_none() || cell.text_height == Some(0.0625), "unexpected override: {:?}", cell.text_height);
+        assert!(cell.text_height.is_none(), "unexpected override: {:?}", cell.text_height);
     }
     assert_eq!(t.cells[0][2].text_height, Some(0.125));
 }
