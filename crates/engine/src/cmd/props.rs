@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
         CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
         CommandSpec::new("chprop", "Change Properties", run_set)
-            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+            .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("change", "Change", change::run_change)
             .alias(&["-ch"])
