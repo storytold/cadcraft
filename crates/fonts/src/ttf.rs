@@ -74,6 +74,12 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
+    pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
+        let Some(f) = self.font() else { return vec![None; chars.len()] };
+        let map = f.charmap();
+        chars.iter().map(|c| map.map(*c).map(|g| g.to_u32())).collect()
+    }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
         [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FULL_NAME]
@@ -155,14 +161,56 @@ const ARABIC_FALLBACK: &[&str] = &[
     "dejavusans",
 ];
 const HEBREW_FALLBACK: &[&str] = &["notosanshebrew", "notoserifhebrew", "arial", "tahoma", "segoeui", "dejavusans"];
+/// Fonts known to cover Thai, with the OpenType mark positioning its stacked vowels and tone
+/// marks need. First the Windows faces Thai drawings are laid out with (Cordia New, Angsana New,
+/// Browallia New: Thai SHX fonts such as `cordia2.shx` copy their design and widths, so text
+/// keeps its fit in title blocks and tables), then IBM Plex Sans Thai (installed, or embedded
+/// from craft-fonts, which makes it the web build's Thai font), then Noto and the fonts each OS
+/// ships (macOS Thonburi and Sukhumvit, Windows Leelawadee and Tahoma, the Linux TLWG fonts).
+const THAI_FALLBACK: &[&str] = &[
+    "cordia",
+    "angsana",
+    "browalia",
+    "ibmplexsansthai",
+    "notosansthai",
+    "notoserifthai",
+    "thonburi",
+    "sukhumvit",
+    "leelawui",
+    "leelawadeeui",
+    "leelawad",
+    "tahoma",
+    "kinnari",
+    "norasi",
+    "garuda",
+    "loma",
+    "waree",
+    "sarabun",
+];
 /// Script-specific fallback files loaded per character, at most.
 const MAX_SCRIPT_FILES: usize = 4;
+
+/// The font file stems matching a script's fallback `names`, best first: regular weights before
+/// bold, light and the like, then in the order of `names`, then by name.
+fn script_candidates(stems: &[String], names: &[&str]) -> Vec<String> {
+    let mut v: Vec<(usize, usize, String)> = stems
+        .iter()
+        .filter_map(|s| {
+            let n = norm(s);
+            names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
+        })
+        .collect();
+    v.sort();
+    v.dedup_by(|a, b| a.2 == b.2);
+    v.into_iter().map(|(_, _, s)| s).collect()
+}
 
 /// Script-specific fallback font names for `c`, if any.
 fn script_fallback(c: char) -> &'static [&'static str] {
     match c {
         '\u{0600}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' => ARABIC_FALLBACK,
         '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => HEBREW_FALLBACK,
+        '\u{0E00}'..='\u{0E7F}' => THAI_FALLBACK,
         _ => &[],
     }
 }
@@ -235,11 +283,8 @@ fn scan() -> HashMap<String, PathBuf> {
             dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
-        if let Some(h) = std::env::var_os("HOME") {
-            dirs.push(PathBuf::from(&h).join(".fonts"));
-            dirs.push(PathBuf::from(h).join(".local/share/fonts"));
-        }
+        let wsl = std::env::var_os("WSL_DISTRO_NAME").is_some() || std::path::Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists();
+        dirs = unix_font_dirs(std::env::var_os("HOME"), wsl);
     }
     let mut stack = dirs;
     let mut seen = 0usize;
@@ -251,7 +296,10 @@ fn scan() -> HashMap<String, PathBuf> {
                 return out;
             }
             let p = e.path();
-            if p.is_dir() {
+            // The entry's type from the directory listing: one `stat` per file costs seconds on
+            // a Windows drive under WSL. A link is followed.
+            let is_dir = e.file_type().map(|t| if t.is_symlink() { p.is_dir() } else { t.is_dir() }).unwrap_or(false);
+            if is_dir {
                 stack.push(p);
                 continue;
             }
@@ -265,6 +313,25 @@ fn scan() -> HashMap<String, PathBuf> {
         }
     }
     out
+}
+
+/// Font folders on Linux and the BSDs, lowest priority first (the scan takes them from the end,
+/// and the first file found for a name wins): the user's own fonts win, and under WSL (`wsl`)
+/// Windows' fonts come after all the others. Drawings made on Windows name Windows fonts (Thai
+/// drawings Cordia New, Angsana New), which a Linux system under WSL usually lacks; with them,
+/// text lays out as it did where it was drawn.
+#[cfg(not(target_arch = "wasm32"))]
+fn unix_font_dirs(home: Option<std::ffi::OsString>, wsl: bool) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if wsl {
+        dirs.push("/mnt/c/Windows/Fonts".into());
+    }
+    dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
+    if let Some(h) = home {
+        dirs.push(PathBuf::from(&h).join(".fonts"));
+        dirs.push(PathBuf::from(h).join(".local/share/fonts"));
+    }
+    dirs
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -362,18 +429,8 @@ impl Db {
         if names.is_empty() {
             return None;
         }
-        let mut stems: Vec<(usize, usize, String)> = self
-            .paths
-            .keys()
-            .chain(self.files.keys())
-            .filter_map(|s| {
-                let n = norm(s);
-                names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
-            })
-            .collect();
-        stems.sort();
-        stems.dedup_by(|a, b| a.2 == b.2);
-        for (_, _, stem) in stems.into_iter().take(MAX_SCRIPT_FILES) {
+        let stems: Vec<String> = self.paths.keys().chain(self.files.keys()).cloned().collect();
+        for stem in script_candidates(&stems, names).into_iter().take(MAX_SCRIPT_FILES) {
             let Some(bytes) = self.file(&stem) else { continue };
             let Some(face) = faces(&bytes).into_iter().find(|f| f.has_glyph(c)) else { continue };
             if let Some(i) = self.fallback.faces.iter().position(|f| f.same(&face)) {
@@ -855,7 +912,7 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
+    if crate::complex::needed(s)
         && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique)
     {
         return Some(sh);
@@ -893,7 +950,7 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 /// Width of one line set in a TrueType face.
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
+    if crate::complex::needed(s)
         && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0)
     {
         return Some(sh.width);
@@ -922,6 +979,47 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
 #[cfg(test)]
 mod family_tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wsl_adds_windows_fonts_below_the_linux_ones() {
+        let linux = unix_font_dirs(Some("/home/u".into()), false);
+        assert!(linux.iter().all(|d| !d.starts_with("/mnt")) && linux.last() == Some(&PathBuf::from("/home/u/.local/share/fonts")));
+        let wsl = unix_font_dirs(Some("/home/u".into()), true);
+        assert_eq!(wsl.first(), Some(&PathBuf::from("/mnt/c/Windows/Fonts")));
+        assert_eq!(wsl.get(1..), Some(linux.as_slice()));
+    }
+
+    #[test]
+    fn thai_looks_in_thai_fonts_before_the_general_search() {
+        // Letters, vowels, tone marks and digits: the general search loads a bounded number of
+        // files with the CJK fonts first, none of which has Thai.
+        for c in ['\u{0E01}', '\u{0E33}', '\u{0E34}', '\u{0E4C}', '\u{0E50}'] {
+            assert!(script_fallback(c).contains(&"notosansthai"), "{c}");
+        }
+        assert!(script_fallback('a').is_empty() && script_fallback('\u{0E80}').is_empty());
+        // Windows, macOS and Linux each ship one of them under these file names.
+        let stems: Vec<String> = ["LeelawUI", "Thonburi", "Loma", "msyh"].map(norm).to_vec();
+        assert!(stems.iter().filter(|s| THAI_FALLBACK.iter().any(|p| s.contains(p))).count() == 3);
+        // The faces Thai drawings are laid out with come first, then IBM Plex Sans Thai (an
+        // installed file or the craft-fonts face, both under this stem), then the others; regular
+        // weights before bold.
+        let stems: Vec<String> =
+            ["notosansthai-regular", "ibmplexsansthai-bold", "ibmplexsansthai-regular", "msyh", "cordiab", "cordia", "ibmplexsansthailooped-regular"]
+                .map(String::from)
+                .to_vec();
+        assert_eq!(
+            script_candidates(&stems, THAI_FALLBACK),
+            ["cordia", "cordiab", "ibmplexsansthai-regular", "ibmplexsansthailooped-regular", "notosansthai-regular", "ibmplexsansthai-bold"]
+        );
+        // A text style naming the family looks in its regular file first, not the Latin Plex
+        // Sans or the looped or bold variants.
+        let stems: Vec<String> = ["ibmplexsans-regular", "ibmplexsansthai-bold", "ibmplexsansthailooped-regular", "ibmplexsansthai-regular", "arial"]
+            .map(String::from)
+            .to_vec();
+        let found = family_candidates(&stems, &norm("IBM Plex Sans Thai"), "ibm");
+        assert_eq!(found.first().map(String::as_str), Some("ibmplexsansthai-regular"), "{found:?}");
+    }
 
     #[test]
     fn a_family_is_looked_for_in_files_starting_with_its_first_word() {

@@ -9,12 +9,14 @@
 //! Right-to-left lines (Persian, Arabic, Urdu, Hebrew) go through [`bidi`] (the Unicode
 //! Bidirectional Algorithm, Arabic joining) and `complex` (OpenType shaping with `harfrust`):
 //! each run is shaped in the font that draws it before glyphs are placed, so the fallback font
-//! drawing Arabic in a stroke-font style joins its letters too.
+//! drawing Arabic in a stroke-font style joins its letters too. Thai lines are shaped the same
+//! way, which stacks their vowels and tone marks above and below each consonant.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 pub mod bidi;
 mod complex;
+mod linebreak;
 mod mtext;
 mod stroke;
 pub mod subset;
@@ -153,7 +155,7 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
     let mut under_start: Option<f64> = None;
     let mut over_start: Option<f64> = None;
     let mut gap = stroke::GAP * sc * wf;
-    if bidi::has_rtl(s)
+    if complex::needed(s)
         && let Some(sh) = complex::shape(None, s, h, wf, oblique)
     {
         return sh;
@@ -244,7 +246,7 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
 
 /// Width of a line without building strokes.
 pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
-    if bidi::has_rtl(s) {
+    if complex::needed(s) {
         let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
         let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
         if let Some(sh) = complex::shape(None, s, h, wf, 0.0) {
