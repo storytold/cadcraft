@@ -37,6 +37,21 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         block_pstyle: ctx.block_pstyle,
         // The reference's own, set by the caller (`Builder::transparency` while it draws).
         block_transparency: ctx.block_transparency,
+        z_offset: ctx.z_offset
+            + match &e.kind {
+                EntityKind::Insert(ins) => {
+                    let base_z = ctx.d.block(&ins.block).map_or(0.0, |b| b.base.z);
+                    (ins.insert.z - base_z * ins.scale.z) * ctx.z_scale
+                }
+                _ => 0.0,
+            },
+        z_scale: ctx.z_scale
+            * match &e.kind {
+                EntityKind::Insert(ins) => ins.scale.z,
+                _ => 1.0,
+            },
+        vp_xf: ctx.vp_xf,
+        vp_xf_inv: ctx.vp_xf_inv,
     }
 }
 
