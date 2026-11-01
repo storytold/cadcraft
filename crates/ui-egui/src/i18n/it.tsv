@@ -480,7 +480,7 @@ menu	Modify	Edita
 	The viewport of layout {name} is locked: unlock it to change its area	Il viewport del layout {name} è bloccato: sbloccalo per cambiarne l'area
 	Layout Areas	Aree dei layout
 	Set Layout Area	Imposta area del layout
-	Layout mode: drag to move, drag a corner to resize, drag on empty ground to add a layout, double-click to open	Modo layout: trascina per spostare, trascina un angolo per ridimensionare, trascina su un punto vuoto per aggiungere un layout, doppio clic per aprire
+	Layout mode: click a rectangle to select it, click a grip and then where to put it, click twice on empty ground to add a layout, double-click to open	Modo layout: clicca un rettangolo per selezionarlo, clicca un grip e poi dove metterlo, clicca due volte su un punto vuoto per aggiungere un layout, doppio clic per aprire
 	Leader	Direttrice
 	Leaders Only	Solo direttrici
 	Left	Sinistra
