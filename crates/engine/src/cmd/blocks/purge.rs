@@ -260,6 +260,32 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
     }
 }
 
+/// Remove every unused block, dimension style, layer, linetype and text style from `d` (PURGE All
+/// for those tables, without a session or undo). Text styles that a remaining linetype's text
+/// elements name are kept. WBLOCK runs it on the drawing it writes.
+pub(in crate::cmd) fn prune_tables(d: &mut Drawing) {
+    for kind in [Kind::Blocks, Kind::Dimstyles, Kind::Layers, Kind::Linetypes, Kind::TextStyles] {
+        let mut names = candidates(d, kind);
+        if kind == Kind::TextStyles {
+            let keep: HashSet<String> =
+                d.linetypes.iter().flat_map(|t| t.pattern.iter()).filter_map(|e| e.style.as_ref()).map(|n| n.to_ascii_lowercase()).collect();
+            names.retain(|n| !keep.contains(&n.to_ascii_lowercase()));
+        }
+        let gone: HashSet<String> = names.into_iter().map(|n| n.to_ascii_lowercase()).collect();
+        if gone.is_empty() {
+            continue;
+        }
+        let drop = |n: &String| gone.contains(&n.to_ascii_lowercase());
+        match kind {
+            Kind::Blocks => d.blocks.retain(|_, b| !drop(&b.name)),
+            Kind::Dimstyles => d.dim_styles.retain(|t| !drop(&t.name)),
+            Kind::Layers => d.layers.retain(|t| !drop(&t.name)),
+            Kind::Linetypes => d.linetypes.retain(|t| !drop(&t.name)),
+            _ => d.text_styles.retain(|t| !drop(&t.name)),
+        }
+    }
+}
+
 fn matching(d: &Drawing, kind: Kind, names: &str) -> Vec<String> {
     let pats: Vec<&str> = names.split(',').map(str::trim).filter(|p| !p.is_empty()).take(1000).collect();
     candidates(d, kind).into_iter().filter(|n| pats.iter().any(|p| wildcard(p, n))).collect()
