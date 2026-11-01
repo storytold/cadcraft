@@ -141,7 +141,17 @@ fn an_existing_file_is_replaced_only_on_yes() {
     s.cmdline("-wblock").unwrap();
     s.cmdline(&path).unwrap();
     assert!(s.prompt_text().ends_with(&format!("{path} already exists, do you want to replace it? [Yes/No] <N>:")), "{}", s.prompt_text());
+    // Only Yes replaces it: other text is asked again.
+    s.cmdline("yodel").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Invalid option keyword."));
+    assert!(s.prompt_text().ends_with("[Yes/No] <N>:"), "{}", s.prompt_text());
     s.cmdline("_N").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+    // Enter is No too.
+    s.cmdline("-wblock").unwrap();
+    s.cmdline(&path).unwrap();
+    s.cmdline("").unwrap();
     assert!(s.running.is_none());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
     lisp(&mut s, &format!("(command \"_.-WBLOCK\" \"{path}\" \"_Y\" \"\" '(0.0 0.0) {} \"\")", ent(b)));

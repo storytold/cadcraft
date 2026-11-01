@@ -217,14 +217,18 @@ impl Interactive for DashWblockM {
                 }
                 Ok(Step::Continue)
             }
-            Ask::Replace => {
-                // Yes goes on; No, the default, ends the command.
-                if matches!(&i, Input::Keyword(k) | Input::Text(k) if k.trim().to_ascii_lowercase().starts_with('y')) {
+            Ask::Replace => match &i {
+                // Yes goes on; No, the default, ends the command; anything else is asked again.
+                Input::Keyword(k) if k == "Yes" => {
                     self.ask = self.after_file(s);
-                    return Ok(Step::Continue);
+                    Ok(Step::Continue)
                 }
-                Ok(Step::Done)
-            }
+                Input::Keyword(_) | Input::Enter => Ok(Step::Done),
+                _ => {
+                    s.echo("Invalid option keyword.");
+                    Ok(Step::Continue)
+                }
+            },
             Ask::Precision => {
                 match &i {
                     Input::Enter => self.ask = Ask::Block,
