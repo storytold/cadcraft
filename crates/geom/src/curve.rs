@@ -113,13 +113,14 @@ impl Arc {
     pub fn bounds(&self) -> Bounds2 {
         let mut b = Bounds2::from_points([self.start_point(), self.end_point()]);
         for k in 0..4 {
-            let a = k as f64 * PI / 2.0;
+            let a = f64::from(k) * PI / 2.0;
             if self.contains_angle(a) {
                 b.add(Vec2::polar(self.center, self.radius, a));
             }
         }
         b
     }
+    #[expect(clippy::cast_precision_loss, reason = "arc_segments caps the sample count at 4096, so every sample index is exact as f64.")]
     pub fn tessellate(&self, tol: f64, out: &mut Vec<Vec2>) {
         let sweep = self.sweep();
         let n = arc_segments(self.radius, sweep, tol);
@@ -192,6 +193,7 @@ impl Circle {
     /// up to two outer (belt) tangents and two inner (crossed) tangents. Empty for concentric
     /// circles or when one circle lies inside the other; tangents that touch both circles at the
     /// same point (circles touching each other) are left out.
+    #[expect(clippy::many_single_char_names, reason = "Circle-tangent equations use conventional r/v/d/u/c/h/n/p/q notation.")]
     pub fn common_tangents(&self, other: &Circle) -> Vec<(Vec2, Vec2)> {
         let (r1, r2) = (self.radius, other.radius);
         let v = other.center - self.center;
@@ -247,6 +249,7 @@ impl Ellipse {
     pub fn sweep(&self) -> f64 {
         ccw_sweep(self.start, self.end)
     }
+    #[expect(clippy::cast_precision_loss, reason = "arc_segments caps the sample count at 4096, so every sample index is exact as f64.")]
     pub fn tessellate(&self, tol: f64, out: &mut Vec<Vec2>) {
         let r = self.major.len();
         let sweep = self.sweep();
@@ -364,7 +367,7 @@ impl Segment {
                 let start = out.len();
                 arc.tessellate(tol, out);
                 if !ccw && let Some(s) = out.get_mut(start..) {
-                    s.reverse()
+                    s.reverse();
                 }
             }
         }
@@ -556,6 +559,7 @@ impl Polyline {
     }
     /// Area centroid of the closed polyline, exact with bulges: the chord triangles fanned from the
     /// first vertex plus each bulge's circular segment, weighted by signed area. `None` at zero area.
+    #[expect(clippy::many_single_char_names, reason = "Centroid integration uses conventional a/b/c/d/t area and point notation.")]
     pub fn centroid(&self) -> Option<Vec2> {
         let origin = self.vertices.first()?.p;
         let n = self.vertices.len();

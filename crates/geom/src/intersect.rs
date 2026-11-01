@@ -14,6 +14,7 @@ pub fn line_line_infinite(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) -> Option<(Vec
 }
 
 /// Intersection of two finite segments.
+#[expect(clippy::many_single_char_names, reason = "Segment endpoints and parameters use conventional a/b/p/t/u geometric notation.")]
 pub fn line_line(a: &Line, b: &Line) -> Option<Vec2> {
     let (p, t, u) = line_line_infinite(a.a, a.b, b.a, b.b)?;
     let tol = 1e-9;
@@ -21,6 +22,7 @@ pub fn line_line(a: &Line, b: &Line) -> Option<Vec2> {
 }
 
 /// Intersections of the infinite line through `l` with a circle. Returns points with line params.
+#[expect(clippy::many_single_char_names, reason = "The line/circle quadratic uses conventional a/d/f/t mathematical notation.")]
 pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
     let d = l.b - l.a;
     let f = l.a - c.center;

@@ -1,6 +1,11 @@
 use super::*;
 
 /// `basis` before it evaluated on the stack, kept as the reference.
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "Spline indices are bounded by slice lengths, and max(0) makes the converted index nonnegative."
+)]
 fn basis_ref(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
     let mut n = vec![0.0; p + 1];
     let mut left = vec![0.0; p + 1];
@@ -23,6 +28,7 @@ fn basis_ref(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
 }
 
 /// `eval` before it evaluated on the stack, kept as the reference.
+#[expect(clippy::many_single_char_names, reason = "The reference implementation keeps the NURBS equation notation used by the algorithm under test.")]
 fn eval_ref(s: &Spline, t: f64) -> Vec2 {
     let n = s.control.len() - 1;
     let (lo, hi) = s.domain();
@@ -41,21 +47,26 @@ fn eval_ref(s: &Spline, t: f64) -> Vec2 {
 }
 
 /// Deterministic pseudo-random numbers in `0..1`.
+#[expect(clippy::cast_precision_loss, reason = "The generator keeps exactly 53 random bits, and 2^53 is exactly representable as f64.")]
 fn noise(seed: &mut u64) -> f64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
     (*seed >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// Splines of degree 1..=11 over 14 control points: clamped and unclamped (uniform) knots,
 /// unit and random weights.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "The test uses 14 control points and degrees through 11, so every knot index is exactly representable as f64."
+)]
 fn samples() -> Vec<Spline> {
     let mut seed = 7;
     let mut out = Vec::new();
     for degree in 1..=11 {
-        let control: Vec<Vec2> = (0..14).map(|i| Vec2::new(i as f64 * 3.0 + noise(&mut seed), 10.0 * noise(&mut seed) - 5.0)).collect();
+        let control: Vec<Vec2> = (0..14).map(|i| Vec2::new(f64::from(i) * 3.0 + noise(&mut seed), 10.0 * noise(&mut seed) - 5.0)).collect();
         let weights: Vec<f64> = (0..14).map(|_| 0.5 + 1.5 * noise(&mut seed)).collect();
         let clamped = Spline::from_control(control.clone(), degree);
-        let uniform = Spline { knots: (0..control.len() + degree + 1).map(|i| i as f64 * 0.25).collect(), ..clamped.clone() };
+        let uniform = Spline { knots: (0..=(control.len() + degree)).map(|i| i as f64 * 0.25).collect(), ..clamped.clone() };
         for base in [clamped, uniform] {
             out.push(Spline { weights: weights.clone(), ..base.clone() });
             out.push(base);
@@ -70,7 +81,7 @@ fn stack_basis_matches_the_heap_basis_bit_for_bit() {
         assert!(s.is_valid());
         let (lo, hi) = s.domain();
         for i in -20..=1020 {
-            let t = lo + (hi - lo) * i as f64 / 1000.0;
+            let t = lo + (hi - lo) * f64::from(i) / 1000.0;
             let got = s.eval(t);
             let want = eval_ref(&s, t);
             assert_eq!((got.x.to_bits(), got.y.to_bits()), (want.x.to_bits(), want.y.to_bits()), "degree {} at {t}: {got:?} vs {want:?}", s.degree);
@@ -87,14 +98,14 @@ fn basis_into_needs_room_for_every_function() {
     let knots = clamped_uniform_knots(6, 3);
     let (mut n, mut left, mut right) = ([0.5; 3], [0.0; 4], [0.0; 4]);
     basis_into(3, 0.5, 3, &knots, &mut n, &mut left, &mut right);
-    assert_eq!(n, [0.5; 3]);
+    assert_eq!(n.map(f64::to_bits), [0.5; 3].map(f64::to_bits));
 }
 
 /// A cubic through 300 points of a sine wave, open or closed.
 fn wiggly(closed: bool) -> Spline {
     let fit: Vec<Vec2> = (0..300)
         .map(|i| {
-            let x = i as f64 / 299.0;
+            let x = f64::from(i) / 299.0;
             Vec2::new(x * 100.0, 10.0 * (x * 60.0).sin())
         })
         .collect();
@@ -108,6 +119,7 @@ fn fine_box(s: &Spline) -> Bounds2 {
 
 /// The box of `n + 1` samples evenly spaced in parameter over the domain, as `bounds` sampled
 /// before it spread its samples over the knot spans.
+#[expect(clippy::cast_precision_loss, reason = "Test grids are capped at MAX_SAMPLES (4000), so sample indices are exactly representable as f64.")]
 fn uniform_box(s: &Spline, n: usize) -> Bounds2 {
     let (lo, hi) = s.domain();
     Bounds2::from_points((0..=n).map(|i| s.eval(lo + (hi - lo) * i as f64 / n as f64)))
@@ -118,7 +130,7 @@ fn uniform_box(s: &Spline, n: usize) -> Bounds2 {
 /// except for a peak of 50 at t = 0.50035, inside a span of width 1e-4 that no point of a
 /// uniform grid of up to 4000 hits (0.50025 and 0.5005 are the nearest).
 fn narrow_span() -> Spline {
-    let control = (0..7).map(|i| Vec2::new(i as f64, if i == 3 { 100.0 } else { 0.0 })).collect();
+    let control = (0..7).map(|i| Vec2::new(f64::from(i), if i == 3 { 100.0 } else { 0.0 })).collect();
     Spline { degree: 2, knots: vec![0.0, 0.0, 0.0, 0.5003, 0.5003, 0.5004, 0.5004, 1.0, 1.0, 1.0], control, ..Spline::default() }
 }
 
@@ -132,14 +144,14 @@ fn an_off_grid_peak_in_a_narrow_span_is_within_a_percent() {
     s.control[4].y = 30.0;
     assert!(s.is_valid());
     let (a, b) = (0.5003, 0.5004);
-    let peak = (0..=10_000).map(|i| s.eval(a + (b - a) * i as f64 / 10_000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
+    let peak = (0..=10_000).map(|i| s.eval(a + (b - a) * f64::from(i) / 10_000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
     assert!(peak.y > 58.0 && peak.y < 59.0, "{peak:?}");
     let hull = Bounds2::from_points(s.control.iter().copied());
     let diag = hull.min.dist(hull.max);
     let got = s.bounds();
     assert!(got.max.y <= peak.y + 1e-9 * diag && got.max.y >= peak.y - 1e-2 * diag, "{got:?} vs peak {peak:?}");
     // Four segments, the floor before, missed it by more than that.
-    let four = (0..=4).map(|i| s.eval(a + (b - a) * i as f64 / 4.0)).fold(f64::MIN, |m, p| m.max(p.y));
+    let four = (0..=4).map(|i| s.eval(a + (b - a) * f64::from(i) / 4.0)).fold(f64::MIN, |m, p| m.max(p.y));
     assert!(four < peak.y - 1e-2 * diag, "{four} vs {peak:?}");
 }
 
@@ -148,7 +160,7 @@ fn bounds_see_an_extreme_inside_a_narrow_knot_span() {
     let s = narrow_span();
     assert!(s.is_valid());
     let (a, b) = (0.5003, 0.5004);
-    let peak = (0..=1000).map(|i| s.eval(a + (b - a) * i as f64 / 1000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
+    let peak = (0..=1000).map(|i| s.eval(a + (b - a) * f64::from(i) / 1000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
     assert!((peak.x - 3.0).abs() < 1e-9 && (peak.y - 50.0).abs() < 1e-9, "{peak:?}");
     let hull = Bounds2::from_points(s.control.iter().copied());
     let diag = hull.min.dist(hull.max);
@@ -165,6 +177,7 @@ fn bounds_see_an_extreme_inside_a_narrow_knot_span() {
 }
 
 #[test]
+#[expect(clippy::cast_precision_loss, reason = "The test grids contain 1502 or 2502 points, so all sample indices are exact as f64.")]
 fn bounds_keep_their_cap_over_many_spans() {
     // 1500 spans: eight per span would pass the cap, so two; 2500 spans: more than the cap
     // allows two for, so the control box, which contains the curve. A smooth curve stays

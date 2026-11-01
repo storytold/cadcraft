@@ -6,7 +6,7 @@ use crate::{Bounds2, Vec2};
 /// Largest B-spline degree treated as valid. Basis evaluation is O(degree²) per sample and
 /// tessellation takes O(degree) samples, so an unbounded degree (DXF/HATCH can declare up to
 /// 100 000) turns a tiny spline into billions of iterations (CWE-407). Real splines are low
-/// degree (AutoCAD caps at 11); above this a spline evaluates to its control polygon instead.
+/// degree (`AutoCAD` caps at 11); above this a spline evaluates to its control polygon instead.
 pub const MAX_DEGREE: usize = 64;
 
 /// A (possibly rational) B-spline curve, DXF SPLINE style.
@@ -87,6 +87,7 @@ impl Spline {
 
     /// `eval` on a spline `is_valid` has accepted, given its `domain()`, so sampling many points
     /// validates once (`is_valid` walks the knot vector).
+    #[expect(clippy::many_single_char_names, reason = "De Boor evaluation keeps the standard p/w/b/k notation shared with basis_ref.")]
     fn eval_valid(&self, t: f64, lo: f64, hi: f64) -> Vec2 {
         let n = self.control.len().saturating_sub(1);
         let t = t.clamp(lo, hi);
@@ -128,16 +129,22 @@ impl Spline {
 
     /// The segments for a control polygon `ratio` times the tolerance: dimensionless, so a
     /// spline and its scaled copy sample alike at any scale.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The floating count is clamped to 8..=2000 before its truncating conversion to usize."
+    )]
     fn segments_for(&self, ratio: f64) -> usize {
         let n = (ratio.sqrt() * 2.0).clamp(8.0, 2000.0) as usize * self.degree.max(1);
         n.min(MAX_SAMPLES)
     }
 
     fn polygon_length(&self) -> f64 {
-        self.control.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum()
+        self.control.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum()
     }
 
     /// `n + 1` points evenly spaced in parameter over the domain (the spline must be valid).
+    #[expect(clippy::cast_precision_loss, reason = "Internal callers cap sample counts at MAX_SAMPLES (4000), so every index is exact as f64.")]
     fn samples(&self, n: usize) -> impl Iterator<Item = Vec2> + '_ {
         let (lo, hi) = self.domain();
         (0..=n).map(move |i| self.eval_valid(lo + (hi - lo) * i as f64 / n as f64, lo, hi))
@@ -159,6 +166,12 @@ impl Spline {
     /// is its control polygon, so its control box is exact; a degenerate spline gets its control
     /// box, which contains the curve (the box of the finite control points when one is not
     /// finite: `hull` skips it, but it would poison every sample).
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "Budgets and per-span counts are capped at MAX_SAMPLES; span fractions are nonnegative before conversion."
+    )]
     pub fn bounds(&self) -> Bounds2 {
         let hull = Bounds2::from_points(self.control.iter().copied());
         let diag = hull.min.dist(hull.max);
@@ -216,6 +229,10 @@ impl Spline {
 /// control points took minutes).
 const MAX_SAMPLES: usize = 4000;
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Knot indices are sampled as normalized f64 parameters; any precision loss would only be beyond 2^53 allocated control points."
+)]
 pub(crate) fn clamped_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     let mut k = vec![0.0; degree + 1];
     let inner = n.saturating_sub(degree + 1);
@@ -233,7 +250,7 @@ pub(crate) fn find_span(n: usize, p: usize, u: f64, knots: &[f64]) -> usize {
     }
     let mut low = p;
     let mut high = n + 1;
-    let mut mid = (low + high) / 2;
+    let mut mid = usize::midpoint(low, high);
     let mut guard = 0;
     while guard < 200 {
         guard += 1;
@@ -246,7 +263,7 @@ pub(crate) fn find_span(n: usize, p: usize, u: f64, knots: &[f64]) -> usize {
         } else {
             break;
         }
-        mid = (low + high) / 2;
+        mid = usize::midpoint(low, high);
     }
     mid
 }
@@ -266,6 +283,11 @@ pub(crate) fn basis(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
 
 /// `basis` into `n[..=p]`, with `left` and `right` as scratch; each must hold `p + 1` values or
 /// `n` stays as it was.
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "Spline indices are bounded by slice lengths, and max(0) makes the converted index nonnegative."
+)]
 fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left: &mut [f64], right: &mut [f64]) {
     if n.len() <= p || left.len() <= p || right.len() <= p {
         return;
@@ -290,6 +312,7 @@ fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left:
 
 /// Gaussian elimination with partial pivoting.
 #[allow(clippy::needless_range_loop)]
+#[expect(clippy::many_single_char_names, reason = "Gaussian elimination keeps conventional matrix/row/column notation.")]
 pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();
     for c in 0..n {
