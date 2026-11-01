@@ -214,6 +214,7 @@ fn a_locked_viewport_is_not_moved_and_the_user_is_told() {
     drag(&mut h, from, from + vec2(80.0, 50.0));
     assert_eq!(areas(&mut h), before, "a locked viewport keeps its area");
     assert!(h.state().session.log.iter().any(|l| l.contains("locked")), "{:?}", h.state().session.log);
+    assert!(h.state().status.as_ref().is_some_and(|(m, _)| m.contains("locked")), "also in the status bar: {:?}", h.state().status);
 }
 
 #[test]
@@ -250,4 +251,67 @@ fn the_command_toggles_and_takes_on() {
     assert!(h.state().canvas.layout.on);
     h.state_mut().run("ui.toggle.layoutmode", json!({"on": true})).unwrap();
     assert!(h.state().canvas.layout.on, "on stays on");
+}
+
+/// With the endpoint snap on, a moved rectangle puts its nearest corner exactly on the endpoint.
+#[test]
+fn a_moved_rectangle_snaps_a_corner_to_an_object_point() {
+    let mut h = harness();
+    h.state_mut().run("options", json!({"OSMODE": 1})).unwrap();
+    h.run_steps(2);
+    let b = win(&areas(&mut h)[0]);
+    // Grab just inside the bottom-left corner, then drop it a few pixels from the line's end (100, 0).
+    let p = pixel(&h);
+    let from = (b[0] + 6.0 * p, b[1] + 6.0 * p);
+    let near = (100.0 + 4.0 * p, 3.0 * p);
+    drag_world(&mut h, from, (near.0 + 6.0 * p, near.1 + 6.0 * p));
+    let a = win(&areas(&mut h)[0]);
+    assert!((a[0] - 100.0).abs() < 1e-6 && a[1].abs() < 1e-6, "the corner is on the endpoint: {a:?}");
+    assert!(((a[2] - a[0]) - (b[2] - b[0])).abs() < 1e-9, "a move keeps the size");
+}
+
+/// With snaps off the same drop lands where the pointer put it.
+#[test]
+fn without_snaps_the_rectangle_goes_where_it_is_dropped() {
+    let mut h = harness();
+    h.state_mut().run("options", json!({"OSMODE": 0})).unwrap();
+    h.run_steps(2);
+    let b = win(&areas(&mut h)[0]);
+    let p = pixel(&h);
+    let from = (b[0] + 6.0 * p, b[1] + 6.0 * p);
+    drag_world(&mut h, from, (100.0 + 10.0 * p, 10.0 * p));
+    let a = win(&areas(&mut h)[0]);
+    assert!((a[0] - 100.0).abs() > 0.5 * p, "not snapped: {a:?}");
+}
+
+/// A new layout's window corners snap to object points too.
+#[test]
+fn a_new_layout_window_snaps_both_corners() {
+    let mut h = harness();
+    h.state_mut().session.execute("line", &json!({"points": [[0, 60], [100, 60]]})).unwrap();
+    h.state_mut().run("options", json!({"OSMODE": 1})).unwrap();
+    h.run_steps(2);
+    let p = pixel(&h);
+    let n = layouts(&h);
+    // Both corners are a few pixels from line ends: (0, 60) and (100, 0).
+    drag_world(&mut h, (-3.0 * p, 60.0 + 3.0 * p), (100.0 + 3.0 * p, 2.0 * p));
+    assert_eq!(layouts(&h), n + 1, "the layout was added");
+    let new = areas(&mut h).into_iter().find(|a| a["layout"] != "A").unwrap();
+    let w = win(&new);
+    let c = ((w[0] + w[2]) / 2.0, (w[1] + w[3]) / 2.0);
+    assert!((c.0 - 50.0).abs() < 1e-6 && (c.1 - 30.0).abs() < 1e-6, "centred on the snapped window (0,60)-(100,0): {c:?}");
+}
+
+/// The status bar button turns the mode on and off.
+#[test]
+fn the_status_bar_button_toggles_the_mode() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    assert!(h.state().canvas.layout.on);
+    h.get_by_label("Layout Mode").click();
+    h.run_steps(3);
+    assert!(!h.state().canvas.layout.on, "the button switched it off");
+    h.get_by_label("Layout Mode").click();
+    h.run_steps(3);
+    assert!(h.state().canvas.layout.on, "and on again");
 }

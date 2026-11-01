@@ -2,9 +2,14 @@
 //! after the layout. Clicking one selects it, dragging moves it and dragging a corner resizes it
 //! (the viewport keeps its shape), double-clicking opens the layout, and dragging on empty ground
 //! adds a layout showing that area. While the mode is on the drawing's own objects are left alone.
+//!
+//! Positions snap to the drawing's objects with the running object snaps (OSNAP), as any point
+//! pick does: a moved rectangle puts its nearest corner (or its centre) on the snap point, a
+//! resized one its dragged corner, a new one both of its corners.
 
 use cadcraft_doc::{Handle, Space};
 use cadcraft_engine::Session;
+use cadcraft_engine::snap::tracking::CursorQuery;
 use cadcraft_geom::Vec2;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
@@ -41,6 +46,11 @@ impl Area {
     fn rect(&self, xf: &Xf) -> Rect {
         Rect::from_two_pos(xf.to_screen(Vec2::new(self.min.x, self.max.y)), xf.to_screen(Vec2::new(self.max.x, self.min.y)))
     }
+    /// The corners (bottom-left first, counter-clockwise) and the centre: the points a moved
+    /// rectangle puts on a snap point.
+    fn reference_points(&self) -> [Vec2; 5] {
+        [self.min, Vec2::new(self.max.x, self.min.y), self.max, Vec2::new(self.min.x, self.max.y), self.center()]
+    }
 }
 
 /// What a press on a rectangle started.
@@ -59,8 +69,11 @@ enum Grab {
 struct Drag {
     grab: Grab,
     area: Option<Area>,
+    /// Where the press was, snapped.
     start: Vec2,
     start_px: Pos2,
+    /// For a move: the corner or centre of the area nearest the press, which lands on snap points.
+    reference: Vec2,
     /// The area as it looks now, when it is being edited (not yet applied).
     shown: Option<(Vec2, f64)>,
 }
@@ -165,6 +178,32 @@ fn dragged(area: &Area, grab: Grab, delta: Vec2, to: Vec2) -> (Vec2, f64) {
     }
 }
 
+/// `raw` moved onto the drawing's object snaps (and the snap grid), as a point pick would be. The
+/// snap marker shows where it landed.
+fn snapped(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, raw: Vec2) -> Vec2 {
+    let now = ui.input(|i| i.time);
+    let q = CursorQuery {
+        base: None,
+        deferred: false,
+        corner: false,
+        aperture: app.session.settings.aperture / xf.scale,
+        tol: 6.0 / xf.scale,
+        now,
+        shift: false,
+    };
+    let r = app.session.snap_cursor(raw, &q);
+    app.canvas.snap = r.snap;
+    app.canvas.track = r.track;
+    app.canvas.cursor = Some(r.point);
+    r.point
+}
+
+/// Tell the user something in the status bar (and in the command history).
+fn say(app: &mut CadApp, message: String) {
+    app.session.echo(message.clone());
+    app.status = Some((message, crate::now_ms()));
+}
+
 /// Handles the pointer over the canvas. Returns whether layout mode took the input, so the
 /// canvas does not also select or pick.
 pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool {
@@ -173,12 +212,13 @@ pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool 
         return false;
     }
     app.canvas.layout.refresh(&mut app.session);
-    let (pressed, released, double, hover, esc) = ui.input(|i| {
+    let (pressed, released, double, hover, origin, esc) = ui.input(|i| {
         (
             i.pointer.primary_pressed(),
             i.pointer.primary_released(),
             i.pointer.button_double_clicked(egui::PointerButton::Primary),
             i.pointer.interact_pos(),
+            i.pointer.press_origin(),
             i.key_pressed(egui::Key::Escape),
         )
     });
@@ -188,24 +228,8 @@ pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool 
         return true;
     }
     if pressed && inside {
-        let lm = &mut app.canvas.layout;
-        let selected = lm.selected.and_then(|h| lm.areas.iter().find(|a| a.handle == h)).cloned();
-        let corner = selected.as_ref().and_then(|a| {
-            let r = a.rect(xf);
-            (0..4).find(|&i| corner_px(r, i).distance(pos) <= HANDLE).map(|i| (a.clone(), i))
-        });
-        let start = xf.to_world(pos);
-        lm.drag = Some(match (corner, lm.at(xf, pos).cloned()) {
-            (Some((a, i)), _) => Drag { grab: Grab::Corner(i), area: Some(a), start, start_px: pos, shown: None },
-            (None, Some(a)) => {
-                lm.selected = Some(a.handle);
-                Drag { grab: Grab::Move, area: Some(a), start, start_px: pos, shown: None }
-            }
-            (None, None) => {
-                lm.selected = None;
-                Drag { grab: Grab::New, area: None, start, start_px: pos, shown: None }
-            }
-        });
+        // Where the button went down (the pointer may already have moved on within this frame).
+        begin(app, ui, xf, origin.unwrap_or(pos));
     }
     if double && let Some(a) = app.canvas.layout.at(xf, pos).cloned() {
         app.canvas.layout.drag = None;
@@ -213,8 +237,21 @@ pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool 
         return true;
     }
     let Some(drag) = app.canvas.layout.drag.clone() else { return true };
-    let to = xf.to_world(pos);
-    let delta = Vec2::new(to.x - drag.start.x, to.y - drag.start.y);
+    let raw_to = xf.to_world(pos);
+    // Where the dragged point lands, and the move it makes: a moved rectangle puts its reference
+    // point on the snap point, so the delta is from that point; a corner or a window's second corner
+    // snaps itself.
+    let (to, delta) = match drag.grab {
+        Grab::Move => {
+            let target = Vec2::new(drag.reference.x + raw_to.x - drag.start.x, drag.reference.y + raw_to.y - drag.start.y);
+            let p = snapped(app, ui, xf, target);
+            (p, Vec2::new(p.x - drag.reference.x, p.y - drag.reference.y))
+        }
+        _ => {
+            let p = snapped(app, ui, xf, raw_to);
+            (p, Vec2::new(p.x - drag.start.x, p.y - drag.start.y))
+        }
+    };
     if let (Some(a), Grab::Move | Grab::Corner(_)) = (&drag.area, drag.grab) {
         let moved = pos.distance(drag.start_px) >= 1.0;
         if let Some(d) = app.canvas.layout.drag.as_mut() {
@@ -226,6 +263,48 @@ pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool 
         finish(app, &drag, pos, to, delta);
     }
     true
+}
+
+/// A press at `at`: selects the rectangle under it and starts the drag it allows (a move, a corner
+/// resize, or a new window on empty ground); a locked viewport only says why it can't change.
+fn begin(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, at: Pos2) {
+    let lm = &mut app.canvas.layout;
+    let selected = lm.selected.and_then(|h| lm.areas.iter().find(|a| a.handle == h)).cloned();
+    let corner = selected.as_ref().filter(|a| !a.locked).and_then(|a| {
+        let r = a.rect(xf);
+        (0..4).find(|&i| corner_px(r, i).distance(at) <= HANDLE).map(|i| (a.clone(), i))
+    });
+    let raw = xf.to_world(at);
+    let under = lm.at(xf, at).cloned();
+    if let Some(a) = under.as_ref().filter(|a| a.locked && corner.is_none()) {
+        lm.selected = Some(a.handle);
+        lm.drag = None;
+        let name = a.layout.clone();
+        say(app, crate::tf!("The viewport of layout {name} is locked: unlock it to change its area", name = name));
+    } else {
+        let (grab, area) = match (corner, under) {
+            (Some((a, i)), _) => (Grab::Corner(i), Some(a)),
+            (None, Some(a)) => {
+                lm.selected = Some(a.handle);
+                (Grab::Move, Some(a))
+            }
+            (None, None) => {
+                lm.selected = None;
+                (Grab::New, None)
+            }
+        };
+        // A new window's first corner snaps; a move keeps the press point and snaps a corner.
+        let reference = area
+            .as_ref()
+            .map(|a| {
+                let mut pts = a.reference_points();
+                pts.sort_by(|p, q| xf.to_screen(*p).distance(at).total_cmp(&xf.to_screen(*q).distance(at)));
+                pts[0]
+            })
+            .unwrap_or(raw);
+        let start = if grab == Grab::New { snapped(app, ui, xf, raw) } else { raw };
+        app.canvas.layout.drag = Some(Drag { grab, area, start, start_px: at, reference, shown: None });
+    }
 }
 
 /// A drag ended at `pos`: apply the edit, or add the layout.
@@ -249,7 +328,7 @@ fn finish(app: &mut CadApp, drag: &Drag, pos: Pos2, to: Vec2, delta: Vec2) {
             }
             app.canvas.layout.read_at = None;
         }
-        Err(e) => app.session.echo(e),
+        Err(e) => say(app, e),
     }
 }
 
@@ -275,14 +354,16 @@ pub fn paint(app: &mut CadApp, painter: &egui::Painter, xf: &Xf) {
         if !r.intersects(clip) {
             continue;
         }
-        painter.rect_filled(r, 0.0, COLOR.gamma_multiply(if selected { 0.16 } else { 0.07 }));
-        painter.rect_stroke(r, 0.0, Stroke::new(if selected { 2.5 } else { 1.5 }, COLOR), StrokeKind::Middle);
-        let font = FontId::proportional(13.0);
-        let label = painter.layout_no_wrap(a.layout.clone(), font, Color32::WHITE);
+        // A locked viewport can't be changed: it is drawn fainter, with "locked" after its name.
+        let color = if a.locked { COLOR.gamma_multiply(0.55) } else { COLOR };
+        painter.rect_filled(r, 0.0, color.gamma_multiply(if selected { 0.16 } else { 0.07 }));
+        painter.rect_stroke(r, 0.0, Stroke::new(if selected { 2.5 } else { 1.5 }, color), StrokeKind::Middle);
+        let name = if a.locked { format!("{} ({})", a.layout, crate::tl!("locked")) } else { a.layout.clone() };
+        let label = painter.layout_no_wrap(name, FontId::proportional(13.0), Color32::WHITE);
         let tag = Rect::from_min_size(r.left_top(), label.size() + vec2(10.0, 4.0));
-        painter.rect_filled(tag, 0.0, COLOR);
+        painter.rect_filled(tag, 0.0, color);
         painter.galley(tag.min + vec2(5.0, 2.0), label, Color32::WHITE);
-        if selected {
+        if selected && !a.locked {
             for i in 0..4 {
                 let h = Rect::from_center_size(corner_px(r, i), vec2(HANDLE, HANDLE));
                 painter.rect_filled(h, 0.0, Color32::WHITE);
@@ -292,12 +373,12 @@ pub fn paint(app: &mut CadApp, painter: &egui::Painter, xf: &Xf) {
     }
     if let Some(d) = &lm.drag
         && d.grab == Grab::New
-        && let Some(p) = painter.ctx().input(|i| i.pointer.interact_pos())
+        && let Some(end) = app.canvas.cursor
     {
-        let r = Rect::from_two_pos(d.start_px, p);
+        let r = Rect::from_two_pos(xf.to_screen(d.start), xf.to_screen(end));
         painter.rect_filled(r, 0.0, COLOR.gamma_multiply(0.1));
         painter.rect_stroke(r, 0.0, Stroke::new(1.5, COLOR), StrokeKind::Middle);
-        let hint = painter.layout_no_wrap("New layout".into(), FontId::proportional(13.0), COLOR);
+        let hint = painter.layout_no_wrap(crate::tl!("New layout").to_string(), FontId::proportional(13.0), COLOR);
         painter.galley(pos2(r.left(), r.top() - hint.size().y - 3.0), hint, COLOR);
     }
     painter.text(
