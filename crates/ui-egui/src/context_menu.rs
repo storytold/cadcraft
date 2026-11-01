@@ -160,13 +160,7 @@ fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
 pub fn object_entries(app: &CadApp) -> Vec<Entry> {
     object_commands(app)
         .into_iter()
-        .filter_map(|(id, label)| {
-            if id == "textedit" {
-                edit_text_window_entry(app).or_else(|| item(app, id, label))
-            } else {
-                item(app, id, label)
-            }
-        })
+        .filter_map(|(id, label)| if id == "textedit" { edit_text_window_entry(app).or_else(|| item(app, id, label)) } else { item(app, id, label) })
         .collect()
 }
 
