@@ -65,6 +65,8 @@ pub mod viewcube;
 pub mod vpscale;
 
 pub mod exchange;
+mod file_provider_app;
+pub mod file_providers;
 
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -236,6 +238,8 @@ pub struct CadApp {
     /// The interface's own preferences from the Options dialog ([`options`]).
     pub options: options::UiOptions,
     pub services: Services,
+    /// Disabled until an explicit same-origin web host registers a provider.
+    pub file_providers: file_providers::Host,
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
@@ -325,6 +329,7 @@ impl CadApp {
             ui: UiState::default(),
             options: options::UiOptions::default(),
             services,
+            file_providers: file_providers::Host::default(),
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),
             cmd: cmdline::CmdLine::default(),
@@ -392,6 +397,9 @@ impl CadApp {
 
     /// Run a command programmatically (or a UI command).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if self.file_providers.busy() && matches!(id, "close" | "closeall" | "revert") {
+            return Err("finish or cancel the pending file provider operation before closing or reverting".into());
+        }
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
@@ -653,6 +661,7 @@ impl CadApp {
     /// pass index is zero. `current_pass_index() == 0` is therefore the frame guard: true on the
     /// first pass and every hidden tick, false on later passes.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        file_provider_app::tick(self);
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);

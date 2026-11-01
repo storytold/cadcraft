@@ -12,6 +12,8 @@
 #[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
+mod file_providers;
+#[cfg(target_arch = "wasm32")]
 mod host;
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -49,6 +51,7 @@ mod web {
             self.1.drain(&mut self.0);
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
+            crate::file_providers::publish(&self.0.file_providers);
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
             // `DirtyReport` suppresses duplicates, so reporting after every logic callback
@@ -83,6 +86,7 @@ mod web {
                 self.1.take_dropped(ui.ctx());
             }
             self.0.ui(ui);
+            crate::file_providers::publish(&self.0.file_providers);
         }
     }
 
@@ -159,6 +163,13 @@ mod web {
                         // Embedded, the parent sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
                         let mut app = CadApp::new(session, services());
+                        // The new capability is independent of the opt-in legacy parent bridge.
+                        // Avoid two hosts competing for the same Save command.
+                        if app_bridge.is_none() {
+                            if let Err(error) = crate::file_providers::install(app.file_providers.clone(), cc.egui_ctx.clone()) {
+                                log::error!("file provider capability could not be installed: {error:?}");
+                            }
+                        }
                         app.system_languages =
                             web_sys::window().map(|w| w.navigator().languages().iter().filter_map(|v| v.as_string()).collect()).unwrap_or_default();
                         if let Some(profile) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::options::PROFILE_KEY)) {

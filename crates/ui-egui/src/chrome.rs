@@ -556,9 +556,19 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
         y += 44.0;
     }
     let main = Rect::from_min_max(pos2(left.right() + 36.0, r.top() + 40.0), r.max);
-    p.text(main.min, egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
+    let mut local_top = main.top();
+    if app.file_providers.enabled() {
+        let mut provider_ui = ui.new_child(egui::UiBuilder::new().max_rect(main).layout(egui::Layout::top_down(egui::Align::Min)));
+        egui::ScrollArea::vertical()
+            .id_salt("provider-recents")
+            .max_height((r.height() * 0.4).clamp(80.0, 240.0))
+            .show(&mut provider_ui, |ui| app.file_providers.provider_recent_ui(ui));
+        app.file_providers.device_recent_ui(&mut provider_ui);
+        local_top += provider_ui.min_rect().height() + 20.0;
+    }
+    p.text(pos2(main.left(), local_top), egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
     let mut recent = None;
-    let mut y = main.top() + 44.0;
+    let mut y = local_top + 44.0;
     for (i, path) in app.ui.recent_files.iter().enumerate() {
         let row = Rect::from_min_size(pos2(main.left(), y), vec2((r.right() - main.left() - 36.0).clamp(0.0, 640.0), 42.0));
         let resp = ui.interact(row, ui.scope_id().with(("recent", i)), Sense::click());
