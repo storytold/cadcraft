@@ -402,6 +402,10 @@ pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
 /// Save to `path` with `opts`. A drawing file then keeps the version and binary choice: the
 /// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again.
 fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usize> {
+    save_as_with(s, cmd, path, opts, store)
+}
+
+fn save_as_with(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs, store: impl FnOnce(&str, &[u8]) -> Result<()>) -> Result<usize> {
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
     }
@@ -663,10 +667,29 @@ fn saved(path: &str, bytes: usize) -> Value {
 fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
     let path = match str_param(p, "path") {
         Some(p) => p.to_string(),
-        None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
+        None => match s.state()?.path.clone() {
+            Some(path) => path,
+            None => return save_opened_name(s),
+        },
     };
     let n = save_to(s, &path)?;
     Ok(saved(&path, n))
+}
+
+/// QSAVE of a drawing opened from bytes (no path) where the host takes delivery of files (the
+/// web embed): deliver it under the name it was opened with, as SAVEAS does. Without a host, or
+/// for a file that isn't a drawing (an imported SVG), there is no name to save under.
+fn save_opened_name(s: &mut Session) -> Result<Value> {
+    let title = s.state()?.title.clone();
+    let deliver = deliver().filter(|_| is_drawing_file(&title));
+    let Some(deliver) = deliver else {
+        return Err(bad("qsave", "drawing has no file name yet; use saveas {path}"));
+    };
+    let opts = SaveAs { version: None, binary: s.state()?.binary_dxf && is_dxf(&title) };
+    let n = save_as_with(s, "save", &title, &opts, |name, bytes| {
+        deliver(name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
+    })?;
+    Ok(saved(&title, n))
 }
 
 fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
