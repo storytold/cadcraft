@@ -39,6 +39,25 @@ fn properties_set_changes_a_texts_style_and_justification() {
     assert_eq!(texts(&s)[0].style, "Big", "nothing changed by a refused call");
 }
 
+/// Several texts given a style in one call: one undo step, and each keeps its own height, also
+/// when the style has a fixed height (that height is what new text gets, as in AutoCAD).
+#[test]
+fn a_style_set_on_several_texts_is_one_step_and_keeps_their_heights() {
+    let mut s = Session::new();
+    s.execute("style", &json!({"name": "Fixed", "font": "Arial", "height": 3.0, "current": false})).unwrap();
+    let mut handles = Vec::new();
+    for (y, height) in [(0.0, 2.0), (10.0, 5.0)] {
+        let r = s.execute("text", &json!({"at": [0.0, y], "text": "T", "height": height})).unwrap();
+        handles.push(r["handle"].as_str().or_else(|| r["handles"][0].as_str()).unwrap().to_string());
+    }
+    s.execute("properties.set", &json!({"handles": handles, "style": "fixed"})).unwrap();
+    let styled: Vec<(String, f64)> = texts(&s).into_iter().map(|t| (t.style, t.height)).collect();
+    assert_eq!(styled, [("Fixed".to_string(), 2.0), ("Fixed".to_string(), 5.0)]);
+    s.undo().unwrap();
+    let back: Vec<(String, f64)> = texts(&s).into_iter().map(|t| (t.style, t.height)).collect();
+    assert_eq!(back, [("Standard".to_string(), 2.0), ("Standard".to_string(), 5.0)], "one undo step takes both back");
+}
+
 #[test]
 fn typed_text_style_option_makes_a_style_current() {
     let mut s = Session::new();
