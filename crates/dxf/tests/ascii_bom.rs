@@ -9,7 +9,7 @@ fn utf8_bom_bytes_are_skipped() {
     bytes.extend_from_slice(BODY.as_bytes());
     let with_bom = cadcraft_dxf::parse(&bytes);
     assert!(with_bom.is_ok(), "{with_bom:?}");
-    assert_eq!(with_bom.map(|t| t.len()).unwrap_or(0), plain.len());
+    assert_eq!(with_bom.map_or(0, |t| t.len()), plain.len());
 }
 
 #[test]
