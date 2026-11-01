@@ -1050,6 +1050,93 @@ fn attribute_vertical_alignment_is_group_74_not_the_field_length() {
     assert_eq!((t.halign, t.valign), (HAlign::Center, VAlign::Middle), "TEXT keeps group 73");
 }
 
+/// The writer's side of the above: an attribute definition and an attribute in each of the 15
+/// justifications come back with the same one from a DXF CADCraft saved (it writes the
+/// alignment as group 74 and no field length) and from a DWG saved from that DXF, whose
+/// DWG→DXF rendition writes the field length `73 0` before `74`.
+#[test]
+fn attributes_keep_all_fifteen_justifications_through_dxf_and_dwg() {
+    use HAlign as H;
+    use VAlign as V;
+    let justifications = [
+        (H::Left, V::Baseline),
+        (H::Center, V::Baseline),
+        (H::Right, V::Baseline),
+        (H::Aligned, V::Baseline),
+        (H::Middle, V::Baseline),
+        (H::Fit, V::Baseline),
+        (H::Left, V::Top),
+        (H::Center, V::Top),
+        (H::Right, V::Top),
+        (H::Left, V::Middle),
+        (H::Center, V::Middle),
+        (H::Right, V::Middle),
+        (H::Left, V::Bottom),
+        (H::Center, V::Bottom),
+        (H::Right, V::Bottom),
+    ];
+    let text = |i: usize, (halign, valign): (HAlign, VAlign)| Text {
+        insert: Vec3::new(0.0, 10.0 * i as f64, 0.0),
+        align_pt: ((halign, valign) != (H::Left, V::Baseline)).then(|| Vec3::new(20.0, 10.0 * i as f64, 0.0)),
+        height: 2.5,
+        value: format!("V{i}"),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign,
+        valign,
+    };
+    let attrib = |i: usize, j: (HAlign, VAlign)| Attrib {
+        tag: format!("T{i}"),
+        text: text(i, j),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    };
+    let mut d = Drawing::new_metric();
+    let mut b = Block::new("J");
+    for (i, &j) in justifications.iter().enumerate() {
+        b.entities.push(Entity::new(Handle(0x50 + i as u64), EntityKind::AttDef(attrib(i, j))));
+    }
+    d.blocks.insert("J".into(), std::sync::Arc::new(b));
+    let insert = Insert {
+        block: "J".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: justifications.iter().enumerate().map(|(i, &j)| attrib(i, j)).collect(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+    let dxf = write_dxf(&d);
+    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
+        let ins = first(&back, |k| if let EntityKind::Insert(i) = k { Some(i.clone()) } else { None });
+        let defs: Vec<Attrib> = back
+            .block("J")
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None })
+            .collect();
+        for (i, &j) in justifications.iter().enumerate() {
+            let tag = format!("T{i}");
+            let att = ins.attribs.iter().find(|a| a.tag == tag).unwrap_or_else(|| panic!("{what}: attribute {tag}"));
+            assert_eq!((att.text.halign, att.text.valign), j, "{what}: attribute {tag}");
+            let def = defs.iter().find(|a| a.tag == tag).unwrap_or_else(|| panic!("{what}: definition {tag}"));
+            assert_eq!((def.text.halign, def.text.valign), j, "{what}: definition {tag}");
+        }
+    }
+}
+
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
 /// rest opens, and the drawing's read notes say how many records were left out and of which
 /// types, so a partial read never passes for a complete one. A complete read has no notes.
