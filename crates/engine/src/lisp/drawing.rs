@@ -491,6 +491,7 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
+    let before = order_key(ctx);
     let (kind_name, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
@@ -509,6 +510,7 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         .is_ok();
     if ok {
         ctx.s.touch();
+        keep_order(ctx, before);
     }
     Ok(Flow::Value(if ok { list.clone() } else { Value::Nil }))
 }
@@ -517,7 +519,9 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn entupd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let h = ename(&a[0])?;
+    let before = order_key(ctx);
     ctx.s.touch();
+    keep_order(ctx, before);
     Ok(Flow::Value(if ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) { Value::Ename(h) } else { Value::Nil }))
 }
 
@@ -544,10 +548,11 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     }
 }
 
-/// Every entity's handle in creation order (model space and layouts), cached per drawing.
+/// Every entity's handle in creation order (model space and layouts), cached until the drawing
+/// changes.
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
+    let Some(key) = order_key(ctx) else { return Arc::default() };
     let Ok(st) = ctx.s.state() else { return Arc::default() };
-    let key = Arc::as_ptr(&st.doc) as usize;
     if let Some((k, v)) = &ctx.env.order
         && *k == key
     {
@@ -562,6 +567,25 @@ fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
     let v = Arc::new(v);
     ctx.env.order = Some((key, v.clone()));
     v
+}
+
+/// The drawing the creation order was taken from: a routine edits the drawing in place, at the
+/// same address, so its revision tells each change, as it does the canvas.
+fn order_key(ctx: &Ctx<'_>) -> Option<(usize, u64)> {
+    let st = ctx.s.state().ok()?;
+    Some((Arc::as_ptr(&st.doc) as usize, st.revision))
+}
+
+/// Carry a creation order taken at `before` past an edit that changes objects but not which
+/// objects there are (`entmod`, `entupd`), so a routine editing each object it walks with
+/// `entnext` does not take the order again at every step.
+fn keep_order(ctx: &mut Ctx<'_>, before: Option<(usize, u64)>) {
+    let now = order_key(ctx);
+    if let (Some(before), Some(now), Some((k, _))) = (before, now, ctx.env.order.as_mut())
+        && *k == before
+    {
+        *k = now;
+    }
 }
 
 pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {

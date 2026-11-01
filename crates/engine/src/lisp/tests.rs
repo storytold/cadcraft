@@ -596,6 +596,64 @@ fn appload_and_load() {
     assert!(r["error"].as_str().is_some_and(|e| e.contains("bad argument type")));
 }
 
+/// `entlast` and `entnext` see what the same routine has just made, drawn or deleted: a routine
+/// edits the drawing in place, at the same address, so the handles they walk are taken again
+/// whenever the drawing changes.
+#[test]
+fn entlast_and_entnext_follow_edits_within_one_routine() {
+    let mut s = session();
+    let got = ok(
+        &mut s,
+        "(progn
+           (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (setq a (entlast))
+           (entmake '((0 . \"LINE\") (10 0.0 1.0 0.0) (11 1.0 1.0 0.0))) (setq b (entlast))
+           (command \"_.CIRCLE\" '(5.0 5.0) 1.0) (setq c (entlast))
+           (list (equal a b) (equal (entnext a) b) (equal (entnext b) c) (cdr (assoc 0 (entget c)))
+                 (progn (entdel c) (equal (entlast) b))))",
+    );
+    assert_eq!(got, "(nil T T \"CIRCLE\" T)");
+    // Walking every object while editing it with entmod and entupd, then deleting the last one.
+    let got = ok(
+        &mut s,
+        "(progn
+           (setq e (entnext) n 0)
+           (while e
+             (entmod (subst '(8 . \"L1\") (assoc 8 (entget e)) (entget e)))
+             (entupd e)
+             (setq n (1+ n) e (entnext e)))
+           (entdel (entlast))
+           (list n (cdr (assoc 8 (entget (entlast)))) (equal (entlast) a) (entnext a)))",
+    );
+    assert_eq!(got, "(2 \"L1\" T nil)");
+}
+
+/// Walking every object with `entnext` while editing each with `entmod` and `entupd` takes the
+/// creation order once: the edits carry it instead of dropping it, which would take it again at
+/// every step (quadratic on a large drawing). The walk's results alone would not tell.
+#[test]
+fn entmod_and_entupd_keep_the_creation_order() {
+    let mut s = session();
+    ok(&mut s, "(repeat 3 (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))))");
+    let order = |s: &Session| {
+        let uid = s.state().map(|st| st.uid).unwrap();
+        s.lisp.envs.get(&uid).and_then(|e| e.order.as_ref()).map(|(_, v)| v.clone()).unwrap()
+    };
+    ok(&mut s, "(entnext)");
+    let taken = order(&s);
+    let got = ok(
+        &mut s,
+        "(progn
+           (setq e (entnext) n 0)
+           (while e
+             (entmod (subst '(8 . \"L1\") (assoc 8 (entget e)) (entget e)))
+             (entupd e)
+             (setq n (1+ n) e (entnext e)))
+           (list n (cdr (assoc 8 (entget (entlast))))))",
+    );
+    assert_eq!(got, "(3 \"L1\")");
+    assert!(std::sync::Arc::ptr_eq(&taken, &order(&s)), "the creation order was taken again");
+}
+
 /// `command` gives an entity name, alone or as `entsel` returns it (name and point), to a prompt
 /// picking one object: the point picks that object, and a bare name stands at its DXF group 10
 /// point. Each call and its numbers are AutoCAD 2024's (accoreconsole, read back with `entget`);
