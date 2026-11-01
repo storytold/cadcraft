@@ -1,6 +1,6 @@
 # The AI Assistant
 
-> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-11-01 · **Change:** trivial (the engine's check moved into the writer underneath, so QSAVE's `.bak` and WBLOCK stay covered; previously minor: the engine refuses the file writes and closes a call wasn't allowed; CLOSE asks first; previously minor: commands given a file ask first; previously minor: every protected command of a script is asked; what the confirmations do and don't cover; the CLI's starting drawing; previously minor: what the agreement covers, confirmations reach command lines and scripts, how `ask` keeps its changes)
+> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-11-01 · **Change:** trivial (`ui.render` to a file checks the consent too; previously trivial: the engine's check moved into the writer underneath, so QSAVE's `.bak` and WBLOCK stay covered; previously minor: the engine refuses the file writes and closes a call wasn't allowed; CLOSE asks first; previously minor: commands given a file ask first; previously minor: every protected command of a script is asked; what the confirmations do and don't cover; the CLI's starting drawing; previously minor: what the agreement covers, confirmations reach command lines and scripts, how `ask` keeps its changes)
 
 **Window ▸ AI Assistant** opens a palette where you ask for a drawing change in your own words
 ("draw a 60 mm flange with four holes on a 45 mm circle") and the assistant carries it out with
@@ -37,7 +37,7 @@ on a drawing of its own (see [From a terminal](#from-a-terminal)). It is the in-
   closing drawings after a yes to CLOSE, nothing otherwise. Where the engine writes, renames or
   deletes a file (the shared atomic writer behind SAVE and its `.bak`, EXPORT, PLOT, PUBLISH,
   WBLOCK and the layout saver; TABLEEXPORT, DATAEXTRACTION, the plot-style and plotter managers, a LISP `open`
-  for writing, DRAWINGRECOVERY's discard) and where it closes a drawing, it checks that consent
+  for writing, DRAWINGRECOVERY's discard, a render to a file) and where it closes a drawing, it checks that consent
   and refuses the rest, wherever the call came from. The palette carries the consent to the UI
   thread with the call, and `cadcraft-cli ask` runs the call inside it. A LISP routine a call
   leaves running goes on in later frames with no consent at all, and stops when the turn ends.
@@ -112,6 +112,7 @@ Saving onto the `--open` file needs `--in-place`, as in `run`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | trivial | `ui.render` to a file checks the consent too |
 | 2026-11-01 | trivial | The engine's check moved into the writer underneath the shared atomic writer, so QSAVE's `.bak` and WBLOCK stay covered |
 | 2026-10-29 | minor | The engine refuses the file writes and closes the user didn't approve for the call (`cadcraft_engine::consent`), also when the call builds them at run time; CLOSE and CLOSEALL ask first; what the guard doesn't cover |
 | 2026-10-29 | minor | Commands given a file (EXPORT, WBLOCK, PLOT, PUBLISH…) ask first, by any tool |

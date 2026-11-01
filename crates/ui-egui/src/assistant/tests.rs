@@ -280,6 +280,25 @@ fn what_a_call_builds_at_run_time_can_t_close_the_drawing() {
     assert!(!app.session.lisp_running() && !app.assistant.started_lisp);
 }
 
+/// `ui.render` isn't one of the assistant's tools, but rendering to a file is a write like the others.
+#[test]
+fn a_render_to_a_file_needs_consent() {
+    use cadcraft_engine::consent::{self, Consent};
+    let dir = std::env::temp_dir().join(format!("cadcraft-render-consent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("view.png");
+    let mut app = app_with(FakeHost::new(vec![]));
+    let ctx = egui::Context::default();
+    let call = json!({ "path": path.to_string_lossy(), "width": 64, "height": 64 });
+    let (req, _reply) = crate::control::ControlRequest::new("ui.render", call.clone());
+    consent::with(Consent::NONE, || crate::control::handle(&mut app, &ctx, &req));
+    assert!(!path.exists());
+    let (req, _reply) = crate::control::ControlRequest::new("ui.render", call);
+    consent::with(Consent { write_files: true, close_drawings: false }, || crate::control::handle(&mut app, &ctx, &req));
+    assert!(path.exists());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A routine a call left running ticks in later frames with no consent: its CLOSE is refused. The
 /// same routine started by the user closes the drawing.
 #[test]
