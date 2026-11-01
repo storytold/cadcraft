@@ -20,37 +20,71 @@
 	3 Points	3 точки
 	3 Viewports	3 видовых экрана
 	3D Face	3D-грань
+	3D Mouse	3D-мышь
+	3D Mouse Navigation	Навигация 3D-мышью
+	3D Mouse...	3D-мышь...
 	3D Operations	3D-операции
 	3D Polyline	3D-полилиния
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D-мышь занята: возможно, ее использует 3DxWare или нет разрешения на доступ к устройству
+	3D mouse connected	3D-мышь подключена
+	3D mouse disconnected	3D-мышь отключена
+	3D mouse input could not be started	Не удалось запустить ввод с 3D-мыши
+	3D mouse input is unavailable on this platform	Ввод с 3D-мыши недоступен на этой платформе
 	4 Viewports	4 видовых экрана
 	< Less than	< Меньше чем
 	<> Not Equal	<> Не равно
 	= Equals	= Равно
 	> Greater than	> Больше чем
+	A drawing opened from a file keeps that file's format.	Чертеж, открытый из файла, сохраняет формат этого файла.
+	A variable name starts with a letter and has only letters, digits and _	Имя переменной начинается с буквы и содержит только буквы, цифры и _
 	About	О программе
 	About CADCraft	О CADCraft
 	Absolute	Абсолютные
+	Add Current Scale	Добавить текущий масштаб
 	Add Leader	Добавить выноску
+	Add Vertex	Добавить вершину
+	Add/Delete Scales...	Добавить/удалить масштабы...
+	Add: Pick points	Добавить: указать точки
+	Add: Select objects	Добавить: выбрать объекты
+	Additional angles	Дополнительные углы
+	Add…	Добавить…
+	Alias	Псевдоним
+	Alias file: {file}	Файл псевдонимов: {file}
 	Align	Выровнять
+	Align Multileaders	Выровнять мультивыноски
 	Align Text	Выровнять текст
 	Aligned	Параллельный
 	All	Все
+	All Annotation Objects	Все аннотативные объекты
+	All Scales	Все масштабы
 	All Used Layers	Все используемые слои
 	All files	Все файлы
+	An array that would create more objects than this is refused.	Массив, который создал бы больше объектов, отклоняется.
+	Analyze Usage	Анализ использования
 	Angle	Угол
+	Angstroms	Ангстремы
 	Angular	Угловой
 	Annotation Visibility	Видимость аннотаций
 	Annotation scale	Масштаб аннотаций
+	Annotative Object Scale	Масштаб аннотативного объекта
+	Annotative Update	Обновление аннотативных объектов
 	Apparent Intersection	Мнимое пересечение
 	Append to current selection set	Добавить к текущему набору выделения
+	Apply	Применить
+	Apply to Layout	Применить к листу
 	Apply to:	Применить к:
 	Apply true color	Применить цвет RGB
 	Arc	Дуга
 	Arc Length	Длина дуги
+	Architectural	Архитектурные
 	Area	Площадь
 	Arrange Panel	Расположить панель
 	Array	Массив
+	Arrow size	Размер стрелки
+	Associative	Ассоциативная
+	Astronomical Units	Астрономические единицы
 	Attach	Присоединить
+	Attach DWG...	Присоединить DWG...
 	Attribute	Атрибут
 	Attribute Definition	Определение атрибута
 	Attribute Display	Отображение атрибутов
@@ -58,33 +92,49 @@
 	Auto (system language)	Авто (язык системы)
 	Auto Constrain	Автоограничение
 	AutoConstrain	Автоограничение
+	Automatic save every	Автосохранение каждые
+	Automatic save file location	Папка файлов автосохранения
 	Axis, End	Ось, конец
 	Base	База
 	Baseline	Базовый
 	Batch Publish	Пакетная публикация
 	Binary assets added	Добавленные двоичные ресурсы
 	Binary assets removed	Удаленные двоичные ресурсы
+	Bind	Внедрить
+	Bind...	Внедрить...
 	Blend	Сгладить
 	Block	Блок
 	Block Attribute Manager...	Диспетчер атрибутов блоков...
 	Block Description...	Описание блока...
 	Block Editor	Редактор блоков
 	Block Reference	Вхождение блока
+	Block to create or edit	Блок для создания или редактирования
 	Block...	Блок...
 	Blocks	Блоки
 	Blue	Синий
 	Bold	Жирный
 	Boolean	Булевы операции
+	Bottom left	Снизу слева
+	Bottom right	Снизу справа
+	Boundaries	Контуры
+	Boundaries picked: {n}	Выбрано контуров: {n}
 	Boundary	Граница
 	Boundary...	Граница...
 	Box	Параллелепипед
 	Break	Разорвать
 	Break At Point	Разорвать в точке
+	Break-line Symbol	Символ линии разрыва
+	Bring Above Objects	Поместить над объектами
+	Bring Annotations to Front	Переместить аннотации на передний план
 	Bring to Front	На передний план
+	Bulleted list	Маркированный список
 	ByBlock	Поблоку
 	ByColor	ПоЦвету
 	ByLayer	Послою
 	CADCraft Help	Справка CADCraft
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft хранит эти настройки, режимы объектной привязки и переключатели черчения в вашей учетной записи и восстанавливает их при запуске.
+	Calibrate	Откалибровать
+	Calibrate 3D Mouse	Откалибровать 3D-мышь
 	Cancel	Отмена
 	Cartesian (x, y)	Декартовы (x, y)
 	Center	Центр
@@ -93,35 +143,61 @@
 	Center X	Центр X
 	Center Y	Центр Y
 	Center Z	Центр Z
+	Center the plot	Центрировать на листе
 	Center, Diameter	Центр, диаметр
 	Center, Radius	Центр, радиус
 	Center, Start, Angle	Центр, начало, угол
 	Center, Start, End	Центр, начало, конец
 	Center, Start, Length	Центр, начало, длина
+	Centered	По центру
+	Centimeters	Сантиметры
 	Chamfer	Фаска
 	Change Space	Изменить пространство
 	Change to Current Layer	Перенести на текущий слой
+	Changed: {n}	Изменено: {n}
+	Changes apply at once and are kept for next time.	Изменения применяются сразу и сохраняются на будущее.
+	Choose the command the alias starts.	Выберите команду, которую запускает псевдоним.
 	Circle	Круг
 	Circumference	Длина окружности
 	Clear	Очистить
+	Clear Command History	Очистить историю команд
+	Clear History	Очистить историю
+	Clear Recent Files	Очистить список недавних файлов
+	Click the ruler to add a tab stop, right-click to remove one	Щелкните линейку, чтобы добавить позицию табуляции; щелчок правой кнопкой удаляет ее
+	Click to set new origin	Щелкните, чтобы задать новое начало координат
+	Clip	Подрезать
+	Clip Viewport	Подрезать видовой экран
 	Clipboard	Буфер обмена
 	Close	Закрыть
 	Close All	Закрыть все
+	Close All Other Drawings	Закрыть все остальные чертежи
+	Close Array Editing	Закрыть редактирование массива
+	Close Block Editor	Закрыть редактор блоков
+	Close Comparison	Закрыть сравнение
 	Closed	Замкнутый
 	Coincident	Совпадение
+	Collapse Palettes	Свернуть палитры
 	Collapse Tool Sets	Свернуть наборы инструментов
+	Collect	Собрать
+	Collect Multileaders	Собрать мультивыноски
 	Collinear	Коллинеарность
 	Color	Цвет
+	Color 1	Цвет 1
+	Color 2	Цвет 2
 	Color 8	Цвет 8
 	Color 9	Цвет 9
 	Color Index	Индекс цвета
 	Color...	Цвет...
+	Command	Команда
+	Command Aliases	Псевдонимы команд
 	Command History	Журнал команд
 	Command Line	Командная строка
 	Command Line History Lines	Строки журнала командной строки
 	Command Reference	Справочник команд
+	Command line history	История командной строки
 	Commits	Коммиты
 	Company	Организация
+	Compare Drawings...	Сравнить чертежи...
 	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Автоматизированное проектирование и черчение: CAD-приложение с открытым кодом, независимо разработанное на Rust.
 	Concentric	Концентричность
 	Cone	Конус
@@ -132,34 +208,65 @@
 	Continue	Продолжить
 	Contributors	Участники
 	Control Vertices	Управляющие вершины
+	Convert	Преобразовать
+	Convert Text to Mtext	Преобразовать текст в многострочный
+	Convert to Arc	Преобразовать в дугу
+	Convert to Line	Преобразовать в отрезок
 	Copy	Копировать
+	Copy Full File Path	Копировать полный путь к файлу
+	Copy History	Копировать историю
 	Copy Layout	Копировать лист
 	Copy Nested Objects	Копировать вложенные объекты
 	Copy Selection	Копировать выделение
+	Copy as JSON	Копировать как JSON
 	Copy with Base Point	Копировать с базовой точкой
 	Count	Количество
+	Count List	Список подсчета
+	Count Table	Таблица подсчета
 	Create Block	Создать блок
+	Create separate hatches	Создавать отдельные штриховки
 	Creates a user parameter	Создает пользовательский параметр
+	Crosshair size	Размер перекрестья
+	Crossing selection color:	Цвет секущей рамки:
 	Ctrl+Enter to finish	Ctrl+Enter для завершения
+	Current Scale Only	Только текущий масштаб
 	Current layer	Текущий слой
 	Current selection	Текущее выделение
 	Current: {color}	Текущий: {color}
+	Curved	Криволинейная
+	Custom	Пользовательский
+	Customize	Настроить
 	Cut	Вырезать
 	Cut with Base Point	Вырезать с базовой точкой
 	Cyan	Голубой
 	Cylinder	Цилиндр
 	DWG	DWG
+	DWG Reference...	Ссылка на DWG...
 	DXF	DXF
 	Dark	Темная
+	Data Extraction...	Извлечение данных...
+	Data Link...	Связь с данными...
+	Decameters	Декаметры
+	Decimal	Десятичные
+	Decimal Degrees	Десятичные градусы
+	Decimeters	Дециметры
 	Default	По умолчанию
 	Default Save Format	Формат сохранения по умолчанию
+	Default Save Version	Версия сохранения по умолчанию
+	Default save version	Версия сохранения по умолчанию
+	Default to boundary extents	По умолчанию по границам контура
 	Define Attributes	Определить атрибуты
 	Define Attributes...	Определить атрибуты...
+	Define each corner of the selection window with a separate click.	Задавать каждый угол рамки выбора отдельным щелчком.
 	Defined width	Заданная ширина
+	Deg/Min/Sec	Град/мин/сек
 	Degree	Градус
+	Degrees of Freedom	Степени свободы
+	Degrees of freedom: {n}	Степеней свободы: {n}
 	Delete	Удалить
 	Delete Column	Удалить столбец
 	Delete Constraints	Удалить ограничения
+	Delete Current Scale	Удалить текущий масштаб
 	Delete Dimension Style	Удалить размерный стиль
 	Delete Duplicate Objects	Удалить дубликаты объектов
 	Delete Layer	Удалить слой
@@ -171,9 +278,14 @@
 	Delta Y	Смещение Y
 	Description	Описание
 	Deselect All	Снять выделение со всего
+	Detach	Отсоединить
 	Diameter	Диаметр
+	Dim scale overall	Общий масштаб размеров
 	Dim style	Размерный стиль
 	Dimension	Размеры
+	Dimension Break	Разрыв размера
+	Dimension Edit	Редактирование размера
+	Dimension Objects Only	Только размерные объекты
 	Dimension Space	Расстояние между размерами
 	Dimension Style Override	Переопределение размерного стиля
 	Dimension Style...	Размерный стиль...
@@ -183,38 +295,60 @@
 	Dimensional Constraint Parameters	Параметры размерных ограничений
 	Dimensional Constraints	Размерные ограничения
 	Disassociate Dimensions	Разъединить размеры
+	Discard	Отбросить
+	Display	Отображение
 	Display name	Отображаемое имя
 	Distance	Расстояние
 	Divide	Поделить
 	Do not plot (click: plot)	Не выводить на печать (щелкните для печати)
+	Don't Save	Не сохранять
 	Donut	Кольцо
 	Double-click to edit the description	Дважды щелкните, чтобы изменить описание
 	Down	Вниз
 	Drafting	Черчение
 	Drafting Settings	Режимы черчения
 	Drafting Settings...	Режимы черчения...
+	Drag Dynamic Grip	Перетащить динамическую ручку
 	Draw	Рисование
 	Draw Order	Порядок отрисовки
 	Drawing (DWG)	Чертеж (DWG)
 	Drawing (DXF)	Чертеж (DXF)
 	Drawing Limits	Лимиты чертежа
+	Drawing Recovery Manager...	Диспетчер восстановления чертежей...
+	Drawing Template (DWT)	Шаблон чертежа (DWT)
+	Drawing Units	Единицы чертежа
 	Drawing Utilities	Утилиты чертежа
 	Drawings (DWG, DXF)	Чертежи (DWG, DXF)
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Чертежи, еще не сохраненные в файл, сохраняются в версии по умолчанию. 0 минут отключает автосохранение.
+	Dynamic	Динамическое
+	Dynamic Block Data	Данные динамического блока
+	Dynamic Block Grips	Ручки динамического блока
+	Dynamic Block Reference	Вхождение динамического блока
 	Dynamic Dimensions	Динамические размеры
 	Dynamic Input	Динамический ввод
 	Dynamic Input (F12)	Динамический ввод (F12)
 	E	В
 	Edit	Редактирование
+	Edit Array	Редактировать массив
+	Edit Attributes...	Редактировать атрибуты...
+	Edit Block Definition	Редактировать описание блока
+	Edit Command Aliases (PGP)...	Редактировать псевдонимы команд (PGP)...
+	Edit Multileader	Редактировать мультивыноску
+	Edit Table Cell	Редактировать ячейку таблицы
 	Edit Text...	Редактировать текст...
+	Edit…	Изменить…
 	Elevation	Уровень
 	Ellipse	Эллипс
 	Elliptical Arc	Эллиптическая дуга
+	Enable 3D mouse navigation	Включить навигацию 3D-мышью
 	Enable Dynamic Input (F12)	Включить динамический ввод (F12)
+	End Object Isolation	Завершить изоляцию объектов
 	End Width	Конечная ширина
 	End X	Конец X
 	End Y	Конец Y
 	End angle	Конечный угол
 	Endpoint	Конечная точка
+	Engineering	Инженерные
 	Enter Top, Zero or Bottom.	Введите Top, Zero или Bottom.
 	Enter a fit data option	Введите параметр аппроксимации
 	Enter a pattern name	Введите имя шаблона
@@ -227,6 +361,7 @@
 	Enter attribute tag name	Введите имя тега атрибута
 	Enter attribute value	Введите значение атрибута
 	Enter block name	Введите имя блока
+	Enter block names to extract	Введите имена блоков для извлечения
 	Enter constraint type	Введите тип ограничения
 	Enter continuity	Введите тип непрерывности
 	Enter default attribute value	Введите значение атрибута по умолчанию
@@ -237,10 +372,12 @@
 	Enter dimension text (<> = measurement)	Введите размерный текст (<> = измеренное значение)
 	Enter dimension value or [name=expression]	Введите размерное значение или [имя=выражение]
 	Enter dimension variable name to override	Введите имя размерной переменной для переопределения
+	Enter geometric characteristic	Введите геометрическую характеристику
 	Enter justification type	Введите тип выравнивания
 	Enter leader text	Введите текст выноски
 	Enter mline scale	Введите масштаб мультилинии
 	Enter mode	Введите режим
+	Enter name of LISP file to load	Введите имя загружаемого файла LISP
 	Enter name of block to insert	Введите имя блока для вставки
 	Enter new text	Введите новый текст
 	Enter next point	Введите следующую точку
@@ -261,15 +398,24 @@
 	Entire drawing	Весь чертеж
 	Equal	Равенство
 	Erase	Стереть
+	Evaluate	Вычислить
+	Evaluate LISP	Вычислить LISP
 	Exclude from new selection set	Исключить из нового набора выделения
+	Exclude:	Исключить:
 	Explode	Расчленить
+	Explode Attributes to Text	Расчленить атрибуты в текст
 	Export	Экспортировать
+	Export Comparison	Экспорт сравнения
+	Export Table	Экспорт таблицы
 	Export to PDF...	Экспортировать в PDF...
 	Expression	Выражение
 	Extend	Удлинить
 	Extension	Продолжение
 	Extents	Границы
+	External Reference	Внешняя ссылка
+	External References	Внешние ссылки
 	Extrude	Выдавить
+	Feet	Футы
 	File	Файл
 	File Tab	Вкладка файла
 	Fillet	Сопряжение
@@ -279,10 +425,13 @@
 	Find...	Найти...
 	First	Первый
 	First commit	Первый коммит
+	First corner	Первый угол
 	Fit Points	Точки сглаживания
+	Fit to paper	Вписать в лист
 	Fix	Фиксация
 	Flatten Objects	Спроецировать объекты на плоскость
 	Format	Формат
+	Fractional	Дробные
 	Freehand	От руки
 	Freeze	Заморозить
 	Freeze Layer	Заморозить слой
@@ -291,6 +440,7 @@
 	Freeze/Thaw in all viewports	Заморозить/разморозить во всех видовых экранах
 	Freeze/Thaw in the current viewport	Заморозить/разморозить в текущем видовом экране
 	From	От точки
+	From Template...	Из шаблона...
 	General	Общие
 	Geometric Center	Геометрический центр
 	Geometric Constraint	Геометрическое ограничение
@@ -298,69 +448,118 @@
 	Geometry	Геометрия
 	Get Variable	Получить переменную
 	Get View	Получить вид
+	Get from the Drawing	Взять из чертежа
+	Gigameters	Гигаметры
 	Global	Глобально
 	Global width	Общая ширина
 	Grab bag	Список
 	Gradient	Градиент
 	Gradient...	Градиент...
+	Grads	Грады
 	Green	Зеленый
 	Grid (F7)	Сетка (F7)
 	Grid Display	Отображение сетки
 	Grid On (F7)	Включить сетку (F7)
+	Grid snap	Привязка к сетке
 	Grid spacing	Шаг сетки
+	Grip Edit	Редактирование ручками
 	Grip Mirror	Зеркальное отражение ручками
+	Grip Option	Параметр ручки
 	Grip Rotate	Поворот ручками
 	Grip Scale	Масштабирование ручками
 	Grip Stretch	Растягивание ручками
+	Grip size	Размер ручек
+	Grips	Ручки
 	Group	Сгруппировать
 	Group Edit	Редактировать группу
+	Group Options	Параметры групп
+	Group Selection	Выбор групп
+	Groups	Группы
 	Hatch	Штриховка
 	Hatch Edit	Редактировать штриховку
+	Hatch Patterns	Образцы штриховки
+	Hatch Pick	Выбор штриховки
+	Hatch and Gradient	Штриховка и градиент
+	Hatch origin	Исходная точка штриховки
 	Hatch...	Штриховка...
+	Hatches	Штриховки
+	Hectometers	Гектометры
 	Height	Высота
 	Height: {height}	Высота: {height}
 	Helix	Спираль
 	Help	Справка
+	Hemispherical	Полусферический
 	Hide All	Скрыть все
 	Hide All Constraint Bars	Скрыть все панели ограничений
 	Hide All Dynamic Dimensions	Скрыть все динамические размеры
 	Hide Layer List	Скрыть список слоев
+	Hide Objects	Скрыть объекты
+	Hide Palette	Скрыть палитру
 	Hide Palettes	Скрыть палитры
+	History	История
+	Hold Shift to add to the selection	Удерживайте Shift, чтобы добавить к выбору
 	Home	Исходный вид
 	Horizontal	Горизонтальность
 	HorizontalDistance	ГоризонтальноеРасстояние
 	How to apply:	Способ применения:
 	ID Point	Координаты точки
+	Ignore	Игнорировать
+	Imperial (inches)	Британские (дюймы)
+	Implied Loops	Неявные контуры
 	Import	Импортировать
 	In	Приблизить
 	In-window Menu Bar	Строка меню в окне
+	Inches	Дюймы
 	Include in new selection set	Включить в новый набор выделения
 	Increment angle	Шаг угла
 	Index Color	Индексированный цвет
 	Index color: {index}	Индексированный цвет: {index}
+	Indicate selection area	Показывать область выбора
+	Infer Constraints	Выводить ограничения
 	Inquiry	Измерение
 	Insert	Вставка
 	Insert Block	Вставить блок
 	Insert Column	Вставить столбец
 	Insert Row	Вставить строку
+	Insert Table Formula	Вставить формулу таблицы
+	Insert tab	Вставить табуляцию
 	Insert this block	Вставить этот блок
 	Insertion	Точка вставки
 	Insertion X	Точка вставки X
 	Insertion Y	Точка вставки Y
 	Insertion Z	Точка вставки Z
+	Insertion scale	Масштаб вставки
 	Inspect Constraints	Просмотреть ограничения
 	Inspect Drawing	Просмотреть чертеж
+	Inspection	Контроль
 	Interface Language	Язык интерфейса
 	Interface Theme	Тема интерфейса
+	Interface language	Язык интерфейса
+	Interface scale	Масштаб интерфейса
+	Interface theme	Тема интерфейса
 	Intersect	Пересечение
 	Intersection	Пересечение
+	Inverted	Инвертированный
+	Island	Остров
+	Island detection	Обнаружение островов
 	Isolate	Изолировать
 	Isolate Layer	Изолировать слой
+	Isolate Objects	Изолировать объекты
 	Isometric Drafting	Изометрическое черчение
+	Isometric Plane	Изометрическая плоскость
+	Isometric snap	Изометрическая привязка
+	Italic	Курсив
+	Jogged	С изломом
+	Jogged Linear	Линейный с изломом
 	Join	Объединить
 	Join the ArtCraft Discord…	Присоединяйтесь к Discord ArtCraft…
 	Join us on Discord	Присоединяйтесь к нам в Discord
+	Justify	Выравнивание
+	Keep the system cursor visible over the drawing area	Не скрывать системный курсор над областью чертежа
+	Kilometers	Километры
+	Landscape	Альбомная
 	Language	Язык
+	Largest array	Наибольший массив
 	Last	Последний
 	Last commit	Последний коммит
 	Layer	Слой
@@ -381,22 +580,31 @@
 	Layers displayed: {shown} of {total}.   Current layer: {layer}	Показано слоев: {shown} из {total}.   Текущий слой: {layer}
 	Layout	Лист
 	Layout list	Список листов
+	Layout paper	Бумага листа
 	Leader	Выноска
+	Leaders Only	Только выноски
 	Left	Слева
+	Left device button: zoom extents. Right device button: calibrate.	Левая кнопка устройства: показать границы. Правая кнопка устройства: калибровка.
 	Length	Длина
 	Length X	Длина X
 	Length Y	Длина Y
 	Lengthen	Изменить длину
 	Light	Светлая
+	Light Years	Световые годы
+	Limits	Лимиты
 	Line	Отрезок
 	Line delta	Изменение количества строк
 	Linear	Линейный
 	Lines +/−	Строки +/−
 	Lines added	Добавленные строки
 	Lines deleted	Удаленные строки
+	Lines of Command History	Строк истории команд
 	Linetype	Тип линии
 	Linetype Scale	Масштаб типа линии
 	Linetype scale	Масштаб типа линии
+	Load Application...	Загрузить приложение...
+	Loaded	Загружено
+	Lock viewport	Заблокировать видовой экран
 	Ltscale	Масштаб типа линии
 	Linetype...	Тип линии...
 	Lineweight	Вес линии
@@ -423,6 +631,8 @@
 	Major line every	Основная линия каждые
 	Make Current	Сделать текущим
 	Make Object's Layer Current	Сделать слой объекта текущим
+	Make it a block of this drawing, keeping its layer names	Сделать блоком этого чертежа с сохранением имен слоев
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Сделать блоком этого чертежа; его слои становятся NAME$0$LAYER
 	Make...	Создать...
 	Match Layer	Согласовать слой
 	Match Properties	Копирование свойств
@@ -431,21 +641,36 @@
 	Measure Geometry	Измерить геометрию
 	Merge Cells	Объединить ячейки
 	Merged PRs	Принятые PR
+	Meters	Метры
+	Metric (millimetres)	Метрические (миллиметры)
+	Microinches	Микродюймы
+	Microns	Микроны
 	Mid Between 2 Points	Середина между двумя точками
 	Midpoint	Середина
+	Miles	Мили
+	Millimeters	Миллиметры
+	Mils	Милы
 	Mirror	Зеркальное отражение
 	Model	Модель
 	Model Space (in viewport)	Пространство модели (в видовом экране)
+	Model background	Фон пространства модели
 	Modeling	Моделирование
 	Models	Модели
 	Modify	Модификация
+	More than {n} aliases.	Более {n} псевдонимов.
+	More toolbar commands	Другие команды панели
 	Move	Переместить
+	Move sideways to pan; push/pull or twist to zoom.	Сдвиг вбок панорамирует; нажатие, вытягивание или поворот масштабирует.
+	Move/Copy/Rotate	Переместить/копировать/повернуть
 	Multileader	Мультивыноска
 	Multileader Style...	Стиль мультивыносок...
 	Multileader style	Стиль мультивыносок
 	Multiline	Мультилиния
+	Multiline Style...	Стиль мультилинии...
 	Multiline Text	Многострочный текст
 	Multiline Text...	Многострочный текст...
+	Multiline text	Многострочный текст
+	Multiline...	Мультилиния...
 	Multiple	Разные типы
 	Multiple Point	Несколько точек
 	My	Мои
@@ -454,6 +679,8 @@
 	Name	Название
 	Name (A–Z)	Название (А–Я)
 	Named Viewports...	Именованные видовые экраны...
+	Named Views...	Именованные виды...
+	Nanometers	Нанометры
 	Nearest	Ближайшая точка
 	New	Создать
 	New (metric)	Создать (метрический)
@@ -464,19 +691,29 @@
 	New Layout	Новый лист
 	New VP Freeze	Заморозить в новых ВЭ
 	New Viewports...	Новые видовые экраны...
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Новые чертежи и первый чертеж при запуске используют эти единицы, если не задан шаблон по умолчанию (QNEWTEMPLATE).
+	New block	Новый блок
+	New from Template...	Создать из шаблона...
 	New layout	Новый лист
 	New state name	Название нового состояния
+	Next Change	Следующее изменение
 	No	Нет
+	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонимов не загружен. REINIT заменяет эти псевдонимы псевдонимами из файла.
 	No blocks defined in this drawing.	В этом чертеже нет определенных блоков.
 	No contributor data was built into this copy.	В эту сборку не включены данные об участниках.
+	No external references are attached.	Внешние ссылки не присоединены.
 	No model credits were built into this copy.	В эту сборку не включены данные о моделях.
 	No saved layer states	Нет сохраненных состояний слоев
 	No selection	Ничего не выделено
+	No supported 3D mouse found	Поддерживаемая 3D-мышь не найдена
 	Node	Узел
 	None	Нет
 	Normal	Обычный
+	Not Found	Не найдено
 	Not available	Недоступно
 	Not available yet	Пока недоступно
+	Not loaded	Не загружено
+	Numbered list	Нумерованный список
 	OK	ОК
 	Object	Объект
 	Object Snap	Объектная привязка
@@ -484,27 +721,62 @@
 	Object Snap On (F3)	Включить объектную привязку (F3)
 	Object Snap Tracking	Отслеживание объектной привязки
 	Object Snap Tracking (F11)	Отслеживание объектной привязки (F11)
+	Object Snap Tracking Settings	Параметры отслеживания объектной привязки
+	Object grouping	Группировка объектов
+	Object selection limit for display of grips	Предел числа выбранных объектов для показа ручек
+	Object snap aperture	Прицел объектной привязки
+	Object snap marker size	Размер маркера объектной привязки
 	Object type:	Тип объекта:
+	Objects on locked layers	Объекты на заблокированных слоях
+	Oblique	Наклон
 	Off	Выключено
 	Offset	Смещение
 	On	Включено
 	On/Off	Включить/выключить
 	One of the Crafting Apps by the ArtCraft team and community.	Одна из программ Crafting Apps от команды и сообщества ArtCraft.
+	Only in this drawing: {n}	Только в этом чертеже: {n}
+	Only in {name}: {n}	Только в {name}: {n}
+	Open	Открыть
 	Open (⌘O)	Открыть (⌘O)
+	Open Recent	Открыть недавние
 	Open Sample Drawing	Открыть образец чертежа
+	Open Xref	Открыть xref
+	Open and Save	Открытие и сохранение
+	Open in Block Editor	Открыть в редакторе блоков
 	Open sample drawing	Открыть образец чертежа
 	Open...	Открыть...
 	Operator:	Оператор:
+	Opposite corner	Противоположный угол
+	Options	Параметры
+	Options...	Параметры...
 	Orbit	Орбита
 	Ordinate	Ординатный
+	Orientation	Ориентация
+	Origin: {x}, {y}	Начало: {x}, {y}
 	Ortho (F8)	Орто (F8)
 	Ortho Mode	Режим Орто
 	Ortho Mode (F8)	Режим Орто (F8)
 	Osnap Settings...	Параметры объектной привязки...
 	Out	Отдалить
+	Outer	Внешний
+	Over-constrained	Переопределено
+	Overlay	Наложение
+	Overline	Надчеркивание
 	Override	Переопределить
 	PAPER	ЛИСТ
+	Pan sensitivity	Чувствительность панорамирования
+	Paper size	Размер бумаги
+	Parsecs	Парсеки
+	Paste to Command Line	Вставить в командную строку
 	Percent	Процент
+	Pickbox size	Размер прицела выбора
+	Plot Window	Рамка печати
+	Plot area	Область печати
+	Plot object lineweights	Печатать веса линий объектов
+	Plot offset	Смещение при печати
+	Plot transparency	Печатать прозрачность
+	Plotter Manager	Диспетчер плоттеров
+	Plotter Manager...	Диспетчер плоттеров...
 	Polar (distance < angle)	Полярные (расстояние < угол)
 	PRs	PR
 	Page Setup Manager	Диспетчер параметров листов
@@ -537,7 +809,118 @@
 	New CTB	Новая CTB
 	New STB	Новая STB
 	New style	Новый стиль
+	Polar angle measurement	Отсчет полярных углов
+	Polar distance	Полярное расстояние
+	PolarSnap	Полярная привязка
+	Polygonal Viewport	Многоугольный видовой экран
+	Polyline Edit	Редактирование полилинии
+	Portrait	Книжная
+	Precision	Точность
+	Preview	Предварительный просмотр
+	Previous Change	Предыдущее изменение
+	Printer/plotter	Принтер/плоттер
+	Profiles	Профили
+	QuickCalc Pick	Выбор для быстрокалькулятора
+	Radians	Радианы
+	Recalculate Table Formulas	Пересчитать формулы таблицы
+	Recent Commands	Недавние команды
+	Recent Input	Недавний ввод
+	Rectangular snap	Прямоугольная привязка
+	Reference Manager	Диспетчер ссылок
+	Reference Name	Имя ссылки
+	References: {n}	Ссылок: {n}
+	Reinitialize	Переинициализировать
+	Relative to last segment	Относительно последнего сегмента
+	Release the 3D mouse to calibrate its resting position	Отпустите 3D-мышь, чтобы откалибровать ее положение покоя
+	Reload	Обновить
+	Reload All	Обновить все
+	Remove Vertex	Удалить вершину
 	Reset Panel Layout	Сбросить расположение панелей
+	Reset keeps the interface language.	Сброс сохраняет язык интерфейса.
+	Reset to Defaults	Восстановить значения по умолчанию
+	Reverse zoom direction	Обратное направление масштабирования
+	Run Script...	Выполнить сценарий...
+	SVG drawings (SVG, SVGZ)	Чертежи SVG (SVG, SVGZ)
+	Sample output	Пример вывода
+	Save Block	Сохранить блок
+	Save Block As	Сохранить блок как
+	Save alias	Сохранить псевдоним
+	Save changes to {name}?	Сохранить изменения в {name}?
+	Save new drawings as	Сохранять новые чертежи как
+	Saved Path	Сохраненный путь
+	Scale List...	Список масштабов...
+	Scientific	Научные
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Экранные лупы, программы чтения с экрана и записи экрана следят за системным курсором.
+	Select Similar	Выбрать подобные
+	Select boundaries to remove	Выберите контуры для удаления
+	Select objects first, then choose a command	Сначала выберите объекты, затем команду
+	Select using two clicks only	Выбирать только двумя щелчками
+	Selection	Выбор
+	Selection Area Effect	Эффект области выбора
+	Selection Preview Filter	Фильтр предварительного просмотра выбора
+	Selection area opacity:	Непрозрачность области выбора:
+	Selection effect color	Цвет эффекта выбора
+	Selection modes	Режимы выбора
+	Selection preview	Предварительный просмотр выбора
+	Send Hatches to Back	Переместить штриховки на задний план
+	Send Under Objects	Поместить под объектами
+	Set Current Viewport	Сделать видовой экран текущим
+	Set Dynamic Property	Задать динамическое свойство
+	Set Table Cell Style	Задать стиль ячейки таблицы
+	Settings...	Параметры...
+	Shape	Форма
+	Show Annotative Objects	Показать аннотативные объекты
+	Show Quick Properties for selected objects	Показывать быстрые свойства выбранных объектов
+	Show and hide the tools of this category	Показать и скрыть инструменты этой категории
+	Show command prompting near the crosshairs	Показывать запросы команд рядом с перекрестьем
+	Show grips	Показывать ручки
+	Show in Tool Sets	Показать в наборах инструментов
+	Snap Overrides	Временная привязка
+	Snap type	Тип привязки
+	Snap, grid, polar tracking and Dynamic Input:	Привязка, сетка, полярное отслеживание и динамический ввод:
+	Solid Editing	Редактирование тел
+	Specified origin	Заданное начало
+	Spherical	Сферический
+	Spline Edit	Редактирование сплайна
+	Stretch Vertex	Растянуть вершину
+	Surveyor's Units	Геодезические единицы
+	Synchronize Multiple-scale Positions	Синхронизировать положения для нескольких масштабов
+	Table Breaks	Разрывы таблицы
+	Table Cell Style	Стиль ячейки таблицы
+	Tables	Таблицы
+	Temporary track point	Временная точка отслеживания
+	Text Objects Only	Только текстовые объекты
+	Text color	Цвет текста
+	Thaw Layer	Разморозить слой
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Прицел определяет, насколько близко к точке должен подойти курсор, чтобы объектная привязка ее нашла.
+	This drawing	Этот чертеж
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Правый щелчок с учетом времени: быстрый щелчок работает как Enter, удержание открывает меню
+	To	В
+	Tolerance...	Допуск...
+	Top left	Сверху слева
+	Top right	Сверху справа
+	Track orthogonally only	Отслеживать только ортогонально
+	Track using all polar angle settings	Отслеживать по всем полярным углам
+	Turn On Layer	Включить слой
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Если выключено, правый щелчок во время команды всегда открывает контекстное меню.
+	Type an alias name.	Введите имя псевдонима.
+	US Survey Feet	Геодезические футы США
+	US Survey Inch	Геодезический дюйм США
+	US Survey Mile	Геодезическая миля США
+	US Survey Yard	Геодезический ярд США
+	Underline	Подчеркивание
+	Unitless	Без единиц
+	Units Conversion	Преобразование единиц
+	Units of new drawings	Единицы новых чертежей
+	Units to scale inserted content	Единицы для масштабирования вставляемого содержимого
+	Unload	Выгрузить
+	Unloaded	Выгружено
+	Unlock viewport	Разблокировать видовой экран
+	Unreferenced	Без ссылок
+	Unresolved	Не разрешено
+	Unsaved changes	Несохраненные изменения
+	Update Data Links	Обновить связи с данными
+	Use current origin	Использовать текущее начало
 	Use for this layout	Использовать для этого листа
 	Display plot styles	Показывать стили печати
 	No plot style tables.	Нет таблиц стилей печати.
@@ -666,7 +1049,24 @@
 	Add to Working Set	Добавить в рабочий набор
 	Edit Reference In-Place	Редактировать ссылку на месте
 	Save Reference Edits	Сохранить изменения ссылки
+	User Preferences	Пользовательские настройки
+	Variables	Переменные
+	Version 2000	Версия 2000
+	Version 2004	Версия 2004
+	Version 2007	Версия 2007
+	Version 2010	Версия 2010
+	Version 2013	Версия 2013
+	Version 2018	Версия 2018
+	Viewport is locked	Видовой экран заблокирован
+	Viewport scale	Масштаб видового экрана
+	Visual Effect Settings	Параметры визуальных эффектов
+	Visual Effect Settings...	Параметры визуальных эффектов...
+	When a command is active	Когда команда активна
+	When no command is active	Когда нет активной команды
+	Window <	Рамка <
+	Window selection color:	Цвет рамки выбора:
 	Working Set	Рабочий набор
+	X offset (mm)	Смещение по X (мм)
 	Xref and Block In-place Editing	Редактирование xref и блоков на месте
 	Select a polyline.	Выберите полилинию.
 	Select a text, mtext, attribute definition or dimension.	Выберите текст, многострочный текст, определение атрибута или размер.
@@ -976,17 +1376,31 @@
 	Workspace Switching	Переключение рабочих сред
 	Write Block	Записать блок в файл
 	Xline	Вспомогательная прямая
+	Xrefs	Внешние ссылки
+	Y offset (mm)	Смещение по Y (мм)
+	Yards	Ярды
 	Yellow	Желтый
 	Yes	Да
+	Your changes will be lost if you don't save them.	Если не сохранить изменения, они будут потеряны.
 	Zoom	Показать
 	Zoom All	Показать все
+	Zoom Dynamic	Показать динамически
 	Zoom Extents	Показать границы объектов
 	Zoom In	Увеличить
 	Zoom Object	Показать объект
 	Zoom Out	Уменьшить
 	Zoom Previous	Предыдущий масштаб
+	Zoom Realtime	Показать в реальном времени
 	Zoom Window	Показать рамкой
+	Zoom sensitivity	Чувствительность масштабирования
+	built-in	встроенный
+	contains authoring elements. Open in Block Editor?	содержит элементы редактирования. Открыть в редакторе блоков?
 	error	ошибка
+	min	мин
+	objects	объектов
+	overrides built-in	заменяет встроенный
+	{alias} is already defined; select it and use Edit.	{alias} уже определен; выберите его и нажмите «Изменить».
+	{command} is an unknown command.	{command}: неизвестная команда.
 	{contributors} · {commits}	{contributors} · {commits}
 	{kind} (constraint {id})	{kind} (ограничение {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Ограничение «{kind}» {name} = {expression}  (дважды щелкните для редактирования)
