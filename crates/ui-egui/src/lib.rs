@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attdefdlg;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -312,6 +313,8 @@ pub struct CadApp {
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
+    /// The Attribute Definition dialog ([`attdefdlg`]).
+    pub attdef: attdefdlg::State,
 }
 
 impl CadApp {
@@ -366,6 +369,7 @@ impl CadApp {
             bedit: bedit::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            attdef: attdefdlg::State::default(),
         }
     }
 

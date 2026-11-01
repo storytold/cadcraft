@@ -6,7 +6,7 @@ pub(in crate::cmd) mod purge;
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
+use cadcraft_doc::{Attrib, AttribModes, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
 use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde_json::{Value, json};
 
@@ -44,7 +44,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params(
+                "{tag, prompt?, default?, at | below: true (one line under the previous definition, with its text settings), \
+                 height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), \
+                 justify?: L|C|R|A|M|F|TL|TC|TR|ML|MC|MR|BL|BC|BR, end? (A and F: the baseline's second endpoint; \
+                 default: the tag's own width along rotation), style? (default: the current style), \
+                 invisible?, constant?, verify?, preset?, lockPosition?}",
+            )
             .interactive(|_| Ok(Box::new(AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -325,40 +331,178 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
 }
 
-fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
-    let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+/// What a new attribute definition is made from: ATTDEF's answers, typed or from the Attribute
+/// Definition dialog.
+#[derive(Clone, Debug)]
+struct AttdefSpec {
+    tag: String,
+    prompt: String,
+    default: String,
+    at: Vec2,
+    height: f64,
+    /// Radians.
+    rotation: f64,
+    justify: (HAlign, VAlign),
+    style: String,
+    width_factor: f64,
+    /// Radians.
+    oblique: f64,
+    invisible: bool,
+    constant: bool,
+    modes: AttribModes,
+    /// Align and Fit: the baseline's second endpoint (`at` is the first); [`AttdefSpec::baseline`]
+    /// fills it in when none was given.
+    end: Option<Vec2>,
+}
+
+impl AttdefSpec {
+    /// An aligned or fit definition's baseline, as AutoCAD stores it: with a typed second endpoint,
+    /// the baseline's angle and the height (Align) or width factor (Fit) that make the tag span it;
+    /// without one, the tag at its own size along the rotation.
+    fn baseline(&mut self, s: &Session) -> Result<()> {
+        if !super::draw::spans_baseline(self.justify.0) {
+            self.end = None;
+            return Ok(());
+        }
+        let d = s.doc()?;
+        let style = d.text_style(&self.style);
+        let tag = self.tag.to_ascii_uppercase();
+        let Some(end) = self.end else {
+            self.end = Some(super::draw::baseline_end(style, &tag, self.height, self.width_factor, self.at, self.rotation));
+            return Ok(());
+        };
+        let len = self.at.dist(end);
+        if !len.is_finite() || len <= 1e-9 {
+            return Err(bad("attdef", "the baseline's two endpoints must differ"));
+        }
+        self.rotation = self.at.angle_to(end);
+        let w = super::draw::styled_width(style, &tag, self.height, self.width_factor);
+        if w.is_finite() && w > 1e-9 {
+            if self.justify.0 == HAlign::Aligned {
+                self.height *= len / w;
+            } else {
+                self.width_factor *= len / w;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn attdef_kind(a: &AttdefSpec) -> EntityKind {
+    let (h, v) = a.justify;
+    let left = h == HAlign::Left && v == VAlign::Baseline;
     EntityKind::AttDef(Attrib {
-        tag: tag.to_ascii_uppercase(),
+        tag: a.tag.to_ascii_uppercase(),
         text: Text {
-            insert: v3(at),
-            align_pt: None,
-            height,
-            value: default.into(),
-            rotation: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
-            style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
+            insert: v3(a.at),
+            align_pt: if left { None } else { Some(v3(a.end.filter(|_| super::draw::spans_baseline(h)).unwrap_or(a.at))) },
+            height: a.height,
+            value: a.default.clone(),
+            rotation: a.rotation,
+            width_factor: a.width_factor,
+            oblique: a.oblique,
+            style: a.style.clone(),
+            halign: h,
+            valign: v,
         },
-        invisible,
-        constant: false,
-        prompt: prompt.into(),
+        invisible: a.invisible,
+        constant: a.constant,
+        prompt: a.prompt.clone(),
         props: Default::default(),
         multiline: None,
-        modes: Default::default(),
+        modes: a.modes,
     })
 }
 
+/// A tag is a word: not empty, no spaces.
+fn valid_tag(t: &str) -> bool {
+    !t.trim().is_empty() && !t.trim().contains(' ')
+}
+
+/// The text style a new definition is written with: `name` (which must exist) or the current
+/// TEXTSTYLE, as (name, fixed height or 0, width factor, obliquing angle).
+fn attdef_style(s: &Session, name: Option<&str>) -> Result<(String, f64, f64, f64)> {
+    let d = s.doc()?;
+    let name = name.map_or_else(|| d.header.str("TEXTSTYLE", "Standard"), str::to_string);
+    let st = d.text_style(&name).ok_or_else(|| bad("attdef", format!("Cannot find text style \"{name}\".")))?;
+    Ok((st.name.clone(), st.height.max(0.0), if st.width_factor > 0.0 { st.width_factor } else { 1.0 }, st.oblique))
+}
+
+/// The attribute definition last added to the space being edited: Enter at ATTDEF's start point
+/// (and the dialog's "Align below previous attribute definition") puts the new one under it.
+fn previous_attdef(s: &Session) -> Option<Attrib> {
+    let d = s.doc().ok()?;
+    d.space(&s.space())?
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::AttDef(a) => Some(a.clone()),
+            _ => None,
+        })
+        .last()
+}
+
+/// Where a definition one line under text `t` goes: its justification point moved down by the
+/// line spacing TEXT continues with (5/3 of the height), along the text's own down direction.
+fn below_point(t: &Text) -> Vec2 {
+    t.justify_point() + Vec2::from_angle(t.rotation - std::f64::consts::FRAC_PI_2) * (t.height * 5.0 / 3.0)
+}
+
+const JUSTIFY_ERROR: &str = "`justify` must be L, C, R, A, M, F, TL, TC, TR, ML, MC, MR, BL, BC or BR";
+
 fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     let tag = str_param(p, "tag").ok_or_else(|| bad("attdef", "`tag` is required"))?;
-    if tag.contains(' ') || tag.is_empty() {
+    if !valid_tag(tag) {
         return Err(bad("attdef", "tag must be non-empty without spaces"));
     }
-    let at = point_req("attdef", p, "at")?;
-    let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
-    Ok(json!({ "handle": s.add_entity(k)?.hex() }))
+    let constant = bool_or(p, "constant", false);
+    let modes =
+        AttribModes { verify: bool_or(p, "verify", false), preset: bool_or(p, "preset", false), lock_position: bool_or(p, "lockPosition", false) };
+    let texts = |at, height, rotation, justify, style: String, width_factor, oblique| AttdefSpec {
+        tag: tag.trim().to_string(),
+        // A blank or missing prompt is the tag, as the typed form and the answers give it.
+        prompt: if constant {
+            String::new()
+        } else {
+            str_param(p, "prompt").filter(|p| !p.trim().is_empty()).map_or_else(|| tag.trim().to_ascii_uppercase(), str::to_string)
+        },
+        default: str_param(p, "default").unwrap_or("").to_string(),
+        at,
+        height,
+        rotation,
+        justify,
+        style,
+        width_factor,
+        oblique,
+        invisible: bool_or(p, "invisible", false),
+        constant,
+        modes,
+        end: None,
+    };
+    let mut spec = if bool_or(p, "below", false) {
+        let prev = previous_attdef(s).ok_or_else(|| bad("attdef", "no attribute definition to align below"))?;
+        let t = &prev.text;
+        texts(below_point(t), t.height, t.rotation, (t.halign, t.valign), t.style.clone(), t.width_factor, t.oblique)
+    } else {
+        let at = point_req("attdef", p, "at")?;
+        let (style, fixed, width_factor, oblique) = attdef_style(s, str_param(p, "style"))?;
+        let justify = match str_param(p, "justify") {
+            Some(j) => super::draw::justify(j).ok_or_else(|| bad("attdef", JUSTIFY_ERROR))?,
+            None => (HAlign::Left, VAlign::Baseline),
+        };
+        let height = match p.get("height").and_then(Value::as_f64) {
+            Some(h) if h > 0.0 && h.is_finite() => h,
+            Some(_) => return Err(bad("attdef", "`height` must be positive")),
+            None if fixed > 0.0 => fixed,
+            None => s.doc()?.header.f64("TEXTSIZE", 0.2),
+        };
+        let end = point_param(p, "end");
+        if end.is_some() && !super::draw::spans_baseline(justify.0) {
+            return Err(bad("attdef", "`end` is for the A and F justifications"));
+        }
+        AttdefSpec { end, ..texts(at, height, f64_or(p, "rotation", 0.0).to_radians(), justify, style, width_factor, oblique) }
+    };
+    spec.baseline(s)?;
+    Ok(json!({ "handle": s.add_entity(attdef_kind(&spec))?.hex() }))
 }
 
 fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
@@ -983,47 +1127,353 @@ impl Interactive for InsertM {
     }
 }
 
+/// A further question one of ATTDEF's start-point options asks.
+enum AttdefAsk {
+    Justify,
+    Style,
+}
+
+/// ATTDEF at the command line, as -ATTDEF asks: the modes, the tag, prompt and default, then the
+/// start point (with Justify and Style), height and rotation; Align asks the baseline's two
+/// endpoints instead, Fit its endpoints and the height. The Attribute Definition dialog answers
+/// everything but the points through [`Session::attdef_answers`].
 #[derive(Default)]
 struct AttdefM {
+    /// Enter at the modes question.
+    modes_done: bool,
+    invisible: bool,
+    constant: bool,
+    modes: AttribModes,
     tag: Option<String>,
     prompt: Option<String>,
     default: Option<String>,
+    at: Option<Vec2>,
+    /// Align and Fit: the baseline's second endpoint.
+    end: Option<Vec2>,
+    justify: Option<(HAlign, VAlign)>,
+    /// Chosen with the Style option; else the current style when the definition is made.
+    style: Option<String>,
+    height: Option<f64>,
+    /// Radians.
+    rotation: Option<f64>,
+    /// Taken from the previous definition (Enter at the start point); else the style's.
+    width_factor: Option<f64>,
+    /// Radians; as `width_factor`.
+    oblique: Option<f64>,
+    ask: Option<AttdefAsk>,
+    /// The dialog answered: after the points nothing more is asked.
+    from_dialog: bool,
+}
+
+const ATTDEF_MODES: [&str; 5] = ["Invisible", "Constant", "Verify", "Preset", "Lock position"];
+const JUSTIFY_OPTIONS: [&str; 15] = ["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
+
+impl AttdefM {
+    fn justify(&self) -> (HAlign, VAlign) {
+        self.justify.unwrap_or((HAlign::Left, VAlign::Baseline))
+    }
+
+    /// Align or Fit: the baseline's second endpoint is asked after the first.
+    fn spans(&self) -> bool {
+        super::draw::spans_baseline(self.justify().0)
+    }
+
+    fn modes_line(&self) -> String {
+        let yn = |b: bool| if b { "Y" } else { "N" };
+        format!(
+            "Current attribute modes:  Invisible={}  Constant={}  Verify={}  Preset={}  Lock position={}",
+            yn(self.invisible),
+            yn(self.constant),
+            yn(self.modes.verify),
+            yn(self.modes.preset),
+            yn(self.modes.lock_position)
+        )
+    }
+
+    /// Flip the mode `k` names (a keyword or its typed start); false for anything else.
+    fn toggle(&mut self, k: &str) -> bool {
+        let k = k.trim();
+        let Some(name) =
+            ATTDEF_MODES.iter().find(|m| m.eq_ignore_ascii_case(k) || (!k.is_empty() && m.to_ascii_lowercase().starts_with(&k.to_ascii_lowercase())))
+        else {
+            return false;
+        };
+        match *name {
+            "Invisible" => self.invisible = !self.invisible,
+            "Constant" => self.constant = !self.constant,
+            "Verify" => self.modes.verify = !self.modes.verify,
+            "Preset" => self.modes.preset = !self.modes.preset,
+            _ => self.modes.lock_position = !self.modes.lock_position,
+        }
+        true
+    }
+
+    /// The text status line shown before the start point is asked.
+    fn show_status(&self, s: &mut Session) -> Result<()> {
+        let (style, fixed, ..) = attdef_style(s, self.style.as_deref())?;
+        let d = s.doc()?;
+        let height = if fixed > 0.0 { fixed } else { d.header.f64("TEXTSIZE", 0.2) };
+        let anno = if d.text_style(&style).is_some_and(|st| st.annotative) { "Yes" } else { "No" };
+        let line = format!(
+            "Current text style:  \"{style}\"  Text height:  {height:.4}  Annotative:  {anno}  Justify:  {}",
+            super::draw::justify_code(self.justify())
+        );
+        s.echo(line);
+        Ok(())
+    }
+
+    /// Take the dialog's answers: everything but the start point.
+    fn apply_answers(&mut self, s: &Session, a: &Value) -> Result<()> {
+        let tag = str_param(a, "tag").filter(|t| valid_tag(t)).ok_or_else(|| bad("attdef", "tag must be non-empty without spaces"))?;
+        self.tag = Some(tag.trim().to_ascii_uppercase());
+        self.invisible = bool_or(a, "invisible", false);
+        self.constant = bool_or(a, "constant", false);
+        self.modes = AttribModes {
+            verify: bool_or(a, "verify", false),
+            preset: bool_or(a, "preset", false),
+            lock_position: bool_or(a, "lockPosition", false),
+        };
+        // A blank prompt is the tag, as AutoCAD asks for it at INSERT (and as the JSON form does).
+        let tag = self.tag.clone().unwrap_or_default();
+        self.prompt =
+            Some(if self.constant { String::new() } else { str_param(a, "prompt").filter(|p| !p.trim().is_empty()).map_or(tag, str::to_string) });
+        self.default = Some(str_param(a, "default").unwrap_or("").to_string());
+        if let Some(j) = str_param(a, "justify") {
+            self.justify = Some(super::draw::justify(j).ok_or_else(|| bad("attdef", JUSTIFY_ERROR))?);
+        }
+        if let Some(n) = str_param(a, "style") {
+            self.style = Some(attdef_style(s, Some(n))?.0);
+        }
+        self.height = a.get("height").and_then(Value::as_f64).filter(|h| *h > 0.0 && h.is_finite());
+        self.rotation = a.get("rotation").and_then(Value::as_f64).filter(|r| r.is_finite()).map(f64::to_radians);
+        self.modes_done = true;
+        self.from_dialog = true;
+        Ok(())
+    }
+
+    /// Everything is answered: add the definition.
+    fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        let (style, fixed, width_factor, oblique) = attdef_style(s, self.style.as_deref())?;
+        let height = match self.height {
+            Some(h) => h,
+            None if fixed > 0.0 => fixed,
+            None => s.doc()?.header.f64("TEXTSIZE", 0.2),
+        };
+        let mut spec = AttdefSpec {
+            tag: self.tag.clone().unwrap_or_default(),
+            prompt: self.prompt.clone().unwrap_or_default(),
+            default: self.default.clone().unwrap_or_default(),
+            at: self.at.unwrap_or(Vec2::new(0.0, 0.0)),
+            height,
+            rotation: self.rotation.unwrap_or(0.0),
+            justify: self.justify(),
+            style,
+            width_factor: self.width_factor.unwrap_or(width_factor),
+            oblique: self.oblique.unwrap_or(oblique),
+            invisible: self.invisible,
+            constant: self.constant,
+            modes: self.modes,
+            end: self.end,
+        };
+        spec.baseline(s)?;
+        s.add_entity(attdef_kind(&spec))?;
+        Ok(Step::Done)
+    }
 }
 
 impl Interactive for AttdefM {
     fn name(&self) -> &'static str {
         "ATTDEF"
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => Prompt::new("Enter attribute tag name", Accept::TEXT),
-            (Some(_), None, _) => Prompt::new("Enter attribute prompt", Accept::TEXT),
-            (Some(_), Some(_), None) => Prompt::new("Enter default attribute value", Accept::TEXT),
-            _ => Prompt::new("Specify start point of text", Accept::POINT),
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        if let Some(a) = s.attdef_answers.take() {
+            self.apply_answers(s, &a)?;
+            self.show_status(s)?;
+        } else {
+            s.echo(self.modes_line());
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        match self.ask {
+            Some(AttdefAsk::Justify) => return Prompt::new("Enter an option", Accept::TEXT).kw(&JUSTIFY_OPTIONS),
+            Some(AttdefAsk::Style) => {
+                let current = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+                return Prompt::new("Enter style name or [?]", Accept::TEXT).kw(&["?"]).default(current);
+            }
+            None => {}
+        }
+        if !self.modes_done {
+            return Prompt::new("Enter an option to change attribute modes", super::curves::KW).kw(&ATTDEF_MODES).default("done");
+        }
+        if self.tag.is_none() {
+            return Prompt::new("Enter attribute tag name", Accept::TEXT);
+        }
+        if self.prompt.is_none() && !self.constant {
+            return Prompt::new("Enter attribute prompt", Accept::TEXT);
+        }
+        if self.default.is_none() {
+            return Prompt::new(if self.constant { "Enter attribute value" } else { "Enter default attribute value" }, Accept::TEXT);
+        }
+        let th = s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
+        match (self.at, self.height) {
+            (None, _) if self.spans() => Prompt::new("Specify first endpoint of text baseline", Accept::POINT).kw(&["Justify", "Style"]),
+            (None, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
+            (Some(a), _) if self.spans() && self.end.is_none() => Prompt::new("Specify second endpoint of text baseline", Accept::POINT).base(a),
+            (Some(a), None) => Prompt::new("Specify height", Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a),
+            (Some(a), Some(_)) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(ask) = self.ask.take() {
+            match ask {
+                AttdefAsk::Justify => match &i {
+                    Input::Keyword(k) | Input::Text(k) => match super::draw::justify(k) {
+                        Some(j) => self.justify = Some(j),
+                        None => {
+                            self.ask = Some(AttdefAsk::Justify);
+                            return Err(EngineError::Other("Invalid option keyword.".into()));
+                        }
+                    },
+                    _ => {}
+                },
+                AttdefAsk::Style => match &i {
+                    Input::Keyword(k) | Input::Text(k) if k.trim() == "?" => {
+                        let names: Vec<String> = s.doc()?.text_styles.iter().map(|st| st.name.clone()).collect();
+                        s.echo(format!("Text styles: {}", names.join(", ")));
+                        self.ask = Some(AttdefAsk::Style);
+                        return Ok(Step::Continue);
+                    }
+                    Input::Keyword(n) | Input::Text(n) if !n.trim().is_empty() => match s.doc()?.text_style(n.trim()) {
+                        Some(st) => {
+                            let name = st.name.clone();
+                            s.doc_mut()?.header.set_str("TEXTSTYLE", &name);
+                            self.style = Some(name);
+                        }
+                        None => {
+                            self.ask = Some(AttdefAsk::Style);
+                            return Err(EngineError::Other(format!("Cannot find text style \"{}\".", n.trim())));
+                        }
+                    },
+                    _ => {}
+                },
+            }
+            self.show_status(s)?;
+            return Ok(Step::Continue);
+        }
+        if !self.modes_done {
+            match i {
+                Input::Keyword(k) | Input::Text(k) => {
+                    if !self.toggle(&k) {
+                        return Err(EngineError::Other("Invalid option keyword.".into()));
+                    }
+                    s.echo(self.modes_line());
+                }
+                Input::Enter => self.modes_done = true,
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        }
         let text = match &i {
             Input::Text(t) => Some(t.clone()),
             Input::Enter => Some(String::new()),
             _ => None,
         };
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => {
-                if let Some(t) = text.filter(|t| !t.trim().is_empty() && !t.contains(' ')) {
-                    self.tag = Some(t.to_ascii_uppercase());
+        if self.tag.is_none() {
+            match text {
+                Some(t) if valid_tag(&t) => self.tag = Some(t.trim().to_ascii_uppercase()),
+                Some(_) => return Err(EngineError::Other("Invalid attribute tag name: it must not be empty or contain spaces.".into())),
+                None => {}
+            }
+            return Ok(Step::Continue);
+        }
+        if self.prompt.is_none() && !self.constant {
+            // Enter (or blanks): the tag is the prompt, as in AutoCAD.
+            let tag = self.tag.clone().unwrap_or_default();
+            self.prompt = text.map(|t| if t.trim().is_empty() { tag } else { t });
+            return Ok(Step::Continue);
+        }
+        if self.default.is_none() {
+            if let Some(t) = text {
+                self.default = Some(t);
+                if self.prompt.is_none() {
+                    self.prompt = Some(String::new());
+                }
+                self.show_status(s)?;
+            }
+            return Ok(Step::Continue);
+        }
+        if let Some(a) = self.at
+            && self.spans()
+            && self.end.is_none()
+        {
+            if let Input::Point(p) = i {
+                if a.dist(p) <= 1e-9 {
+                    return Err(EngineError::Other("The second endpoint must differ from the first.".into()));
+                }
+                self.end = Some(p);
+                // Align takes its height from the baseline; Fit asks it unless it is known.
+                if self.from_dialog || self.height.is_some() || self.justify().0 == HAlign::Aligned {
+                    return self.finish(s);
                 }
             }
-            (Some(_), None, _) => self.prompt = text,
-            (Some(_), Some(_), None) => self.default = text,
-            (Some(tag), Some(pr), Some(def)) => {
-                if let Input::Point(p) = i {
-                    let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
-                    s.add_entity(k)?;
-                    return Ok(Step::Done);
+            return Ok(Step::Continue);
+        }
+        let th = s.doc()?.header.f64("TEXTSIZE", 0.2);
+        match (self.at, self.height, i) {
+            (None, _, Input::Keyword(k)) if k == "Justify" => self.ask = Some(AttdefAsk::Justify),
+            (None, _, Input::Keyword(k)) if k == "Style" => self.ask = Some(AttdefAsk::Style),
+            (None, _, Input::Point(p)) => {
+                self.at = Some(p);
+                if self.from_dialog && !self.spans() {
+                    return self.finish(s);
+                }
+                // A fixed-height style sets the height; only the rotation is asked.
+                if let Ok((_, fixed, ..)) = attdef_style(s, self.style.as_deref())
+                    && fixed > 0.0
+                {
+                    self.height = Some(fixed);
                 }
             }
+            (None, _, Input::Enter) => {
+                // Under the previous definition, with its text settings.
+                let Some(prev) = previous_attdef(s) else {
+                    return Err(EngineError::Other("No previous attribute definition to align below.".into()));
+                };
+                let t = &prev.text;
+                self.at = Some(below_point(t));
+                self.justify = Some((t.halign, t.valign));
+                self.style = Some(t.style.clone());
+                self.height = Some(t.height);
+                self.rotation = Some(t.rotation);
+                self.width_factor = Some(t.width_factor);
+                self.oblique = Some(t.oblique);
+                return self.finish(s);
+            }
+            (Some(_), None, Input::Enter) => self.height = Some(th),
+            (Some(a), None, Input::Point(p)) => self.height = Some(a.dist(p).max(1e-9)),
+            (Some(_), None, Input::Text(t)) => {
+                let h = number(&t).filter(|h| *h > 0.0).ok_or_else(|| EngineError::Other("Requires a positive height.".into()))?;
+                self.height = Some(h);
+                s.doc_mut()?.header.set_f64("TEXTSIZE", h);
+            }
+            (Some(_), Some(_), Input::Enter) => {
+                self.rotation = Some(0.0);
+                return self.finish(s);
+            }
+            (Some(a), Some(_), Input::Point(p)) => {
+                self.rotation = Some(a.angle_to(p));
+                return self.finish(s);
+            }
+            (Some(_), Some(_), Input::Text(t)) => {
+                self.rotation = Some(s.angle_settings().direction(&t).ok_or_else(|| EngineError::Other("Requires an angle.".into()))?);
+                return self.finish(s);
+            }
+            _ => {}
+        }
+        // Fit: the height was the last question (its angle is the baseline's).
+        if self.spans() && self.end.is_some() && self.height.is_some() {
+            return self.finish(s);
         }
         Ok(Step::Continue)
     }
