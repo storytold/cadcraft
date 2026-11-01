@@ -10,7 +10,7 @@ mod rename;
 pub use matchprop::MatchProps;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Lineweight, Transparency};
+use cadcraft_doc::{EntityKind, Handle, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
@@ -21,8 +21,8 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
-        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
+        CommandSpec::new("chprop", "Change Properties", run_set)
             .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("change", "Change", change::run_change)
@@ -196,11 +196,67 @@ fn set_xy(p: &mut Vec3, v: &Value) {
     }
 }
 
+/// The objects `properties.set` leaves alone, as CHPROP, MATCHPROP and MOVE do: those on locked
+/// layers and, while a reference is edited in place, those outside the working set.
+#[derive(Default)]
+struct LeftOut {
+    locked: usize,
+    outside: usize,
+}
+
+impl LeftOut {
+    /// `hs` without the objects that can't be edited, and how many those were.
+    fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
+        let d = s.doc()?;
+        let mut out = LeftOut::default();
+        let hs = hs
+            .into_iter()
+            .filter(|h| {
+                if super::blocks::refedit::locked(d, *h) {
+                    out.outside += 1;
+                } else if super::curves::is_locked(s, *h) {
+                    out.locked += 1;
+                } else {
+                    return true;
+                }
+                false
+            })
+            .collect();
+        Ok((hs, out))
+    }
+
+    /// `{changed, locked}`, and a message saying how many were left out when any were.
+    fn result(&self, changed: usize) -> Value {
+        let mut notes = Vec::new();
+        match self.locked {
+            0 => {}
+            1 => notes.push("1 object was on a locked layer.".to_string()),
+            n => notes.push(format!("{n} objects were on a locked layer.")),
+        }
+        match self.outside {
+            0 => {}
+            1 => notes.push("1 object was not in the working set.".to_string()),
+            n => notes.push(format!("{n} objects were not in the working set.")),
+        }
+        if changed == 0 && !notes.is_empty() {
+            notes.push("Nothing was changed.".to_string());
+        }
+        let mut r = json!({ "changed": changed, "locked": self.locked + self.outside });
+        if !notes.is_empty()
+            && let Some(o) = r.as_object_mut()
+        {
+            o.insert("message".into(), json!(notes.join(" ")));
+        }
+        r
+    }
+}
+
 fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     if hs.is_empty() {
         return Err(bad("properties.set", "nothing selected"));
     }
+    let (hs, left_out) = LeftOut::split(s, hs)?;
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
@@ -211,6 +267,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|v| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("properties.set", "thickness must be a finite number")))
         .transpose()?;
     let lw = p.get("lineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
+    if hs.is_empty() {
+        // Every object was left out: the drawing stays as it was, with no undo step.
+        return Ok(left_out.result(0));
+    }
     let d = s.doc_mut()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
@@ -237,7 +297,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
         })?;
     }
-    Ok(json!({ "changed": hs.len() }))
+    Ok(left_out.result(hs.len()))
 }
 
 fn apply_kind_properties(
