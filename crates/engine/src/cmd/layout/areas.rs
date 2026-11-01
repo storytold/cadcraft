@@ -46,12 +46,27 @@ pub(super) fn run_areas(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(Value::Array(areas))
 }
 
+/// The widest (or, inverted, the tallest) proportion a window may have for a viewport to take it. A more
+/// extreme window would shrink the viewport's short side below what a viewport can be.
+const MAX_PROPORTION: f64 = 1e4;
+
+/// Whether the viewport can take window `w`'s proportion: neither side is thousands of times the other.
+pub(super) fn proportion_ok(w: Bounds2) -> bool {
+    let a = w.width() / w.height();
+    (1.0 / MAX_PROPORTION..=MAX_PROPORTION).contains(&a)
+}
+
 /// Make viewport `h` show exactly the model window `w`, whatever its proportion. The viewport takes
 /// the window's proportion: the biggest such rectangle inside its current one, with the same centre,
 /// so the scale stays and it stays on the sheet. A viewport clipped by an object keeps its shape and
 /// shows the whole window with room to spare.
 pub(super) fn fit_viewport(s: &mut Session, h: Handle, w: Bounds2) -> Result<()> {
     let (ww, wh) = (w.width(), w.height());
+    // Refused before anything changes: a window this long or this tall would shrink the viewport's short
+    // side to nothing, and a viewport that small is no longer listed or selectable.
+    if !proportion_ok(w) {
+        return Err(bad("layout.setarea", "the window is too long or too tall for a viewport to take its proportion"));
+    }
     s.doc_mut()?.modify_entity(h, |e| {
         let EntityKind::Viewport(v) = &mut e.kind else { return };
         v.view_center = w.center();

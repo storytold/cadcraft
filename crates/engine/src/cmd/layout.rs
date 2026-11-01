@@ -363,6 +363,10 @@ fn window_param(p: &Value, who: &str) -> Result<Option<Bounds2>> {
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
     // Checked before anything is added, so a bad window leaves no layout behind.
     let window = window_param(p, "layout.new")?;
+    // With `adapt` the viewport takes the window's proportion: refused before a layout is added if it can't.
+    if bool_or(p, "adapt", false) && window.is_some_and(|w| !areas::proportion_ok(w)) {
+        return Err(bad("layout.new", "the window is too long or too tall for a viewport to take its proportion"));
+    }
     let d = s.doc()?;
     let name = match str_param(p, "name") {
         Some(n) => check_name("layout.new", d, n, None)?,

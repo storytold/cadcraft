@@ -261,3 +261,28 @@ fn a_new_layout_can_take_the_proportion_of_its_window() {
     s.undo().unwrap();
     assert!(s.doc().unwrap().layout("Fitted").is_none());
 }
+
+/// A window so long or so tall that the viewport's short side would vanish is refused before anything changes.
+#[test]
+fn extreme_proportions_are_refused_and_change_nothing() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "A", "window": [[0, 0], [40, 20]]})).unwrap();
+    let before = areas(&mut s);
+    let viewport_before = viewport_of(&s, "A");
+    let h = before[0]["handle"].as_str().unwrap().to_string();
+    let layouts_before = s.doc().unwrap().layouts.len();
+    for w in [json!([[0, 0], [1e11, 1e-8]]), json!([[0, 0], [1e-8, 1e11]]), json!([[0, 0], [100001, 10]]), json!([[0, 0], [10, 100001]])] {
+        assert!(s.execute("layout.setarea", &json!({"handle": h, "window": w})).is_err(), "{w}");
+        assert!(s.execute("layout.new", &json!({"name": "Thin", "window": w, "adapt": true})).is_err(), "{w}");
+    }
+    assert_eq!(areas(&mut s), before, "no area changed");
+    assert_eq!(viewport_of(&s, "A"), viewport_before, "and the viewport kept its shape");
+    assert_eq!(s.doc().unwrap().layouts.len(), layouts_before, "no layout was left behind");
+    // The widest proportion still allowed works, and the viewport stays listed.
+    s.execute("layout.setarea", &json!({"handle": h, "window": [[0, 0], [10000, 1]]})).unwrap();
+    assert_eq!(areas(&mut s).len(), 1, "the viewport is still listed");
+    let (w, ht, _) = viewport_of(&s, "A");
+    assert!(w > 1e-9 && ht > 1e-9, "{w} x {ht}");
+    // Without `adapt` a long window is fine for layout.new: the viewport keeps the printable area's shape.
+    s.execute("layout.new", &json!({"name": "Long", "window": [[0, 0], [1e11, 1e-8]]})).unwrap();
+}
