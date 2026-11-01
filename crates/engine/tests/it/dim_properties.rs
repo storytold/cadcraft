@@ -70,6 +70,35 @@ fn properties_override_one_dimensions_extension_line_offset_and_fixed_length() {
     assert!(dims(&s)[1].1.overrides.is_empty());
 }
 
+/// The three overrides are kept through a DXF save (the dimension's `ACAD` `DSTYLE` extended data:
+/// DIMEXO 42, DIMFXL 49, DIMFXLON 290), and one undo takes back one Properties change.
+#[test]
+fn extension_line_overrides_round_trip_through_dxf_and_undo() {
+    let mut s = Session::new();
+    s.script("dimlinear 0,0 10,0 5,-3\n").unwrap();
+    let h = dims(&s)[0].0.clone();
+    s.execute("properties.set", &json!({ "handles": [h], "extOffset": 0.75 })).unwrap();
+    s.execute("properties.set", &json!({ "handles": [h], "fixedExt": true, "fixedExtLength": 0.5 })).unwrap();
+    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    let dm = back
+        .model
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::Dimension(dm) => Some(dm.clone()),
+            _ => None,
+        })
+        .unwrap();
+    for (key, want) in [("extOffset", json!(0.75)), ("fixedExt", json!(true)), ("fixedExtLength", json!(0.5))] {
+        assert_eq!(dm.overrides.get(key), Some(&want), "{key} after a DXF round trip: {:?}", dm.overrides);
+    }
+    s.execute("u", &json!({})).unwrap();
+    let dm = &dims(&s)[0].1;
+    assert_eq!(dm.overrides.get("extOffset"), Some(&json!(0.75)), "the first change stays");
+    assert!(dm.overrides.get("fixedExt").is_none() && dm.overrides.get("fixedExtLength").is_none(), "{:?}", dm.overrides);
+    s.execute("u", &json!({})).unwrap();
+    assert!(dims(&s)[0].1.overrides.is_empty());
+}
+
 #[test]
 fn bad_values_change_nothing() {
     let mut s = Session::new();
