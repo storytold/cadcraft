@@ -29,6 +29,8 @@ pub enum Value {
     Point { at: Vec3 },
     /// A two-point parameter's points.
     Points { base: Vec3, end: Vec3 },
+    /// A flip parameter's reflection line and whether it is flipped.
+    Flip { base: Vec3, end: Vec3, flipped: bool },
 }
 
 /// A dynamic block reference.
@@ -91,7 +93,9 @@ fn entries(objects: &HashMap<Handle, &ForeignObject>, dict: Handle) -> Vec<(Stri
     out
 }
 
-/// A value XRECORD: its text (group 1) when it has one, else its points (10/20/30).
+/// A value XRECORD: its text (group 1) when it has one, else its points (10/20/30); a flip
+/// parameter's also has its state, a group 70 after its points (the header's `70 25`, `70 104`
+/// come before them).
 fn value(o: &ForeignObject) -> Option<Value> {
     if let Some(t) = o.tags.iter().find(|t| t.code == 1) {
         return Some(Value::Text { value: t.value.clone() });
@@ -100,7 +104,10 @@ fn value(o: &ForeignObject) -> Option<Value> {
         o.tags.iter().filter(|t| t.code == code).nth(i).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
     };
     let point = |i: usize| Some(Vec3::new(num(10, i)?, num(20, i)?, num(30, i).unwrap_or(0.0)));
+    let first_point = o.tags.iter().position(|t| t.code == 10).unwrap_or(o.tags.len());
+    let state = o.tags.get(first_point..).unwrap_or_default().iter().rev().find(|t| t.code == 70).map(|t| t.value.trim() == "1");
     match (point(0), point(1)) {
+        (Some(base), Some(end)) if state.is_some() => Some(Value::Flip { base, end, flipped: state == Some(true) }),
         (Some(base), Some(end)) => Some(Value::Points { base, end }),
         (Some(at), None) => Some(Value::Point { at }),
         _ => None,
@@ -122,15 +129,50 @@ pub fn reference(d: &Drawing, insert: Handle) -> Option<Reference> {
     let target = data.tags.iter().find(|t| t.code == 340).and_then(|t| Handle::parse_hex(&t.value))?;
     let (kind, name) = d.foreign.targets.get(&target)?;
     let definition = d.block(name).filter(|_| kind == "BLOCK_RECORD")?.name.clone();
-    dynamic_block(d, &definition)?;
+    let m = dynamic_block(d, &definition)?;
     let mut values = BTreeMap::new();
     let cache = entry(&objects, rep, "AppDataCache").and_then(|c| entry(&objects, c, "ACAD_ENHANCEDBLOCKDATA"));
     for (key, h) in cache.map(|c| entries(&objects, c)).unwrap_or_default().into_iter().take(MAX_VALUES) {
         if let (Ok(node), Some(v)) = (key.trim().parse::<i32>(), objects.get(&h).and_then(|o| value(o))) {
+            // The record's groups alone can't tell a flip from another two-point parameter (a stray
+            // 70, or a flip without its state): the parameter it belongs to decides.
+            let flip = m.parameters.iter().any(|p| p.node == node && matches!(p.kind, ParameterKind::Flip { .. }));
+            let v = match (flip, v) {
+                (false, Value::Flip { base, end, .. }) => Value::Points { base, end },
+                (true, Value::Points { base, end }) => Value::Flip { base, end, flipped: false },
+                (_, v) => v,
+            };
             values.insert(node, v);
         }
     }
     Some(Reference { definition, values })
+}
+
+/// An angle (radians) as Properties shows it: degrees with AUPREC decimals.
+/// An angle parameter's value `a` (radians, counterclockwise) as the drawing shows angles: from
+/// ANGBASE, clockwise when ANGDIR is 1 (AutoCAD shows a 0 angle as 90 in a drawing measured
+/// clockwise from north, and 0.5 rad as 61.35).
+pub(super) fn angle_shown(d: &Drawing, a: f64) -> f64 {
+    let base = d.header.f64("ANGBASE", 0.0);
+    let shown = if d.header.i64("ANGDIR", 0) == 1 { base - a } else { a - base };
+    shown.rem_euclid(std::f64::consts::TAU)
+}
+
+/// The value of an angle parameter shown (or typed) as `v` (radians): the inverse of
+/// [`angle_shown`].
+pub(super) fn angle_from_shown(d: &Drawing, v: f64) -> f64 {
+    let base = d.header.f64("ANGBASE", 0.0);
+    let a = if d.header.i64("ANGDIR", 0) == 1 { base - v } else { v + base };
+    a.rem_euclid(std::f64::consts::TAU)
+}
+
+fn angle_text(d: &Drawing, a: f64) -> String {
+    let prec = usize::try_from(d.header.i64("AUPREC", 0).clamp(0, 8)).unwrap_or(0);
+    // Rounded to the shown decimals first: an angle just short of a full turn shows as 0, not 360.
+    let step = 10f64.powi(i32::try_from(prec).unwrap_or(0));
+    let shown = (angle_shown(d, a).to_degrees() * step).round() / step;
+    let shown = if shown >= 360.0 { shown - 360.0 } else { shown };
+    format!("{:.prec$}", shown + 0.0)
 }
 
 /// A number as the drawing shows lengths (LUPREC decimals).
@@ -239,6 +281,27 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
                 let choices = if values.is_list() { values.list.iter().map(|x| number(d, x * sx)).collect() } else { Vec::new() };
                 out.push(CustomProperty { name: label.clone(), value: number(d, (e - b).len() * sx), choices, editable: true });
             }
+            // The distance from the base to the end, and the end's direction (AutoCAD measures it
+            // from the block's X axis, not from where the dynamic block has it).
+            ParameterKind::Polar { base: b, end: e, label, angle_label, values, .. } => {
+                let (b, e) = match v {
+                    Some(Value::Points { base, end }) => (*base, *end),
+                    _ => (*b, *e),
+                };
+                let choices = if values.is_list() { values.list.iter().map(|x| number(d, x * sx)).collect() } else { Vec::new() };
+                out.push(CustomProperty { name: label.clone(), value: number(d, (e - b).len() * sx), choices, editable: true });
+                let a = (e - b).xy().angle().rem_euclid(std::f64::consts::TAU);
+                out.push(CustomProperty { name: angle_label.clone(), value: angle_text(d, a), choices: Vec::new(), editable: true });
+            }
+            // How far the end is from the base along X and along Y.
+            ParameterKind::Xy { base: b, end: e, x_label, y_label, .. } => {
+                let (b, e) = match v {
+                    Some(Value::Points { base, end }) => (*base, *end),
+                    _ => (*b, *e),
+                };
+                out.push(CustomProperty { name: x_label.clone(), value: number(d, (e.x - b.x) * sx), choices: Vec::new(), editable: true });
+                out.push(CustomProperty { name: y_label.clone(), value: number(d, (e.y - b.y) * sy), choices: Vec::new(), editable: true });
+            }
             ParameterKind::Point { at, label, .. } => {
                 let at = match v {
                     Some(Value::Point { at }) => *at,
@@ -246,6 +309,21 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
                 };
                 out.push(CustomProperty { name: format!("{label} X"), value: number(d, (at.x - base.x) * sx), choices: Vec::new(), editable: true });
                 out.push(CustomProperty { name: format!("{label} Y"), value: number(d, (at.y - base.y) * sy), choices: Vec::new(), editable: true });
+            }
+            ParameterKind::Rotation { base: hb, end: he, label, .. } => {
+                let (b, e) = match v {
+                    Some(Value::Points { base, end }) => (*base, *end),
+                    _ => (*hb, *he),
+                };
+                let now = (e - b).xy();
+                let zero = (*he - *hb).xy();
+                let a = (now.y.atan2(now.x) - zero.y.atan2(zero.x)).rem_euclid(std::f64::consts::TAU);
+                out.push(CustomProperty { name: label.clone(), value: angle_text(d, a), choices: Vec::new(), editable: true });
+            }
+            ParameterKind::Flip { label, states, .. } => {
+                let flipped = matches!(v, Some(Value::Flip { flipped: true, .. }));
+                let value = states[usize::from(flipped)].clone();
+                out.push(CustomProperty { name: label.clone(), value, choices: states.to_vec(), editable: true });
             }
             ParameterKind::Visibility { label, states, .. } => {
                 let value = cur.property(p.node, "VisibilityState").unwrap_or_default();
@@ -280,4 +358,21 @@ fn lookup_sets_what_changes(m: &DynamicBlock, node: i32) -> bool {
         }
     }
     any
+}
+
+#[cfg(test)]
+mod tests {
+    use super::angle_text;
+    use crate::Drawing;
+
+    #[test]
+    fn an_angle_just_short_of_a_full_turn_shows_as_zero() {
+        let mut d = Drawing::new_imperial();
+        d.header.set_i64("AUPREC", 0);
+        assert_eq!(angle_text(&d, 359.7f64.to_radians()), "0");
+        assert_eq!(angle_text(&d, 359.4f64.to_radians()), "359");
+        d.header.set_i64("AUPREC", 2);
+        assert_eq!(angle_text(&d, 359.996f64.to_radians()), "0.00");
+        assert_eq!(angle_text(&d, 90f64.to_radians()), "90.00");
+    }
 }
