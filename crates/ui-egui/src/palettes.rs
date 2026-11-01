@@ -1076,6 +1076,17 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, &ids);
                 num(ui, "Defined width", "width", len(tx.width), &mut set, &mut bad, &ids);
             }
+            // A multileader's text (#1081): it had no field, so it couldn't be changed.
+            EntityKind::MLeader(ml) => {
+                if let Some(tx) = &ml.text {
+                    prop_row(ui, "Contents", |ui| {
+                        if let Some(s) = edit_field(ui, ui.scope_id().with(("mltxt", &ids)), tx.contents.clone()) {
+                            set = Some(json!({ "handles": ids, "text": s }));
+                        }
+                    });
+                    num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, &ids);
+                }
+            }
             EntityKind::LwPolyline(pl) => {
                 num(ui, "Global width", "width", len(pl.const_width), &mut set, &mut bad, &ids);
                 let g = cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: pl.closed };

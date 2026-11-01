@@ -33,6 +33,9 @@ pub struct CharFmt {
     pub font: Option<String>,
     /// Absolute character height set inline (`\H`); `None`: the text's.
     pub height: Option<f64>,
+    /// The inline height was set relative to the text's own (`\H2x;`): this multiplier, written
+    /// back as it was so the part keeps scaling with the text's height.
+    pub height_rel: Option<f64>,
     /// Colour set inline (`\C`, `\c`); `None`: the entity's (ByLayer/ByBlock).
     pub color: Option<MTextColor>,
 }
@@ -99,6 +102,23 @@ fn arg_end(chars: &[char], from: usize) -> usize {
 impl Formatted {
     /// Parse MTEXT contents. Never fails: what isn't understood is kept as atoms or dropped.
     pub fn from_contents(contents: &str) -> Formatted {
+        Self::from_contents_with_height(contents, None)
+    }
+
+    /// [`Self::from_contents`] for a text `height` high: a relative height code (`\H2x;`) with no
+    /// inline height before it scales that one instead of being dropped.
+    pub fn from_contents_with_height(contents: &str, height: Option<f64>) -> Formatted {
+        Self::parse(contents, height).0
+    }
+
+    /// Whether the editor holds all of `contents`: past [`MAX_CHARS`] characters the rest would
+    /// be cut off, and saving would shorten the text.
+    pub fn fits(contents: &str) -> bool {
+        Self::parse(contents, None).1
+    }
+
+    /// The parse, and whether it took in all of `contents`.
+    fn parse(contents: &str, height: Option<f64>) -> (Formatted, bool) {
         let mut f = Formatted::default();
         let chars: Vec<char> = contents.chars().collect();
         let mut stack: Vec<CharFmt> = Vec::new();
@@ -108,7 +128,7 @@ impl Formatted {
         let mut i = 0;
         while let Some(&c) = chars.get(i) {
             if f.fmt.len() >= MAX_CHARS {
-                break;
+                return (f, false);
             }
             match c {
                 '{' => {
@@ -151,7 +171,7 @@ impl Formatted {
                             i = end + 1;
                             match k {
                                 'f' | 'F' => apply_font(&mut cur, &a),
-                                'H' => cur.height = parse_height(&a, cur.height),
+                                'H' => apply_height(&mut cur, &a, height),
                                 'C' => {
                                     cur.color = a.trim().parse::<u16>().ok().and_then(|v| (v > 0 && v < 256).then_some(MTextColor::Aci(v)));
                                 }
@@ -187,7 +207,7 @@ impl Formatted {
                 }
             }
         }
-        f
+        (f, true)
     }
 
     fn push_char(&mut self, c: char, fmt: &CharFmt) {
@@ -445,7 +465,9 @@ impl Formatted {
             let fam: String = fam.chars().filter(|c| !matches!(c, ';' | '|' | '{' | '}' | '\\')).collect();
             s.push_str(&format!("\\f{fam}|b{}|i{};", u8::from(f.bold), u8::from(f.italic)));
         }
-        if let Some(h) = f.height {
+        if let Some(m) = f.height_rel {
+            s.push_str(&format!("\\H{}x;", trim(m)));
+        } else if let Some(h) = f.height {
             s.push_str(&format!("\\H{};", trim(h)));
         }
         match f.color {
@@ -462,12 +484,32 @@ fn trim(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-fn parse_height(a: &str, cur: Option<f64>) -> Option<f64> {
+/// A `\H` code on `cur`, for a text `base` high. A relative height over the text's own (no
+/// inline height before it, or a relative one) stays relative; over an inline absolute height it
+/// becomes absolute.
+fn apply_height(cur: &mut CharFmt, a: &str, base: Option<f64>) {
+    let valid = |h: f64| (h.is_finite() && h > 0.0 && h < 1e6).then_some(h);
     let a = a.trim();
-    match a.strip_suffix(['x', 'X']) {
-        // A relative height needs the current one; without it the code is dropped.
-        Some(r) => r.trim().parse::<f64>().ok().zip(cur).map(|(m, h)| h * m).filter(|h| h.is_finite() && *h > 0.0 && *h < 1e6),
-        None => a.parse::<f64>().ok().filter(|h| h.is_finite() && *h > 0.0 && *h < 1e6).or(cur),
+    let Some(r) = a.strip_suffix(['x', 'X']) else {
+        if let Some(h) = a.parse::<f64>().ok().and_then(valid) {
+            cur.height = Some(h);
+            cur.height_rel = None;
+        }
+        return;
+    };
+    let Some(m) = r.trim().parse::<f64>().ok().and_then(valid) else { return };
+    match (cur.height, cur.height_rel) {
+        (_, Some(r0)) => {
+            if let Some(m) = valid(r0 * m) {
+                cur.height_rel = Some(m);
+                cur.height = base.and_then(|b| valid(b * m));
+            }
+        }
+        (None, None) => {
+            cur.height_rel = Some(m);
+            cur.height = base.and_then(|b| valid(b * m));
+        }
+        (Some(h), None) => cur.height = valid(h * m).or(cur.height),
     }
 }
 
@@ -492,6 +534,22 @@ fn apply_font(cur: &mut CharFmt, a: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relative_height_is_written_back_relative() {
+        let f = Formatted::from_contents_with_height("{\\H2x;big} small {\\H3;abs}", Some(5.0));
+        assert_eq!(f.fmt_at(0).height, Some(10.0), "shown at twice the text's height");
+        let out = f.to_contents();
+        assert!(out.contains("\\H2x;big"), "{out}");
+        assert!(out.contains("\\H3;abs"), "an absolute height stays absolute: {out}");
+        // Opened again for a taller text, the part scales with it.
+        assert_eq!(Formatted::from_contents_with_height(&out, Some(8.0)).fmt_at(0).height, Some(16.0));
+        // Relative over relative multiplies; over an absolute one it is absolute.
+        let n = Formatted::from_contents_with_height("{\\H2x;a{\\H1.5x;b}}{\\H4;c{\\H2x;d}}", Some(1.0)).to_contents();
+        assert!(n.contains("\\H3x;b") && n.contains("\\H8;d"), "{n}");
+        // With no height known it is still kept.
+        assert!(Formatted::from_contents("{\\H2x;x}").to_contents().contains("\\H2x;x"));
+    }
 
     #[test]
     fn round_trips_formats_and_atoms() {
