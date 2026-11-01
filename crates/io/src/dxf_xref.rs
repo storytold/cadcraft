@@ -13,7 +13,7 @@ use cadcraft_doc::Drawing;
 
 /// Whether a symbol name belongs to an attached xref (`xref|name`).
 pub(crate) fn dependent(name: &str) -> bool {
-    name.contains('|')
+    cadcraft_doc::foreign::xref_dependent(name)
 }
 
 /// The drawing as it is saved: xref blocks emptied, xref-dependent symbols other than layers and

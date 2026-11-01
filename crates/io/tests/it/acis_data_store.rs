@@ -101,3 +101,119 @@ fn dwg_keeps_the_solids_geometry() {
     let again = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     assert_eq!(again.foreign.data_store_entities().len(), 2);
 }
+
+/// A solid with SAT-text ACIS data (an R2000-style file) can't be written to a DXF of 2013 or
+/// later, whose files keep that data in the data store: it is left out there and counted, while
+/// 2010 and earlier keep it, and solids with a data store record are kept everywhere (#2334).
+#[test]
+fn sat_text_solids_are_left_out_of_dxf_2013_and_later() {
+    let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+        0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n1\n16 ZWCAD\n3\nEnd-of-ACIS-data\n\
+        0\n3DSOLID\n5\n2C\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n\
+        0\nLINE\n5\n2D\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = cadcraft_io::read_dxf(sat.as_bytes()).unwrap();
+    let count = |v: cadcraft_io::Version, ty: &str| {
+        let out = cadcraft_io::write_with(&d, "x.dxf", &cadcraft_io::SaveOptions { version: Some(v), binary: false }).unwrap();
+        let t = String::from_utf8(out).unwrap().replace("\r\n", "\n");
+        t.matches(&format!("\n0\n{ty}\n")).count() + t.matches(&format!("\n  0\n{ty}\n")).count()
+    };
+    assert_eq!(cadcraft_doc::foreign::sat_text_dropped(&d), [("3DSOLID".to_string(), 1), ("REGION".to_string(), 1)].into());
+    for v in [cadcraft_io::Version::R2000, cadcraft_io::Version::R2010] {
+        assert_eq!((count(v, "REGION"), count(v, "3DSOLID")), (1, 1), "{v:?} keeps them");
+    }
+    for v in [cadcraft_io::Version::R2013, cadcraft_io::Version::R2018] {
+        assert_eq!((count(v, "REGION"), count(v, "3DSOLID")), (0, 0), "{v:?} leaves them out");
+        assert_eq!(count(v, "LINE"), 1, "{v:?} keeps the rest");
+    }
+    // Solids with a data store record keep their geometry in 2013 and later.
+    let stored = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
+    assert!(cadcraft_doc::foreign::sat_text_dropped(&stored).is_empty());
+}
+
+/// A DWG keeps SAT-text solids at any version (its writer handles them), and a DXF's note leaves
+/// out the contents of xref blocks, which the DXF doesn't hold anyway (#2334).
+#[test]
+fn sat_text_solids_stay_in_dwg_2018_and_xref_contents_are_not_counted() {
+    let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+        0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n\
+        0\nLINE\n5\n2D\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = cadcraft_io::read_dxf(sat.as_bytes()).unwrap();
+    let opts = cadcraft_io::SaveOptions { version: Some(cadcraft_io::Version::R2018), binary: false };
+    let dwg = cadcraft_io::write_with(&d, "x.dwg", &opts).unwrap();
+    let back = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    let unknown = |d: &cadcraft_doc::Drawing| d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Unknown(u) if u.dxf_type == "REGION")).count();
+    assert_eq!(unknown(&back), 1, "the DWG 2018 keeps the region");
+
+    // Xref blocks (and `xref|` ones) hold no entities in the file: not reported as left out.
+    let mut x = d.clone();
+    let region = d.model.iter().find(|e| matches!(&e.kind, EntityKind::Unknown(_))).cloned().unwrap();
+    let mut host = cadcraft_doc::Block::new("REF");
+    host.xref_path = Some("other.dwg".into());
+    host.entities.push((*region).clone());
+    x.blocks.insert("REF".into(), std::sync::Arc::new(host));
+    let mut dep = cadcraft_doc::Block::new("REF|PART");
+    dep.entities.push((*region).clone());
+    x.blocks.insert("REF|PART".into(), std::sync::Arc::new(dep));
+    assert_eq!(cadcraft_doc::foreign::sat_text_dropped(&x), [("REGION".to_string(), 1)].into(), "only the model-space region");
+}
+
+/// Only groups 1 and 3 of the modeler geometry subclass are SAT text, and only a record holding
+/// the entity's ASM_Data keeps its geometry in the data store (#2334).
+#[test]
+fn sat_text_is_told_by_its_subclass_and_a_geometry_record() {
+    use cadcraft_doc::foreign::{Foreign, sat_text_acis};
+    use cadcraft_doc::{Handle, RawTag, Unknown};
+    let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+    let solid = |tags: Vec<RawTag>| Unknown { dxf_type: "3DSOLID".into(), tags };
+    let none = std::collections::BTreeSet::new();
+    let h = Handle(0x2B);
+    // A stray 1 or 3 outside AcDbModelerGeometry is not SAT text.
+    let stray =
+        solid(vec![tag(100, "AcDbEntity"), tag(1, "name"), tag(100, "AcDbModelerGeometry"), tag(70, "1"), tag(100, "AcDb3dSolid"), tag(3, "x")]);
+    assert!(!sat_text_acis(&stray, h, &none));
+    let real = solid(vec![tag(100, "AcDbEntity"), tag(100, "AcDbModelerGeometry"), tag(70, "1"), tag(1, "400 1 1 0"), tag(100, "AcDb3dSolid")]);
+    assert!(sat_text_acis(&real, h, &none));
+    // Without subclass markers (an old file) the groups are the entity's own.
+    assert!(sat_text_acis(&solid(vec![tag(8, "0"), tag(1, "400 1 1 0")]), h, &none));
+
+    // A 320 in the data store without an ASM_Data record doesn't keep the geometry.
+    let store = |asm: bool| {
+        let mut t = vec![tag(0, "ACDSRECORD"), tag(90, "1"), tag(320, "2B")];
+        t.push(tag(2, if asm { "ASM_Data" } else { "Other" }));
+        Foreign { data_store: t, ..Foreign::default() }
+    };
+    assert!(store(true).data_store_entities().contains(&h));
+    assert!(store(false).data_store_entities().is_empty());
+}
+
+/// The writer keeps a data store record by its first 320 only, so only that entity counts as
+/// stored (#2334).
+#[test]
+fn a_data_store_record_stores_only_its_first_entity() {
+    use cadcraft_doc::foreign::Foreign;
+    use cadcraft_doc::{Handle, RawTag};
+    let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+    let store = Foreign { data_store: vec![tag(0, "ACDSRECORD"), tag(320, "2B"), tag(320, "2C"), tag(2, "ASM_Data")], ..Foreign::default() };
+    assert_eq!(store.data_store_entities(), [Handle(0x2B)].into());
+}
+
+/// A real DWG round trip of a SAT-text REGION: the DWG writer keeps the SAT groups up to 2010, and
+/// from 2013 they come back empty (the solid's geometry is not in the file), which the DWG save
+/// note has to say (#2334).
+#[test]
+fn a_dwg_keeps_a_sat_text_region_only_before_2013() {
+    let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+        0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n0\nENDSEC\n0\nEOF\n";
+    let d = cadcraft_io::read_dxf(sat.as_bytes()).unwrap();
+    let holds_sat = |v: cadcraft_io::Version| {
+        let dwg = cadcraft_io::write_with(&d, "x.dwg", &cadcraft_io::SaveOptions { version: Some(v), binary: false }).unwrap();
+        let back = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+        let region = back.model.iter().find_map(|e| match &e.kind {
+            EntityKind::Unknown(u) if u.dxf_type == "REGION" => Some(u.clone()),
+            _ => None,
+        });
+        region.is_some_and(|u| cadcraft_doc::foreign::has_sat_text(&u.tags))
+    };
+    assert!(holds_sat(cadcraft_io::Version::R2010), "2010 keeps the SAT text");
+    assert!(!holds_sat(cadcraft_io::Version::R2018), "2018 comes back without it");
+}
