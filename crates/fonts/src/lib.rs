@@ -1,7 +1,7 @@
-//! `CADCraft` text layout.
+//! CADCraft text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("`CADCraft` Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
+//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
 //! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
 //! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
 //! (paragraphs, stacking, height changes), word wrap and attachment points.
@@ -41,7 +41,6 @@ pub struct Run {
 /// Replace `%%` control codes: `%%d` degree, `%%p` plus/minus, `%%c` diameter, `%%%` percent,
 /// `%%nnn` character code. Underline/overline toggles (`%%u`, `%%o`) are returned as flags
 /// per character.
-#[must_use]
 pub fn decode_controls(text: &str) -> Vec<(char, bool, bool)> {
     let mut out = Vec::with_capacity(text.len());
     let mut under = false;
@@ -82,7 +81,6 @@ pub fn decode_controls(text: &str) -> Vec<(char, bool, bool)> {
 }
 
 /// Advance width of one character at height 1 and width factor 1.
-#[must_use]
 pub fn char_advance(c: char) -> f64 {
     match stroke::glyph(c) {
         Some((w, _)) => (w + stroke::GAP) / stroke::CAP,
@@ -93,7 +91,6 @@ pub fn char_advance(c: char) -> f64 {
 
 /// Whether `c` is an East Asian wide character (CJK ideographs and punctuation, kana, Hangul,
 /// fullwidth forms): drawn in a square cell, like a big font's characters.
-#[must_use]
 pub fn is_wide(c: char) -> bool {
     matches!(u32::from(c),
         0x1100..=0x115F
@@ -146,7 +143,6 @@ fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
 /// Shape a single line in the stroke font at `height`, with `width_factor` and `oblique`
 /// (radians). Characters the stroke font lacks are drawn from an installed font that has them
 /// (glyph outlines, sized like TrueType text), else as a missing-glyph box.
-#[must_use]
 pub fn shape_stroke(text: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
     let normalized_height = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let scale_x = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
@@ -242,7 +238,6 @@ fn missing_glyph_box(out: &mut Shaped, x: f64, h: f64, k: f64) {
 
 /// Lay out a single line at `height`, with `width_factor` and `oblique` (radians), in the
 /// stroke font (fallback glyphs become closed outlines).
-#[must_use]
 pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run {
     let sh = shape_stroke(s, height, width_factor, oblique);
     let mut strokes = sh.strokes;
@@ -251,7 +246,6 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
 }
 
 /// Width of a line without building strokes.
-#[must_use]
 pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
     if bidi::has_rtl(s) {
         let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
@@ -271,7 +265,6 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
 
 /// Width of the gap MTEXT leaves between two words. Words are measured without their trailing
 /// letter gap, so the stroke font's gap is added on both sides of the space, as TEXT lays it out.
-#[must_use]
 pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, " ", height, width_factor)
@@ -304,7 +297,6 @@ impl TextFont {
         }
         ttf::find(&ttf::font_alt()).map_or(TextFont::Stroke, TextFont::Outline)
     }
-    #[must_use]
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
     }
@@ -383,12 +375,10 @@ impl Shaped {
         self.strokes.extend(other.strokes);
         self.glyphs.extend(other.glyphs);
     }
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.strokes.is_empty() && self.glyphs.is_empty()
     }
     /// All geometry as polylines (outlines become closed polylines).
-    #[must_use]
     pub fn outlines(&self) -> Vec<Vec<Vec2>> {
         let mut v = self.strokes.clone();
         v.extend(self.glyphs.iter().flatten().cloned());
@@ -426,7 +416,6 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
-#[must_use]
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
     if let TextFont::Outline(face) = font
         && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
@@ -437,7 +426,6 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
 }
 
 /// Width of one line in `font`.
-#[must_use]
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, s, height, width_factor)
@@ -489,7 +477,6 @@ pub struct TextParams {
 }
 
 impl TextParams {
-    #[must_use]
     pub fn new(insert: Vec2, height: f64) -> Self {
         TextParams {
             insert,
@@ -505,7 +492,6 @@ impl TextParams {
         }
     }
     /// Centred on `p` both ways (dimension and table text).
-    #[must_use]
     pub fn centered(p: Vec2, height: f64, rotation: f64) -> Self {
         TextParams { align_pt: Some(p), rotation, h: Align::Middle, v: VAlign::Middle, ..TextParams::new(p, height) }
     }
@@ -514,7 +500,6 @@ impl TextParams {
 /// Where a single-line TEXT's baseline starts (the left end of its first character's baseline),
 /// in world coordinates: what DXF/DWG store as a justified text's insertion point (group 10),
 /// computed from its alignment point (group 11) and its width in `font`.
-#[must_use]
 pub fn baseline_start(font: &TextFont, s: &str, p: &TextParams) -> Vec2 {
     let (origin, local, rot, mirror) = frame(font, s, p);
     origin + Vec2::new(local.x * mirror.x, local.y * mirror.y).rotate(rot)
@@ -577,7 +562,6 @@ fn frame(font: &TextFont, s: &str, p: &TextParams) -> (Vec2, Vec2, f64, Vec2) {
 
 /// Place a single-line TEXT in world coordinates with any font. Returns the shaped text and its
 /// bounding box.
-#[must_use]
 pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
     let mut height = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
     let mut wf = p.width_factor;
@@ -621,7 +605,6 @@ pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
 /// Place a single-line TEXT in world coordinates with the stroke font. Returns strokes and the
 /// text's bounding box.
 #[allow(clippy::too_many_arguments)]
-#[must_use]
 pub fn place_text(
     s: &str,
     insert: Vec2,

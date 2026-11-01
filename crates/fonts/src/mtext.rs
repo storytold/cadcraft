@@ -8,7 +8,6 @@ pub(crate) mod para;
 
 /// Strip MTEXT formatting codes to plain text with `\n` paragraph breaks.
 /// Stacked fractions `\S1/2;` become `1/2`; `\~` is a space; braces are dropped.
-#[must_use]
 pub fn plain_mtext(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -105,7 +104,6 @@ pub struct MTextParams {
 }
 
 impl MTextParams {
-    #[must_use]
     pub fn new(insert: Vec2, height: f64) -> Self {
         MTextParams {
             insert,
@@ -534,7 +532,6 @@ impl Line {
 }
 
 /// Lay out MTEXT with the stroke font. `attach` 1..=9 (TL, TC, TR, ML, MC, MR, BL, BC, BR).
-#[must_use]
 pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attach: u8, rotation: f64, line_spacing: f64) -> MTextLayout {
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }

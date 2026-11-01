@@ -219,7 +219,6 @@ pub enum ListStyle {
 
 impl ListStyle {
     /// The label of item `i` (from 0).
-    #[must_use]
     pub fn label(self, i: usize) -> String {
         let letters = |upper: bool| {
             // Bijective base 26: a … z, aa, ab …
@@ -244,7 +243,6 @@ impl ListStyle {
 
 /// Paragraphs as a list: a hanging indent of `indent` drawing units with a tab stop there, and
 /// each paragraph its label and a tab (`\pxi-3,l3,t3;1.<tab>First\P2.<tab>Second`).
-#[must_use]
 pub fn list_contents(paragraphs: &[&str], style: ListStyle, indent: f64) -> String {
     let indent = if indent.is_finite() && indent > 0.0 { indent.min(MAX_UNITS) } else { 3.0 };
     let props = ParaProps { first: -indent, left: indent, tabs: vec![(indent, TabKind::Left)], ..ParaProps::default() };
@@ -265,7 +263,6 @@ pub struct Paragraphs {
 }
 
 impl Paragraphs {
-    #[must_use]
     pub fn scan(contents: &str) -> Paragraphs {
         let chars: Vec<char> = contents.chars().collect();
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
@@ -326,20 +323,17 @@ impl Paragraphs {
     }
 
     /// Properties of paragraph `k`.
-    #[must_use]
     pub fn props(&self, k: usize) -> &ParaProps {
         let st = self.para.get(k).or(self.para.last()).copied().unwrap_or(0);
         self.states.get(st).or(self.states.first()).unwrap_or(&DEFAULT_PROPS)
     }
 
     /// The break after paragraph `k` starts a new column.
-    #[must_use]
     pub fn column_break(&self, k: usize) -> bool {
         self.column_break.get(k).copied().unwrap_or(false)
     }
 
     /// Any paragraph formatting at all.
-    #[must_use]
     pub fn formatted(&self) -> bool {
         self.states.len() > 1 || self.column_break.iter().any(|b| *b)
     }

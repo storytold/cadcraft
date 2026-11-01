@@ -34,7 +34,6 @@ pub(crate) fn is_mark(c: char) -> bool {
 
 /// Base direction of a paragraph from its first strong character (rules P2/P3): `Some(true)`
 /// right-to-left, `Some(false)` left-to-right, `None` when it has no strong character.
-#[must_use]
 pub fn base_rtl(s: &str) -> Option<bool> {
     s.chars().find_map(|c| match bidi_class(c) {
         BidiClass::L => Some(false),
@@ -58,7 +57,6 @@ fn byte_starts(text: &str) -> Vec<usize> {
 /// each flagged right-to-left or not. The paragraph direction comes from the first strong
 /// character (or `base` when given). Characters inside a right-to-left run are still in logical
 /// order: the caller lays them out from right to left.
-#[must_use]
 pub fn visual_runs(chars: &[char], base: Option<bool>) -> Vec<(Range<usize>, bool)> {
     if chars.is_empty() {
         return Vec::new();
@@ -79,7 +77,6 @@ pub fn visual_runs(chars: &[char], base: Option<bool>) -> Vec<(Range<usize>, boo
 
 /// Resolved embedding level of every character of one line (after rule L1), for reordering
 /// pieces of the line with [`reorder`].
-#[must_use]
 pub fn char_levels(text: &str, base: Option<bool>) -> Vec<u8> {
     if text.is_empty() {
         return Vec::new();
@@ -90,14 +87,12 @@ pub fn char_levels(text: &str, base: Option<bool>) -> Vec<u8> {
 
 /// Display order (rule L2) of items with the given embedding levels: indices into `levels`,
 /// left to right.
-#[must_use]
 pub fn reorder(levels: &[u8]) -> Vec<usize> {
     let lv: Vec<Level> = levels.iter().map(|l| Level::new(*l).unwrap_or_else(|_| Level::ltr())).collect();
     ParagraphBidiInfo::reorder_visual(&lv)
 }
 
 /// The mirrored glyph of a paired bracket in right-to-left text (rule L4, common pairs).
-#[must_use]
 pub fn mirror(c: char) -> char {
     match c {
         '(' => ')',
@@ -120,7 +115,6 @@ pub fn mirror(c: char) -> char {
 
 /// A line in display order, code point by code point: right-to-left runs reversed and their
 /// brackets mirrored. Shows what the layout draws, before glyph shaping.
-#[must_use]
 pub fn visual_order(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
@@ -221,7 +215,6 @@ pub enum Form {
 
 /// The contextual form of every character of a logical-order run (`None` for characters that
 /// don't join: spaces, digits, Latin, marks, ZWNJ).
-#[must_use]
 pub fn joining_forms(chars: &[char]) -> Vec<Option<Form>> {
     let jt: Vec<Jt> = chars.iter().map(|c| joining_type(*c)).collect();
     // Neighbour joining types, skipping transparent marks.
@@ -307,7 +300,6 @@ const FORMS_A: &[(u32, u32, u32)] = &[
 ];
 
 /// The presentation-form code point of `c` in `form`, when Unicode has one.
-#[must_use]
 pub fn presentation_form(c: char, form: Form) -> Option<char> {
     let u = u32::from(c);
     let slot = match form {
