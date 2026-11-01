@@ -508,7 +508,6 @@ fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, bu
 /// curve (which gains a vertex there), so the two meet exactly. A curve that is flattened
 /// into chords (an ellipse, a spline) lies up to the flattening tolerance off the true curve,
 /// so a line that ends on the true curve can stop just short of the chords.
-#[must_use]
 #[expect(clippy::many_single_char_names, reason = "Endpoint snapping keeps conventional polyline, segment and point notation.")]
 pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
     let mut out: Vec<Vec<Vec2>> = polys.to_vec();
@@ -559,26 +558,22 @@ pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
 }
 
 /// The closed loop enclosing `p`, counter-clockwise, or `None`.
-#[must_use]
 pub fn enclosing_loop(polys: &[Vec<Vec2>], p: Vec2, tol: f64) -> Option<Vec<Vec2>> {
     enclosing_loop_gap(polys, p, tol, 0.0)
 }
 
 /// [`enclosing_loop`], with gaps of up to `gap` between curve ends closed (HPGAPTOL).
-#[must_use]
 pub fn enclosing_loop_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<Vec<Vec2>> {
     let g = build_gap(polys, tol, gap)?;
     points(&g, &outer_face(&g, p)?)
 }
 
 /// The closed loop enclosing `p` plus the islands inside it, or `None` when `p` isn't enclosed.
-#[must_use]
 pub fn boundary_at(polys: &[Vec<Vec2>], p: Vec2, tol: f64) -> Option<Boundary> {
     boundary_at_gap(polys, p, tol, 0.0)
 }
 
 /// [`boundary_at`], with gaps of up to `gap` between curve ends closed (HPGAPTOL).
-#[must_use]
 pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<Boundary> {
     let g = build_gap(polys, tol, gap)?;
     let ids = outer_face(&g, p)?;
@@ -594,7 +589,6 @@ pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Opti
 /// The outside outline of curves that together enclose an area (counter-clockwise, dangling
 /// ends removed), or `None` when they enclose nothing or form more than one separate group.
 /// Gaps of up to `gap` between curve ends are closed (HPGAPTOL).
-#[must_use]
 #[expect(clippy::float_cmp, reason = "Exact x equality is required for the deterministic lexicographic tie-break.")]
 pub fn outline(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<Vec<Vec2>> {
     let g = build_gap(polys, tol, gap)?;

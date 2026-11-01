@@ -24,7 +24,6 @@ impl Default for Bounds2 {
 impl Bounds2 {
     pub const EMPTY: Bounds2 = Bounds2 { min: Vec2 { x: f64::INFINITY, y: f64::INFINITY }, max: Vec2 { x: f64::NEG_INFINITY, y: f64::NEG_INFINITY } };
 
-    #[must_use]
     pub fn new(a: Vec2, b: Vec2) -> Self {
         Bounds2 { min: a.min(b), max: a.max(b) }
     }
@@ -35,7 +34,6 @@ impl Bounds2 {
         }
         b
     }
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         !(self.min.x <= self.max.x && self.min.y <= self.max.y)
     }
@@ -45,7 +43,6 @@ impl Bounds2 {
             self.max = self.max.max(p);
         }
     }
-    #[must_use]
     pub fn union(&self, o: &Bounds2) -> Bounds2 {
         if o.is_empty() {
             return *self;
@@ -55,15 +52,12 @@ impl Bounds2 {
         }
         Bounds2 { min: self.min.min(o.min), max: self.max.max(o.max) }
     }
-    #[must_use]
     pub fn width(&self) -> f64 {
         if self.is_empty() { 0.0 } else { span(self.min.x, self.max.x) }
     }
-    #[must_use]
     pub fn height(&self) -> f64 {
         if self.is_empty() { 0.0 } else { span(self.min.y, self.max.y) }
     }
-    #[must_use]
     pub fn center(&self) -> Vec2 {
         if self.is_empty() {
             return Vec2::ZERO;
@@ -75,27 +69,22 @@ impl Bounds2 {
         };
         Vec2::new(mid(self.min.x, self.max.x), mid(self.min.y, self.max.y))
     }
-    #[must_use]
     pub fn contains(&self, p: Vec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
     /// True when `o` lies entirely inside.
-    #[must_use]
     pub fn contains_box(&self, o: &Bounds2) -> bool {
         !o.is_empty() && self.contains(o.min) && self.contains(o.max)
     }
-    #[must_use]
     pub fn intersects(&self, o: &Bounds2) -> bool {
         !(self.is_empty() || o.is_empty() || o.min.x > self.max.x || o.max.x < self.min.x || o.min.y > self.max.y || o.max.y < self.min.y)
     }
-    #[must_use]
     pub fn expand(&self, d: f64) -> Bounds2 {
         if self.is_empty() {
             return *self;
         }
         Bounds2 { min: self.min - Vec2::new(d, d), max: self.max + Vec2::new(d, d) }
     }
-    #[must_use]
     pub fn corners(&self) -> [Vec2; 4] {
         [self.min, Vec2::new(self.max.x, self.min.y), self.max, Vec2::new(self.min.x, self.max.y)]
     }

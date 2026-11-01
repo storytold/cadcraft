@@ -24,7 +24,6 @@ impl KnotParam {
     pub const ALL: [KnotParam; 3] = [KnotParam::Chord, KnotParam::SqrtChord, KnotParam::Uniform];
 
     /// The name as the prompt and the "Current settings" line show it.
-    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             KnotParam::Chord => "Chord",
@@ -35,7 +34,6 @@ impl KnotParam {
 
     /// Parse a keyword or JSON value ("chord", "sqrt", "square root", "uniform", or 0/1/2 as in
     /// the SPLKNOTS setting).
-    #[must_use]
     pub fn parse(s: &str) -> Option<KnotParam> {
         Some(match s.trim().to_ascii_lowercase().as_str() {
             "c" | "chord" | "0" => KnotParam::Chord,
@@ -46,7 +44,6 @@ impl KnotParam {
     }
 
     /// The SPLKNOTS code (0 chord, 1 square root, 2 uniform).
-    #[must_use]
     pub fn code(self) -> i64 {
         match self {
             KnotParam::Chord => 0,
@@ -84,7 +81,6 @@ pub struct FitOptions {
 impl FitOptions {
     /// Normalised tangents (zero or non-finite directions dropped) and a finite, non-negative
     /// tolerance: what a spline stores.
-    #[must_use]
     pub fn sanitized(self) -> FitOptions {
         let dir = |t: Option<Vec2>| t.filter(|v| v.x.is_finite() && v.y.is_finite() && v.len() > 1e-12).map(Vec2::normalized);
         FitOptions {
@@ -111,7 +107,6 @@ impl Spline {
     /// control points. A fit point given twice in a row is a kink (SPLINEDIT Fit data Kink): the
     /// curve passes through it with a corner (a knot of full multiplicity) and the pieces on
     /// either side are fitted on their own.
-    #[must_use]
     pub fn fit_with(fit: &[Vec2], closed: bool, opts: FitOptions) -> Spline {
         let opts = opts.sanitized();
         let kinked = if fit.len() <= MAX_KINK_POINTS { kinked_fit(fit, closed, opts) } else { None };
@@ -131,7 +126,6 @@ impl Spline {
     }
 
     /// Rebuild from new fit points with this spline's knot parametrisation, tangents and tolerance.
-    #[must_use]
     pub fn refit(&self, fit: &[Vec2], closed: bool) -> Spline {
         Spline::fit_with(fit, closed, self.fit_opts)
     }
@@ -139,7 +133,6 @@ impl Spline {
     /// Which knot parametrisation produced this spline's knots from its fit points (DXF files
     /// keep the knots but not the parametrisation). Compares knot vectors only (no solving), so
     /// it is cheap for any number of fit points. Chord when nothing matches.
-    #[must_use]
     pub fn infer_knot_param(&self) -> KnotParam {
         if self.fit.len() < 3 {
             return self.fit_opts.knots;
