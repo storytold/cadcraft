@@ -55,6 +55,7 @@ fn read(_bytes: &[u8], name: &str) -> Result<Drawing, String> {
     Ok(s.doc().unwrap().clone())
 }
 
+/// A new folder with two drawings and a file that is not one.
 fn folder() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("cadcraft-blocklibrary-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

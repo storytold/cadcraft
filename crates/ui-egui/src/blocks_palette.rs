@@ -683,6 +683,7 @@ struct Painting<'a> {
 }
 
 impl<'a> Painting<'a> {
+    /// A frame's painting, with its whole allowance of previews and time.
     fn new(pictures: &'a mut Pictures) -> Self {
         Self {
             pictures,
@@ -918,9 +919,12 @@ fn repeat_placement(app: &mut CadApp, ui: &egui::Ui, st: &mut State) {
         return;
     }
     st.repeating = None;
-    // Only this INSERT placing something repeats it: it may have been cancelled, and other
-    // commands may have run to their end since the last frame (queued control requests do).
-    if app.session.last_finished != Some((placing.started, true)) {
+    // Only this INSERT placing something repeats it: it may have been cancelled, and a command
+    // started since means the user moved on, even one that ended before this frame (queued control
+    // requests do that). A JSON command does not count: it never stops a running command, so it
+    // leaves the repeat alone whichever side of this frame it lands.
+    let session = &app.session;
+    if session.commands_started != placing.started || session.last_finished != Some((placing.started, true)) {
         return;
     }
     if insert(app, &placing.item, st, placing.explode) {
@@ -1417,6 +1421,7 @@ mod tests {
     fn work_covers_every_list_and_the_blocks_objects_draw() {
         use cadcraft_engine::doc::{HatchLoop, LwPolyline, MLine, MLineJust, MLineStyle, Region, Wipeout};
         use cadcraft_engine::geom::{PolyVertex, Vec2};
+        /// Whether an object of this kind is refused before anything is drawn.
         fn too_much(d: &Drawing, kind: EntityKind) -> bool {
             !affordable(d, &[&Entity::new(Handle(0x200), kind)])
         }
@@ -1551,6 +1556,7 @@ mod tests {
         assert_eq!(p.points, 0);
     }
 
+    /// However many full-size previews come in, the cache stays within its bounds.
     #[test]
     fn a_thousand_full_size_previews_stay_within_the_bounds() {
         let full = |n: usize| Picture::Ready(Arc::new(Shape { lines: vec![(None, vec![Pos2::ZERO; n])], tris: Vec::new() }));

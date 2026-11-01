@@ -62,6 +62,7 @@ fn json_blockspalette_lists_and_never_opens_the_palette() {
     assert!(!app.ui.docking.layout.contains(&Panel::Blocks));
 }
 
+/// A click on a tile starts INSERT and answers the prompts the options settle.
 #[test]
 fn a_click_starts_insert_for_the_block() {
     let mut app = drawing();
@@ -78,6 +79,7 @@ fn a_click_starts_insert_for_the_block() {
     assert!(prompt.starts_with("INSERT Specify insertion point"), "{prompt}");
 }
 
+/// The options wait while a block is being placed, and Repeat Placement goes on until Escape.
 #[test]
 fn options_are_off_while_placing_and_the_block_is_placed_again_until_cancelled() {
     use cadcraft_engine::Input;
@@ -146,8 +148,27 @@ fn another_command_between_two_frames_ends_the_repeat() {
     h.state_mut().run("line", json!({ "points": [[2, 2], [3, 3]] })).unwrap();
     h.run_steps(3);
     assert_eq!(h.state().session.prompt_text(), "Command:");
+
+    // The block placed, then a command of its own that asks nothing: the user has moved on.
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    let session = &mut h.state_mut().session;
+    session.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    session.start("regen").unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().session.prompt_text(), "Command:");
+
+    // A JSON command never stops a running one, so it does not end the repeat here either.
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    h.state_mut().session.input(Input::Point(Vec2::new(6.0, 6.0))).unwrap();
+    h.state_mut().run("line", json!({ "points": [[4, 4], [5, 5]] })).unwrap();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT"), "{}", h.state().session.prompt_text());
+    h.state_mut().session.input(Input::Cancel).unwrap();
 }
 
+/// INSERT started as the palette starts it stops at the insertion point.
 #[test]
 fn insert_started_by_the_palette_flow_waits_for_the_point() {
     use cadcraft_engine::Input;
@@ -210,6 +231,7 @@ fn wait_for(h: &mut Harness<'static, CadApp>, label: &str) {
     panic!("{label} never showed");
 }
 
+/// The whole life of a library: added, read in the background, refreshed, placed from, removed.
 #[test]
 fn a_library_is_added_listed_placed_and_removed() {
     use cadcraft_engine::cmd::file::{IoHooks, set_io};
@@ -287,6 +309,7 @@ fn the_toolbar_icon_and_the_window_menu_open_the_palette_not_a_dialog() {
     assert!(app.ui.docking.layout.contains(&Panel::Blocks));
 }
 
+/// An exploded block leaves no reference, and it repeats all the same.
 #[test]
 fn repeat_placement_goes_on_when_the_block_is_placed_exploded() {
     use cadcraft_engine::Input;
@@ -319,6 +342,7 @@ fn repeat_placement_goes_on_when_the_block_is_placed_exploded() {
     assert_eq!(count(&h, false), 2);
 }
 
+/// What ran while the palette was hidden went unwatched: nothing repeats when it comes back.
 #[test]
 fn a_hidden_palette_does_not_start_placing_again_when_it_comes_back() {
     use cadcraft_engine::Input;
@@ -343,6 +367,7 @@ fn a_hidden_palette_does_not_start_placing_again_when_it_comes_back() {
     assert_eq!(h.state().session.prompt_text(), "Command:", "nothing is attached to the cursor");
 }
 
+/// Switching drawings ends the repeat.
 #[test]
 fn repeat_placement_does_not_carry_over_to_another_drawing() {
     let mut app = drawing();
@@ -370,6 +395,7 @@ fn references(app: &CadApp) -> usize {
     app.session.doc().unwrap().model.iter().filter(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Insert(_))).count()
 }
 
+/// `app` with the palette open and the panels above it closed, so its gallery has room.
 fn open_palette(mut app: CadApp) -> Harness<'static, CadApp> {
     for panel in ["layers", "properties"] {
         app.run("ui.dock", json!({ "operation": "close", "panel": panel })).unwrap();
@@ -421,6 +447,7 @@ fn a_tile_is_reachable_and_placed_from_the_keyboard() {
     assert!(h.state().session.prompt_text().starts_with("INSERT"), "{}", h.state().session.prompt_text());
 }
 
+/// A big gallery builds only the visible tiles, a few per frame, so it opens quickly.
 #[test]
 fn a_drawing_of_a_thousand_blocks_stays_responsive_and_bounded() {
     let mut app = CadApp::new(Session::default(), Services::default());
