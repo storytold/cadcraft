@@ -184,9 +184,16 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
         b.entities.push(e);
     }
     doc.blocks.insert(name.to_string(), Arc::new(b));
-    if keep != Keep::Retain {
-        for h in hs {
-            doc.remove_entity(*h);
+    match keep {
+        Keep::Retain => {}
+        Keep::Convert => {
+            for h in hs {
+                doc.remove_entity(*h);
+            }
+        }
+        // As after ERASE, OOPS brings them back.
+        Keep::Delete => {
+            super::modify::erase_kept(s, hs)?;
         }
     }
     s.set_selection(Vec::new());
