@@ -18,10 +18,9 @@ pub fn pick_aperture(s: &Session) -> f64 {
     s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5
 }
 
-/// The object under `p` in the current space.
+/// The object under `p` in the current space (or the one named for `p`: [`Session::pick_object`]).
 pub fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
-    let space = s.space();
-    crate::select::pick(s.doc().ok()?, &space, p, pick_aperture(s))
+    s.pick_object(&s.space(), p, pick_aperture(s)).ok().flatten()
 }
 
 pub fn entity(s: &Session, h: Handle) -> Result<Entity> {

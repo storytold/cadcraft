@@ -241,8 +241,19 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
     if q.is_finite() { Vec3::new(q.x, q.y, t.insert.z) } else { t.insert }
 }
 
+/// `attdef_prompt` is `Some` for an ATTDEF (its prompt, which may be empty) and `None` for an ATTRIB.
 pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
-    w.p(10, text_insert(d, t));
+    let attdef = attdef_prompt.is_some();
+    // An attribute definition with no default value is drawn as its tag, whatever its prompt: the
+    // baseline start AutoCAD stored is judged against the tag's width too. A stored point that is
+    // close to the empty text's own start is kept as it is, so the font's width of the tag never
+    // moves it.
+    let own = text_insert(d, t);
+    let insert = match attrib {
+        Some((a, _)) if attdef && t.value.is_empty() && own != t.insert => text_insert(d, &Text { value: a.tag.clone(), ..t.clone() }),
+        _ => own,
+    };
+    w.p(10, insert);
     w.f(40, t.height);
     w.s(1, &t.value);
     if t.rotation != 0.0 {
@@ -277,7 +288,7 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
     }
     match attrib {
         Some((a, target)) => {
-            w.s(100, if attdef_prompt.is_some() { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
+            w.s(100, if attdef { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
             if target >= Version::R2010 {
                 w.i(280, 0);
             }
