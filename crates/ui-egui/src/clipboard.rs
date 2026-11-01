@@ -54,10 +54,28 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
             egui::Event::Cut => out.push("cutclip"),
             egui::Event::Paste(text) => {
                 let h = hash(&text);
-                if ctx.data(|d| d.get_temp::<u64>(text_id())) != Some(h) && clipboard::load_system_text(&mut app.session, &text) {
+                let is_own = ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h);
+                let is_dxf = !is_own && clipboard::load_system_text(&mut app.session, &text);
+                if is_dxf {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
                 }
-                out.push(if shift { "pasteblock" } else { "pasteclip" });
+                let clean = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                let t = clean.trim();
+                let paste_to_cmd = !is_own
+                    && !is_dxf
+                    && !t.is_empty()
+                    && (app.session.clipboard.is_empty()
+                        || !app.cmd.buffer.is_empty()
+                        || app.session.prompting()
+                        || t.starts_with('(')
+                        || t.starts_with('!')
+                        || cadcraft_engine::is_bare_lisp_prefix(t));
+                if paste_to_cmd {
+                    app.cmd.buffer.push_str(&clean);
+                    app.cmd.note_typing();
+                } else {
+                    out.push(if shift { "pasteblock" } else { "pasteclip" });
+                }
             }
             _ => {}
         }

@@ -23,9 +23,10 @@ impl Session {
     pub fn idle_click(&mut self, p: Vec2, shift: bool) -> Result<()> {
         let space = self.space();
         let pickadd = self.settings.pickadd;
+        let orbit = self.edit_orbit();
         if let Some(pw) = self.pending_window.take() {
             let crossing = p.x < pw.corner.x;
-            let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+            let hs = select::select_window_in_orbit(self.doc()?, &space, orbit, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
             if shift && pickadd {
@@ -37,7 +38,7 @@ impl Session {
             return Ok(());
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
-        match select::pick(self.doc()?, &space, p, ap) {
+        match select::pick_in_orbit(self.doc()?, &space, orbit, p, ap) {
             Some(h) => self.idle_pick(h, shift),
             None => self.pending_window = Some(PendingWindow { corner: p, during_command: false }),
         }
@@ -86,7 +87,8 @@ impl Session {
             return Vec::new();
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
-        self.doc().map(|d| select::pick_all(d, &self.space(), p, ap)).unwrap_or_default()
+        let orbit = self.edit_orbit();
+        self.doc().map(|d| select::pick_all_in_orbit(d, &self.space(), orbit, p, ap)).unwrap_or_default()
     }
 
     /// Whether selection cycling marks `p` with its badge (SELECTIONCYCLING 1 or 2): overlapping

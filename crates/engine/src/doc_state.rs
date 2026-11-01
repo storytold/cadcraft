@@ -40,6 +40,8 @@ pub struct DocState {
     /// The fonts missing on Windows that a save last named: the next save names them again only
     /// when they change.
     pub(crate) fonts_noted: String,
+    /// 3D Orbit orientation of model space (`Orbit3d::default()` = Top 2D plan view).
+    pub orbit: cadcraft_render::Orbit3d,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -68,6 +70,7 @@ impl DocState {
             block_edit: None,
             erased: Default::default(),
             fonts_noted: String::new(),
+            orbit: cadcraft_render::Orbit3d::default(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet

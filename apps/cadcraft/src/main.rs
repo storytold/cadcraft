@@ -159,6 +159,8 @@ fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
+                .add_filter(i18n::t("Drawings & LISP (DWG, DXF, LSP)"), &["dwg", "dxf", "dwt", "lsp"])
+                .add_filter(i18n::t("AutoLISP Routine (LSP)"), &["lsp"])
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
                 .add_filter(i18n::t("All files"), &["*"])
