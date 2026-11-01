@@ -1116,9 +1116,13 @@ fn attributes_keep_all_fifteen_justifications_through_dxf_and_dwg() {
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
     let dxf = write_dxf(&d);
-    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
-    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
-    for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
+    // The DWG half needs the DWG bridge, which wasm32 and FreeBSD aarch64 build without
+    // (crates/dwg/build.rs); the DXF half runs everywhere.
+    #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+    let from_dwg = Some(read_dxf(&cadcraft_dwg::dwg_to_dxf(&cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap()).unwrap()).unwrap());
+    #[cfg(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64")))]
+    let from_dwg = None;
+    for (back, what) in [Some((read_dxf(dxf.as_bytes()).unwrap(), "DXF")), from_dwg.map(|d| (d, "DWG"))].into_iter().flatten() {
         let ins = first(&back, |k| if let EntityKind::Insert(i) = k { Some(i.clone()) } else { None });
         let defs: Vec<Attrib> = back
             .block("J")
