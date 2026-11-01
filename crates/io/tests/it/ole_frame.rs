@@ -75,3 +75,22 @@ fn a_moved_ole_frame_keeps_its_position_in_a_dwg() {
     let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
     assert!(near(c(10), UL.0 + 100.0) && near(c(20), UL.1 - 50.0) && near(c(11), LR.0 + 100.0) && near(c(21), LR.1 - 50.0), "{:?}", u.tags);
 }
+
+/// After a move, a DXF save and read-back carries the moved corners both in groups 10/11 and in
+/// the OLE data header (review on #2587).
+#[test]
+fn a_moved_ole_frame_keeps_its_data_header_in_a_dxf() {
+    let mut d = read_dxf(dxf().as_bytes()).unwrap();
+    for h in d.model.handles() {
+        d.model.modify(h, |e| e.kind.transform(&cadcraft_geom::Mat3::translate(cadcraft_geom::Vec2::new(100.0, -50.0))));
+    }
+    let bytes = write_with(&d, "x.dxf", &SaveOptions { version: None, binary: false }).unwrap();
+    let u = ole(&read_dxf(&bytes).unwrap()).unwrap();
+    let hex: String = u.tags.iter().filter(|t| t.code == 310).map(|t| t.value.clone()).collect();
+    let b: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+    let f = |o: usize| f64::from_le_bytes(b[o..o + 8].try_into().unwrap());
+    let near = |a: f64, c: f64| (a - c).abs() < 1e-9;
+    assert!(near(f(2), UL.0 + 100.0) && near(f(10), UL.1 - 50.0) && near(f(2 + 48), LR.0 + 100.0) && near(f(10 + 48), LR.1 - 50.0));
+    let g = |code: i32| u.tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).unwrap();
+    assert!(near(g(10), UL.0 + 100.0) && near(g(21), LR.1 - 50.0));
+}

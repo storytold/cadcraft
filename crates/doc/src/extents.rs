@@ -43,8 +43,62 @@ pub fn ole_frame(tags: &[crate::RawTag]) -> Option<[Vec2; 5]> {
     Some([a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y), a])
 }
 
+/// The bytes of the OLE data before its corners: a 2-byte marker.
+const OLE_HEADER: usize = 2;
+/// The corners in the OLE data: four of x, y, z as little-endian doubles (upper left, upper right,
+/// lower right, lower left).
+const OLE_CORNERS: usize = 12;
+
+/// Move the four corners at the start of the OLE data (the 310 groups' hex, in order) by `m`,
+/// keeping z and every tag's length. Data that is not valid hex or is too short is left alone.
+fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
+    let idx: Vec<usize> = outside_app(tags).into_iter().filter(|&i| tags.get(i).is_some_and(|t| t.code == 310)).collect();
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut lens: Vec<usize> = Vec::new();
+    for &i in &idx {
+        let Some(t) = tags.get(i) else { return };
+        let s = t.value.trim();
+        if s.len() % 2 != 0 || !s.is_ascii() {
+            return;
+        }
+        for k in (0..s.len()).step_by(2) {
+            let Some(b) = s.get(k..k + 2).and_then(|h| u8::from_str_radix(h, 16).ok()) else { return };
+            bytes.push(b);
+        }
+        lens.push(s.len() / 2);
+    }
+    let end = OLE_HEADER + OLE_CORNERS * 8;
+    if bytes.len() < end {
+        return;
+    }
+    let mut out = bytes.clone();
+    for c in 0..4 {
+        let at = OLE_HEADER + c * 24;
+        let rd = |o: usize| out.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes).filter(|v| v.is_finite());
+        let (Some(x), Some(y)) = (rd(at), rd(at + 8)) else { return };
+        let p = m.apply(Vec2::new(x, y));
+        if !(p.x.is_finite() && p.y.is_finite()) {
+            return;
+        }
+        if let Some(s) = out.get_mut(at..at + 8) {
+            s.copy_from_slice(&p.x.to_le_bytes());
+        }
+        if let Some(s) = out.get_mut(at + 8..at + 16) {
+            s.copy_from_slice(&p.y.to_le_bytes());
+        }
+    }
+    let mut pos = 0;
+    for (&i, &n) in idx.iter().zip(&lens) {
+        let (Some(t), Some(chunk)) = (tags.get_mut(i), out.get(pos..pos + n)) else { return };
+        let lower = t.value.bytes().any(|b| b.is_ascii_lowercase());
+        t.value = chunk.iter().map(|b| if lower { format!("{b:02x}") } else { format!("{b:02X}") }).collect();
+        pos += n;
+    }
+}
+
 /// Move an OLE2FRAME by `m`, a translation: its two corners are mapped through `m` (a DWG save
-/// writes the frame's position from these groups). Other transforms do not keep a frame axis
+/// writes the frame's position from these groups), and so are the corners at the start of its OLE
+/// data (310 groups), which a reader of the saved file may trust instead. Other transforms do not keep a frame axis
 /// aligned, so callers refuse them (see [`ole_frame_accepts`]). A frame with no usable corners is
 /// left alone.
 pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
@@ -58,6 +112,7 @@ pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) 
             t.value = v.to_string();
         }
     }
+    ole_data_transform(tags, m);
 }
 
 /// Whether `m` can move an OLE2FRAME: only a translation (move, copy, stretch of the whole frame).

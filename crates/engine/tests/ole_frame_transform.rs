@@ -55,3 +55,72 @@ fn rotate_scale_and_mirror_refuse_an_ole_frame() {
     assert_eq!(corners(&s), before);
     assert_eq!(s.doc().unwrap().model.len(), 1, "nothing was copied");
 }
+
+/// The OLE data's marker and four corners (x, y, z doubles each), as hex split into chunks.
+fn data_session(chunks: &[usize], hex_override: Option<&str>) -> (Session, String) {
+    let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+    let mut blob = vec![1u8, 0];
+    for (x, y) in [(30.0f64, -19.0f64), (35.0, -19.0), (35.0, -22.0), (30.0, -22.0)] {
+        for v in [x, y, 7.0] {
+            blob.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let hex: String = hex_override.map(str::to_string).unwrap_or_else(|| blob.iter().map(|b| format!("{b:02X}")).collect());
+    let mut tags = vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")];
+    let mut at = 0;
+    for &n in chunks {
+        let end = (at + n).min(hex.len());
+        tags.push(tag(310, &hex[at..end]));
+        at = end;
+    }
+    if at < hex.len() {
+        tags.push(tag(310, &hex[at..]));
+    }
+    let mut d = Drawing::new_imperial();
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "ole.dxf", None);
+    (s, h.hex())
+}
+
+fn data_tags(s: &Session) -> Vec<String> {
+    let d = s.doc().unwrap();
+    d.model
+        .iter()
+        .filter_map(|e| {
+            if let EntityKind::Unknown(u) = &e.kind {
+                Some(u.tags.iter().filter(|t| t.code == 310).map(|t| t.value.clone()).collect::<Vec<_>>())
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn move_also_moves_the_corners_in_the_ole_data() {
+    let (mut s, h) = data_session(&[10, 100, 40], None);
+    let before = data_tags(&s);
+    s.execute("move", &json!({ "handles": [h], "delta": [10, 5] })).unwrap();
+    let after = data_tags(&s);
+    assert_eq!(after.iter().map(String::len).collect::<Vec<_>>(), before.iter().map(String::len).collect::<Vec<_>>(), "chunk lengths are kept");
+    let hex: String = after.concat();
+    let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+    let f = |o: usize| f64::from_le_bytes(bytes[o..o + 8].try_into().unwrap());
+    let want = [(40.0, -14.0), (45.0, -14.0), (45.0, -17.0), (40.0, -17.0)];
+    for (c, (x, y)) in want.iter().enumerate() {
+        assert_eq!((f(2 + c * 24), f(10 + c * 24), f(18 + c * 24)), (*x, *y, 7.0), "corner {c}");
+    }
+}
+
+#[test]
+fn move_leaves_malformed_or_short_ole_data_alone() {
+    for (chunks, hex) in [(vec![4], "0100"), (vec![3, 3], "ABCDE"), (vec![10], "ZZ0100ZZ0100"), (vec![2], "é")] {
+        let (mut s, h) = data_session(&chunks, Some(hex));
+        let before = data_tags(&s);
+        s.execute("move", &json!({ "handles": [h], "delta": [10, 5] })).unwrap();
+        assert_eq!(data_tags(&s), before, "{hex}");
+        assert_eq!(corners(&s)[0].1, "40", "the corner groups still move");
+    }
+}
