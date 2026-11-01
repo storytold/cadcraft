@@ -1119,6 +1119,17 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
                 num(ui, "Text height", "textHeight", len(st.text_height), &mut set, &mut bad, &ids);
                 num(ui, "Arrow size", "arrowSize", len(st.arrow_size), &mut set, &mut bad, &ids);
+                // The gap between the measured points and the extension lines (DIMEXO), or
+                // extension lines of one length from the dimension line (DIMFXLON, DIMFXL).
+                num(ui, "Ext line offset", "extOffset", len(st.ext_offset), &mut set, &mut bad, &ids);
+                prop_row(ui, "Ext line fixed", |ui| {
+                    let mut on = st.fixed_ext;
+                    let label = if on { "Yes" } else { "No" };
+                    if ui.checkbox(&mut on, crate::i18n::t(label)).changed() {
+                        set = Some(json!({ "handles": ids, "fixedExt": on }));
+                    }
+                });
+                num(ui, "Ext line fixed length", "fixedExtLength", len(st.fixed_ext_length), &mut set, &mut bad, &ids);
                 num(ui, "Dim scale overall", "dimScale", real(st.scale), &mut set, &mut bad, &ids);
                 prop_row(ui, "Precision", |ui| {
                     let cur = st.decimals.to_string();
