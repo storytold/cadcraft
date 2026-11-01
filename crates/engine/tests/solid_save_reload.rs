@@ -40,12 +40,21 @@ fn group_of(s: &Session, handle: &str) -> String {
     d.groups.iter().find(|g| g.members.contains(&h)).unwrap().name.clone()
 }
 
+/// A scratch directory removed when the test ends, also when an assertion fails.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn exact_and_boolean_solids_survive_save_and_reopen() {
     hooks();
-    let dir = std::env::temp_dir().join(format!("cadcraft-solid-save-reload-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("solids.dxf").to_string_lossy().to_string();
+    let dir = Scratch(std::env::temp_dir().join(format!("cadcraft-solid-save-reload-{}", std::process::id())));
+    std::fs::create_dir_all(&dir.0).unwrap();
+    let path = dir.0.join("solids.dxf").to_string_lossy().to_string();
 
     let mut s = Session::new();
     let prism = s.execute("extrude", &json!({"profile": [[0, 0], [4, 0], [4, 3], [0, 3]], "height": 2})).unwrap();
@@ -79,5 +88,4 @@ fn exact_and_boolean_solids_survive_save_and_reopen() {
     // The reopened boolean result is a closed solid that takes part in further booleans.
     let pin = handles(&back.execute("cylinder", &json!({"center": [10, -2, -1], "radius": 0.5, "height": 4, "segments": 12})).unwrap());
     back.execute("subtract", &json!({"from": [holed[0]], "remove": [pin[0]]})).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
 }

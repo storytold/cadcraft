@@ -445,10 +445,27 @@ fn output(polys: Vec<Poly>, originals: &[Poly], budget: &mut Budget) -> Result<M
         return Err(MeshError("boolean output size limit"));
     }
     let result = Mesh3 { vertices: points, triangles };
-    // Solids that touch only along an edge give a non-manifold result: refuse it
-    // with a reason the user can act on rather than as if an input were broken.
-    input(&result, budget.tolerance).map_err(|_| MeshError("the result is not a closed solid (the solids touch only along an edge)"))?;
+    check_result(&result, budget.tolerance)?;
     Ok(result)
+}
+/// A boolean result must be a valid input again. Solids that touch only along an edge leave that
+/// edge in four triangles: that failure gets a reason the user can act on rather than reading as
+/// a broken input. Every other failure keeps its own message.
+fn check_result(result: &Mesh3, tol: f64) -> Result<(), MeshError> {
+    let error = match input(result, tol) {
+        Ok(_) => return Ok(()),
+        Err(e) => e,
+    };
+    if error != MeshError("mesh must be closed and consistently oriented") {
+        return Err(error);
+    }
+    let mut uses = HashMap::new();
+    for t in &result.triangles {
+        for (i, j) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *uses.entry((i.min(j), i.max(j))).or_insert(0usize) += 1;
+        }
+    }
+    if uses.values().any(|n| *n > 2) { Err(MeshError("the result is not a closed solid (the solids touch only along an edge)")) } else { Err(error) }
 }
 #[derive(Clone, Copy)]
 enum Op {
@@ -584,6 +601,39 @@ mod tests {
         input(&mesh, 1e-8)?;
         assert!((volume(&mesh) - expected).abs() < 1e-6, "expected {expected}, got {}", volume(&mesh));
         Ok(())
+    }
+    #[test]
+    fn only_an_edge_used_more_than_twice_reads_as_an_edge_touch() {
+        let edge = MeshError("the result is not a closed solid (the solids touch only along an edge)");
+        // Two boxes sharing one edge: that edge is in four triangles.
+        let (a, b) = (cube(0.0, 0.0, 0.0, 1.0).unwrap(), cube(1.0, 1.0, 0.0, 1.0).unwrap());
+        let n = a.vertices.len();
+        let mut joined = Mesh3 { vertices: [a.vertices, b.vertices].concat(), triangles: a.triangles };
+        joined.triangles.extend(b.triangles.iter().map(|t| [t[0] + n, t[1] + n, t[2] + n]));
+        let mut welded = Mesh3 { vertices: Vec::new(), triangles: Vec::new() };
+        let mut ids = HashMap::new();
+        for t in &joined.triangles {
+            let mut w = [0; 3];
+            for (k, v) in t.iter().enumerate() {
+                let p = joined.vertices[*v];
+                let key = [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+                w[k] = *ids.entry(key).or_insert_with(|| {
+                    welded.vertices.push(p);
+                    welded.vertices.len() - 1
+                });
+            }
+            welded.triangles.push(w);
+        }
+        assert_eq!(check_result(&welded, 1e-9), Err(edge.clone()));
+        // An open mesh, a degenerate triangle and too many triangles keep their own reasons.
+        let mut open = cube(0.0, 0.0, 0.0, 1.0).unwrap();
+        open.triangles.pop();
+        assert_eq!(check_result(&open, 1e-9), Err(MeshError("mesh must be closed and consistently oriented")));
+        let mut flat = cube(0.0, 0.0, 0.0, 1.0).unwrap();
+        flat.triangles[0] = [flat.triangles[0][0], flat.triangles[0][0], flat.triangles[0][1]];
+        assert_eq!(check_result(&flat, 1e-9), Err(MeshError("degenerate triangle")));
+        let many = Mesh3 { vertices: vec![Vec3::ZERO; 3], triangles: vec![[0, 1, 2]; MAX_FACES + 1] };
+        assert_eq!(check_result(&many, 1e-9), Err(MeshError("boolean input size limit")));
     }
     #[test]
     fn boxes() -> Result<(), MeshError> {
