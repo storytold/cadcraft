@@ -1349,3 +1349,34 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+# Menu and command labels the October 2026 update missed (#1129).
+	Align Multileaders	对齐多重引线
+	Analyze Usage	分析使用情况
+	Break-line Symbol	折断线符号
+	Change	更改
+	Change Properties	修改特性
+	Clear Recent Files	清除最近的文件
+	Close Block Editor	关闭块编辑器
+	Collect	合并
+	Collect Multileaders	合并多重引线
+	Convert Text to Mtext	将文字转换为多行文字
+	Customize	自定义
+	Drag Dynamic Grip	拖动动态夹点
+	Dynamic Block Data	动态块数据
+	Dynamic Block Grips	动态块夹点
+	Dynamic Block Reference	动态块参照
+	Edit Command Aliases (PGP)...	编辑命令别名 (PGP)...
+	Edit Multileader	编辑多重引线
+	Evaluate LISP	求值 LISP
+	Explode Attributes to Text	将属性分解为文字
+	Express Tools	扩展工具
+	Groups	编组
+	Hatch Pick	拾取图案填充
+	Implied Loops	隐含环
+	Justify	对正
+	Move/Copy/Rotate	移动/复制/旋转
+	Save Block	保存块
+	Save Block As	块另存为
+	Save Layout as Template	将布局另存为样板
+	Set Dynamic Property	设置动态特性
+	Units	单位
