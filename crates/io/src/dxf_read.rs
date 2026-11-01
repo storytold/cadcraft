@@ -1,6 +1,6 @@
 //! DXF → Drawing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{
@@ -90,6 +90,18 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let mut blocks: Vec<BlockDef> = Vec::new();
     let mut layout_objs: Vec<LayoutDef> = Vec::new();
     let mut entities = Vec::new();
+    // One set for every list: a generated handle must be unique across blocks and ENTITIES
+    // (a *MODEL_SPACE block and an ENTITIES record both land in the model space).
+    let mut seen_handles = HashSet::new();
+    // Model/paper-space handles retain priority if an in-memory drawing or damaged DXF also
+    // assigns one to a block entity. This preserves top-level references while letting block
+    // handles be repaired before their deferred fixups are recorded.
+    let reserved_entity_handles: HashSet<Handle> = secs
+        .iter()
+        .filter(|s| s.name == "ENTITIES")
+        .flat_map(|s| records(&s.tags))
+        .filter_map(|(_, tags)| common::T(&tags).s(5).and_then(|h| Handle::parse_hex(&h)))
+        .collect();
     let mut objs = Objects::default();
     // Every handle another program's file already uses is taken before anything gets a new one:
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
@@ -108,11 +120,22 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         match s.name.as_str() {
             "HEADER" => header(&s.tags, &mut d),
             "TABLES" => tables(&s.tags, &mut d, &mut rx),
-            "BLOCKS" => blocks.extend(read_blocks(&s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
+            "BLOCKS" => {
+                blocks.extend(read_blocks(&s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped, &mut seen_handles, &reserved_entity_handles))
+            }
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&records(&s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(
+                    &records(&s.tags),
+                    &mut d,
+                    &mut rx,
+                    &mut n,
+                    &mut table_cells_left,
+                    &mut seen_handles,
+                    &reserved_entity_handles,
+                    true,
+                ));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
             "OBJECTS" => read_objects(&s.tags, &mut objs, &mut layout_objs),
