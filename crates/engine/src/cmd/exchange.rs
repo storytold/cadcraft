@@ -385,7 +385,15 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let mut pm = cadcraft_render::raster::render(&list, &view, &ro).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
     // A placed plot (fitted, or a saved window) shows only inside the printable area, as the PDF and PNG plots clip it.
     if fit || saved.window.is_some() || space == Space::Model {
-        cadcraft_render::raster::blank_outside_printable(&mut pm, &sheet.printable, px_per_paper_unit);
+        // The view may scale and centre the sheet (the height cap), so map the printable corners
+        // (paper point q shows drawing point (q - to) / k + from) through it.
+        let screen = |q: Vec2| {
+            let (x, y) = view.to_screen((q - to) / k + from);
+            (f64::from(x), f64::from(y))
+        };
+        let (min, max) = (sheet.printable.min, sheet.printable.max);
+        let (a, b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
+        cadcraft_render::raster::blank_outside_pixels(&mut pm, a, b);
     }
     let png = pm.encode_png().map_err(|_| bad("preview", "rendering the preview failed"))?;
     let layout = space.tab_name();
@@ -794,6 +802,31 @@ mod tests {
             s.execute("preview", &json!({ "layout": "Layout1", "width": 600 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
         };
         assert_eq!(build(true), build(false), "a line in the margin is clipped away");
+    }
+
+    /// On a tall sheet the height cap makes the view scale and centre the sheet in the image; the
+    /// printable clip must follow it, so ink in the margin is still blanked.
+    #[test]
+    fn preview_clip_follows_the_view_when_the_height_cap_applies() {
+        let build = |margin_line: bool| {
+            let mut s = Session::new();
+            s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+            s.execute("line", &json!({ "points": [[0.0, 50.0], [100.0, 50.0]] })).unwrap();
+            if margin_line {
+                s.execute("line", &json!({ "points": [[-2.6, 0.0], [-2.6, 100.0]] })).unwrap();
+            }
+            s.execute("pagesetup", &json!({ "layout": "Layout1", "margins": [10, 10, 10, 10] })).unwrap();
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.width_mm = 210.0;
+            page.height_mm = 1200.0;
+            page.landscape = false;
+            page.plot_area = "window".into();
+            page.plot_window = [0.0, 0.0, 100.0, 100.0];
+            page.scale_to_fit = true;
+            page.center = true;
+            s.execute("preview", &json!({ "layout": "Layout1", "width": 1000 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(build(true), build(false), "a line in the margin is clipped away on a tall sheet");
     }
 
     /// Hostile saved setups (a degenerate or far-away window, a scale of 0 or not finite) fall back
