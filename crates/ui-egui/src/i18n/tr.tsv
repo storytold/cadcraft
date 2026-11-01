@@ -130,8 +130,8 @@
 	Boundary	Sınır
 	Boundary...	Sınır...
 	Box	Kutu
-	Break	Kes
-	Break At Point	Noktadan Kes
+	Break	Kır
+	Break At Point	Noktadan Kır
 	Bring Above Objects	Nesnelerin Üstüne Getir
 	Bring Annotations to Front	Açıklamaları Öne Getir
 	Bring to Front	En Öne Getir
@@ -281,7 +281,7 @@
 	Diameter	Çap
 	Dim style	Ölçü stili
 	Dimension	Ölçü
-	Dimension Break	Ölçü Kesme
+	Dimension Break	Ölçü Kırma
 	Dimension Edit	Ölçü Düzenleme
 	Dimension Objects Only	Yalnızca Ölçülendirme Nesneleri
 	Dimension Space	Ölçü Aralığı
@@ -295,7 +295,7 @@
 	Disassociate Dimensions	Ölçülerin İlişkisini Kaldır
 	Display	Görüntü
 	Display name	Görünen ad
-	Display plot styles	Çizim stillerini göster
+	Display plot styles	Çizdirme stillerini göster
 	Distance	Uzaklık
 	Divide	Böl
 	Do not plot (click: plot)	Çizdirme (tıklayın: çizdir)
@@ -333,7 +333,7 @@
 	Edit Reference In-Place	Referansı Yerinde Düzenle
 	Edit Table Cell	Tablo Hücresini Düzenle
 	Edit Text...	Metni Düzenle...
-	Elevation	Yükseklik
+	Elevation	Kot
 	Ellipse	Elips
 	Elliptical Arc	Eliptik Yay
 	Enable 3D mouse navigation	3B fare ile gezinmeyi etkinleştir
@@ -360,7 +360,7 @@
 	Enter constraint type	Kısıtlama türünü girin
 	Enter continuity	Süreklilik girin
 	Enter default attribute value	Varsayılan öznitelik değerini girin
-	Enter degree of spline	Eğrinin derecesini girin
+	Enter degree of spline	Spline derecesini girin
 	Enter delta angle	Açı farkını girin
 	Enter delta length or	Uzunluk farkını girin veya
 	Enter dimension text	Ölçü metnini girin
@@ -427,7 +427,7 @@
 	Freeze/Thaw	Dondur/Çöz
 	Freeze/Thaw in all viewports	Tüm görünüm pencerelerinde dondur/çöz
 	Freeze/Thaw in the current viewport	Geçerli görünüm penceresinde dondur/çöz
-	From	Kimden
+	From	Kaynak
 	From Template...	Şablondan...
 	General	Genel
 	Geometric Center	Geometrik Merkez
@@ -487,7 +487,7 @@
 	Hide Palettes	Paletleri Gizle
 	History	Geçmiş
 	Hold Shift to add to the selection	Seçime eklemek için Shift'i basılı tutun
-	Home	Giriş
+	Home	Başlangıç
 	Horizontal	Yatay
 	HorizontalDistance	Yatay Uzaklık
 	How to apply:	Uygulama biçimi:
@@ -677,7 +677,7 @@
 	No contributor data was built into this copy.	Bu kopyaya katkıda bulunan verisi eklenmemiş.
 	No external references are attached.	İliştirilmiş dış referans yok.
 	No model credits were built into this copy.	Bu kopyaya model emeği bilgisi eklenmemiş.
-	No plot style tables.	Çizim stili tablosu yok.
+	No plot style tables.	Çizdirme stili tablosu yok.
 	No saved layer states	Kayıtlı katman durumu yok
 	No selection	Seçim yok
 	No supported 3D mouse found	Desteklenen 3B fare bulunamadı
@@ -763,16 +763,16 @@
 	Pickbox size	Seçim kutusu boyutu
 	Plot	Çizdir
 	Plot (click: do not plot)	Çizdir (tıklayın: çizdirme)
-	Plot Preview	Çizim Önizlemesi
-	Plot Style Manager	Çizim Stili Yöneticisi
-	Plot Style Manager...	Çizim Stili Yöneticisi...
-	Plot Style...	Çizim Stili...
-	Plot Styles...	Çizim Stilleri...
-	Plot Window	Çizim Penceresi
-	Plot style	Çizim stili
-	Plot style attached to	Çizim stilinin bağlı olduğu yer
-	Plot style table	Çizim stili tablosu
-	Plot table type	Çizim tablosu türü
+	Plot Preview	Çizdirme Önizlemesi
+	Plot Style Manager	Çizdirme Stili Yöneticisi
+	Plot Style Manager...	Çizdirme Stili Yöneticisi...
+	Plot Style...	Çizdirme Stili...
+	Plot Styles...	Çizdirme Stilleri...
+	Plot Window	Çizdirme Penceresi
+	Plot style	Çizdirme stili
+	Plot style attached to	Çizdirme stilinin bağlı olduğu yer
+	Plot style table	Çizdirme stili tablosu
+	Plot table type	Çizdirme tablosu türü
 	Plotter Manager	Çizici Yöneticisi
 	Plotter Manager...	Çizici Yöneticisi...
 	Plus/minus	Artı/eksi
@@ -913,7 +913,7 @@
 	Select a block reference.	Bir blok referansı seçin.
 	Select a circle or arc.	Bir daire veya yay seçin.
 	Select a closed polyline	Kapalı bir çoklu çizgi seçin
-	Select a closed polyline, circle, ellipse or closed spline.	Kapalı bir çoklu çizgi, daire, elips veya kapalı eğri seçin.
+	Select a closed polyline, circle, ellipse or closed spline.	Kapalı bir çoklu çizgi, daire, elips veya kapalı spline seçin.
 	Select a closed polyline.	Kapalı bir çoklu çizgi seçin.
 	Select a curve as the path.	Yol olarak bir eğri seçin.
 	Select a dimension constraint type	Bir ölçü kısıtlaması türü seçin
@@ -922,7 +922,7 @@
 	Select a line or an arc.	Bir çizgi veya yay seçin.
 	Select a line or polyline segment	Bir çizgi veya çoklu çizgi parçası seçin
 	Select a line, arc or open polyline.	Bir çizgi, yay veya açık çoklu çizgi seçin.
-	Select a line, arc, circle, polyline, ellipse or spline as the path.	Yol olarak bir çizgi, yay, daire, çoklu çizgi, elips veya eğri seçin.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Yol olarak bir çizgi, yay, daire, çoklu çizgi, elips veya spline seçin.
 	Select a line, circle, arc or polyline segment.	Bir çizgi, daire, yay veya çoklu çizgi parçası seçin.
 	Select a line.	Bir çizgi seçin.
 	Select a polyline.	Bir çoklu çizgi seçin.
@@ -935,7 +935,7 @@
 	Select an object to measure or	Ölçülecek nesneyi seçin veya
 	Select an object.	Bir nesne seçin.
 	Select an open curve.	Açık bir eğri seçin.
-	Select an open line, arc, polyline, ellipse arc or spline.	Açık bir çizgi, yay, çoklu çizgi, elips yayı veya eğri seçin.
+	Select an open line, arc, polyline, ellipse arc or spline.	Açık bir çizgi, yay, çoklu çizgi, elips yayı veya spline seçin.
 	Select arc or circle	Yay veya daire seçin
 	Select arc or polyline arc segment	Yay veya çoklu çizgi yay parçası seçin
 	Select arc style	Yay stilini seçin
@@ -952,10 +952,10 @@
 	Select object	Nesne seçin
 	Select object to dimension	Ölçülendirilecek nesneyi seçin
 	Select object to divide	Bölünecek nesneyi seçin
-	Select object to extend or shift-select to trim	Uzatılacak nesneyi seçin ya da kırpmak için Shift ile seçin
+	Select object to extend or shift-select to trim	Uzatılacak nesneyi seçin ya da budamak için Shift ile seçin
 	Select object to measure	Ölçülecek nesneyi seçin
 	Select object to offset	Ötelenecek nesneyi seçin
-	Select object to trim or shift-select to extend	Kırpılacak nesneyi seçin ya da uzatmak için Shift ile seçin
+	Select object to trim or shift-select to extend	Budanacak nesneyi seçin ya da uzatmak için Shift ile seçin
 	Select objects	Nesneleri seçin
 	Select objects (crossing window first corner)	Nesneleri seçin (kesişen pencerenin ilk köşesi)
 	Select objects first, then choose a command	Önce nesneleri seçin, sonra bir komut belirleyin
@@ -971,7 +971,7 @@
 	Select second object	İkinci nesneyi seçin
 	Select second object or shift-select to apply corner	İkinci nesneyi seçin ya da köşe uygulamak için Shift ile seçin
 	Select second point	İkinci noktayı seçin
-	Select spline	Eğri seçin
+	Select spline	Spline seçin
 	Select symmetry line	Simetri çizgisini seçin
 	Select two points	İki nokta seçin
 	Selection	Seçim
@@ -1057,7 +1057,7 @@
 	Specify center point of array	Dizinin merkez noktasını belirtin
 	Specify center point of base	Tabanın merkez noktasını belirtin
 	Specify corner of viewport	Görünüm penceresinin köşesini belirtin
-	Specify corner of window, enter a scale factor (nX or nXP)	Pencerenin köşesini belirtin, bir ölçek faktörü girin (nX or nXP)
+	Specify corner of window, enter a scale factor (nX or nXP)	Pencerenin köşesini belirtin, bir ölçek faktörü girin (nX veya nXP)
 	Specify diameter of circle	Dairenin çapını belirtin
 	Specify dimension arc line location	Ölçü yayı çizgisinin konumunu belirtin
 	Specify dimension line location	Ölçü çizgisinin konumunu belirtin
@@ -1125,7 +1125,7 @@
 	Specify rotation angle or	Döndürme açısını belirtin veya
 	Specify scale factor	Ölçek faktörünü belirtin
 	Specify second angle endpoint	Açının ikinci uç noktasını belirtin
-	Specify second break point	İkinci kesme noktasını belirtin
+	Specify second break point	İkinci kırma noktasını belirtin
 	Specify second chamfer distance for rectangles	Dikdörtgenler için ikinci pah uzaklığını belirtin
 	Specify second constraint point	İkinci kısıtlama noktasını belirtin
 	Specify second destination point	İkinci hedef noktayı belirtin
@@ -1148,7 +1148,7 @@
 	Specify starting width	Başlangıç genişliğini belirtin
 	Specify starting width for next segment	Sonraki parçanın başlangıç genişliğini belirtin
 	Specify tangent direction for the start point of arc	Yayın başlangıç noktası için teğet yönünü belirtin
-	Specify the elevation for rectangles	Dikdörtgenler için yüksekliği belirtin
+	Specify the elevation for rectangles	Dikdörtgenler için kotu belirtin
 	Specify thickness for rectangles	Dikdörtgenler için kalınlığı belirtin
 	Specify third point on circle	Daire üzerindeki üçüncü noktayı belirtin
 	Specify third point on circle: _tan to	Daire üzerindeki üçüncü noktayı belirtin: _tan to
@@ -1161,8 +1161,8 @@
 	Specify width for rectangles	Dikdörtgenler için genişliği belirtin
 	Sphere	Küre
 	Spherical	Küresel
-	Spline	Eğri
-	Spline Edit	Eğri Düzenle
+	Spline	Spline
+	Spline Edit	Spline Düzenle
 	Stack (type 1/2 then select)	Yığ (1/2 yazıp seçin)
 	Standard	Standart
 	Start	Başlangıç
@@ -1218,7 +1218,7 @@
 	This drawing	Bu çizim
 	Time	Zaman
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Süreye bağlı sağ tıklama: kısa tıklama Enter'dır, basılı tutmak menüyü açar
-	To	Kime
+	To	Hedef
 	To get started, create or open a drawing.	Başlamak için bir çizim oluşturun veya açın.
 	Toggle PICKADD (off: each pick replaces the selection)	PICKADD'i değiştir (kapalı: her seçim öncekinin yerini alır)
 	Toggle PICKADD (on: picks add to the selection)	PICKADD'i değiştir (açık: seçimler mevcut seçime eklenir)
@@ -1233,7 +1233,7 @@
 	Track orthogonally only	Yalnızca dik açılarla izle
 	Track using all polar angle settings	Tüm kutupsal açı ayarlarını kullanarak izle
 	Transparency	Saydamlık
-	Trim	Kırp
+	Trim	Buda
 	True Color	Gerçek Renk
 	Turn All Layers On	Tüm Katmanları Aç
 	Turn Off Layer	Katmanı Kapat

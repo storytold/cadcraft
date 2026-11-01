@@ -1,7 +1,9 @@
 //! Properties: per-object property edits, current properties, CHPROP, MATCHPROP, linetypes, units,
 //! RENAME.
 
+mod change;
 mod chprop;
+mod dash_units;
 mod matchprop;
 mod rename;
 
@@ -23,6 +25,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
             .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
+        CommandSpec::new("change", "Change", change::run_change)
+            .alias(&["-ch"])
+            .params("{handles?, point?: [x, y], elevation?} → {changed, ignored, differingZ, detachedHatches, locked}: the point moves the nearer end of each line to it (level or plumb with the other end under ORTHOMODE) and, when it is the one object, passes a circle through it or places a text, attribute definition or block reference at it (`ignored` otherwise); `elevation` sets the z of objects whose points share one (`differingZ` otherwise); objects on locked layers are left out (the command line asks Specify change point or [Properties], then about each circle, text, attribute definition and block reference in turn)")
+            .interactive(|_| Ok(Box::new(change::ChangeM::new()))),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -38,6 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("lweight", "Lineweight...", run_lweight).menu(&["Format", "Lineweight..."]).alias(&["lw", "lineweight"]).params("{lineweight: mm | ByLayer}"),
         CommandSpec::new("ltscale", "Linetype Scale", run_ltscale).alias(&["lts"]).params("{scale}").interactive(|_| Ok(Box::new(LtscaleM))),
         CommandSpec::new("units", "Units...", run_units).menu(&["Format", "Units..."]).alias(&["un"]).params("{lunits?: 1..5, luprec?: 0..8, aunits?: 0..4, auprec?: 0..8, insunits?}"),
+        CommandSpec::new("-units", "Units", run_units).alias(&["-un"]).params("(as UNITS)").interactive(|_| Ok(Box::new(dash_units::DashUnits::default()))),
         CommandSpec::new("thickness", "Thickness", run_thickness)
             .menu(&["Format", "Thickness"])
             .params("{thickness} (THICKNESS: the 3D thickness given to new lines, arcs, circles, points and polylines; may be negative) → {thickness}")
