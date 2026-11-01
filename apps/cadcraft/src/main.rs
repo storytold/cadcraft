@@ -23,8 +23,6 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
-#[cfg(target_os = "macos")]
-mod native_open;
 mod spacemouse;
 mod system_animations;
 mod workspace;
@@ -44,8 +42,6 @@ struct App {
     workspace_error: Option<String>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
-    #[cfg(target_os = "macos")]
-    native_open: native_open::NativeOpen,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
     #[cfg(target_os = "macos")]
     menus_in_window: bool,
@@ -98,7 +94,6 @@ impl eframe::App for App {
         if ctx.current_pass_index() == 0 {
             #[cfg(target_os = "macos")]
             {
-                self.native_open.poll(&mut self.cad);
                 if self.native_menu.is_none() && !self.menus_in_window {
                     self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad, ctx));
                 }
@@ -315,15 +310,10 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
-    // Install the Open Documents Apple-event handler before the macOS run loop starts.
-    #[cfg(target_os = "macos")]
-    let native_open = native_open::NativeOpen::install();
     eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
-            #[cfg(target_os = "macos")]
-            native_open.set_context(cc.egui_ctx.clone());
             let mut app = CadApp::new(Session::empty(), services());
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
@@ -392,8 +382,6 @@ fn main() -> eframe::Result {
                 workspace_error,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
-                #[cfg(target_os = "macos")]
-                native_open,
                 #[cfg(target_os = "macos")]
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
