@@ -127,6 +127,14 @@ mod web {
             groups: cadcraft_io::entity_groups,
             entity: cadcraft_io::entity_from_groups,
         });
+        // PDF underlays read their pages.
+        cadcraft_engine::cmd::underlay::set_pdf(cadcraft_engine::cmd::underlay::PdfHooks {
+            page: cadcraft_io::pdf_read::page_info,
+            render: cadcraft_io::pdf_read::render_page,
+            region: cadcraft_io::pdf_read::render_page_region,
+            layers: cadcraft_io::pdf_layers::layer_list,
+            with_layers: cadcraft_io::pdf_layers::apply_layers,
+        });
         // `?host=parent`: a same-origin page framing CADCraft (such as a Nextcloud app) opens
         // drawings in it and stores what it saves. Otherwise there is no file system here: saved
         // files reach the user as browser downloads.

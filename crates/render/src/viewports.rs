@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::display::append;
-use super::display::{DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
+use super::display::{DPrim, DisplayList, Kind, ListUnderlay, PageClip, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
@@ -196,7 +196,17 @@ enum Clip<'a> {
 
 /// Append `src` to `dst`, clipped to `clip`.
 fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
-    for p in &src.prims {
+    // Underlay pages keep their place among the clipped primitives and are clipped alike.
+    let page_clip = || match clip {
+        Clip::Rect(r) => PageClip::Rect(*r),
+        Clip::Poly(c) => PageClip::Poly(std::sync::Arc::new((*c).clone())),
+    };
+    let page_clip = if src.underlays.is_empty() { PageClip::None } else { page_clip() };
+    let mut pages = src.underlays.iter().peekable();
+    for (i, p) in src.prims.iter().enumerate() {
+        while let Some(u) = pages.next_if(|u| u.at as usize <= i) {
+            dst.underlays.push(ListUnderlay { at: dst.prims.len() as u32, clip: page_clip.clone(), ..u.clone() });
+        }
         let pts = src.points(p);
         match (p.kind, clip) {
             (Kind::Polyline, Clip::Rect(rect)) => {
@@ -243,6 +253,9 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                 }
             }
         }
+    }
+    for u in pages {
+        dst.underlays.push(ListUnderlay { at: dst.prims.len() as u32, clip: page_clip.clone(), ..u.clone() });
     }
 }
 
