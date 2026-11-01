@@ -281,10 +281,12 @@ pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
 /// of letting it double its way up (every doubling moves all the tags read so far, and the last
 /// one holds old and new lists at once). Never trusted beyond `max_tags`, nor beyond what a text
 /// of this length can hold (a group is two lines of at least two bytes each), so a sparse file of
-/// blank lines cannot reserve more than a dense one of the same size would fill.
+/// blank lines cannot reserve more than a dense one of the same size would fill. A reservation the
+/// allocator refuses is skipped, not an abort: the list then grows as it did before.
 #[allow(clippy::while_let_loop)]
 fn parse_ascii_with_limit(text: &str, max_tags: usize, expect: usize) -> Result<Vec<Tag>> {
-    let mut tags = Vec::with_capacity(expect.min(max_tags).min(text.len() / MIN_GROUP_BYTES));
+    let mut tags = Vec::new();
+    let _ = tags.try_reserve_exact(expect.min(max_tags).min(text.len() / MIN_GROUP_BYTES));
     let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
