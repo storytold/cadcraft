@@ -293,7 +293,7 @@ mod native {
     /// The DWG dimension flags byte. Its bit 1 is DXF group 70's bit 32 (ODA DWG specification,
     /// common dimension data), which acadrust keeps no copy of from DXF: it is set here as
     /// CADCraft's DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
-    /// acadrust 0.6.5 reads and writes itself.
+    /// acadrust 0.6.6 reads and writes itself.
     fn dimension_flags(doc: &mut acadrust::CadDocument) {
         for e in doc.entities_mut() {
             let acadrust::entities::EntityType::Dimension(d) = e else { continue };
@@ -915,7 +915,8 @@ mod tests {
     /// AutoCAD's DWG scale action (BLOCKSCALEACTION) ends with a byte after its three
     /// connections that DXF doesn't carry. acadrust 0.6.4 neither read nor wrote it, so AutoCAD
     /// read past the object and refused every DWG CADCraft wrote with a dynamic block that scales
-    /// ("Error Decrypting Data"); 0.6.5 keeps it. The byte reaches the DWG, and a scale action
+    /// ("Error Decrypting Data"); 0.6.5 added it and 0.6.6, which this uses, still keeps it (0.6.6 also
+    /// fixes multi-layout DWGs, #1463). The byte reaches the DWG, and a scale action
     /// from DXF is written whole, with the byte AutoCAD writes (0).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
