@@ -1,5 +1,5 @@
 use super::common::T;
-use super::{Arc, AssocSnap, Circle, DimAssoc, DimKind, Dimension, Drawing, EntityKind, Handle, Tag, Vec2, Vec3};
+use super::{Arc, AssocSnap, Circle, DimAssoc, DimKind, Dimension, Drawing, EntityKind, Handle, Rx, Tag, Vec2, Vec3};
 
 /// Associativity from a DIMASSOC object (files from other writers). The dimension kind decides
 /// which definition points the references name, in the order AutoCAD writes them: `p13`/`p14`
@@ -7,17 +7,19 @@ use super::{Arc, AssocSnap, Circle, DimAssoc, DimKind, Dimension, Drawing, Entit
 /// angular dimensions, the three points of an angular-3-point dimension, `p13` for ordinate
 /// dimensions, and for radial or diametric dimensions the single circle reference
 /// ([`radial_links`]). CADCraft's own xdata links, when present, win.
-pub(super) fn dimassoc(d: &mut Drawing, tags: &[Tag]) {
+pub(super) fn dimassoc(d: &mut Drawing, tags: &[Tag], rx: &Rx) {
+    // The entity handles a reference names follow the entity when the reader renumbered it.
+    let renamed = |h: Handle| rx.renamed.get(&h).copied().unwrap_or(h);
     let start = tags.iter().position(|x| x.code == 100 && x.str() == "AcDbDimAssoc").unwrap_or(0);
     let tail = tags.get(start..).unwrap_or(&[]);
-    let Some(dim_h) = tail.iter().find(|x| x.code == 330).and_then(|x| Handle::parse_hex(&x.str())) else { return };
+    let Some(dim_h) = tail.iter().find(|x| x.code == 330).and_then(|x| Handle::parse_hex(&x.str())).map(renamed) else { return };
     let Some(EntityKind::Dimension(dm)) = d.entity(dim_h).map(|e| &e.kind) else { return };
     if !dm.assoc.is_empty() {
         return;
     }
     // A radial or diametric dimension names its circle once, by its centre.
     if matches!(dm.kind, DimKind::Radius | DimKind::Diameter) {
-        let links = radial_links(d, dm, tail);
+        let links = radial_links(d, dm, tail, rx);
         if !links.is_empty() {
             let _ = d.modify_entity(dim_h, |e| {
                 if let EntityKind::Dimension(dm) = &mut e.kind {
@@ -44,8 +46,8 @@ pub(super) fn dimassoc(d: &mut Drawing, tags: &[Tag]) {
         let Some(point) = used.get(k) else { break };
         let end = starts.get(k + 1).copied().unwrap_or(tail.len());
         let r = T(tail.get(s + 1..end).unwrap_or(&[]));
-        let Some(main) = r.s(331).and_then(|h| Handle::parse_hex(&h)) else { continue };
-        let other = r.s(332).and_then(|h| Handle::parse_hex(&h));
+        let Some(main) = r.s(331).and_then(|h| Handle::parse_hex(&h)).map(renamed) else { continue };
+        let other = r.s(332).and_then(|h| Handle::parse_hex(&h)).map(renamed);
         let at = r.p(10).xy();
         // A polyline's segment (subentity type 73 = 2, edge; 91 its 1-based index).
         let segment = r.i(91).filter(|k| *k >= 1 && r.i(73) == Some(2));
@@ -65,7 +67,7 @@ pub(super) fn dimassoc(d: &mut Drawing, tags: &[Tag]) {
 /// Associations of a radial or diametric dimension from its one standard reference: the circle
 /// or arc it measures, by its centre (osnap 3). The definition points are then on that circle,
 /// so the dimension follows its radius or diameter.
-fn radial_links(d: &Drawing, dm: &Dimension, tail: &[Tag]) -> Vec<DimAssoc> {
+fn radial_links(d: &Drawing, dm: &Dimension, tail: &[Tag], rx: &Rx) -> Vec<DimAssoc> {
     let starts: Vec<usize> = tail.iter().enumerate().filter(|(_, x)| x.code == 1 && x.str() == "AcDbOsnapPointRef").map(|(i, _)| i).take(8).collect();
     for (k, s) in starts.iter().enumerate() {
         let end = starts.get(k + 1).copied().unwrap_or(tail.len());
@@ -73,7 +75,7 @@ fn radial_links(d: &Drawing, dm: &Dimension, tail: &[Tag]) -> Vec<DimAssoc> {
         if !matches!(r.i(72), Some(3 | 4)) {
             continue;
         }
-        let Some(handle) = r.s(331).and_then(|h| Handle::parse_hex(&h)) else { continue };
+        let Some(handle) = r.s(331).and_then(|h| Handle::parse_hex(&h)).map(|h| rx.renamed.get(&h).copied().unwrap_or(h)) else { continue };
         let Some(centre) = circle_centre(d, handle) else { continue };
         let on = |point: &str, p: Vec3| {
             let angle = centre.angle_to(p.xy());

@@ -153,7 +153,7 @@ impl Objects {
         }
     }
 
-    fn apply_groups(&self, d: &mut Drawing) {
+    fn apply_groups(&self, d: &mut Drawing, rx: &Rx) {
         // Groups (named by their ACAD_GROUP dictionary entries); members that exist.
         for (h, tags) in &self.groups {
             let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
@@ -162,6 +162,8 @@ impl Objects {
                 .iter()
                 .filter(|x| x.code == 340)
                 .filter_map(|x| Handle::parse_hex(&x.str()))
+                // A member the reader renumbered keeps its place in the group.
+                .map(|m| rx.renamed.get(&m).copied().unwrap_or(m))
                 .filter(|m| d.entity(*m).is_some())
                 .take(MAX_OBJECTS)
                 .collect();
@@ -212,10 +214,10 @@ impl Objects {
                 l.view = Some(*view);
             }
         }
-        self.apply_groups(d);
+        self.apply_groups(d, rx);
         // Standard associativity, for dimensions without CADCraft's exact links.
         for tags in &self.dimassocs {
-            dimassoc(d, tags);
+            dimassoc(d, tags, rx);
         }
     }
 }
