@@ -153,6 +153,15 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // PDF underlays read their pages.
+    cadcraft_engine::cmd::underlay::set_pdf(cadcraft_engine::cmd::underlay::PdfHooks {
+        page: cadcraft_io::pdf_read::page_info,
+        render: cadcraft_io::pdf_read::render_page,
+        lines: cadcraft_io::pdf_read::page_lines,
+        region: cadcraft_io::pdf_read::render_page_region,
+        layers: cadcraft_io::pdf_layers::layer_list,
+        with_layers: cadcraft_io::pdf_layers::apply_layers,
+    });
 }
 
 fn services() -> Services {
@@ -179,6 +188,13 @@ fn services() -> Services {
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         no_file_system: false,
+        pick_pdf: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter(i18n::t("PDF files"), &["pdf"])
+                .add_filter(i18n::t("All files"), &["*"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 

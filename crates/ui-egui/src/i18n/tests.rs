@@ -87,6 +87,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
         "xrefs",
+        "pdfattach_dlg",
         "canvas",
         "chrome",
         "cmdline",

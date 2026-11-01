@@ -132,6 +132,7 @@ mod snap_curves;
 mod snap_intersections_aperture;
 mod snap_nearest;
 mod snap_overrides;
+mod snap_pdf_frame;
 mod snap_tracking;
 mod snaps_more;
 mod solid_command;
