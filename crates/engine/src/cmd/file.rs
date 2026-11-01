@@ -316,10 +316,15 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let mut drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
+    // The SHX fonts its text styles name are looked for beside the drawing too.
+    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+    }
+    crate::cmd::image::preload_images(&mut drawing, path.as_deref());
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 

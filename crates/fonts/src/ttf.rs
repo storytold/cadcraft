@@ -533,9 +533,48 @@ fn key(name: &str) -> String {
     n.trim_end_matches(".ttf").trim_end_matches(".otf").trim_end_matches(".ttc").trim_end_matches(".otc").to_string()
 }
 
-/// Names that mean a stroke font: never looked up as TrueType.
+/// Names that mean a stroke font: never looked up as TrueType (including Autodesk SHX-proxy TTF stems).
 fn is_stroke_name(k: &str) -> bool {
-    k.is_empty() || k.ends_with(".shx") || k == crate::BUILTIN_FONT.to_ascii_lowercase() || k == "txt" || k == "simplex" || k == "romans"
+    let base = k.trim_end_matches('_');
+    base.is_empty()
+        || k.ends_with(".shx")
+        || k == crate::BUILTIN_FONT.to_ascii_lowercase()
+        || matches!(
+            base,
+            "txt"
+                | "monotxt"
+                | "simplex"
+                | "romans"
+                | "romand"
+                | "romanc"
+                | "romant"
+                | "isocp"
+                | "isocp2"
+                | "isocp3"
+                | "isoct"
+                | "isoct2"
+                | "isoct3"
+                | "isocpeur"
+                | "isocpeui"
+                | "isocteur"
+                | "isocteui"
+                | "complex"
+                | "italic"
+                | "italicc"
+                | "italict"
+                | "scripts"
+                | "scriptc"
+                | "greekc"
+                | "greeks"
+                | "gothice"
+                | "gothicg"
+                | "gothici"
+                | "syastro"
+                | "symap"
+                | "symath"
+                | "symeteo"
+                | "symusic"
+        )
 }
 
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names

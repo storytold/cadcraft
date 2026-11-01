@@ -48,14 +48,28 @@ pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
     if let Some((name, path)) = t.split_once('=') {
         let name = name.trim();
         let path = if path.trim().is_empty() { name } else { path.trim() };
-        return (!name.is_empty()).then(|| FileRef { name: name.to_string(), path: path.to_string(), explicit: true });
+        let resolved = crate::lisp::resolve_support_file(s, path)
+            .or_else(|| crate::lisp::resolve_support_file(s, &format!("{path}.dwg")))
+            .or_else(|| crate::lisp::resolve_support_file(s, &format!("{path}.dxf")))
+            .unwrap_or_else(|| path.to_string());
+        return (!name.is_empty()).then(|| FileRef { name: name.to_string(), path: resolved, explicit: true });
+    }
+    if s.doc().is_ok_and(|d| d.block(t).is_some()) {
+        return None;
     }
     let lower = t.to_ascii_lowercase();
     let pathlike = t.contains(['/', '\\']) || lower.ends_with(".dwg") || lower.ends_with(".dxf");
-    if !pathlike || s.doc().is_ok_and(|d| d.block(t).is_some()) {
-        return None;
+    if pathlike {
+        let resolved = crate::lisp::resolve_support_file(s, t).unwrap_or_else(|| t.to_string());
+        return Some(FileRef { name: stem(t), path: resolved, explicit: false });
     }
-    Some(FileRef { name: stem(t), path: t.to_string(), explicit: false })
+    if let Some(resolved) = crate::lisp::resolve_support_file(s, &format!("{t}.dwg"))
+        .or_else(|| crate::lisp::resolve_support_file(s, &format!("{t}.dxf")))
+        .or_else(|| crate::lisp::resolve_support_file(s, t))
+    {
+        return Some(FileRef { name: stem(t), path: resolved, explicit: false });
+    }
+    None
 }
 
 /// The file name without folders and extension (either separator, so Windows paths work anywhere).

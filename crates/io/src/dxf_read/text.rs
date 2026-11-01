@@ -101,7 +101,7 @@ pub(super) fn text_from(t: &T) -> Text {
         5 => HAlign::Fit,
         _ => HAlign::Left,
     };
-    let v = match t.i(73).or_else(|| t.i(74)).unwrap_or(0) {
+    let v = match t.i(74).or_else(|| t.i(73)).unwrap_or(0) {
         1 => VAlign::Bottom,
         2 => VAlign::Middle,
         3 => VAlign::Top,

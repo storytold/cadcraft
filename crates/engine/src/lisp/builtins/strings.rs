@@ -27,6 +27,7 @@ pub(super) fn substr(a: &[Value]) -> R {
     }
     let chars = s.chars().skip(start as usize - 1);
     let out: String = match a.get(2) {
+        Some(Value::Nil) | None => chars.collect(),
         Some(n) => {
             let n = int(n)?;
             if n < 0 {
@@ -34,7 +35,6 @@ pub(super) fn substr(a: &[Value]) -> R {
             }
             chars.take(n as usize).collect()
         }
-        None => chars.collect(),
     };
     Ok(Value::str(&out))
 }
@@ -144,10 +144,29 @@ pub(super) fn vl_symbolp(a: &[Value]) -> R {
 pub(super) fn vl_string_search(a: &[Value]) -> R {
     arity(a, 2, 3)?;
     let (pat, s) = (string(&a[0])?, string(&a[1])?);
-    let start = a.get(2).map(int).transpose()?.unwrap_or(0).max(0) as usize;
+    let start = a.get(2).filter(|v| !v.is_nil()).map(int).transpose()?.unwrap_or(0).max(0) as usize;
     let chars: Vec<char> = s.chars().collect();
     let tail: String = chars.iter().skip(start).collect();
     Ok(tail.find(&*pat).map(|b| Value::Int((start + tail[..b].chars().count()) as i32)).unwrap_or_default())
+}
+
+pub(super) fn vl_string_position(a: &[Value]) -> R {
+    arity(a, 2, 4)?;
+    let code = u32::try_from(int(&a[0])?).ok().and_then(char::from_u32);
+    let Some(target) = code else { return Ok(Value::Nil) };
+    let s = string(&a[1])?;
+    let start = a.get(2).filter(|v| !v.is_nil()).map(int).transpose()?.unwrap_or(0).max(0) as usize;
+    let from_end = a.get(3).is_some_and(|v| !v.is_nil());
+    let chars: Vec<char> = s.chars().collect();
+    if start >= chars.len() {
+        return Ok(Value::Nil);
+    }
+    let pos = if from_end {
+        (start..chars.len()).rev().find(|&i| chars[i] == target)
+    } else {
+        (start..chars.len()).find(|&i| chars[i] == target)
+    };
+    Ok(pos.map(|i| Value::Int(i as i32)).unwrap_or_default())
 }
 
 pub(super) fn vl_string_subst(a: &[Value]) -> R {

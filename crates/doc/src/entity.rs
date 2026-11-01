@@ -442,9 +442,7 @@ impl EntityKind {
                 v.height *= s;
             }
             EntityKind::Image(i) => {
-                t3(&mut i.insert);
-                i.u = m.apply_vec(i.u.xy()).to3(0.0);
-                i.v = m.apply_vec(i.v.xy()).to3(0.0);
+                i.transform(m);
             }
             EntityKind::Wipeout(w) => w.boundary.iter_mut().for_each(|p| *p = m.apply(*p)),
             EntityKind::Table(t) => {
@@ -623,7 +621,12 @@ impl EntityKind {
                 let h = Vec2::new(v.width / 2.0, v.height / 2.0);
                 Bounds2::new(c - h, c + h).corners().to_vec()
             }
-            EntityKind::Image(i) => vec![i.insert.xy()],
+            EntityKind::Image(i) => {
+                let [c0, c1, c2, c3] = i.corners();
+                let center = (c0 + c2) * 0.5;
+                let top_mid = (c2 + c3) * 0.5;
+                vec![c0, c1, c2, c3, center, top_mid]
+            }
             EntityKind::Wipeout(w) => w.vertices().to_vec(),
             EntityKind::Table(t) => vec![t.insert.xy()],
             EntityKind::Tolerance(t) => vec![t.insert.xy()],

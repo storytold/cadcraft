@@ -48,7 +48,7 @@ pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
-pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
+pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command, is_system_xdata_app};
 pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
 
 mod doc_state;
@@ -63,6 +63,7 @@ pub use doc_state::{DocState, Snapshot};
 pub use error::{EngineError, Result};
 pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
+pub use session::{is_bare_lisp_operator, is_bare_lisp_prefix};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
 
@@ -72,6 +73,16 @@ pub fn build_version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev")));
     &VERSION
+}
+
+/// Interactive pick state requested by an external .NET plugin via `dotnet.bridge`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DotNetPickState {
+    pub status: String,
+    pub point: Option<[f64; 3]>,
+    pub handle: Option<String>,
+    pub handles: Vec<String>,
+    pub value: Option<f64>,
 }
 
 /// The editor session: open drawings, settings, the running command and the command log.
@@ -134,6 +145,8 @@ pub struct Session {
     pub last_used: LastUsed,
     /// Where `clipboard` came from and the layers, styles and blocks its objects need.
     pub clipboard_source: Option<cmd::clipboard::ClipSource>,
+    /// A raster image payload on the clipboard.
+    pub clipboard_image: Option<cmd::clipboard::ClipboardImage>,
     /// The window last picked with PLOTWINDOW (the Plot dialog's "Window <").
     pub plot_window: Option<cadcraft_geom::Bounds2>,
     /// AutoLISP: each drawing's symbols and the routine running ([`lisp`]).
@@ -142,6 +155,12 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// State of an active interactive pick requested by a .NET DLL plugin (`dotnet.bridge`).
+    pub dotnet_pick: DotNetPickState,
+    /// Optional Z coordinate of a 3D point passed programmatically (e.g. from LISP `command` into `3DPOLY`).
+    pub(crate) pending_point_z: Option<f64>,
+    /// Directory of the most recently loaded LISP file, searched by `findfile`, `open` and `-INSERT`.
+    pub lisp_file_dir: Option<String>,
     /// The object named with a point for the input a prompt picking one object is taking
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
@@ -192,12 +211,34 @@ impl Session {
             last_dim: None,
             last_used: LastUsed::default(),
             clipboard_source: None,
+            clipboard_image: None,
             plot_window: None,
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            dotnet_pick: DotNetPickState::default(),
+            pending_point_z: None,
+            lisp_file_dir: None,
             pick_hint: None,
         }
+    }
+
+    /// Record the folder of a loaded LISP file so `findfile`, `open` and `-INSERT` search it.
+    pub fn set_lisp_file_dir(&mut self, dir: Option<String>) {
+        self.lisp_file_dir = dir;
+    }
+
+    /// Put a raster image payload onto the clipboard.
+    pub fn set_clipboard_image(&mut self, bytes: Vec<u8>, width: u32, height: u32) {
+        self.clipboard = Vec::new();
+        self.clipboard_base = Vec2::ZERO;
+        self.clipboard_source = None;
+        self.clipboard_image = Some(cmd::clipboard::ClipboardImage { bytes: std::sync::Arc::new(bytes), width, height });
+    }
+
+    /// The file path of the active drawing, if known.
+    pub fn drawing_path(&self) -> Option<String> {
+        self.state().ok().and_then(|s| s.path.clone())
     }
 
     pub fn state(&self) -> Result<&DocState> {

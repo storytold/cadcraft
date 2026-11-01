@@ -84,6 +84,14 @@ impl Space {
     }
 }
 
+/// An embedded OLE object (OLE2FRAME / OLEFRAME) payload.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OleItem {
+    pub name: String,
+    pub ole_type: i32,
+    pub data: std::sync::Arc<Vec<u8>>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drawing {
     pub header: Header,
@@ -132,6 +140,10 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// In-memory image assets for embedded/pasted raster images.
+    pub image_assets: BTreeMap<String, std::sync::Arc<Vec<u8>>>,
+    /// Embedded OLE object payloads for OLE2FRAME entities.
+    pub ole_items: BTreeMap<String, OleItem>,
     /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
     /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
     /// drawing reopens with it. Never set on an open drawing.
@@ -195,8 +207,30 @@ impl Drawing {
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            image_assets: BTreeMap::new(),
+            ole_items: BTreeMap::new(),
             portable_fonts: false,
         }
+    }
+
+    /// Store an in-memory image asset buffer.
+    pub fn store_image_asset(&mut self, key: impl Into<String>, bytes: Vec<u8>) {
+        self.image_assets.insert(key.into(), std::sync::Arc::new(bytes));
+    }
+
+    /// Retrieve an in-memory image asset buffer.
+    pub fn get_image_asset(&self, key: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.image_assets.get(key).cloned()
+    }
+
+    /// Store an embedded OLE object payload.
+    pub fn store_ole_item(&mut self, key: impl Into<String>, name: String, ole_type: i32, data: Vec<u8>) {
+        self.ole_items.insert(key.into(), OleItem { name, ole_type, data: std::sync::Arc::new(data) });
+    }
+
+    /// Retrieve an embedded OLE object payload.
+    pub fn get_ole_item(&self, key: &str) -> Option<&OleItem> {
+        self.ole_items.get(key)
     }
 
     /// Allocate a fresh handle.

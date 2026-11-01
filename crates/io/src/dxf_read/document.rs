@@ -309,10 +309,16 @@ pub(super) fn apply_sortents(
     for (owner, map) in tables {
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
+        // Attribute definitions are not drawn in block references; preserve their record order so
+        // INSERT prompts attributes in creation/BATTMAN order rather than draw order.
         // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).
         let key = |e: &Entity| {
-            let k = map.get(&e.handle).copied().unwrap_or(e.handle.0);
-            (k == 0, k)
+            if matches!(e.kind, EntityKind::AttDef(_)) {
+                (1u8, false, 0)
+            } else {
+                let k = map.get(&e.handle).copied().unwrap_or(e.handle.0);
+                (0u8, k == 0, k)
+            }
         };
         if up == "*MODEL_SPACE" {
             d.model.sort_by_key(key);

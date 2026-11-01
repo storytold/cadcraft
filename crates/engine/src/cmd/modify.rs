@@ -30,6 +30,7 @@ use break_join::{BreakM, run_break, run_breakat, run_join};
 use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
+pub(crate) use offset::offset_polyline;
 use offset::{OffsetM, run_offset};
 use oops::run_oops;
 pub(crate) use oops::{Erased, erase_kept};

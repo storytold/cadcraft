@@ -153,12 +153,42 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    cadcraft_engine::lisp::input::set_file_dialog(|title, default, ext, flags| {
+        let mut d = rfd::FileDialog::new();
+        if !title.is_empty() {
+            d = d.set_title(title);
+        }
+        if !default.is_empty() {
+            let p = std::path::Path::new(default);
+            if p.is_dir() {
+                d = d.set_directory(p);
+            } else {
+                if let Some(dir) = p.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+                    d = d.set_directory(dir);
+                }
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    d = d.set_file_name(name);
+                }
+            }
+        }
+        let exts: Vec<&str> = ext.split([';', ',']).map(str::trim).filter(|e| !e.is_empty()).collect();
+        if !exts.is_empty() {
+            d = d.add_filter(ext, &exts);
+        }
+        d = d.add_filter("All files", &["*"]);
+        let picked = if flags & 1 != 0 { d.save_file() } else { d.pick_file() };
+        picked.map(|p| p.to_string_lossy().into_owned())
+    });
 }
 
+/// Build host file-picker and on-demand control services for the desktop UI.
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
+                .add_filter(i18n::t("Drawings & Plugins (DWG, DXF, DLL, LSP, VB, CS)"), &["dwg", "dxf", "dwt", "dll", "lsp", "vb", "cs"])
+                .add_filter(i18n::t(".NET Plugin / AutoLISP (DLL, LSP, VB, CS)"), &["dll", "lsp", "vb", "cs"])
+                .add_filter(i18n::t("AutoLISP Routine (LSP)"), &["lsp"])
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
                 .add_filter(i18n::t("All files"), &["*"])
@@ -179,6 +209,14 @@ fn services() -> Services {
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         no_file_system: false,
+        pick_image: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter(i18n::t("Raster Images (PNG, JPG, BMP, WEBP, TIFF)"), &["png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff", "gif"])
+                .add_filter(i18n::t("All files"), &["*"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
+        start_control: None,
     }
 }
 
@@ -357,6 +395,9 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
+            } else {
+                let ctx = cc.egui_ctx.clone();
+                app.services.start_control = Some(Box::new(move || control_server::start(0, ctx.clone())));
             }
             if sample {
                 let _ = app.run("ui.sample", serde_json::json!({}));

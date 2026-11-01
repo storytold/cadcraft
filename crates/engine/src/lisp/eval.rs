@@ -93,6 +93,16 @@ pub enum Frame {
         f: Value,
         args: Vec<Value>,
     },
+    /// Evaluating one argument of `(command …)` before feeding it to the session.
+    Command {
+        f: Value,
+        rest: Value,
+    },
+    /// Stepping to the next argument of `(command …)` after the previous one was fed.
+    CommandNext {
+        f: Value,
+        rest: Value,
+    },
 }
 
 /// Special forms: their arguments are not evaluated first.
@@ -282,7 +292,11 @@ impl Machine {
         }
         match args {
             Value::Cons(c) => {
-                self.stack.push(Frame::Args { f, rest: c.cdr.clone(), done: Vec::new() });
+                if matches!(&f, Value::Subr(b) if b.name == "COMMAND" || b.name == "COMMAND-S") {
+                    self.stack.push(Frame::Command { f, rest: c.cdr.clone() });
+                } else {
+                    self.stack.push(Frame::Args { f, rest: c.cdr.clone(), done: Vec::new() });
+                }
                 self.state = State::Eval(c.car.clone());
             }
             _ => self.state = State::Call(f, Vec::new()),
@@ -381,6 +395,20 @@ impl Machine {
             },
             Frame::Catch => self.state = State::Ret(v),
             Frame::Resume { f, args } => self.state = State::Call(f, args),
+            Frame::Command { f, rest } => {
+                if matches!(rest, Value::Cons(_)) {
+                    self.stack.push(Frame::CommandNext { f: f.clone(), rest });
+                }
+                self.state = State::Call(f, vec![v]);
+            }
+            Frame::CommandNext { f, rest } => {
+                if let Value::Cons(c) = rest {
+                    self.stack.push(Frame::Command { f, rest: c.cdr.clone() });
+                    self.state = State::Eval(c.car.clone());
+                } else {
+                    self.state = State::Ret(v);
+                }
+            }
         }
         Ok(())
     }

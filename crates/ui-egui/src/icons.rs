@@ -1060,9 +1060,6 @@ pub fn describe_control(ui: &egui::Ui, response: &egui::Response, label: &str, s
                 node.set_selected(selected);
             }
         });
-        if response.clicked() {
-            response.request_focus();
-        }
     }
     if response.has_focus() && response.rect.width() > 4.0 && response.rect.height() > 4.0 {
         ui.painter().rect_stroke(response.rect.shrink(2.0), 2.0, Stroke::new(1.0, Tokens::get().accent), egui::StrokeKind::Inside);

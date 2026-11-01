@@ -159,9 +159,28 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
+        "DWGPREFIX" => {
+            let dir = s
+                .state()
+                .ok()
+                .and_then(|d| d.path.as_deref())
+                .and_then(|p| std::path::Path::new(p).parent())
+                .and_then(|p| p.to_str())
+                .filter(|d| !d.is_empty())
+                .map(str::to_string)
+                .or_else(|| s.lisp_file_dir.clone())
+                .map(|dir| {
+                    if dir.is_empty() || dir.ends_with(['/', '\\']) {
+                        dir
+                    } else {
+                        let sep = if dir.contains('\\') { '\\' } else { '/' };
+                        format!("{dir}{sep}")
+                    }
+                })
+                .unwrap_or_default();
+            json!(dir)
+        }
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
-        // The drawing's folder with a trailing separator ("" while it has no file); DWGTITLED is 1 once it has one.
-        "DWGPREFIX" => json!(s.state().ok().and_then(|d| d.path.as_deref()).map(dwg_prefix).unwrap_or_default()),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
         "CMDACTIVE" => json!(i32::from(s.running.is_some())),
         "TILEMODE" => json!(i32::from(s.state().is_ok_and(|d| d.space.layout().is_none()))),
@@ -193,9 +212,26 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
                 Some(h) => serde_json::to_value(h).ok()?,
                 // A dimension variable the header doesn't carry reads from the current style.
                 None => {
-                    let field = cadcraft_doc::DIMVARS.iter().find(|(v, _)| *v == n)?.1;
-                    let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard"))?;
-                    serde_json::to_value(st).ok()?.get(field)?.clone()
+                    if let Some((_, field)) = cadcraft_doc::DIMVARS.iter().find(|(v, _)| *v == n) {
+                        let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard"))?;
+                        serde_json::to_value(st).ok()?.get(field)?.clone()
+                    } else {
+                        match n.as_str() {
+                            "ATTDIA" | "DIMTIX" | "DIMTMOVE" | "DIMTOFL" | "DIMFXLON" | "INSUNITSDEFSOURCE" | "INSUNITSDEFTARGET" | "3DOSMODE" => {
+                                json!(0)
+                            }
+                            "CMDECHO" | "ATTIPE" | "ATTREQ" => json!(1),
+                            "OLEQUALITY" | "CVPORT" => json!(2),
+                            "DIMATFIT" => json!(3),
+                            "DIMLWE" => json!(-3),
+                            "PLINEWID" => json!(0.0),
+                            "DIMDLI" => json!(0.38),
+                            "DIMLTYPE" | "DIMLTEX1" | "DIMLTEX2" => json!("."),
+                            "DIMTXSTY" => json!("Standard"),
+                            "INETLOCATION" => json!(""),
+                            _ => return None,
+                        }
+                    }
                 }
             }
         }
@@ -204,6 +240,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
 }
 
 /// DWGPREFIX: the folder of the drawing file, made absolute, with a trailing separator.
+#[allow(dead_code)]
 fn dwg_prefix(path: &str) -> String {
     let full = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     match full.parent() {
@@ -237,25 +274,8 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
 }
 
 /// Variables `get` reports from session or drawing state that `set` can't change.
-const READ_ONLY: &[&str] = &[
-    "CMDNAMES",
-    "DWGNAME",
-    "DWGPREFIX",
-    "DWGTITLED",
-    "CMDACTIVE",
-    "TILEMODE",
-    "PLATFORM",
-    "DBMOD",
-    "BLOCKEDITOR",
-    "CTAB",
-    "LASTPOINT",
-    "VIEWCTR",
-    "VIEWSIZE",
-    "EXTMIN",
-    "EXTMAX",
-    "UNDOCTL",
-    "UNDOMARKS",
-];
+const READ_ONLY: &[&str] =
+    &["CMDNAMES", "DWGNAME", "DWGPREFIX", "DBMOD", "BLOCKEDITOR", "LASTPOINT", "VIEWCTR", "VIEWSIZE", "EXTMIN", "EXTMAX", "UNDOCTL", "UNDOMARKS"];
 
 pub fn is_read_only(name: &str) -> bool {
     READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim())) || table::is_read_only(&name.trim().to_ascii_uppercase())
@@ -391,6 +411,47 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             s.doc_mut()?.header.set_i64(&n, i);
         }
         "CONSTRAINTINFER" => s.doc_mut()?.parametric.settings.infer = as_bool(v).ok_or_else(bad)?,
+        "CTAB" => {
+            let tab = v.as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or_else(bad)?;
+            let Some(c) = crate::cmd::find_command("layout.set") else { return Err(bad()) };
+            return (c.run)(s, &json!({ "name": tab })).map(|_| ());
+        }
+        "CVPORT" => {
+            let id = as_i(v).filter(|i| *i >= 1).ok_or_else(bad)?;
+            if let cadcraft_doc::Space::Paper(layout_name) = s.layout_space() {
+                if id == 1 {
+                    if let Ok(st) = s.state_mut() {
+                        st.mspace = None;
+                    }
+                    s.doc_mut()?.header.set_i64("CVPORT", 1);
+                    return Ok(());
+                }
+                let vp_h = s.doc().ok().and_then(|d| {
+                    let store = d.space(&cadcraft_doc::Space::Paper(layout_name))?;
+                    store
+                        .iter()
+                        .find_map(|e| match &e.kind {
+                            cadcraft_doc::EntityKind::Viewport(vp) if i64::from(vp.id) == id => Some(e.handle),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            let idx = usize::try_from(id.checked_sub(2)?).ok()?;
+                            store
+                                .iter()
+                                .filter_map(|e| match &e.kind {
+                                    cadcraft_doc::EntityKind::Viewport(vp) if vp.id != 1 => Some(e.handle),
+                                    _ => None,
+                                })
+                                .nth(idx)
+                        })
+                }).ok_or_else(bad)?;
+                if let Ok(st) = s.state_mut() {
+                    st.mspace = Some(vp_h);
+                }
+            }
+            s.doc_mut()?.header.set_i64("CVPORT", id);
+            return Ok(());
+        }
         _ => {
             if let Some(r) = table::set(s, &n, v) {
                 return r;

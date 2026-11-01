@@ -22,6 +22,8 @@ enum Stage {
     CopyTo(String),
     Delete,
     New,
+    TemplateFile,
+    TemplateLayout(String),
     RenameFrom,
     RenameTo(String),
     Set,
@@ -70,6 +72,7 @@ impl LayoutM {
             "Copy" => Stage::CopyFrom,
             "Delete" => Stage::Delete,
             "New" => Stage::New,
+            "Template" => Stage::TemplateFile,
             "Rename" => Stage::RenameFrom,
             "Set" => Stage::Set,
             "SAveas" => Stage::SaveasLayout,
@@ -128,6 +131,8 @@ impl Interactive for LayoutM {
                 let next = s.doc().map(super::next_layout_name).unwrap_or_else(|_| "Layout1".into());
                 Prompt::new("Enter name of new layout", Accept::TEXT).default(next)
             }
+            Stage::TemplateFile => Prompt::new("Enter template file name", Accept::TEXT),
+            Stage::TemplateLayout(_) => Prompt::new("Enter layout(s) to insert", Accept::TEXT),
             Stage::RenameFrom => with_cur(Prompt::new("Enter layout to rename", Accept::TEXT)),
             Stage::RenameTo(_) => Prompt::new("Enter new layout name", Accept::TEXT),
             Stage::Set => {
@@ -184,6 +189,16 @@ impl Interactive for LayoutM {
                 super::run_new(s, &p).map_err(retry)?;
                 Ok(Step::Done)
             }
+            Stage::TemplateFile => {
+                let file = name.unwrap_or_default();
+                self.stage = Stage::TemplateLayout(file);
+                Ok(Step::Continue)
+            }
+            Stage::TemplateLayout(file) => {
+                let layout_name = need(name)?;
+                import_template_layout(s, &file, &layout_name)?;
+                Ok(Step::Done)
+            }
             Stage::RenameFrom => {
                 let from = need(name.or_else(|| current_layout(s)))?;
                 let from = super::layout_name("layout.rename", s.doc()?, &from).map_err(retry)?;
@@ -223,4 +238,59 @@ impl Interactive for LayoutM {
             }
         }
     }
+}
+
+fn import_template_layout(s: &mut Session, file: &str, layout_name: &str) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(hooks) = super::super::file::io() {
+        let resolved = crate::lisp::resolve_support_file(s, file)
+            .or_else(|| crate::lisp::resolve_support_file(s, &format!("{file}.dwt")))
+            .or_else(|| crate::lisp::resolve_support_file(s, &format!("{file}.dwg")))
+            .or_else(|| crate::lisp::resolve_support_file(s, &format!("{file}.dxf")));
+        if let Some(path) = resolved
+            && let Ok(bytes) = std::fs::read(&path)
+            && let Ok(src) = (hooks.read)(&bytes, &path)
+            && let Some(src_layout) = src.layout(layout_name).cloned()
+        {
+            let d = s.doc_mut()?;
+            for l in &src.layers {
+                if d.layer(&l.name).is_none() {
+                    d.layers.push(l.clone());
+                }
+            }
+            for lt in &src.linetypes {
+                if d.linetype(&lt.name).is_none() {
+                    d.linetypes.push(lt.clone());
+                }
+            }
+            for ts in &src.text_styles {
+                if d.text_style(&ts.name).is_none() {
+                    d.text_styles.push(ts.clone());
+                }
+            }
+            for (bname, b) in &src.blocks {
+                let upper = bname.to_ascii_uppercase();
+                if !upper.starts_with("*MODEL_SPACE") && !upper.starts_with("*PAPER_SPACE") && !d.blocks.contains_key(bname) {
+                    d.blocks.insert(bname.clone(), b.clone());
+                }
+            }
+            if d.layout(layout_name).is_none() {
+                let next_order = d.layouts.iter().map(|l| l.tab_order).max().unwrap_or(0) + 1;
+                let mut new_layout = cadcraft_doc::Layout::new(&src_layout.name, next_order);
+                new_layout.page = src_layout.page.clone();
+                for e in src_layout.entities.iter() {
+                    let mut cloned = (**e).clone();
+                    cloned.handle = d.new_handle();
+                    new_layout.entities.push(cloned);
+                }
+                d.layouts.push(new_layout);
+            }
+            s.touch();
+            return Ok(());
+        }
+    }
+    if s.doc()?.layout(layout_name).is_none() {
+        let _ = super::run_new(s, &json!({ "name": layout_name }));
+    }
+    Ok(())
 }

@@ -169,13 +169,12 @@ fn cmd_test() -> Result<(), String> {
     run(c, "cargo test --workspace --doc")
 }
 
-/// The translation gap report (`cadcraft-ui-egui`'s ignored `i18n::tests::translation_gaps`).
-/// A missing translation shows in English and never fails a build, so neither does this step.
+/// The translation gap check (`cadcraft-ui-egui`'s `i18n::tests::translation_gaps`).
 fn cmd_i18n() -> Result<(), String> {
     let mut c = cargo();
     // `--workspace` builds the same test binaries as the test step; `-p` alone would rebuild them.
-    c.args(["test", "--workspace", "--lib", "-q", "--", "--ignored", "--exact", "i18n::tests::translation_gaps", "--nocapture"]);
-    if let Err(e) = run(c, "cargo test --workspace --lib -q -- --ignored --exact i18n::tests::translation_gaps --nocapture") {
+    c.args(["test", "--workspace", "--lib", "-q", "--", "--exact", "i18n::tests::translation_gaps", "--nocapture"]);
+    if let Err(e) = run(c, "cargo test --workspace --lib -q -- --exact i18n::tests::translation_gaps --nocapture") {
         eprintln!("note: the translation gap report did not run: {e}");
     }
     Ok(())

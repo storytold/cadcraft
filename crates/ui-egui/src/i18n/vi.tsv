@@ -1452,3 +1452,5 @@ menu	Modify	Hiệu chỉnh
 	Change Properties	Đổi thuộc tính
 	Font	Phông chữ
 	Save Layout as Template	Lưu layout thành mẫu
+	New AppID (e.g. CAD_XDATA)	AppID mới (ví dụ: CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Tạo ứng dụng CAD_XDATA

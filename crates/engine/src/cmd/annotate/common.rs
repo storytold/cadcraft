@@ -134,7 +134,7 @@ enum DimAsk {
 /// (`<>` stands for the measurement) and rotate the text.
 #[derive(Default)]
 pub(super) struct DimText {
-    text: String,
+    pub(super) text: String,
     angle: f64,
     asking: Option<DimAsk>,
 }

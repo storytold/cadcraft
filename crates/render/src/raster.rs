@@ -78,6 +78,43 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     let mut pm = Pixmap::new(view.width, view.height)?;
     pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
     let vis = view.world_bounds();
+    for img in &list.images {
+        let mut ib = Bounds2::EMPTY;
+        for q in [img.origin, img.origin + img.u, img.origin + img.u + img.v, img.origin + img.v] {
+            ib.add(q);
+        }
+        if !ib.intersects(&vis) {
+            continue;
+        }
+        let Ok(dyn_img) = image::load_from_memory(&img.bytes) else { continue };
+        let (iw, ih) = (dyn_img.width(), dyn_img.height());
+        if iw == 0 || ih == 0 || iw > 16384 || ih > 16384 {
+            continue;
+        }
+        let Some(mut src_pm) = Pixmap::new(iw, ih) else { continue };
+        let rgba = dyn_img.to_rgba8();
+        for (dst, px) in src_pm.pixels_mut().iter_mut().zip(rgba.pixels()) {
+            if let Some(c) = tiny_skia::PremultipliedColorU8::from_rgba(
+                (u16::from(px[0]) * u16::from(px[3]) / 255) as u8,
+                (u16::from(px[1]) * u16::from(px[3]) / 255) as u8,
+                (u16::from(px[2]) * u16::from(px[3]) / 255) as u8,
+                px[3],
+            ) {
+                *dst = c;
+            }
+        }
+        let (tl_x, tl_y) = view.to_screen(img.origin + img.v);
+        let (tr_x, tr_y) = view.to_screen(img.origin + img.u + img.v);
+        let (bl_x, bl_y) = view.to_screen(img.origin);
+        let sx = (tr_x - tl_x) / (iw as f32);
+        let ky = (tr_y - tl_y) / (iw as f32);
+        let kx = (bl_x - tl_x) / (ih as f32);
+        let sy = (bl_y - tl_y) / (ih as f32);
+        let xf = Transform::from_row(sx, ky, kx, sy, tl_x, tl_y);
+        let opacity = (100u32.saturating_sub(u32::from(img.fade)) as f32 / 100.0).clamp(0.0, 1.0);
+        let paint = tiny_skia::PixmapPaint { opacity, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        pm.draw_pixmap(0, 0, src_pm.as_ref(), &paint, xf, None);
+    }
     let mut hairlines = Hairlines::default();
     let mut screen: Vec<(f32, f32)> = Vec::new();
     for p in &list.prims {

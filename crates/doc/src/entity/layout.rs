@@ -1,5 +1,5 @@
 use super::common::Handle;
-use super::{Color, Deserialize, Serialize, Vec2, Vec3, standard, yes};
+use super::{Color, Deserialize, Mat3, Serialize, Vec2, Vec3, standard, yes};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +114,30 @@ impl Default for Image {
             pixel_size: image_pixel(),
             resolution_units: 0,
         }
+    }
+}
+
+impl Image {
+    /// Create a new image entity placed at `insert` with pixel vectors, dimensions, and path.
+    pub fn new(insert: Vec3, u: Vec3, v: Vec3, size: Vec2, path: impl Into<String>) -> Self {
+        Image { insert, u, v, size, path: path.into(), ..Image::default() }
+    }
+
+    /// Four corners of the image in world coordinates: [bottom-left, bottom-right, top-right, top-left].
+    pub fn corners(&self) -> [Vec2; 4] {
+        let o = self.insert.xy();
+        let u = self.u.xy() * self.size.x;
+        let v = self.v.xy() * self.size.y;
+        [o, o + u, o + u + v, o + v]
+    }
+
+    /// Transform this image by affine 2D matrix `m`.
+    pub fn transform(&mut self, m: &Mat3) {
+        let p = m.apply(self.insert.xy());
+        self.insert.x = p.x;
+        self.insert.y = p.y;
+        self.u = m.apply_vec(self.u.xy()).to3(0.0);
+        self.v = m.apply_vec(self.v.xy()).to3(0.0);
     }
 }
 

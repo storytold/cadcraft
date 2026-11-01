@@ -190,11 +190,17 @@ impl Table {
         None
     }
 
-    /// Grip points: the insertion point, then the origin of every further part.
+    /// Grip points: the insertion point, then the origin of every further part (or bottom-right scale grip when unbroken).
     pub fn grip_points(&self) -> Vec<Vec2> {
         let mut g = vec![self.insert.xy()];
         if self.is_broken() {
             g.extend(self.parts().into_iter().skip(1).map(|p| p.origin));
+        } else {
+            let w: f64 = self.col_widths.iter().map(|w| size(*w)).sum();
+            let h: f64 = self.row_heights.iter().map(|r| size(*r)).sum();
+            if w > 0.0 && h > 0.0 {
+                g.push(self.insert.xy() + Vec2::new(w, -h));
+            }
         }
         g
     }
