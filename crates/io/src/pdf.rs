@@ -520,6 +520,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         tolerance: 0.001,
         min_dash: 0.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights,
         view_height: 0.0,
