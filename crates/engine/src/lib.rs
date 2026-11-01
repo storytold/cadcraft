@@ -19,6 +19,7 @@ pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
 mod finite;
+pub mod formula;
 pub mod grip_dims;
 pub mod grips;
 mod guard;
@@ -33,6 +34,7 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod textformula;
 pub mod undoctl;
 pub mod units;
 
@@ -267,6 +269,20 @@ impl Session {
 
     /// Add an entity to the current space with current properties.
     pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
+        // Text starting with `=` is a formula: it keeps the formula and shows the result.
+        let mut kind = kind;
+        // Multileader and dimension text too, as when it is edited (a dimension's `<>` is its
+        // measurement).
+        if matches!(kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_) | EntityKind::Dimension(_)) {
+            let mut env = textformula::env(self);
+            // Measured only for a formula (most new dimensions have none).
+            if let EntityKind::Dimension(dm) = &kind
+                && textformula::is_formula(&dm.text)
+            {
+                env.measured = textformula::measured(self.doc()?, dm);
+            }
+            textformula::apply(&mut kind, &env, true);
+        }
         let common = self.current_common();
         let space = self.space();
         let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());

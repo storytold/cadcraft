@@ -30,6 +30,7 @@ pub(super) fn model() -> Drawing {
         &Space::Model,
         Common::default(),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::new(-3.25, 4.5, 1.75),
             align_pt: None,
             height: 2.5,

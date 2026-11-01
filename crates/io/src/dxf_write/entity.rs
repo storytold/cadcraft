@@ -1,5 +1,5 @@
 use super::blocks::table_size;
-use super::common::{attrib_common, common, common_x, dim_xdata, layer_and_props, multiline_tags, oblique_52, text_tags};
+use super::common::{attrib_common, common, common_x, dim_xdata, formula_xdata, layer_and_props, multiline_tags, oblique_52, text_tags};
 use super::ctx::Ctx;
 use super::layout::paper_view;
 use super::{
@@ -226,6 +226,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
             text_tags(w, d, t, None, None);
+            formula_xdata(w, t.formula.as_deref());
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -249,6 +250,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             if cx.target >= Version::R2007 {
                 multiline_tags(w, a, true);
             }
+            formula_xdata(w, a.text.formula.as_deref());
         }
         EntityKind::MText(t) => {
             w.s(0, "MTEXT");
@@ -277,6 +279,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
+            formula_xdata(w, t.formula.as_deref());
         }
         _ => {}
     }
@@ -319,6 +322,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
                 if cx.target >= Version::R2007 {
                     multiline_tags(w, a, false);
                 }
+                formula_xdata(w, a.text.formula.as_deref());
             }
             let sh = w.h();
             w.s(0, "SEQEND");
@@ -408,6 +412,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
             }
         }
         dim_xdata(w, dm, cx);
+        formula_xdata(w, dm.marks.formula.as_deref());
     }
 }
 
@@ -491,8 +496,10 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
                 style: cx.mleader_style(&m.style),
                 text_style: m.text.as_ref().and_then(|t| cx.style(&t.style)),
                 block: m.block.as_ref().and_then(|b| cx.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
+                arrow: Some(m.arrow.trim()).filter(|a| !a.is_empty()).and_then(|a| cx.arrow(a)),
             };
             w.t.extend(crate::dxf_mleader::entity_tags(d, m, &refs));
+            formula_xdata(w, m.text.as_ref().and_then(|t| t.formula.as_deref()));
         }
         EntityKind::Leader(l) => {
             w.s(0, "LEADER");

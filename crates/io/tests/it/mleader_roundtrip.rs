@@ -18,10 +18,13 @@ fn mleaders(d: &Drawing) -> Vec<&MLeader> {
 
 fn text_mleader() -> MLeader {
     MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 3.0, 0.0)], vec![Vec3::new(1.0, -2.0, 0.0)]],
         landing: Vec3::new(5.0, 4.0, 0.0),
         dogleg: 0.75,
         text: Some(MText {
+            formula: None,
             insert: Vec3::new(5.9, 4.0, 0.0),
             height: 0.4,
             width: 6.0,
@@ -78,6 +81,7 @@ fn spline_leader_with_block_content_and_attributes() {
     let mut blk = Block::new("BUBBLE");
     blk.entities.push(Entity::new(Handle(0x200), EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 1.0 })));
     let tag_text = Text {
+        formula: None,
         insert: Vec3::new(-0.2, -0.1, 0.0),
         align_pt: None,
         height: 0.25,
@@ -123,6 +127,8 @@ fn spline_leader_with_block_content_and_attributes() {
         modes: Default::default(),
     });
     let m = MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(4.0, 5.0, 0.0), Vec3::new(8.0, 4.0, 0.0)]],
         landing: Vec3::new(10.0, 3.0, 0.0),
         dogleg: 1.0,
@@ -264,4 +270,43 @@ fn multileader_through_dwg() {
     let got = mleaders(&back);
     assert_eq!(got.len(), 1, "{:?}", back.model.iter().map(|e| e.kind.dxf_name()).collect::<Vec<_>>());
     assert_eq!(*got[0], m);
+}
+
+#[test]
+fn a_multileaders_own_arrowhead_survives() {
+    let mut d = Drawing::new_metric();
+    d.text_styles.push(TextStyle { name: "Notes".into(), ..TextStyle::default() });
+    d.mleader_styles.push(MLeaderStyle { name: "Callout".into(), arrow_size: 0.3, ..MLeaderStyle::default() });
+    // A user arrowhead block, and a built-in arrowhead by its block name.
+    let mut blk = Block::new("HATZ");
+    blk.entities.push(Entity::new(Handle(0x200), EntityKind::Line(Line { a: Vec3::new(-1.0, -1.0, 0.0), b: Vec3::new(1.0, 1.0, 0.0) })));
+    d.blocks.insert("HATZ".into(), std::sync::Arc::new(blk));
+    for arrow in ["HATZ", "_Open30"] {
+        let m = MLeader { arrow: arrow.into(), ..text_mleader() };
+        d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::MLeader(m)).unwrap();
+    }
+    d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::MLeader(text_mleader())).unwrap();
+    let (_, back) = roundtrip(&d);
+    let got: Vec<String> = mleaders(&back).iter().map(|m| m.arrow.to_ascii_uppercase()).collect();
+    assert_eq!(got, ["HATZ", "_OPEN30", ""], "own arrowheads kept, the style's left to the style");
+}
+
+/// Leader type None with leader lines in the file: the lines are kept (hidden), not thrown away,
+/// so the multileader comes back as it was (#2034 review).
+#[test]
+fn hidden_leader_lines_are_kept() {
+    let mut d = Drawing::new_metric();
+    let mut m = text_mleader();
+    m.no_leader = true;
+    // The landing's length is kept too, for when the leader comes back.
+    m.dogleg = 2.5;
+    m.style = "Standard".into();
+    d.add(&Space::Model, Common::default(), EntityKind::MLeader(m.clone())).unwrap();
+    let (_, back) = roundtrip(&d);
+    let got = mleaders(&back);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].no_leader, "still hidden");
+    assert_eq!(got[0].leaders, m.leaders, "the lines are kept");
+    assert!(got[0].leader_paths().is_empty(), "and not drawn");
+    assert_eq!(got[0].dogleg, 2.5, "the landing length is kept");
 }

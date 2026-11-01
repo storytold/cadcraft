@@ -43,7 +43,7 @@ const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCO
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
 /// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
-const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD"];
+const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD", "CADCRAFTFORMULA"];
 
 /// Most objects kept from one file.
 const MAX_OBJECTS: usize = 1_000_000;
@@ -925,6 +925,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
         alive_memo.insert(o.handle.hex(), false);
     }
+    // A text whose AutoCAD field was replaced drops the field (see `replaced_fields`).
+    alive_memo.extend(replaced_fields(f, d, &owners).into_iter().map(|h| (h, false)));
     for o in &f.objects {
         let mut path: Vec<String> = Vec::new();
         let mut cur = o.handle.hex();
@@ -1012,6 +1014,41 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+}
+
+/// The `ACAD_FIELD` dictionaries of texts whose AutoCAD field was replaced (their formula holds
+/// no field any more): not written, nor the fields under them (the extension dictionary's entry
+/// goes with them), so reopening does not bring the field back. `owners`: object → owner.
+fn replaced_fields(f: &Foreign, d: &Drawing, owners: &HashMap<String, String>) -> Vec<String> {
+    let has_field = |formula: &Option<String>| formula.as_deref().is_some_and(|f| f.contains("%<\\"));
+    let fieldless: HashSet<String> = all_entities(d)
+        .filter(|e| match &e.kind {
+            EntityKind::Text(t) => !has_field(&t.formula),
+            EntityKind::MText(t) => !has_field(&t.formula),
+            _ => false,
+        })
+        .map(|e| e.handle.hex())
+        .collect();
+    let mut out = Vec::new();
+    if fieldless.is_empty() {
+        return out;
+    }
+    // Only a field the reader made a formula of can have been replaced: one it declined (too long,
+    // too deep, a child missing) never reached the text, so it stays as it was read (#2318 review).
+    let mut objects: HashMap<String, Vec<Tag>> = HashMap::new();
+    for o in f.objects.iter().filter(|o| is_dictionary(&o.kind) || o.kind == "FIELD") {
+        // Keyed by the handle as the file wrote it, as the field entries refer to it.
+        let t: Vec<Tag> = o.tags.iter().map(tag).collect();
+        let h = crate::dxf_fields::object_handle(&t).unwrap_or_else(|| o.handle.hex());
+        objects.insert(h, t);
+    }
+    for o in f.objects.iter().filter(|o| is_dictionary(&o.kind) && owners.get(&o.handle.hex()).is_some_and(|w| fieldless.contains(w))) {
+        let t: Vec<Tag> = o.tags.iter().map(tag).collect();
+        out.extend(
+            entries(&t).into_iter().filter(|(k, h)| up(k) == "ACAD_FIELD" && crate::dxf_fields::resolves(&objects, &up(h))).map(|(_, h)| norm(&h)),
+        );
+    }
+    out
 }
 
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of
