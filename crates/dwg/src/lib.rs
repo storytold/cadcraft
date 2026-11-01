@@ -241,12 +241,51 @@ mod native {
     /// can cover rows × cols cells, so the total is bounded too.
     const MAX_MERGE_CELLS: usize = 1 << 24;
 
+    /// A table cell's own text height only when the file says it overrides the table style's.
+    /// acadrust's DXF writer writes a cell style's height (group 140) whenever the cell has a
+    /// style record, even a default 0.18 with no override flag, and CADCraft reads a 140 as an
+    /// override (#2501). The override is the cell style's TEXT_HEIGHT property flag or the
+    /// content's format override bit 128; without either the height is cleared (0 is no
+    /// override), so the table style's height applies.
+    fn table_cell_heights(doc: &mut acadrust::CadDocument) {
+        use acadrust::entities::table::CellStylePropertyFlags;
+        const CONTENT_TEXT_HEIGHT: i32 = 128;
+        for e in doc.entities_mut() {
+            let acadrust::entities::EntityType::Table(t) = e else { continue };
+            for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                // The first content's own height (group 144) when its format override sets bit 128.
+                // CADCraft keeps one height for the cell's text, so a later content's override
+                // must not stand in for the first content's.
+                let content_height = cell
+                    .contents
+                    .first()
+                    .filter(|c| c.format_override_flags & CONTENT_TEXT_HEIGHT != 0)
+                    .map(|c| c.text_height)
+                    .filter(|h| h.is_finite() && *h > 0.0);
+                if let Some(h) = content_height {
+                    // CADCraft reads only the style's height (group 140), so carry it there.
+                    cell.style.get_or_insert_with(acadrust::entities::table::CellStyle::new).text_height = h;
+                    continue;
+                }
+                // A style overrides through its property flags or, in newer files, its override
+                // flags; anything else is the writer's default and is cleared.
+                if let Some(style) = cell.style.as_mut()
+                    && !style.property_flags.contains(CellStylePropertyFlags::TEXT_HEIGHT)
+                    && style.override_flags & CellStylePropertyFlags::TEXT_HEIGHT.bits() as i32 == 0
+                {
+                    style.text_height = 0.0;
+                }
+            }
+        }
+    }
+
     /// The fix-ups made to a document after the DWG read, returning how many orphaned DGN
     /// components were dropped. The document comes from a third-party reader and is hostile.
     fn post_process(doc: &mut acadrust::CadDocument) -> usize {
         super::fail_in_test("post_process");
         current_style_names(doc);
         table_merges(doc);
+        table_cell_heights(doc);
         table_style_rows(doc, false);
         keep_sort_handles(doc);
         drop_orphaned_dgn_components(doc)
@@ -728,6 +767,34 @@ mod native {
             assert_eq!(table_merges_within(&mut doc, 250), 200, "two whole-table ranges fit, the rest are skipped");
             let mut doc = doc_with_table(10, 10, 1);
             assert_eq!(table_merges_within(&mut doc, usize::MAX), 100);
+        }
+
+        /// A height marked only in the style's override flags (as newer files store it) is kept,
+        /// and the same height with no flag at all is cleared (review on #2588). Tested on the
+        /// read document because acadrust's DWG writer doesn't write the override flags.
+        #[test]
+        fn a_style_override_flag_keeps_the_cell_height() {
+            use acadrust::entities::table::{CellStyle, CellStylePropertyFlags};
+            let height = |override_flags: i32| {
+                let mut doc = doc_with_table(1, 1, 0);
+                for e in doc.entities_mut() {
+                    if let EntityType::Table(t) = e {
+                        for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                            let mut s = CellStyle::new();
+                            s.text_height = 0.5;
+                            s.override_flags = override_flags;
+                            cell.style = Some(s);
+                        }
+                    }
+                }
+                table_cell_heights(&mut doc);
+                doc.entities().find_map(|e| match e {
+                    EntityType::Table(t) => t.rows.first()?.cells.first()?.style.as_ref().map(|s| s.text_height),
+                    _ => None,
+                })
+            };
+            assert_eq!(height(CellStylePropertyFlags::TEXT_HEIGHT.bits() as i32), Some(0.5));
+            assert_eq!(height(0), Some(0.0));
         }
 
         /// A panic in the post-read fix-ups is an error, not a crash (#1934).
