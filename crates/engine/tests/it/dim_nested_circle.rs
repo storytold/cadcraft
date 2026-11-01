@@ -212,3 +212,22 @@ fn a_circle_on_a_layer_frozen_in_the_viewport_is_not_taken() {
     assert_eq!(viewport(false), 1, "thawed, the circle is taken through the viewport");
     assert_eq!(viewport(true), 0, "frozen in the viewport, it is not drawn there and not taken");
 }
+
+/// A circle with no size, as a file can hold, is refused rather than given a degenerate
+/// dimension, whether it is picked directly or inside a block.
+#[test]
+fn a_zero_radius_circle_is_refused() {
+    let zero = || EntityKind::Circle(cadcraft_engine::doc::Circle { center: cadcraft_engine::geom::Vec3::new(50.0, 50.0, 0.0), radius: 0.0 });
+    let mut s = Session::new();
+    s.doc_mut().unwrap().add(&cadcraft_engine::doc::Space::Model, Default::default(), zero()).unwrap();
+    s.script("dimradius 50,50\n").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Object selected is not a circle or arc."), "{:?}", s.log);
+    s.cancel();
+    let mut s = nested(|s| {
+        s.doc_mut().unwrap().add(&cadcraft_engine::doc::Space::Model, Default::default(), zero()).unwrap();
+    });
+    s.script("dimdiameter 50,50\n").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Object selected is not a circle or arc."), "{:?}", s.log);
+    s.cancel();
+    assert!(dims(&s).is_empty());
+}

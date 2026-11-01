@@ -120,8 +120,10 @@ const MAX_NESTED_PICK: usize = 100_000;
 /// drawn as an ellipse and is not taken either.
 pub(super) fn circle_at(s: &Session, p: Vec2) -> Option<(Vec2, f64)> {
     let h = pick_at(s, p)?;
+    // A circle with no size (a zero radius read from a file) makes a degenerate dimension.
+    let usable = |(c, r): &(Vec2, f64)| c.is_finite() && r.is_finite() && *r > 0.0;
     if let Some(c) = circle_of(s, h) {
-        return Some(c);
+        return Some(c).filter(usable);
     }
     let d = s.doc().ok()?;
     let EntityKind::Insert(ins) = &d.entity(h)?.kind else { return None };
@@ -159,7 +161,7 @@ pub(super) fn circle_at(s: &Session, p: Vec2) -> Option<(Vec2, f64)> {
             nearest = Some((dist, circle));
         }
     });
-    nearest.and_then(|(_, c)| c).filter(|(c, r)| c.is_finite() && r.is_finite() && *r > 0.0)
+    nearest.and_then(|(_, c)| c).filter(usable)
 }
 
 /// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.
