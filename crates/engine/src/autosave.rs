@@ -416,6 +416,13 @@ mod native {
             writes
         }
 
+        /// Whether a background write hasn't finished yet. Its file can exist before it finishes
+        /// (the folder is synced after the rename), and until [`Autosaver::reap`] takes it in, the
+        /// drawing is left out of planning.
+        pub fn writing(&self) -> bool {
+            self.running.iter().any(|(_, h)| !h.is_finished())
+        }
+
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
         /// so it is tried again SAVETIME later even if it doesn't change.
