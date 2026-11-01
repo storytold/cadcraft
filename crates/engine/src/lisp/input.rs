@@ -33,6 +33,10 @@ pub enum GetKind {
         spaces: bool,
     },
     Kword,
+    /// `getfiled`: a file name typed; `new`: it may name a file that doesn't exist yet.
+    File {
+        new: bool,
+    },
     /// `entsel` / `nentsel`: an object picked.
     EntSel,
 }
@@ -46,6 +50,59 @@ pub struct GetRequest {
     pub initget: Initget,
     /// `getdist`/`getangle` without a base point: the first point given, the second to come.
     pub first: Option<[f64; 3]>,
+    /// `getfiled`'s extension, default and folder (boxed: it keeps [`Need`](super::eval::Need) small).
+    pub file: Box<FileAsk>,
+}
+
+/// `getfiled`: the extension a bare name gets, the name Enter gives, and the folder a relative
+/// name is in.
+#[derive(Clone, Debug, Default)]
+pub struct FileAsk {
+    pub ext: String,
+    pub default: String,
+    /// The default folder (a default ending in a path delimiter, or any default with flag 16).
+    pub dir: String,
+    /// New-file mode asks before an existing file is replaced (flag 32 clear).
+    pub confirm: bool,
+    /// A new file's name that already exists, waiting for Yes to replace it.
+    pub replace: Option<String>,
+}
+
+impl FileAsk {
+    /// `name` with the extension when it has none, in the default folder when relative (`None`
+    /// for an empty name).
+    fn complete(&self, name: &str) -> Option<String> {
+        let name = name.trim().trim_matches('"');
+        if name.is_empty() {
+            return None;
+        }
+        let has_ext = std::path::Path::new(name).extension().is_some();
+        let name = if has_ext || self.ext.is_empty() { name.to_string() } else { format!("{name}.{}", self.ext) };
+        Some(if self.dir.is_empty() || std::path::Path::new(&name).is_absolute() {
+            name
+        } else {
+            std::path::Path::new(&self.dir).join(name).to_string_lossy().into_owned()
+        })
+    }
+}
+
+/// `getfiled`'s answer `name`, typed or the default taken with Enter: open mode (`new` false)
+/// asks again for a file that isn't there, and new-file mode asks before replacing one that is
+/// (unless flag 32 says not to), where files can be checked. In the browser (wasm32) there is no
+/// file system to look in, so the name is taken as given, and opening it then fails the way every
+/// file function there does (`open` gives nil).
+fn file_answer(req: &GetRequest, name: String, new: bool) -> Result<Value, Again> {
+    if cfg!(not(target_arch = "wasm32")) {
+        let exists = super::builtins::file_exists(&name);
+        if !new && !exists {
+            return Err(format!("Can't find file {name}.").as_str().into());
+        }
+        if new && exists && req.file.confirm {
+            let file = FileAsk { replace: Some(name), ..(*req.file).clone() };
+            return Err(Again::Ask(Box::new(GetRequest { file: Box::new(file), ..req.clone() })));
+        }
+    }
+    Ok(Value::str(&name))
 }
 
 impl GetRequest {
@@ -56,12 +113,13 @@ impl GetRequest {
             GetKind::Point | GetKind::Corner | GetKind::EntSel => Accept { text: any, ..Accept::POINT },
             GetKind::Dist | GetKind::Angle { .. } => Accept { text: any, ..Accept::POINT_OR_NUMBER },
             GetKind::Real | GetKind::Int => Accept { text: any, ..Accept::NUMBER },
-            GetKind::String { .. } | GetKind::Kword => Accept::TEXT,
+            GetKind::String { .. } | GetKind::Kword | GetKind::File { .. } => Accept::TEXT,
         };
-        let message = match (&self.first, self.message.is_empty()) {
-            (Some(_), _) => "Specify second point: ".to_string(),
-            (None, true) => default_message(self.kind).to_string(),
-            (None, false) => self.message.clone(),
+        let message = match (&self.file.replace, &self.first, self.message.is_empty()) {
+            (Some(name), _, _) => format!("{name} already exists. Replace it? [Yes/No] <No>: "),
+            (None, Some(_), _) => "Specify second point: ".to_string(),
+            (None, None, true) => default_message(self.kind).to_string(),
+            (None, None, false) => self.message.clone(),
         };
         let base = self.first.or(self.base).map(|p| Vec2::new(p[0], p[1]));
         let mut p = Prompt::new(message, accept).base_opt(base);
@@ -83,16 +141,38 @@ impl GetRequest {
             Ok(v) => Answer::Value(v),
             Err(Again::Second(p)) => Answer::Second(p),
             Err(Again::Msg(m)) => Answer::Again(m),
+            Err(Again::Ask(r)) => Answer::Ask(r),
         }
     }
 
     fn answer_value(&self, s: &mut Session, input: Input) -> Result<Value, Again> {
+        if let (GetKind::File { .. }, Some(name)) = (self.kind, &self.file.replace) {
+            // Replace the file that is there? Yes gives its name; No (the default) asks for a name again.
+            let yes = |t: &str| matches!(t.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+            let no = |t: &str| matches!(t.trim().to_ascii_lowercase().as_str(), "n" | "no");
+            let again = || Again::Ask(Box::new(GetRequest { file: Box::new(FileAsk { replace: None, ..(*self.file).clone() }), ..self.clone() }));
+            return match input {
+                Input::Text(t) | Input::Keyword(t) if yes(&t) => Ok(Value::str(name)),
+                Input::Text(t) | Input::Keyword(t) if no(&t) => Err(again()),
+                Input::Enter => Err(again()),
+                Input::Cancel => Err("*Cancel*".into()),
+                _ => Err("Answer Yes or No.".into()),
+            };
+        }
         let ig = &self.initget;
         let no_null = ig.bits & 1 != 0;
         match input {
             Input::Enter => {
                 if matches!(self.kind, GetKind::String { .. }) {
                     return Ok(Value::str(""));
+                }
+                if let GetKind::File { new } = self.kind {
+                    // Enter takes the default name (checked as a typed one is), or cancels the choice
+                    // (nil) without one.
+                    return match self.file.complete(&self.file.default) {
+                        Some(name) => file_answer(self, name, new),
+                        None => Ok(Value::Nil),
+                    };
                 }
                 if no_null {
                     return Err(match self.kind {
@@ -150,6 +230,7 @@ impl GetRequest {
                 GetKind::Int => "Requires an integer value.",
                 GetKind::Kword => "Invalid option keyword.",
                 GetKind::String { .. } => "Requires a string.",
+                GetKind::File { .. } => "Requires a file name.",
                 _ => "Requires numeric value.",
             }
             .into()),
@@ -169,6 +250,10 @@ impl GetRequest {
             }
             GetKind::Kword if any => Ok(Value::str(t)),
             GetKind::Kword => Err("Invalid option keyword.".into()),
+            GetKind::File { new } => {
+                let Some(name) = self.file.complete(t).or_else(|| self.file.complete(&self.file.default)) else { return Ok(Value::Nil) };
+                file_answer(self, name, new)
+            }
             GetKind::Int => match t.trim().parse::<i32>() {
                 Ok(i) if (-32768..=32767).contains(&i) => self.check_number(f64::from(i), true),
                 Ok(_) => Err("Value must be between -32768 and 32767.".into()),
@@ -222,11 +307,14 @@ pub enum Answer {
     Again(String),
     /// `getdist`/`getangle` without a base point got its first point: ask for the second.
     Second([f64; 3]),
+    /// The prompt goes on as this request (`getfiled`: whether to replace a file, or a name again).
+    Ask(Box<GetRequest>),
 }
 
 enum Again {
     Msg(String),
     Second([f64; 3]),
+    Ask(Box<GetRequest>),
 }
 
 impl From<String> for Again {
@@ -300,6 +388,10 @@ fn point_and_message(args: &[Value], name: &str) -> Result<(Option<[f64; 3]>, St
 }
 
 fn wait(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]>) -> Result<Flow, LispError> {
+    wait_with(ctx, kind, message, base, FileAsk::default())
+}
+
+fn wait_with(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]>, file: FileAsk) -> Result<Flow, LispError> {
     let initget = ctx.env.initget.take().unwrap_or_default();
     // Text printed so far shows before the prompt.
     let printed = std::mem::take(&mut ctx.env.out);
@@ -309,7 +401,33 @@ fn wait(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]
             ctx.env.printed_at = Some(ctx.s.log.len());
         }
     }
-    Ok(Flow::Wait(Need::Get(GetRequest { kind, message, base, initget, first: None })))
+    Ok(Flow::Wait(Need::Get(GetRequest { kind, message, base, initget, first: None, file: Box::new(file) })))
+}
+
+/// `(getfiled title default ext flags)`: a file name, asked at the command line (no dialog opens
+/// from LISP, as with FILEDIA 0). A bare name gets `ext`; Enter takes `default`, or gives nil
+/// without one. Flag 1 asks for a new file (Save As), and an existing one is replaced only after
+/// Yes unless flag 32 is set; otherwise the file must exist. With flag 16, or a default ending in a
+/// path delimiter, the default is the folder relative names are in.
+pub fn getfiled(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {
+    let [title, default, ext, flags] = args.as_slice() else { return Err(args_err(args.len() < 4)) };
+    let s = |v: &Value| match v {
+        Value::Str(s) => Ok(s.to_string()),
+        Value::Nil => Ok(String::new()),
+        other => Err(LispError::bad_arg("stringp", other)),
+    };
+    let (title, default, ext) = (s(title)?, s(default)?, s(ext)?);
+    let Value::Int(flags) = flags else { return Err(LispError::bad_arg("fixnump", flags)) };
+    // The first of "dwg;dxf", without its dot; "*" or "" adds none.
+    let ext = ext.split(';').next().unwrap_or("").trim().trim_start_matches('.').to_string();
+    let ext = if ext == "*" { String::new() } else { ext };
+    let title = if title.is_empty() { "Enter file name".to_string() } else { title.trim_end_matches([' ', ':']).to_string() };
+    // Flag 16, or a default ending in a path delimiter: the default is a folder, not a file name.
+    let (dir, default) = if flags & 16 != 0 || default.ends_with(['/', '\\']) { (default, String::new()) } else { (String::new(), default) };
+    let message = if default.is_empty() { format!("{title}: ") } else { format!("{title} <{default}>: ") };
+    // Flag 32: a new file may replace one that is there without asking.
+    let file = FileAsk { ext, default, dir, confirm: flags & 32 == 0, replace: None };
+    wait_with(ctx, GetKind::File { new: flags & 1 != 0 }, message, None, file)
 }
 
 pub fn getpoint(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {

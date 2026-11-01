@@ -10,6 +10,8 @@ pub struct LispFile {
     pub writing: bool,
     pub append: bool,
     pub lines: std::collections::VecDeque<String>,
+    /// How far (bytes) `read-char` has read into the first of `lines`.
+    pub pos: usize,
     pub text: String,
 }
 
@@ -23,7 +25,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
         "a" => (true, true),
         _ => return Err(LispError::new(format!("bad argument value: file mode {mode}"))),
     };
-    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), text: String::new() };
+    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), pos: 0, text: String::new() };
     if !writing {
         match read_text_file(&path) {
             Some(t) => {
@@ -54,7 +56,12 @@ pub(super) fn close(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
 pub(super) fn read_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(Value::File(id)) = a.first() else { return Ok(Flow::Value(Value::Nil)) };
-    let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| f.lines.pop_front());
+    // The rest of the line: what `read-char` hasn't read of it yet.
+    let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| {
+        let l = f.lines.pop_front()?;
+        let rest = l.get(std::mem::take(&mut f.pos)..).unwrap_or("").to_string();
+        Some(rest)
+    });
     Ok(Flow::Value(line.map(|l| Value::str(&l)).unwrap_or_default()))
 }
 
@@ -110,11 +117,11 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 
 #[cfg(not(target_arch = "wasm32"))]
-fn file_exists(path: &str) -> bool {
+pub fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).is_file()
 }
 
 #[cfg(target_arch = "wasm32")]
-fn file_exists(_path: &str) -> bool {
+pub fn file_exists(_path: &str) -> bool {
     false
 }
