@@ -104,6 +104,31 @@ fn names_by_kind_and_unnamed_in_one_step() {
     assert_eq!(list(&mut s)["zeroLength"].as_u64(), Some(1));
 }
 
+/// The list and the purge read one scan: purging every listed name (the dialog with everything
+/// checked) removes exactly the list. Purge All goes on to what that frees in the same step (layer
+/// Inner, used only by the purged blocks' lines), which the next list would have shown.
+#[test]
+fn every_listed_item_is_what_purge_removes() {
+    let mut s = drawing();
+    let v = list(&mut s);
+    let r = s.execute("purge", &json!({ "type": "all", "names": v["named"].clone() })).unwrap();
+    for (kind, listed) in v["named"].as_object().unwrap() {
+        let mut want = names(&v, kind);
+        let mut got: Vec<String> =
+            r["purged"][kind].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+        want.sort();
+        got.sort();
+        assert_eq!(got, want, "{kind}: listed {listed}");
+    }
+    assert!(s.doc().unwrap().layer("Inner").is_some(), "Inner wasn't listed, so it stays");
+
+    let mut s = drawing();
+    s.execute("purge", &json!({ "type": "all" })).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.blocks.is_empty() && d.layer("Inner").is_none(), "Purge All takes the nested layer too");
+    assert!(d.layer("0").is_some() && d.text_style("Standard").is_some() && d.dim_style("Standard").is_some(), "the defaults stay");
+}
+
 #[test]
 fn names_that_are_not_text_purge_nothing() {
     for bad in [
