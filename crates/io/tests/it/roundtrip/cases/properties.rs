@@ -285,8 +285,10 @@ pub(crate) fn layer_inheritance_overrides() -> Vec<Case> {
         .collect()
 }
 
-/// Mirrored styles affect baseline placement; their metrics must not overwrite the entity's
-/// own height/width/oblique. Font layout constructs consistent inputs, never expected output.
+/// Mirrored text affects baseline placement: a TEXT's own flags mirror it (new text takes its
+/// style's, so each mirrored style also has text whose flags differ). The style's metrics must
+/// not overwrite the entity's own height/width/oblique/flags. Font layout constructs consistent
+/// inputs, never expected output.
 pub(crate) fn alignment_style_interactions() -> Vec<Case> {
     let mut cases = Vec::new();
     for (halign, valign) in [
@@ -296,7 +298,7 @@ pub(crate) fn alignment_style_interactions() -> Vec<Case> {
         (HAlign::Aligned, VAlign::Baseline),
         (HAlign::Fit, VAlign::Baseline),
     ] {
-        for flags in 0..4 {
+        for (flags, text_flags) in (0..4).flat_map(|f| [(f, f), (f, f ^ 3)]) {
             let style = TextStyle {
                 name: "Notes".into(),
                 height: 7.0,
@@ -316,6 +318,8 @@ pub(crate) fn alignment_style_interactions() -> Vec<Case> {
                 width_factor: 0.75,
                 oblique: -0.125,
                 rotation: 0.7,
+                backwards: text_flags & 1 != 0,
+                upside_down: text_flags & 2 != 0,
                 ..text()
             };
             if !matches!(halign, HAlign::Aligned | HAlign::Fit) {
@@ -329,12 +333,16 @@ pub(crate) fn alignment_style_interactions() -> Vec<Case> {
                     oblique: t.oblique,
                     h,
                     v,
-                    backwards: style.backwards,
-                    upside_down: style.upside_down,
+                    backwards: t.backwards,
+                    upside_down: t.upside_down,
                 };
                 t.insert = cadcraft_fonts::baseline_start(&cadcraft_fonts::TextFont::Stroke, &t.value, &params).to3(0.0);
             }
-            let mut case = entity_case(&format!("text/alignment-style/{halign:?}/{valign:?}/flags={flags}"), Common::default(), EntityKind::Text(t));
+            let mut case = entity_case(
+                &format!("text/alignment-style/{halign:?}/{valign:?}/flags={flags}/text-flags={text_flags}"),
+                Common::default(),
+                EntityKind::Text(t),
+            );
             *case.drawing.text_styles.iter_mut().find(|s| s.name == "Notes").unwrap() = style;
             cases.push(case);
         }

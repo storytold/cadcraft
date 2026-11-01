@@ -2,8 +2,8 @@
 //! is used to build an input. New failures are isolated by the format-specific test registrations.
 
 use cadcraft_doc::{
-    Arc, Common, Ellipse, EntityKind, Face3d, Hatch, HatchLoop, Image, Leader, LwPolyline, MText, MTextColumnType, MTextColumns, Point, Polyline3d,
-    RayLine, Solid, Table, TableCell, Wipeout,
+    Arc, Common, Ellipse, EntityKind, Face3d, Hatch, HatchLoop, Image, Leader, LwPolyline, MText, MTextColumnType, MTextColumns, MTextDirection,
+    MTextMask, Point, Polyline3d, RayLine, Solid, Table, TableCell, Wipeout,
 };
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
 
@@ -133,6 +133,8 @@ pub(crate) fn mtext() -> MText {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     }
 }
 
@@ -173,6 +175,22 @@ pub(crate) fn mtext_long() -> Vec<Case> {
     [249, 250, 251, 255, 256, 1024]
         .map(|n| case(&format!("mtext/long={n}"), EntityKind::MText(MText { contents: "Ø😀".repeat(n), ..mtext() })))
         .into()
+}
+
+pub(crate) fn mtext_directions() -> Vec<Case> {
+    [MTextDirection::LeftToRight, MTextDirection::TopToBottom, MTextDirection::ByStyle]
+        .map(|direction| case(&format!("mtext/direction={direction:?}"), EntityKind::MText(MText { direction, ..mtext() })))
+        .into()
+}
+
+pub(crate) fn mtext_masks() -> Vec<Case> {
+    [
+        MTextMask { use_background: true, color: cadcraft_color::Color::ByLayer, scale: 1.5 },
+        MTextMask { use_background: false, color: cadcraft_color::Color::Index(3), scale: 1.0 },
+        MTextMask { use_background: false, color: cadcraft_color::Color::True(cadcraft_color::Rgb(10, 20, 30)), scale: 5.0 },
+    ]
+    .map(|mask| case(&format!("mtext/background={mask:?}"), EntityKind::MText(MText { background: Some(mask), ..mtext() })))
+    .into()
 }
 
 pub(crate) fn mtext_columns() -> Vec<Case> {
