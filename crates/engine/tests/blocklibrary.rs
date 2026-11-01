@@ -166,8 +166,13 @@ fn bounds_a_huge_table() {
         d.blocks.insert(name.clone(), Arc::new(Block::new(&name)));
     }
     let r = many.execute("blockspalette", &json!({})).unwrap();
-    assert_eq!(r["blocks"].as_array().unwrap().len(), 10_000);
+    let names: Vec<&str> = r["blocks"].as_array().unwrap().iter().map(|b| b["name"].as_str().unwrap()).collect();
+    assert_eq!(names.len(), 10_000);
     assert_eq!(r["truncated"], true);
+    // The first ones by name, sorted: B9999 comes last of all, so it is the one left out.
+    assert_eq!(names.first(), Some(&"B0"));
+    assert!(!names.contains(&"B9999"));
+    assert!(names.windows(2).all(|w| w[0].to_ascii_lowercase() <= w[1].to_ascii_lowercase()));
 }
 
 /// The list file in the settings folder.
@@ -224,6 +229,12 @@ fn libraries_list_import_and_are_kept() {
     std::fs::write(&file, b"changed contents, another size").unwrap();
     s.execute("blocklibrary", &json!({ "path": file })).unwrap();
     assert_eq!(READS.load(Ordering::SeqCst) - reads_before, 2, "a changed file is read again");
+    // Refresh in the palette reads it again even when its size and time look the same.
+    cadcraft_engine::cmd::clear_library_cache();
+    let listed = s.execute("blocklibrary", &json!({ "path": file })).unwrap();
+    assert_eq!(READS.load(Ordering::SeqCst) - reads_before, 3, "a cleared file is read again");
+    // The palette's worker thread gets the same answer without a session.
+    assert_eq!(cadcraft_engine::cmd::list_library(&file).unwrap(), listed);
 
     leaves_out_an_unused_dimension_style(&mut s, &dir);
     keeps_the_list(&mut s, &dir, &dir_s, &file);

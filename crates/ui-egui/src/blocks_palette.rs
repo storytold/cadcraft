@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use cadcraft_engine::Input;
-use cadcraft_engine::doc::{Block, Drawing, Entity};
+use cadcraft_engine::doc::{Block, Drawing, Entity, EntityKind, HatchLoop, Insert, MAX_BLOCK_DEPTH};
 use cadcraft_engine::geom::{Bounds2, Vec2};
 use cadcraft_engine::render::{DisplayList, Kind, Options, build_entities};
 use egui::{Color32, Pos2, RichText, Sense, Stroke, vec2};
@@ -34,6 +34,13 @@ const PREVIEW_POINTS: usize = 30_000;
 const PREVIEW_DETAIL: f64 = 300.0;
 /// Most objects a block can hold and still get a preview.
 const PREVIEW_ENTITIES: usize = 50_000;
+/// Most work (vertices, control points and repeated references, counted before drawing) a
+/// preview may ask for: a single object can hold millions of vertices.
+const PREVIEW_WORK: usize = 500_000;
+/// What a character costs in that count: a glyph takes several times the work of a vertex.
+const TEXT_WORK: usize = 4;
+/// The shortest dash pattern the pass that finds the size draws: none, they do not change it.
+const NO_DASHES: f64 = 1e30;
 /// How long a preview pass may keep the interface waiting before it is given up.
 const PREVIEW_DEADLINE: Duration = Duration::from_millis(100);
 /// Most previews built in one frame; the others wait for the next frames.
@@ -129,6 +136,8 @@ struct State {
     new_library: String,
     /// Bumped to read the library again.
     refresh: u32,
+    /// The library is being read: Refresh waits for it, so clicks do not pile up reads.
+    reading: bool,
     /// Scale and rotation are asked on the drawing (the INSERT prompts) while these are on;
     /// off, the values below are used without asking.
     scale_on_screen: bool,
@@ -157,6 +166,7 @@ impl Default for State {
             library: None,
             new_library: String::new(),
             refresh: 0,
+            reading: false,
             scale_on_screen: false,
             scale: [1.0; 3],
             rotation_on_screen: false,
@@ -349,24 +359,58 @@ fn current_items(app: &mut CadApp, ui: &egui::Ui, pictures: &SharedPictures) -> 
 /// The contents of a library, or why it cannot be read.
 type Loaded = Result<Listing, String>;
 
-/// What a library holds, read once and kept until Refresh (reading a drawing walks its blocks).
-fn library_items(app: &mut CadApp, ui: &egui::Ui, path: &str, refresh: u32, pictures: &SharedPictures) -> Loaded {
+/// Where a library's contents arrive: empty until they are read.
+type Slot = Arc<Mutex<Option<Loaded>>>;
+
+/// The library the palette shows.
+#[derive(Clone)]
+struct Library {
+    path: String,
+    refresh: u32,
+    slot: Slot,
+}
+
+/// What a library holds, read once and kept until Refresh, or `None` while it is being read.
+fn library_items(ui: &egui::Ui, path: &str, refresh: u32, pictures: &SharedPictures) -> Option<Loaded> {
     let id = egui::Id::unique("blocks-library");
-    if let Some((p, r, loaded)) = ui.data(|d| d.get_temp::<(String, u32, Loaded)>(id))
-        && p == path
-        && r == refresh
+    let known = ui.data(|d| d.get_temp::<Library>(id)).filter(|l| l.path == path && l.refresh == refresh);
+    let library = known.unwrap_or_else(|| {
+        pictures.lock().unwrap_or_else(PoisonError::into_inner).drop_libraries();
+        let library = Library { path: path.to_string(), refresh, slot: read_in_background(ui.ctx(), path) };
+        ui.data_mut(|d| d.insert_temp(id, library.clone()));
+        library
+    });
+    library.slot.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+/// Read a library on a worker thread: a big drawing or a slow network folder must not stop the
+/// interface. The web has no threads and reads it now, as OPEN does.
+fn read_in_background(ctx: &egui::Context, path: &str) -> Slot {
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return loaded;
+        let slot = Slot::default();
+        let (out, ctx, owned) = (slot.clone(), ctx.clone(), path.to_string());
+        let worker = std::thread::Builder::new().name("block-library".into()).spawn(move || {
+            let loaded = catch_unwind(|| read_library(&owned)).unwrap_or_else(|_| Err(format!("{owned}: the file could not be read")));
+            *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(loaded);
+            ctx.request_repaint();
+        });
+        // No thread to read on: read it here.
+        if worker.is_err() {
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(read_library(path));
+        }
+        slot
     }
-    let loaded = read_library(app, path);
-    pictures.lock().unwrap_or_else(PoisonError::into_inner).drop_libraries();
-    ui.data_mut(|d| d.insert_temp(id, (path.to_string(), refresh, loaded.clone())));
-    loaded
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        Arc::new(Mutex::new(Some(read_library(path))))
+    }
 }
 
 /// What a library holds: the blocks of a drawing file, or the drawings of a folder.
-fn read_library(app: &mut CadApp, path: &str) -> Loaded {
-    let listed = app.run("blocklibrary", json!({ "path": path }))?;
+fn read_library(path: &str) -> Loaded {
+    let listed = cadcraft_engine::cmd::list_library(path).map_err(|e| e.to_string())?;
     let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
     let truncated = listed.get("truncated").and_then(Value::as_bool).unwrap_or(false);
     if listed.get("kind").and_then(Value::as_str) == Some("folder") {
@@ -467,6 +511,83 @@ fn clipped(text: &str, max: usize) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Take `n` from the work left, one at least (looking at an empty object is work too); `None`
+/// when there is not that much.
+fn spend(left: &mut usize, n: usize) -> Option<()> {
+    *left = left.checked_sub(n.max(1))?;
+    Some(())
+}
+
+/// The sum of what `sizes` yields.
+fn total(sizes: impl Iterator<Item = usize>) -> usize {
+    sizes.fold(0, usize::saturating_add)
+}
+
+/// What drawing `text` costs.
+fn text_work(text: &str) -> usize {
+    text.len().saturating_mul(TEXT_WORK)
+}
+
+/// The vertices of filled loops.
+fn loop_vertices(loops: &[HatchLoop]) -> usize {
+    total(loops.iter().map(|l| l.vertices.len()))
+}
+
+/// What the block `name` costs, drawn `times` times: what it costs once, multiplied.
+fn block_work(d: &Drawing, name: &str, times: usize, depth: usize, left: &mut usize) -> Option<()> {
+    let Some(inner) = d.block(name) else { return Some(()) };
+    if depth >= MAX_BLOCK_DEPTH {
+        return None;
+    }
+    let mut once = *left;
+    for e in inner.entities.iter() {
+        work_of(d, e, depth + 1, &mut once)?;
+    }
+    spend(left, left.saturating_sub(once).saturating_mul(times))
+}
+
+/// What a block reference costs: its attributes, and its block once for each cell of its array.
+fn reference_work(d: &Drawing, i: &Insert, depth: usize, left: &mut usize) -> Option<()> {
+    spend(left, total(i.attribs.iter().map(|a| text_work(&a.text.value))))?;
+    let cells = (i.rows.max(1) as usize).saturating_mul(i.cols.max(1) as usize);
+    block_work(d, &i.block, cells, depth, left)
+}
+
+/// What drawing `e` costs, counted before it is drawn: its vertices, control points and
+/// characters, and the blocks it draws. `None` when the cost is not worth knowing (it is too big).
+fn work_of(d: &Drawing, e: &Entity, depth: usize, left: &mut usize) -> Option<()> {
+    match &e.kind {
+        EntityKind::LwPolyline(p) => spend(left, p.vertices.len()),
+        EntityKind::Polyline3d(p) => spend(left, p.points.len()),
+        EntityKind::Spline(sp) => spend(left, sp.control.len().saturating_add(sp.fit.len())),
+        EntityKind::MLine(m) => spend(left, m.vertices.len().saturating_mul(m.def.elements.len().max(1))),
+        EntityKind::Leader(l) => spend(left, l.vertices.len()),
+        EntityKind::Wipeout(w) => spend(left, w.boundary.len()),
+        EntityKind::Region(r) => spend(left, loop_vertices(&r.loops)),
+        EntityKind::Hatch(h) => spend(left, loop_vertices(&h.loops).saturating_add(h.pattern_lines.len())),
+        EntityKind::Text(t) => spend(left, text_work(&t.value)),
+        EntityKind::MText(t) => spend(left, text_work(&t.contents)),
+        EntityKind::AttDef(a) => spend(left, text_work(&a.tag)),
+        EntityKind::Table(t) => spend(left, total(t.cells.iter().flatten().map(|c| text_work(&c.text).saturating_add(1)))),
+        EntityKind::Insert(i) => reference_work(d, i, depth, left),
+        EntityKind::Dimension(dm) => {
+            spend(left, 1)?;
+            dm.block.as_ref().map_or(Some(()), |name| block_work(d, name, 1, depth, left))
+        }
+        EntityKind::MLeader(m) => {
+            spend(left, total(m.leaders.iter().map(Vec::len)).saturating_add(m.text.as_ref().map_or(0, |t| text_work(&t.contents))))?;
+            m.block.as_ref().map_or(Some(()), |i| reference_work(d, i, depth, left))
+        }
+        _ => spend(left, 1),
+    }
+}
+
+/// Whether the objects can be drawn within the preview's work limit, counted before any drawing.
+fn affordable(d: &Drawing, ents: &[&Entity]) -> bool {
+    let mut left = PREVIEW_WORK;
+    ents.iter().all(|e| work_of(d, e, 0, &mut left).is_some())
+}
+
 /// The block as the canvas draws it (nested blocks, splines, text and fills included), each
 /// object in its colour. A huge block's picture holds only a first part. `None`: the block is too
 /// big, or drawing it was cancelled, took too long or failed.
@@ -478,13 +599,19 @@ fn outline(d: &Drawing, b: &Block, cancel: &Arc<AtomicBool>, deadline: Option<Du
     if ents.is_empty() {
         return Some(Shape::default());
     }
-    // A coarse pass for the size, then one detailed to match it.
-    let first = build_within(d, &ents, Options { tolerance: 1.0, lineweights: false, ..Options::default() }, cancel, deadline)?;
+    if !affordable(d, &ents) {
+        return None;
+    }
+    // A coarse pass for the size, then one detailed to match it. The view height is given, so a
+    // point is sized by the block and the drawing is not scanned for its extents.
+    let coarse = Options { tolerance: 1.0, min_dash: NO_DASHES, lineweights: false, view_height: 1.0, ..Options::default() };
+    let first = build_within(d, &ents, coarse, cancel, deadline)?;
     let span = first.bounds.width().max(first.bounds.height());
     if !(span.is_finite() && span > 0.0) {
         return Some(Shape::default());
     }
-    let opts = Options { tolerance: span / PREVIEW_DETAIL, min_dash: span / PREVIEW_DETAIL, lineweights: false, ..Options::default() };
+    let opts =
+        Options { tolerance: span / PREVIEW_DETAIL, min_dash: span / PREVIEW_DETAIL, lineweights: false, view_height: span, ..Options::default() };
     let list = build_within(d, &ents, opts, cancel, deadline)?;
     let mut lines: Vec<(Option<Color32>, Vec<Vec2>)> = Vec::new();
     let mut tris: Vec<(Option<Color32>, Vec<Vec2>)> = Vec::new();
@@ -669,11 +796,19 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
 
     let pictures: SharedPictures = ui.data_mut(|d| d.get_temp_mut_or_default::<SharedPictures>(egui::Id::unique("blocks-pictures")).clone());
+    let mut reading = false;
     let loaded: Loaded = match (st.tab, st.library.clone()) {
         (Tab::Current, _) => Ok(current_items(app, ui, &pictures)),
-        (Tab::Libraries, Some(path)) => library_items(app, ui, &path, st.refresh, &pictures),
+        (Tab::Libraries, Some(path)) => match library_items(ui, &path, st.refresh, &pictures) {
+            Some(loaded) => loaded,
+            None => {
+                reading = true;
+                Ok(Listing::default())
+            }
+        },
         (Tab::Libraries, None) => Ok(Listing::default()),
     };
+    st.reading = reading;
     let wanted = st.filter.trim().to_lowercase();
     let items: Vec<&Item> =
         loaded.as_ref().map(|l| l.items.iter().filter(|i| wanted.is_empty() || named(&i.label, &wanted)).collect()).unwrap_or_default();
@@ -695,6 +830,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(8.0);
                 let msg = match (&loaded, st.tab, st.library.is_some(), st.filter.trim().is_empty()) {
+                    _ if reading => crate::tl!("Reading the library...").to_string(),
                     (Err(e), ..) => e.clone(),
                     (_, Tab::Libraries, false, _) => crate::tl!("Add a folder of drawings or a drawing file to use its blocks.").to_string(),
                     (_, Tab::Libraries, true, true) => crate::tl!("This library has no drawings or blocks.").to_string(),
@@ -834,10 +970,12 @@ fn libraries_bar(ui: &mut egui::Ui, st: &mut State, act: &mut Option<Act>) {
             *act = Some(Act::PickLibrary);
         }
         if ui
-            .add_enabled(st.library.is_some(), egui::Button::new(crate::tl!("Refresh")))
+            .add_enabled(st.library.is_some() && !st.reading, egui::Button::new(crate::tl!("Refresh")))
             .on_hover_text(crate::tl!("Read the library again"))
             .clicked()
         {
+            // The files are parsed again, even one whose size and time look the same.
+            cadcraft_engine::cmd::clear_library_cache();
             st.refresh = st.refresh.wrapping_add(1);
         }
     });
@@ -1110,7 +1248,7 @@ mod tests {
     use cadcraft_engine::doc::{Block, Drawing, Entity, EntityKind, Handle, Line};
     use egui::Pos2;
 
-    use super::{Item, Lazy, PREVIEW_ENTITIES, Picture, Pictures, Shape, Source, State, clipped, insert, outline, picture};
+    use super::{Item, Lazy, PREVIEW_ENTITIES, PREVIEW_WORK, Picture, Pictures, Shape, Source, State, affordable, clipped, insert, outline, picture};
     use crate::{CadApp, Services};
 
     /// The block's picture, with no cancelling and no deadline.
@@ -1225,6 +1363,117 @@ mod tests {
         assert!(matches!(picture(&lazy), Picture::Unavailable));
     }
 
+    /// One object with a million vertices, or a reference repeated a million times, is refused
+    /// before anything is drawn; ordinary ones are drawn.
+    #[test]
+    fn work_is_counted_before_drawing() {
+        use cadcraft_engine::doc::LwPolyline;
+        use cadcraft_engine::geom::{PolyVertex, Vec2};
+        let poly = |n: usize| {
+            let vertices = (0..n).map(|i| PolyVertex { p: Vec2::new(i as f64, (i % 7) as f64), ..PolyVertex::default() }).collect();
+            Entity::new(
+                Handle(0x200),
+                EntityKind::LwPolyline(LwPolyline { vertices, closed: false, const_width: 0.0, elevation: 0.0, plinegen: false }),
+            )
+        };
+        let d = Drawing::new_metric();
+        let mut big = Block::new("BIG");
+        big.entities.push(poly(PREVIEW_WORK + 1));
+        let cancel = Arc::new(AtomicBool::new(false));
+        assert!(outline(&d, &big, &cancel, None).is_none(), "a million vertices are not drawn");
+        let mut small = Block::new("SMALL");
+        small.entities.push(poly(1_000));
+        assert!(outline(&d, &small, &cancel, None).is_some_and(|s| !s.lines.is_empty()));
+
+        // A reference repeated across a huge array costs what one cell costs, times the cells.
+        let mut s = Session::new();
+        s.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
+        make_block(&mut s, "CELL");
+        s.execute("insert", &json!({ "name": "CELL", "at": [0, 0] })).unwrap();
+        let mut array = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        if let EntityKind::Insert(i) = &mut array.kind {
+            i.rows = 5_000;
+            i.cols = 5_000;
+        }
+        let mut holder = Block::new("GRID");
+        holder.entities.push(array);
+        assert!(outline(s.doc().unwrap(), &holder, &cancel, None).is_none(), "25 million cells are not drawn");
+    }
+
+    /// Lists of every kind, long texts and the blocks a dimension or a multileader draws count.
+    #[test]
+    fn work_covers_every_list_and_the_blocks_objects_draw() {
+        use cadcraft_engine::doc::{HatchLoop, LwPolyline, MLine, MLineJust, MLineStyle, Region, Wipeout};
+        use cadcraft_engine::geom::{PolyVertex, Vec2};
+        fn too_much(d: &Drawing, kind: EntityKind) -> bool {
+            !affordable(d, &[&Entity::new(Handle(0x200), kind)])
+        }
+        let points: Vec<Vec2> = (0..=PREVIEW_WORK).map(|i| Vec2::new(i as f64, (i % 7) as f64)).collect();
+        let vertices: Vec<PolyVertex> = points.iter().map(|p| PolyVertex { p: *p, ..PolyVertex::default() }).collect();
+        let d = Drawing::new_metric();
+        assert!(too_much(&d, EntityKind::Wipeout(Wipeout { boundary: points.clone() })));
+        assert!(too_much(&d, EntityKind::MLine(MLine::new(&MLineStyle::default(), &points, false, MLineJust::default(), 1.0))));
+        let region = Region { loops: vec![HatchLoop { vertices: vertices.clone(), outer: true, sources: Vec::new() }] };
+        assert!(too_much(&d, EntityKind::Region(region)));
+        // An object with nothing in it still takes a visit, for each cell of an array.
+        let mut empty = Block::new("EMPTY");
+        let nothing = LwPolyline { vertices: Vec::new(), closed: false, const_width: 0.0, elevation: 0.0, plinegen: false };
+        empty.entities.push(Entity::new(Handle(0x202), EntityKind::LwPolyline(nothing)));
+        let mut grid = Drawing::new_metric();
+        grid.blocks.insert("EMPTY".into(), Arc::new(empty));
+        let cells = (PREVIEW_WORK as f64).sqrt() as u32 + 1;
+        let array = json!({ "block": "EMPTY", "insert": [0, 0, 0], "rows": cells, "cols": cells });
+        assert!(too_much(&grid, EntityKind::Insert(serde_json::from_value(array).unwrap())));
+
+        let mut s = Session::new();
+        let mut heavy = Block::new("HEAVY");
+        let poly = LwPolyline { vertices, closed: false, const_width: 0.0, elevation: 0.0, plinegen: false };
+        heavy.entities.push(Entity::new(Handle(0x201), EntityKind::LwPolyline(poly)));
+        s.doc_mut().unwrap().blocks.insert("HEAVY".into(), Arc::new(heavy));
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        s.execute("mleader", &json!({ "points": [[0, 0], [5, 5]], "text": "A" })).unwrap();
+        s.execute("mleader", &json!({ "points": [[0, 0], [5, 5]], "block": "HEAVY" })).unwrap();
+        let d = s.doc().unwrap();
+        let of = |pick: fn(&EntityKind) -> bool| d.model.iter().find(|e| pick(&e.kind)).map(|e| e.kind.clone()).unwrap();
+        // The drawn block of the dimension, the block of the multileader and a very long text.
+        let mut dim = of(|k| matches!(k, EntityKind::Dimension(_)));
+        assert!(!too_much(d, dim.clone()));
+        if let EntityKind::Dimension(dm) = &mut dim {
+            dm.block = Some("HEAVY".into());
+        }
+        assert!(too_much(d, dim));
+        assert!(too_much(d, of(|k| matches!(k, EntityKind::MLeader(m) if m.block.is_some()))));
+        let mut with_text = of(|k| matches!(k, EntityKind::MLeader(m) if m.text.is_some()));
+        if let EntityKind::MLeader(m) = &mut with_text
+            && let Some(text) = &mut m.text
+        {
+            text.contents = "x".repeat(PREVIEW_WORK);
+            assert!(too_much(d, EntityKind::MText(text.clone())));
+        }
+        assert!(too_much(d, with_text));
+    }
+
+    /// A block of points is sized by itself, not by a drawing a thousand times bigger: each X
+    /// stays a small part of the picture.
+    #[test]
+    fn a_point_preview_does_not_follow_the_drawing_extents() {
+        use cadcraft_engine::doc::{Common, Point, Space};
+        let mut d = Drawing::new_metric();
+        d.header.set_i64("PDMODE", 3);
+        let far = Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1e6, 1e6, 0.0) };
+        d.add(&Space::Model, Common::default(), EntityKind::Line(far)).unwrap();
+        let mut b = Block::new("DOTS");
+        for i in 0..4 {
+            b.entities.push(Entity::new(Handle(0x300 + i), EntityKind::Point(Point { p: Vec3::new(i as f64, 0.0, 0.0), angle: 0.0 })));
+        }
+        let shape = outline(&d, &b, &Arc::new(AtomicBool::new(false)), None).unwrap();
+        assert!(!shape.lines.is_empty());
+        for (_, line) in &shape.lines {
+            let (min, max) = line.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.x), hi.max(p.x)));
+            assert!(max - min < 0.25, "a point takes {} of the picture", max - min);
+        }
+    }
+
     /// Coordinates that are not numbers never reach the picture.
     #[test]
     fn hostile_coordinates_stay_out_of_the_picture() {
@@ -1258,7 +1507,8 @@ mod tests {
         a.entities.push(back);
         d.blocks.insert("A".into(), Arc::new(a));
         let d = s.doc().unwrap();
-        let _ = shape(d, d.block("A").unwrap());
+        // The loop is found while the work is counted: no picture, and nothing drawn.
+        assert!(outline(d, d.block("A").unwrap(), &Arc::new(AtomicBool::new(false)), None).is_none());
     }
 
     /// What no frame shows goes first; what the current frame shows stays, whatever the total.

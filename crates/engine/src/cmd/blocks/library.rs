@@ -28,7 +28,7 @@ const MAX_FILES: usize = 2000;
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_SCANNED: usize = 100_000;
 /// Most blocks a palette listing holds: the rest of a hostile file's table is left out.
-pub(super) const MAX_LISTED: usize = 10_000;
+const MAX_LISTED: usize = 10_000;
 /// Most libraries the list keeps.
 const MAX_LIBRARIES: usize = 64;
 /// The longest library path kept.
@@ -50,6 +50,14 @@ struct Cached {
 }
 
 static CACHE: Mutex<Vec<Cached>> = Mutex::new(Vec::new());
+
+/// Forget the library drawings read so far: the next read parses each file again, even one whose
+/// size and time did not change (Refresh in the palette).
+pub fn clear_library_cache() {
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.clear();
+    }
+}
 
 /// The file's size and modification time; `None` where it cannot be told (nothing is kept then).
 fn stamp(path: &str) -> Option<(u64, Option<SystemTime>)> {
@@ -145,12 +153,23 @@ fn is_folder(path: &str) -> bool {
     !cfg!(target_arch = "wasm32") && Path::new(path).is_dir()
 }
 
-/// The named blocks of a library drawing: no generated or layout blocks, no xrefs.
-pub(crate) fn library_blocks(d: &Drawing) -> Vec<&std::sync::Arc<cadcraft_doc::Block>> {
-    let mut v: Vec<_> =
-        d.blocks.values().filter(|b| !b.anonymous && b.xref_path.is_none() && !b.name.starts_with('*') && !b.name.contains('|')).collect();
-    v.sort_by_key(|b| b.name.to_ascii_lowercase());
-    v
+/// The first `MAX_LISTED` named blocks of a library drawing by name (no generated or layout
+/// blocks, no xrefs), and whether there were more. The names are made lower case once, and only
+/// the blocks that are kept are sorted.
+pub(crate) fn library_blocks(d: &Drawing) -> (Vec<&std::sync::Arc<cadcraft_doc::Block>>, bool) {
+    let mut keyed: Vec<(String, &std::sync::Arc<cadcraft_doc::Block>)> = d
+        .blocks
+        .values()
+        .filter(|b| !b.anonymous && b.xref_path.is_none() && !b.name.starts_with('*') && !b.name.contains('|'))
+        .map(|b| (b.name.to_ascii_lowercase(), b))
+        .collect();
+    let truncated = keyed.len() > MAX_LISTED;
+    if truncated {
+        keyed.select_nth_unstable_by(MAX_LISTED, |a, b| a.0.cmp(&b.0));
+        keyed.truncate(MAX_LISTED);
+    }
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    (keyed.into_iter().map(|(_, b)| b).collect(), truncated)
 }
 
 /// Read a library file (for the palette's previews too), kept until the file changes.
@@ -158,18 +177,24 @@ pub fn read_library_file(path: &str) -> Result<Arc<Drawing>> {
     cached_drawing(path)
 }
 
-/// BLOCKLIBRARY: list a folder's drawings or a drawing's blocks.
-fn run_library(_s: &mut Session, p: &Value) -> Result<Value> {
-    let path = str_param(p, "path").map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| bad("blocklibrary", "`path` is required"))?;
+/// What BLOCKLIBRARY answers for `path`. It needs no session, so the palette reads big drawings
+/// and slow folders on a worker thread.
+pub fn list_library(path: &str) -> Result<Value> {
     if is_folder(path) {
         let (files, truncated) = folder_files(Path::new(path))?;
         let list: Vec<Value> = files.iter().map(|(name, file)| json!({ "name": name, "file": file })).collect();
         return Ok(json!({ "kind": "folder", "path": path, "files": list, "truncated": truncated }));
     }
     let d = cached_drawing(path)?;
-    let blocks = library_blocks(&d);
-    let list: Vec<Value> = blocks.iter().take(MAX_LISTED).map(|b| json!({ "name": b.name, "description": b.description })).collect();
-    Ok(json!({ "kind": "file", "path": path, "blocks": list, "truncated": blocks.len() > MAX_LISTED }))
+    let (blocks, truncated) = library_blocks(&d);
+    let list: Vec<Value> = blocks.iter().map(|b| json!({ "name": b.name, "description": b.description })).collect();
+    Ok(json!({ "kind": "file", "path": path, "blocks": list, "truncated": truncated }))
+}
+
+/// BLOCKLIBRARY: list a folder's drawings or a drawing's blocks.
+fn run_library(_s: &mut Session, p: &Value) -> Result<Value> {
+    let path = str_param(p, "path").map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| bad("blocklibrary", "`path` is required"))?;
+    list_library(path)
 }
 
 /// BLOCKLIBIMPORT: define a library block (or a whole drawing) in the current drawing.

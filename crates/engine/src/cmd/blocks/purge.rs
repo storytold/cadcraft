@@ -114,8 +114,20 @@ fn json_key(kind: Kind) -> &'static str {
     }
 }
 
+/// Most objects PURGE's scan reads, as the scan of used layers does.
+const MAX_SCAN: usize = 5_000_000;
+
+fn all_entities(d: &Drawing) -> impl Iterator<Item = &std::sync::Arc<cadcraft_doc::Entity>> {
+    d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()))
+}
+
 fn entities(d: &Drawing) -> impl Iterator<Item = &std::sync::Arc<cadcraft_doc::Entity>> {
-    d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter())).take(5_000_000)
+    all_entities(d).take(MAX_SCAN)
+}
+
+/// Whether the scan reads the whole drawing: past its limit, what is in use can look unused.
+pub(in crate::cmd) fn scan_reads_everything(d: &Drawing) -> bool {
+    all_entities(d).nth(MAX_SCAN).is_none()
 }
 
 /// The arrowhead block names a dimension's overrides set.
@@ -151,10 +163,9 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
             _ => {}
         }
     }
-    let mut guard = 0;
+    // Each block is walked once, so this ends, cycles included.
     while let Some(n) = frontier.pop() {
-        guard += 1;
-        if guard > 100_000 || !used.insert(n.to_ascii_uppercase()) {
+        if !used.insert(n.to_ascii_uppercase()) {
             continue;
         }
         if let Some(b) = d.block(&n) {

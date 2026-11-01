@@ -145,15 +145,33 @@ fn the_palette_closes_and_reopens_where_it_was() {
     assert!(app.ui.docking.layout.contains(&Panel::Blocks));
 }
 
-/// Every library file reads as a drawing with a block "Valve" (a line), whatever its bytes.
+/// How many times a library file was parsed.
+static READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Every library file reads as a drawing with a block "Valve" (a line), whatever its bytes, and
+/// takes long enough to see the palette go on drawing meanwhile.
 fn read_library(_bytes: &[u8], _name: &str) -> Result<cadcraft_engine::doc::Drawing, String> {
     use cadcraft_engine::doc::geom::Vec3;
     use cadcraft_engine::doc::{Block, Drawing, Entity, EntityKind, Handle, Line};
+    READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(std::time::Duration::from_millis(300));
     let mut d = Drawing::new_metric();
     let mut valve = Block::new("Valve");
     valve.entities.push(Entity::new(Handle(0x70), EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(4.0, 0.0, 0.0) })));
     d.blocks.insert("Valve".into(), std::sync::Arc::new(valve));
     Ok(d)
+}
+
+/// Draw frames until `label` shows: a library is read on a worker thread.
+fn wait_for(h: &mut Harness<'static, CadApp>, label: &str) {
+    for _ in 0..1000 {
+        if h.query_by_label(label).is_some() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.run_steps(1);
+    }
+    panic!("{label} never showed");
 }
 
 #[test]
@@ -179,9 +197,19 @@ fn a_library_is_added_listed_placed_and_removed() {
     h.get_by_label("Libraries").click();
     h.run_steps(3);
     h.get_by_label("valves.dxf").click();
-    h.run_steps(3);
-    h.get_by_label("Valve");
+    h.run_steps(2);
+    // The palette goes on drawing while the file is read, and says so.
+    h.get_by_label("Reading the library...");
+    assert!(h.get_by_label("Refresh").accesskit_node().is_disabled());
+    wait_for(&mut h, "Valve");
     assert!(h.state().session.doc().unwrap().block("Valve").is_none());
+
+    // Refresh parses the file again, even though its size and time have not changed.
+    let reads = READS.load(std::sync::atomic::Ordering::SeqCst);
+    h.get_by_label("Refresh").click();
+    h.run_steps(2);
+    wait_for(&mut h, "Valve");
+    assert_eq!(READS.load(std::sync::atomic::Ordering::SeqCst), reads + 1);
 
     // Placing it defines the block here and waits for the insertion point.
     h.get_by_label("Valve").click();

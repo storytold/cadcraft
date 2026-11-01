@@ -320,17 +320,14 @@ fn run_blockspalette(s: &mut Session, _p: &Value) -> Result<Value> {
     count(&d.model);
     d.layouts.iter().for_each(|l| count(&l.entities));
     d.blocks.values().for_each(|b| count(&b.entities));
-    let mut blocks: Vec<&Arc<Block>> =
-        d.blocks.values().filter(|b| !b.anonymous && b.xref_path.is_none() && !b.name.starts_with('*') && !b.name.contains('|')).collect();
-    blocks.sort_by_key(|b| b.name.to_ascii_lowercase());
+    let (blocks, truncated) = library::library_blocks(d);
     let list: Vec<Value> = blocks
         .iter()
-        .take(library::MAX_LISTED)
         .map(
             |b| json!({ "name": b.name, "description": b.description, "references": counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0) }),
         )
         .collect();
-    Ok(json!({ "blocks": list, "truncated": blocks.len() > library::MAX_LISTED }))
+    Ok(json!({ "blocks": list, "truncated": truncated }))
 }
 
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {

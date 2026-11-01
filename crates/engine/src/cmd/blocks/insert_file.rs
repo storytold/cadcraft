@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use super::super::file::MAX_DRAWING_BYTES;
 use super::super::file::io;
 use super::super::modify::explode_kind;
-use super::purge::{Kind, candidates, override_arrows};
+use super::purge::{Kind, candidates, override_arrows, scan_reads_everything};
 use super::{referenced_block, references_block, valid_block_name};
 use crate::cmd::{bad, str_param};
 use crate::{EngineError, Result, Session};
@@ -187,10 +187,9 @@ impl TableNames {
 fn reachable(d: &Drawing, roots: Vec<String>) -> BTreeSet<String> {
     let mut seen = BTreeSet::new();
     let mut todo = roots;
-    let mut guard = 0;
+    // Each block is walked once, so this ends, cycles included.
     while let Some(n) = todo.pop() {
-        guard += 1;
-        if guard > 100_000 || !seen.insert(n.to_ascii_uppercase()) {
+        if !seen.insert(n.to_ascii_uppercase()) {
             continue;
         }
         let Some(b) = d.block(&n) else { continue };
@@ -223,8 +222,12 @@ fn needed_blocks(src: &Drawing) -> BTreeSet<String> {
 
 /// Remove the blocks, layers, linetypes and styles that were not in the drawing `before` and that
 /// nothing uses (PURGE's scan), in an order where removing one frees the next. `keep` is the
-/// block just defined: nothing refers to it yet, so it and the blocks it needs stay.
+/// block just defined: nothing refers to it yet, so it and the blocks it needs stay. Nothing goes
+/// from a drawing too big for that scan: an unused entry stays, but a used one would be lost.
 fn drop_unused_new(d: &mut Drawing, before: &TableNames, keep: &str) {
+    if !scan_reads_everything(d) {
+        return;
+    }
     // Removing a dimension style frees its arrowhead block, which an earlier table already
     // scanned: scan again until a pass removes nothing (a chain is never longer than the tables).
     for _ in 0..MERGED.len() {
@@ -387,6 +390,78 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    /// A block holding very many references still reaches every block it needs.
+    #[test]
+    fn a_block_of_many_references_keeps_all_it_needs() {
+        let reference = |handle: u64, block: &str| {
+            let insert: cadcraft_doc::Insert = serde_json::from_value(json!({ "block": block, "insert": [0, 0, 0] })).unwrap();
+            Entity::new(Handle(handle), EntityKind::Insert(insert))
+        };
+        let mut big = Block::new("Big");
+        big.entities.push(reference(0x100, "Deep"));
+        for i in 0..100_001 {
+            big.entities.push(reference(0x200 + i, "Leaf"));
+        }
+        let mut d = Drawing::default();
+        d.blocks.insert("Big".into(), Arc::new(big));
+        d.blocks.insert("Deep".into(), Arc::new(Block::new("Deep")));
+        d.blocks.insert("Leaf".into(), Arc::new(Block::new("Leaf")));
+        assert!(reachable(&d, vec!["Big".into()]).contains("DEEP"));
+    }
+
+    /// A drawing with very many references does not lose the arrowhead of a merged dimension
+    /// style: the arrowheads are the last thing PURGE's walk looks at.
+    #[test]
+    fn many_references_keep_a_merged_arrowhead() {
+        let mut d = Drawing::new_metric();
+        d.blocks.insert("Leaf".into(), Arc::new(Block::new("Leaf")));
+        for i in 0..100_001 {
+            let insert: cadcraft_doc::Insert = serde_json::from_value(json!({ "block": "Leaf", "insert": [0, 0, 0] })).unwrap();
+            d.model.push(Entity::new(Handle(0x200 + i), EntityKind::Insert(insert)));
+        }
+        let before = TableNames::of(&d);
+        d.blocks.insert("Tip".into(), Arc::new(Block::new("Tip")));
+        d.dim_styles.push(cadcraft_doc::DimStyle { name: "Late".into(), arrow_block: "Tip".into(), ..Default::default() });
+        d.header.set_str("DIMSTYLE", "Late");
+        d.blocks.insert("Merged".into(), Arc::new(Block::new("Merged")));
+        drop_unused_new(&mut d, &before, "Merged");
+        assert!(d.block("Tip").is_some());
+    }
+
+    /// Past the purge scan's limit nothing is called unused: a merged block's dimension style and
+    /// layer stay even when the scan never reaches its objects.
+    #[test]
+    fn a_drawing_too_big_for_the_scan_keeps_what_was_merged() {
+        let mut s = Session::new();
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        let mut dim = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        dim.common.layer = "Late".into();
+        if let EntityKind::Dimension(dm) = &mut dim.kind {
+            dm.style = "Late".into();
+        }
+        // One definition under many names: millions of objects for the scan, thousands in memory.
+        let mut filler = Block::new("Filler");
+        for i in 0..10_000 {
+            filler.entities.push(Entity::new(Handle(0x1000 + i), dim.kind.clone()));
+        }
+        let filler = Arc::new(filler);
+        let mut d = Drawing::new_metric();
+        for i in 0..501 {
+            d.blocks.insert(format!("F{i:03}"), filler.clone());
+        }
+        let before = TableNames::of(&d);
+        assert!(!scan_reads_everything(&d));
+        d.layers.push(cadcraft_doc::Layer { name: "Late".into(), ..Default::default() });
+        d.dim_styles.push(cadcraft_doc::DimStyle { name: "Late".into(), ..Default::default() });
+        // Sorted after every filler, so past the limit.
+        let mut merged = Block::new("Z");
+        merged.entities.push(dim);
+        d.blocks.insert("Z".into(), Arc::new(merged));
+        drop_unused_new(&mut d, &before, "Z");
+        assert!(d.layers.iter().any(|l| l.name == "Late"));
+        assert!(d.dim_styles.iter().any(|t| t.name == "Late"));
     }
 
     #[test]

@@ -1266,6 +1266,7 @@ menu	Modify	수정
 	This block is already in the drawing, so its definition is used.	이 블록은 이미 도면에 있으므로 기존 정의를 사용합니다.
 	Open Library...	라이브러리 열기...
 	Read the library again	라이브러리 다시 읽기
+	Reading the library...	라이브러리를 읽는 중...
 	Refresh	새로 고침
 	Remove from the list	목록에서 제거
 	Repeat Placement	배치 반복
