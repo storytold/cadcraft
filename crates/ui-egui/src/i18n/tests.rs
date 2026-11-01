@@ -63,6 +63,8 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     let catalog = catalog(language).unwrap();
     let mut sources = BTreeSet::new();
     sources.extend(crate::menus::MENUS.iter().copied());
+    // File ▸ Open Recent is built at run time, not from a command's menu path.
+    sources.extend([crate::menus::OPEN_RECENT, crate::menus::CLEAR_RECENT]);
     for c in cadcraft_engine::command_specs() {
         sources.insert(c.label);
         sources.extend(c.menu.iter().copied());
@@ -558,6 +560,13 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
         }
         assert!(view.has_glyph(&egui::FontId::monospace(12.0), '\u{21e7}'), "U+21E7 shift symbol missing in Monospace");
     });
+}
+
+/// #1129: in Chinese every menu, submenu, command, tool palette and object-snap label is
+/// translated, so no menu shows English entries.
+#[test]
+fn chinese_menus_and_commands_are_fully_translated() {
+    assert_eq!(missing_commands_menus_tools_and_snap_labels("zh"), Vec::<String>::new());
 }
 
 /// Bosnian counts: 1, 21 `one`; 2–4, 22–24 (not 12–14) `few`; everything else `other`.
