@@ -1,10 +1,11 @@
-//! Edit Text: the window a double-click on a text object opens.
+//! Edit Text: the window behind the shortcut menu's Edit Text entry.
 //!
-//! TEXTEDIT already existed, but only as a command line: double-clicking a single-line text put
-//! the caret in the command bar, one line, no context, and the text under the cursor was out of
-//! sight. The window shows the same edit over the drawing: the object's own text, its type and
-//! handle, and OK/Cancel. The engine call is unchanged (`textedit` with a handle and the new
-//! text), so undo, locked layers and the DXF round trip behave exactly as before.
+//! TEXTEDIT already existed, but only as a command line: it put the caret in the command bar,
+//! one line, no context, and the text under the cursor was out of sight. The window shows the
+//! same edit over the drawing: the object's own text, its type and handle, and OK/Cancel. The
+//! engine call is unchanged (`textedit` with a handle and the new text), so undo, locked layers
+//! and the DXF round trip behave exactly as before. The double-click keeps its in-place editing
+//! (#842); the window is the shortcut menu's way in.
 
 use egui::RichText;
 use serde_json::json;
@@ -33,13 +34,17 @@ struct State {
     text: String,
     /// What the drawing holds now, to tell an edit from a no-op.
     original: String,
+    /// The drawing the window was opened for: a handle means nothing once another drawing is
+    /// active, and committing to it would edit an object the user never saw.
+    uid: u64,
     message: String,
 }
 
 /// Read the object the window is for. A handle that no longer exists, or an object that is not
 /// text, leaves the window empty instead of failing: the drawing may have changed under it.
 fn initial(app: &CadApp, hex: &str) -> State {
-    let mut st = State { handle: hex.to_string(), ..Default::default() };
+    let uid = app.session.state().map(|s| s.uid).unwrap_or_default();
+    let mut st = State { handle: hex.to_string(), uid, ..Default::default() };
     let Some(h) = cadcraft_doc::Handle::parse_hex(hex) else { return st };
     let Ok(d) = app.session.doc() else { return st };
     let Some(e) = d.entity(h) else { return st };
@@ -100,6 +105,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
         // keeps the undo stack honest.
         if st.text == st.original {
             keep = false;
+        } else if app.session.state().map(|s| s.uid).ok() != Some(st.uid) {
+            // The drawing switched while the window sat open: the handle now names another
+            // drawing's object, so the commit is refused and the user reopens on the drawing
+            // they meant to edit.
+            st.message = crate::tl!("The drawing changed. Close the window and open it again.").to_string();
         } else {
             let params = json!({ "handles": [st.handle.clone()], "text": st.text });
             match app.run("textedit", params) {
@@ -112,5 +122,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
         }
     }
     *open = keep;
-    ctx.data_mut(|d| d.insert_temp(sid, st));
+    // The state lives exactly as long as the window does: a closed window leaves nothing
+    // behind, so reopening it reads the drawing's text instead of an edit the user cancelled.
+    if keep {
+        ctx.data_mut(|d| d.insert_temp(sid, st));
+    } else {
+        ctx.data_mut(|d| d.remove_temp::<State>(sid));
+    }
 }

@@ -1,4 +1,4 @@
-use super::{CadApp, Handle, Vec2};
+use super::{CadApp, Handle, Input, Vec2};
 
 /// The vertical wheel scroll this frame that zooms, in points, read from the raw wheel events so
 /// each notch zooms by its whole step at once, as in standard CAD (#660). egui's smoothed delta
@@ -26,18 +26,20 @@ pub(super) fn wheel_zoom_points(events: &[egui::Event], opts: &egui::InputOption
 }
 
 /// The model space tiles on screen (none without tiling): each tile's rectangle in `full`.
-/// Open Edit Text on the text, mtext or attribute definition at `p` (the objects the shortcut
-/// menu offers Edit Text for); false when there is none.
+/// Start TEXTEDIT on the text, mtext or attribute definition at `p` (the objects its shortcut menu
+/// offers Edit Text for); false when there is none.
 pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
-    let hit = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        let e = app.session.doc().ok()?.entity(h)?;
-        matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)).then_some(h)
+    let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
+        app.session.doc().ok()?.entity(h).map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)))
     });
-    let Some(h) = hit else { return false };
-    // The window edits the object in place of the command line, which used to take the caret and
-    // hide the drawing behind it.
-    app.ui.dialog = Some(format!("textedit:{}", h.hex()));
+    if is_text != Some(true) {
+        return false;
+    }
+    app.start("textedit");
+    if let Err(e) = app.session.input(Input::Point(p)) {
+        app.session.echo(e.to_string());
+    }
     true
 }
 
