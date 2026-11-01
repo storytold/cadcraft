@@ -246,6 +246,11 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// The single-line text (a TEXT or an attribute definition) whose new value is being asked
+    /// for (TEXTEDIT with one picked): where the UI puts its in-place field.
+    fn editing_text(&self) -> Option<cadcraft_doc::Text> {
+        None
+    }
 }
 
 /// See [`Interactive::drag`].

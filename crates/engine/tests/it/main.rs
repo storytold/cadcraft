@@ -150,6 +150,7 @@ mod table_styles;
 mod temp_tracking;
 mod text_commands;
 mod text_left_justify;
+mod textedit_editing_text;
 mod tolerance;
 mod transparent;
 mod trim_closed_polyline;
