@@ -9,7 +9,7 @@ use cadcraft_doc::{
     Linetype, Lineweight, LwPolyline, MAX_FRAME_CHARS, MLeaderStyle, MText, MultilineAttrib, NamedView, PageSetup, Point, Polyline3d, RawTag,
     RayLine, Solid, Table, TableCell, Text, TextStyle, Tolerance, Transparency, Ucs, Unknown, VAlign, Viewport, VportConfig, VportTile, Wipeout,
 };
-use cadcraft_dxf::{Tag, record_slices as records, section_slices as sections};
+use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
 
 use crate::{IoError, Result};
@@ -59,7 +59,7 @@ struct Rx {
     pstyles: HashMap<String, String>,
     /// Upper-case block name → associative array parameters from its BLOCK_RECORD.
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
-    /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
+    /// LAYER record handle (upper case) → layer name (VIEWPORT 331 frozen layers (341 in older CADCraft files)).
     layers: HashMap<String, String>,
 }
 
@@ -115,16 +115,16 @@ fn read_tags_budgeted(tags: &[Tag], mut table_cells_left: usize) -> Result<Drawi
     count_skipped(&mut skipped, "(no section)", outside_sections(tags));
     for s in &secs {
         match s.name.as_str() {
-            "HEADER" => header(s.tags, &mut d),
-            "TABLES" => tables(s.tags, &mut d, &mut rx),
-            "BLOCKS" => blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
+            "HEADER" => header(&s.tags, &mut d),
+            "TABLES" => tables(&s.tags, &mut d, &mut rx),
+            "BLOCKS" => blocks.extend(read_blocks(&s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&records(s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(&records(&s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
-            "OBJECTS" => read_objects(s.tags, &mut objs, &mut layout_objs),
+            "OBJECTS" => read_objects(&s.tags, &mut objs, &mut layout_objs),
             _ => {}
         }
     }

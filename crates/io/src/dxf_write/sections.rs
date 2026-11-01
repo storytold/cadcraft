@@ -1144,10 +1144,6 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         }
     }
 
-    // Each CLASS may need one group 91. Reserve before insertion so adding class
-    // counters cannot repeatedly reallocate a multi-million-tag drawing.
-    let class_count = tags.iter().filter(|t| t.code == 0 && t.str() == "CLASS").count();
-    tags.reserve_exact(class_count);
     let mut start = 0;
     while start < tags.len() {
         if tags.get(start).is_none_or(|t| t.code != 0 || t.str() != "CLASS") {

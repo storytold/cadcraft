@@ -4,7 +4,7 @@ use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
 
 pub(super) fn parse_entities(
-    recs: &[(String, &[Tag])],
+    recs: &[(String, Vec<Tag>)],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
@@ -129,7 +129,7 @@ pub(super) fn read_blocks(
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
     for (k, tg) in records(tags) {
-        objs.add(&k, tg);
+        objs.add(&k, &tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
