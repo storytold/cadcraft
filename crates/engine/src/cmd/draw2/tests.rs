@@ -1009,6 +1009,155 @@ fn rectang_options_command_line() {
     }
 }
 
+/// RECTANG against what AutoCAD 2024 stores for the same typed input (black-box: synthetic
+/// input in accoreconsole, read back with `entget`): Area with the corners taken off, and
+/// corners too large for the sides.
+#[test]
+fn rectang_area_and_oversized_corners_match_autocad() {
+    type Case = (&'static [&'static str], &'static [[f64; 3]], [f64; 3]);
+    // (typed input, vertices [x, y, bulge], [width, elevation, thickness])
+    let cases: [Case; 4] = [
+        // RECTANG-028: Area counts the chamfered corners off.
+        (
+            &["rectang _C 1.5 2.5 26.36462345136234,-19.7291241693893 _R 0 _A 1442.9297064464572 _W 35.53488991311575"],
+            &[
+                [26.36462345136234, -18.2291241693893, 0.0],
+                [28.86462345136234, -19.7291241693893, 0.0],
+                [65.68168268505678, -19.7291241693893, 0.0],
+                [67.18168268505678, -17.2291241693893, 0.0],
+                [67.18168268505678, 14.30576574372644, 0.0],
+                [64.68168268505678, 15.80576574372644, 0.0],
+                [27.86462345136234, 15.80576574372644, 0.0],
+                [26.36462345136234, 13.30576574372644, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-035-VN: Area counts the fillets off, at survey coordinates.
+        (
+            &["rectang _F 2.0 612322.0691653182,2398792.948957577 _R 0 _A 592.8936847254046 _L 19.287858563349488"],
+            &[
+                [612322.0691653182, 2398794.948957577, 0.414213562373095],
+                [612324.0691653182, 2398792.948957577, 0.0],
+                [612339.3570238815, 2398792.948957577, 0.414213562373095],
+                [612341.3570238815, 2398794.948957577, 0.0],
+                [612341.3570238815, 2398821.866195597, 0.414213562373095],
+                [612339.3570238815, 2398823.866195598, 0.0],
+                [612324.0691653182, 2398823.866195598, 0.414213562373095],
+                [612322.0691653182, 2398821.866195597, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-029: a fillet too large: each corner two coincident vertices.
+        (
+            &["rectang _F 11.37084114989061 -21.46774953784037,-0.023473793210982308 _R 0 -2.5163476213560187,49.88119923361903"],
+            &[
+                [-21.46774953784036, -0.0234737932109823, 0.0],
+                [-21.46774953784036, -0.0234737932109823, 0.0],
+                [-2.516347621356018, -0.0234737932109823, 0.0],
+                [-2.516347621356018, -0.0234737932109823, 0.0],
+                [-2.516347621356018, 49.88119923361903, 0.0],
+                [-2.516347621356018, 49.88119923361903, 0.0],
+                [-21.46774953784036, 49.88119923361903, 0.0],
+                [-21.46774953784036, 49.88119923361903, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-039-VN: a chamfer too large, rotated, with Dimensions.
+        (
+            &[
+                "rectang _C 18.656567079201356 18.656567079201356 612317.9599920243,2398739.0200147885 _R 30 _D 26.652238684573366 32.64533161964191 612344.6122307089,2398771.6653464083",
+            ],
+            &[
+                [612317.9599920243, 2398739.020014788, 0.0],
+                [612317.9599920243, 2398739.020014788, 0.0],
+                [612341.041507793, 2398752.34613413, 0.0],
+                [612341.041507793, 2398752.34613413, 0.0],
+                [612324.7188419831, 2398780.617820628, 0.0],
+                [612324.7188419831, 2398780.617820628, 0.0],
+                [612301.6373262145, 2398767.291701286, 0.0],
+                [612301.6373262145, 2398767.291701286, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+    ];
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    for (input, want, [width, elevation, thickness]) in cases {
+        let mut s = Session::new();
+        for line in input {
+            s.cmdline(line).unwrap();
+            assert!(s.running.is_none(), "{line}: {}", s.prompt_text());
+        }
+        let e = s.doc().unwrap().model.last().unwrap().clone();
+        let EntityKind::LwPolyline(p) = &e.kind else { panic!("{input:?}: {:?}", e.kind) };
+        let got: Vec<[f64; 3]> = p.vertices.iter().map(|v| [v.p.x, v.p.y, v.bulge]).collect();
+        let ok = got.len() == want.len() && got.iter().zip(want).all(|(g, w)| g.iter().zip(w).all(|(a, b)| same(*a, *b)));
+        assert!(
+            ok,
+            "{input:?}
+ got {got:?}
+want {want:?}"
+        );
+        assert!(p.closed && same(p.const_width, width) && same(p.elevation, elevation) && same(e.common.thickness, thickness), "{input:?}");
+    }
+    // Rotation, elevation and thickness are remembered too: AutoCAD opens the next RECTANG with
+    // "Current rectangle modes:  Elevation=7.5000  Thickness=2.2500  Rotation=30.96".
+    let mut s = Session::new();
+    s.cmdline("rectang _E 7.5 _T 2.25 0,0 _R _P 0,0 10,6 10,20").unwrap();
+    s.cmdline("rectang 100,100 110,105").unwrap();
+    let e = s.doc().unwrap().model.last().unwrap().clone();
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
+    let edge = p.vertices[1].p - p.vertices[0].p;
+    assert!(p.vertices[0].p == Vec2::new(100.0, 100.0) && same(edge.angle(), 6f64.atan2(10.0)), "{p:?}");
+    assert!(p.elevation == 7.5 && e.common.thickness == 2.25);
+}
+
+/// RECTANG's Rotation follows the drawing's angle settings as AutoCAD 2024's does.
+#[test]
+fn rectang_rotation_follows_the_angle_settings() {
+    let modes = |s: &Session| s.log.iter().filter(|l| l.starts_with("Current rectangle modes:")).cloned().collect::<Vec<_>>();
+    // With ANGBASE 90 and ANGDIR 1, AutoCAD 2024 turns a rectangle given Rotation 30 clockwise
+    // by 30° from +X (ANGBASE aside), and shows that rotation from ANGBASE: "Rotation=120.00",
+    // and <120.00> as the next rotation default.
+    let mut s = Session::new();
+    s.cmdline("setvar angbase 90").unwrap();
+    s.cmdline("setvar angdir 1").unwrap();
+    s.cmdline("rectang 50,0 _R 30 60,5").unwrap();
+    let e = s.doc().unwrap().model.last().unwrap().clone();
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
+    let edge = p.vertices[1].p - p.vertices[0].p;
+    assert!((edge.y.atan2(edge.x) + 30f64.to_radians()).abs() < 1e-9, "{p:?}");
+    s.start("rectang").unwrap();
+    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=120.00"]);
+    s.cmdline("50,0").unwrap();
+    s.cmdline("_R").unwrap();
+    assert!(s.prompt_text().contains("<120.00>"), "{}", s.prompt_text());
+    s.cancel();
+    // In degrees/minutes/seconds: "Rotation=30d30'".
+    let mut s = Session::new();
+    s.cmdline("setvar aunits 1").unwrap();
+    s.cmdline("rectang 50,0 _R 30.5 60,5").unwrap();
+    s.start("rectang").unwrap();
+    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=30d30'"]);
+    s.cancel();
+}
+
+/// Area allows for cut corners only while they fit: a fillet too large for the resulting sides
+/// leaves square corners, so the rectangle is the full area asked for (4 × 1, not 4 × 1.858).
+#[test]
+fn rectang_area_with_corners_too_large_stays_exact() {
+    let check = |s: &Session| {
+        let pts = rect_pts(s);
+        let b = cadcraft_geom::Bounds2::from_points(pts.clone());
+        assert!(near(b.min, 0.0, 0.0) && near(b.max, 4.0, 1.0), "{pts:?}");
+        assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
+    };
+    let mut s = Session::new();
+    s.cmdline("rectang _F 2 0,0 _A 4 _L 4").unwrap();
+    check(&s);
+    s.execute("rectang", &json!({"p1": [0, 0], "area": 4, "length": 4, "fillet": 2})).unwrap();
+    check(&s);
+}
+
 /// Guards the JSON `center: true` form for every sizing route: a picked corner mirrored about
 /// the centre, full-size `dimensions`, full `area`, rotation about the centre, that the default
 /// corner mode is untouched, and that centre mode without a size is rejected.
@@ -1044,7 +1193,7 @@ fn rectang_center_mode_json() {
 }
 
 /// Guards that fillet, chamfer, width and thickness still apply in centre mode, and that an
-/// oversized fillet falls back to sharp corners without moving the rectangle off centre.
+/// oversized fillet leaves sharp corners without moving the rectangle off centre.
 #[test]
 fn rectang_center_mode_honours_options() {
     let mut s = Session::new();
@@ -1061,9 +1210,11 @@ fn rectang_center_mode_honours_options() {
     assert_eq!(rect_pts(&s).len(), 8);
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // A fillet too large for the rectangle falls back to sharp corners, still centred.
+    // A fillet too large for the rectangle leaves sharp corners, each one two coincident vertices
+    // as in AutoCAD, still centred.
     s.execute("rectang", &json!({"center": true, "p1": [10, 10], "p2": [14, 16], "fillet": 5})).unwrap();
-    assert_eq!(rect_pts(&s).len(), 4);
+    let pts = rect_pts(&s);
+    assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
 }
@@ -1091,8 +1242,9 @@ fn rectang_center_mode_command_line() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // Area too: the rectangle of that area is centred on the first point.
-    s.cmdline("rectang ce 10,10 a 96 l 8").unwrap();
+    // Area too: the rectangle of that area is centred on the first point (without the fillet
+    // remembered from above, which would take its corners off the area).
+    s.cmdline("rectang f 0 ce 10,10 a 96 l 8").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
