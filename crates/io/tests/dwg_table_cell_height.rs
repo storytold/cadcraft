@@ -128,6 +128,39 @@ fn content_with_format_override_bit_128_keeps_its_own_height() {
     assert_eq!(h, Some(0.3125));
 }
 
+/// Only the first content's override stands for the cell: a later content's height must not
+/// replace the first content's inherited one (review on #2588).
+#[test]
+fn a_later_contents_height_does_not_replace_the_first_contents() {
+    let h = first_cell_height(false, |c| {
+        c.style = Some(styled(0.18, CellStylePropertyFlags::NONE));
+        c.contents.clear();
+        c.contents.push(CellContent::new());
+        let mut later = CellContent::new();
+        later.format_override_flags |= 128;
+        later.text_height = 0.3125;
+        c.contents.push(later);
+    });
+    assert_eq!(h, None);
+}
+
+/// Bit 128 with an unusable content height copies nothing, so the writer's default style height
+/// is still cleared (review on #2588).
+#[test]
+fn bit_128_with_an_invalid_height_still_clears_the_default() {
+    for bad in [0.0, -1.0, f64::NAN] {
+        let h = first_cell_height(false, |c| {
+            c.style = Some(styled(0.18, CellStylePropertyFlags::NONE));
+            if c.contents.is_empty() {
+                c.contents.push(CellContent::new());
+            }
+            c.contents[0].format_override_flags |= 128;
+            c.contents[0].text_height = bad;
+        });
+        assert_eq!(h, None, "content height {bad}");
+    }
+}
+
 #[test]
 fn a_cell_with_no_style_record_inherits_the_table_style() {
     assert_eq!(first_cell_height(false, |c| c.style = None), None);
