@@ -1,0 +1,14 @@
+id: string-error
+valid:
+  - "fn parse(s: &str) -> Result<Port, PortError> { todo!() }"
+  - "fn name() -> Option<String> { None }"
+  - "fn ok() -> Result<String, PortError> { Ok(String::new()) }"
+  - Err(PortError::Range)
+  - Err(e)
+invalid:
+  - "fn parse(s: &str) -> Result<Port, String> { todo!() }"
+  - "type R = Result<(), String>;"
+  - Err(format!("bad port {s}"))
+  - Err(e.to_string())
+  - Err(String::from("bad port"))
+  - Err("bad port")

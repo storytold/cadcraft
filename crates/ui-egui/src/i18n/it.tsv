@@ -97,6 +97,7 @@ menu	Modify	Edita
 	Blend	Fondi
 	Block	Blocco
 	Block Attribute Manager...	Gestore attributi blocco...
+	Block Description...	Descrizione blocco...
 	Block Editor	Editor blocchi
 	Block Reference	Riferimento di blocco
 	Block...	Blocco...
@@ -147,6 +148,7 @@ menu	Modify	Edita
 	Close All Other Drawings	Chiudi tutti gli altri disegni
 	Closed	Chiusa
 	Close Comparison	Chiudi confronto
+	Export Comparison	Esporta confronto
 	Coincident	Coincidente
 	Collapse Palettes	Comprimi tavolozze
 	Collapse Tool Sets	Comprimi set di strumenti
@@ -194,6 +196,7 @@ menu	Modify	Edita
 	Current selection	Selezione corrente
 	Current: {color}	Corrente: {color}
 	Cut	Taglia
+	Cut with Base Point	Taglia con punto base
 	Cyan	Ciano
 	Cylinder	Cilindro
 	DWG	DWG
@@ -547,6 +550,7 @@ menu	Modify	Edita
 	N	N
 	Name	Nome
 	Name (A–Z)	Nome (A–Z)
+	Named Viewports...	Finestre con nome...
 	Named Views...	Viste con nome...
 	Nearest	Vicino
 	New	Nuovo
@@ -742,6 +746,7 @@ menu	Modify	Edita
 	Rename Text Style	Rinomina stile di testo
 	Rename...	Rinomina...
 	Repeat {command}	Ripeti {command}
+	Replace Block...	Sostituisci blocco...
 	Requires a point (x,y, @dx,dy or @d<a).	Richiede un punto (x,y, @dx,dy o @d<a).
 	Reset Palettes	Reimposta tavolozze
 	Restore	Ripristina
@@ -1259,3 +1264,106 @@ menu	Modify	Edita
 	Discard	Scarta
 	Customize	Personalizza
 	Edit Command Aliases (PGP)...	Modifica alias dei comandi (PGP)...
+# Added for 0.7/0.8: multileaders, LISP, recent files, in-place reference editing, selection options, hatch and gradient, dynamic blocks, Block Editor, text formatting.
+	Evaluate LISP	Valuta LISP
+	Align Multileaders	Allinea multidirettrici
+	Collect	Raccogli
+	Collect Multileaders	Raccogli multidirettrici
+	Edit Multileader	Modifica multidirettrice
+	Load Application...	Carica applicazione...
+	Open Recent	Apri recenti
+	Clear Recent Files	Cancella file recenti
+	Add to Working Set	Aggiungi al set di lavoro
+	Edit Reference In-Place	Modifica riferimento sul posto
+	Save Reference Edits	Salva modifiche al riferimento
+	Working Set	Set di lavoro
+	Xref and Block In-place Editing	Modifica sul posto di xrif e blocchi
+	Crossing selection color:	Colore selezione interseca:
+	Exclude:	Escludi:
+	Grips	Grip
+	Groups	Gruppi
+	Hatches	Tratteggi
+	Indicate selection area	Indica l'area di selezione
+	Multiline text	Testo multilinea
+	Object grouping	Raggruppamento oggetti
+	Object selection limit for display of grips	Limite di oggetti selezionati per la visualizzazione dei grip
+	Objects on locked layers	Oggetti su layer bloccati
+	Preview	Anteprima
+	Selection Area Effect	Effetto area di selezione
+	Selection Preview Filter	Filtro anteprima di selezione
+	Selection area opacity:	Opacità area di selezione:
+	Selection effect color	Colore effetto di selezione
+	Selection modes	Modalità di selezione
+	Selection preview	Anteprima di selezione
+	Show grips	Mostra grip
+	Tables	Tabelle
+	Visual Effect Settings	Impostazioni effetti visivi
+	Visual Effect Settings...	Impostazioni effetti visivi...
+	When a command is active	Quando un comando è attivo
+	When no command is active	Quando nessun comando è attivo
+	Window selection color:	Colore selezione finestra:
+	Xrefs	Xrif
+	Interface scale	Scala dell'interfaccia
+	Query Texts	Interroga testi
+	Analyze Shapes	Analizza forme
+	Hatch Pick	Scelta tratteggio
+	Hatch and Gradient	Tratteggio e sfumatura
+	Color 1	Colore 1
+	Color 2	Colore 2
+	Shape	Forma
+	Curved	Curva
+	Spherical	Sferica
+	Hemispherical	Emisferica
+	Inverted	Invertita
+	Centered	Centrata
+	Hatch origin	Origine del tratteggio
+	Use current origin	Usa l'origine corrente
+	Specified origin	Origine specificata
+	Click to set new origin	Fare clic per impostare una nuova origine
+	Default to boundary extents	Predefinita sulle estensioni del contorno
+	Bottom left	In basso a sinistra
+	Bottom right	In basso a destra
+	Top left	In alto a sinistra
+	Top right	In alto a destra
+	Boundaries	Contorni
+	Add: Pick points	Aggiungi: scegli punti
+	Add: Select objects	Aggiungi: seleziona oggetti
+	Boundaries picked: {n}	Contorni scelti: {n}
+	Select boundaries to remove	Selezionare i contorni da rimuovere
+	Island	Isola
+	Associative	Associativo
+	Create separate hatches	Crea tratteggi separati
+	Island detection	Rilevamento isole
+	Normal	Normale
+	Outer	Esterno
+	Ignore	Ignora
+	Origin: {x}, {y}	Origine: {x}, {y}
+	Sheet Books to PDF...	Raccolte di fogli in PDF...
+	Not a number or distance: {text}	Non è un numero né una distanza: {text}
+	Dynamic Block Data	Dati del blocco dinamico
+	Custom	Personalizzato
+	Dynamic Block Reference	Riferimento a blocco dinamico
+	Set Dynamic Property	Imposta proprietà dinamica
+	Dynamic Block Grips	Grip del blocco dinamico
+	Drag Dynamic Grip	Trascina grip dinamico
+	Save Block	Salva blocco
+	Save Block As	Salva blocco con nome
+	Close Block Editor	Chiudi editor blocchi
+	Unsaved changes	Modifiche non salvate
+	Edit Block Definition	Modifica definizione del blocco
+	Block to create or edit	Blocco da creare o modificare
+	Open in Block Editor	Apri nell'editor blocchi
+	This drawing	Questo disegno
+	contains authoring elements. Open in Block Editor?	contiene elementi di creazione. Aprirlo nell'editor blocchi?
+	New block	Nuovo blocco
+	Italic	Corsivo
+	Underline	Sottolineato
+	Overline	Sopralineato
+	Justify	Giustifica
+	Text color	Colore del testo
+	Click the ruler to add a tab stop, right-click to remove one	Fare clic sul righello per aggiungere una tabulazione, clic destro per rimuoverla
+	Select using two clicks only	Seleziona solo con due clic
+	Define each corner of the selection window with a separate click.	Definire ogni angolo della finestra di selezione con un clic separato.
+	Check for Updates…	Verifica aggiornamenti…
+	CADCraft is up to date.	CADCraft è aggiornato.
+	Could not check for updates.	Impossibile verificare gli aggiornamenti.

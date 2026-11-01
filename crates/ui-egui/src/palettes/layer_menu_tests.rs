@@ -1,9 +1,10 @@
-use super::*;
-use crate::Services;
+use super::properties_section;
+use crate::{CadApp, Services};
 use cadcraft_engine::Session;
-use egui::Shape;
+use egui::{Rect, Shape, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use serde_json::json;
 
 fn texts(shape: &Shape, clip: Rect, out: &mut Vec<(String, Rect, Rect)>) {
     match shape {

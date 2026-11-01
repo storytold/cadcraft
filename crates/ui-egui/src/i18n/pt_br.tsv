@@ -11,7 +11,7 @@
 	* Wildcard Match	* Correspondência com curinga
 	*VARIES*	*VARIADO*
 	+  |  Top  |  2D Wireframe	+  |  Superior  |  Wireframe 2D
-	+Bin	+bin.
+	+Bin	+bin
 	+LOC	+linhas
 	1 Viewport	1 viewport
 	2 Points	2 pontos
@@ -81,11 +81,12 @@
 	Batch Publish...	Publicação em lote...
 	Binary assets added	Recursos binários adicionados
 	Binary assets removed	Recursos binários removidos
-	Bind	Vincular
-	Bind...	Vincular...
-	Blend	Mesclar
+	Bind	Integrar
+	Bind...	Integrar...
+	Blend	Curva de transição
 	Block	Bloco
 	Block Attribute Manager...	Gerenciador de atributos de bloco...
+	Block Description...	Descrição do bloco...
 	Block Editor	Editor de blocos
 	Block Reference	Referência de bloco
 	Block...	Bloco...
@@ -99,15 +100,15 @@
 	Break	Quebrar
 	Break At Point	Quebrar no ponto
 	Bring Above Objects	Trazer acima dos objetos
-	Bring Annotations to Front	Trazer anotações para frente
+	Bring Annotations to Front	Trazer anotações para a frente
 	Bring to Front	Trazer para a frente
-	Bulleted list	Lista com marcas
+	Bulleted list	Lista com marcadores
 	ByBlock	PorBloco
 	ByColor	PorCor
 	ByLayer	PorCamada
 	CADCraft	CADCraft
 	CADCraft Help	Ajuda do CADCraft
-	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	O CADCraft mantém estas preferências, modos de referência a objetos e alternâncias de desenho na sua conta de usuário e as restaura ao iniciar.
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	O CADCraft mantém estas preferências, os modos de snap a objetos e as opções de desenho na sua conta de usuário e os restaura ao iniciar.
 	Cancel	Cancelar
 	Cartesian (x, y)	Cartesiano (x, y)
 	Center	Centro
@@ -132,13 +133,14 @@
 	Clear Command History	Limpar histórico de comandos
 	Clear History	Limpar histórico
 	Clip	Recortar
-	Clip Viewport	Recortar janela gráfica
+	Clip Viewport	Recortar viewport
 	Clipboard	Área de transferência
 	Close	Fechar
 	Close All	Fechar tudo
 	Close All Other Drawings	Fechar todos os outros desenhos
 	Close Array Editing	Fechar edição de matriz
 	Close Comparison	Fechar comparação
+	Export Comparison	Exportar comparação
 	Closed	Fechada
 	Coincident	Coincidente
 	Collapse Palettes	Recolher paletas
@@ -149,7 +151,7 @@
 	Color 9	Cor 9
 	Color Index	Índice de cor
 	Color...	Cor...
-	Command Aliases	Sinônimos de comandos
+	Command Aliases	Aliases de comandos
 	Command History	Histórico de comandos
 	Command Line	Linha de comando
 	Command Line History Lines	Linhas do histórico da linha de comando
@@ -191,6 +193,7 @@
 	Current selection	Seleção atual
 	Current: {color}	Atual: {color}
 	Cut	Recortar
+	Cut with Base Point	Recortar com ponto base
 	Cyan	Ciano
 	Cylinder	Cilindro
 	DWG	DWG
@@ -282,7 +285,7 @@
 	End angle	Ângulo final
 	Endpoint	Extremidade
 	Enter	Enter
-	Enter Top, Zero or Bottom.	Digite Superior, Zero ou Inferior.
+	Enter Top, Zero or Bottom.	Digite Top, Zero ou Bottom.
 	Enter a fit data option	Digite uma opção de dados de ajuste
 	Enter a pattern name	Digite o nome de um padrão
 	Enter a vertex editing option	Digite uma opção de edição de vértice
@@ -330,7 +333,7 @@
 	Erase	Apagar
 	Evaluate	Avaliar
 	Exclude from new selection set	Excluir do novo conjunto de seleção
-	Explode	Decompor
+	Explode	Explodir
 	Export	Exportar
 	Export Table	Exportar tabela
 	Export to PDF...	Exportar para PDF...
@@ -374,22 +377,22 @@
 	Get from the Drawing	Obter do desenho
 	Global	Global
 	Global width	Largura global
-	Grab bag	Lista
+	Grab bag	Diversos
 	Gradient	Gradiente
 	Gradient...	Gradiente...
 	Green	Verde
 	Grid (F7)	Grade (F7)
 	Grid Display	Exibição da grade
 	Grid On (F7)	Grade ativada (F7)
-	Grid snap	Forçar cursor à grade
+	Grid snap	Snap à grade
 	Grid spacing	Espaçamento da grade
-	Grip Edit	Editar com pinça
-	Grip Mirror	Espelhar por pegador
-	Grip Option	Opção de pinça
-	Grip Rotate	Girar por pegador
-	Grip Scale	Escalar por pegador
-	Grip Stretch	Esticar por pegador
-	Grip size	Tamanho da pinça
+	Grip Edit	Editar por grip
+	Grip Mirror	Espelhar por grip
+	Grip Option	Opção de grip
+	Grip Rotate	Girar por grip
+	Grip Scale	Escalar por grip
+	Grip Stretch	Esticar por grip
+	Grip size	Tamanho do grip
 	Group	Grupo
 	Group Edit	Editar grupo
 	Group Options	Opções de grupo
@@ -413,7 +416,7 @@
 	Hold Shift to add to the selection	Mantenha Shift pressionado para adicionar à seleção
 	Home	Vista inicial
 	Horizontal	Horizontal
-	HorizontalDistance	DistânciaHorizontal
+	HorizontalDistance	Distância horizontal
 	How to apply:	Como aplicar:
 	ID Point	Coordenadas do ponto
 	Import	Importar
@@ -451,7 +454,7 @@
 	Isolate Objects	Isolar objetos
 	Isometric Drafting	Desenho isométrico
 	Isometric Plane	Plano isométrico
-	Isometric snap	Forçar cursor isométrico
+	Isometric snap	Snap isométrico
 	Jogged	Com desvio
 	Jogged Linear	Linear com desvio
 	Join	Unir
@@ -459,14 +462,14 @@
 	Join us on Discord	Junte-se a nós no Discord
 	Keep the system cursor visible over the drawing area	Manter o cursor do sistema visível sobre a área de desenho
 	Language	Idioma
-	Largest array	Matriz maior
+	Largest array	Maior matriz
 	Last	Último
 	Last commit	Último commit
 	Layer	Camada
 	Layer Delete	Excluir camada
-	Layer Match	Corresponder camada
+	Layer Match	Igualar camada
 	Layer Merge	Mesclar camadas
-	Layer Off	Desativar camada
+	Layer Off	Desligar camada
 	Layer Properties	Propriedades da camada
 	Layer Properties Manager	Gerenciador de propriedades de camadas
 	Layer Properties Manager — current viewport	Gerenciador de propriedades de camadas — viewport atual
@@ -480,7 +483,7 @@
 	Layers displayed: {shown} of {total}.   Current layer: {layer}	Camadas exibidas: {shown} de {total}.   Camada atual: {layer}
 	Layout	Layout
 	Layout list	Lista de layouts
-	Layout paper	Papel da apresentação
+	Layout paper	Papel do layout
 	Leader	Linha de chamada
 	Leaders Only	Somente linhas de chamada
 	Left	Esquerda
@@ -500,7 +503,7 @@
 	Linetype Scale	Escala do tipo de linha
 	Linetype scale	Escala do tipo de linha
 	Loaded	Carregada
-	Lock viewport	Bloquear janela gráfica
+	Lock viewport	Bloquear viewport
 	Ltscale	Escala do tipo de linha
 	Linetype...	Tipo de linha...
 	Lineweight	Espessura de linha
@@ -520,7 +523,7 @@
 	Lock Layer	Bloquear camada
 	Lock/Unlock	Bloquear/desbloquear
 	Loft	Loft
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OU Apache-2.0. Sem afiliação com a Autodesk, Inc.
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Sem afiliação com a Autodesk, Inc.
 	MODEL	MODELO
 	MText	MText
 	Magenta	Magenta
@@ -528,9 +531,9 @@
 	Make Current	Tornar atual
 	Make Object's Layer Current	Tornar atual a camada do objeto
 	Make it a block of this drawing, keeping its layer names	Torná-lo um bloco deste desenho, mantendo os nomes das camadas
-	Make it a block of this drawing; its layers become NAME$0$LAYER	Torná-lo um bloco deste desenho; suas camadas passam a NAME$0$LAYER
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Torná-lo um bloco deste desenho; suas camadas passam a se chamar NAME$0$LAYER
 	Make...	Criar...
-	Match Layer	Corresponder camada
+	Match Layer	Igualar camada
 	Match Properties	Copiar propriedades
 	Measure	Medir
 	Measure Distance	Medir distância
@@ -552,17 +555,18 @@
 	Multileader Style...	Estilo de linha de chamada múltipla...
 	Multileader style	Estilo de linha de chamada múltipla
 	Multiline	Multilinha
-	Multiline Style...	Estilo de linha múltipla...
+	Multiline Style...	Estilo de multilinha...
 	Multiline Text	Texto multilinha
 	Multiline Text...	Texto multilinha...
-	Multiline...	Linha múltipla...
+	Multiline...	Multilinha...
 	Multiple	Múltiplo
 	Multiple Point	Ponto múltiplo
 	My	Minhas
-	My properties: not available yet	Minhas propriedades: ainda não disponível
+	My properties: not available yet	Minhas propriedades: ainda não disponíveis
 	N	N
 	Name	Nome
 	Name (A–Z)	Nome (A–Z)
+	Named Viewports...	Viewports nomeados...
 	Named Views...	Vistas nomeadas...
 	Nearest	Mais próximo
 	New	Novo
@@ -587,6 +591,7 @@
 	No selection	Nenhuma seleção
 	Node	Nó
 	None	Nenhum
+	Normal	Normal
 	Not Found	Não encontrado
 	Not available	Não disponível
 	Not available yet	Ainda não disponível
@@ -599,13 +604,13 @@
 	Object Snap On (F3)	Snap a objetos ativado (F3)
 	Object Snap Tracking	Rastreamento de snap a objetos
 	Object Snap Tracking (F11)	Rastreamento de snap a objetos (F11)
-	Object Snap Tracking Settings	Configurações de rastreamento de referência a objetos
-	Object snap aperture	Abertura de referência a objetos
-	Object snap marker size	Tamanho do marcador de referência a objetos
+	Object Snap Tracking Settings	Configurações de rastreamento de snap a objetos
+	Object snap aperture	Abertura do snap a objetos
+	Object snap marker size	Tamanho do marcador de snap a objetos
 	Object type:	Tipo de objeto:
 	Oblique	Oblíqua
 	Off	Desativado
-	Offset	Deslocar
+	Offset	Offset
 	On	Ativado
 	On/Off	Ativar/desativar
 	One of the Crafting Apps by the ArtCraft team and community.	Um dos Crafting Apps da equipe e da comunidade ArtCraft.
@@ -628,13 +633,13 @@
 	Ortho Mode (F8)	Modo orto (F8)
 	Osnap Settings...	Configurações de snap a objetos...
 	Out	Afastar
-	Over-constrained	Sobre-restrito
+	Over-constrained	Sobrerrestrito
 	Overlay	Sobreposição
 	Override	Substituir
 	PAPER	PAPEL
 	Paste to Command Line	Colar na linha de comando
 	Percent	Porcentagem
-	Pickbox size	Tamanho da caixa de seleção
+	Pickbox size	Tamanho do quadrado de seleção
 	Plotter Manager	Gerenciador de plotagem
 	Plotter Manager...	Gerenciador de plotagem...
 	Polar (distance < angle)	Polar (distância < ângulo)
@@ -672,16 +677,16 @@
 	New style	Novo estilo
 	Polar angle measurement	Medição de ângulo polar
 	Polar distance	Distância polar
-	PolarSnap	Forçar cursor polar
-	Polygonal Viewport	Janela gráfica poligonal
+	PolarSnap	Snap polar
+	Polygonal Viewport	Viewport poligonal
 	Polyline Edit	Editar polilinha
 	Previous Change	Alteração anterior
 	Profiles	Perfis
-	QuickCalc Pick	Designar para cálculo rápido
+	QuickCalc Pick	Selecionar para a calculadora rápida
 	Recalculate Table Formulas	Recalcular fórmulas da tabela
 	Recent Commands	Comandos recentes
 	Recent Input	Entradas recentes
-	Rectangular snap	Forçar cursor retangular
+	Rectangular snap	Snap retangular
 	Reference Manager	Gerenciador de referências
 	Reference Name	Nome da referência
 	References: {n}	Referências: {n}
@@ -703,7 +708,7 @@
 	Selection	Seleção
 	Send Hatches to Back	Enviar hachuras para trás
 	Send Under Objects	Enviar sob os objetos
-	Set Current Viewport	Definir janela gráfica atual
+	Set Current Viewport	Definir viewport atual
 	Set Table Cell Style	Definir estilo da célula da tabela
 	Settings...	Configurações...
 	Show Annotative Objects	Mostrar objetos anotativos
@@ -711,9 +716,9 @@
 	Show and hide the tools of this category	Mostrar e ocultar as ferramentas desta categoria
 	Show command prompting near the crosshairs	Mostrar o prompt de comando perto da mira
 	Show in Tool Sets	Mostrar em conjuntos de ferramentas
-	Snap Overrides	Substituições de referência a objetos
-	Snap type	Tipo de referência a objetos
-	Snap, grid, polar tracking and Dynamic Input:	Referência a objetos, grade, rastreamento polar e entrada dinâmica:
+	Snap Overrides	Substituições de snap a objetos
+	Snap type	Tipo de snap
+	Snap, grid, polar tracking and Dynamic Input:	Snap, grade, rastreamento polar e entrada dinâmica:
 	Solid Editing	Edição de sólidos
 	Spline Edit	Editar spline
 	Stretch Vertex	Esticar vértice
@@ -722,8 +727,8 @@
 	Table Cell Style	Estilo da célula da tabela
 	Temporary track point	Ponto de rastreamento temporário
 	Text Objects Only	Somente objetos de texto
-	Thaw Layer	Ativar camada
-	The aperture is how near the cursor must come to a point for an object snap to find it.	A abertura é a distância a que o cursor deve chegar de um ponto para que uma referência a objetos o encontre.
+	Thaw Layer	Descongelar camada
+	The aperture is how near the cursor must come to a point for an object snap to find it.	A abertura é o quanto o cursor precisa se aproximar de um ponto para que o snap a objetos o encontre.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Clique direito sensível ao tempo: um clique rápido é Enter; mantê-lo pressionado abre o menu
 	To	A
 	Tolerance...	Tolerância...
@@ -734,7 +739,7 @@
 	Units Conversion	Conversão de unidades
 	Unload	Descarregar
 	Unloaded	Descarregada
-	Unlock viewport	Desbloquear janela gráfica
+	Unlock viewport	Desbloquear viewport
 	Unreferenced	Sem referência
 	Unresolved	Não resolvida
 	Update Data Links	Atualizar vínculos de dados
@@ -788,7 +793,7 @@
 	Quick Select	Seleção rápida
 	Quick Select Properties	Propriedades da seleção rápida
 	Quick Select...	Seleção rápida...
-	QuickCalc	Calculadora
+	QuickCalc	Calculadora rápida
 	Quit CADCraft	Sair do CADCraft
 	Radius	Raio
 	Raster Image	Imagem raster
@@ -820,6 +825,7 @@
 	Rename Text Style	Renomear estilo de texto
 	Rename...	Renomear...
 	Repeat {command}	Repetir {command}
+	Replace Block...	Substituir bloco...
 	Requires a point (x,y, @dx,dy or @d<a).	Requer um ponto (x,y, @dx,dy ou @d<a).
 	Reset Palettes	Redefinir paletas
 	Restore	Restaurar
@@ -827,7 +833,7 @@
 	Reverse	Inverter
 	Reverse the order	Inverter a ordem
 	Revision Cloud	Nuvem de revisão
-	Revolve	Revolucionar
+	Revolve	Revolver
 	Right	Direita
 	Rotate	Girar
 	Rotation	Rotação
@@ -863,7 +869,7 @@
 	Edit Reference In-Place	Editar referência no local
 	Save Reference Edits	Salvar alterações da referência
 	Working Set	Conjunto de trabalho
-	Xref and Block In-place Editing	Edição no local de xrefs e blocos
+	Xref and Block In-place Editing	Edição no local de referências externas e blocos
 	Select a line, arc, circle, polyline, ellipse or spline as the path.	Selecione uma linha, arco, círculo, polilinha, elipse ou spline como trajetória.
 	Select a line, circle, arc or polyline segment.	Selecione uma linha, círculo, arco ou segmento de polilinha.
 	Select a line.	Selecione uma linha.
@@ -896,14 +902,14 @@
 	Select object to divide	Selecione o objeto a dividir
 	Select object to extend or shift-select to trim	Selecione o objeto a estender ou use Shift para aparar
 	Select object to measure	Selecione o objeto a medir
-	Select object to offset	Selecione o objeto a deslocar
+	Select object to offset	Selecione o objeto para o offset
 	Select object to trim or shift-select to extend	Selecione o objeto a aparar ou use Shift para estender
 	Select objects	Selecione objetos
 	Select objects (crossing window first corner)	Selecione objetos (primeiro canto da janela de captura)
 	Select objects to array.	Selecione os objetos para a matriz.
 	Select objects to stretch by crossing-window or crossing-polygon...	Selecione os objetos a esticar por janela de captura ou polígono de captura...
 	Select objects:	Selecione objetos:
-	Select one polyline (Multiple is available through the JSON form).	Selecione uma polilinha (Múltiplo está disponível pela forma JSON).
+	Select one polyline (Multiple is available through the JSON form).	Selecione uma polilinha (a opção Multiple está disponível pela forma JSON).
 	Select path curve	Selecione a curva da trajetória
 	Select point or object	Selecione um ponto ou objeto
 	Select polyline or	Selecione uma polilinha ou
@@ -1021,8 +1027,8 @@
 	Specify new location for marked vertex	Especifique a nova posição do vértice marcado
 	Specify new width for all segments	Especifique a nova largura para todos os segmentos
 	Specify next point	Especifique o próximo ponto
-	Specify offset distance	Especifique a distância de deslocamento
-	Specify offset distance or	Especifique a distância de deslocamento ou
+	Specify offset distance	Especifique a distância de offset
+	Specify offset distance or	Especifique a distância de offset ou
 	Specify opposite corner	Especifique o canto oposto
 	Specify other corner point	Especifique o outro ponto de canto
 	Specify other endpoint of axis	Especifique a outra extremidade do eixo
@@ -1030,7 +1036,7 @@
 	Specify point	Especifique o ponto
 	Specify point on object for first tangent of circle	Especifique o ponto no objeto para a primeira tangente do círculo
 	Specify point on object for second tangent of circle	Especifique o ponto no objeto para a segunda tangente do círculo
-	Specify point on side to offset	Especifique um ponto no lado do deslocamento
+	Specify point on side to offset	Especifique um ponto no lado do offset
 	Specify radius of arc	Especifique o raio do arco
 	Specify radius of circle	Especifique o raio do círculo
 	Specify rotation angle	Especifique o ângulo de rotação
@@ -1052,7 +1058,7 @@
 	Specify second point on circle: _tan to	Especifique o segundo ponto no círculo: _tan para
 	Specify second point or <use first point as displacement>	Especifique o segundo ponto ou <usar o primeiro ponto como deslocamento>
 	Specify second source point	Especifique o segundo ponto de origem
-	Specify side to offset	Especifique o lado do deslocamento
+	Specify side to offset	Especifique o lado do offset
 	Specify start angle	Especifique o ângulo inicial
 	Specify start point	Especifique o ponto inicial
 	Specify start point of arc	Especifique o ponto inicial do arco
@@ -1128,8 +1134,8 @@
 	Transparency	Transparência
 	Trim	Aparar
 	True Color	Cor verdadeira
-	Turn All Layers On	Ativar todas as camadas
-	Turn Off Layer	Desativar camada
+	Turn All Layers On	Ligar todas as camadas
+	Turn Off Layer	Desligar camada
 	Turn Quick Properties off (QPMODE)	Desativar propriedades rápidas (QPMODE)
 	Type	Tipo
 	Type a command	Digite um comando
@@ -1165,14 +1171,14 @@
 	Version 2018	Versão 2018
 	Version {version}	Versão {version}
 	Vertical	Vertical
-	VerticalDistance	DistânciaVertical
+	VerticalDistance	Distância vertical
 	View	Exibir
 	ViewCube	ViewCube
 	Viewport	Viewport
 	Viewport Layer Freeze	Congelamento de camada no viewport
 	Viewport Properties	Propriedades do viewport
-	Viewport is locked	A janela gráfica está bloqueada
-	Viewport scale	Escala da janela gráfica
+	Viewport is locked	O viewport está bloqueado
+	Viewport scale	Escala do viewport
 	Viewport {id}	Viewport {id}
 	Viewports	Viewports
 	Volume	Volume
@@ -1208,7 +1214,7 @@
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
 	ƒx  New User Parameter	ƒx  Novo parâmetro do usuário
 	ΔLOC	Δlinhas
-	−Bin	−bin.
+	−Bin	−bin
 	−LOC	−linhas
 	⌘↩ to finish	⌘↩ para concluir
 @plural	{n} commit	{n} commit|{n} commits
@@ -1233,12 +1239,12 @@
 	3D mouse disconnected	Mouse 3D desconectado
 	3D mouse input could not be started	Não foi possível iniciar a entrada do mouse 3D
 	Enable 3D mouse navigation	Ativar navegação com mouse 3D
-	Pan sensitivity	Sensibilidade de deslocamento
+	Pan sensitivity	Sensibilidade do pan
 	Zoom sensitivity	Sensibilidade do zoom
 	Reverse zoom direction	Inverter a direção do zoom
 	Calibrate	Calibrar
-	Move sideways to pan; push/pull or twist to zoom.	Mova lateralmente para deslocar; empurre/puxe ou gire para ampliar.
-	Left device button: zoom extents. Right device button: calibrate.	Botão esquerdo do dispositivo: zoom à extensão. Botão direito do dispositivo: calibrar.
+	Move sideways to pan; push/pull or twist to zoom.	Mova lateralmente para fazer pan; empurre/puxe ou gire para aplicar zoom.
+	Left device button: zoom extents. Right device button: calibrate.	Botão esquerdo do dispositivo: zoom extensão. Botão direito do dispositivo: calibrar.
 	Hatch Pattern	Padrão de hachura
 	Search for pattern	Pesquisar padrão
 	Query Texts	Consultar textos
@@ -1247,3 +1253,6 @@
 	Not a number or distance: {text}	Não é um número nem uma distância: {text}
 	Select using two clicks only	Selecionar apenas com dois cliques
 	Define each corner of the selection window with a separate click.	Defina cada canto da janela de seleção com um clique separado.
+	Check for Updates…	Verificar atualizações…
+	CADCraft is up to date.	O CADCraft está atualizado.
+	Could not check for updates.	Não foi possível verificar atualizações.

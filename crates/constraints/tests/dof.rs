@@ -382,3 +382,83 @@ fn vertex_constraints_on_large_fit_spline_do_not_charge_reconstruction() {
     assert_eq!(report.status, DofStatus::Under);
     assert_eq!(report.dof, Some(1000));
 }
+
+/// Adds a constraint that the stored ellipse can only hold with its axes renumbered: refused,
+/// with the drawing unchanged.
+fn refused_on_minor_axis_end(p: (f64, f64)) {
+    let mut d = Drawing::default();
+    let e = ellipse(&mut d, (0.0, 0.0), (4.0, 0.0), 0.5, 0.0, std::f64::consts::TAU);
+    ok(&mut d, con(K::Fix, &[s(e, Sub::Center)]));
+    let p = point(&mut d, p);
+    ok(&mut d, con(K::Fix, &[w(p)]));
+    let before = d.clone();
+    let r = add(&mut d, con(K::Coincident, &[s(e, Sub::Vertex(1)), w(p)]), &SolveOptions::default());
+    assert!(matches!(r, Err(SolveError::Conflict { .. })), "{r:?}, ellipse {:?}", ell(&d, e));
+    assert_eq!(d, before);
+}
+
+/// Pulling a minor axis end past the major axis length would need a ratio above 1, which the
+/// stored ellipse holds only by swapping its axes (and so renumbering their ends).
+#[test]
+fn minor_axis_end_pulled_past_the_major_axis_is_refused() {
+    refused_on_minor_axis_end((0.0, 6.0));
+}
+
+/// Pulling a minor axis end through the centre would need a negative ratio, which the stored
+/// ellipse cannot hold: storing its absolute value would mirror the minor axis end.
+#[test]
+fn minor_axis_end_pulled_through_the_centre_is_refused() {
+    refused_on_minor_axis_end((0.0, -1.0));
+}
+
+/// A circle-like ellipse whose solution makes the minor axis the longer one: stored with its axes
+/// swapped, which constraints that name no axis end by index do not notice.
+fn round_ellipse(d: &mut Drawing, start: f64, end: f64) -> Handle {
+    let e = ellipse(d, (0.0, 0.0), (4.0, 0.0), 1.0, start, end);
+    ok(d, con(K::Fix, &[s(e, Sub::Center)]));
+    e
+}
+
+#[test]
+fn tangent_that_swaps_a_round_ellipse_axes_is_kept() {
+    let mut d = Drawing::default();
+    let e = round_ellipse(&mut d, 0.0, std::f64::consts::TAU);
+    let l = line(&mut d, (-10.0, 4.5), (10.0, 4.5));
+    ok(&mut d, con(K::Fix, &[w(l)]));
+    ok(&mut d, con(K::Tangent, &[w(l), w(e)]));
+    assert!(ell(&d, e).ratio <= 1.0);
+    assert!(all_satisfied(&d));
+}
+
+#[test]
+fn point_on_curve_that_swaps_a_round_ellipse_axes_is_kept() {
+    let mut d = Drawing::default();
+    let e = round_ellipse(&mut d, 0.0, std::f64::consts::TAU);
+    let p = point(&mut d, (0.0, 4.5));
+    ok(&mut d, con(K::Fix, &[w(p)]));
+    ok(&mut d, con(K::Coincident, &[w(p), w(e)]));
+    assert!(ell(&d, e).ratio <= 1.0);
+    assert!(all_satisfied(&d));
+}
+
+#[test]
+fn elliptical_arc_start_that_swaps_its_axes_is_kept() {
+    let mut d = Drawing::default();
+    let e = round_ellipse(&mut d, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+    let p = point(&mut d, (0.0, 4.5));
+    ok(&mut d, con(K::Fix, &[w(p)]));
+    ok(&mut d, con(K::Coincident, &[s(e, Sub::Start), w(p)]));
+    assert!(ell(&d, e).ratio <= 1.0);
+    assert!(all_satisfied(&d));
+}
+
+#[test]
+fn tangent_circle_that_swaps_a_round_ellipse_axes_is_kept() {
+    let mut d = Drawing::default();
+    let e = round_ellipse(&mut d, 0.0, std::f64::consts::TAU);
+    let c = circle(&mut d, (0.0, 6.0), 1.5);
+    ok(&mut d, con(K::Fix, &[w(c)]));
+    ok(&mut d, con(K::Tangent, &[w(c), w(e)]));
+    assert!(ell(&d, e).ratio <= 1.0);
+    assert!(all_satisfied(&d));
+}

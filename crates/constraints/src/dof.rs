@@ -235,7 +235,7 @@ mod budget_tests {
             aux_init: Vec::new(),
             aux: 0,
         };
-        let comp = Comp { model, built: vec![endpoint], weights: vec![1.0; 2], tol: 1e-9 };
+        let comp = Comp { model, built: vec![endpoint], weights: vec![1.0; 2], held: Vec::new(), tol: 1e-9 };
         assert!(analyse(&comp).dof.is_none());
     }
 }

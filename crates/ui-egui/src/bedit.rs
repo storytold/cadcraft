@@ -1,7 +1,9 @@
 //! The Edit Block Definition dialog: BEDIT typed or started from a menu or the Tool Sets with no
 //! block reference selected. It lists the drawing's blocks with a preview and description; a name
 //! no block has yet starts a new block. OK runs BEDIT with that name; the dialog itself never
-//! changes the drawing. JSON calls (`bedit {name}`) and a selected block reference skip it.
+//! changes the drawing. In the Block Editor it switches to the block chosen, first asking whether
+//! to save the changes not saved yet. JSON calls (`bedit {name}`) and a selected block reference
+//! skip it.
 
 use std::sync::Arc;
 
@@ -24,6 +26,8 @@ pub struct State {
     pub name: String,
     /// Why the last OK failed, shown until the name changes.
     pub error: Option<String>,
+    /// OK in the Block Editor with changes not saved: asking whether to save them first.
+    pub ask_save: bool,
     /// The preview of the block named, for (drawing uid, revision, block name).
     preview: Option<((u64, u64, String), Arc<DisplayList>)>,
 }
@@ -51,7 +55,7 @@ pub fn authoring_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) 
         .unwrap_or_else(|| crate::i18n::t("This drawing").to_string());
     let mut choice: Option<&str> = None;
     egui::Window::new(crate::tl!("Open in Block Editor"))
-        .id(egui::Id::new("Open in Block Editor"))
+        .id(egui::Id::unique("Open in Block Editor"))
         .open(open)
         .collapsible(false)
         .resizable(false)
@@ -86,22 +90,19 @@ pub fn authoring_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) 
 }
 
 /// BEDIT typed or from a menu without parameters opens the dialog, unless exactly one block
-/// reference is selected (it opens at once) or the Block Editor is open (BEDIT says why not).
+/// reference is selected (it opens at once). In the Block Editor it starts on the block edited.
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !matches!(id, "bedit" | "be") || !params.is_null() {
         return None;
     }
     let st = app.session.state().ok()?;
-    if st.block_edit.is_some() {
-        return None;
-    }
     let refs = st.selection.iter().filter(|h| st.doc.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).count();
     if refs == 1 && st.selection.len() == 1 {
         return None;
     }
     // Start on the block last edited if it is still there, else the first one.
     let names = editable_blocks(&st.doc);
-    let last = app.bedit.name.clone();
+    let last = st.block_editor().map(str::to_string).unwrap_or_else(|| app.bedit.name.clone());
     let name = if names.iter().any(|n| n.eq_ignore_ascii_case(&last)) { last } else { names.first().cloned().unwrap_or_default() };
     app.bedit = State { name, ..State::default() };
     app.ui.dialog = Some("bedit".into());
@@ -164,16 +165,20 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let list = existing.as_deref().and_then(|n| preview(app, n));
     let description = existing.as_deref().and_then(|n| d.block(n)).map(|b| b.description.clone()).unwrap_or_default();
     let (mut ok, mut cancel) = (false, false);
+    if app.bedit.ask_save {
+        save_question(app, ctx, open);
+        return;
+    }
     egui::Window::new(crate::tl!("Edit Block Definition"))
-        .id(egui::Id::new("Edit Block Definition"))
+        .id(egui::Id::unique("Edit Block Definition"))
         .open(open)
         .collapsible(false)
         .resizable(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
-            ui.label(crate::tl!("Block to create or edit"));
-            let edit = ui.add(egui::TextEdit::singleline(&mut app.bedit.name).desired_width(460.0));
+            let name_label = ui.label(crate::tl!("Block to create or edit"));
+            let edit = ui.add(egui::TextEdit::singleline(&mut app.bedit.name).desired_width(460.0)).labelled_by(name_label.id);
             if edit.changed() {
                 app.bedit.error = None;
             }
@@ -236,14 +241,72 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// OK: open the Block Editor on the name given (a new name starts a new block). Returns whether
-/// it opened; if not, the dialog shows why and stays open.
+/// In the Block Editor with changes not saved: whether to save them before switching to the
+/// block chosen. Yes saves, No discards, Cancel goes back to the list.
+fn save_question(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let current = app.session.state().ok().and_then(|st| st.block_editor().map(str::to_string)).unwrap_or_default();
+    let mut answer: Option<Option<bool>> = None;
+    egui::Window::new(crate::tl!("Edit Block Definition"))
+        .id(egui::Id::unique("Edit Block Definition"))
+        .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.label(crate::tf!("Save changes to block \"{name}\"?", name = current));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(crate::tl!("Yes")).clicked() {
+                    answer = Some(Some(true));
+                }
+                if ui.button(crate::tl!("No")).clicked() {
+                    answer = Some(Some(false));
+                }
+                if ui.button(crate::tl!("Cancel")).clicked() {
+                    answer = Some(None);
+                }
+            });
+        });
+    let Some(answer) = answer else { return };
+    app.bedit.ask_save = false;
+    if let Some(save) = answer
+        && run(app, Some(save))
+    {
+        *open = false;
+    }
+}
+
+/// OK: open the Block Editor on the name given (a new name starts a new block). In the Block
+/// Editor with changes not saved, it asks first whether to save them. Returns whether it opened;
+/// if not, the dialog shows why (or asks) and stays open.
 pub fn confirm(app: &mut CadApp) -> bool {
     let name = app.bedit.name.trim().to_string();
     if name.is_empty() {
         return false;
     }
-    match app.run("bedit", json!({ "name": name, "create": true })) {
+    let ask = app.session.state().is_ok_and(|st| st.block_unsaved() && st.block_editor().is_some_and(|b| !b.eq_ignore_ascii_case(&name)));
+    if ask {
+        // A block it can't switch to is refused before the question, which would trap the user.
+        if let Err(e) = app.run("bedit", json!({ "name": name, "create": true, "check": true })) {
+            app.bedit.error = Some(e);
+            return false;
+        }
+        app.bedit.ask_save = true;
+        return false;
+    }
+    run(app, None)
+}
+
+/// Run BEDIT on the name given, saving (`Some(true)`) or discarding (`Some(false)`) the Block
+/// Editor's changes not saved yet. Returns whether it went through; if not, the dialog shows why.
+fn run(app: &mut CadApp, save: Option<bool>) -> bool {
+    let name = app.bedit.name.trim().to_string();
+    let mut p = json!({ "name": name, "create": true });
+    if let (Some(save), Some(o)) = (save, p.as_object_mut()) {
+        o.insert("save".into(), json!(save));
+    }
+    match app.run("bedit", p) {
         Ok(_) => true,
         Err(e) => {
             app.bedit.error = Some(e);

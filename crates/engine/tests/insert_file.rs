@@ -8,6 +8,11 @@ use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Block, Circle, Drawing, Entity, EntityKind, HVal, Handle, Insert, Layer, Line};
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 /// A drawing file in a test format: its bytes are "x,y", the $INSBASE. Model space: a line from
 /// 10,10 to 20,10 on layer PARTS (colour 1), and a reference to block NUT (a circle) at 10,10.
 fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
@@ -42,15 +47,6 @@ fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
 
 fn hooks() {
     set_io(IoHooks { read, write: |_, _| Err("no writer in this test".into()), plot: None });
-}
-
-/// Write a test drawing file with $INSBASE `base`; returns its path.
-fn file(name: &str, base: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("cadcraft-insert-file-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join(name);
-    std::fs::write(&p, base).unwrap();
-    p.to_string_lossy().into_owned()
 }
 
 /// Lines in model space as (ax, ay, bx, by), rounded.
@@ -105,7 +101,9 @@ fn star_name_inserts_the_blocks_objects_with_one_scale_factor() {
 #[test]
 fn a_drawing_file_becomes_a_block_with_its_insbase_and_tables() {
     hooks();
-    let bolt = file("bolt.dxf", "10,10");
+    // Test drawing files hold their $INSBASE.
+    let dir = TempDir::new("insert-file");
+    let bolt = dir.file("bolt.dxf", "10,10");
     let mut s = Session::new();
     // This drawing's own layer PARTS keeps its colour.
     s.execute("layer.new", &json!({ "name": "PARTS", "color": 3 })).unwrap();
@@ -128,7 +126,7 @@ fn a_drawing_file_becomes_a_block_with_its_insbase_and_tables() {
     assert_eq!(inserts(&s).len(), 2);
 
     // NAME=path defines the block under that name without asking; *path inserts the file's objects.
-    let pin = file("pin.dxf", "10,10");
+    let pin = dir.file("pin.dxf", "10,10");
     s.script(&format!("-INSERT M8={bolt} 0,0 1 1 0\n-INSERT *{pin} 50,0 1 0\n")).unwrap();
     assert!(s.running.is_none(), "INSERT finished: {}", s.prompt_text());
     assert!(s.doc().unwrap().block("M8").is_some());
@@ -138,7 +136,7 @@ fn a_drawing_file_becomes_a_block_with_its_insbase_and_tables() {
     assert!(inserts(&s).iter().any(|i| i.0 == "NUT" && i.1 == 50.0 && i.2 == 0.0));
 
     // JSON: `file` with an optional block name, never a dialog.
-    let r = s.execute("insert", &json!({ "file": file("washer.dxf", "0,0"), "at": [5, 5] })).unwrap();
+    let r = s.execute("insert", &json!({ "file": dir.file("washer.dxf", "0,0"), "at": [5, 5] })).unwrap();
     assert!(r["handle"].is_string(), "{r}");
     assert!(inserts(&s).iter().any(|i| i.0 == "washer"));
 
@@ -172,33 +170,5 @@ fn exploded_json_insert_is_one_undo_step() {
         assert!(inserts(&s).is_empty(), "{params}");
         assert!(s.doc().unwrap().block("B").is_none(), "{params}");
         assert_eq!(lines(&s), vec![(0.0, 0.0, 10.0, 0.0)], "{params}");
-    }
-}
-
-/// #1997: a file drawn in inches comes into a drawing in metres at 0.0254, on top of the scale asked for.
-#[test]
-fn a_file_in_other_units_is_scaled_to_this_drawings_units() {
-    hooks();
-    let part = file("inches.dxf", "0,0");
-    let scale_of = |s: &Session| {
-        let d = s.doc().unwrap();
-        d.model.iter().rev().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some((i.scale.x, i.scale.y)) } else { None }).unwrap()
-    };
-    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-12 && (a.1 - b.1).abs() < 1e-12;
-    let mut s = Session::new();
-    s.execute("units", &json!({ "insunits": 6 })).unwrap();
-    s.execute("insert", &json!({ "file": part, "at": [0, 0] })).unwrap();
-    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
-    s.execute("insert", &json!({ "file": part, "at": [0, 0], "scale": [2, 3] })).unwrap();
-    assert!(near(scale_of(&s), (0.0508, 0.0762)), "{:?}", scale_of(&s));
-    // Interactive INSERT converts too.
-    s.script(&format!("-INSERT inches={part} 0,0 1 1 0\n")).unwrap();
-    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
-    // A drawing in the same units, or without any, takes the file as is.
-    for units in [1, 0] {
-        let mut s = Session::new();
-        s.execute("units", &json!({ "insunits": units })).unwrap();
-        s.execute("insert", &json!({ "file": part, "at": [0, 0] })).unwrap();
-        assert!(near(scale_of(&s), (1.0, 1.0)), "INSUNITS {units}: {:?}", scale_of(&s));
     }
 }

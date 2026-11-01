@@ -2,26 +2,39 @@
 //! winding, the first self-intersection and coincident vertices — for agents that read a drawing.
 //! Read-only.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use cadcraft_doc::{Entity, EntityKind};
 use cadcraft_geom::{Bounds2, Polyline, Vec2, intersect_segments};
 use serde_json::{Value, json};
 
-use super::super::*;
-use super::{area_of, object_area};
+use super::super::bad;
+
+use super::super::point_value;
+use super::{SelfCheck, area_of, object_area};
 use crate::{Result, Session};
 
 const CMD: &str = "shapes";
 
-pub const PARAMS: &str = "{type?, layer?, window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit? (default 200), offset?, tolerance?: positive number (default 1e-9 × the extents diagonal; near-duplicate vertices and a first vertex equal to the last)} → {schema: 1, count (all closed shapes), returned, offset, truncated, shapes: [{handle, type, layer, perimeter, area (≥ 0), winding: ccw|cw, centroid: [x,y] | null (zero area), selfIntersection: [x,y] | null (the first crossing of two non-adjacent edges; null past 4000 edges), duplicateVertices: [{index, distance} (vertices index and index+1, wrapping)]}], skipped: {<type>: {count, reason}} (the other matches)}: closed polylines, circles, full ellipses and closed splines, arcs and bulges exact";
+pub const PARAMS: &str = "{type?, layer?, window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit? (default 200), offset?, tolerance?: positive number (default 1e-9 × the extents diagonal; near-duplicate vertices and a first vertex equal to the last)} → {schema: 1, count (all closed shapes), returned, offset, truncated, shapes: [{handle, type, layer, perimeter, area (≥ 0), winding: ccw|cw, centroid: [x,y] | null (zero area), selfIntersection: [x,y] | null (the first crossing of two non-adjacent edges; null past 4000 edges), duplicateVertices: [{index, distance} (vertices index and index+1, wrapping)]}], skipped: {<type>: {count, reason}} (the other matches), selfCheck: {schema, found, analyzed, skipped: {<type>: {count, reason}}, caps: {<name>: <value>}, implausible: [{handle, type, field, value, bound, reason}]} (what the analysis covered, the caps it hit, and values that point at a bug)}: closed polylines, circles, full ellipses and closed splines, arcs and bulges exact";
 
 /// The facts SHAPES reports for one closed shape, or why an entity is not one.
 enum Facts {
-    Shape { perimeter: f64, area: f64, signed: f64, centroid: Option<Vec2>, cross: Option<Vec2>, dups: Vec<(usize, f64)> },
+    Shape {
+        perimeter: f64,
+        area: f64,
+        signed: f64,
+        centroid: Option<Vec2>,
+        cross: Option<Vec2>,
+        /// The shape had more edges than the self-intersection cap checks.
+        cross_capped: bool,
+        dups: Vec<(usize, f64)>,
+        bounds: Bounds2,
+    },
     Skip(&'static str),
 }
 
+/// SHAPES: geometry facts for every closed shape that matches the filters in the current space,
+/// paged by `offset`/`limit`, with the self-check of what was found, analysed, skipped and
+/// flagged.
 pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let given = |k: &str| p.get(k).filter(|v| !v.is_null());
     let text = |k: &str| -> Result<Option<String>> {
@@ -52,15 +65,29 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let s: &Session = s;
     let st = s.state()?;
     let d = &st.doc;
-    let empty = || json!({ "schema": 1, "count": 0, "returned": 0, "offset": offset, "truncated": false, "shapes": [], "skipped": {} });
+    let empty = || {
+        json!({
+            "schema": 1,
+            "count": 0,
+            "returned": 0,
+            "offset": offset,
+            "truncated": false,
+            "shapes": [],
+            "skipped": {},
+            "selfCheck": SelfCheck::new().to_json(),
+        })
+    };
     let Some(store) = d.space(&st.space) else { return Ok(empty()) };
+    let extents = d.extents(&st.space);
+    // No visible extents means no bound to compare an area against (`implausible` skips an
+    // infinite bound).
+    let extents_area = if extents.is_empty() { f64::INFINITY } else { extents.width() * extents.height() };
     let tol = tolerance.unwrap_or_else(|| {
-        let ext = d.extents(&st.space);
-        let diag = if ext.is_empty() { 0.0 } else { ext.min.dist(ext.max) };
+        let diag = if extents.is_empty() { 0.0 } else { extents.min.dist(extents.max) };
         (diag * 1e-9).max(1e-12)
     });
     let wtol = window.as_ref().map(crate::select::window_tol).unwrap_or(0.0);
-    let mut skipped: BTreeMap<&str, (usize, BTreeSet<&str>)> = BTreeMap::new();
+    let mut check = SelfCheck::new();
     let mut shapes: Vec<(&Entity, Facts)> = Vec::new();
     for e in store
         .iter()
@@ -68,31 +95,51 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
         .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
         .filter(|e| window.as_ref().is_none_or(|w| crate::select::in_window(d, e, None, w, crossing, wtol)))
     {
+        check.found(1);
         match facts(s, e, tol)? {
-            Facts::Skip(why) => {
-                let entry = skipped.entry(e.kind.type_name()).or_default();
-                entry.0 += 1;
-                entry.1.insert(why);
+            Facts::Skip(why) => check.skip(e.kind.type_name(), why, 1),
+            f => {
+                check.analyzed(1);
+                if let Facts::Shape { perimeter, area, cross_capped, bounds, .. } = &f {
+                    if *cross_capped {
+                        check.cap("crossingSegments", MAX_CROSSING_SEGMENTS as u64);
+                    }
+                    let diagonal = if bounds.is_empty() { 0.0 } else { bounds.min.dist(bounds.max) };
+                    check.implausible(
+                        e.handle,
+                        e.kind.type_name(),
+                        "perimeter",
+                        *perimeter,
+                        diagonal * 10.0,
+                        "perimeter is more than 10 x the bounding-box diagonal",
+                    );
+                    check.implausible(e.handle, e.kind.type_name(), "area", *area, extents_area, "area is larger than the drawing extents");
+                }
+                shapes.push((e, f));
             }
-            f => shapes.push((e, f)),
         }
     }
     let page: Vec<Value> = shapes.iter().skip(offset).take(limit).map(|(e, f)| shape_json(e, f)).collect();
-    let skipped: BTreeMap<&str, Value> =
-        skipped.into_iter().map(|(k, (n, why))| (k, json!({ "count": n, "reason": why.into_iter().collect::<Vec<_>>().join("; ") }))).collect();
+    let truncated = page.len() < shapes.len().saturating_sub(offset);
+    if truncated {
+        check.cap("limit", u64::try_from(limit).unwrap_or(u64::MAX));
+    }
+    let skipped = check.skipped_json();
     Ok(json!({
         "schema": 1,
         "count": shapes.len(),
         "returned": page.len(),
         "offset": offset,
-        "truncated": page.len() < shapes.len().saturating_sub(offset),
+        "truncated": truncated,
         "shapes": page,
         "skipped": skipped,
+        "selfCheck": check.to_json(),
     }))
 }
 
+/// One analysed shape as the JSON object the command reports (null if `f` is not a shape).
 fn shape_json(e: &Entity, f: &Facts) -> Value {
-    let Facts::Shape { perimeter, area, signed, centroid, cross, dups } = f else { return Value::Null };
+    let Facts::Shape { perimeter, area, signed, centroid, cross, dups, .. } = f else { return Value::Null };
     json!({
         "handle": e.handle.hex(),
         "type": e.kind.type_name(),
@@ -106,11 +153,24 @@ fn shape_json(e: &Entity, f: &Facts) -> Value {
     })
 }
 
+/// The facts SHAPES reports for one entity, or the reason it is not a closed shape: circles,
+/// full ellipses, closed or self-closing polylines and splines are measured, arcs and everything
+/// else are skipped.
 fn facts(s: &Session, e: &Entity, tol: f64) -> Result<Facts> {
     Ok(match &e.kind {
         EntityKind::Circle(c) => {
             let (area, perimeter) = object_area(s, e.handle)?;
-            Facts::Shape { perimeter, area, signed: area, centroid: Some(c.center.xy()), cross: None, dups: Vec::new() }
+            let r = Vec2::new(c.radius, c.radius);
+            Facts::Shape {
+                perimeter,
+                area,
+                signed: area,
+                centroid: Some(c.center.xy()),
+                cross: None,
+                cross_capped: false,
+                dups: Vec::new(),
+                bounds: Bounds2::new(c.center.xy() - r, c.center.xy() + r),
+            }
         }
         EntityKind::Ellipse(el) => {
             let geom = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
@@ -118,7 +178,16 @@ fn facts(s: &Session, e: &Entity, tol: f64) -> Result<Facts> {
                 return Ok(Facts::Skip("open"));
             }
             let (area, perimeter) = object_area(s, e.handle)?;
-            Facts::Shape { perimeter, area, signed: area, centroid: Some(geom.center), cross: None, dups: Vec::new() }
+            Facts::Shape {
+                perimeter,
+                area,
+                signed: area,
+                centroid: Some(geom.center),
+                cross: None,
+                cross_capped: false,
+                dups: Vec::new(),
+                bounds: geom.bounds(),
+            }
         }
         EntityKind::LwPolyline(pl) => {
             let mut vertices = pl.vertices.clone();
@@ -145,7 +214,8 @@ fn facts(s: &Session, e: &Entity, tol: f64) -> Result<Facts> {
                     (dist <= tol).then_some((i, dist))
                 })
                 .collect();
-            Facts::Shape { perimeter: g.len(), area: signed.abs(), signed, centroid: g.centroid(), cross: first_crossing(&g), dups }
+            let (cross, cross_capped) = first_crossing(&g);
+            Facts::Shape { perimeter: g.len(), area: signed.abs(), signed, centroid: g.centroid(), cross, cross_capped, dups, bounds: g.bounds() }
         }
         EntityKind::Spline(sp) => {
             let mut pts = sp.tessellate(1e-3);
@@ -162,9 +232,11 @@ fn facts(s: &Session, e: &Entity, tol: f64) -> Result<Facts> {
             if pts.len() < 3 {
                 return Ok(Facts::Skip("degenerate"));
             }
+            let bounds = Bounds2::from_points(pts.iter().copied());
             let (area, perimeter) = area_of(&pts);
             let g = Polyline::from_points(&pts, true);
-            Facts::Shape { perimeter, area, signed: g.area(), centroid: g.centroid(), cross: first_crossing(&g), dups: Vec::new() }
+            let (cross, cross_capped) = first_crossing(&g);
+            Facts::Shape { perimeter, area, signed: g.area(), centroid: g.centroid(), cross, cross_capped, dups: Vec::new(), bounds }
         }
         EntityKind::Arc(_) => Facts::Skip("open"),
         _ => Facts::Skip("not a closed shape"),
@@ -174,13 +246,14 @@ fn facts(s: &Session, e: &Entity, tol: f64) -> Result<Facts> {
 /// Shapes with more edges than this report no selfIntersection.
 const MAX_CROSSING_SEGMENTS: usize = 4_000;
 
-/// The first crossing between two non-adjacent edges, in edge order.
-fn first_crossing(g: &Polyline) -> Option<Vec2> {
+/// The first crossing between two non-adjacent edges, in edge order, and whether the shape was
+/// too large to check (the cap applies even if a crossing lies among the first edges).
+fn first_crossing(g: &Polyline) -> (Option<Vec2>, bool) {
     let segs = g.segments();
     let n = segs.len();
     // The pairwise test is quadratic: past this many edges the answer is null, not a hang.
     if n > MAX_CROSSING_SEGMENTS {
-        return None;
+        return (None, true);
     }
     for (i, a) in segs.iter().enumerate() {
         for (j, b) in segs.iter().enumerate().skip(i + 2) {
@@ -188,9 +261,9 @@ fn first_crossing(g: &Polyline) -> Option<Vec2> {
                 continue;
             }
             if let Some(x) = intersect_segments(a, b).first() {
-                return Some(*x);
+                return (Some(*x), false);
             }
         }
     }
-    None
+    (None, false)
 }

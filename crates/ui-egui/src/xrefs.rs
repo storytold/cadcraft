@@ -37,19 +37,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     }
 }
 
-/// Show the palette. The first time it docks below the Layers palette (where the palettes column
-/// is); after that it comes back where it was.
+/// Show the palette. The first time it docks below Properties in the right dock; after that it
+/// comes back where it was.
 fn open_palette(app: &mut CadApp) -> Result<Value, String> {
-    let panel = Panel::ExternalRefs;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
-    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
-    if first && app.ui.docking.layout.contains(&Panel::Layers) {
-        let moved = json!({ "operation": "move", "panel": panel.id(), "target": Panel::Layers.id(), "zone": "bottom" });
-        if let Ok(r) = crate::docking::command(app, false, &moved) {
-            return Ok(r);
-        }
-    }
-    Ok(r)
+    crate::docking::command(app, false, &json!({ "operation": "open", "panel": Panel::ExternalRefs.id() }))
 }
 
 /// A picked file inside the host drawing's folder is attached by its relative path, so the
@@ -77,7 +68,7 @@ struct Row {
 fn rows(app: &CadApp, ui: &egui::Ui) -> Vec<Row> {
     let Ok(st) = app.session.state() else { return Vec::new() };
     let key = (st.uid, st.revision);
-    let id = egui::Id::new("xref-rows");
+    let id = egui::Id::unique("xref-rows");
     if let Some((k, rows)) = ui.data(|d| d.get_temp::<((u64, u64), Vec<Row>)>(id))
         && k == key
     {
@@ -129,8 +120,8 @@ enum Act {
 pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let rows = rows(app, ui);
-    let sel_id = egui::Id::new("xref-selected");
-    let path_id = egui::Id::new("xref-path-edit");
+    let sel_id = egui::Id::unique("xref-selected");
+    let path_id = egui::Id::unique("xref-path-edit");
     let mut selected: Option<String> = ui.data(|d| d.get_temp(sel_id));
     if !selected.as_ref().is_some_and(|s| rows.iter().any(|r| &r.name == s)) {
         selected = rows.first().map(|r| r.name.clone());
@@ -245,10 +236,10 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        ui.label(crate::tl!("Saved Path"));
+        let label = ui.label(crate::tl!("Saved Path"));
         let mut text: String = ui.data(|d| d.get_temp(path_id)).unwrap_or_else(|| r.path.clone());
         let w = (ui.available_width() - 70.0).max(60.0);
-        let edit = ui.add(egui::TextEdit::singleline(&mut text).desired_width(w));
+        let edit = ui.add(egui::TextEdit::singleline(&mut text).desired_width(w)).labelled_by(label.id);
         let apply = ui.add_enabled(!text.trim().is_empty() && text != r.path, egui::Button::new(crate::tl!("Apply"))).clicked()
             || (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && text != r.path);
         if apply {

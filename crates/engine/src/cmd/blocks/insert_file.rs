@@ -34,52 +34,10 @@ impl FileRef {
         !self.explicit && s.doc().is_ok_and(|d| d.block(&self.name).is_some())
     }
 
-    /// Read the file and (re)define its block. Returns the block's name and the factor that
-    /// converts the file's `$INSUNITS` to this drawing's (1 when either declares no units).
-    pub fn define(&self, s: &mut Session) -> Result<(String, f64)> {
+    /// Read the file and (re)define its block. Returns the block's name.
+    pub fn define(&self, s: &mut Session) -> Result<String> {
         let src = read_drawing(&self.path)?;
-        let name = define_from(s, &src, &self.name)?;
-        Ok((name, unit_factor(&src, s.doc()?)))
-    }
-}
-
-/// Metres in one `$INSUNITS` unit (DXF Reference); `None` for 0 (unitless) and unknown codes.
-fn unit_metres(code: i64) -> Option<f64> {
-    Some(match code {
-        1 => 0.0254,
-        2 => 0.3048,
-        3 => 1609.344,
-        4 => 0.001,
-        5 => 0.01,
-        6 => 1.0,
-        7 => 1000.0,
-        8 => 2.54e-8,
-        9 => 2.54e-5,
-        10 => 0.9144,
-        11 => 1e-10,
-        12 => 1e-9,
-        13 => 1e-6,
-        14 => 0.1,
-        15 => 10.0,
-        16 => 100.0,
-        17 => 1e9,
-        18 => 1.495_978_707e11,
-        19 => 9.460_730_472_580_8e15,
-        20 => 3.085_677_581_491_4e16,
-        21 => 1200.0 / 3937.0,
-        22 => 1.0 / 39.37,
-        23 => 3600.0 / 3937.0,
-        24 => 6_336_000.0 / 3937.0,
-        _ => return None,
-    })
-}
-
-/// The scale that brings a file drawn in `src`'s units into `target`'s, as AutoCAD does (1 inch
-/// file into a metre drawing: 0.0254). A drawing without units is taken as is.
-fn unit_factor(src: &Drawing, target: &Drawing) -> f64 {
-    match (unit_metres(src.header.i64("INSUNITS", 0)), unit_metres(target.header.i64("INSUNITS", 0))) {
-        (Some(from), Some(to)) => from / to,
-        _ => 1.0,
+        define_from(s, &src, &self.name)
     }
 }
 
@@ -191,6 +149,7 @@ fn merge_tables(d: &mut Drawing, src: &Drawing) {
     merge(&mut d.dim_styles, &src.dim_styles, |t| &t.name);
     merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name);
     merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
+    merge(&mut d.mline_styles, &src.mline_styles, |t| &t.name);
 }
 
 /// Which source blocks to copy, and under which name: new names keep theirs, generated
@@ -272,15 +231,7 @@ pub(super) fn json_params(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(path) = str_param(&p, "file").map(str::to_string) {
         let n = name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| stem(&path));
-        let (defined, factor) = FileRef { name: n, path, explicit: true }.define(s)?;
-        name = Some(defined);
-        if factor != 1.0 {
-            // The file's units to this drawing's, on top of the scale asked for.
-            p["scale"] = match p.get("scale") {
-                Some(Value::Array(a)) => Value::Array(a.iter().map(|v| v.as_f64().map_or_else(|| v.clone(), |x| json!(x * factor))).collect()),
-                other => json!(other.and_then(Value::as_f64).unwrap_or(1.0) * factor),
-            };
-        }
+        name = Some(FileRef { name: n, path, explicit: true }.define(s)?);
     }
     if let Some(n) = name {
         p["name"] = json!(n);
@@ -304,5 +255,18 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    #[test]
+    fn inserted_file_brings_its_mline_styles() {
+        let mut src = Drawing::default();
+        src.mline_styles.push(cadcraft_doc::MLineStyle { name: "WALL".into(), ..Default::default() });
+        let mut d = Drawing::default();
+        merge_tables(&mut d, &src);
+        assert!(d.mline_styles.iter().any(|m| m.name == "WALL"));
+        // A style this drawing already has keeps its own definition.
+        let before = d.mline_styles.len();
+        merge_tables(&mut d, &src);
+        assert_eq!(d.mline_styles.len(), before);
     }
 }

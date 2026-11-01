@@ -188,8 +188,13 @@ pub fn format_linear(v: f64, f: &NumFormat) -> (String, String) {
     }
 }
 
-/// Format an angle (radians, non-negative sweep) per DIMAUNIT / DIMADEC.
+/// Format an angle (radians, non-negative sweep) per DIMAUNIT / DIMADEC, with a decimal point.
 pub fn format_angle(rad: f64, unit: u8, decimals: u8, zin: u8) -> String {
+    format_angle_with_separator(rad, unit, decimals, zin, ".")
+}
+
+/// Format an angle with the dimension style's DIMDSEP separator.
+pub(crate) fn format_angle_with_separator(rad: f64, unit: u8, decimals: u8, zin: u8, separator: &str) -> String {
     let rad = if rad.is_finite() { rad } else { 0.0 };
     let deg = rad.to_degrees();
     match unit {
@@ -209,9 +214,9 @@ pub fn format_angle(rad: f64, unit: u8, decimals: u8, zin: u8) -> String {
                 _ => format!("{d}°{m}'{s}\""),
             }
         }
-        2 => format!("{}g", format_decimal(deg / 0.9, decimals, zin, ".")),
-        3 => format!("{}r", format_decimal(rad, decimals, zin, ".")),
-        _ => format!("{}°", format_decimal(deg, decimals, zin, ".")),
+        2 => format!("{}g", format_decimal(deg / 0.9, decimals, zin, separator)),
+        3 => format!("{}r", format_decimal(rad, decimals, zin, separator)),
+        _ => format!("{}°", format_decimal(deg, decimals, zin, separator)),
     }
 }
 

@@ -67,6 +67,7 @@
 	Blend	过渡
 	Block	块
 	Block Attribute Manager...	块属性管理器...
+	Block Description...	块描述...
 	Block Editor	块编辑器
 	Block Reference	块参照
 	Block...	块...
@@ -145,6 +146,7 @@
 	Current selection	当前选择
 	Current: {color}	当前: {color}
 	Cut	剪切
+	Cut with Base Point	带基点剪切
 	Cyan	青色
 	Cylinder	圆柱体
 	DWG	DWG
@@ -617,6 +619,7 @@
 	Rename Text Style	重命名文字样式
 	Rename...	重命名...
 	Repeat {command}	重复 {command}
+	Replace Block...	替换块...
 	Requires a point (x,y, @dx,dy or @d<a).	需要一个点 (x,y, @dx,dy 或 @d<a)。
 	Reset Palettes	重置选项板
 	Restore	恢复
@@ -1119,6 +1122,7 @@
 	Open Recent	打开最近的图形
 	Sheet Books to PDF...	图纸册转 PDF...
 	Drawing Recovery Manager...	图形恢复管理器...
+	Named Viewports...	命名视口...
 	Named Views...	命名视图...
 	Polygonal Viewport	多边形视口
 	From Template...	来自模板...
@@ -1146,3 +1150,202 @@
 	First corner	第一角点
 	Opposite corner	对角点
 	Window <	窗口 <
+	History	历史记录
+	Grip Edit	夹点编辑
+	Paste to Command Line	粘贴到命令行
+	Changed: {n}	已更改: {n}
+	Bulleted list	项目符号列表
+	No external references are attached.	没有附加的外部参照。
+	Unloaded	已卸载
+	Make it a block of this drawing, keeping its layer names	将其制作为此图形的块，保留其图层名称
+	Spline Edit	样条曲线编辑
+	Degrees of Freedom	自由度
+	Stretch Vertex	拉伸顶点
+	Analyze Shapes	分析形状
+	Over-constrained	过度约束
+	Previous Change	上一个更改
+	Close Comparison	关闭比较
+	Export Comparison	导出比较
+	Plotter Manager	打印机管理
+	Clear Command History	清除命令历史记录
+	Degrees of freedom: {n}	自由度: {n}
+	Open	打开
+	Arrow size	箭头大小
+	Viewport scale	视口比例
+	Unresolved	未解析
+	Version 2007	2007 版
+	Clear History	清除历史记录
+	Isometric Plane	等轴测平面
+	min	最小
+	Grip Option	夹点选项
+	Interface language	界面语言
+	Command Aliases	命令别名
+	Version 2013	2013 版
+	Reload	重新加载
+	Default Save Version	默认保存版本
+	Export Table	导出表格
+	A variable name starts with a letter and has only letters, digits and _	变量名必须以字母开头，且只能包含字母、数字和下划线
+	External References	外部参照
+	Variables	变量
+	Settings...	设置...
+	Set Current Viewport	设置当前视口
+	Convert	转换为
+	Copy Full File Path	复制完整文件路径
+	Edit Table Cell	编辑表格单元格
+	Numbered list	编号列表
+	Recent Commands	最近的命令
+	Edit Attributes...	编辑属性...
+	Select Similar	选择相似
+	Viewport is locked	视口已锁定
+	Show in Tool Sets	在工具集中显示
+	Infer Constraints	推断约束
+	Group Selection	编组选择
+	Copy History	复制历史记录
+	Clip Viewport	裁剪视口
+	Dimension Edit	标注编辑
+	Hide Palette	隐藏选项板
+	Search for pattern	搜索图案
+	Recent Input	最近输入
+	Attach DWG...	附加 DWG...
+	Lines of Command History	命令历史记录行数
+	Close All Other Drawings	关闭所有其他图形
+	Overlay	覆盖
+	Units Conversion	单位转换
+	Unload	卸载
+	Unlock viewport	解除锁定视口
+	Not loaded	未加载
+	References: {n}	参照: {n}
+	Volume	体积
+	Remove Vertex	移除顶点
+	Evaluate	求值
+	To	到
+	Count Table	计数表
+	Only in this drawing: {n}	仅在此图形中: {n}
+	Reinitialize	重新初始化
+	Update Data Links	更新数据链接
+	Dim scale overall	全局标注比例
+	CADCraft	CADCraft
+	Enter	输入
+	Temporary track point	临时追踪点
+	Plot Window	窗口打印
+	Show and hide the tools of this category	显示和隐藏此类别的工具
+	Query Texts	查询文字
+	Unreferenced	未参照
+	Drawing Template (DWT)	图形样板 (DWT)
+	Turn On Layer	打开图层
+	QuickCalc Pick	快速计算器拾取
+	Loaded	已加载
+	Add Vertex	添加顶点
+	Make it a block of this drawing; its layers become NAME$0$LAYER	将其制作为此图形的块；其图层将变为 NAME$0$LAYER
+	Recalculate Table Formulas	重新计算表格公式
+	Convert to Line	转换为直线
+	More toolbar commands	更多工具栏命令
+	Reference Name	参照名
+	Close Array Editing	关闭阵列编辑
+	Version 2018	2018 版
+	Reload All	全部重新加载
+	objects	个对象
+	Set Table Cell Style	设置表格单元格样式
+	Snap Overrides	捕捉替代
+	Count List	计数列表
+	Thaw Layer	解冻图层
+	Convert to Arc	转换为圆弧
+	Precision	精度
+	Version 2004	2004 版
+	Saved Path	保存的路径
+	Apply	应用
+	Lock viewport	锁定视口
+	Bind	绑定
+	Only in {name}: {n}	仅在 {name} 中: {n}
+	SVG drawings (SVG, SVGZ)	SVG 图形 (SVG, SVGZ)
+	Insert Table Formula	插入表格公式
+	Detach	分离
+	Zoom Realtime	实时缩放
+	Not Found	未找到
+	Version 2010	2010 版
+	Group Options	编组选项
+	Version 2000	2000 版
+	Insert tab	插入选项卡
+	Polyline Edit	多段线编辑
+	Next Change	下一个更改
+	Table Breaks	表格断开
+	Hatch Patterns	填充图案
+	Table Cell Style	表格单元格样式
+	Annotative Update	注释性更新
+	Hatch Pattern	填充图案
+	Get from the Drawing	从图形中获取
+	Zoom Dynamic	动态缩放
+	Edit Array	编辑阵列
+	Save changes to {name}?	是否保存对 {name} 的更改？
+	Your changes will be lost if you don't save them.	如果不保存，您的更改将丢失。
+	Don't Save	不保存
+	Hatch and Gradient	填充和渐变
+	Boundaries	边界
+	Add: Pick points	添加：拾取点
+	Add: Select objects	添加：选择对象
+	Boundaries picked: {n}	已拾取边界：{n}
+	Associate	关联
+	Create separate hatches	创建独立的填充
+	Island detection	孤岛检测
+	Normal	普通
+	Outer	外部
+	Ignore	忽略
+	Hatch origin	填充原点
+	Use current origin	使用当前原点
+	Specified origin	指定原点
+	Click to set new origin	点击设置新原点
+	Default to boundary extents	默认至边界范围
+	Bottom left	左下
+	Bottom right	右下
+	Top right	右上
+	Top left	左上
+	Color 1	颜色 1
+	Color 2	颜色 2
+	Shape	形状
+	Inverted	反向
+	Centered	居中
+	Curved	曲线
+	Spherical	球面
+	Hemispherical	半球面
+	Drawing Units	图形单位
+	Insertion scale	插入比例
+	Units to scale inserted content	用于缩放插入内容的单位
+	Sample output	示例输出
+	Architectural	建筑
+	Decimal	十进制
+	Engineering	工程
+	Fractional	分数
+	Scientific	科学
+	Decimal Degrees	十进制度
+	Deg/Min/Sec	度/分/秒
+	Grads	梯度
+	Radians	弧度
+	Surveyor's Units	测量员单位
+	Unitless	无单位
+	Inches	英寸
+	Feet	英尺
+	Miles	英里
+	Millimeters	毫米
+	Centimeters	厘米
+	Meters	米
+	Kilometers	千米
+	Microinches	微英寸
+	Mils	密尔
+	Yards	码
+	Angstroms	埃
+	Nanometers	纳米
+	Microns	微米
+	Decimeters	分米
+	Decameters	十米
+	Hectometers	百米
+	Gigameters	吉米
+	Astronomical Units	天文单位
+	Light Years	光年
+	Parsecs	秒差距
+	US Survey Feet	美国测量英尺
+	US Survey Inch	美国测量英寸
+	US Survey Yard	美国测量码
+	US Survey Mile	美国测量英里
+	Check for Updates…	检查更新…
+	CADCraft is up to date.	CADCraft 已是最新版本。
+	Could not check for updates.	无法检查更新。

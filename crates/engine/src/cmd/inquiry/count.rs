@@ -9,7 +9,9 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH,
 use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{bad, bool_or, point_req, str_param, targets};
+
+use super::SelfCheck;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Merges done while expanding nested references; a hostile file stops here (and says so).
@@ -20,12 +22,15 @@ const MAX_HANDLES: usize = 100_000;
 /// COUNT's JSON parameters.
 pub(super) const PARAMS: &str = "{block?, object?: handle (count objects like this one), space?: current|model|all|<layout> (default current), \
      handles?: [...] (count in these objects), nested?: bool (default true), highlight?: bool} → \
-     {blocks: {name: n}, nested: {name: n}, spaces: {space: {name: n}}, total} | {block, count, nested, handles}, plus `message`";
+     {blocks: {name: n}, nested: {name: n}, spaces: {space: {name: n}}, total} | {block, count, nested, handles}, plus `message` and \
+     `selfCheck` (found/analyzed/skipped counts with reasons, and the caps hit: work, handles, blockDepth)";
 
+/// COUNT's interactive command-line prompt machine.
 pub(super) fn machine() -> Box<dyn Interactive> {
     Box::new(CountM)
 }
 
+/// COUNTTABLE's interactive command-line prompt machine (it asks for the insertion point).
 pub(super) fn table_machine() -> Box<dyn Interactive> {
     Box::new(CountTableM)
 }
@@ -109,11 +114,14 @@ struct Expander<'a> {
     memo: HashMap<(String, usize), Rc<BTreeMap<String, u64>>>,
     work: u64,
     truncated: bool,
+    /// A block at the end of the depth cap still held references.
+    depth_capped: bool,
 }
 
 impl<'a> Expander<'a> {
+    /// An expander that has not traversed any block yet.
     fn new(d: &'a Drawing) -> Self {
-        Expander { d, memo: HashMap::new(), work: 0, truncated: false }
+        Expander { d, memo: HashMap::new(), work: 0, truncated: false, depth_capped: false }
     }
     /// The definition's own name for a referenced block (names are case-insensitive).
     fn canonical(&self, name: &str) -> String {
@@ -125,10 +133,17 @@ impl<'a> Expander<'a> {
         if let Some(m) = self.memo.get(&key) {
             return m.clone();
         }
+        if levels == 0 {
+            // More references than MAX_BLOCK_DEPTH covers: say so rather than silently stop.
+            if self.d.block(name).is_some_and(|b| b.entities.iter().any(|e| matches!(&e.kind, EntityKind::Insert(_)))) {
+                self.depth_capped = true;
+            }
+            let out = Rc::new(BTreeMap::new());
+            self.memo.insert(key, out.clone());
+            return out;
+        }
         let mut out: BTreeMap<String, u64> = BTreeMap::new();
-        if levels > 0
-            && let Some(b) = self.d.block(name)
-        {
+        if let Some(b) = self.d.block(name) {
             let b = b.clone();
             for e in b.entities.iter() {
                 let EntityKind::Insert(i) = &e.kind else { continue };
@@ -173,6 +188,14 @@ struct Tally {
     /// Top-level objects holding `want` (when one block is asked for).
     handles: Vec<Handle>,
     truncated: bool,
+    /// Top-level objects scanned, and the block references among them.
+    found: u64,
+    analyzed: u64,
+    /// Top-level objects that are not block references, by type.
+    skipped: BTreeMap<&'static str, u64>,
+    /// More top-level objects held the block than `MAX_HANDLES`.
+    handles_capped: bool,
+    depth_capped: bool,
 }
 
 /// Count block references in `scope`; with `want`, also collect the top-level objects holding it.
@@ -180,7 +203,13 @@ fn tally(d: &Drawing, scope: &Scope, nested: bool, want: Option<&str>) -> Tally 
     let mut x = Expander::new(d);
     let mut t = Tally::default();
     for (space, e) in scope.objects(d) {
-        let EntityKind::Insert(i) = &e.kind else { continue };
+        t.found = t.found.saturating_add(1);
+        let EntityKind::Insert(i) = &e.kind else {
+            let n = t.skipped.entry(e.kind.type_name()).or_default();
+            *n = n.saturating_add(1);
+            continue;
+        };
+        t.analyzed = t.analyzed.saturating_add(1);
         let name = x.canonical(&i.block);
         let m = copies(i);
         let mut holds = want.is_some_and(|w| w.eq_ignore_ascii_case(&name));
@@ -199,13 +228,39 @@ fn tally(d: &Drawing, scope: &Scope, nested: bool, want: Option<&str>) -> Tally 
                 holds |= want.is_some_and(|w| w.eq_ignore_ascii_case(k));
             }
         }
-        if holds && t.handles.len() < MAX_HANDLES {
-            t.handles.push(e.handle);
+        if holds {
+            if t.handles.len() < MAX_HANDLES {
+                t.handles.push(e.handle);
+            } else {
+                t.handles_capped = true;
+            }
         }
     }
     t.spaces.retain(|_, m| !m.is_empty());
     t.truncated = x.truncated;
+    t.depth_capped = x.depth_capped;
     t
+}
+
+/// The self-check for a COUNT-style result: what was scanned, counted and skipped, and the caps
+/// that stopped it.
+fn self_check(t: &Tally) -> Value {
+    let mut check = SelfCheck::new();
+    check.found(t.found);
+    check.analyzed(t.analyzed);
+    for (ty, n) in &t.skipped {
+        check.skip(ty, "not a block reference", *n);
+    }
+    if t.truncated {
+        check.cap("work", MAX_WORK);
+    }
+    if t.handles_capped {
+        check.cap("handles", u64::try_from(MAX_HANDLES).unwrap_or(u64::MAX));
+    }
+    if t.depth_capped {
+        check.cap("blockDepth", u64::try_from(MAX_BLOCK_DEPTH).unwrap_or(u64::MAX));
+    }
+    check.to_json()
 }
 
 /// A translation-free signature of an object's geometry: objects with equal keys are copies of
@@ -262,7 +317,15 @@ fn list(t: &Tally, scope: &Scope) -> Value {
         m
     };
     let total = t.blocks.values().fold(0u64, |a, b| a.saturating_add(*b));
-    json!({ "blocks": t.blocks, "nested": t.nested, "spaces": t.spaces, "total": total, "truncated": t.truncated, "message": message })
+    json!({
+        "blocks": t.blocks,
+        "nested": t.nested,
+        "spaces": t.spaces,
+        "total": total,
+        "truncated": t.truncated,
+        "selfCheck": self_check(t),
+        "message": message,
+    })
 }
 
 /// Count block `b` (its references, nested ones included) in `scope`.
@@ -273,7 +336,15 @@ fn count_block(d: &Drawing, scope: &Scope, nested: bool, b: &str) -> Value {
     let k = t.nested.get(&name).copied().unwrap_or(0);
     let wh = scope.label();
     let message = if k > 0 { format!("Block {name}: {n} in {wh} ({k} nested).") } else { format!("Block {name}: {n} in {wh}.") };
-    json!({ "block": name, "count": n, "nested": k, "handles": hex(&t.handles), "truncated": t.truncated, "message": message })
+    json!({
+        "block": name,
+        "count": n,
+        "nested": k,
+        "handles": hex(&t.handles),
+        "truncated": t.truncated,
+        "selfCheck": self_check(&t),
+        "message": message,
+    })
 }
 
 /// Count the objects in `scope` shaped like `h` (a block reference: references of its block).
@@ -284,18 +355,35 @@ fn count_like(d: &Drawing, scope: &Scope, nested: bool, h: Handle) -> Result<Val
     }
     let ty = e.kind.type_name();
     let key = shape_key(&e.kind).ok_or_else(|| bad("count", format!("a {ty} can't be counted by shape")))?;
-    let hs: Vec<Handle> = scope
-        .objects(d)
-        .into_iter()
-        .filter(|(_, o)| o.kind.type_name() == ty && shape_key(&o.kind).as_deref() == Some(key.as_str()))
-        .map(|(_, o)| o.handle)
-        .take(MAX_HANDLES)
-        .collect();
+    let mut check = SelfCheck::new();
+    let mut hs: Vec<Handle> = Vec::new();
+    let mut capped = false;
+    for (_, o) in scope.objects(d) {
+        check.found(1);
+        if o.kind.type_name() != ty {
+            check.skip(o.kind.type_name(), "a different type", 1);
+            continue;
+        }
+        check.analyzed(1);
+        if shape_key(&o.kind).as_deref() == Some(key.as_str()) {
+            if hs.len() < MAX_HANDLES {
+                hs.push(o.handle);
+            } else {
+                capped = true;
+            }
+        }
+    }
+    if capped {
+        check.cap("handles", u64::try_from(MAX_HANDLES).unwrap_or(u64::MAX));
+    }
     let n = hs.len();
     let message = format!("{ty}: {n} like the selected one in {}.", scope.label());
-    Ok(json!({ "object": ty, "count": n, "handles": hex(&hs), "message": message }))
+    Ok(json!({ "object": ty, "count": n, "handles": hex(&hs), "selfCheck": check.to_json(), "message": message }))
 }
 
+/// The body of COUNT and COUNTLIST: list the blocks in scope, count one block, or count the
+/// objects shaped like a picked one. `default_all` makes an omitted `space` mean every space
+/// (COUNTLIST) instead of the current one (COUNT).
 fn run(s: &mut Session, cmd: &str, p: &Value, default_all: bool) -> Result<Value> {
     let scope = Scope::parse(s, cmd, p, default_all)?;
     let nested = bool_or(p, "nested", true);
@@ -336,6 +424,8 @@ fn table_style(s: &Session) -> cadcraft_doc::TableStyle {
     d.table_styles.iter().find(|t| t.name.eq_ignore_ascii_case(&cur)).or(d.table_styles.first()).cloned().unwrap_or_default()
 }
 
+/// COUNTTABLE: insert a table of the block counts in scope at `at`, and report what the tally
+/// covered (and refused: no block references in scope is an error, not an empty table).
 pub(super) fn run_counttable(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "counttable";
     let at = point_req(CMD, p, "at")?;
@@ -348,9 +438,15 @@ pub(super) fn run_counttable(s: &mut Session, p: &Value) -> Result<Value> {
     let header = Some(vec!["Name".to_string(), "Count".to_string()]);
     let table = super::super::table::make_table(&table_style(s), at, cells.len(), 2, None, None, Some("Block Count"), header, &cells);
     let h = s.add_entity(EntityKind::Table(table))?;
-    Ok(json!({ "handle": h.hex(), "rows": cells.len(), "message": format!("Table of {} block(s) inserted.", cells.len()) }))
+    Ok(json!({
+        "handle": h.hex(),
+        "rows": cells.len(),
+        "selfCheck": self_check(&t),
+        "message": format!("Table of {} block(s) inserted.", cells.len()),
+    }))
 }
 
+/// Echo a result's `message` at the command line, one line at a time.
 fn echo_lines(s: &mut Session, r: &Value) {
     if let Some(m) = r.get("message").and_then(Value::as_str) {
         for l in m.lines() {

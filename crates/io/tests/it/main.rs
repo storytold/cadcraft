@@ -1,0 +1,74 @@
+mod acad_interop;
+#[cfg(not(target_arch = "wasm32"))]
+mod acis_data_store;
+mod angle_header;
+mod annotative_orientation;
+mod annotative_roundtrip;
+mod assoc_array_roundtrip;
+mod attdef_insert_dwg;
+mod attrib_modes;
+mod attrib_props;
+mod block_expansion;
+mod closed_spline;
+mod codepages;
+mod dim_block_resave_roundtrip;
+mod dim_block_text;
+mod dim_marks_roundtrip;
+mod dimstyle_vars_roundtrip;
+mod dimtfill_roundtrip;
+mod drafting_spacing;
+#[cfg(not(target_arch = "wasm32"))]
+mod dwg_header_vars;
+mod dwg_layout_owner;
+#[cfg(not(target_arch = "wasm32"))]
+mod dwg_roundtrip_losses;
+mod dwt_template;
+mod dxf_versions;
+mod dynblock_read;
+mod entity_props_roundtrip;
+mod followups_626;
+mod groups_roundtrip;
+mod hatch_assoc_roundtrip;
+mod hatch_pattern_def;
+mod helix_roundtrip;
+mod layout_paper_units;
+mod layout_plot_window;
+mod leader_vertex_elevation;
+#[cfg(not(target_arch = "wasm32"))]
+mod low_handseed;
+mod mleader_content;
+mod mleader_roundtrip;
+mod mline_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod model_layout_plot_type;
+mod mtext_columns_roundtrip;
+mod mtext_embedded_object;
+mod mtext_line_spacing;
+mod multiline_attributes;
+mod paperview_marker;
+mod passthrough_image_roundtrip;
+mod pdf_followups;
+mod pdf_layers;
+#[path = "../support/pdf_read.rs"]
+mod pdf_read;
+mod plot_layout_scale;
+mod plot_model_png_scale;
+mod plot_styles;
+mod region_roundtrip;
+mod roundtrip;
+mod roundtrip_audit;
+mod skipped_records;
+mod sortents;
+mod spline_fit_data;
+mod split_entities_section;
+mod style_typeface;
+mod svg_arc_budget;
+mod svg_tiny_extents;
+mod table_cellstyle_roundtrip;
+mod tables_objects_roundtrip;
+mod text_left_justify;
+mod tolerance_roundtrip;
+mod user_lin_pat_roundtrip;
+mod view_tables_roundtrip;
+mod viewport_clip_roundtrip;
+mod xref_roundtrip;

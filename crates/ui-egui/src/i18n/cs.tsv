@@ -92,6 +92,7 @@
 	Blend	Spojit křivky
 	Block	Blok
 	Block Attribute Manager...	Správce atributů bloků...
+	Block Description...	Popis bloku...
 	Block Editor	Editor bloků
 	Block Reference	Reference bloku
 	Block...	Blok...
@@ -141,6 +142,7 @@
 	Close All Other Drawings	Zavřít všechny ostatní výkresy
 	Closed	Uzavřeno
 	Close Comparison	Zavřít porovnání
+	Export Comparison	Exportovat porovnání
 	Coincident	Totožnost
 	Collapse Tool Sets	Sbalit sady nástrojů
 	Collinear	Kolinearita
@@ -186,6 +188,7 @@
 	Current selection	Aktuální výběr
 	Current: {color}	Aktuální: {color}
 	Cut	Vyjmout
+	Cut with Base Point	Vyjmout se základním bodem
 	Cyan	Azurová
 	Cylinder	Válec
 	DWG	DWG
@@ -535,6 +538,7 @@
 	N	S
 	Name	Název
 	Name (A–Z)	Název (A–Z)
+	Named Viewports...	Pojmenované výřezy...
 	Named Views...	Pojmenované pohledy...
 	Nearest	Nejbližší
 	New	Nový
@@ -558,6 +562,7 @@
 	No selection	Žádný výběr
 	Node	Bod
 	None	Žádné
+	Normal	Normální
 	Not available	Není k dispozici
 	Not available yet	Zatím není k dispozici
 	Numbered list	Číslovaný seznam
@@ -730,6 +735,7 @@
 	Rename Text Style	Přejmenovat styl textu
 	Rename...	Přejmenovat...
 	Repeat {command}	Opakovat {command}
+	Replace Block...	Nahradit blok...
 	Requires a point (x,y, @dx,dy or @d<a).	Je vyžadován bod (x,y, @dx,dy nebo @d<a).
 	Reset Palettes	Obnovit palety
 	Restore	Obnovit
@@ -1218,3 +1224,6 @@ menu	Modify	Modifikace
 	Not a number or distance: {text}	Není číslo ani vzdálenost: {text}
 	Query Texts	Dotaz na texty
 	Analyze Shapes	Analyzovat tvary
+	Check for Updates…	Zkontrolovat aktualizace…
+	CADCraft is up to date.	CADCraft je aktuální.
+	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.

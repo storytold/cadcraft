@@ -75,7 +75,7 @@ struct Wheel {
 fn wheel(events: &[egui::Event], opts: &egui::InputOptions, page: f32) -> Wheel {
     let (mut scroll, mut zoom_points) = (egui::Vec2::ZERO, 0.0);
     for e in events {
-        let egui::Event::MouseWheel { unit, delta, phase: egui::TouchPhase::Move, modifiers } = e else { continue };
+        let egui::Event::MouseWheel { unit, delta, phase: egui::TouchPhase::Move, modifiers, .. } = e else { continue };
         let per = match unit {
             egui::MouseWheelUnit::Point => 1.0,
             egui::MouseWheelUnit::Line => opts.line_scroll_speed,
@@ -142,7 +142,7 @@ mod tests {
     use super::*;
 
     fn notch(unit: egui::MouseWheelUnit, delta: egui::Vec2, modifiers: egui::Modifiers) -> egui::Event {
-        egui::Event::MouseWheel { unit, delta, phase: egui::TouchPhase::Move, modifiers }
+        egui::Event::MouseWheel { unit, delta, phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
     }
 
     #[test]
@@ -194,7 +194,13 @@ mod tests {
         assert_eq!(zoomed.scroll, egui::Vec2::ZERO);
         assert!((zoomed.zoom - (o.scroll_zoom_speed * o.line_scroll_speed).exp()).abs() < 1e-6 && zoomed.zoom > 1.0);
         // A touchpad's begin and end markers carry no scroll.
-        let ended = egui::Event::MouseWheel { unit: MouseWheelUnit::Point, delta: vec2(0.0, 9.0), phase: egui::TouchPhase::End, modifiers: none };
+        let ended = egui::Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: vec2(0.0, 9.0),
+            phase: egui::TouchPhase::End,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: none,
+        };
         assert_eq!(wheel(&[ended], &o, 500.0), Wheel { scroll: egui::Vec2::ZERO, zoom: 1.0 });
         // Hostile deltas scroll and zoom nothing.
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {

@@ -5,7 +5,8 @@ use cadcraft_geom::{Bounds2, Mat3, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::*;
+use super::{CommandSpec, EngineError, bad, bool_or, clipboard, f64_or, has_selection, point_param, point_req, points_param, str_param, targets};
+
 use crate::undoctl::Control;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -26,6 +27,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .key("Cmd+X")
             .params("{handles?}")
             .interactive(|_| Ok(Box::new(SelectRun::new("cutclip", "CUTCLIP")))),
+        CommandSpec::new("cutbase", "Cut with Base Point", run_cutbase)
+            .menu(&["Edit", "Cut with Base Point"])
+            .params("{handles?, base: [x,y]}")
+            .interactive(|_| Ok(Box::new(CopyBaseM { cut: true, ..CopyBaseM::default() }))),
         CommandSpec::new("copyclip", "Copy", run_copyclip)
             .menu(&["Edit", "Copy"])
             .key("Cmd+C")
@@ -434,9 +439,11 @@ impl Interactive for MredoM {
     }
 }
 
+/// Copy the objects of `hs` to the clipboard, each once however often `hs` lists it.
 fn copy_to_clip(s: &mut Session, hs: &[Handle], base: Option<Vec2>) -> Result<usize> {
     let d = s.doc()?;
-    let ents: Vec<Entity> = hs.iter().filter_map(|h| d.entity(*h).map(|e| (**e).clone())).collect();
+    let mut seen = std::collections::HashSet::new();
+    let ents: Vec<Entity> = hs.iter().filter(|h| seen.insert(**h)).filter_map(|h| d.entity(*h).map(|e| (**e).clone())).collect();
     let b = ents.iter().fold(Bounds2::EMPTY, |acc, e| acc.union(&entity_bounds(d, e, 0)));
     let base = base.unwrap_or(if b.min.is_finite() { b.min } else { Vec2::ZERO });
     let n = ents.len();
@@ -451,22 +458,59 @@ fn run_copyclip(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_copybase(s: &mut Session, p: &Value) -> Result<Value> {
+    let base = point_req("copybase", p, "base")?;
     let hs = targets(s, p)?;
-    let base = point_param(p, "base");
-    let n = copy_to_clip(s, &hs, base)?;
+    let n = copy_to_clip(s, &hs, Some(base))?;
     Ok(json!({ "copied": n }))
 }
 
-fn run_cut(s: &mut Session, p: &Value) -> Result<Value> {
-    let mut hs = targets(s, p)?;
-    hs.retain(|h| !super::curves::is_locked(s, *h));
-    let n = copy_to_clip(s, &hs, None)?;
+/// Copy the objects that are not on locked layers to the clipboard and erase them. Returns how
+/// many were cut and the message to show: how many were on a locked layer, and that nothing was
+/// cut when that is all of them (the clipboard then keeps what it held).
+fn cut_to_clip(s: &mut Session, hs: &[Handle], base: Option<Vec2>) -> Result<(usize, Option<String>)> {
+    let mut seen = std::collections::HashSet::new();
+    let live: Vec<Handle> = {
+        let d = s.doc()?;
+        hs.iter().copied().filter(|h| seen.insert(*h) && d.entity(*h).is_some()).collect()
+    };
+    let (hs, locked): (Vec<Handle>, Vec<Handle>) = live.into_iter().partition(|h| !super::curves::is_locked(s, *h));
+    let note = match locked.len() {
+        0 => None,
+        1 => Some("1 object was on a locked layer.".to_string()),
+        n => Some(format!("{n} objects were on a locked layer.")),
+    };
+    if hs.is_empty() {
+        let msg = note.map_or_else(|| "Nothing was cut.".to_string(), |m| format!("{m} Nothing was cut."));
+        return Ok((0, Some(msg)));
+    }
+    let n = copy_to_clip(s, &hs, base)?;
     let d = s.doc_mut()?;
     for h in &hs {
         d.remove_entity(*h);
     }
     s.set_selection(Vec::new());
-    Ok(json!({ "cut": n }))
+    Ok((n, note))
+}
+
+fn cut_result(n: usize, msg: Option<String>) -> Value {
+    let mut r = json!({ "cut": n });
+    if let Some(m) = msg {
+        r["message"] = json!(m);
+    }
+    r
+}
+
+fn run_cut(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    let (n, msg) = cut_to_clip(s, &hs, None)?;
+    Ok(cut_result(n, msg))
+}
+
+fn run_cutbase(s: &mut Session, p: &Value) -> Result<Value> {
+    let base = point_req("cutbase", p, "base")?;
+    let hs = targets(s, p)?;
+    let (n, msg) = cut_to_clip(s, &hs, Some(base))?;
+    Ok(cut_result(n, msg))
 }
 
 /// Paste the clipboard moved by `offset` (the clipboard brings the layers, styles and blocks its
@@ -649,23 +693,31 @@ impl Interactive for SelectM {
     }
 }
 
-/// COPYBASE: base point first, then "Select objects:" (skipped with a pickfirst selection).
+/// COPYBASE and CUTBASE: base point first, then "Select objects:" (skipped with a pickfirst
+/// selection). CUTBASE also erases the objects it copies.
 #[derive(Default)]
 struct CopyBaseM {
     base: Option<Vec2>,
     sel: SelectPhase,
+    cut: bool,
 }
 
 impl CopyBaseM {
     fn copy(&self, s: &mut Session, hs: &[Handle]) -> Result<Step> {
-        copy_to_clip(s, hs, self.base)?;
+        if self.cut {
+            if let (_, Some(m)) = cut_to_clip(s, hs, self.base)? {
+                s.echo(m);
+            }
+        } else {
+            copy_to_clip(s, hs, self.base)?;
+        }
         Ok(Step::Done)
     }
 }
 
 impl Interactive for CopyBaseM {
     fn name(&self) -> &'static str {
-        "COPYBASE"
+        if self.cut { "CUTBASE" } else { "COPYBASE" }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         self.sel = SelectPhase::begin(s);

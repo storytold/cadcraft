@@ -95,7 +95,8 @@ impl Bridge {
         }
     }
 
-    /// After each frame: tell the parent when unsaved changes appear or go away.
+    /// After each logic callback (including a hidden tab's): tell the parent when unsaved changes
+    /// appear or go away. `DirtyReport` suppresses duplicates, so this is idempotent.
     pub fn report_dirty(&self, app: &CadApp, reported: &DirtyReport) {
         let dirty = app.session.docs.iter().any(|d| d.is_dirty());
         if reported.0.get() != Some(dirty) && self.send(&[("type", "cadcraft:dirty".into()), ("dirty", dirty.into())]) {
