@@ -94,6 +94,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "dialogs",
         "hatchdlg",
         "aliasdlg",
+        "keys",
         "mtext_editor",
         "layers",
         "bedit",
