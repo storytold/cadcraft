@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (Properties palette draws the described text and dimension rows; U14 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first). A PR names the rows it closes in its
@@ -58,7 +58,6 @@ Options ▸ Selection can now require two separate clicks for a selection window
 or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| U14 | Properties palette leftovers for text and dimensions: no Remove Style Overrides or Save as New Style on the dimension shortcut menu (one row at a time: right-click an overridden row); Quick Properties still shows its own few text rows; no rows yet for MTEXT background mask, direction and defined height or TEXT backwards and upside down (not modeled). Every other TEXT, MTEXT and dimension property is edited there, for one object or several of one type, from `properties.describe` (#954, #994) | Medium | 2–4 |
 | U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
 | U5 | Grip menus open on right-click only (no hover menu, no Ctrl to cycle the options); no multifunctional grips on dimensions, MLEADER, hatches or text; Add Vertex on an arc segment straightens it. Hot-grip options (Base point, Copy, Undo, Reference, eXit), multiple hot grips and the polyline/line/arc grip menus landed (#425) | Low-medium | 2–4 |
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
@@ -152,11 +151,6 @@ Detail: [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-30 | minor | QSAVE asks before replacing a file with content the DWG writer can't keep, and ISAVEBAK keeps the previous file as `.bak`: row 1 narrowed, FF1 and F20 updated |
-| 2026-10-13 | minor | U14 added: the Properties palette's text, mtext and dimension rows; `properties.describe` and the `properties.set` keys behind them landed (engine side). Dimension and text style edits now redraw dimensions read from files |
-| 2026-10-13 | minor | Properties palette draws the text, mtext and dimension rows the engine describes: every dimension style setting as an override of the selected dimensions, style, justification and line spacing rows, several objects of one type at once with *VARIES*; U14 narrowed to the shortcut menu, Quick Properties and unmodeled rows |
-| 2026-10-15 | minor | U14: annotative scaling in the Properties palette (Annotative scale row and Annotation Object Scale dialog, paper/model height, hatch and multileader rows) |
-| 2026-10-13 | minor | Properties palette draws the text, mtext and dimension rows the engine describes: every dimension style setting as an override of the selected dimensions, style, justification and line spacing rows, several objects of one type at once with *VARIES*; U14 narrowed to the shortcut menu, Quick Properties and unmodeled rows (#994) |
-| 2026-10-13 | minor | U14 added: the Properties palette's text, mtext and dimension rows; `properties.describe` and the `properties.set` keys behind them landed (engine side, #954). Dimension and text style edits now redraw dimensions read from files |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-26 | minor | BEDIT in the Block Editor (typed, Edit Block, or the Edit Block Definition dialog) switches to another block as AutoCAD's does, asking whether to save the changes not saved yet; the JSON form takes `save`: F3 evidence |
