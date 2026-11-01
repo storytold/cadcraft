@@ -408,6 +408,7 @@
 	List Groups	列出编组
 	List Layer States	列出图层状态
 	List Layouts	列出布局
+	List Purgeable Items	列出可清理项目
 	List System Variables	列出系统变量
 	List Text Styles	列出文字样式
 	Load all	全部加载
