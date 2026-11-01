@@ -39,6 +39,10 @@ pub(super) fn sheet_first(l: &Layout) -> Vec<&Entity> {
 pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
     let size = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    // A custom plot scale (142/143 paper units per drawing unit) shrinks the sheet in paper
+    // space; the same guard as the written scale (#2108).
+    let scale = if !l.page.scale_to_fit && l.page.scale.is_finite() && l.page.scale > 0.0 { l.page.scale } else { 1.0 };
+    let size = size / scale;
     let center = size * 0.5;
     let h = w.h();
     w.s(0, "VIEWPORT");

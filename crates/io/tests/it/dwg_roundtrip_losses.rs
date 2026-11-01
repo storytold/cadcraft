@@ -139,6 +139,39 @@ fn viewport_ids_survive_dwg_and_the_paper_viewport_stays_implicit() {
     assert_eq!(viewport_ids(&cadcraft_io::read_dxf(text.as_bytes()).unwrap().layouts[0]), [1, 2]);
 }
 
+/// The paper-space viewport the writer adds covers the sheet in paper-space units, so a custom
+/// plot scale (142/143, 147) divides the page size; a hostile scale falls back to 1:1 (#2108).
+#[test]
+fn the_generated_paper_viewport_follows_the_plot_scale() {
+    let sheet_of = |scale: f64| {
+        let mut d = Drawing::new_metric();
+        let page = &mut d.layouts[0].page;
+        page.width_mm = 297.0;
+        page.height_mm = 420.0;
+        page.landscape = true;
+        page.paper_mm = true;
+        page.scale = scale;
+        page.scale_to_fit = false;
+        let first = Space::Paper(d.layouts[0].name.clone());
+        d.add(&first, Common::default(), viewport(2)).unwrap();
+        let text = cadcraft_io::write_dxf(&d);
+        let vps = records(&text, "VIEWPORT");
+        let sheet = vps.iter().find(|v| group(v, "1000") == Some("PAPERVIEW")).unwrap();
+        let f = |c: &str| group(sheet, c).and_then(|v| v.parse::<f64>().ok()).unwrap();
+        (f("40"), f("41"), f("10"), f("20"), f("12"), f("22"))
+    };
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    let (w, h, cx, cy, vx, vy) = sheet_of(49.6);
+    assert!(close(w, 420.0 / 49.6) && close(h, 297.0 / 49.6), "width {w} height {h}");
+    assert!(close(cx, w / 2.0) && close(cy, h / 2.0) && close(vx, w / 2.0) && close(vy, h / 2.0));
+    let (w, h, ..) = sheet_of(1.0);
+    assert!(close(w, 420.0) && close(h, 297.0), "width {w} height {h}");
+    for hostile in [f64::NAN, 0.0, -2.0, f64::INFINITY] {
+        let (w, h, ..) = sheet_of(hostile);
+        assert!(close(w, 420.0) && close(h, 297.0), "scale {hostile}: width {w} height {h}");
+    }
+}
+
 /// The paper-space viewport (id 1) of a drawing from another program can come after a model
 /// viewport in the layout, e.g. when the draw order (SORTENTS) put it behind. DWG numbers in
 /// order, so the writer puts it first: otherwise the model viewport became the sheet on reopen.
