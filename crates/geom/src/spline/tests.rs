@@ -234,23 +234,49 @@ fn square_with_narrow_spans(edge: usize) -> Spline {
 
 #[test]
 fn tessellate_spans_covers_every_span_however_many() {
-    // Up to `MAX_SAMPLES` spans the count stays within the cap, at least one segment per span.
-    let s = square_with_narrow_spans(3000);
-    assert!(s.is_valid());
-    let pts = s.tessellate_spans(1e-9);
-    assert!(pts.len() <= MAX_SAMPLES + 1, "{}", pts.len());
-    assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
-    // Past it, one segment each: the narrow spans are measured, not stepped over by a grid.
+    // A degree-1 spline's spans are straight: one segment each, its control points, however many
+    // there are. The narrow spans are measured, not stepped over by a grid.
+    for edge in [3000, MAX_SAMPLES + 500] {
+        let s = square_with_narrow_spans(edge);
+        assert!(s.is_valid());
+        let pts = s.tessellate_spans(1e-9);
+        assert_eq!(pts.len(), s.control.len());
+        assert!(pts.iter().zip(&s.control).all(|(p, c)| p.near(*c, 1e-9)));
+        assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
+    }
     let s = square_with_narrow_spans(MAX_SAMPLES + 500);
-    assert!(s.is_valid());
     assert!(crate::shoelace(&s.samples(MAX_SAMPLES).collect::<Vec<_>>()).abs() < 0.6e4);
-    let pts = s.tessellate_spans(1e-9);
-    assert_eq!(pts.len(), s.control.len());
-    assert!(pts.iter().zip(&s.control).all(|(p, c)| p.near(*c, 1e-9)));
-    assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
-    // A few spans: their share of the count, at least eight segments each, end included.
-    let s = Spline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)], 1);
-    assert_eq!(s.tessellate_spans(1.0).len(), 2 * 8 + 1);
+}
+
+#[test]
+fn tessellate_spans_samples_where_the_curve_bends() {
+    // A quadratic spline along the x-axis but for one control point 1000 above it: three spans
+    // bend, and the area under them is 1750/3 (a fine grid gives 583.3333334). Their chords alone
+    // would give 750. Below the sample cap and past it, the straight spans keep one segment each
+    // (their samples are the only ones on the axis but the curve's end) and the bent spans take
+    // all the rest.
+    for edge in [40, MAX_SAMPLES + 500] {
+        let mut control: Vec<Vec2> = (0..=edge).map(|i| Vec2::new(i as f64, 0.0)).collect();
+        control.extend([Vec2::new(edge as f64 + 0.5, 1000.0), Vec2::new(edge as f64 + 1.0, 0.0), Vec2::new(edge as f64 + 2.0, 0.0)]);
+        let s = Spline::from_control(control, 2);
+        let pts = s.tessellate_spans(1e-9);
+        let area = crate::shoelace(&pts).abs();
+        assert!((area - 1750.0 / 3.0).abs() < 1e-6 * area, "{edge}: {area}");
+        assert_eq!(pts.iter().filter(|p| p.y == 0.0).count(), edge + 1, "{edge}");
+        assert_eq!(pts.len(), s.control.len() - 2 + s.sample_count(1e-9) + 1, "{edge}");
+    }
+}
+
+#[test]
+fn span_bend_bounds_the_area_off_the_chord() {
+    let mut s = Spline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(3.0, 0.0), Vec2::new(4.0, 2.0)], 2);
+    // Collinear control points: a straight span.
+    assert_eq!(s.span_bend(0), 0.0);
+    // (1,0) (3,0) (4,2): twice their triangle's area.
+    assert!((s.span_bend(1) - 4.0).abs() < 1e-12, "{}", s.span_bend(1));
+    // A weight that isn't positive: the polygon's length squared.
+    s.weights = vec![1.0, -0.5, 1.0, 1.0];
+    assert!((s.span_bend(0) - 9.0).abs() < 1e-12, "{}", s.span_bend(0));
 }
 
 fn scaled(s: &Spline, k: f64) -> Spline {

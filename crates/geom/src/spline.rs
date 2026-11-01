@@ -188,63 +188,91 @@ impl Spline {
             return Bounds2::from_points(self.samples(MAX_SAMPLES));
         }
         let (lo, hi) = self.domain();
+        let floor = 8.min(MAX_SAMPLES / spans);
+        // The span's share of the domain first: huge knots (1e308, from a hostile edit) would
+        // overflow `budget * (b - a)` to infinity and the cast to a boundless count.
+        let segments = |budget: usize, (a, b): (f64, f64)| floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES);
         let n = self.segments_for(self.polygon_length() / (diag * 1e-3));
+        let budget = if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES - floor * spans };
         let mut out = Bounds2::EMPTY;
-        for t in self.span_params(n, spans) {
-            out.add(self.eval_valid(t, lo, hi));
+        for (a, b) in self.knot_spans() {
+            let seg = segments(budget, (a, b));
+            for i in 0..seg {
+                out.add(self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi));
+            }
         }
+        out.add(self.eval_valid(hi, lo, hi));
         out
     }
 
-    /// Points along the curve for measuring it (AREA): the count [`Spline::tessellate`] takes at
-    /// `tol`, spread over the knot spans as [`Spline::bounds`] spreads them, so a narrow span,
-    /// which one grid over the whole domain can step over entirely, is measured too. Each span
-    /// takes at least eight segments while they fit in `MAX_SAMPLES` (so the count can be more),
-    /// fewer as the spans grow in number, but never none: past `MAX_SAMPLES` spans one each, as
-    /// [`Spline::length`] integrates every span. An invalid spline gives its control points, as
-    /// `tessellate` does.
+    /// Points along the curve for measuring it (AREA). Each knot span has a segment, so a narrow
+    /// span, which one grid over the whole domain can step over entirely, is measured too. The
+    /// count [`Spline::tessellate`] takes at `tol` is then shared out among the spans that bend
+    /// ([`Spline::span_bend`]), by the cube root of their bend: a span's chord error falls with
+    /// the square of its segments, so that share keeps the total error least. A straight span
+    /// keeps its one segment, which measures it exactly. The points number one per span plus
+    /// that count, past `MAX_SAMPLES` when the spans are that many, as [`Spline::length`]
+    /// integrates every span. An invalid spline gives its control points, as `tessellate` does.
     pub fn tessellate_spans(&self, tol: f64) -> Vec<Vec2> {
         if !self.is_valid() {
             return self.control.clone();
         }
-        let spans = self.knot_spans().count();
-        if spans == 0 {
-            return self.samples(self.sample_count(tol)).collect();
-        }
         let (lo, hi) = self.domain();
-        self.span_params(self.sample_count(tol), spans).map(|t| self.eval_valid(t, lo, hi)).collect()
+        let n = self.sample_count(tol);
+        let spans: Vec<(f64, f64, f64)> = self.indexed_knot_spans().map(|(j, a, b)| (a, b, self.span_bend(j).cbrt())).collect();
+        if spans.is_empty() {
+            return self.samples(n).collect();
+        }
+        let total: f64 = spans.iter().map(|s| s.2).sum();
+        let shared = total.is_finite() && total > 0.0;
+        let mut out = Vec::with_capacity(spans.len() + n + 1);
+        let (mut acc, mut used) = (0.0, 0);
+        for (a, b, share) in spans {
+            // Rounded on the running total, so the extra samples add up to `n` however thinly the
+            // shares are spread; the fraction first, at most 1, so a huge bend can't overflow.
+            acc += share;
+            let upto = if shared { (n as f64 * (acc / total).min(1.0)) as usize } else { 0 };
+            let seg = 1 + upto.saturating_sub(used);
+            used = used.max(upto);
+            out.extend((0..seg).map(|i| self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi)));
+        }
+        out.push(self.eval_valid(hi, lo, hi));
+        out
     }
 
-    /// Parameters for `n` segments spread over the knot spans in proportion to their share of the
-    /// domain, at least eight per span (fewer when that would pass `MAX_SAMPLES`, never none),
-    /// each span's start and the domain's end included; when the spread passes `MAX_SAMPLES` the
-    /// budget is cut to fit, and past `MAX_SAMPLES` spans each has one. The spline must be valid,
-    /// with `spans` its `knot_spans().count()`.
-    fn span_params(&self, n: usize, spans: usize) -> impl Iterator<Item = f64> + '_ {
-        let (lo, hi) = self.domain();
-        let floor = (MAX_SAMPLES / spans.max(1)).clamp(1, 8);
-        // The span's share of the domain first: huge knots (1e308, from a hostile edit) would
-        // overflow `budget * (b - a)` to infinity and the cast to a boundless count.
-        let segments = move |budget: usize, (a, b): (f64, f64)| floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES);
-        let budget =
-            if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES.saturating_sub(floor * spans) };
-        self.knot_spans()
-            .flat_map(move |(a, b)| {
-                let seg = segments(budget, (a, b));
-                (0..seg).map(move |i| a + (b - a) * i as f64 / seg as f64)
-            })
-            .chain(std::iter::once(hi))
+    /// How far knot span `j` (as [`Spline::indexed_knot_spans`] numbers it) can stray from its
+    /// chord, as an area: twice the largest triangle its first control point, the one farthest
+    /// from it and another make. That is between a quarter of the area of their convex hull and
+    /// twice it. With positive weights the span and its chord lie in that hull, so the area
+    /// between them is no more; it is zero when the points are collinear, and then the span is
+    /// straight. A weight that isn't positive lets the span leave the hull, so the square of the
+    /// points' polygon length counts instead.
+    fn span_bend(&self, j: usize) -> f64 {
+        let Some(pts) = self.control.get(j..=j + self.degree) else { return 0.0 };
+        let Some(&a) = pts.first() else { return 0.0 };
+        if !self.weights.get(j..=j + self.degree).is_none_or(|w| w.iter().all(|w| *w > 0.0)) {
+            let len: f64 = pts.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(p, q)| p.dist(*q))).sum();
+            return len * len;
+        }
+        let far = pts.iter().copied().max_by(|p, q| a.dist(*p).total_cmp(&a.dist(*q))).unwrap_or(a);
+        pts.iter().map(|p| (*p - a).cross(far - a).abs()).fold(0.0, f64::max)
     }
 
     /// The non-empty knot spans the curve is defined over, in parameter order.
     fn knot_spans(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.indexed_knot_spans().map(|(_, a, b)| (a, b))
+    }
+
+    /// The non-empty knot spans with the index of the first of the `degree + 1` control points
+    /// that shape each.
+    fn indexed_knot_spans(&self) -> impl Iterator<Item = (usize, f64, f64)> + '_ {
         let knots = self.knots.get(self.degree..=self.control.len()).unwrap_or(&[]);
-        knots.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(a, b)| (*a, *b)).filter(|(a, b)| b > a))
+        knots.windows(2).enumerate().filter_map(|(j, w)| w.first().zip(w.get(1)).map(|(a, b)| (j, *a, *b)).filter(|(_, a, b)| b > a))
     }
 }
 
 /// Most segments `tessellate` and `bounds` evaluate for one spline (#268: a high degree on many
-/// control points took minutes). `tessellate_spans` takes one per knot span past it.
+/// control points took minutes).
 const MAX_SAMPLES: usize = 4000;
 
 pub(crate) fn clamped_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
