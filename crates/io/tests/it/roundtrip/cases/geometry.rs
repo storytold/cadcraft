@@ -123,6 +123,7 @@ pub(crate) fn faces() -> Vec<Case> {
 
 pub(crate) fn mtext() -> MText {
     MText {
+        formula: None,
         insert: Vec3::new(1.25, -2.5, 3.75),
         height: 2.25,
         width: 12.5,

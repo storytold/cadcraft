@@ -54,6 +54,9 @@ pub struct DimGeometry {
     pub text_pos: Vec2,
     /// The measured value (DXF group 42): a length, or the angle in radians.
     pub measurement: f64,
+    /// What a formula's `<>` stands for: the measurement as the dimension shows it (DIMLFAC,
+    /// DIMRND and the shown resolution applied; degrees for an angle).
+    pub formula_value: Option<f64>,
     pub text_angle: f64,
     pub text_height: f64,
     /// Plain text of the dimension.

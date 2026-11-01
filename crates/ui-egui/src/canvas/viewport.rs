@@ -125,6 +125,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         // only moves the geometry.
         let area = rect.expand(rect.width().max(rect.height()) * 0.5);
         let opts = cadcraft_render::Options {
+            continuous: false,
             tolerance: 2f64.powi(band) * 0.5,
             min_dash: 2f64.powi(band) * 2.0,
             text: true,

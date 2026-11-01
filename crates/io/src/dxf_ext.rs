@@ -20,6 +20,57 @@ use serde_json::Value;
 
 /// Registered application name of CADCraft's extended data.
 pub(crate) const APP: &str = "CADCRAFT";
+/// Extended data of a text's formula (`=...`), in 1000 strings of at most 250 characters.
+pub(crate) const FORMULA_APP: &str = "CADCRAFTFORMULA";
+
+/// A text's formula from its `CADCRAFTFORMULA` extended data.
+pub(crate) fn formula(tags: &[Tag]) -> Option<String> {
+    let x = xdata(tags, FORMULA_APP);
+    let mut s = String::new();
+    for t in x.iter().filter(|t| t.code == 1000) {
+        s.push_str(&t.str());
+        // A formula longer than any CADCraft writes is not read (the text keeps its value): the
+        // file alone would bound it otherwise (#2318 review).
+        if s.len() > MAX_FORMULA_BYTES {
+            return None;
+        }
+    }
+    (!s.is_empty()).then_some(s)
+}
+
+/// Longest formula read back from a file, in bytes: room for the longest field template the
+/// reader resolves (16,384 characters of up to 4 bytes).
+const MAX_FORMULA_BYTES: usize = 64 * 1024;
+
+/// A formula as 1000 strings of at most 250 bytes (whole characters).
+pub(crate) fn formula_chunks(f: &str) -> Vec<String> {
+    // An xdata string holds at most 255 bytes: Hebrew, Cyrillic or Chinese letters take 2 to 4
+    // bytes each, so the pieces are cut by bytes, between letters.
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in f.chars() {
+        if cur.len() + c.len_utf8() > 250 {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+#[cfg(test)]
+mod formula_chunk_tests {
+    #[test]
+    fn chunks_fit_an_xdata_string_in_bytes() {
+        let f = format!("=\"{}\"", "שלום ".repeat(200));
+        let chunks = super::formula_chunks(&f);
+        assert!(chunks.iter().all(|c| c.len() <= 250), "{:?}", chunks.iter().map(String::len).collect::<Vec<_>>());
+        assert_eq!(chunks.concat(), f, "nothing lost, no letter cut");
+        assert_eq!(super::formula_chunks("=1+1"), ["=1+1"]);
+    }
+}
 /// Named-object-dictionary key of the constraint XRECORD.
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.
@@ -310,6 +361,35 @@ pub(crate) fn arrow_block_name(name: &str) -> Option<(String, Arrowhead)> {
 /// Applications whose xdata carries layer properties: transparency and description.
 pub(crate) const LAYER_TRANSPARENCY_APP: &str = "AcCmTransparency";
 pub(crate) const LAYER_DESCRIPTION_APP: &str = "AcAecLayerStandard";
+/// AutoCAD's hatch background colour xdata application (one `1071` colour value).
+pub(crate) const HATCH_BACKGROUND_APP: &str = "HATCHBACKGROUNDCOLOR";
+
+/// An AutoCAD colour value (`1071`/`420`-style, top byte the method): 0xC2 RGB, 0xC3 an index
+/// colour in the low byte, 0xC0 ByLayer, 0xC1 ByBlock; `None` for none or anything else.
+pub(crate) fn acad_color(v: i64) -> Option<cadcraft_color::Color> {
+    let v = v as u32;
+    match v >> 24 {
+        0xC2 => Some(cadcraft_color::Color::True(cadcraft_color::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))),
+        0xC3 => match (v & 0xFF) as u8 {
+            0 => None,
+            i => Some(cadcraft_color::Color::Index(i)),
+        },
+        0xC0 => Some(cadcraft_color::Color::ByLayer),
+        0xC1 => Some(cadcraft_color::Color::ByBlock),
+        _ => None,
+    }
+}
+
+/// [`acad_color`] the other way.
+pub(crate) fn acad_color_value(c: cadcraft_color::Color) -> i64 {
+    let v: u32 = match c {
+        cadcraft_color::Color::True(cadcraft_color::Rgb(r, g, b)) => 0xC200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        cadcraft_color::Color::Index(i) => 0xC300_0000 | u32::from(i),
+        cadcraft_color::Color::ByLayer => 0xC000_0000,
+        cadcraft_color::Color::ByBlock => 0xC100_0000,
+    };
+    i64::from(v as i32)
+}
 
 /// A transparency percentage (0..=90) as an `AcCmTransparency` value: the alpha with the
 /// "by alpha" flag (0x02 in the top byte).
@@ -899,5 +979,23 @@ mod tests {
         assert!(arrow_block_name("").is_none());
         assert!(arrow_block_name("nonsense").is_none());
         assert!(is_standard_arrow("_dot"));
+    }
+}
+
+#[cfg(test)]
+mod formula_cap_tests {
+    use super::{FORMULA_APP, MAX_FORMULA_BYTES, formula};
+    use cadcraft_dxf::Tag;
+
+    /// A formula is read back whole up to the cap; a file's longer one is not read at all.
+    #[test]
+    fn an_overlong_formula_is_not_read() {
+        let tags = |n: usize| {
+            let mut t = vec![Tag::s(0, "TEXT"), Tag::s(1001, FORMULA_APP)];
+            t.extend((0..n).map(|_| Tag::s(1000, "x".repeat(250))));
+            t
+        };
+        assert_eq!(formula(&tags(4)).map(|f| f.len()), Some(1000));
+        assert_eq!(formula(&tags(MAX_FORMULA_BYTES / 250 + 2)), None);
     }
 }
