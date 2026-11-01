@@ -90,7 +90,7 @@ fn handle(s: &str) -> Option<Handle> {
 }
 
 /// Group codes whose values are handles of other objects (DXF Reference, group code ranges).
-fn is_pointer(code: i32) -> bool {
+pub(crate) fn is_pointer(code: i32) -> bool {
     matches!(code, 320..=369 | 390..=399 | 480..=481 | 1005)
 }
 
@@ -436,6 +436,9 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     for e in all_entities(d) {
         note(&e.common.xdata);
+        if let EntityKind::Viewport(v) = &e.kind {
+            note(&v.extra);
+        }
     }
     for e in all_entities(d) {
         if let EntityKind::Unknown(u) = &e.kind {
@@ -824,17 +827,41 @@ fn extra_for<'a>(f: &'a Foreign, xd: &XdataOf, rec: &Rec, body: &[Tag], block: &
     }
 }
 
-/// Entities' own xdata ([`cadcraft_doc::Common::xdata`]), by handle.
-type XdataOf<'a> = HashMap<Handle, &'a [RawTag]>;
+/// What an entity carries itself (so its copies carry it too), by handle: its xdata
+/// ([`cadcraft_doc::Common::xdata`]) and a viewport's unmodelled groups
+/// ([`cadcraft_doc::Viewport::extra`]).
+type XdataOf<'a> = HashMap<Handle, Own<'a>>;
 
-/// The extras of entity `h`: what the drawing keeps for it, with the entity's own xdata.
+#[derive(Clone, Copy)]
+struct Own<'a> {
+    xdata: &'a [RawTag],
+    tail: &'a [RawTag],
+}
+
+/// The [`Own`] data of every entity that carries any.
+fn own_data(d: &Drawing) -> XdataOf<'_> {
+    all_entities(d)
+        .filter_map(|e| {
+            let tail: &[RawTag] = match &e.kind {
+                EntityKind::Viewport(v) => &v.extra,
+                _ => &[],
+            };
+            (!e.common.xdata.is_empty() || !tail.is_empty()).then_some((e.handle, Own { xdata: &e.common.xdata, tail }))
+        })
+        .collect()
+}
+
+/// The extras of entity `h`: what the drawing keeps for it, with what the entity carries itself.
 fn entity_extra<'a>(f: &'a Foreign, xd: &XdataOf, h: Handle) -> Option<Cow<'a, ForeignExtra>> {
     let kept = f.entities.get(&h);
     match xd.get(&h) {
         None => kept.map(Cow::Borrowed),
-        Some(xdata) => {
+        Some(own) => {
             let mut x = kept.cloned().unwrap_or_default();
-            x.xdata = xdata.to_vec();
+            if !own.xdata.is_empty() {
+                x.xdata = own.xdata.to_vec();
+            }
+            x.tail = own.tail.to_vec();
             Some(Cow::Owned(x))
         }
     }
@@ -849,7 +876,7 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
-    let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
+    let xd = own_data(d);
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {
         return;
     }
@@ -1112,6 +1139,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
         if i == xdata_at
             && let Some(x) = x
         {
+            out.extend(x.tail.iter().map(|p| map.group(p)));
             xdata(map, x, &own_apps, out);
         }
         let mut t = t.clone();
@@ -1148,6 +1176,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             out.extend(x.props.iter().map(|p| map.group(p)));
         }
         if xdata_at == b.len() {
+            out.extend(x.tail.iter().map(|p| map.group(p)));
             xdata(map, x, &own_apps, out);
         }
     }

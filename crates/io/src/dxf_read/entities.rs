@@ -4,8 +4,81 @@ use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attr
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
-    Vec3, Viewport, Wipeout, records,
+    Vec3, Viewport, ViewportUcs, Wipeout, records,
 };
+
+/// VIEWPORT groups that are not kept raw in [`Viewport::extra`]: those read into the model, and
+/// the view twist, direction and target (51, 16, 17), which say where the view centre is measured
+/// from: carried along while the centre is written in drawing coordinates, they would move the
+/// view on the next read.
+const VIEWPORT_NOT_EXTRA: &[i32] = &[
+    10, 20, 30, 40, 41, 68, 69, 12, 22, 45, 90, 340, 341, 331, 71, 110, 120, 130, 111, 121, 131, 112, 122, 132, 79, 146, 345, 346, 51, 16, 26, 36,
+    17, 27, 37,
+];
+
+/// Most groups kept raw on one viewport (a VIEWPORT record has about forty).
+const MAX_VIEWPORT_EXTRA: usize = 512;
+
+/// The groups of a VIEWPORT's own subclass (after `100 AcDbViewport`, before any xdata).
+fn viewport_groups(tags: &[Tag]) -> &[Tag] {
+    let Some(start) = tags.iter().position(|t| t.code == 100 && t.str().trim() == "AcDbViewport") else { return &[] };
+    let rest = tags.get(start + 1..).unwrap_or(&[]);
+    rest.get(..rest.iter().position(|t| t.code == 100 || t.code >= 1000).unwrap_or(rest.len())).unwrap_or(&[])
+}
+
+/// A VIEWPORT's own UCS (groups 110–112, 79, 146), if it has one. The named and base UCS (345,
+/// 346) are table handles, resolved once the UCS table is known ([`entity_extras`]).
+fn viewport_ucs(tags: &[Tag]) -> Option<ViewportUcs> {
+    let g = viewport_groups(tags);
+    // Any UCS group, the base UCS handle (346) alone too: a viewport that only names its base
+    // UCS keeps it.
+    if !g.iter().any(|t| matches!(t.code, 110 | 111 | 112 | 345 | 346)) {
+        return None;
+    }
+    let t = T(g);
+    let has = |c: i32| g.iter().any(|t| t.code == c);
+    let (origin, x_axis, y_axis) =
+        (t.p(110), if has(111) { t.p(111) } else { Vec3::new(1.0, 0.0, 0.0) }, if has(112) { t.p(112) } else { Vec3::new(0.0, 1.0, 0.0) });
+    // Unreadable numbers come through as 0, so a broken axis is one with no length.
+    let finite = [origin, x_axis, y_axis].iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+    if !finite || x_axis.len() <= 1e-12 || y_axis.len() <= 1e-12 {
+        return None;
+    }
+    Some(ViewportUcs {
+        origin,
+        x_axis,
+        y_axis,
+        elevation: t.f(146).filter(|e| e.is_finite()).unwrap_or(0.0),
+        ortho: t.i(79).and_then(|o| u8::try_from(o).ok()).filter(|o| *o <= 6).unwrap_or(0),
+        named: None,
+        base: None,
+    })
+}
+
+/// A VIEWPORT's groups CADCraft doesn't model, as read ([`VIEWPORT_NOT_EXTRA`]), plus those of
+/// CADCraft's xdata copy that the record lacks (a DWG drops some).
+fn viewport_extra(tags: &[Tag]) -> Vec<RawTag> {
+    // Only groups that can stand inside the AcDbViewport subclass: no record start (0), handle (5,
+    // 105), subclass (100), group brace (102) or xdata (1000 on), which written back would break
+    // the record or give it a second handle.
+    let own_group = |code: i32| (1..1000).contains(&code) && !matches!(code, 5 | 100 | 102 | 105);
+    // The record's own pointer groups stay: they are remapped with the record.
+    let mut out: Vec<RawTag> = viewport_groups(tags)
+        .iter()
+        .filter(|t| own_group(t.code) && !VIEWPORT_NOT_EXTRA.contains(&t.code))
+        .take(MAX_VIEWPORT_EXTRA)
+        .map(|t| RawTag { code: t.code, value: t.str() })
+        .collect();
+    for (code, value) in crate::dxf_ext::read_extra(tags) {
+        if out.len() >= MAX_VIEWPORT_EXTRA {
+            break;
+        }
+        if own_group(code) && !VIEWPORT_NOT_EXTRA.contains(&code) && !crate::dxf_raw::is_pointer(code) && !out.iter().any(|t| t.code == code) {
+            out.push(RawTag { code, value });
+        }
+    }
+    out
+}
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
@@ -253,6 +326,9 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
             clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
             on: t.i(90).unwrap_or(0) & 131072 == 0,
+            ucs: viewport_ucs(tags),
+            ucs_per_viewport: t.i(71) == Some(1),
+            extra: viewport_extra(tags),
         }),
         "WIPEOUT" => {
             let o = t.p(10);
@@ -466,14 +542,26 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
-        ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+        ("VIEWPORT", EntityKind::Viewport(v)) => {
+            // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
+            if v.frozen_layers.is_empty() {
+                v.frozen_layers = tags
+                    .iter()
+                    .take_while(|t| t.code < 1000)
+                    .filter(|t| t.code == 341)
+                    .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
+                    .collect();
+            }
+            // The named and base UCS, by name: groups 345 and 346, else CADCraft's xdata (which a
+            // DWG keeps when they are dropped). A name that isn't in the UCS table: none.
+            if let Some(u) = &mut v.ucs {
+                let t = T(viewport_groups(tags));
+                let by_handle = |code: i32| t.s(code).and_then(|h| rx.ucss.get(&h.trim().to_ascii_uppercase()).cloned());
+                let (xn, xb) = crate::dxf_ext::read_ucs_names(tags);
+                let known = |n: Option<String>| n.and_then(|n| rx.ucs_names.get(&n.to_ascii_uppercase()).cloned());
+                u.named = by_handle(345).or_else(|| known(xn));
+                u.base = by_handle(346).or_else(|| known(xb));
+            }
         }
         _ => {}
     }

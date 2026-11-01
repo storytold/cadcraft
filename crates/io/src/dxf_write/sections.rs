@@ -161,7 +161,8 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     // UCS: named user coordinate systems (DXF Reference, UCS).
     let th = table_head(w, "UCS", d.ucss.len());
     for u in &d.ucss {
-        record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        let h = record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        w.ucss.insert(u.name.to_ascii_uppercase(), h);
         w.s(2, &u.name);
         w.i(70, 0);
         w.p(10, u.origin);
@@ -243,7 +244,7 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), ucss: HashMap::new(), reactors: HashMap::new() };
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -892,6 +893,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         next: d.handseed.max(0x100).saturating_add(0x1000),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
         reactors: hatch_reactors(d),
     };
     // Pre-allocate handles for block records.

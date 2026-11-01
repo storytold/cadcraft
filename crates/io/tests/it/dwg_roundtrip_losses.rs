@@ -27,6 +27,9 @@ fn viewport(id: u32) -> EntityKind {
         layer_colors: vec![],
         clip: None,
         on: true,
+        ucs: None,
+        ucs_per_viewport: false,
+        extra: Vec::new(),
     })
 }
 

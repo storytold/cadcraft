@@ -43,6 +43,8 @@ struct W {
     pstyles: HashMap<String, String>,
     /// Upper-case layer name → its LAYER table record handle (group 341 of viewports).
     layers: HashMap<String, String>,
+    /// Upper-case UCS name → its UCS table record handle (groups 345 and 346 of viewports).
+    ucss: HashMap<String, String>,
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
@@ -145,6 +147,7 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
         next: d.handseed.max(0x100).saturating_add(0x1000),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
         reactors: HashMap::new(),
     };
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
