@@ -171,7 +171,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP, dxf_ext::FORMULA_APP];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
@@ -624,7 +624,8 @@ fn write_style_objects(w: &mut W, plan: &ObjectWritePlan<'_>, mleader_dict: &str
     }
     let byblock_ltype = ltype_handles.get("BYBLOCK").cloned();
     for (s, h) in mleader_styles.iter().zip(mleader_handles) {
-        mleader_style_obj(w, s, h, mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style));
+        let arrow = Some(s.arrow_block.trim()).filter(|a| !a.is_empty()).and_then(|a| cx.arrow(a));
+        mleader_style_obj(w, s, h, mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style), arrow);
     }
     // Multiline styles.
     w.t.extend(crate::dxf_mline::objects(&cx.mlines, root_dict));
@@ -807,7 +808,11 @@ fn arrow_block_definitions(
     for s in &d.dim_styles {
         arrow_names.extend([s.arrow_block.clone(), s.arrow_block1.clone(), s.arrow_block2.clone(), s.leader_arrow_block.clone()]);
     }
+    arrow_names.extend(d.mleader_styles.iter().map(|s| s.arrow_block.clone()));
     for e in every {
+        if let EntityKind::MLeader(m) = &e.kind {
+            arrow_names.push(m.arrow.clone());
+        }
         if let EntityKind::Dimension(dm) = &e.kind {
             for (k, v) in &dm.overrides {
                 let Some(f) = DimStyle::field_name(k).filter(|f| f.starts_with("arrowBlock") || *f == "leaderArrowBlock") else { continue };

@@ -16,8 +16,9 @@ mod arrowheads;
 mod text;
 
 use arrowheads::tick;
-pub use arrowheads::{ArrowGeom, Arrowhead, arrow, arrowhead};
+pub use arrowheads::{ArrowGeom, Arrowhead, arrowhead};
 pub use text::{DimText, format_linear_value};
+use text::{Head, head};
 
 /// Most DIMBREAK gaps drawn per dimension.
 const MAX_BREAKS: usize = 1000;
@@ -54,6 +55,9 @@ pub struct DimGeometry {
     pub text_pos: Vec2,
     /// The measured value (DXF group 42): a length, or the angle in radians.
     pub measurement: f64,
+    /// What a formula's `<>` stands for: the measurement as the dimension shows it (DIMLFAC,
+    /// DIMRND and the shown resolution applied; degrees for an angle).
+    pub formula_value: Option<f64>,
     pub text_angle: f64,
     pub text_height: f64,
     /// Plain text of the dimension.
@@ -225,8 +229,8 @@ struct DimConfig<'a> {
     gap: f64,
     tick_size: f64,
     ticks: bool,
-    first_arrow: Arrowhead,
-    second_arrow: Arrowhead,
+    first_arrow: Head<'a>,
+    second_arrow: Head<'a>,
     width_factor: f64,
 }
 
@@ -248,8 +252,9 @@ impl<'a> DimConfig<'a> {
             gap: style.text_gap.abs() * scale,
             tick_size,
             ticks: tick_size > 0.0,
-            first_arrow: Arrowhead::parse(first_arrow),
-            second_arrow: Arrowhead::parse(second_arrow),
+            // A user arrowhead block (in `font.user_arrows`), else a built-in one.
+            first_arrow: head(first_arrow, font),
+            second_arrow: head(second_arrow, font),
             width_factor: if font.width_factor > 0.0 && font.width_factor.is_finite() { font.width_factor } else { 1.0 },
         }
     }
@@ -273,12 +278,12 @@ impl<'a> DimConfig<'a> {
         (layout.bounds.width(), layout.bounds.height())
     }
 
-    fn end(&self, geometry: &mut DimGeometry, kind: Arrowhead, tip: Vec2, direction: Vec2) -> f64 {
+    fn end(&self, geometry: &mut DimGeometry, kind: Head<'_>, tip: Vec2, direction: Vec2) -> f64 {
         if self.ticks {
             geometry.dim(tick(tip, direction, self.tick_size));
             0.0
         } else {
-            geometry.add_arrow(arrowhead(kind, tip, direction, self.arrow_size));
+            geometry.add_arrow(kind.geom(tip, direction, self.arrow_size));
             kind.inset(self.arrow_size)
         }
     }

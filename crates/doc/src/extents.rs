@@ -217,7 +217,11 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             b
         }
         EntityKind::MLeader(m) => {
-            let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
+            // Hidden leader lines (leader type None) and their landing take no room.
+            let content = m.text.as_ref().map(|t| t.insert.xy()).or_else(|| m.block.as_ref().map(|i| i.insert.xy()));
+            let start = if m.no_leader { content.unwrap_or(m.landing.xy()) } else { m.landing.xy() };
+            let shown = m.leaders.iter().filter(|_| !m.no_leader).flatten().map(|v| v.xy());
+            let mut b = Bounds2::from_points(shown.chain(std::iter::once(start)));
             if let Some(t) = &m.text {
                 b.add(t.insert.xy());
                 if !blank(&t.contents) {
@@ -325,6 +329,7 @@ mod tests {
 
     fn text(halign: HAlign, valign: VAlign) -> Text {
         Text {
+            formula: None,
             insert: Vec3::new(0.0, 0.0, 0.0),
             align_pt: Some(Vec3::new(0.0, 0.0, 0.0)),
             height: 1.0,
@@ -344,6 +349,7 @@ mod tests {
 
     fn mtext(contents: &str, width: f64) -> crate::MText {
         crate::MText {
+            formula: None,
             insert: Vec3::new(10.0, 10.0, 0.0),
             height: 2.5,
             width,
@@ -410,6 +416,7 @@ mod tests {
     #[test]
     fn multileader_text_is_inside_its_bounds() {
         let mtext = crate::MText {
+            formula: None,
             insert: Vec3::new(25.45, 0.0, 0.0),
             height: 5.0,
             width: 0.0,
@@ -422,6 +429,8 @@ mod tests {
             columns: None,
         };
         let ml = crate::MLeader {
+            arrow: String::new(),
+            no_leader: false,
             leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
             landing: Vec3::new(25.0, 0.0, 0.0),
             dogleg: 0.45,
@@ -434,8 +443,16 @@ mod tests {
         let b = bounds(EntityKind::MLeader(ml.clone()));
         // The glyph spans x 25.45..28.78, y -2.5..2.5.
         assert!(b.min.x <= 0.0 && b.max.x >= 28.79 && b.min.y <= -2.5 && b.max.y >= 2.5);
-        let mut empty = ml;
+        let mut empty = ml.clone();
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
         assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+        // Leader type None: the hidden leader line and landing take no room.
+        let hidden =
+            crate::MLeader { no_leader: true, leaders: vec![vec![Vec3::new(-500.0, -500.0, 0.0), Vec3::new(-400.0, -500.0, 0.0)]], ..ml.clone() };
+        let b = bounds(EntityKind::MLeader(hidden.clone()));
+        assert!(b.min.x >= 25.0 && b.min.y > -10.0, "{b:?}");
+        assert!(EntityKind::MLeader(hidden).prims().is_empty(), "no snaps on hidden lines");
+        let shown = crate::MLeader { leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0)]], ..ml };
+        assert!(!EntityKind::MLeader(shown).prims().is_empty());
     }
 }

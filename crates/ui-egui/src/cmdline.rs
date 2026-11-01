@@ -57,7 +57,9 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         return None;
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
-    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
+    // RECTANG's other corner: its width and height, in boxes beside the sides.
+    let dims = p.corner && p.base.is_some() && app.session.running.as_ref().is_some_and(|r| r.id == "rectang");
+    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, dims })
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -719,6 +721,28 @@ mod tests {
     use super::*;
     use cadcraft_engine::Session;
     use egui::{Event, PointerButton};
+
+    /// RECTANG's other corner: a width typed alone and Enter makes a rectangle that wide (the
+    /// height from the cursor), not a corner along the cursor's diagonal (#2325 review).
+    #[test]
+    fn a_rectangle_width_typed_alone_is_its_width() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("rectang");
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        app.canvas.cursor = Some(cadcraft_geom::Vec2::new(3.0, 4.0));
+        app.cmd.buffer = "100".into();
+        submit(&mut app);
+        let d = app.session.doc().unwrap();
+        let pl = d
+            .model
+            .iter()
+            .find_map(|e| if let cadcraft_doc::EntityKind::LwPolyline(p) = &e.kind { Some(p.clone()) } else { None })
+            .expect("a rectangle");
+        let b = cadcraft_geom::Bounds2::from_points(pl.vertices.iter().map(|v| v.p));
+        assert!((b.width() - 100.0).abs() < 1e-9 && (b.height() - 4.0).abs() < 1e-9, "{b:?}");
+    }
 
     #[test]
     fn compact_canvas_contains_history_controls_without_changing_line_preference() {

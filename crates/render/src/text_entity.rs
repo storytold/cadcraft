@@ -8,7 +8,7 @@ pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
     let ts = text_style(d, &t.style);
-    let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+    let font = cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font);
     let (h, v) = align(t.halign, t.valign);
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
@@ -36,7 +36,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: cadcraft_fonts::TextFont::resolve(&ts.font),
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {

@@ -128,6 +128,8 @@ mod units {
 
     fn unit_ml(arrow: [f64; 2], land: [f64; 2]) -> MLeader {
         MLeader {
+            arrow: String::new(),
+            no_leader: false,
             leaders: vec![vec![Vec3::new(arrow[0], arrow[1], 0.0)]],
             landing: Vec3::new(land[0], land[1], 0.0),
             dogleg: 0.0,
@@ -141,6 +143,8 @@ mod units {
 
     fn no_leader(land: [f64; 2]) -> MLeader {
         MLeader {
+            arrow: String::new(),
+            no_leader: false,
             leaders: vec![],
             landing: Vec3::new(land[0], land[1], 0.0),
             dogleg: 0.0,

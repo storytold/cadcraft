@@ -18,10 +18,13 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
     let dogleg = if landing { st.dogleg } else { 0.0 };
     let tpos = *landing_pt + Vec2::new((dogleg + st.landing_gap) * dir, 0.0);
     Some(EntityKind::MLeader(MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![arrow_pts.iter().map(|p| v3(*p)).collect()],
         landing: v3(*landing_pt),
         dogleg,
         text: (!text.is_empty()).then(|| MText {
+            formula: None,
             insert: v3(tpos),
             height: th,
             width: 0.0,
@@ -69,6 +72,7 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
         out.push(
             s.add_entity(EntityKind::MText(MText {
+                formula: None,
                 insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
                 height: th,
                 width: 0.0,
