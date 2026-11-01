@@ -47,9 +47,33 @@ pub trait LegacyProfile: Sync {
 
 static PROFILES: &[&dyn LegacyProfile] = &[&vietnamese::Vietnamese];
 
+/// Environment variable name to disable legacy font hint detection.
+pub const DISABLE_LEGACY_FONT_HINT_ENV: &str = "CADCRAFT_DISABLE_LEGACY_FONT_HINT";
+
+/// Check whether the legacy font hint mechanism is disabled via the
+/// `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable.
+pub fn is_font_hint_disabled() -> bool {
+    is_font_hint_disabled_with(|k| std::env::var(k).ok())
+}
+
+pub(crate) fn is_font_hint_disabled_with(mut get_var: impl FnMut(&str) -> Option<String>) -> bool {
+    match get_var(DISABLE_LEGACY_FONT_HINT_ENV) {
+        Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" | "off" | "no" => false,
+            _ => !v.trim().is_empty(),
+        },
+        None => false,
+    }
+}
+
 /// Return the first candidate in `candidates` (such as `&[&ts.font, &style_name]`) that matches
 /// a registered [`LegacyProfile::match_font`].
+///
+/// Returns `None` if the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set.
 pub fn font_hint<'a>(candidates: &[&'a str]) -> Option<&'a str> {
+    if is_font_hint_disabled() {
+        return None;
+    }
     font_hint_with(PROFILES, candidates)
 }
 
@@ -69,8 +93,11 @@ pub fn font_hint_with<'a>(profiles: &[&dyn LegacyProfile], candidates: &[&'a str
 /// If `hint` matches a registered profile's font naming rules, that profile decodes the text;
 /// otherwise each profile's conservative [`LegacyProfile::detect`] heuristic is tried in order.
 /// Returns `Cow::Borrowed(s)` with zero allocation when no legacy encoding applies.
+///
+/// If the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set, `hint` is ignored.
 pub fn transcode<'a>(s: &'a str, hint: Option<&str>) -> Cow<'a, str> {
-    transcode_with(PROFILES, s, hint)
+    let effective_hint = if is_font_hint_disabled() { None } else { hint };
+    transcode_with(PROFILES, s, effective_hint)
 }
 
 /// Like [`transcode`], using an explicit slice of profiles.
@@ -95,7 +122,12 @@ pub fn transcode_with<'a>(profiles: &[&dyn LegacyProfile], s: &'a str, hint: Opt
 
 /// If `font` belongs to a registered legacy 8-bit encoding profile, return its modern Unicode
 /// substitute typeface class (`Serif` or `Sans`).
+///
+/// Returns `None` if the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set.
 pub fn substitute_face(font: &str) -> Option<FontClass> {
+    if is_font_hint_disabled() {
+        return None;
+    }
     substitute_face_with(PROFILES, font)
 }
 
@@ -111,6 +143,32 @@ pub fn substitute_face_with(profiles: &[&dyn LegacyProfile], font: &str) -> Opti
         }
     }
     None
+}
+
+/// Return true if `text` contains legacy-encoded characters that would be
+/// transcoded under `hint`.
+///
+/// UI and engine layers can query this to detect whether a text entity requires
+/// transcoding before or after rendering.
+pub fn is_legacy_text(text: &str, hint: Option<&str>) -> bool {
+    transcode(text, hint) != text
+}
+
+/// Return a human-readable summary of the matched legacy encoding family.
+pub fn transcode_summary(hint: Option<&str>) -> &'static str {
+    match hint {
+        Some(h) => {
+            let lower = h.to_ascii_lowercase();
+            if lower.contains("vni") {
+                "VNI Windows"
+            } else if lower.contains(".vn") || lower.contains("vnsimli") {
+                "TCVN3"
+            } else {
+                "legacy 8-bit"
+            }
+        }
+        None => "legacy 8-bit",
+    }
 }
 
 #[cfg(test)]
@@ -180,5 +238,35 @@ mod tests {
         assert_eq!(font_hint(&[".VnArialH", "Standard"]), Some(".VnArialH"));
         assert_eq!(font_hint(&["arial.ttf", "Standard"]), None);
         assert_eq!(font_hint(&["", ""]), None);
+    }
+
+    #[test]
+    fn font_hint_disabled_env_switch_parsing() {
+        assert!(is_font_hint_disabled_with(|_| Some("1".into())));
+        assert!(is_font_hint_disabled_with(|_| Some("true".into())));
+        assert!(is_font_hint_disabled_with(|_| Some("on".into())));
+        assert!(is_font_hint_disabled_with(|_| Some("yes".into())));
+        assert!(is_font_hint_disabled_with(|_| Some("YES".into())));
+        assert!(is_font_hint_disabled_with(|_| Some(" 1 \n".into())));
+
+        assert!(!is_font_hint_disabled_with(|_| Some("0".into())));
+        assert!(!is_font_hint_disabled_with(|_| Some("false".into())));
+        assert!(!is_font_hint_disabled_with(|_| Some("off".into())));
+        assert!(!is_font_hint_disabled_with(|_| Some("no".into())));
+        assert!(!is_font_hint_disabled_with(|_| Some("".into())));
+        assert!(!is_font_hint_disabled_with(|_| None));
+    }
+
+    #[test]
+    fn is_legacy_text_and_transcode_summary_surface_status() {
+        assert!(is_legacy_text("B¶n vÏ", Some(".VnTime")));
+        assert!(!is_legacy_text("Bản vẽ", Some(".VnTime")));
+        assert!(!is_legacy_text("Hello", None));
+
+        assert_eq!(transcode_summary(Some(".VnTime")), "TCVN3");
+        assert_eq!(transcode_summary(Some("vnsimli.shx")), "TCVN3");
+        assert_eq!(transcode_summary(Some("VNI-Helve")), "VNI Windows");
+        assert_eq!(transcode_summary(Some("Standard")), "legacy 8-bit");
+        assert_eq!(transcode_summary(None), "legacy 8-bit");
     }
 }

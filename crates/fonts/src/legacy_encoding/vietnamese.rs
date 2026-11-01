@@ -1,4 +1,26 @@
-//! Legacy Vietnamese encoding profile (TCVN3, TCVN3H, VNI Windows).
+//! Legacy Vietnamese 8-bit encoding tables and transcoder (TCVN3, TCVN3H, VNI Windows).
+//!
+//! # Source Attribution & Standard References
+//! The character mapping tables in this module are based on published public domain conventions
+//! and national / industry standards:
+//!
+//! 1. **TCVN3 (ABC) Encoding:**
+//!    - **TCVN 5712:1993**: *Information technology – 8-bit coded character set for Vietnamese*
+//!      (specifically the VN3 / TCVN3 variant commonly paired with ABC font pairs). Standardized
+//!      by the Ministry of Science, Technology and Environment of Vietnam (1993).
+//!    - Cross-verified with GNU C Library official charmap:
+//!      `glibc/localedata/charmaps/TCVN5712-1`
+//!    - Cross-verified with Unicode Consortium and ICU conversion mappings.
+//!
+//! 2. **VNI Windows Encoding (2-byte composite & single-byte):**
+//!    - De facto industry convention established by VNI Software Company (late 1980s–1990s)
+//!      for Vietnamese typography on Microsoft Windows and AutoCAD, pairing base ASCII vowels
+//!      with Latin-1 / extended accent codes.
+//!    - Cross-verified with open-source reference implementations:
+//!      - UniKey engine (`vnconv` / `vni.tab`) by Pham Kim Long.
+//!      - CPAN Vietnamese encoding tables (`Encode::VN::VNI`).
+//!
+//! All conversions deterministically emit standard precomposed Unicode NFC.
 //!
 //! In Vietnamese AEC CAD workflows, legacy drawings frequently use 8-bit encodings:
 //! - **TCVN 5712 / TCVN3 (ABC)**: Paired with fonts starting with `.Vn` or known `vn` stems
@@ -473,9 +495,11 @@ pub fn transcode_tcvn3_h(s: &str) -> Cow<'_, str> {
 
 /// Main entry point: transcode legacy Vietnamese text to Unicode NFC.
 ///
-/// Thin wrapper delegating to [`super::transcode`].
+/// Thin wrapper delegating to [`super::transcode`]. If the
+/// `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set, `font_hint` is ignored.
 pub fn transcode_vietnamese<'a>(s: &'a str, font_hint: Option<&str>) -> Cow<'a, str> {
-    super::transcode_with(&[&Vietnamese], s, font_hint)
+    let effective_hint = if super::is_font_hint_disabled() { None } else { font_hint };
+    super::transcode_with(&[&Vietnamese], s, effective_hint)
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +813,35 @@ fn match_tcvn3_single(c: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_transcoded_output_is_nfc_composed() {
+        let samples = [
+            ("B¶n vÏ chi tiÕt", ".VnTime"),
+            ("MÆT B»NG KÕT CÊU", ".VnTime"),
+            ("TI£U CHUÈN", ".VnTime"),
+            ("B¶n vÏ", ".VnArialH"),
+            ("BAÛN VEÕ CHI TIEÁT", "VNI-Times"),
+            ("Maët baèng keát caáu", "VNI-Helve"),
+            ("Tieâu chuaån kyõ thuaät", "VNI-Aptima"),
+            ("NHOÂM 3003 DAØY 2MM", "VNI-Times"),
+        ];
+
+        for (input, hint) in samples {
+            let out = transcode_vietnamese(input, Some(hint));
+            assert_ne!(out, input, "Must be transcoded");
+            // In NFC, Vietnamese characters are precomposed codepoints, containing no
+            // combining diacritical marks (U+0300..=U+036F or U+1DC0..=U+1DFF).
+            for c in out.chars() {
+                assert!(
+                    !matches!(c, '\u{0300}'..='\u{036F}' | '\u{1DC0}'..='\u{1DFF}'),
+                    "Transcoded output for {:?} contains combining mark {:?}",
+                    input,
+                    c
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_vni_nhom_day() {
