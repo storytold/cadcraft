@@ -172,3 +172,15 @@ fn a_typed_height_is_a_distance() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(attdefs(&s)[0].text.height, 18.0);
 }
+
+#[test]
+fn the_modes_start_from_aflags() {
+    // AFLAGS 0, not the default 16: Invisible toggled on gives 1, and nothing else.
+    let mut s = session();
+    s.execute("setvar", &json!({ "name": "AFLAGS", "value": 0 })).unwrap();
+    s.cmdline("(command \"_.-ATTDEF\" \"_I\" \"\" \"T1\" \"Hoi\" \"D\" '(5.0 10.0) 2.5 0)").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(aflags(&s), 1);
+    let a = attdefs(&s).remove(0);
+    assert_eq!((a.invisible, a.modes.lock_position), (true, false));
+}
