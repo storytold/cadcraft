@@ -19,6 +19,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 mod attdef;
 mod attedit;
+mod bauthor;
 mod burst;
 mod description;
 mod dyngrip;
@@ -90,6 +91,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(xref::specs())
     .chain(refedit::specs())
     .chain(bedit::specs())
+    .chain(bauthor::specs())
     .collect()
 }
 
