@@ -250,6 +250,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 repoint(&mut std::sync::Arc::make_mut(block).entities, &old, &nn);
             }
         }
+        merge::rename_in_viewports(d, &old, &nn);
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }

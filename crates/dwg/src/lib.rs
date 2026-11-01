@@ -58,13 +58,13 @@ impl Limits {
 }
 
 /// A byte count in megabytes for messages ("9.9 MB", "1024 MB").
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(no_dwg_bridge, allow(dead_code))]
 fn mb(n: u64) -> String {
     let m = n as f64 / f64::from(1u32 << 20);
     if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(no_dwg_bridge))]
 mod native {
     use std::io::{Cursor, Write};
     use std::panic::AssertUnwindSafe;
@@ -942,18 +942,18 @@ mod native {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(no_dwg_bridge))]
 pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_kept_as};
 
 // Test-only: the stage ("post_process" or "convert") whose guard the current test checks. The
 // stage then panics on entry, so a test through the public API shows whether it is guarded.
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(no_dwg_bridge)))]
 thread_local! {
     static PANIC_IN: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 /// Panics when a test asked for `stage` to fail (see [`PANIC_IN`]); does nothing otherwise.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(no_dwg_bridge))]
 #[allow(clippy::panic)]
 fn fail_in_test(_stage: &str) {
     #[cfg(test)]
@@ -963,35 +963,39 @@ fn fail_in_test(_stage: &str) {
 }
 
 /// The error for a DWG version CADCraft can't write.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(no_dwg_bridge, allow(dead_code))]
 fn unsupported(version: &str) -> String {
     let list: Vec<&str> = VERSIONS.iter().map(|(_, year)| *year).collect();
     format!("DWG version `{version}` can't be written (CADCraft writes {})", list.join(", "))
 }
 
-#[cfg(target_arch = "wasm32")]
+/// Which build has no DWG bridge, for the stubs' errors.
+#[cfg(no_dwg_bridge)]
+const NO_BRIDGE_BUILD: &str = if cfg!(target_arch = "wasm32") { "web" } else { "FreeBSD aarch64" };
+
+#[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be opened in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf_noted(_bytes: &[u8], _limits: Limits) -> Result<(Vec<u8>, Vec<String>), String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be opened in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf_with(_bytes: &[u8], _limits: Limits) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be opened in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg(_dxf: &[u8]) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be written in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be written in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg_kept_as(_dxf: &[u8], _version: &str, _kept: &str) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be written in the web build yet; save as DXF".into())
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
 
 #[cfg(test)]
@@ -999,14 +1003,14 @@ mod tests {
     use super::*;
 
     /// The DXF of an empty drawing, enough for the bridge to make a small DWG.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     const MINIMAL_DXF: &str = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  0\nENDSEC\n  0\nEOF\n";
 
     /// Makes `stage` panic on the current thread until dropped.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     struct PanicIn;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     impl PanicIn {
         fn at(stage: &'static str) -> Self {
             PANIC_IN.with(|p| p.set(Some(stage)));
@@ -1014,7 +1018,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     impl Drop for PanicIn {
         fn drop(&mut self) {
             PANIC_IN.with(|p| p.set(None));
@@ -1023,7 +1027,7 @@ mod tests {
 
     /// The public read reports a panic in the post-read fix-ups as an error: this fails if the
     /// `guarded` call around `post_process` is taken out (#2402).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn reading_a_dwg_survives_a_panic_in_post_processing() {
         let dwg = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap();
@@ -1034,7 +1038,7 @@ mod tests {
     }
 
     /// The DXF to DWG conversion reports a panic in its fix-ups as an error, not a crash (#2402).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn converting_to_dwg_survives_a_panic_in_the_fix_ups() {
         let _panic = PanicIn::at("convert");
@@ -1051,7 +1055,7 @@ mod tests {
 
     /// A DXF with ROMANS as `$TEXTSTYLE` gives a DWG whose current text style is ROMANS, not
     /// Standard: the DXF names the style, and the handle read with it was Standard's (#1650).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn current_text_style_reaches_the_dwg() {
         let header = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  9\n$TEXTSTYLE\n  7\nROMANS\n  0\nENDSEC\n";
@@ -1071,7 +1075,7 @@ mod tests {
         assert!(dwg_to_dxf(b"").is_err());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn dxf_to_dwg_rejects_garbage_without_crashing() {
         // The DXF→DWG path runs the third-party reader inside catch_unwind and reports failures
@@ -1081,7 +1085,7 @@ mod tests {
     }
 
     /// A DXF with one DIMENSION per (text, group 70, subclass, points) row.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     fn dims_dxf(dims: &[(&str, i64, &str, &[(i32, [f64; 2])])]) -> String {
         let mut s = String::from("  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n");
         for (text, flags, sub, pts) in dims {
@@ -1098,7 +1102,7 @@ mod tests {
     /// the text is at its default position), and bit 32 in bit 1 (ODA DWG specification, common
     /// dimension data). The bytes are read back raw, so a reader that inverts bit 0 the same way
     /// as the writer can't hide a wrong byte.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn dimension_text_position_flags_reach_the_dwg_as_autocad_reads_them() {
         let linear: &[(i32, [f64; 2])] = &[(13, [0.0, 0.0]), (14, [100.0, 0.0])];
@@ -1145,7 +1149,7 @@ mod tests {
     }
 
     /// The handles a DXF text refers to or gives its records (groups 5, 105 and 330–369).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     fn dxf_handles(dxf: &str) -> std::collections::HashSet<u64> {
         let lines: Vec<&str> = dxf.lines().collect();
         lines
@@ -1162,7 +1166,7 @@ mod tests {
     /// 1.2 GB DXF rendition over the limit, so it didn't open). They're left out with a note, and
     /// their dictionary entries with them; the definition and every component it reaches —
     /// through compound and point components, around a cycle — are kept.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn orphaned_dgn_line_style_components_are_left_out() {
         use acadrust::objects::*;
@@ -1279,7 +1283,7 @@ mod tests {
     }
 
     /// An R2000 DXF header (`\r\n` lines, as CADCraft writes them) with `extra` after `$ACADVER`.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     fn r2000(extra: &[u8]) -> Vec<u8> {
         let mut dxf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1015\r\n  9\r\n$DWGCODEPAGE\r\n  3\r\nANSI_1252\r\n".to_vec();
         dxf.extend_from_slice(b"  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nTEXT\r\n  1\r\n");
@@ -1289,7 +1293,7 @@ mod tests {
     }
 
     /// The kept version replaces only the `$ACADVER` value; everything else stays byte for byte.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn declare_version_changes_only_acadver() {
         let dxf = r2000(b"A\\U+00E7\\U+00E3o");
@@ -1299,7 +1303,7 @@ mod tests {
 
     /// A kept version not newer than the declared one, a binary DXF and a DXF without `$ACADVER`
     /// are read as they are.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn declare_version_leaves_what_it_need_not_change() {
         let dxf = r2000(b"x");
@@ -1316,7 +1320,7 @@ mod tests {
     /// The header is read as group code and value pairs up to the first `0`/`ENDSEC`: a `$ACADVER`
     /// name whose value would come after it, or a file that never ends its HEADER, is no version
     /// to replace, and `\r\n` lines keep the value's offset right.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn declare_version_reads_the_header_in_pairs_up_to_endsec() {
         let cut = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  0\r\nENDSEC\r\n  1\r\nAC1015\r\n";
@@ -1330,7 +1334,7 @@ mod tests {
 
     /// Declared as 2007 or later, a DXF is UTF-8: code page text is decoded first. Declared as an
     /// older version, the code page bytes stay as they are.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn declare_version_decodes_a_code_page_for_utf8_versions() {
         let dxf = r2000(b"A\xe7\xe3o");
@@ -1352,7 +1356,7 @@ mod tests {
     }
 
     /// An unknown kept version converts as [`dxf_to_dwg_as`] does.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn unknown_kept_version_converts_as_before() {
         let dxf = r2000(b"x");
@@ -1361,7 +1365,7 @@ mod tests {
     }
 
     /// The CLASS names in CLASSES order; nothing for a binary DXF or one without CLASSES.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn dxf_class_names_in_classes_order() {
         let dxf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nCLASSES\r\n  0\r\nCLASS\r\n  1\r\nWIDGETA\r\n  2\r\nAcDbWidgetA\r\n  3\r\nApp\r\n  0\r\nCLASS\r\n  1\r\nWIDGETB\r\n  2\r\nAcDbWidgetB\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nTEXT\r\n  1\r\nNOT_A_CLASS\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
