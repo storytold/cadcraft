@@ -54,6 +54,7 @@
 	About	Про програму
 	About CADCraft	Про CADCraft
 	Absolute	Абсолютні
+	Address	Адреса
 	Add Leader	Додати виноску
 	Additional angles	Додаткові кути
 	Align	Вирівняти
@@ -536,6 +537,8 @@
 	Models	Моделі
 	Modify	Модифікація
 	Move	Перемістити
+	Mouse wheel zooms (instead of scrolling)	Коліщатко миші масштабує (замість прокручування)
+	By default on macOS, trackpad and Magic Mouse scrolling pans the drawing. Enable this to make the wheel always zoom.	Типово в macOS прокручування трекпадом і Magic Mouse панорамує креслення. Увімкніть, щоб коліщатко завжди масштабувало.
 	Move/Copy/Rotate	Перемістити/Копіювати/Повернути
 	Multileader	Мультивиноска
 	Multileader Style...	Стиль мультивиносок...
@@ -1191,6 +1194,7 @@
 	Wipeout	Маскування
 	Workspace Switching	Перемикання робочого простору
 	Write Block	Записати блок у файл
+	Write Block Pick	Вибір для запису блока
 	Xline	Допоміжна пряма
 	Yellow	Жовтий
 	Yes	Так

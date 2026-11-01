@@ -516,6 +516,10 @@ fn automation(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>)
     ui.add_space(4.0);
     ui.add_enabled_ui(app.ui.mcp_port.is_some(), |ui| {
         grid(ui, "options_automation", |ui| {
+            ui.label(crate::tl!("Address"));
+            ui.label("127.0.0.1");
+            ui.end_row();
+
             ui.label(crate::tl!("Port"));
             let mut port = app.ui.mcp_port.unwrap_or(7980);
             if ui.add(egui::DragValue::new(&mut port).range(1024..=65535)).changed() {
