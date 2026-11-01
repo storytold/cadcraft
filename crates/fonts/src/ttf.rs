@@ -54,7 +54,6 @@ impl std::fmt::Debug for Face {
 
 impl Face {
     /// Face `index` of font file `bytes`, if it parses.
-    #[must_use]
     pub fn new(bytes: Arc<Vec<u8>>, index: u32) -> Option<Face> {
         FontRef::from_index(&bytes, index).ok()?;
         Some(Face { bytes, index })
@@ -77,7 +76,6 @@ impl Face {
             .is_some_and(|l| l.feature_records().iter().any(|r| tags.contains(&r.feature_tag())))
     }
     /// Whether the face maps `c` to a glyph.
-    #[must_use]
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
@@ -97,7 +95,6 @@ impl Face {
 }
 
 /// Faces of a font file: every face of a collection (capped), or the single font.
-#[must_use]
 pub fn faces(bytes: &Arc<Vec<u8>>) -> Vec<Face> {
     match FileRef::new(bytes) {
         Ok(FileRef::Collection(c)) => (0..c.len().min(MAX_FACES_PER_FILE)).filter_map(|i| Face::new(bytes.clone(), i)).collect(),
@@ -566,7 +563,6 @@ fn is_stroke_name(k: &str) -> bool {
 
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names
 /// (".shx", empty) return `None`.
-#[must_use]
 pub fn find(name: &str) -> Option<Face> {
     let k = key(name);
     if is_stroke_name(&k) {
@@ -606,7 +602,6 @@ fn split_list(s: &str) -> Vec<String> {
 
 /// FONTALT: the font used for a text style font that can't be found. Empty = the built-in
 /// stroke font.
-#[must_use]
 pub fn font_alt() -> String {
     prefs().alt.clone()
 }
@@ -617,7 +612,6 @@ pub fn set_font_alt(name: &str) {
 }
 
 /// FONTFALLBACK: fonts tried first for characters a text's font lacks, comma-separated.
-#[must_use]
 pub fn fallback_fonts() -> String {
     prefs().fallback.join(", ")
 }
@@ -635,7 +629,6 @@ fn wants_fallback(c: char) -> bool {
 
 /// A face that has `c`, for text whose own font lacks it: FONTFALLBACK fonts, then FONTALT,
 /// then installed fonts (wide-coverage CJK fonts first). Bounded and cached.
-#[must_use]
 pub fn fallback_for(c: char) -> Option<Face> {
     if !wants_fallback(c) {
         return None;
@@ -787,7 +780,6 @@ impl OutlinePen for Pen {
 /// How far below the baseline a face reaches, as a fraction of the text height (which is the
 /// face's cap height): its descent over its cap height. A bottom-justified text's alignment
 /// point is there, as `AutoCAD` places it (#2229). `None` when the face has no usable descent.
-#[must_use]
 pub fn descent_ratio(face: &Face) -> Option<f64> {
     let f = face.font()?;
     let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
@@ -822,7 +814,6 @@ pub(crate) fn glyph_by_id(face: &Face, gid: u32) -> Arc<GlyphOutline> {
 
 /// Closed, flattened contours of a glyph at 1000 font units per em. Shared with the outline
 /// cache so renderers can tessellate once before applying each occurrence's affine placement.
-#[must_use]
 pub fn glyph_contours(face: &Face, gid: u16) -> Arc<[Vec<Vec2>]> {
     glyph_by_id(face, u32::from(gid)).contours.clone()
 }
@@ -930,13 +921,11 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// Shape one line with a TrueType face: closed glyph contours grouped per glyph (baseline at
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
-#[must_use]
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
     shape_dir(face, s, height, width_factor, oblique, None)
 }
 
 /// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
-#[must_use]
 pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     face.font()?;
     // As in [`crate::shape_stroke_dir`]: a line asked to run right to left takes the bidi path.
@@ -976,7 +965,6 @@ pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: 
 }
 
 /// Width of one line set in a TrueType face.
-#[must_use]
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
     if crate::complex::needed(s)
@@ -998,7 +986,6 @@ pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64
 }
 
 /// Lay out one line with a TrueType face: closed glyph contours (baseline at y = 0).
-#[must_use]
 pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Run> {
     let sh = shape(face, s, height, width_factor, oblique)?;
     let mut strokes: Vec<Vec<Vec2>> = sh.glyphs.into_iter().flatten().collect();
