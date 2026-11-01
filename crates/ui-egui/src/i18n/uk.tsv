@@ -1283,6 +1283,8 @@
 	Automatic save every	Автозбереження кожні
 	min	хв
 	Automatic save file location	Папка файлів автозбереження
+	Backup copy	Резервна копія
+	Create backup copy with each save	Створювати резервну копію під час кожного збереження
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Креслення, що ще не мають файлу, зберігаються в типовій версії. 0 хвилин вимикає автозбереження.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Клік правою кнопкою з урахуванням часу: швидкий клік — Enter, утримання відкриває меню
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Якщо вимкнено, клік правою кнопкою під час команди завжди відкриває контекстне меню.
@@ -1373,3 +1375,4 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?

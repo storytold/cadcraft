@@ -11,8 +11,7 @@
 //! - [`fallback_fonts`] (`FONTFALLBACK`): fonts tried first for characters the text's font
 //!   lacks (CJK in an SHX big font, for example), before the automatic system font search.
 //!
-//! On native builds both start from the `CADCRAFT_FONTALT` / `CADCRAFT_FONTFALLBACK`
-//! environment variables.
+//! Both start empty; the host sets its starting values ([`set_font_alt`], [`set_fallback_fonts`]).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -524,16 +523,8 @@ struct Prefs {
 }
 
 fn prefs() -> MutexGuard<'static, Prefs> {
-    static P: OnceLock<Mutex<Prefs>> = OnceLock::new();
-    P.get_or_init(|| {
-        #[cfg(not(target_arch = "wasm32"))]
-        let env = |k: &str| std::env::var(k).unwrap_or_default();
-        #[cfg(target_arch = "wasm32")]
-        let env = |_: &str| String::new();
-        Mutex::new(Prefs { alt: clean_name(&env("CADCRAFT_FONTALT")), fallback: split_list(&env("CADCRAFT_FONTFALLBACK")) })
-    })
-    .lock()
-    .unwrap_or_else(PoisonError::into_inner)
+    static P: Mutex<Prefs> = Mutex::new(Prefs { alt: String::new(), fallback: Vec::new() });
+    P.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A font name setting: trimmed, capped, "." = none.
@@ -716,6 +707,16 @@ impl OutlinePen for Pen {
     fn close(&mut self) {
         self.flush();
     }
+}
+
+/// How far below the baseline a face reaches, as a fraction of the text height (which is the
+/// face's cap height): its descent over its cap height. A bottom-justified text's alignment
+/// point is there, as AutoCAD places it (#2229). `None` when the face has no usable descent.
+pub fn descent_ratio(face: &Face) -> Option<f64> {
+    let f = face.font()?;
+    let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
+    let r = descent / cap_height(&f);
+    (r.is_finite() && r > 0.0 && r < 2.0).then_some(r)
 }
 
 /// Cap height of a font in font units at 1000 units per em: the OS/2 value, else the height

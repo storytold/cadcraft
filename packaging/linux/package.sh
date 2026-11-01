@@ -44,11 +44,16 @@ BASENAME="cadcraft-$VERSION-linux-$ARCH"
 
 echo "==> CADCraft $VERSION for Linux $ARCH ($FORMATS)"
 
+# The man-and-completions example writes cadcraft-cli's man pages and shell completions below. It
+# is built in its own cargo run: built with the binaries, its dev-dependencies' features would be
+# unified into them.
 if [[ "$SKIP_BUILD" = 0 ]]; then
   if [[ -n "${CROSS_TARGET:-}" ]]; then
     (cd "$ROOT" && cargo build --release --locked -p cadcraft -p cadcraft-cli --target "$CROSS_TARGET")
+    (cd "$ROOT" && cargo build --release --locked -p cadcraft-cli --example man-and-completions --target "$CROSS_TARGET")
   else
     (cd "$ROOT" && cargo build --release --locked -p cadcraft -p cadcraft-cli)
+    (cd "$ROOT" && cargo build --release --locked -p cadcraft-cli --example man-and-completions)
   fi
 fi
 BIN="$CARGO_TARGET_DIR/${CROSS_TARGET:+$CROSS_TARGET/}release"
@@ -69,6 +74,26 @@ mkdir -p "$STAGE/usr/share/icons"
 cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/usr/share/icons/"
 mkdir -p "$STAGE/usr/share/doc/cadcraft"
 copy_docs "$STAGE/usr/share/doc/cadcraft"
+# cadcraft-cli's man pages and shell completions, from its clap definition, written by the
+# example built above. A cross build runs it through $EMULATOR, like the --version check at the
+# end, and leaves them out without one, as a --skip-build run whose prebuilt binaries came without
+# the example does. zsh reads site-functions on Fedora and openSUSE.
+CLI_DOCS="$BIN/examples/man-and-completions"
+if [[ -n "${CROSS_TARGET:-}" ]] && [[ -z "${EMULATOR:-}" ]]; then
+  warn "no EMULATOR to run the $CROSS_TARGET build, so cadcraft-cli's man pages and completions are left out"
+elif [[ ! -x "$CLI_DOCS" ]]; then
+  warn "$CLI_DOCS is not built, so cadcraft-cli's man pages and completions are left out"
+else
+  if [[ -n "${CROSS_TARGET:-}" ]]; then
+    "$EMULATOR" "$CLI_DOCS" "$WORK/cli-docs"
+  else
+    "$CLI_DOCS" "$WORK/cli-docs"
+  fi
+  install -Dm644 -t "$STAGE/usr/share/man/man1" "$WORK"/cli-docs/*.1
+  install -Dm644 "$WORK/cli-docs/cadcraft-cli.bash" "$STAGE/usr/share/bash-completion/completions/cadcraft-cli"
+  install -Dm644 "$WORK/cli-docs/_cadcraft-cli" "$STAGE/usr/share/zsh/site-functions/_cadcraft-cli"
+  install -Dm644 "$WORK/cli-docs/cadcraft-cli.fish" "$STAGE/usr/share/fish/vendor_completions.d/cadcraft-cli.fish"
+fi
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$STAGE/usr/share/applications/$APP_ID.desktop"

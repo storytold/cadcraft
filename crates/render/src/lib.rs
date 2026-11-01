@@ -235,7 +235,7 @@ impl Builder<'_> {
                     self.tris_at(ctx, color, &mesh.triangles, xf);
                     mesh.triangles.len()
                 } else {
-                    let tris = fill::triangulate_evenodd(g);
+                    let tris = crate::text::triangulate_placed(g);
                     self.tris(ctx, color, &tris);
                     tris.len()
                 };

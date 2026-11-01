@@ -73,14 +73,17 @@ reached", malformed source is a reader error, and every built-in checks its argu
 - **Output and files:** `princ prin1 print prompt terpri alert open close read-line write-line
   findfile`
 - **Errors:** `*error*`, `vl-catch-all-apply vl-catch-all-error-p vl-catch-all-error-message`
-- **Drawing:** `command` (also `command-s`, `vl-cmdf`) with `pause`, a command left open for the
-  next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
+- **Drawing:** `command` (also `command-s`, `vl-cmdf`) with `pause`, entity names and `entsel`
+  lists at prompts picking one object (a bare name picks at its DXF group 10 point, as in AutoCAD),
+  a command left open for the next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
   entnext entupd handent`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
   sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
   getkword entsel nentsel`
 - **Units:** `rtos angtos distof angtof`
+- **Angle variables:** `getvar` and `setvar` give and take ANGBASE, SNAPANG, POLARANG, HPANG,
+  CHAMFERD and DIMJOGANG in radians, as in AutoCAD; the SETVAR command shows them in degrees.
 - **No-ops:** `vl-load-com gc redraw`; `ver`
 
 Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` returns is what a

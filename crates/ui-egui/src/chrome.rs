@@ -575,7 +575,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
         y += 46.0;
     }
     if let Some(path) = recent {
-        app.open_path(&path);
+        app.open_path(std::path::Path::new(&path));
     } else if app.ui.recent_files.is_empty() {
         p.text(
             pos2(main.center().x, main.center().y),

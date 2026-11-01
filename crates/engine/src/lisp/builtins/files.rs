@@ -73,17 +73,17 @@ pub(super) fn findfile(a: &[Value]) -> R {
 
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn read_text_file(path: &str) -> Option<String> {
+pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
     // Read through a byte-limited, regular-file-only reader so a path naming an endless device
     // cannot exhaust memory before the 64 MiB cap is enforced (CWE-400).
     const MAX: usize = 64 * 1024 * 1024;
-    let bytes = crate::capped_read::read_capped(std::path::Path::new(path), MAX).ok()?;
+    let bytes = crate::capped_read::read_capped(path.as_ref(), MAX).ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Return `None` on the web, where native filesystem paths are unavailable.
 #[cfg(target_arch = "wasm32")]
-pub fn read_text_file(_path: &str) -> Option<String> {
+pub fn read_text_file(_path: impl AsRef<std::path::Path>) -> Option<String> {
     None
 }
 
