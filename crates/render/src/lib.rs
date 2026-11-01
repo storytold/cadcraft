@@ -311,7 +311,7 @@ mod text_entity;
 mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
-pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
+pub use display::{DPrim, DisplayList, Kind, ListUnderlay, MAX_TRANSPARENCY, NO_LAYER, PageClip, PlotText, VIEWPORT_CONTENT, alpha, pdf_underlay};
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;

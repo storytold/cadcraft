@@ -1,6 +1,6 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
-use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
+use super::display::{Kind, ListUnderlay, NO_LAYER, PageClip, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
@@ -65,6 +65,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
+    }
+    if let EntityKind::PdfUnderlay(u) = &e.kind {
+        underlay_page(b, ctx, e.handle, u);
     }
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
@@ -234,6 +237,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, l);
             }
         }
+        EntityKind::PdfUnderlay(u) => {
+            for pts in underlay_frames(b, ctx, u) {
+                stroke(b, &pts);
+            }
+        }
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -263,6 +271,50 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
     }
+}
+
+/// A PDF underlay's page, before its frame (in a block too, placed by the reference); an unloaded
+/// one shows neither, a hidden one only its frame.
+fn underlay_page(b: &mut Builder, ctx: &Ctx, handle: Handle, u: &cadcraft_doc::PdfUnderlay) {
+    if u.unloaded || u.hidden {
+        return;
+    }
+    let (au, av) = u.axes();
+    b.list.underlays.push(ListUnderlay {
+        handle,
+        at: b.list.prims.len() as u32,
+        origin: ctx.xf.apply(u.insert.xy()),
+        u: ctx.xf.apply_vec(au),
+        v: ctx.xf.apply_vec(av),
+        clip: PageClip::None,
+        own: u
+            .clip_outline()
+            .and_then(|o| crate::clip::PolyClip::new(&o.into_iter().map(|p| ctx.xf.apply(p)).collect::<Vec<_>>()))
+            .map(std::sync::Arc::new),
+        inverted: u.clip_inverted,
+    });
+}
+
+/// A PDF underlay's frame (its clip boundary when clipped) as closed polylines, per PDFFRAME:
+/// 0 = none, 1 = shown and plotted, 2 = shown but not plotted. An unloaded underlay has none.
+fn underlay_frames(b: &Builder, ctx: &Ctx, u: &cadcraft_doc::PdfUnderlay) -> Vec<Vec<Vec2>> {
+    let frame = match ctx.d.header.i64("PDFFRAME", 1) {
+        0 => false,
+        2 => !b.plotting,
+        _ => true,
+    };
+    if u.unloaded || !frame {
+        return Vec::new();
+    }
+    u.frames()
+        .into_iter()
+        .map(|mut pts| {
+            if let Some(f) = pts.first().copied() {
+                pts.push(f);
+            }
+            pts
+        })
+        .collect()
 }
 
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {

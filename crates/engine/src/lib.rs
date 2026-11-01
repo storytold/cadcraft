@@ -76,6 +76,8 @@ pub fn build_version() -> &'static str {
 
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {
+    /// What the PDF Underlay dialog chose, for the PDFATTACH it starts.
+    pub(crate) attach_preset: Option<cmd::underlay::AttachPreset>,
     pub docs: Vec<DocState>,
     pub active: usize,
     /// Monotonic count of changes to the open drawings and the active one. A screenshot queued
@@ -171,6 +173,7 @@ impl Session {
             in_script: false,
             suspended: None,
             log: Vec::new(),
+            attach_preset: None,
             last_command: None,
             last_point: Vec2::ZERO,
             last_segment: None,
