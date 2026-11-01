@@ -760,7 +760,15 @@ fn dim_def_points(dm: &cadcraft_doc::Dimension) -> Vec<Vec2> {
 /// Calls `f` with each object drawn by a block reference and the transform placing it, nested
 /// references expanded (within [`MAX_BLOCK_DEPTH`] levels and `budget` objects); objects that
 /// aren't drawn (hidden, on a layer that is off or frozen, attribute definitions) are left out.
-fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut usize, frozen: &[String], f: &mut dyn FnMut(&EntityKind, &Mat3)) {
+pub(crate) fn block_leaves(
+    d: &Drawing,
+    ins: &Insert,
+    m: &Mat3,
+    depth: usize,
+    budget: &mut usize,
+    frozen: &[String],
+    f: &mut dyn FnMut(&EntityKind, &Mat3),
+) {
     if depth >= MAX_BLOCK_DEPTH {
         return;
     }
@@ -815,7 +823,7 @@ fn prim_near(p: &Prim, probe: &Bounds2, aperture: f64) -> bool {
 
 /// The rotation-and-uniform-scale factor of `m`'s linear part (mirroring allowed), or `None`
 /// when it distorts shapes (non-uniform scale or shear).
-fn similarity_scale(m: &Mat3) -> Option<f64> {
+pub(crate) fn similarity_scale(m: &Mat3) -> Option<f64> {
     let (u, v) = (Vec2::new(m.a, m.b), Vec2::new(m.c, m.d));
     let (lu, lv) = (u.len(), v.len());
     let tol = 1e-9 * lu.max(lv);
@@ -824,7 +832,7 @@ fn similarity_scale(m: &Mat3) -> Option<f64> {
 
 /// `p` placed by the affine transform `m`, exactly: circles and arcs under a non-uniform scale
 /// become ellipses and elliptical arcs.
-fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
+pub(crate) fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
     let mirror = m.is_mirroring();
     match p {
         Prim::Seg(Segment::Line(l)) => Prim::Seg(Segment::Line(cadcraft_geom::Line::new(m.apply(l.a), m.apply(l.b)))),

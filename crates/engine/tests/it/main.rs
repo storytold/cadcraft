@@ -34,6 +34,7 @@ mod dim_baseline_spacing;
 mod dim_chain;
 mod dim_commands;
 mod dim_explode_text;
+mod dim_nested_circle;
 mod dim_properties;
 mod dim_radial_inside;
 mod dim_radial_outside;
