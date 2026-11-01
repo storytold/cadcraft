@@ -12,7 +12,9 @@ use super::insert_file::stem;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub(super) fn wblock_spec() -> CommandSpec {
-    CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}")
+    CommandSpec::new("wblock", "Write Block", run_wblock)
+        .alias(&["w"])
+        .params("{path, name? (a block, or \"*\" for the whole drawing) | handles?, base?}")
 }
 
 /// -WBLOCK erases the objects it writes, whatever its mOde option says: AutoCAD 2024 does, and
@@ -40,6 +42,7 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
     let (entities, bytes) = match str_param(p, "name") {
+        Some("*") => write(s, "wblock", &path, Source::Whole)?,
         Some(name) => write(s, "wblock", &path, Source::Block(name, base))?,
         None => write(s, "wblock", &path, Source::Objects(&targets(s, p)?, base.unwrap_or(Vec2::ZERO)))?,
     };
