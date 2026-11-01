@@ -81,6 +81,23 @@ fn a_circle_two_references_deep_is_taken() {
     assert!((d[0].p15.xy().dist(Vec2::new(100.0, -50.0)) - 2.5).abs() < 1e-9);
 }
 
+/// A mirrored reference (scale -1 in X) still draws a circle: the dimension is centred on the
+/// mirrored centre with the circle's radius, in drawing units. It is not associative: the
+/// attachments name objects of the drawing, and the circle is inside the block.
+#[test]
+fn a_circle_in_a_mirrored_reference_is_taken_unassociated() {
+    let mut s = session();
+    s.execute("insert", &json!({"name": "P", "at": [-60, 0], "scale": [-1.5, 1.5]})).unwrap();
+    let c = Vec2::new(-60.0, 0.0);
+    // The circle has radius 7.5 here; picked on its left, away from the arc and the mirrored line.
+    s.script(&format!("dimradius {} {}\n", pt(c + Vec2::new(0.0, -7.5)), pt(c + Vec2::new(-5.0, -15.0)))).unwrap();
+    let d = dims(&s);
+    assert_eq!(d.len(), 1, "a radius dimension of the circle in the mirrored reference");
+    assert!(d[0].defpt.xy().dist(c) < 1e-9, "centred on the mirrored centre: {:?}", d[0].defpt);
+    assert!((d[0].p15.xy().dist(c) - 7.5).abs() < 1e-9, "radius {}", d[0].p15.xy().dist(c));
+    assert!(d[0].assoc.is_empty(), "{:?}", d[0].assoc);
+}
+
 #[test]
 fn a_blocks_line_or_an_unevenly_scaled_circle_is_not_a_circle() {
     let mut s = session();
