@@ -1286,6 +1286,8 @@
 	Automatic save every	Interval automatického ukládání
 	min	min
 	Automatic save file location	Umístění souborů automatického ukládání
+	Backup copy	Záložní kopie
+	Create backup copy with each save	Při každém uložení vytvořit záložní kopii
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Výkresy, které ještě nemají soubor, se ukládají ve výchozí verzi formátu. Hodnota 0 minut vypíná automatické ukládání.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Rozlišovat délku stisku pravého tlačítka: krátké kliknutí odpovídá klávese Enter, podržení otevře místní nabídku
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Při vypnuté volbě kliknutí pravým tlačítkem během příkazu vždy otevře místní nabídku.
@@ -1383,8 +1385,6 @@ menu	Modify	Modifikace
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
 	Font	Písmo
-	Backup copy	Záložní kopie
-	Create backup copy with each save	Při každém uložení vytvořit záložní kopii
 	Change	Změnit
 	Change Properties	Změnit vlastnosti
 	Units	Jednotky
