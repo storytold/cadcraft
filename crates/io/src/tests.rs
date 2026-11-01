@@ -2243,6 +2243,148 @@ fn svg_shapes_become_entities_in_millimetres() {
     assert!((l.a.y - 10.0).abs() < 1e-9 && (l.b.y).abs() < 1e-9, "{l:?}");
 }
 
+/// The vertices of the first polyline and, for each bulge vertex, the point halfway along its arc.
+fn polyline_and_arc_midpoints(d: &Drawing) -> (LwPolyline, Vec<Vec2>) {
+    let p = first(d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let n = p.vertices.len();
+    let mids = (0..n)
+        .filter(|&i| p.vertices[i].bulge != 0.0)
+        .map(|i| {
+            let (a, b) = (p.vertices[i].p, p.vertices[(i + 1) % n].p);
+            let d = b - a;
+            // The sagitta, signed by the bulge, off the chord's midpoint to its right.
+            let s = p.vertices[i].bulge * d.len() / 2.0;
+            (a + b) * 0.5 + Vec2::new(d.y, -d.x) * (s / d.len())
+        })
+        .collect();
+    (p, mids)
+}
+
+/// FF14: `rx`/`ry` round a rectangle's corners as SVG 1.1 §9.2 draws them: one closed polyline
+/// whose four corners are quarter-circle bulge arcs, bulging outward.
+#[test]
+fn svg_rounded_rect_corners_become_arcs() {
+    let svg = format!("{SVG_PAGE}<rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" rx=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "rounded.svg").unwrap();
+    assert_eq!(kinds(&d), ["Polyline"]);
+    assert!(d.read_notes.is_empty(), "{:?}", d.read_notes);
+    let (p, mids) = polyline_and_arc_midpoints(&d);
+    assert!(p.closed);
+    let got: Vec<Vec2> = p.vertices.iter().map(|v| v.p).collect();
+    let want = [(2.0, 9.0), (6.0, 9.0), (7.0, 8.0), (7.0, 6.0), (6.0, 5.0), (2.0, 5.0), (1.0, 6.0), (1.0, 8.0)].map(|(x, y)| Vec2::new(x, y));
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for (g, w) in got.iter().zip(want.iter()) {
+        assert!((*g - *w).len() < 1e-9, "{g:?} vs {w:?}");
+    }
+    // A quarter circle's bulge is tan(90°/4), on the vertex starting each corner.
+    let bulges: Vec<f64> = p.vertices.iter().map(|v| v.bulge).collect();
+    for (i, b) in bulges.iter().enumerate() {
+        let corner = i % 2 == 1;
+        assert!(if corner { (b.abs() - std::f64::consts::FRAC_PI_8.tan()).abs() < 1e-9 } else { *b == 0.0 }, "{bulges:?}");
+    }
+    // Each arc's midpoint is 1 mm from its corner's centre, towards the rectangle's corner.
+    let centres = [(6.0, 8.0), (6.0, 6.0), (2.0, 6.0), (2.0, 8.0)].map(|(x, y)| Vec2::new(x, y));
+    let outer = [(7.0, 9.0), (7.0, 5.0), (1.0, 5.0), (1.0, 9.0)].map(|(x, y)| Vec2::new(x, y));
+    assert_eq!(mids.len(), 4);
+    for ((m, c), o) in mids.iter().zip(centres.iter()).zip(outer.iter()) {
+        assert!(((*m - *c).len() - 1.0).abs() < 1e-9, "{m:?} vs centre {c:?}");
+        assert!((*o - *m).len() < (*o - *c).len(), "{m:?} bulges inward");
+    }
+}
+
+/// SVG 1.1 §9.2's radius rules: a missing, negative or `auto` radius takes the other's value,
+/// each radius is at most half its side, and a zero radius (or none) keeps the corners square.
+#[test]
+fn svg_rounded_rect_radius_rules() {
+    let read_rect = |attrs: &str| {
+        let svg = format!("{SVG_PAGE}<rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" {attrs}/></svg>");
+        read(svg.as_bytes(), "r.svg").unwrap()
+    };
+    let bulges = |d: &Drawing| polyline_and_arc_midpoints(d).1.len();
+    let vertices = |d: &Drawing| polyline_and_arc_midpoints(d).0.vertices.len();
+    for attrs in ["ry=\"1\"", "rx=\"1\" ry=\"auto\"", "rx=\"-2\" ry=\"1\"", "rx=\"1mm\""] {
+        let d = read_rect(attrs);
+        assert_eq!((vertices(&d), bulges(&d)), (8, 4), "{attrs}");
+    }
+    for attrs in ["", "rx=\"0\"", "rx=\"-1\"", "rx=\"1\" ry=\"0\"", "rx=\"auto\""] {
+        let d = read_rect(attrs);
+        assert_eq!((vertices(&d), bulges(&d)), (4, 0), "{attrs}");
+    }
+    // rx="10" alone: ry is 10 too, then rx is capped at 3 and ry at 2, an elliptical corner.
+    let d = read_rect("rx=\"10\"");
+    let (p, mids) = polyline_and_arc_midpoints(&d);
+    assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
+    for v in &p.vertices {
+        assert!(v.p.x > 1.0 - 1e-9 && v.p.x < 7.0 + 1e-9 && v.p.y > 5.0 - 1e-9 && v.p.y < 9.0 + 1e-9, "{:?}", v.p);
+    }
+}
+
+/// A percentage radius is of the viewport's width (`rx`) or height (`ry`) in user units; with no
+/// viewport to refer to it reads as absent, so the radius rules apply.
+#[test]
+fn svg_rounded_rect_percentage_radii() {
+    let read_rect = |page: &str, attrs: &str| {
+        let svg = format!("{page}<rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" {attrs}/></svg>");
+        read(svg.as_bytes(), "pct.svg").unwrap()
+    };
+    let outline = |d: &Drawing| {
+        let (p, mids) = polyline_and_arc_midpoints(d);
+        (p.vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect::<Vec<_>>(), mids.len())
+    };
+    // The page's viewBox is 20 × 10: 5% of the width is 1, and 10% is 2 across and 1 down.
+    assert_eq!(outline(&read_rect(SVG_PAGE, "rx=\"5%\"")), outline(&read_rect(SVG_PAGE, "rx=\"1\"")));
+    assert_eq!(outline(&read_rect(SVG_PAGE, "rx=\"10%\" ry=\"10%\"")), outline(&read_rect(SVG_PAGE, "rx=\"2\" ry=\"1\"")));
+    // A bare width and height are the viewport without a viewBox.
+    let px_page = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">"#;
+    assert_eq!(outline(&read_rect(px_page, "ry=\"10%\"")), outline(&read_rect(px_page, "rx=\"1\"")));
+    // Millimetre sizes with no viewBox give no user-unit viewport: the percentage is absent.
+    let mm_page = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm">"#;
+    assert_eq!(outline(&read_rect(mm_page, "rx=\"5%\"")).1, 0);
+    assert_eq!(outline(&read_rect(mm_page, "rx=\"5%\"")).0.len(), 4);
+}
+
+/// Elliptical corners (`rx` ≠ `ry`), and circular ones under a non-uniform transform, aren't
+/// circular arcs, so they are traced as line vertices on the corner's ellipse.
+#[test]
+fn svg_elliptical_rounded_corners_are_traced() {
+    let svg = format!("{SVG_PAGE}<rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" rx=\"2\" ry=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "elliptical.svg").unwrap();
+    let (p, mids) = polyline_and_arc_midpoints(&d);
+    assert!(p.closed && mids.is_empty(), "{p:?}");
+    // Every vertex lies on an edge or on its corner's ellipse ((x-cx)/2)² + (y-cy)² = 1.
+    let centres = [(5.0, 8.0), (5.0, 6.0), (3.0, 6.0), (3.0, 8.0)].map(|(x, y)| Vec2::new(x, y));
+    for v in &p.vertices {
+        let (x, y) = (v.p.x, v.p.y);
+        let on_edge = (y - 9.0).abs() < 1e-9 && (3.0..=5.0).contains(&x)
+            || (y - 5.0).abs() < 1e-9 && (3.0..=5.0).contains(&x)
+            || (x - 7.0).abs() < 1e-9 && (6.0..=8.0).contains(&y)
+            || (x - 1.0).abs() < 1e-9 && (6.0..=8.0).contains(&y);
+        let on_ellipse = centres.iter().any(|c| (((x - c.x) / 2.0).powi(2) + (y - c.y).powi(2) - 1.0).abs() < 1e-6);
+        assert!(on_edge || on_ellipse, "{:?} is off the rounded rectangle", v.p);
+    }
+    let svg = format!("{SVG_PAGE}<g transform=\"scale(2,1)\"><rect x=\"1\" y=\"1\" width=\"3\" height=\"4\" rx=\"1\"/></g></svg>");
+    let (p, mids) = polyline_and_arc_midpoints(&read(svg.as_bytes(), "stretched.svg").unwrap());
+    assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
+    // A skew maps the circular corners to ellipses too: traced, with no circular arcs.
+    let svg = format!("{SVG_PAGE}<g transform=\"skewX(30)\"><rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" rx=\"1\"/></g></svg>");
+    let (p, mids) = polyline_and_arc_midpoints(&read(svg.as_bytes(), "skewed.svg").unwrap());
+    assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
+    // A tiny scale is still non-uniform: the test is relative to the scale, not absolute.
+    let svg = format!("{SVG_PAGE}<g transform=\"scale(0.00001,0.00002)\"><rect width=\"200000\" height=\"100000\" rx=\"20000\"/></g></svg>");
+    let (p, mids) = polyline_and_arc_midpoints(&read(svg.as_bytes(), "tiny.svg").unwrap());
+    assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
+}
+
+/// A closed path's last point is dropped only when it repeats the first to within rounding,
+/// however far from the origin the drawing is.
+#[test]
+fn svg_closed_path_keeps_a_distinct_last_point_far_from_the_origin() {
+    let svg = format!("{SVG_PAGE}<path d=\"M1000000000 0 L1000000010 0 L1000000010 10 L1000000000.5 0 Z\"/></svg>");
+    let d = read(svg.as_bytes(), "far.svg").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.closed && p.vertices.len() == 4, "{p:?}");
+}
+
 #[test]
 fn svg_path_lines_curves_and_arcs() {
     let svg = format!("{SVG_PAGE}<path d=\"M1 1 L5 1 C6 1 7 2 8 3\"/><path d=\"M0 0 A5 5 0 0 1 10 0 Z\"/></svg>");
@@ -2321,9 +2463,9 @@ fn svg_hidden_and_defs_subtrees_are_skipped() {
     assert_eq!(kinds(&d), ["Polyline"]);
 }
 
-/// #627: what the reader doesn't read yet (text, raster images, `<use>` copies, style sheets,
-/// rounded corners) is named in a read note instead of being left out silently; what isn't drawn
-/// (in `<defs>` or hidden) isn't counted.
+/// #627: what the reader doesn't read yet (text, raster images, `<use>` copies, style sheets) is
+/// named in a read note instead of being left out silently; what isn't drawn (in `<defs>` or
+/// hidden) isn't counted. A rectangle's rounded corners are read, so they aren't named.
 #[test]
 fn svg_left_out_content_is_noted() {
     let svg = format!(
@@ -2337,7 +2479,7 @@ fn svg_left_out_content_is_noted() {
     assert_eq!(
         d.read_notes,
         ["SVG: CADCraft doesn't read these yet, so they were left out: 2 texts, 1 raster image, 2 `<use>` copies, \
-          1 `<style>` sheet (its class rules aren't applied), 1 rectangle with rounded corners (drawn square)"]
+          1 `<style>` sheet (its class rules aren't applied)"]
     );
     let plain = read(format!("{SVG_PAGE}<rect x=\"1\" y=\"1\" width=\"4\" height=\"3\"/></svg>").as_bytes(), "a.svg").unwrap();
     assert!(plain.read_notes.is_empty(), "{:?}", plain.read_notes);

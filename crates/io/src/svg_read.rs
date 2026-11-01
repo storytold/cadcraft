@@ -1,17 +1,17 @@
 //! SVG → Drawing: the static W3C SVG subset that drawing tools emit.
 //!
-//! Reads shapes (`rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`), `path`
-//! outlines (`M L H V C S Q T A Z`, absolute and relative), `g` grouping with `transform`
-//! attributes, `viewBox` and unit-bearing `width`/`height`, and Inkscape layers
-//! (`inkscape:groupmode="layer"`). Geometry becomes centre-line entities in millimetres with
-//! the page's top-left corner at the origin and Y pointing up — where a laser or pen job
+//! Reads shapes (`rect`, rounded corners included, `circle`, `ellipse`, `line`, `polyline`,
+//! `polygon`), `path` outlines (`M L H V C S Q T A Z`, absolute and relative), `g` grouping
+//! with `transform` attributes, `viewBox` and unit-bearing `width`/`height`, and Inkscape
+//! layers (`inkscape:groupmode="layer"`). Geometry becomes centre-line entities in millimetres
+//! with the page's top-left corner at the origin and Y pointing up — where a laser or pen job
 //! wants it.
 //!
 //! Not read (each is a follow-up): CSS class rules (`<style>`), `use` references, fills,
-//! gradients and hatch patterns, text, embedded raster images, rounded rectangle corners
-//! (`rx`/`ry`), and elliptical arcs under non-uniform transforms (those are flattened into
-//! line segments instead of losing the shape). What the drawing shows of those (all but fills,
-//! gradients and patterns) is named in a read note, so it is never left out silently.
+//! gradients and hatch patterns, text, embedded raster images, and elliptical arcs under
+//! non-uniform transforms (those are flattened into line segments instead of losing the
+//! shape). What the drawing shows of those (all but fills, gradients and patterns) is named in
+//! a read note, so it is never left out silently.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -124,6 +124,8 @@ struct Parser {
     drawing: Drawing,
     /// Root viewBox/unit mapping composed with every open container transform.
     stack: Vec<Mat3>,
+    /// The root viewport's width and height in user units, which percentage radii refer to.
+    viewport_size: Option<(f64, f64)>,
     /// Current Inkscape layer name.
     layer: String,
     layers: HashSet<String>,
@@ -146,7 +148,6 @@ enum LeftOut {
     Image,
     Use,
     Style,
-    RoundedCorners,
 }
 
 impl LeftOut {
@@ -165,7 +166,6 @@ impl LeftOut {
             Self::Image => ("raster image", "raster images"),
             Self::Use => ("`<use>` copy", "`<use>` copies"),
             Self::Style => ("`<style>` sheet (its class rules aren't applied)", "`<style>` sheets (their class rules aren't applied)"),
-            Self::RoundedCorners => ("rectangle with rounded corners (drawn square)", "rectangles with rounded corners (drawn square)"),
         };
         format!("{n} {}", if n == 1 { one } else { many })
     }
@@ -177,6 +177,7 @@ impl Parser {
         Parser {
             drawing: Drawing::new_metric(),
             stack: vec![Mat3::IDENTITY],
+            viewport_size: None,
             layer: "0".into(),
             layers: HashSet::from(["0".to_string()]),
             layer_color: 1,
@@ -289,6 +290,7 @@ impl Parser {
     fn enter_group(&mut self, name: &[u8], e: &BytesStart) -> Result<()> {
         if name == b"svg" && self.stack.len() == 1 {
             self.stack[0] = viewport(e)?;
+            self.viewport_size = viewport_size(e);
         }
         if name == b"g" && attr(e, b"inkscape:groupmode").as_deref() == Some("layer") {
             let raw = attr(e, b"inkscape:label").or_else(|| attr(e, b"id"));
@@ -363,11 +365,47 @@ impl Parser {
         if w <= 0.0 || h <= 0.0 {
             return Ok(());
         }
-        if num(e, b"rx", 0.0) > 0.0 || num(e, b"ry", 0.0) > 0.0 {
-            self.left_out(LeftOut::RoundedCorners);
+        let (rx, ry) = corner_radii(e, w, h, self.viewport_size);
+        if rx <= 0.0 || ry <= 0.0 {
+            let pts = [Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)];
+            return self.add_polyline(&pts.map(|p| self.map(p)), true);
         }
-        let pts = [Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)];
-        self.add_polyline(&pts.map(|p| self.map(p)), true)
+        // SVG 1.1 §9.2: a rounded rectangle is exactly this path, from the top edge clockwise.
+        let start = Vec2::new(x + rx, y);
+        let corners = [
+            (Vec2::new(x + w - rx, y), Vec2::new(x + w, y + ry)),
+            (Vec2::new(x + w, y + h - ry), Vec2::new(x + w - rx, y + h)),
+            (Vec2::new(x + rx, y + h), Vec2::new(x, y + h - ry)),
+            (Vec2::new(x, y + ry), Vec2::new(x + rx, y)),
+        ];
+        let degenerate = |a: Vec2, b: Vec2| (b - a).len() <= f64::EPSILON * (w + h);
+        let m = self.cur();
+        if (rx - ry).abs() <= 1e-9 * rx.max(ry) && preserves_circles(&m) {
+            // Circular corners stay circular: quarter-circle bulge arcs, like a path's arcs.
+            let mut sp = Subpath { start, segs: Vec::new(), closed: true };
+            let mut at = start;
+            for (edge_end, arc_end) in corners {
+                if !degenerate(at, edge_end) {
+                    sp.segs.push(Seg::Line(edge_end));
+                }
+                sp.segs.push(Seg::Arc { rx, ry, rot: 0.0, large: false, sweep: true, end: arc_end });
+                at = arc_end;
+            }
+            return self.emit_subpath(&sp);
+        }
+        // Elliptical corners, or circular ones under a non-uniform transform: traced as line
+        // vertices on each corner's ellipse, one closed outline.
+        let mut pts = vec![m.apply(start)];
+        let mut at = start;
+        for (edge_end, arc_end) in corners {
+            if !degenerate(at, edge_end) {
+                pts.push(m.apply(edge_end));
+            }
+            pts.extend(flatten_arc(&m, edge_end, arc_end, (rx, ry), 0.0, false, true)?.into_iter().skip(1));
+            at = arc_end;
+        }
+        pts.pop(); // back on the start, which the closed outline already has
+        self.add_polyline(&pts, true)
     }
 
     fn circle(&mut self, e: &BytesStart) -> Result<()> {
@@ -548,6 +586,16 @@ impl Parser {
     }
 
     fn flush_run(&mut self, run: &mut Vec<PolyVertex>, closed: bool) -> Result<()> {
+        // A closed run that ends back on its first vertex (to within rounding): the closing
+        // segment is that last step, so the repeated vertex goes and the step's bulge stays on
+        // the vertex before it.
+        if closed
+            && run.len() > 2
+            && let (Some(first), Some(last)) = (run.first(), run.last())
+            && (last.p - first.p).len() <= 64.0 * f64::EPSILON * (1.0 + first.p.x.abs().max(first.p.y.abs()))
+        {
+            run.pop();
+        }
         if run.len() >= 2 {
             let vertices = std::mem::take(run);
             self.add(EntityKind::LwPolyline(LwPolyline { vertices, closed, const_width: 0.0, elevation: 0.0, plinegen: false }))?;
@@ -589,6 +637,36 @@ fn num(e: &BytesStart, name: &[u8], fallback: f64) -> f64 {
     attr(e, name).as_deref().and_then(parse_length_mm).unwrap_or(fallback)
 }
 
+/// Does `m` map circles to circles (a rotation, uniform scale or reflection, plus a shift)?
+fn preserves_circles(m: &Mat3) -> bool {
+    let ex = m.apply_vec(Vec2::new(1.0, 0.0));
+    let ey = m.apply_vec(Vec2::new(0.0, 1.0));
+    // Relative to the basis vectors' size, so a tiny but non-uniform scale isn't taken as uniform.
+    let mag = ex.x * ex.x + ex.y * ex.y + ey.x * ey.x + ey.y * ey.y;
+    mag > 0.0 && (ex.x * ex.x + ex.y * ex.y - (ey.x * ey.x + ey.y * ey.y)).abs() <= 1e-9 * mag && (ex.x * ey.x + ex.y * ey.y).abs() <= 1e-9 * mag
+}
+
+/// A `rect`'s corner radii (SVG 1.1 §9.2): a missing, negative or unreadable (`auto`) radius
+/// takes the other one's value, both missing means square corners, and each is at most half
+/// the side it rounds. A percentage is of the `viewport`'s width (`rx`) or height (`ry`); with
+/// no viewport to refer to it is unreadable.
+fn corner_radii(e: &BytesStart, w: f64, h: f64, viewport: Option<(f64, f64)>) -> (f64, f64) {
+    let radius = |name: &[u8], of: Option<f64>| {
+        let raw = attr(e, name)?;
+        let r = match raw.trim().strip_suffix('%') {
+            Some(pct) => pct.trim().parse::<f64>().ok().filter(|p| p.is_finite())? / 100.0 * of?,
+            None => parse_length_mm(&raw)?,
+        };
+        (r >= 0.0).then_some(r)
+    };
+    let (rx, ry) = match (radius(b"rx", viewport.map(|v| v.0)), radius(b"ry", viewport.map(|v| v.1))) {
+        (Some(rx), Some(ry)) => (rx, ry),
+        (Some(r), None) | (None, Some(r)) => (r, r),
+        (None, None) => (0.0, 0.0),
+    };
+    (rx.min(w / 2.0), ry.min(h / 2.0))
+}
+
 /// A bare number, or a number with an absolute CSS/SVG unit: millimetres here, everything
 /// else (px, the default; pt, pc, in, cm) through the CSS reference pixel (96 per inch).
 fn parse_length_mm(s: &str) -> Option<f64> {
@@ -608,6 +686,25 @@ fn parse_length_mm(s: &str) -> Option<f64> {
         "pc" => Some(value * 25.4 / 6.0),
         _ => Some(value * 25.4 / 96.0),
     }
+}
+
+/// The root viewport's size in user units (SVG 1.1 §7.10): the `viewBox`, else a bare or `px`
+/// `width` and `height`.
+fn viewport_size(e: &BytesStart) -> Option<(f64, f64)> {
+    let positive = |v: f64| v.is_finite() && v > 0.0;
+    if let Some(raw) = attr(e, b"viewBox")
+        && let [_, _, w, h] = Numbers::new(&raw).collect::<Vec<f64>>()[..]
+        && positive(w)
+        && positive(h)
+    {
+        return Some((w, h));
+    }
+    let px = |name: &[u8]| {
+        let raw = attr(e, name)?;
+        let n = raw.trim();
+        n.strip_suffix("px").unwrap_or(n).trim().parse::<f64>().ok().filter(|v| positive(*v))
+    };
+    Some((px(b"width")?, px(b"height")?))
 }
 
 /// The root mapping: `viewBox` and unit-bearing `width`/`height` become millimetres per user
