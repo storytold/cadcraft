@@ -606,16 +606,24 @@ impl CadApp {
     }
 
     /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed
-    /// OPEN is reported: on the command line and in the status bar.
+    /// OPEN is reported: on the command line and as [`Self::open_error`] does.
     pub fn open_failed(&mut self, e: impl Into<String>) {
         let e = e.into();
         self.session.echo(e.clone());
+        self.open_error(e);
+    }
+
+    /// A drawing that could not be opened: logged, in the status bar, and in an alert that stays
+    /// until dismissed ([`opening::failed_alert`], #2458).
+    fn open_error(&mut self, e: String) {
+        log::warn!("{e}");
+        self.opening.note_failure(&e);
         self.set_status(e);
     }
 
     fn opened(&mut self, r: Result<Value, String>) {
         match r {
-            Err(e) => self.set_status(e),
+            Err(e) => self.open_error(e),
             Ok(v) => {
                 self.ui.start_tab = false;
                 self.canvas.zoom_pending = true;
@@ -709,11 +717,12 @@ impl CadApp {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
-    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning or Drawing Recovery. The
-    /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
-    /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
+    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning, Drawing
+    /// Recovery or the alert for files that could not be opened. The floating panels' own OS
+    /// windows take no input meanwhile (egui's `Modal` blocks only the main window). The app's
+    /// other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty() || self.opening.has_failures()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
@@ -894,6 +903,7 @@ impl CadApp {
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
         save_loss::prompt(self, ui.ctx());
+        opening::failed_alert(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
