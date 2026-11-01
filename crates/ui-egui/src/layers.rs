@@ -477,38 +477,48 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
         .width(240.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.label(RichText::new(crate::tl!("Loaded linetypes")).small().color(t.text_dim));
-            for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
-                let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
-                if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
-                    ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
-                }
-                lt_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(50.0, r.height())), Some(lt), t.text);
-                ui.painter().text(pos2(r.left() + 62.0, r.center().y), egui::Align2::LEFT_CENTER, &lt.name, crate::theme::body(), t.text);
-                if resp.on_hover_text(&lt.description).clicked() {
-                    actions.push(("layer.set", json!({ "name": name, "linetype": lt.name })));
-                    ui.close();
-                }
-            }
-            if !library.is_empty() {
-                ui.separator();
-                ui.menu_button("Load...", |ui| {
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        for n in library {
-                            if ui.button(n).clicked() {
-                                actions.push(("linetype", json!({ "load": n })));
-                                actions.push(("layer.set", json!({ "name": name, "linetype": n })));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button(crate::tl!("Load all")).clicked() {
-                        actions.push(("linetype", json!({ "load": "*" })));
+            let margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
+            let height = (ui.ctx().content_rect().height() - margin).clamp(0.0, 300.0);
+            ui.set_max_height(height);
+            egui::ScrollArea::vertical().max_height(height).min_scrolled_height(0.0).show(ui, |ui| {
+                ui.label(RichText::new(crate::tl!("Loaded linetypes")).small().color(t.text_dim));
+                for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
+                    let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
+                    if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
+                        ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
+                    }
+                    lt_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(50.0, r.height())), Some(lt), t.text);
+                    ui.painter().text(pos2(r.left() + 62.0, r.center().y), egui::Align2::LEFT_CENTER, &lt.name, crate::theme::body(), t.text);
+                    if resp.on_hover_text(&lt.description).clicked() {
+                        actions.push(("layer.set", json!({ "name": name, "linetype": lt.name })));
                         ui.close();
                     }
-                });
-            }
+                }
+                if !library.is_empty() {
+                    ui.separator();
+                    egui::containers::menu::SubMenuButton::new("Load...")
+                        .config(egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside))
+                        .ui(ui, |ui| {
+                            let margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
+                            let height = (ui.ctx().content_rect().height() - margin).clamp(0.0, 300.0);
+                            ui.set_max_height(height);
+                            egui::ScrollArea::vertical().max_height(height).min_scrolled_height(0.0).show(ui, |ui| {
+                                for n in library {
+                                    if ui.button(n).clicked() {
+                                        actions.push(("linetype", json!({ "load": n })));
+                                        actions.push(("layer.set", json!({ "name": name, "linetype": n })));
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button(crate::tl!("Load all")).clicked() {
+                                    actions.push(("linetype", json!({ "load": "*" })));
+                                    ui.close();
+                                }
+                            });
+                        });
+                }
+            });
         });
     // Lineweight.
     let lw_resp = ui
@@ -756,7 +766,13 @@ fn wild(p: &[u8], t: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{LpmState, crate_wild, dialog, row};
+    use crate::CadApp;
+    use cadcraft_doc::{Layer, Linetype};
+    use egui::{Id, Pos2, Rect, pos2, vec2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use serde_json::{Value, json};
 
     #[test]
     fn layer_search() {
@@ -787,5 +803,77 @@ mod tests {
         }
         let (first, last) = (heights[5], heights[29]);
         assert!(first > 0.0 && first < 700.0 && (last - first).abs() < 0.5, "window height drifted: {heights:?}");
+    }
+
+    #[derive(Default)]
+    struct State {
+        row: LpmState,
+        actions: Vec<(&'static str, Value)>,
+    }
+
+    fn click_at(h: &Harness<'_, State>, pos: Pos2) {
+        h.hover_at(pos);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+    }
+
+    #[test]
+    fn nested_load_menu_scrolls_without_dismissing_its_parent() {
+        for load_all in [false, true] {
+            let linetypes: Vec<_> = (0..60).map(|i| Linetype::simple(&format!("Dash {i:02}"), "", &[0.5, -0.25])).collect();
+            let library: Vec<_> = (0..60).map(|i| format!("Load {i:02}")).collect();
+            // The row's unrelated transparency spinner has no accessible name yet. This test
+            // exercises popup pointer behavior, not accessibility of the whole Layer Manager.
+            let mut h = Harness::builder().with_size(vec2(1400.0, 180.0)).with_accessibility_check(false).build_ui_state(
+                move |ui, state: &mut State| {
+                    ui.horizontal(|ui| {
+                        row(ui, &Layer::new("0"), "0", &Default::default(), None, &linetypes, &library, &mut state.row, &mut state.actions);
+                    });
+                },
+                State::default(),
+            );
+            h.ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
+            h.run_steps(4);
+            let parent = Id::unique(("lpm_lt", "0"));
+            egui::Popup::open_id(&h.ctx, parent);
+            h.run_steps(6);
+            h.get_by_label("Load...").scroll_to_me();
+            h.run_steps(6);
+            h.get_by_label("Load...").click();
+            h.run_steps(6);
+            let submenu = h.ctx.memory(|memory| {
+                let menus: Vec<_> = memory.areas().visible_layer_ids().into_iter().filter(|layer| layer.order == egui::Order::Foreground).collect();
+                assert_eq!(menus.len(), 2);
+                memory.area_rect(menus.iter().find(|layer| layer.id != parent).unwrap().id).unwrap()
+            });
+            assert!(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 180.0)).expand(1.0).contains_rect(submenu));
+            let inner = submenu - egui::Frame::popup(&h.ctx.global_style()).total_margin();
+            let style = egui::style::ScrollStyle::solid();
+            let x = inner.right() - style.bar_outer_margin - style.bar_width / 2.0;
+            let before = h.get_by_label("Load 59").rect().top();
+            for y in [inner.top() + 4.0, inner.center().y] {
+                click_at(&h, pos2(x, y));
+                h.run_steps(4);
+                assert!(h.query_by_label("Load 59").is_some(), "scrollbar clicks must keep the submenu open");
+                assert!(egui::Popup::is_id_open(&h.ctx, parent));
+                assert!(h.state().actions.is_empty());
+            }
+            assert!(h.get_by_label("Load 59").rect().top() < before - 1.0);
+            let choice = if load_all { "Load all" } else { "Load 59" };
+            h.get_by_label(choice).scroll_to_me();
+            h.run_steps(6);
+            assert!(submenu.contains_rect(h.get_by_label(choice).rect()), "the final action must be inside the submenu");
+            h.get_by_label(choice).click();
+            h.run_steps(4);
+            let expected = if load_all {
+                vec![("linetype", json!({ "load": "*" }))]
+            } else {
+                vec![("linetype", json!({ "load": "Load 59" })), ("layer.set", json!({ "name": "0", "linetype": "Load 59" }))]
+            };
+            assert_eq!(h.state().actions, expected);
+            assert!(h.query_by_label("Load all").is_none(), "selection closes the submenu");
+            assert!(!egui::Popup::is_id_open(&h.ctx, parent), "selection closes the parent menu");
+        }
     }
 }
