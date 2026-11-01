@@ -13,7 +13,9 @@
 //!
 //! Both start empty; the host sets its starting values ([`set_font_alt`], [`set_fallback_fonts`]).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
