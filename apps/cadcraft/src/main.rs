@@ -310,6 +310,16 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
+    // macOS: Quit CADCraft (Cmd+Q), the Dock's Quit and logout end the app through AppKit's
+    // terminate, which would skip the unsaved-changes prompt (#2157). winit turns each into a
+    // close request for the window instead, so it asks first, as the close button does.
+    #[cfg(target_os = "macos")]
+    {
+        options.event_loop_builder = Some(Box::new(|b| {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            b.with_close_requested_on_terminate(true);
+        }));
+    }
     eframe::run_native(
         "CADCraft",
         options,
