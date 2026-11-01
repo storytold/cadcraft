@@ -157,8 +157,10 @@ impl Session {
             Frame::From { base: Some(b) } => Prompt::new("<Offset>", point).base(b),
             Frame::Mid { first: None } => Prompt::new("First point of mid", point),
             Frame::Mid { first: Some(f) } => Prompt::new("Second point of mid", point).base(f),
-            Frame::Filter { keep, first: None } => Prompt::new(format!("{} of", keep.name()), point).base_opt(p.base),
-            Frame::Filter { keep, first: Some(_) } => Prompt::new(format!("(need {})", keep.need()), point).base_opt(p.base),
+            Frame::Filter { keep, first: None } => Prompt::with_values("{filter} of", [("filter", keep.name().to_string())], point).base_opt(p.base),
+            Frame::Filter { keep, first: Some(_) } => {
+                Prompt::with_values("(need {coordinates})", [("coordinates", keep.need().to_string())], point).base_opt(p.base)
+            }
             Frame::TempTrack => Prompt::new("Specify temporary OTRACK point", point),
             Frame::Track { last: None } => Prompt::new("First tracking point", point),
             Frame::Track { last: Some(l) } => Prompt::new("Next point (Press ENTER to end tracking)", point).base(l),

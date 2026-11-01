@@ -633,7 +633,7 @@ impl Interactive for SplineditM {
             }
             Sub::VertexWeight => {
                 let w = sp.weights.get(self.mark).copied().unwrap_or(1.0);
-                Prompt::new(format!("Enter new weight (current = {w:.4})"), Accept::NUMBER).kw(&marker).default("N")
+                Prompt::with_values("Enter new weight (current = {weight})", [("weight", format!("{w:.4}"))], Accept::NUMBER).kw(&marker).default("N")
             }
             Sub::SelectPoint => Prompt::new(if self.back == Sub::FitMove { "Specify fit point" } else { "Specify control point" }, Accept::POINT),
         }

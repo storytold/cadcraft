@@ -134,9 +134,8 @@ impl Interactive for DashUnits {
             Ask::AnglePrecision => {
                 Prompt::new("Enter number of fractional places for display of angles (0 to 8)", Accept::NUMBER).default(u.auprec.to_string())
             }
-            Ask::Direction => {
-                Prompt::new(format!("Enter direction for angle {}", u.direction_text(0.0)), Accept::TEXT).default(u.direction_text(u.angbase))
-            }
+            Ask::Direction => Prompt::with_values("Enter direction for angle {angle}", [("angle", u.direction_text(0.0))], Accept::TEXT)
+                .default(u.direction_text(u.angbase)),
             Ask::Clockwise => Prompt::new("Measure angles clockwise?", Accept::TEXT).kw(&["Yes", "No"]).default(if u.clockwise { "Y" } else { "N" }),
         }
     }

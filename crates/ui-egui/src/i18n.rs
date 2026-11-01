@@ -333,27 +333,16 @@ pub fn menu(source: &str) -> &str {
 /// Named placeholders allow translations to reorder values. Inserted values are never looked up
 /// or substituted again, so a user's name containing `{n}` is preserved verbatim.
 pub fn format(source: &str, values: &[(&str, String)]) -> String {
-    let text = t(source);
-    let mut result = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some((before, tail)) = rest.split_once('{') {
-        result.push_str(before);
-        let Some((key, after)) = tail.split_once('}') else {
-            result.push('{');
-            rest = tail;
-            break;
-        };
-        if let Some((_, value)) = values.iter().find(|(name, _)| *name == key) {
-            result.push_str(value);
-        } else {
-            result.push('{');
-            result.push_str(key);
-            result.push('}');
-        }
-        rest = after;
+    cadcraft_engine::prompt::fill(t(source), values)
+}
+
+/// A prompt's message in the interface language. One with values in it is translated from its
+/// source, and the values are put back ([`cadcraft_engine::Prompt::with_values`]).
+pub fn prompt(p: &cadcraft_engine::Prompt) -> std::borrow::Cow<'_, str> {
+    match &p.template {
+        Some(tpl) => format(tpl.source, &tpl.values).into(),
+        None => t(&p.message).into(),
     }
-    result.push_str(rest);
-    result
 }
 
 /// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).

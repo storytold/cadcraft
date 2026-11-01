@@ -306,6 +306,27 @@ fn counts_and_templates_follow_each_catalog_and_keep_inserted_text() {
     assert_eq!(count(2, "{n} contributor", "{n} contributors"), "2 contributors");
 }
 
+/// A prompt with a value in it (ATTEDIT's "Enter value for NUMBER") is translated from its
+/// source, and the value goes back in as it is (#2611).
+#[test]
+fn a_prompt_with_values_is_translated_from_its_source() {
+    use cadcraft_engine::{Accept, Prompt};
+    let p = Prompt::with_values("Enter value for {tag}", [("tag", "NUMBER".to_string())], Accept::TEXT);
+    assert_eq!(p.message, "Enter value for NUMBER", "everything else reads the English text");
+    with_language("en", || assert_eq!(prompt(&p), "Enter value for NUMBER"));
+    with_language("fr", || {
+        let shown = tr("fr", "Enter value for {tag}").replace("{tag}", "NUMBER");
+        assert_ne!(shown, p.message, "the French catalog has the source");
+        assert_eq!(prompt(&p), shown);
+        // A value that looks like a placeholder stays as typed.
+        let q = Prompt::with_values("Enter value for {tag}", [("tag", "{tag}".to_string())], Accept::TEXT);
+        assert_eq!(prompt(&q), tr("fr", "Enter value for {tag}"));
+        // A prompt without values is looked up by its message, as before.
+        let r = Prompt::new("Enter block name", Accept::TEXT);
+        assert_eq!(prompt(&r), tr("fr", "Enter block name"));
+    });
+}
+
 #[test]
 fn the_wcs_pill_draws_its_arrow_instead_of_a_glyph_a_font_may_lack() {
     // #1541: "WCS ⌄" showed a box where the UI font had no "⌄"; the chevron is now drawn as

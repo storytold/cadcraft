@@ -261,10 +261,16 @@ impl Interactive for PlineM {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         if self.asking_width > 0 {
-            let unit = if self.half { "half-width" } else { "width" };
-            let (which, w) = if self.asking_width == 1 { ("starting", self.start_w) } else { ("ending", self.end_w) };
+            let starting = self.asking_width == 1;
+            let msg = match (starting, self.half) {
+                (true, false) => "Specify starting width",
+                (false, false) => "Specify ending width",
+                (true, true) => "Specify starting half-width",
+                (false, true) => "Specify ending half-width",
+            };
+            let w = if starting { self.start_w } else { self.end_w };
             let shown = if self.half { w / 2.0 } else { w };
-            return Prompt::new(format!("Specify {which} {unit}"), Accept::NUMBER).default(format!("{shown:.4}"));
+            return Prompt::new(msg, Accept::NUMBER).default(format!("{shown:.4}"));
         }
         let base = self.verts.last().map(|v| v.p);
         if let (Some(a), Some(st)) = (self.ask, base) {

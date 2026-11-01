@@ -102,6 +102,7 @@ mod plot_styles;
 mod point_modifiers;
 mod post_command_passes;
 mod prompt_keywords;
+mod prompt_templates;
 mod props_bad_lineweight;
 mod props_insert_scale_attribs;
 mod purge_mlinestyles;

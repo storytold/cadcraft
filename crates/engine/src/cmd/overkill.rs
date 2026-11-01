@@ -675,7 +675,9 @@ impl Interactive for OverkillM {
             Stage::Ignore => {
                 let mut kws: Vec<&str> = vec!["None", "All"];
                 kws.extend(IGNORABLE.iter().map(|(k, _)| *k));
-                Prompt::new(format!("Property to ignore or compare again (ignored: {})", o.ignored_names()), Accept::TEXT).kw(&kws).default("Done")
+                Prompt::with_values("Property to ignore or compare again (ignored: {ignored})", [("ignored", o.ignored_names())], Accept::TEXT)
+                    .kw(&kws)
+                    .default("Done")
             }
             Stage::Tolerance => Prompt::new("Specify tolerance", Accept::NUMBER).default(format!("{}", o.tol)),
             Stage::Plines => Prompt::new("Optimize segments within polylines", Accept::TEXT).kw(&["Yes", "No"]).default(yes_no(o.plines)),

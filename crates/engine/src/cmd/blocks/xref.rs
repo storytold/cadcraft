@@ -429,13 +429,24 @@ impl Interactive for XrefM {
                 .kw(&["?", "Bind", "Detach", "Path", "Unload", "Reload", "Overlay", "Attach"])
                 .default("Attach"),
             XStage::Names("?") => Prompt::new("Enter xref(s) to list", Accept::TEXT).default("*"),
-            XStage::Names(op) => Prompt::new(format!("Enter xref name(s) to {op}"), Accept::TEXT),
+            XStage::Names(op) => {
+                let msg = match *op {
+                    "bind" => "Enter xref name(s) to bind",
+                    "detach" => "Enter xref name(s) to detach",
+                    "unload" => "Enter xref name(s) to unload",
+                    _ => "Enter xref name(s) to reload",
+                };
+                Prompt::new(msg, Accept::TEXT)
+            }
             XStage::PathNames => Prompt::new("Edit path for which xref(s)", Accept::TEXT),
             XStage::NewPath(names) => {
                 let old = names.first().and_then(|n| s.doc().ok()?.block(n)?.xref_path.clone()).unwrap_or_default();
-                Prompt::new(format!("Enter new path for \"{}\"", names.first().cloned().unwrap_or_default()), Accept::TEXT).default(old)
+                Prompt::with_values("Enter new path for \"{name}\"", [("name", names.first().cloned().unwrap_or_default())], Accept::TEXT)
+                    .default(old)
             }
-            XStage::File { overlay } => Prompt::new(format!("Enter name of file to {}", if *overlay { "overlay" } else { "attach" }), Accept::TEXT),
+            XStage::File { overlay } => {
+                Prompt::new(if *overlay { "Enter name of file to overlay" } else { "Enter name of file to attach" }, Accept::TEXT)
+            }
             XStage::Insert(m) => m.prompt(s),
         }
     }
@@ -550,7 +561,16 @@ impl Interactive for XbindM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.sym {
             None => Prompt::new("Enter symbol type to bind", crate::cmd::curves::KW).kw(&["Block", "Dimstyle", "LAyer", "LType", "Style"]),
-            Some(t) => Prompt::new(format!("Enter dependent {t} name(s)"), Accept::TEXT),
+            Some(t) => {
+                let msg = match t {
+                    "block" => "Enter dependent block name(s)",
+                    "dimstyle" => "Enter dependent dimstyle name(s)",
+                    "layer" => "Enter dependent layer name(s)",
+                    "linetype" => "Enter dependent linetype name(s)",
+                    _ => "Enter dependent style name(s)",
+                };
+                Prompt::new(msg, Accept::TEXT)
+            }
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
