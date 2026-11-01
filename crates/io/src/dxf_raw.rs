@@ -996,7 +996,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             // Reactors the writer planned for this source (a DIMASSOC, an associative hatch).
             let extra = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| reactors.get(&h)).map_or(&[][..], Vec::as_slice);
             out.push(zero.clone());
-            record(&map, &ur, ub, x.as_deref(), true, false, extra, &mut out);
+            record(&map, &ur, ub, x.as_deref(), Some(extra), false, &mut out);
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
@@ -1004,7 +1004,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             out.extend(b.iter().cloned());
             continue;
         }
-        record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &[], &mut out);
+        record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
     }
     add_appids(&mut out);
     let top = max_handle(&out).saturating_add(1);
@@ -1082,17 +1082,18 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
 /// is an unknown entity that already carries its own, then `extra` (handles of the written file,
 /// such as a DIMASSOC), without repeating any the record already names. They go into the one
 /// `{ACAD_REACTORS` group the record has, or a new one, so no reactor is lost to a second group.
-fn reactors_to_add(map: &Map, h: &Head, x: Option<&ForeignExtra>, unknown: bool, extra: &[String]) -> Vec<String> {
+fn reactors_to_add(map: &Map, h: &Head, x: Option<&ForeignExtra>, unknown: Option<&[String]>) -> Vec<String> {
+    let extra = unknown.unwrap_or_default();
     let mut have: HashSet<String> = h.reactors.iter().cloned().collect();
-    let kept = x.filter(|_| !(unknown && h.has_reactors)).into_iter().flat_map(|x| x.reactors.iter()).filter_map(|r| map.get(&r.hex()));
+    let kept = x.filter(|_| !(unknown.is_some() && h.has_reactors)).into_iter().flat_map(|x| x.reactors.iter()).filter_map(|r| map.get(&r.hex()));
     kept.chain(extra.iter().cloned()).filter(|r| r != "0" && have.insert(norm(r))).collect()
 }
 
 /// A written record with its kept extras, remapped references (unknown entities) and kept
 /// dictionary entries (the named object dictionary).
-fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, extra: &[String], out: &mut Vec<Tag>) {
+fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Option<&[String]>, root: bool, out: &mut Vec<Tag>) {
     let h = head(b);
-    let adds = reactors_to_add(map, &h, x, unknown, extra);
+    let adds = reactors_to_add(map, &h, x, unknown);
     let mut in_reactors = false;
     let entity = matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind != "BLOCK";
     let xdata_at = b.iter().position(|t| t.code == 1001).unwrap_or(b.len());
@@ -1139,7 +1140,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             }
         }
         let mut t = t.clone();
-        if unknown && i < xdata_at && is_pointer(t.code) && t.code != 102 {
+        if unknown.is_some() && i < xdata_at && is_pointer(t.code) && t.code != 102 {
             if t.code == 330 && !seen_owner {
                 seen_owner = true;
             } else {
