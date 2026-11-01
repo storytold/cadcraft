@@ -340,6 +340,16 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(!dir.join("noext").exists());
     let e = s.execute("plot", &json!({"path": path("y.png"), "device": "CADCraft PDF"})).unwrap_err().to_string();
     assert!(e.contains("writes pdf") && e.contains("png"), "{e}");
+    // A device that resolves to none, or a null/unknown `output`, names no format: the refusal stands.
+    for p in [
+        json!({"path": path("x.txt"), "device": "None"}),
+        json!({"path": path("x.txt"), "output": null}),
+        json!({"path": path("x.txt"), "output": "bogus"}),
+    ] {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+        assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    }
     // An explicit output still decides for an odd name.
     assert_eq!(s.execute("plot", &json!({"path": path("z.txt"), "output": "pdf"})).unwrap()["format"], "pdf");
     std::fs::remove_dir_all(&dir).ok();
