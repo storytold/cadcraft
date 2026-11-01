@@ -68,11 +68,7 @@ impl W {
         self.f(c + 10, p.y);
     }
     fn h(&mut self) -> String {
-        format!("{:X}", self.next_handle())
-    }
-    /// A new handle for a record the drawing doesn't hold (as [`W::h`]).
-    fn next_handle(&mut self) -> u64 {
-        let h = self.next;
+        let h = format!("{:X}", self.next);
         self.next = self.next.saturating_add(1);
         h
     }

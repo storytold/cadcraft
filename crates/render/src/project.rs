@@ -1,9 +1,9 @@
 //! Parallel 3D views ([`crate::Options::projection`]). A flat object lies in a plane `z =
 //! elevation`, which a parallel view maps to the list by a 2D affine map: it draws through that
-//! map like in plan view. 3D lines, polylines, faces, meshes, helices and infinite lines are
+//! map like in plan view. 3D lines, polylines, faces, helices and infinite lines are
 //! projected point by point.
 
-use cadcraft_doc::{EntityKind, Face3d, Line, PolyfaceMesh, Polyline3d, RayLine};
+use cadcraft_doc::{EntityKind, Face3d, Line, Polyline3d, RayLine};
 use cadcraft_geom::{Mat4, Vec3};
 
 /// The elevation of the plane a flat object lies in.
@@ -38,9 +38,6 @@ pub(crate) fn in_view(e: &cadcraft_doc::Entity, view: &Mat4) -> Option<EntityKin
         EntityKind::Line(l) => EntityKind::Line(Line { a: p(&l.a), b: p(&l.b) }),
         EntityKind::Polyline3d(pl) => EntityKind::Polyline3d(Polyline3d { points: pl.points.iter().map(p).collect(), closed: pl.closed }),
         EntityKind::Face3d(f) => EntityKind::Face3d(Face3d { corners: f.corners.map(|c| p(&c)), hidden_edges: f.hidden_edges }),
-        EntityKind::PolyfaceMesh(m) => {
-            EntityKind::PolyfaceMesh(PolyfaceMesh { vertices: m.vertices.iter().map(p).collect(), faces: m.faces.clone() })
-        }
         EntityKind::Helix(h) => EntityKind::Polyline3d(Polyline3d { points: h.fit_points().iter().map(p).collect(), closed: false }),
         EntityKind::Ray(r) | EntityKind::XLine(r) => {
             let ray = RayLine { base: p(&r.base), dir: p(&(r.base + r.dir)) - p(&r.base) };
