@@ -134,6 +134,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         plot_style_table: None,
         view: build_window(views),
         transparency: app.session.settings.transparency_display,
+        on_screen: true,
         skip_viewport: split,
         cancel: None,
     };

@@ -135,6 +135,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             view: Some(area),
             skip_viewport: None,
             transparency,
+            on_screen: true,
             cancel: None,
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
