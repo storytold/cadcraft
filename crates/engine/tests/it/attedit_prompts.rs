@@ -212,7 +212,7 @@ fn attedit_with_a_missing_handle_changes_nothing() {
 }
 
 /// With several handles the rules hold for every target: a constant attribute is named once and left
-/// alone, and one target on a locked layer refuses the whole request before anything changes.
+/// alone; one target on a locked layer is left out and counted, and a request with every target locked is refused.
 #[test]
 fn attedit_with_several_handles_keeps_the_rules_for_every_target() {
     let mut s = with_block();
@@ -233,11 +233,19 @@ fn attedit_with_several_handles_keeps_the_rules_for_every_target() {
     assert_eq!((r["changed"].clone(), r["constantTags"].clone()), (json!(2), json!(["U"])));
     assert_eq!((value(&s, a, "U"), value(&s, b, "U")), ("u".into(), "u".into()), "constant attributes keep their value");
 
-    // `a` is on layer 0, locked: `b` is not, and still is not edited.
+    // `a` is on layer 0, locked: `b` is edited, `a` is left out and counted.
     s.execute("layer.set", &json!({"name": "0", "locked": true})).unwrap();
-    let e = s.execute("attedit", &json!({"handles": [b.hex(), a.hex()], "values": {"T": "later"}})).unwrap_err().to_string();
+    let r = s.execute("attedit", &json!({"handles": [b.hex(), a.hex()], "values": {"T": "later"}})).unwrap();
+    assert_eq!((r["changed"].clone(), r["locked"].clone()), (json!(1), json!(1)));
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("same".into(), "later".into()), "only the unlocked reference changed");
+
+    // One handle on a locked layer is refused, and so is a request with every reference locked.
+    let e = s.execute("attedit", &json!({"handle": a.hex(), "values": {"T": "x"}})).unwrap_err().to_string();
     assert!(e.contains("locked"), "{e}");
-    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("same".into(), "same".into()));
+    s.execute("layer.set", &json!({"name": "L2", "locked": true})).unwrap();
+    let e = s.execute("attedit", &json!({"handles": [a.hex(), b.hex()], "values": {"T": "x"}})).unwrap_err().to_string();
+    assert!(e.contains("locked"), "{e}");
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("same".into(), "later".into()));
 }
 
 /// A place is one reference's attribute: with several handles `at` is refused and nothing changes.

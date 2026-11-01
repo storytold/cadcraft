@@ -19,7 +19,7 @@ pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle | handles (every block reference gets the values), values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags; with `handle`, not `handles`); constant attributes are left alone} → {changed, unknownTags?, constantTags?}")
+        .params("{handle | handles (every block reference gets the values), values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags; with `handle`, not `handles`); constant attributes are left alone; among several `handles` the references on locked layers are left out} → {changed, locked?, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -82,8 +82,9 @@ fn with_unknown_tags_of_all(s: &Session, hs: &[Handle], values: &Map<String, Val
 
 /// ATTEDIT on `handle` or `handles`: every block reference gets the values. The whole request is
 /// checked before the first edit, so a refused one changes nothing: each target must be a block
-/// reference on an unlocked layer and no value may be too long. Constant attributes are left alone
-/// and named in `constantTags`.
+/// reference and no value may be too long. A `handle` on a locked layer is refused; among several
+/// `handles` the references on locked layers are left out and counted in `locked`, as CHPROP does
+/// (all of them locked is refused). Constant attributes are left alone and named in `constantTags`.
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     if hs.is_empty() {
@@ -106,6 +107,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let given = |i: usize, tag: &str| at.iter().find(|(j, _)| *j == i).map(|(_, v)| v.clone()).or_else(|| value_for(&vals, tag));
     let mut constant: Vec<String> = Vec::new();
+    let mut free: Vec<Handle> = Vec::new();
     for h in &hs {
         let Some(entity) = s.doc()?.entity(*h) else {
             return Err(bad("attedit", format!("no object has handle {}", h.hex())));
@@ -114,8 +116,12 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
         };
         if super::super::curves::is_locked(s, *h) {
-            return Err(bad("attedit", format!("the reference {} is on a locked layer", h.hex())));
+            if hs.len() == 1 {
+                return Err(bad("attedit", format!("the reference {} is on a locked layer", h.hex())));
+            }
+            continue;
         }
+        free.push(*h);
         if let Some((i, _)) = at.iter().find(|(i, _)| *i >= ins.attribs.len()) {
             return Err(bad("attedit", format!("`at`: {i} is not the index of one of the reference's attributes")));
         }
@@ -128,8 +134,12 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
+    let locked = hs.len() - free.len();
+    if free.is_empty() {
+        return Err(bad("attedit", "every reference is on a locked layer"));
+    }
     let mut n = 0;
-    for h in &hs {
+    for h in &free {
         s.doc_mut()?.modify_entity(*h, |e| {
             if let EntityKind::Insert(i) = &mut e.kind {
                 for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
@@ -141,7 +151,13 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })?;
     }
-    let mut r = with_unknown_tags_of_all(s, &hs, &vals, json!({ "changed": n }));
+    let mut r = with_unknown_tags_of_all(s, &free, &vals, json!({ "changed": n }));
+    if locked > 0 {
+        if let Some(o) = r.as_object_mut() {
+            o.insert("locked".into(), json!(locked));
+        }
+        s.echo(if locked == 1 { "1 was on a locked layer.".to_string() } else { format!("{locked} were on a locked layer.") });
+    }
     if !constant.is_empty()
         && let Some(o) = r.as_object_mut()
     {
