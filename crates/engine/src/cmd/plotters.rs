@@ -296,6 +296,19 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     // The path's extension names the format, like EXPORT, unless a device is given; a given
     // device that writes another format is refused. EXPORTPDF always writes PDF.
     let by_path = if cmd == "exportpdf" { None } else { str_param(p, "path").and_then(path_output) };
+    // A path whose extension names no format (or has none) would hold a PDF under that name:
+    // refuse it, as EXPORT does, unless `output` or a device says what to write.
+    if cmd == "plot"
+        && by_path.is_none()
+        && p.get("output").is_none()
+        && !given.is_some_and(|n| !n.is_empty())
+        && let Some(path) = str_param(p, "path")
+    {
+        return Err(bad(
+            cmd,
+            format!("can't tell the format of `{path}`: give a path ending in .png, .svg or .pdf, or set `output` to png, svg or pdf"),
+        ));
+    }
     if let (Some(want), Some(dev), true) = (by_path, &dev, given.is_some_and(|n| !n.is_empty()))
         && dev.output != want
     {

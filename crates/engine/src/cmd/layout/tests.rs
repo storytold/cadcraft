@@ -303,3 +303,36 @@ fn mspace_edits_model_through_viewport() {
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
 }
+
+/// The path's extension picks the plot format as EXPORT does, in any case; one that names no
+/// format (or none) is refused instead of writing a PDF under that name, and a device that writes
+/// another format is refused.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn plot_path_extension_picks_the_format_like_export() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let mut s = session_with_model();
+    let dir = std::env::temp_dir().join(format!("cadcraft-plot-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+    let upper = s.execute("plot", &json!({"path": path("X.PNG")})).unwrap();
+    assert_eq!(upper["format"], "png", "an upper-case extension still picks png");
+    let e = s.execute("plot", &json!({"path": path("x.txt")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    let e = s.execute("plot", &json!({"path": path("noext")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("noext").exists());
+    let e = s.execute("plot", &json!({"path": path("y.png"), "device": "CADCraft PDF"})).unwrap_err().to_string();
+    assert!(e.contains("writes pdf") && e.contains("png"), "{e}");
+    // An explicit output still decides for an odd name.
+    assert_eq!(s.execute("plot", &json!({"path": path("z.txt"), "output": "pdf"})).unwrap()["format"], "pdf");
+    std::fs::remove_dir_all(&dir).ok();
+}

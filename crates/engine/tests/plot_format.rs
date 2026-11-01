@@ -36,11 +36,12 @@ fn the_extension_picks_png_svg_or_pdf() {
         assert_eq!(r["format"], format, "{name}: the reply names the format");
         assert_eq!(magic(&out), head, "{name}: the file holds that format");
     }
-    // No path, or an extension that names no format: PDF as before.
+    // No path: PDF data as before. An extension that names no format is refused, like EXPORT.
     assert_eq!(s.execute("plot", &json!({ "layout": "Model" })).unwrap()["format"], "pdf");
     let other = dir.join("e.plt");
-    assert_eq!(s.execute("plot", &json!({ "path": other.to_string_lossy(), "layout": "Model" })).unwrap()["format"], "pdf");
-    assert_eq!(magic(&other), b"%PDF-");
+    let e = s.execute("plot", &json!({ "path": other.to_string_lossy(), "layout": "Model" })).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!other.exists(), "nothing is written under a name that is not a format");
     // EXPORTPDF always writes PDF.
     let pdf = dir.join("f.png");
     s.execute("exportpdf", &json!({ "path": pdf.to_string_lossy(), "layout": "Model" })).unwrap();
