@@ -197,7 +197,9 @@ impl Interactive for DashWblockM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.ask {
             Ask::File => Prompt::new("Enter name of output file", Accept::TEXT),
-            Ask::Replace => Prompt::new(format!("{} already exists, do you want to replace it?", self.path), KW).kw(&["Yes", "No"]).default("N"),
+            Ask::Replace => Prompt::with_values("{file} already exists, do you want to replace it?", [("file", self.path.clone())], KW)
+                .kw(&["Yes", "No"])
+                .default("N"),
             Ask::Precision => Prompt::new("Enter decimal places of accuracy (0 to 16)", Accept::NUMBER).kw(&["Binary", "Preview"]).default("16"),
             Ask::Block => Prompt::new("Enter name of existing block", Accept::TEXT).kw(&[SAME_NAME, WHOLE]).default("define new drawing"),
             Ask::Base => Prompt::new("Specify insertion base point", Accept::POINT).kw(&["mOde"]),
