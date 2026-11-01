@@ -172,3 +172,39 @@ fn exploded_json_insert_is_one_undo_step() {
         assert_eq!(lines(&s), vec![(0.0, 0.0, 10.0, 0.0)], "{params}");
     }
 }
+
+/// #1997: a file drawn in inches comes into a drawing in metres at 0.0254, on top of the scale asked for,
+/// and so does every later reference to the block it defined, by name or typed.
+#[test]
+fn a_file_in_other_units_is_scaled_to_this_drawings_units() {
+    hooks();
+    let dir = TempDir::new("insert-units");
+    let part = dir.file("inches.dxf", "0,0");
+    let scale_of = |s: &Session| {
+        let d = s.doc().unwrap();
+        d.model.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some((i.scale.x, i.scale.y)) } else { None }).last().unwrap()
+    };
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-12 && (a.1 - b.1).abs() < 1e-12;
+    let mut s = Session::new();
+    s.execute("units", &json!({ "insunits": 6 })).unwrap();
+    s.execute("insert", &json!({ "file": part, "at": [0, 0] })).unwrap();
+    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
+    s.execute("insert", &json!({ "file": part, "at": [0, 0], "scale": [2, 3] })).unwrap();
+    assert!(near(scale_of(&s), (0.0508, 0.0762)), "{:?}", scale_of(&s));
+    // Interactive INSERT converts too.
+    s.script(&format!("-INSERT inches={part} 0,0 1 1 0\n")).unwrap();
+    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
+    // The block remembers its units: a copy placed by name converts the same way.
+    s.execute("insert", &json!({ "name": "inches", "at": [5, 0] })).unwrap();
+    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
+    s.script("-INSERT inches 10,0 1 1 0\n").unwrap();
+    assert!(near(scale_of(&s), (0.0254, 0.0254)), "{:?}", scale_of(&s));
+    // A drawing in the same units, or without any, takes the file as is.
+    for units in [1, 0] {
+        let mut s = Session::new();
+        s.execute("units", &json!({ "insunits": units })).unwrap();
+        s.execute("insert", &json!({ "file": part, "at": [0, 0] })).unwrap();
+        s.execute("insert", &json!({ "name": "inches", "at": [5, 0] })).unwrap();
+        assert!(near(scale_of(&s), (1.0, 1.0)), "INSUNITS {units}: {:?}", scale_of(&s));
+    }
+}

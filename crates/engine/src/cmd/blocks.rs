@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
+            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE; the block keeps the file's $INSUNITS and every reference converts them to this drawing's, on top of `scale`), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
@@ -248,6 +248,9 @@ fn insert_scaled(
     values: &serde_json::Map<String, Value>,
 ) -> Result<Handle> {
     let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
+    // The block's units to this drawing's, on top of the scale asked for (an xref is not converted).
+    let f = if blk.xref_path.is_some() { 1.0 } else { insert_file::units_factor(blk.units, s.doc()?) };
+    let scale = Vec3::new(scale.x * f, scale.y * f, scale.z * f);
     let mut ins = insert_entity(&blk, at, scale, rotation, base);
     let m = ins.transform(blk.base.xy());
     for e in blk.entities.iter() {
