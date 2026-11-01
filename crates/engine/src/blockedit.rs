@@ -268,11 +268,12 @@ impl DocState {
     }
 
     /// Start editing in the Block Editor `be` (the drawing is already the editor's): a fresh
-    /// undo history, nothing selected, model space.
+    /// undo history, nothing selected, nothing for OOPS, model space.
     fn enter_block_editor(&mut self, be: BlockEdit) {
         self.undo.clear();
         self.redo.clear();
         self.undo_ctl = Default::default();
+        self.erased = Default::default();
         self.selection.clear();
         self.selection_windows.clear();
         self.previous_selection.clear();
@@ -339,6 +340,7 @@ impl DocState {
         self.undo = host.undo;
         self.redo = host.redo;
         self.undo_ctl = host.undo_ctl;
+        self.erased = host.erased;
         // The drawing comes back with nothing selected; Previous is what was selected before.
         self.selection.clear();
         self.selection_windows.clear();

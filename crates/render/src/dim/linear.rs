@@ -150,11 +150,11 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
     };
     state.side_out = if (config.dimension.defpt.xy() - state.p1).dot(state.n) >= 0.0 { state.n } else { -state.n };
     state.text_axis = Vec2::from_angle(state.angle);
-    let off_along = |axis: Vec2| {
-        let glyph_extent = state.text_width * state.text_axis.dot(axis).abs() / 2.0
-            + state.text_height * state.text_axis.perp().dot(axis).abs() * if st.text_above == 1 { 0.6 } else { 0.5 };
-        config.gap + glyph_extent
+    let clearance = |axis: Vec2, across: f64| {
+        config.gap + state.text_width * state.text_axis.dot(axis).abs() / 2.0 + state.text_height * state.text_axis.perp().dot(axis).abs() * across
     };
+    // Empirical #2004 match: 0.595× height with SHX and 0.601× with TrueType.
+    let off_along = |axis: Vec2| clearance(axis, if st.text_above == 1 { 0.6 } else { 0.5 });
     let above = if state.angle.abs() < 1e-12 && state.n.y.abs() > 1e-9 {
         if state.n.y > 0.0 { state.n } else { -state.n }
     } else if state.angle.abs() < 1e-12 {
@@ -181,12 +181,11 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
             + outward * (config.gap + state.text_height / 2.0);
     } else if state.moved {
         let mid = state.f1.mid(state.f2);
-        let lift = off_along(state.side_out) + 2.0 * config.arrow_size.max(config.tick_size);
-        state.text_mid = if st.text_move == 1 {
-            mid + state.side_out * lift + state.u * state.half_extent
-        } else {
-            mid + state.side_out * (lift + off_along(state.side_out))
-        };
+        // Half the text height either way, whatever DIMTAD says (#2222).
+        let clear = clearance(state.side_out, 0.5);
+        let lift = clear + 2.0 * config.arrow_size.max(config.tick_size);
+        state.text_mid =
+            if st.text_move == 1 { mid + state.side_out * lift + state.u * state.half_extent } else { mid + state.side_out * (lift + clear) };
     } else if !config.dimension.user_text_pos {
         state.text_mid = state.along_center + state.offset;
     }

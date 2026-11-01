@@ -134,7 +134,7 @@ pub fn run(_root: &Path, exact: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Counts, count_tests, walk};
+    use super::{Counts, count_tests};
 
     #[test]
     fn counts_attributes_and_proptest_blocks() {
@@ -155,7 +155,7 @@ mod tests {
         // A directory symlink pointing back at `real` would be re-scanned if followed.
         symlink(&real, base.join("alias")).unwrap();
         let mut c = Counts::default();
-        walk(&base, &mut c).unwrap();
+        super::walk(&base, &mut c).unwrap();
         assert_eq!(c.files, 1, "the aliased directory was followed and counted twice");
         std::fs::remove_dir_all(&base).ok();
     }

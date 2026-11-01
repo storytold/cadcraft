@@ -4,7 +4,27 @@ impl Session {
     // ---------------- programmatic execution ----------------
 
     /// Run a command with JSON parameters (no dialogs). Records undo when the drawing changes.
+    ///
+    /// The command itself is guarded below, where its own panic can be told apart. This guard is
+    /// for everything around it: the passes after a command (constraints, associativity, groups)
+    /// are as able to panic as the command, and a panic there restores the drawing the same way.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.execute_guarded(id, params))) {
+            Ok(r) => r,
+            Err(p) => {
+                if let Some((doc, sel, uid)) = before
+                    && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
+                {
+                    st.doc = doc;
+                    st.selection = sel;
+                }
+                Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
+            }
+        }
+    }
+
+    fn execute_guarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
@@ -46,16 +66,24 @@ impl Session {
             (r, _) => r,
         };
         let grouped = self.lisp_groups_undo();
+        let mut in_routine = None;
         if spec.undoable
             && let Some((doc, sel, uid)) = before
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            // Inside a LISP routine the routine's single undo step records it.
-            if !grouped {
-                st.push_undo(Snapshot { label: spec.label.to_string(), doc, selection: sel });
+            let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel };
+            // Inside a LISP routine the routine's single undo step records it, and the routine
+            // keeps it for U inside it.
+            if grouped {
+                in_routine = Some(snap);
+            } else {
+                st.push_undo(snap);
             }
             st.revision += 1;
+        }
+        if let Some(snap) = in_routine {
+            self.lisp_record_step(snap);
         }
         result
     }
@@ -69,29 +97,34 @@ impl Session {
 
     // ---------------- undo ----------------
 
+    /// Take the last step back. Inside a LISP routine, the routine's last command first; past
+    /// those, the drawing's step before the routine, which then starts from there.
     pub fn undo(&mut self) -> Result<Option<String>> {
+        if let Some(label) = self.lisp_take_back(false) {
+            return Ok(Some(label));
+        }
         let st = self.state_mut()?;
         let Some(snap) = st.undo.pop() else { return Ok(None) };
-        let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
-        st.doc = snap.doc;
-        st.follow_layout(&cur.doc);
-        st.selection = Vec::new();
+        let cur = st.swap_in(snap);
+        let label = cur.label.clone();
         st.selection_windows.clear();
         st.redo.push(cur);
-        st.revision += 1;
-        Ok(Some(snap.label))
+        self.lisp_rebase();
+        Ok(Some(label))
     }
 
+    /// Bring back what the last undo took back; inside a LISP routine, what U inside it took first.
     pub fn redo(&mut self) -> Result<Option<String>> {
+        if let Some(label) = self.lisp_take_back(true) {
+            return Ok(Some(label));
+        }
         let st = self.state_mut()?;
         let Some(snap) = st.redo.pop() else { return Ok(None) };
-        let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
-        st.doc = snap.doc;
-        st.follow_layout(&cur.doc);
-        st.selection = Vec::new();
+        let cur = st.swap_in(snap);
+        let label = cur.label.clone();
         st.selection_windows.clear();
         st.undo.push(cur);
-        st.revision += 1;
-        Ok(Some(snap.label))
+        self.lisp_rebase();
+        Ok(Some(label))
     }
 }
