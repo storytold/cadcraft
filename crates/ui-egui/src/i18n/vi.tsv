@@ -280,7 +280,7 @@
 	Enter a vertex editing option	Nhập tùy chọn sửa đỉnh
 	Enter an option	Nhập một tùy chọn
 	Enter angle of xline	Nhập góc của đường dựng
-	Enter angle of xline (0) or	Nhập góc của đường dựng (0) hoặc
+	Enter angle of xline (0)	Nhập góc của đường dựng (0)
 	Enter area of rectangle in current units	Nhập diện tích hình chữ nhật theo đơn vị hiện hành
 	Enter attribute prompt	Nhập lời nhắc attribute
 	Enter attribute tag name	Nhập tên thẻ attribute
@@ -291,7 +291,7 @@
 	Enter default attribute value	Nhập giá trị attribute mặc định
 	Enter degree of spline	Nhập bậc của spline
 	Enter delta angle	Nhập góc chênh lệch
-	Enter delta length or	Nhập chiều dài chênh lệch hoặc
+	Enter delta length	Nhập chiều dài chênh lệch
 	Enter dimension text	Nhập chữ kích thước
 	Enter dimension text (<> = measurement)	Nhập chữ kích thước (<> = số đo)
 	Enter dimension value or [name=expression]	Nhập giá trị kích thước hoặc [name=expression]
@@ -786,8 +786,8 @@
 	Select an arc or circle	Chọn một cung tròn hoặc đường tròn
 	Select an arc.	Chọn một cung tròn.
 	Select an object	Chọn một đối tượng
-	Select an object to change or	Chọn một đối tượng để thay đổi hoặc
-	Select an object to measure or	Chọn một đối tượng để đo hoặc
+	Select an object to change	Chọn một đối tượng để thay đổi
+	Select an object to measure	Chọn một đối tượng để đo
 	Select an object.	Chọn một đối tượng.
 	Select an open curve.	Chọn một đường cong hở.
 	Select an open line, arc, polyline, ellipse arc or spline.	Chọn một đoạn thẳng, cung tròn, polyline, cung elip hoặc spline hở.
@@ -801,14 +801,13 @@
 	Select first line	Chọn đoạn thẳng thứ nhất
 	Select first line or arc	Chọn đoạn thẳng hoặc cung tròn thứ nhất
 	Select first object	Chọn đối tượng thứ nhất
-	Select first object or	Chọn đối tượng thứ nhất hoặc
 	Select first point	Chọn điểm thứ nhất
 	Add to Working Set	Thêm vào Working Set
 	Edit Reference In-Place	Chỉnh sửa tham chiếu tại chỗ
 	Save Reference Edits	Lưu chỉnh sửa tham chiếu
 	Working Set	Working Set
 	Xref and Block In-place Editing	Chỉnh sửa Xref và Block tại chỗ
-	Select nested objects to copy or	Chọn đối tượng lồng nhau để sao chép hoặc
+	Select nested objects to copy	Chọn đối tượng lồng nhau để sao chép
 	Select object	Chọn đối tượng
 	Select object to dimension	Chọn đối tượng để ghi kích thước
 	Select object to divide	Chọn đối tượng để chia
@@ -824,7 +823,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Chọn một polyline (có thể chọn nhiều qua dạng JSON).
 	Select path curve	Chọn đường cong làm đường dẫn
 	Select point or object	Chọn điểm hoặc đối tượng
-	Select polyline or	Chọn polyline hoặc
+	Select polyline	Chọn polyline
 	Select second line	Chọn đoạn thẳng thứ hai
 	Select second line or shift-select to apply corner	Chọn đoạn thẳng thứ hai hoặc chọn kèm Shift để áp dụng góc
 	Select second object	Chọn đối tượng thứ hai
@@ -882,9 +881,8 @@
 	Specify axis endpoint of ellipse	Chỉ định điểm cuối trục của elip
 	Specify base diameter	Chỉ định đường kính đáy
 	Specify base point	Chỉ định điểm gốc
-	Specify base point or	Chỉ định điểm gốc hoặc
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Chỉ định điểm gốc hoặc độ dời (kéo bằng nút giữa chuột để pan theo thời gian thực)
-	Specify base radius or	Chỉ định bán kính đáy hoặc
+	Specify base radius	Chỉ định bán kính đáy
 	Specify center of donut	Chỉ định tâm vành tròn
 	Specify center of ellipse	Chỉ định tâm elip
 	Specify center of polygon	Chỉ định tâm đa giác
@@ -926,7 +924,7 @@
 	Specify first point on circle: _tan to	Chỉ định điểm thứ nhất trên đường tròn: _tan to
 	Specify first source point	Chỉ định điểm nguồn thứ nhất
 	Specify height	Chỉ định chiều cao
-	Specify helix height or	Chỉ định chiều cao đường xoắn ốc hoặc
+	Specify helix height	Chỉ định chiều cao đường xoắn ốc
 	Specify included angle	Chỉ định góc chắn của cung
 	Specify insertion base point	Chỉ định điểm gốc chèn
 	Specify insertion point	Chỉ định điểm chèn
@@ -980,7 +978,6 @@
 	Specify new width for all segments	Chỉ định bề rộng mới cho tất cả các đoạn
 	Specify next point	Chỉ định điểm tiếp theo
 	Specify offset distance	Chỉ định khoảng cách offset
-	Specify offset distance or	Chỉ định khoảng cách offset hoặc
 	Specify opposite corner	Chỉ định góc đối diện
 	Specify other corner point	Chỉ định điểm góc đối diện
 	Specify other endpoint of axis	Chỉ định đầu kia của trục
@@ -993,7 +990,6 @@
 	Specify radius of circle	Chỉ định bán kính đường tròn
 	Specify rotation angle	Chỉ định góc xoay
 	Specify rotation angle of text	Chỉ định góc xoay của chữ
-	Specify rotation angle or	Chỉ định góc xoay hoặc
 	Specify scale factor	Chỉ định hệ số tỉ lệ
 	Specify second angle endpoint	Chỉ định đầu thứ hai của góc
 	Specify second break point	Chỉ định điểm ngắt thứ hai
@@ -1026,9 +1022,9 @@
 	Specify third source point or <continue>	Chỉ định điểm nguồn thứ ba hoặc <tiếp tục>
 	Specify through point	Chỉ định điểm đi qua
 	Specify top diameter	Chỉ định đường kính trên
-	Specify top radius or	Chỉ định bán kính trên hoặc
+	Specify top radius	Chỉ định bán kính trên
 	Specify total angle	Chỉ định tổng góc
-	Specify total length or	Chỉ định tổng chiều dài hoặc
+	Specify total length	Chỉ định tổng chiều dài
 	Specify width for rectangles	Chỉ định bề rộng cho hình chữ nhật
 	Sphere	Hình cầu
 	Spline	Spline

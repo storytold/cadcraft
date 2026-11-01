@@ -194,14 +194,14 @@ impl Interactive for LengthenM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.phase {
             LPhase::Main => {
-                Prompt::new("Select an object to measure or", Accept::POINT).kw(&["DElta", "Percent", "Total", "DYnamic"]).default("DYnamic")
+                Prompt::new("Select an object to measure", Accept::POINT).kw(&["DElta", "Percent", "Total", "DYnamic"]).default("DYnamic")
             }
-            LPhase::Delta => Prompt::new("Enter delta length or", Accept::NUMBER).kw(&["Angle"]).default("0.0000"),
+            LPhase::Delta => Prompt::new("Enter delta length", Accept::NUMBER).kw(&["Angle"]).default("0.0000"),
             LPhase::DeltaAngle => Prompt::new("Enter delta angle", Accept::NUMBER).default("0"),
             LPhase::Percent => Prompt::new("Enter percentage length", Accept::NUMBER).default("100.0000"),
-            LPhase::Total => Prompt::new("Specify total length or", Accept::NUMBER).kw(&["Angle"]).default("1.0000"),
+            LPhase::Total => Prompt::new("Specify total length", Accept::NUMBER).kw(&["Angle"]).default("1.0000"),
             LPhase::TotalAngle => Prompt::new("Specify total angle", Accept::NUMBER).default("57"),
-            LPhase::Change => Prompt::new("Select an object to change or", Accept::POINT).kw(&["Undo"]),
+            LPhase::Change => Prompt::new("Select an object to change", Accept::POINT).kw(&["Undo"]),
             LPhase::DynEnd(..) => Prompt::new("Specify new end point", Accept::POINT),
         }
     }
