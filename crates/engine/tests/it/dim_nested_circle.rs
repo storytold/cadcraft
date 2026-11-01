@@ -154,17 +154,25 @@ fn text_solids_and_rays_in_a_block_are_measured_as_they_are_drawn() {
         s.execute("text", &json!({"at": [0, 0], "text": "HELLO", "height": 2})).unwrap();
         s.execute("circle", &json!({"center": [8.000001, 1], "radius": 5})).unwrap();
     });
+    // The pick is refused: DIMRADIUS says so and still asks for an arc or circle, where taking the
+    // circle would have moved on to the dimension line's location.
+    let refused = |s: &Session| {
+        s.log.last().is_some_and(|l| l == "Object selected is not a circle or arc.") && s.prompt_text().contains("Select arc or circle")
+    };
     s.script("dimradius 3,1\n").unwrap();
+    assert!(refused(&s), "the pick is on the text: {:?} / {}", s.log, s.prompt_text());
     s.cancel();
     assert!(dims(&s).is_empty(), "the pick is on the text");
 
     // Inside a SOLID, far from its edges.
     let mut s = nested(|s| {
-        s.execute("lisp", &json!({"code": "(entmake '((0 . \"SOLID\") (10 0.0 0.0 0.0) (11 10.0 0.0 0.0) (12 0.0 10.0 0.0) (13 10.0 10.0 0.0)))"}))
-            .unwrap();
+        s.execute("solid", &json!({"points": [[0, 0], [10, 0], [0, 10], [10, 10]]})).unwrap();
         s.execute("circle", &json!({"center": [10.000001, 5], "radius": 5})).unwrap();
     });
+    let kinds: Vec<&str> = s.doc().unwrap().block("N").unwrap().entities.iter().map(|e| e.kind.type_name()).collect();
+    assert!(kinds.contains(&"2D Solid"), "the block holds the SOLID: {kinds:?}");
     s.script("dimradius 5,5\n").unwrap();
+    assert!(refused(&s), "the pick is on the SOLID: {:?} / {}", s.log, s.prompt_text());
     s.cancel();
     assert!(dims(&s).is_empty(), "the pick is on the SOLID");
 
