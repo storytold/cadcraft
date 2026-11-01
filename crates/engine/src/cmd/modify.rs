@@ -20,6 +20,7 @@ mod break_join;
 mod explode;
 mod fillet;
 mod offset;
+mod oops;
 mod select_then;
 mod stretch;
 mod transform;
@@ -30,6 +31,8 @@ use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
 use offset::{OffsetM, run_offset};
+use oops::run_oops;
+pub(crate) use oops::{Erased, erase_kept};
 use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::transform_entities;
@@ -43,6 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["e", "delete"])
             .params("{handles?: [hex]} (default: selection)")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Erase)))),
+        CommandSpec::new("oops", "Oops", run_oops).params("{} (brings back what the last ERASE or BLOCK removed)"),
         CommandSpec::new("move", "Move", run_move)
             .menu(&["Modify", "Move"])
             .alias(&["m"])
@@ -61,7 +65,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("scale", "Scale", run_scale)
             .menu(&["Modify", "Scale"])
             .alias(&["sc"])
-            .params("{handles?, base: [x,y], factor, copy?: bool}")
+            .params("{handles?, base: [x,y] or [x,y,z] (default Z: ELEVATION), factor, copy?: bool}")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Scale)))),
         CommandSpec::new("mirror", "Mirror", run_mirror)
             .menu(&["Modify", "Mirror"])

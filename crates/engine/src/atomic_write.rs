@@ -30,6 +30,9 @@ const MAX_TRIES: u32 = 32;
 /// are written through the retained handle and flushed, and the temporary is then renamed over
 /// `path`. On any failure the temporary is removed and the original `path` is left untouched.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // A symlinked destination is resolved so the link stays a link and its target is replaced.
+    let resolved = resolve_symlink(path)?;
+    let path = resolved.as_deref().unwrap_or(path);
     let permissions = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(meta.permissions()),
         Ok(_) => None,
@@ -76,6 +79,41 @@ fn sync_dir(dir: &Path) {
     }
     #[cfg(not(unix))]
     let _ = dir;
+}
+
+/// Resolve `path` when it is a symlink, or return `None` if it is not one.
+///
+/// A dangling link (for example into an unavailable mount) cannot be canonicalized, so its target
+/// is followed by hand with `read_link`, joining relative targets onto the link's directory.
+fn resolve_symlink(path: &Path) -> io::Result<Option<PathBuf>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {}
+        _ => return Ok(None),
+    }
+    if let Ok(target) = std::fs::canonicalize(path) {
+        return Ok(Some(target));
+    }
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        let target = std::fs::read_link(&current)?;
+        current = if target.is_absolute() { target } else { current.parent().map_or(target.clone(), |p| p.join(&target)) };
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {}
+            Ok(_) => return finish_target(&current),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return finish_target(&current),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::InvalidInput, "too many levels of symbolic links"))
+}
+
+/// Build the write path for a resolved, non-link (possibly missing) target.
+fn finish_target(current: &Path) -> io::Result<Option<PathBuf>> {
+    // The target's directory must exist; otherwise report the error rather than replacing the link.
+    let parent = current.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let parent = std::fs::canonicalize(parent)?;
+    let name = current.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "symlink target has no file name"))?;
+    Ok(Some(parent.join(name)))
 }
 
 /// Create a fresh, exclusively-owned temporary file inside `dir`, returning its handle and path.
@@ -179,6 +217,52 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"private report");
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_destination_updates_the_target() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-link-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.dxf");
+        let link = dir.join("link.dxf");
+        std::fs::write(&real, b"old").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&real, &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "symlink was replaced by a regular file");
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_destination_creates_the_target() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-dangle-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(dir.join("mnt")).unwrap();
+        let real = dir.join("mnt").join("real.dxf");
+        let link = dir.join("link.dxf");
+        symlink("mnt/real.dxf", &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "symlink was replaced by a regular file");
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_with_missing_parent_errors_and_keeps_the_link() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-nomnt-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("link.dxf");
+        symlink("missing/real.dxf", &link).unwrap();
+        assert!(write_atomic(&link, b"new").is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn private_temp_is_restricted_from_creation() {

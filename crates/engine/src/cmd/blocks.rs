@@ -7,7 +7,7 @@ pub(in crate::cmd) mod purge;
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
-use cadcraft_geom::{Mat3, Vec2, Vec3};
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::helpers::v3;
@@ -17,6 +17,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, po
 use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+mod attdef;
 mod attedit;
 mod bauthor;
 mod belement;
@@ -26,6 +27,7 @@ mod description;
 mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
+mod wblock;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -48,10 +50,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
             .params("{tag, prompt?, default?, at, height?, invisible?}")
-            .interactive(|_| Ok(Box::new(AttdefM::default()))),
+            .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
-        CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
+        wblock::wblock_spec(),
+        wblock::dash_wblock_spec(),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -190,9 +193,16 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
         b.entities.push(e);
     }
     doc.blocks.insert(name.to_string(), Arc::new(b));
-    if keep != Keep::Retain {
-        for h in hs {
-            doc.remove_entity(*h);
+    match keep {
+        Keep::Retain => {}
+        Keep::Convert => {
+            for h in hs {
+                doc.remove_entity(*h);
+            }
+        }
+        // As after ERASE, OOPS brings them back.
+        Keep::Delete => {
+            super::modify::erase_kept(s, hs)?;
         }
     }
     s.set_selection(Vec::new());
@@ -365,53 +375,6 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
     let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
-}
-
-fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
-    let src = s.doc()?;
-    let mut d = cadcraft_doc::Drawing::new_imperial();
-    d.layers = src.layers.clone();
-    d.linetypes = src.linetypes.clone();
-    d.text_styles = src.text_styles.clone();
-    d.dim_styles = src.dim_styles.clone();
-    d.blocks = src.blocks.clone();
-    // The base point becomes the written drawing's origin, its insertion base: by default 0,0 for
-    // objects and the block's base point for a block (`base` is then in block coordinates).
-    let base = point_param(p, "base");
-    d.header.set("INSBASE", cadcraft_doc::HVal::Point(Vec3::ZERO));
-    let m = Mat3::translate(-base.unwrap_or(Vec2::ZERO));
-    let ents: Vec<Entity> = if let Some(name) = str_param(p, "name") {
-        let b = src.block(name).ok_or_else(|| bad("wblock", format!("no block `{name}`")))?;
-        let m = Mat3::translate(-base.unwrap_or(b.base.xy()));
-        b.entities
-            .iter()
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    } else {
-        targets(s, p)?
-            .iter()
-            .filter_map(|h| src.entity(*h))
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    };
-    for mut e in ents {
-        e.handle = d.new_handle();
-        d.model.push(e);
-    }
-    let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
-    let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
-    #[cfg(not(target_arch = "wasm32"))]
-    std::fs::write(&path, &bytes).map_err(|e| bad("wblock", format!("{path}: {e}")))?;
-    Ok(json!({ "path": path, "entities": d.model.len(), "bytes": bytes.len() }))
 }
 
 fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
@@ -601,6 +564,8 @@ enum InsStage {
     ZScale,
     Rotation,
     Attribs,
+    /// A Verify attribute asked again.
+    Verify,
 }
 
 #[derive(Default)]
@@ -621,8 +586,11 @@ struct InsertM {
     /// Where the block was dropped to pick a Basepoint on it.
     dropped: Option<Vec2>,
     rotation: Option<f64>,
-    attdefs: Vec<(String, String, String)>,
+    /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
+    attdefs: Vec<(String, String, String, bool)>,
     values: serde_json::Map<String, Value>,
+    /// Verify attributes asked again so far.
+    verified: usize,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
     /// The file waiting for the Redefine answer.
@@ -639,6 +607,17 @@ impl InsertM {
         } else {
             InsStage::Attribs
         };
+        if self.stage == InsStage::Attribs && self.values.is_empty() && !self.attdefs.is_empty() {
+            s.echo("Enter attribute values");
+        }
+        // Then the Verify attributes are asked again, with the values typed.
+        if self.stage == InsStage::Attribs && self.values.len() >= self.attdefs.len() && self.verified < self.verifying().len() {
+            if self.verified == 0 {
+                s.echo("Verify attribute values");
+            }
+            self.stage = InsStage::Verify;
+            return Ok(Step::Continue);
+        }
         if self.stage == InsStage::Attribs
             && self.values.len() >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
@@ -652,20 +631,26 @@ impl InsertM {
         Ok(Step::Continue)
     }
 
-    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point.
+    /// The Verify attributes asked for.
+    fn verifying(&self) -> Vec<&(String, String, String, bool)> {
+        self.attdefs.iter().filter(|a| a.3).collect()
+    }
+
+    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point. Constant
+    /// and Preset attributes take their values without asking, and so do all of them with ATTREQ 0.
     fn choose(&mut self, s: &mut Session, name: &str) -> Result<()> {
         let Some(b) = s.doc()?.block(name).cloned() else {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.attdefs = if self.explode {
+        self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {
             b.entities
                 .iter()
                 .filter_map(|e| {
                     if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone()))
+                        (!a.constant && !a.modes.preset).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone(), a.modes.verify))
                     } else {
                         None
                     }
@@ -750,8 +735,13 @@ impl Interactive for InsertM {
             InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
             InsStage::Attribs => {
-                let (_, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
+            }
+            InsStage::Verify => {
+                let (tag, prompt) = self.verifying().get(self.verified).map(|a| (a.0.clone(), a.1.clone())).unwrap_or_default();
+                let typed = self.values.get(&tag).and_then(Value::as_str).unwrap_or_default().to_string();
+                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(typed)
             }
         }
     }
@@ -911,12 +901,26 @@ impl Interactive for InsertM {
                 return self.advance(s);
             }
             InsStage::Attribs => {
-                let (tag, _, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                return self.advance(s);
+            }
+            // Enter keeps the value typed.
+            InsStage::Verify => {
+                let tag = self.verifying().get(self.verified).map(|a| a.0.clone()).unwrap_or_default();
+                match i {
+                    Input::Text(t) => {
+                        self.values.insert(tag, Value::String(t));
+                    }
+                    Input::Enter => {}
+                    // A click or anything else is no answer: the value is asked for again.
+                    _ => return Ok(Step::Continue),
+                }
+                self.verified += 1;
                 return self.advance(s);
             }
         }
@@ -937,52 +941,6 @@ impl Interactive for InsertM {
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
         vec![EntityKind::Insert(insert_entity(b, at, self.scale3(scale), rot, self.base))]
-    }
-}
-
-#[derive(Default)]
-struct AttdefM {
-    tag: Option<String>,
-    prompt: Option<String>,
-    default: Option<String>,
-}
-
-impl Interactive for AttdefM {
-    fn name(&self) -> &'static str {
-        "ATTDEF"
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => Prompt::new("Enter attribute tag name", Accept::TEXT),
-            (Some(_), None, _) => Prompt::new("Enter attribute prompt", Accept::TEXT),
-            (Some(_), Some(_), None) => Prompt::new("Enter default attribute value", Accept::TEXT),
-            _ => Prompt::new("Specify start point of text", Accept::POINT),
-        }
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        let text = match &i {
-            Input::Text(t) => Some(t.clone()),
-            Input::Enter => Some(String::new()),
-            _ => None,
-        };
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => {
-                if let Some(t) = text.filter(|t| !t.trim().is_empty() && !t.contains(' ')) {
-                    self.tag = Some(t.to_ascii_uppercase());
-                }
-            }
-            (Some(_), None, _) => self.prompt = text,
-            (Some(_), Some(_), None) => self.default = text,
-            (Some(tag), Some(pr), Some(def)) => {
-                if let Input::Point(p) = i {
-                    let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
-                    s.add_entity(k)?;
-                    return Ok(Step::Done);
-                }
-            }
-        }
-        Ok(Step::Continue)
     }
 }
 

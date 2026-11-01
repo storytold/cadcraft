@@ -555,13 +555,7 @@ fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut hs = s.selection();
     hs.retain(|h| !super::curves::is_locked(s, *h));
     // The Block Editor's picked parameters and actions go too.
-    let mut n = s.erase_picked_elements()?;
-    let d = s.doc_mut()?;
-    for h in hs {
-        if d.remove_entity(h).is_some() {
-            n += 1;
-        }
-    }
+    let n = s.erase_picked_elements()? + super::modify::erase_kept(s, &hs)?;
     s.set_selection(Vec::new());
     Ok(json!({ "erased": n }))
 }
