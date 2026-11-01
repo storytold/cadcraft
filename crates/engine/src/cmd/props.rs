@@ -414,12 +414,10 @@ fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
     let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
 
     if let Some(v) = str_param(params, "pattern") {
-        if !hatch.pattern.eq_ignore_ascii_case(v) {
-            hatch.pattern_lines = super::hatch::lines_for(v);
-        }
         hatch.pattern = v.to_ascii_uppercase();
-        // The old pattern's definition lines no longer apply.
-        hatch.pattern_lines.clear();
+        // A library pattern is drawn from the library; a loaded .pat pattern carries its own
+        // line families; nothing else is known about the name.
+        hatch.pattern_lines = super::hatch::lines_for(&hatch.pattern);
         hatch.solid = hatch.pattern == "SOLID";
         if !hatch.solid {
             // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
