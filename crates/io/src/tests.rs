@@ -2243,6 +2243,26 @@ fn svg_shapes_become_entities_in_millimetres() {
     assert!((l.a.y - 10.0).abs() < 1e-9 && (l.b.y).abs() < 1e-9, "{l:?}");
 }
 
+/// A smooth curve right after `Z` has no curve to reflect: its first control point is the
+/// current point (SVG 1.1 §8.3.6), not the mirror of the control point before the close.
+#[test]
+fn svg_path_smooth_curve_after_close_starts_at_the_current_point() {
+    let svg = format!("{SVG_PAGE}<path d=\"M0 5 C0 0 10 0 10 5 Z S20 0 20 5\"/></svg>");
+    let d = read(svg.as_bytes(), "s.svg").unwrap();
+    let after_close = d
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::Spline(s) = &e.kind { Some(s.clone()) } else { None })
+        .last()
+        .expect("the S segment becomes a spline");
+    // Drawing y is 10 - SVG y: start (0, 5), first control at the start, second control SVG (20, 0), end (20, 5).
+    let want = [Vec2::new(0.0, 5.0), Vec2::new(0.0, 5.0), Vec2::new(20.0, 10.0), Vec2::new(20.0, 5.0)];
+    assert_eq!(after_close.control.len(), want.len(), "{after_close:?}");
+    for (got, want) in after_close.control.iter().zip(want) {
+        assert!((*got - want).len() < 1e-9, "{after_close:?}");
+    }
+}
+
 #[test]
 fn svg_path_lines_curves_and_arcs() {
     let svg = format!("{SVG_PAGE}<path d=\"M1 1 L5 1 C6 1 7 2 8 3\"/><path d=\"M0 0 A5 5 0 0 1 10 0 Z\"/></svg>");

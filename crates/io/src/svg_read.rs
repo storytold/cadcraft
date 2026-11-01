@@ -843,6 +843,9 @@ fn parse_path(d: &str) -> Result<Vec<Subpath>> {
                     }
                     cur = start;
                     cmd = 0;
+                    // An S/T after Z has no curve to reflect, so it starts from the current point.
+                    prev_cubic = None;
+                    prev_quad = None;
                     continue;
                 }
                 cmd = c;
