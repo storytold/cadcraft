@@ -79,6 +79,33 @@ fn use_system_title_bar_swaps_the_window_buttons_for_the_frame() {
     assert_eq!(buttons(&h, "Minimize"), base("Minimize") + 1);
 }
 
+/// `CADCRAFT_TITLEBAR=app` draws the window buttons even when the saved workspace has Use system
+/// title bar on, and Options doesn't offer the setting it overrides.
+#[test]
+fn titlebar_app_overrides_the_saved_system_title_bar() {
+    assert!(cadcraft_ui_egui::app_draws_frame(true, true, true), "the window opens without winit's frame");
+    assert!(!cadcraft_ui_egui::app_draws_frame(true, false, true));
+    assert!(!cadcraft_ui_egui::app_draws_frame(false, true, false), "nothing to draw where the desktop draws");
+    let plain = harness(None);
+    let mut app = CadApp::new(Session::default(), Services::default());
+    app.window_controls = Some(Layout::default());
+    app.frame_forced = true;
+    app.ui.system_title_bar = true;
+    assert!(app.draws_window_frame());
+    let mut h = Harness::builder().with_size(vec2(1280.0, 760.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(buttons(&h, "Minimize"), buttons(&plain, "Minimize") + 1, "the title row has the buttons");
+    h.state_mut().ui.dialog = Some("options:display".into());
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(Role::CheckBox, "Use system title bar").is_none());
+}
+
 /// GNOME's `button-layout` decides which buttons appear: Fedora's default shows only close.
 #[test]
 fn the_desktop_button_layout_decides_the_window_buttons() {
