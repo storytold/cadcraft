@@ -1,4 +1,5 @@
 use super::{DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
+use crate::transcode_mtext;
 
 /// Format a linear measurement per the style (plain text).
 pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
@@ -9,7 +10,7 @@ pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
 /// alternate units, then the user's override text (`<>` = the measurement). DIMRND rounds the
 /// measurement (and so the limits) only: tolerances are never rounded and alternate units
 /// round by DIMALTRND.
-pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String {
+pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str, hint: Option<&str>) -> String {
     let v = meas * st.linear_factor;
     let nf = NumFormat::from_style(st);
     let main = if st.limits {
@@ -19,16 +20,17 @@ pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str)
     } else {
         format!("{prefix}{}", format_linear(v, &nf).1)
     };
-    let mut s = post(&st.post, &main);
+    let mut s = post(&st.post, &main, hint);
     if st.tolerance && !st.limits {
         let tf = NumFormat { decimals: st.tol_decimals, zin: st.tol_zero_suppression, round: 0.0, ..nf.clone() };
         // DIMPOST's suffix (what follows `<>`, or all of it) also goes on the tolerance values.
-        let suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let raw_suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let suffix = transcode_mtext(raw_suffix, hint);
         if (st.tol_plus - st.tol_minus).abs() < 1e-12 {
             s += &format!("%%p{}{suffix}", format_linear(st.tol_plus, &tf).1);
         } else {
-            let plus = format_linear(st.tol_plus, &tf).1 + suffix;
-            let minus = format_linear(st.tol_minus, &tf).1 + suffix;
+            let plus = format_linear(st.tol_plus, &tf).1 + &suffix;
+            let minus = format_linear(st.tol_minus, &tf).1 + &suffix;
             let sign = |x: &str, pos: char| if x.trim_start_matches(['0', '.', ',']).is_empty() { x.to_string() } else { format!("{pos}{x}") };
             let (plus, minus) =
                 (sign(&plus, '+'), if st.tol_minus < 0.0 { format!("+{}", minus.trim_start_matches('-')) } else { sign(&minus, '-') });
@@ -47,15 +49,19 @@ pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str)
         };
         let af = NumFormat { unit, decimals: st.alt_decimals, zin: st.alt_zero_suppression, round: st.alt_round, frac, ..nf };
         let alt = format_linear(v * st.alt_factor, &af).1;
-        s += &format!(" [{}]", post(&st.alt_post, &alt));
+        s += &format!(" [{}]", post(&st.alt_post, &alt, hint));
     }
-    inspected(apply_override(&s, d), d)
+    inspected(apply_override(&s, d, st, hint), d, hint)
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
-pub(super) fn inspected(value: String, d: &Dimension) -> String {
+pub(super) fn inspected(value: String, d: &Dimension, hint: Option<&str>) -> String {
     match &d.marks.inspect {
-        Some(ins) => [ins.label.as_str(), value.as_str(), ins.rate.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join("  "),
+        Some(ins) => {
+            let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+            let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+            [label.as_ref(), value.as_str(), rate.as_ref()].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("  ")
+        }
         None => value,
     }
 }
@@ -67,25 +73,28 @@ fn tol_height_code(st: &DimStyle) -> String {
 }
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
-fn post(template: &str, meas: &str) -> String {
-    if template.contains("<>") {
-        bounded_replace(template, meas)
+fn post(template: &str, meas: &str, hint: Option<&str>) -> String {
+    let t = transcode_mtext(template, hint);
+    if t.contains("<>") {
+        bounded_replace(&t, meas)
     } else {
         let mut out = String::new();
         append_dim_text(&mut out, meas);
-        append_dim_text(&mut out, template);
+        append_dim_text(&mut out, &t);
         out
     }
 }
 
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
-pub(super) fn apply_override(base: &str, d: &Dimension) -> String {
+pub(super) fn apply_override(base: &str, d: &Dimension, st: &DimStyle, hint: Option<&str>) -> String {
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
         String::new()
     } else {
-        bounded_replace(&d.text, base)
+        let hint = hint.or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
+        let text = transcode_mtext(&d.text, hint);
+        bounded_replace(&text, base)
     }
 }
 
@@ -129,6 +138,7 @@ pub struct DimText {
     pub fixed_height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    pub font_hint: Option<String>,
 }
 
 #[cfg(test)]
@@ -137,7 +147,7 @@ mod text_budget_tests {
     /// A dimension suffix without placeholders still obeys the total text limit.
     #[test]
     fn bounds_post_without_markers() {
-        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12");
+        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12", None);
         assert_eq!(text.len(), MAX_DIM_TEXT);
         assert!(text.starts_with("12x"));
     }
