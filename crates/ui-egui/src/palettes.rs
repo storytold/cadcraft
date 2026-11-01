@@ -762,6 +762,22 @@ fn selection_memo(ui: &egui::Ui, app: &CadApp, sel: &[cadcraft_engine::doc::Hand
     memo
 }
 
+/// Separates what a numeric row shows from the value it was worked out from, so that two objects
+/// whose values differ by less than the display shows still count as different. The value is
+/// compared to 12 significant digits, which keeps float noise (a length that comes out as
+/// 5.000000000000001) from reading as a difference.
+const EXACT_SEP: char = '\u{1f}';
+
+/// `shown`, tagged with the number `v` it was formatted from.
+fn exact(shown: String, v: f64) -> String {
+    format!("{shown}{EXACT_SEP}{:.11e}", v + 0.0)
+}
+
+/// What a row shows of a value that [`exact`] tagged (a plain string is shown as it is).
+fn shown_part(s: &str) -> String {
+    s.split(EXACT_SEP).next().unwrap_or_default().to_string()
+}
+
 /// Properties palette: the selection's common properties, or the current defaults when nothing is selected; formats lengths per drawing units and dispatches setter commands.
 pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -773,6 +789,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     // Lengths are shown as the drawing's units say (UNITS), and read back in any format.
     let (lu, lp) = (h.i64("LUNITS", 2), h.i64("LUPREC", 4));
     let len = |v: f64| cadcraft_engine::units::format_distance(v, lu, lp);
+    let lenx = |v: f64| exact(len(v), v);
     let mut bad: Option<String> = None;
     if sel.is_empty() {
         // Current properties for new objects; each row runs the command that sets it.
@@ -1058,6 +1075,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     let real = |v: f64| format!("{v:.4}");
+    let realx = |v: f64| exact(real(v), v);
     // Rotations show as the drawing measures directions (ANGBASE, ANGDIR).
     let angles = app.session.angle_settings();
     let num = |ui: &mut egui::Ui, label: &str, key: &str, shown: String, set: &mut Option<Value>, bad: &mut Option<String>, ids: &Vec<String>| {
@@ -1244,7 +1262,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     })
                     .collect();
                 match vals.first() {
-                    Some(v0) if vals.iter().all(|v| v == v0) => v0.clone(),
+                    Some(v0) if vals.iter().all(|v| v == v0) => shown_part(v0),
                     _ => VARIES.into(),
                 }
             })
@@ -1262,9 +1280,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         });
         let numbers = [
-            ("Text height", "textHeight", shared("dim.text_height", &|_, st| len(st.text_height))),
-            ("Arrow size", "arrowSize", shared("dim.arrow_size", &|_, st| len(st.arrow_size))),
-            ("Dim scale overall", "dimScale", shared("dim.scale", &|_, st| real(st.scale))),
+            ("Text height", "textHeight", shared("dim.text_height", &|_, st| lenx(st.text_height))),
+            ("Arrow size", "arrowSize", shared("dim.arrow_size", &|_, st| lenx(st.arrow_size))),
+            ("Dim scale overall", "dimScale", shared("dim.scale", &|_, st| realx(st.scale))),
         ];
         for (label, key, shown) in numbers {
             prop_row(ui, label, |ui| {
@@ -1288,31 +1306,32 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             memo.get(key, || {
                 let vals: Vec<Option<String>> = sel.iter().filter_map(|h| d.entity(*h)).map(|x| f(&x.kind)).collect();
                 match vals.first() {
-                    Some(Some(v0)) if vals.iter().all(|v| v.as_ref() == Some(v0)) => v0.clone(),
+                    Some(Some(v0)) if vals.iter().all(|v| v.as_ref() == Some(v0)) => shown_part(v0),
                     _ => VARIES.into(),
                 }
             })
         };
         let deg = |v: f64| real(angles.shown(v).to_degrees());
+        let degx = |v: f64| exact(deg(v), angles.shown(v).to_degrees());
         match &e.kind {
             EntityKind::Line(_) => {
                 let line = |k: &EntityKind| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None };
                 for (label, value) in [
-                    ("Start X", shared("line.ax", &|k| line(k).map(|l| len(l.a.x)))),
-                    ("Start Y", shared("line.ay", &|k| line(k).map(|l| len(l.a.y)))),
-                    ("End X", shared("line.bx", &|k| line(k).map(|l| len(l.b.x)))),
-                    ("End Y", shared("line.by", &|k| line(k).map(|l| len(l.b.y)))),
-                    ("Delta X", shared("line.dx", &|k| line(k).map(|l| len(l.b.x - l.a.x)))),
-                    ("Delta Y", shared("line.dy", &|k| line(k).map(|l| len(l.b.y - l.a.y)))),
+                    ("Start X", shared("line.ax", &|k| line(k).map(|l| lenx(l.a.x)))),
+                    ("Start Y", shared("line.ay", &|k| line(k).map(|l| lenx(l.a.y)))),
+                    ("End X", shared("line.bx", &|k| line(k).map(|l| lenx(l.b.x)))),
+                    ("End Y", shared("line.by", &|k| line(k).map(|l| lenx(l.b.y)))),
+                    ("Delta X", shared("line.dx", &|k| line(k).map(|l| lenx(l.b.x - l.a.x)))),
+                    ("Delta Y", shared("line.dy", &|k| line(k).map(|l| lenx(l.b.y - l.a.y)))),
                 ] {
                     prop_row(ui, label, |ui| read_only(ui, &value));
                 }
-                num(ui, "Length", "length", shared("line.length", &|k| line(k).map(|l| len((l.b.xy() - l.a.xy()).len()))), &mut set, &mut bad, ids);
+                num(ui, "Length", "length", shared("line.length", &|k| line(k).map(|l| lenx((l.b.xy() - l.a.xy()).len()))), &mut set, &mut bad, ids);
                 num(
                     ui,
                     "Angle",
                     "angle",
-                    shared("line.angle", &|k| line(k).map(|l| real((l.b.xy() - l.a.xy()).angle().to_degrees()))),
+                    shared("line.angle", &|k| line(k).map(|l| realx((l.b.xy() - l.a.xy()).angle().to_degrees()))),
                     &mut set,
                     &mut bad,
                     ids,
@@ -1320,15 +1339,15 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             EntityKind::Circle(_) => {
                 let circle = |k: &EntityKind| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None };
-                prop_row(ui, "Center X", |ui| read_only(ui, &shared("circle.cx", &|k| circle(k).map(|c| len(c.center.x)))));
-                prop_row(ui, "Center Y", |ui| read_only(ui, &shared("circle.cy", &|k| circle(k).map(|c| len(c.center.y)))));
-                num(ui, "Radius", "radius", shared("circle.radius", &|k| circle(k).map(|c| len(c.radius))), &mut set, &mut bad, ids);
-                num(ui, "Diameter", "diameter", shared("circle.diameter", &|k| circle(k).map(|c| len(c.radius * 2.0))), &mut set, &mut bad, ids);
+                prop_row(ui, "Center X", |ui| read_only(ui, &shared("circle.cx", &|k| circle(k).map(|c| lenx(c.center.x)))));
+                prop_row(ui, "Center Y", |ui| read_only(ui, &shared("circle.cy", &|k| circle(k).map(|c| lenx(c.center.y)))));
+                num(ui, "Radius", "radius", shared("circle.radius", &|k| circle(k).map(|c| lenx(c.radius))), &mut set, &mut bad, ids);
+                num(ui, "Diameter", "diameter", shared("circle.diameter", &|k| circle(k).map(|c| lenx(c.radius * 2.0))), &mut set, &mut bad, ids);
                 num(
                     ui,
                     "Circumference",
                     "circumference",
-                    shared("circle.circumference", &|k| circle(k).map(|c| len(c.radius * std::f64::consts::TAU))),
+                    shared("circle.circumference", &|k| circle(k).map(|c| lenx(c.radius * std::f64::consts::TAU))),
                     &mut set,
                     &mut bad,
                     ids,
@@ -1337,7 +1356,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui,
                     "Area",
                     "area",
-                    shared("circle.area", &|k| circle(k).map(|c| real(c.radius * c.radius * std::f64::consts::PI))),
+                    shared("circle.area", &|k| circle(k).map(|c| realx(c.radius * c.radius * std::f64::consts::PI))),
                     &mut set,
                     &mut bad,
                     ids,
@@ -1345,9 +1364,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             EntityKind::Arc(_) => {
                 let arc = |k: &EntityKind| if let EntityKind::Arc(a) = k { Some(a.clone()) } else { None };
-                num(ui, "Radius", "radius", shared("arc.radius", &|k| arc(k).map(|a| len(a.radius))), &mut set, &mut bad, ids);
-                num(ui, "Start angle", "startAngle", shared("arc.start", &|k| arc(k).map(|a| real(a.start.to_degrees()))), &mut set, &mut bad, ids);
-                num(ui, "End angle", "endAngle", shared("arc.end", &|k| arc(k).map(|a| real(a.end.to_degrees()))), &mut set, &mut bad, ids);
+                num(ui, "Radius", "radius", shared("arc.radius", &|k| arc(k).map(|a| lenx(a.radius))), &mut set, &mut bad, ids);
+                num(ui, "Start angle", "startAngle", shared("arc.start", &|k| arc(k).map(|a| realx(a.start.to_degrees()))), &mut set, &mut bad, ids);
+                num(ui, "End angle", "endAngle", shared("arc.end", &|k| arc(k).map(|a| realx(a.end.to_degrees()))), &mut set, &mut bad, ids);
             }
             EntityKind::Text(_) => {
                 let contents = shared("text.value", &|k| if let EntityKind::Text(t) = k { Some(t.value.clone()) } else { None });
@@ -1356,11 +1375,11 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         set = Some(json!({ "handles": ids, "text": s }));
                     }
                 });
-                let height = shared("text.height", &|k| if let EntityKind::Text(t) = k { Some(len(t.height)) } else { None });
+                let height = shared("text.height", &|k| if let EntityKind::Text(t) = k { Some(lenx(t.height)) } else { None });
                 num(ui, "Height", "height", height, &mut set, &mut bad, ids);
-                let rotation = shared("text.rotation", &|k| if let EntityKind::Text(t) = k { Some(deg(t.rotation)) } else { None });
+                let rotation = shared("text.rotation", &|k| if let EntityKind::Text(t) = k { Some(degx(t.rotation)) } else { None });
                 num(ui, "Rotation", "rotation", rotation, &mut set, &mut bad, ids);
-                let width_factor = shared("text.width_factor", &|k| if let EntityKind::Text(t) = k { Some(real(t.width_factor)) } else { None });
+                let width_factor = shared("text.width_factor", &|k| if let EntityKind::Text(t) = k { Some(realx(t.width_factor)) } else { None });
                 num(ui, "Width factor", "widthFactor", width_factor, &mut set, &mut bad, ids);
             }
             EntityKind::MText(_) => {
@@ -1370,17 +1389,17 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         set = Some(json!({ "handles": ids, "text": s }));
                     }
                 });
-                let height = shared("mtext.height", &|k| if let EntityKind::MText(t) = k { Some(len(t.height)) } else { None });
+                let height = shared("mtext.height", &|k| if let EntityKind::MText(t) = k { Some(lenx(t.height)) } else { None });
                 num(ui, "Text height", "height", height, &mut set, &mut bad, ids);
-                let width = shared("mtext.width", &|k| if let EntityKind::MText(t) = k { Some(len(t.width)) } else { None });
+                let width = shared("mtext.width", &|k| if let EntityKind::MText(t) = k { Some(lenx(t.width)) } else { None });
                 num(ui, "Defined width", "width", width, &mut set, &mut bad, ids);
             }
             EntityKind::LwPolyline(_) => {
                 // Only Length and Area need the vertices; the other rows read one field.
                 let geom = |p: &cadcraft_doc::LwPolyline| cadcraft_geom::Polyline { vertices: p.vertices.clone(), closed: p.closed };
-                let width = shared("poly.width", &|k| if let EntityKind::LwPolyline(p) = k { Some(len(p.const_width)) } else { None });
+                let width = shared("poly.width", &|k| if let EntityKind::LwPolyline(p) = k { Some(lenx(p.const_width)) } else { None });
                 num(ui, "Global width", "width", width, &mut set, &mut bad, ids);
-                let length = shared("poly.length", &|k| if let EntityKind::LwPolyline(p) = k { Some(len(geom(p).len())) } else { None });
+                let length = shared("poly.length", &|k| if let EntityKind::LwPolyline(p) = k { Some(lenx(geom(p).len())) } else { None });
                 prop_row(ui, "Length", |ui| read_only(ui, &length));
                 let area = shared("poly.area", &|k| {
                     if let EntityKind::LwPolyline(p) = k { Some(if p.closed { real(geom(p).area().abs()) } else { String::new() }) } else { None }
@@ -1407,9 +1426,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         }
                     });
                 });
-                let scale = shared("hatch.scale", &|k| if let EntityKind::Hatch(h) = k { Some(real(h.scale)) } else { None });
+                let scale = shared("hatch.scale", &|k| if let EntityKind::Hatch(h) = k { Some(realx(h.scale)) } else { None });
                 num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
-                let angle = shared("hatch.angle", &|k| if let EntityKind::Hatch(h) = k { Some(real(h.angle.to_degrees())) } else { None });
+                let angle = shared("hatch.angle", &|k| if let EntityKind::Hatch(h) = k { Some(realx(h.angle.to_degrees())) } else { None });
                 num(ui, "Angle", "angle", angle, &mut set, &mut bad, ids);
             }
             EntityKind::Insert(_) => {
@@ -1439,9 +1458,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 ] {
                     prop_row(ui, label, |ui| read_only(ui, &value));
                 }
-                let rotation = shared("insert.rotation", &|k| if let EntityKind::Insert(i) = k { Some(deg(i.rotation)) } else { None });
+                let rotation = shared("insert.rotation", &|k| if let EntityKind::Insert(i) = k { Some(degx(i.rotation)) } else { None });
                 num(ui, "Rotation", "rotation", rotation, &mut set, &mut bad, ids);
-                let scale = shared("insert.scale", &|k| if let EntityKind::Insert(i) = k { Some(real(i.scale.x)) } else { None });
+                let scale = shared("insert.scale", &|k| if let EntityKind::Insert(i) = k { Some(realx(i.scale.x)) } else { None });
                 num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
             }
             _ => {}
@@ -1541,6 +1560,32 @@ mod tests {
         app.run("properties.set", json!({ "handles": [first, second], "textHeight": 7 })).unwrap();
         let texts = painted_texts(&mut app, properties_section);
         assert!(texts.iter().any(|t| t == "7.0000" || t == "7"), "the common text height is shown; painted: {texts:?}");
+    }
+
+    /// Values the display rounds alike still count as different: two dimensions whose text heights
+    /// differ by a millionth show `*VARIES*`, as do two circles whose radii do. Float noise (a
+    /// ten-trillionth) is not a difference.
+    #[test]
+    fn values_that_differ_below_the_display_precision_still_vary() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let dims: Vec<String> = [10, 20]
+            .map(|x| app.run("dimlinear", json!({ "p1": [0, 0], "p2": [x, 0], "at": [5, 3] })).unwrap()["handle"].as_str().unwrap().to_string())
+            .to_vec();
+        app.run("select", json!({ "handles": dims.clone() })).unwrap();
+        app.run("properties.set", json!({ "handles": [dims[0].clone()], "textHeight": 7.0 })).unwrap();
+        app.run("properties.set", json!({ "handles": [dims[1].clone()], "textHeight": 7.0 + 1e-13 })).unwrap();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(!texts.iter().any(|t| t == VARIES), "noise below 12 digits is not a difference; painted: {texts:?}");
+        app.run("properties.set", json!({ "handles": [dims[1].clone()], "textHeight": 7.000001 })).unwrap();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(texts.iter().any(|t| t == VARIES), "7 and 7.000001 differ although both show as 7.0000; painted: {texts:?}");
+
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let circles = circles(&mut app, &[2, 2], json!({}));
+        app.run("select", json!({ "handles": circles.clone() })).unwrap();
+        app.run("properties.set", json!({ "handles": [circles[1].clone()], "radius": 2.000001 })).unwrap();
+        let h = palette(app);
+        assert!(h.query_all_by_value(VARIES).count() > 0, "radii 2 and 2.000001 vary");
     }
 
     /// Two objects of each type, selected together: the palette shows the type's properties (not
