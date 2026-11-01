@@ -20,6 +20,57 @@ use serde_json::Value;
 
 /// Registered application name of CADCraft's extended data.
 pub(crate) const APP: &str = "CADCRAFT";
+/// Extended data of a text's formula (`=...`), in 1000 strings of at most 250 characters.
+pub(crate) const FORMULA_APP: &str = "CADCRAFTFORMULA";
+
+/// A text's formula from its `CADCRAFTFORMULA` extended data.
+pub(crate) fn formula(tags: &[Tag]) -> Option<String> {
+    let x = xdata(tags, FORMULA_APP);
+    let mut s = String::new();
+    for t in x.iter().filter(|t| t.code == 1000) {
+        s.push_str(&t.str());
+        // A formula longer than any CADCraft writes is not read (the text keeps its value): the
+        // file alone would bound it otherwise (#2318 review).
+        if s.len() > MAX_FORMULA_BYTES {
+            return None;
+        }
+    }
+    (!s.is_empty()).then_some(s)
+}
+
+/// Longest formula read back from a file, in bytes: room for the longest field template the
+/// reader resolves (16,384 characters of up to 4 bytes).
+const MAX_FORMULA_BYTES: usize = 64 * 1024;
+
+/// A formula as 1000 strings of at most 250 bytes (whole characters).
+pub(crate) fn formula_chunks(f: &str) -> Vec<String> {
+    // An xdata string holds at most 255 bytes: Hebrew, Cyrillic or Chinese letters take 2 to 4
+    // bytes each, so the pieces are cut by bytes, between letters.
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in f.chars() {
+        if cur.len() + c.len_utf8() > 250 {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+#[cfg(test)]
+mod formula_chunk_tests {
+    #[test]
+    fn chunks_fit_an_xdata_string_in_bytes() {
+        let f = format!("=\"{}\"", "שלום ".repeat(200));
+        let chunks = super::formula_chunks(&f);
+        assert!(chunks.iter().all(|c| c.len() <= 250), "{:?}", chunks.iter().map(String::len).collect::<Vec<_>>());
+        assert_eq!(chunks.concat(), f, "nothing lost, no letter cut");
+        assert_eq!(super::formula_chunks("=1+1"), ["=1+1"]);
+    }
+}
 /// Named-object-dictionary key of the constraint XRECORD.
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.
@@ -144,6 +195,22 @@ pub(crate) const DIM_CODES: &[(&str, i32, K)] = &[
 
 /// DIMSAH: separate arrow blocks in use.
 pub(crate) const DIMSAH: i32 = 173;
+
+/// A per-end arrowhead (DIMBLK1 / DIMBLK2) that is closed filled whatever DIMBLK is: AutoCAD's
+/// "." (an empty per-end name follows DIMBLK). In a file it is no block (handle 0) with DIMSAH
+/// on, which is what AutoCAD reads as closed filled.
+pub(crate) const SEPARATE_CLOSED_FILLED: &str = ".";
+
+/// With separate arrowheads on (DIMSAH), an end without its own block is closed filled.
+pub(crate) fn separate_ends(fields: &mut serde_json::Map<String, Value>) {
+    for f in ["arrowBlock1", "arrowBlock2"] {
+        if let Some(v) = fields.get_mut(f)
+            && v.as_str().is_some_and(|n| n.trim().is_empty())
+        {
+            *v = Value::String(SEPARATE_CLOSED_FILLED.to_string());
+        }
+    }
+}
 /// DIMPOST's group in DIMSTYLE records.
 pub(crate) const DIMPOST: i32 = 3;
 
@@ -211,7 +278,9 @@ pub(crate) fn encode(kind: K, v: &Value, style: Lookup, block: Lookup, ltype: Lo
         K::TextStyle => DimVal::Handle(style(v.as_str()?)?),
         K::Block => {
             let name = v.as_str()?;
-            DimVal::Handle(if name.trim().is_empty() { "0".to_string() } else { block(name)? })
+            // "" and "." (an end's own closed filled arrowhead, see [`SEPARATE_CLOSED_FILLED`])
+            // are no block: handle 0.
+            DimVal::Handle(if name.trim().is_empty() || name.trim() == SEPARATE_CLOSED_FILLED { "0".to_string() } else { block(name)? })
         }
         K::Linetype => DimVal::Handle(ltype(v.as_str().filter(|n| !n.trim().is_empty())?)?),
         K::Angle => DimVal::Real(v.as_f64().filter(|x| x.is_finite())?.to_radians()),
@@ -419,6 +488,8 @@ fn read_dimvar_list(
             out.insert(field.to_string(), val);
         }
     }
+    // An end's arrowhead given here as no block is closed filled (written with DIMSAH).
+    separate_ends(&mut out);
     out
 }
 
@@ -899,5 +970,23 @@ mod tests {
         assert!(arrow_block_name("").is_none());
         assert!(arrow_block_name("nonsense").is_none());
         assert!(is_standard_arrow("_dot"));
+    }
+}
+
+#[cfg(test)]
+mod formula_cap_tests {
+    use super::{FORMULA_APP, MAX_FORMULA_BYTES, formula};
+    use cadcraft_dxf::Tag;
+
+    /// A formula is read back whole up to the cap; a file's longer one is not read at all.
+    #[test]
+    fn an_overlong_formula_is_not_read() {
+        let tags = |n: usize| {
+            let mut t = vec![Tag::s(0, "TEXT"), Tag::s(1001, FORMULA_APP)];
+            t.extend((0..n).map(|_| Tag::s(1000, "x".repeat(250))));
+            t
+        };
+        assert_eq!(formula(&tags(4)).map(|f| f.len()), Some(1000));
+        assert_eq!(formula(&tags(MAX_FORMULA_BYTES / 250 + 2)), None);
     }
 }

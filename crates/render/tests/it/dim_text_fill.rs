@@ -138,6 +138,8 @@ fn a_dimension_read_with_its_block_keeps_the_block_and_gets_the_background() {
     let circle = EntityKind::Circle(Circle { center: Vec3::new(5.0, 5.0, 0.0), radius: 3.0 });
     blk.entities.push(Entity::new(Handle(1), circle));
     let text = MText {
+        frame: false,
+        formula: None,
         insert: Vec3::new(20.0, 20.0, 0.0),
         height: 0.18,
         width: 0.0,
@@ -170,6 +172,8 @@ fn every_text_of_a_block_gets_a_background() {
     let mut blk = Block::new("*D1");
     for (i, (y, s)) in [(20.0, "10.0000"), (22.0, "+0.1")].into_iter().enumerate() {
         let text = MText {
+            frame: false,
+            formula: None,
             insert: Vec3::new(20.0, y, 0.0),
             height: 0.18,
             width: 0.0,
@@ -200,6 +204,8 @@ fn a_block_that_holds_its_background_gets_no_second_one() {
         let solid = cadcraft_doc::Solid { corners: solid.map(|(x, y)| Vec3::new(x, y, 0.0)) };
         blk.entities.push(Entity::new(Handle(1), EntityKind::Solid(solid)));
         let text = MText {
+            frame: false,
+            formula: None,
             insert: Vec3::new(20.0, 20.0, 0.0),
             height: 0.18,
             width: 0.0,
@@ -230,6 +236,9 @@ fn a_block_with_turned_text_gets_a_turned_background() {
     d.dim_styles.push(style(1, Color::ByBlock));
     let mut blk = Block::new("*D1");
     let text = cadcraft_doc::Text {
+        backwards: false,
+        upside_down: false,
+        formula: None,
         insert: Vec3::new(20.0, 20.0, 0.0),
         align_pt: None,
         height: 0.5,

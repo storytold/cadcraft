@@ -1,4 +1,4 @@
-use super::text::linear_text;
+use super::text::{linear_formula_value, linear_text};
 use super::{DimConfig, DimGeometry, DimKind, LineRole, Vec2, ext_line, readable};
 
 struct LinearDimState {
@@ -55,6 +55,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     };
     let (f1, f2) = (foot(p1), foot(p2));
     let raw_measurement = (p2 - p1).dot(direction).abs();
+    g.formula_value = Some(linear_formula_value(raw_measurement, st));
     g.mtext = linear_text(raw_measurement, d, st, "");
     g.measurement = raw_measurement;
     let measurement = f1.dist(f2);
@@ -247,12 +248,32 @@ fn draw_linear_lines(config: &DimConfig<'_>, g: &mut DimGeometry, state: &Linear
         }
         to_text(g, if state.outside_arrows { state.f2 + u * stub } else { state.f2 });
     }
+    // DIMTMOVE 0: text the user moved along the line past an extension line takes the
+    // dimension line with it, out to its far end.
+    if d.user_text_pos && st.text_move == 0 && state.has_text && !state.text_outside {
+        let len = (state.f2 - state.f1).dot(u);
+        let t = (state.text_mid - state.f1).dot(u);
+        let half = state.half_extent;
+        if t.is_finite() && len.is_finite() {
+            if t + half > len + 1e-9 {
+                seg(g, state.f2, state.f1 + u * (t + half));
+            }
+            if t - half < -1e-9 {
+                seg(g, state.f1 + u * (t - half), state.f1);
+            }
+        }
+    }
+    // DIMTMOVE 1: a leader from the dimension line to text moved off it, under the text.
     if (d.user_text_pos || state.moved) && st.text_move == 1 && state.has_text {
         let base = state.f1.mid(state.f2);
         let offset = (state.text_mid - base).dot(n).abs();
-        if offset > state.text_height / 2.0 + config.gap + 1e-9 {
-            let side = if (base - state.text_mid).dot(state.text_axis) >= 0.0 { state.text_axis } else { -state.text_axis };
-            g.dim(vec![base, state.text_mid + side * (state.text_width / 2.0 + config.gap)]);
+        if offset > state.text_height + config.gap {
+            let (tr, tw, tht, gap) = (state.text_axis, state.text_width, state.text_height, config.gap);
+            let under = state.text_mid - tr.perp() * (tht / 2.0 + gap / 2.0);
+            let (a, b) = (under - tr * (tw / 2.0 + gap / 2.0), under + tr * (tw / 2.0 + gap / 2.0));
+            let near = if a.dist(base) <= b.dist(base) { a } else { b };
+            g.dim(vec![base, near]);
+            g.dim(vec![a, b]);
         }
     }
     if let Some(jog) = d.marks.jog_line {
