@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -65,7 +65,28 @@ pub struct SnapHit {
     /// The entity the snap point lies on (for an intersection, the first of the two), whose Z
     /// the picked point takes.
     #[serde(skip)]
-    pub source: Option<Handle>,
+    pub source: Option<SnapSource>,
+}
+
+/// What a snap point lies on: an object of the drawing and, for one inside a block reference,
+/// the object in the block it came from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SnapSource {
+    /// The drawing's object (for a block's contents, the reference).
+    pub handle: Handle,
+    pub leaf: Option<BlockLeaf>,
+}
+
+/// An object inside a block reference and how the reference places it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockLeaf {
+    /// The object, in its block.
+    pub handle: Handle,
+    /// From drawing coordinates to the block's, seen from above.
+    pub to_block: Mat3,
+    /// The drawing Z of a block Z `z` is `z0 + zs * z`.
+    pub z0: f64,
+    pub zs: f64,
 }
 
 impl SnapHit {
@@ -410,8 +431,8 @@ pub(crate) fn gather(
 /// The entity each gathered candidate and nearby primitive comes from (parallel to them).
 #[derive(Default)]
 struct Sources {
-    cands: Vec<Option<Handle>>,
-    prims: Vec<Option<Handle>>,
+    cands: Vec<Option<SnapSource>>,
+    prims: Vec<Option<SnapSource>>,
 }
 
 fn gather_in(
@@ -459,17 +480,29 @@ fn gather_in(
                 _ => {}
             }
         }
+        let own = Some(SnapSource { handle: e.handle, leaf: None });
         let mut sink = Sink { osmode, aperture, probe, cands: &mut cands, near: &mut near_prims };
         sink.object(&e.kind, None);
-        // A block reference snaps to the objects inside it, placed by its transform.
+        // A block reference snaps to the objects inside it, placed by its transform; each snap
+        // remembers the object it came from, whose Z it takes.
         if let EntityKind::Insert(ins) = &e.kind {
-            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+            let z = plan_z(&e.common, ins, (0.0, 1.0));
+            block_leaves(d, ins, &Mat3::IDENTITY, z, 0, &mut budget, frozen, &mut |be, m, z| {
+                let (c0, p0) = (sink.cands.len(), sink.near.len());
+                sink.object(&be.kind, Some(m));
+                let leaf = z.zip(m.inverse()).map(|((z0, zs), to_block)| BlockLeaf { handle: be.handle, to_block, z0, zs });
+                let from = Some(SnapSource { handle: e.handle, leaf });
+                src.cands.resize(c0, own);
+                src.cands.resize(sink.cands.len(), from);
+                src.prims.resize(p0, own);
+                src.prims.resize(sink.near.len(), from);
+            });
         }
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
-        src.cands.resize(cands.len(), Some(e.handle));
-        src.prims.resize(near_prims.len(), Some(e.handle));
+        src.cands.resize(cands.len(), own);
+        src.prims.resize(near_prims.len(), own);
     }
     Some((cands, near_prims, src))
 }
@@ -542,8 +575,8 @@ fn finish(
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
-        let mut nb: Option<(f64, Vec2, Option<Handle>)> = None;
-        let mut consider = |c: Vec2, from: Option<Handle>| {
+        let mut nb: Option<(f64, Vec2, Option<SnapSource>)> = None;
+        let mut consider = |c: Vec2, from: Option<SnapSource>| {
             let dd = c.dist(cursor);
             if visible(c) && dd <= aperture && nb.is_none_or(|(bd, ..)| dd < bd) {
                 nb = Some((dd, c, from));
@@ -733,7 +766,7 @@ impl Sink<'_> {
                     col_spacing: 0.0,
                     row_spacing: 0.0,
                 };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &ins, &Mat3::IDENTITY, None, 0, budget, frozen, &mut |be, m, _| self.object(&be.kind, Some(m)));
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
@@ -778,7 +811,19 @@ fn dim_def_points(dm: &cadcraft_doc::Dimension) -> Vec<Vec2> {
 /// Calls `f` with each object drawn by a block reference and the transform placing it, nested
 /// references expanded (within [`MAX_BLOCK_DEPTH`] levels and `budget` objects); objects that
 /// aren't drawn (hidden, on a layer that is off or frozen, attribute definitions) are left out.
-fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut usize, frozen: &[String], f: &mut dyn FnMut(&EntityKind, &Mat3)) {
+/// The objects inside a block reference, each with its transform and, when every reference on
+/// the way is in plan (`z`, from [`plan_z`]), how its Z maps to the drawing's.
+#[allow(clippy::too_many_arguments)]
+fn block_leaves(
+    d: &Drawing,
+    ins: &Insert,
+    m: &Mat3,
+    z: Option<(f64, f64)>,
+    depth: usize,
+    budget: &mut usize,
+    frozen: &[String],
+    f: &mut dyn FnMut(&Entity, &Mat3, Option<(f64, f64)>),
+) {
     if depth >= MAX_BLOCK_DEPTH {
         return;
     }
@@ -786,6 +831,7 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
     if blk.entities.is_empty() {
         return;
     }
+    let z = z.map(|(z0, zs)| (z0 - zs * blk.base.z, zs));
     let (cols, rows) = (ins.cols.clamp(1, 10_000), ins.rows.clamp(1, 10_000));
     for r in 0..rows {
         for c in 0..cols {
@@ -809,12 +855,29 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 }
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
-                    EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
-                    k => f(k, &mm),
+                    EntityKind::Insert(inner) => {
+                        let zz = z.and_then(|z| plan_z(&be.common, inner, z));
+                        block_leaves(d, inner, &mm, zz, depth + 1, budget, frozen, f);
+                    }
+                    _ => f(be, &mm, z),
                 }
             }
         }
     }
+}
+
+/// How a block reference in plan maps its block's Z to the drawing's, given `outer`, the map of
+/// the coordinates it is placed in (`(z0, zs)`: drawing Z = `z0 + zs * z`); `None` for a
+/// reference in a tilted or mirrored plane, whose contents keep the reference's own Z.
+fn plan_z(common: &cadcraft_doc::Common, ins: &Insert, outer: (f64, f64)) -> Option<(f64, f64)> {
+    let n = common.extrusion;
+    if n.x.abs() > 1e-9 || n.y.abs() > 1e-9 || n.z <= 0.0 {
+        return None;
+    }
+    // The block's base point is taken off where the block is looked up, in `block_leaves`.
+    let (z0, zs) = outer;
+    let z = (z0 + zs * ins.insert.z, zs * ins.scale.z);
+    (z.0.is_finite() && z.1.is_finite()).then_some(z)
 }
 
 /// Whether `p` comes within `aperture` of the box `probe`.
@@ -893,7 +956,7 @@ fn xform_ellipse(e: &Ellipse, m: &Mat3) -> Ellipse {
 }
 
 /// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
-fn deferred_hit(prims: &[Prim], sources: &[Option<Handle>], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
+fn deferred_hit(prims: &[Prim], sources: &[Option<SnapSource>], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
     let mut best: Option<(f64, SnapHit)> = None;
     for (i, p) in prims.iter().enumerate() {
         let curve = match p {

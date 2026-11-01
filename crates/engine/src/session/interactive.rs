@@ -120,8 +120,17 @@ impl Session {
     pub(crate) fn snap_z(&self, hit: &snap::SnapHit) -> f64 {
         let elevation = self.doc().map(|d| d.header.f64("ELEVATION", 0.0)).unwrap_or(0.0);
         let on_source = || {
-            let e = self.doc().ok()?.entity(hit.source?)?;
-            cmd::inquiry::entity_z(e, hit.point).filter(|z| z.is_finite())
+            let d = self.doc().ok()?;
+            let src = hit.source?;
+            let z = match src.leaf {
+                // An object inside a block reference: its Z where the snap lies, placed by the reference.
+                Some(l) => {
+                    let e = d.blocks.values().find_map(|b| b.entities.get(l.handle))?;
+                    cmd::inquiry::entity_z(e, l.to_block.apply(hit.point)).map(|z| l.z0 + l.zs * z)
+                }
+                None => cmd::inquiry::entity_z(d.entity(src.handle)?, hit.point),
+            };
+            z.filter(|z| z.is_finite())
         };
         let z = if self.settings.osnapz { elevation } else { on_source().unwrap_or_else(|| cmd::inquiry::z_at(self, hit.point)) };
         if z.is_finite() { z } else { 0.0 }

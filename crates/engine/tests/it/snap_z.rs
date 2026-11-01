@@ -163,3 +163,70 @@ fn an_intersection_takes_the_z_of_the_first_object() {
     click(&mut s, Vec2::new(0.01, 0.01), mode::INT);
     assert_eq!(points(&s), vec![Vec3::new(0.0, 0.0, 0.0)]);
 }
+
+/// A reference to `block` at `at`, scaled by `z_scale` in Z only.
+fn reference(block: &str, at: Vec3, z_scale: f64) -> EntityKind {
+    EntityKind::Insert(cadcraft_engine::doc::Insert {
+        block: block.into(),
+        insert: at,
+        scale: Vec3::new(1.0, 1.0, z_scale),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    })
+}
+
+/// Block B: a line rising from (0,0,0) to (10,0,10) and a point at (5,5,5). Block C: B placed
+/// 3 units up.
+fn blocks(s: &mut Session) {
+    let d = s.doc_mut().unwrap();
+    let mut b = cadcraft_engine::doc::Block::new("B");
+    let line = cadcraft_engine::doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 10.0) };
+    b.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), EntityKind::Line(line)));
+    b.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), EntityKind::Point(Point { p: Vec3::new(5.0, 5.0, 5.0), angle: 0.0 })));
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    let mut c = cadcraft_engine::doc::Block::new("C");
+    c.entities.push(cadcraft_engine::doc::Entity::new(d.new_handle(), reference("B", Vec3::new(0.0, 0.0, 3.0), 1.0)));
+    d.blocks.insert("C".into(), std::sync::Arc::new(c));
+}
+
+/// A snap on an object inside a block reference takes that object's Z, placed by the
+/// reference (its insertion Z and Z scale), through nested references too.
+#[test]
+fn a_snap_inside_a_block_takes_the_z_of_the_object_there() {
+    let mut s = Session::new();
+    blocks(&mut s);
+    s.add_entity(reference("B", Vec3::new(100.0, 0.0, 2.0), 2.0)).unwrap();
+    s.add_entity(reference("C", Vec3::new(300.0, 0.0, 1.0), 1.0)).unwrap();
+    s.cmdline("zoom e").ok();
+    s.cmdline("point").unwrap();
+    click(&mut s, Vec2::new(110.01, 0.01), mode::END);
+    s.cmdline("point").unwrap();
+    click(&mut s, Vec2::new(105.01, 5.01), mode::NOD);
+    s.cmdline("point").unwrap();
+    click(&mut s, Vec2::new(310.01, 0.01), mode::END);
+    assert_eq!(points(&s), vec![Vec3::new(110.0, 0.0, 22.0), Vec3::new(105.0, 5.0, 12.0), Vec3::new(310.0, 0.0, 14.0)]);
+}
+
+/// Center and quadrant snaps on an ellipse take its Z.
+#[test]
+fn ellipse_snaps_take_the_ellipses_z() {
+    let mut s = Session::new();
+    let e = cadcraft_engine::doc::Ellipse {
+        center: Vec3::new(300.0, 0.0, 3.0),
+        major: Vec3::new(10.0, 0.0, 0.0),
+        ratio: 0.5,
+        start: 0.0,
+        end: std::f64::consts::TAU,
+    };
+    s.add_entity(EntityKind::Ellipse(e)).unwrap();
+    s.cmdline("zoom e").ok();
+    s.cmdline("point").unwrap();
+    click(&mut s, Vec2::new(300.01, 0.01), mode::CEN);
+    s.cmdline("point").unwrap();
+    click(&mut s, Vec2::new(310.01, 0.01), mode::QUA);
+    assert_eq!(points(&s), vec![Vec3::new(300.0, 0.0, 3.0), Vec3::new(310.0, 0.0, 3.0)]);
+}
