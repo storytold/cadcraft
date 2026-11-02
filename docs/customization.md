@@ -10,6 +10,7 @@ and what is not there yet.
 | Scripts (`.scr`) | SCRIPT (Tools > Run Script...), `cadcraft-cli run --script-file`, and script text over MCP and the control channel. | below |
 | Command aliases (`.pgp`) | ALIASEDIT `{file}` loads an alias file for the session; REINIT reads it again. | below |
 | Compiled plug-ins (C++, .NET) | Not supported. A plug-in API is planned, for plug-ins written in Rust and compiled to WebAssembly. | [gaps.md](gaps.md) (E4) |
+| Plot style tables (`.ctb`, `.stb`), plotter configs (`.pc3`) | Not imported: the files are binary and have no public specification. Recreate the table once in CADCraft's JSON format and load it. | [plot-styles.md](plot-styles.md#importing-autocad-ctbstbpc3-files) |
 | Programs that drive the CAD program from outside | The JSON control channel, the MCP server and `cadcraft-cli`. Any language that can open a TCP socket or start a process can use them. | below |
 
 ## LISP routines
@@ -37,6 +38,26 @@ cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases for the rest of
 the session. Lines that would start external programs are skipped. From a script or the control
 channel: `aliasedit {"file": "/path/to/aliases.pgp"}`.
+
+## Plot styles
+
+CADCraft's plot style tables are its own JSON format. It can't read AutoCAD's binary `.ctb`,
+`.stb`, `.pc3` or `.pmp` files: they have no public specification, and CADCraft is clean-room, so
+it doesn't reverse-engineer vendor data. `STYLESMANAGER load` on one of them explains this
+instead of returning a parse error, and leaves the drawing as it was.
+
+The migration is one-time: read the settings in the source application's plot style table editor
+and write them as CADCraft JSON, then load that file. The field list, a migration checklist and a
+complete CTB template (and a named-table one) are in
+[plot-styles.md](plot-styles.md#importing-autocad-ctbstbpc3-files).
+
+```sh
+cadcraft-cli run drawing.dxf --cmd 'stylesmanager {"action": "load", "path": "office.ctb.json"}'
+```
+
+Keep the file: a user plot style library that shares one table across drawings is #1901. A
+`.pc3` is a plotter configuration rather than a plot style table; devices use CADCraft's own
+JSON too ([plotters.md](plotters.md)).
 
 ## Driving CADCraft from another program
 

@@ -39,8 +39,9 @@ pub const NORMAL_STYLE: &str = "Normal";
 pub const MAX_NAMED_STYLES: usize = 1024;
 /// Largest table file we read, in bytes.
 pub const MAX_TABLE_FILE: usize = 4 << 20;
-/// Format marker and version of our table files.
-const FILE_MARKER: &str = "cadcraftPlotStyleTable";
+/// The JSON key that marks a file as one of our plot style tables.
+pub const TABLE_FILE_MARKER: &str = "cadcraftPlotStyleTable";
+/// Format version of our table files.
 const FILE_VERSION: u64 = 1;
 
 /// Number of styles in a colour-dependent table (one per index colour 1..=255).
@@ -351,7 +352,7 @@ impl PlotStyleTable {
     pub fn to_file_text(&self) -> String {
         let mut v = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
         if let Some(o) = v.as_object_mut() {
-            o.insert(FILE_MARKER.into(), FILE_VERSION.into());
+            o.insert(TABLE_FILE_MARKER.into(), FILE_VERSION.into());
         }
         serde_json::to_string_pretty(&v).unwrap_or_default()
     }
@@ -362,10 +363,10 @@ impl PlotStyleTable {
             return Err("the plot style table file is too large".into());
         }
         let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("not a CADCraft plot style table: {e}"))?;
-        match v.get(FILE_MARKER).and_then(serde_json::Value::as_u64) {
+        match v.get(TABLE_FILE_MARKER).and_then(serde_json::Value::as_u64) {
             Some(FILE_VERSION) => {}
             Some(n) => return Err(format!("plot style table format version {n} is newer than this CADCraft reads")),
-            None => return Err(format!("not a CADCraft plot style table (no `{FILE_MARKER}`)")),
+            None => return Err(format!("not a CADCraft plot style table (no `{TABLE_FILE_MARKER}`)")),
         }
         let t: PlotStyleTable = serde_json::from_value(v).map_err(|e| format!("bad plot style table: {e}"))?;
         Ok(t.sanitized())
