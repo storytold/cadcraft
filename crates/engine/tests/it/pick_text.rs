@@ -502,3 +502,35 @@ fn mtext_bounds_invalidate_when_style_font_changes() {
     let extended_pt = Vec2::new(b1.max.x + (b2.width() - b1.width()) * 0.5, b1.center().y);
     assert_eq!(pick(d2, &Space::Model, extended_pt, 0.5), Some(h));
 }
+
+/// Annotative single-line Text and MText scale exactly once (never f^2) during pick, window, and polygon selection.
+#[test]
+fn annotative_text_and_mtext_do_not_double_scale_in_selection() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "AnnoStyle", "annotative": true, "current": true })).unwrap();
+    let r_text = s.execute("text", &json!({ "at": [0.0, 0.0], "text": "SINGLE", "height": 2.0 })).unwrap();
+    let h_text = Handle::parse_hex(r_text["handle"].as_str().unwrap()).unwrap();
+    let r_mtext = s.execute("mtext", &json!({ "at": [0.0, 100.0], "text": "MULTI", "height": 2.0, "attach": 1 })).unwrap();
+    let h_mtext = Handle::parse_hex(r_mtext["handle"].as_str().unwrap()).unwrap();
+
+    s.execute("objectscale", &json!({ "handles": [h_text.hex(), h_mtext.hex()], "add": "2:1" })).unwrap();
+    s.execute("objectscale", &json!({ "handles": [h_text.hex(), h_mtext.hex()], "add": "1:10" })).unwrap();
+
+    // At 2:1 (factor = 0.5), paper height 2.0 becomes 1.0 in model units (not 0.5 from double-scaling).
+    s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "2:1" })).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(pick(d, &Space::Model, Vec2::new(1.0, 0.75), 0.05), Some(h_text), "upper half of 0.5x scaled Text must still pick");
+
+    // At 1:10 (factor = 10.0), paper height 2.0 becomes 20.0 in model units (not 200.0 from double-scaling).
+    s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "1:10" })).unwrap();
+    let d = s.doc().unwrap();
+    let win_text = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(150.0, 30.0));
+    assert_eq!(select_window(d, &Space::Model, win_text, false), vec![h_text], "window sized for 1x scale factor must enclose Text");
+
+    let win_mtext = Bounds2::new(Vec2::new(-5.0, 70.0), Vec2::new(150.0, 105.0));
+    assert_eq!(select_window(d, &Space::Model, win_mtext, false), vec![h_mtext], "window sized for 1x scale factor must enclose MText");
+
+    // Crossing polygon wholly inside the scaled MText (around y = 90, where unscaled height 2.0 at y = 98..100 wouldn't reach).
+    let poly_inside = [Vec2::new(5.0, 88.0), Vec2::new(8.0, 88.0), Vec2::new(6.5, 92.0)];
+    assert_eq!(select_polygon(d, &Space::Model, &poly_inside, true), vec![h_mtext], "crossing polygon inside scaled MText must select");
+}
