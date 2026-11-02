@@ -1034,6 +1034,7 @@ fn add_associated_dimension(d: &mut Drawing, a: cadcraft_doc::Handle, b: cadcraf
         overrides: Default::default(),
         assoc: vec![at("p13", a), at("p14", b)],
         marks: Default::default(),
+        angle_unit: Default::default(),
     };
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).expect("add dimension");
 }

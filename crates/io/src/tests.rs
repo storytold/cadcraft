@@ -2919,11 +2919,7 @@ fn angular_resave(stored: &str) -> (AngleUnit, f64) {
     let mut patched: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
     patched[i + 1] = stored.into();
     let d = read_dxf(patched.join("\n").as_bytes()).unwrap();
-    let unit = d
-        .model
-        .iter()
-        .find_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm.angle_unit) } else { None })
-        .unwrap();
+    let unit = d.model.iter().find_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm.angle_unit) } else { None }).unwrap();
     (unit, dim_group_42(&write_dxf(&d)))
 }
 

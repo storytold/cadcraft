@@ -1,0 +1,550 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$ACADVER
+  1
+AC1027
+  9
+$INSUNITS
+ 70
+6
+  9
+$HANDSEED
+  5
+2000
+  0
+ENDSEC
+  0
+SECTION
+  2
+TABLES
+  0
+TABLE
+  2
+LTYPE
+  5
+10
+100
+AcDbSymbolTable
+ 70
+3
+  0
+LTYPE
+  5
+11
+100
+AcDbSymbolTableRecord
+100
+AcDbLinetypeTableRecord
+  2
+CONTINUOUS
+ 70
+0
+  3
+Solid line
+ 72
+65
+ 73
+0
+ 40
+0.0
+  0
+LTYPE
+  5
+12
+100
+AcDbSymbolTableRecord
+100
+AcDbLinetypeTableRecord
+  2
+DASHED
+ 70
+0
+  3
+Dashed
+ 72
+65
+ 73
+0
+ 40
+0.0
+  0
+LTYPE
+  5
+13
+100
+AcDbSymbolTableRecord
+100
+AcDbLinetypeTableRecord
+  2
+CENTER
+ 70
+0
+  3
+Center
+ 72
+65
+ 73
+0
+ 40
+0.0
+  0
+ENDTAB
+  0
+TABLE
+  2
+LAYER
+  5
+14
+100
+AcDbSymbolTable
+ 70
+2
+  0
+LAYER
+  5
+15
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+0
+ 70
+0
+ 62
+7
+  6
+CONTINUOUS
+  0
+LAYER
+  5
+16
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+COTA
+ 70
+0
+ 62
+7
+  6
+CONTINUOUS
+  0
+ENDTAB
+  0
+TABLE
+  2
+STYLE
+  5
+17
+100
+AcDbSymbolTable
+ 70
+1
+  0
+STYLE
+  5
+18
+100
+AcDbSymbolTableRecord
+100
+AcDbTextStyleTableRecord
+  2
+Standard
+ 70
+0
+ 40
+0.0
+ 41
+1.0
+  3
+txt
+  0
+ENDTAB
+  0
+TABLE
+  2
+DIMSTYLE
+  5
+19
+100
+AcDbSymbolTable
+ 70
+1
+  0
+DIMSTYLE
+105
+1A
+  2
+ISO-25
+ 70
+0
+ 40
+1.0
+140
+2.5
+271
+2
+  0
+ENDTAB
+  0
+ENDSEC
+  0
+SECTION
+  2
+BLOCKS
+  0
+BLOCK
+  5
+1000
+  8
+0
+  2
+*Model_Space
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Model_Space
+  0
+ENDBLK
+  5
+1001
+  0
+BLOCK
+  5
+1002
+  8
+0
+  2
+*Paper_Space
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Paper_Space
+  0
+ENDBLK
+  5
+1003
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+DIMENSION
+  5
+100
+  8
+COTA
+100
+AcDbDimension
+  2
+*D200
+  3
+ISO-25
+ 70
+0
+ 11
+61.725
+ 21
+-8.0
+ 31
+0.0
+ 50
+0.0
+ 13
+0.0
+ 23
+0.0
+ 33
+0.0
+ 14
+123.45
+ 24
+0.0
+ 34
+0.0
+ 10
+123.45
+ 20
+-10.0
+ 30
+0.0
+ 42
+123.45
+  0
+DIMENSION
+  5
+101
+  8
+COTA
+100
+AcDbDimension
+  2
+*D201
+  3
+ISO-25
+ 70
+1
+ 11
+7.0
+ 21
+76.0
+ 31
+0.0
+ 13
+0.0
+ 23
+50.0
+ 33
+0.0
+ 14
+30.0
+ 24
+90.0
+ 34
+0.0
+ 10
+-8.0
+ 20
+56.0
+ 30
+0.0
+ 42
+50.0
+  0
+DIMENSION
+  5
+102
+  8
+COTA
+100
+AcDbDimension
+  2
+*D202
+  3
+ISO-25
+ 70
+2
+ 11
+225.0
+ 21
+8.0
+ 31
+0.0
+ 13
+200.0
+ 23
+0.0
+ 33
+0.0
+ 14
+260.0
+ 24
+0.0
+ 34
+0.0
+ 15
+200.0
+ 25
+0.0
+ 35
+0.0
+ 16
+221.650635
+ 26
+12.5
+ 36
+0.0
+ 10
+230.0
+ 20
+51.961524
+ 30
+0.0
+ 42
+59.99999989158382
+  0
+DIMENSION
+  5
+103
+  8
+COTA
+100
+AcDbDimension
+  2
+*D203
+  3
+ISO-25
+ 70
+4
+ 11
+412.5
+ 21
+3.0
+ 31
+0.0
+ 15
+425.0
+ 25
+0.0
+ 35
+0.0
+ 10
+400.0
+ 20
+0.0
+ 30
+0.0
+ 42
+25.0
+  0
+DIMENSION
+  5
+104
+  8
+COTA
+100
+AcDbDimension
+  2
+*D204
+  3
+ISO-25
+ 70
+3
+ 11
+500.0
+ 21
+0.0
+ 31
+0.0
+ 15
+500.0
+ 25
+40.0
+ 35
+0.0
+ 10
+500.0
+ 20
+-40.0
+ 30
+0.0
+ 42
+80.0
+  0
+DIMENSION
+  5
+105
+  8
+COTA
+100
+AcDbDimension
+  2
+*D205
+  3
+ISO-25
+ 70
+32
+  1
+<> livre
+ 11
+50.0
+ 21
+190.0
+ 31
+0.0
+ 50
+0.0
+ 13
+0.0
+ 23
+200.0
+ 33
+0.0
+ 14
+100.0
+ 24
+200.0
+ 34
+0.0
+ 10
+0.0
+ 20
+190.0
+ 30
+0.0
+ 42
+100.0
+  0
+DIMENSION
+  5
+106
+  8
+COTA
+100
+AcDbDimension
+  2
+*D206
+  3
+ISO-25
+ 70
+32
+  1
+VAR
+ 11
+37.5
+ 21
+290.0
+ 31
+0.0
+ 50
+0.0
+ 13
+0.0
+ 23
+300.0
+ 33
+0.0
+ 14
+75.0
+ 24
+300.0
+ 34
+0.0
+ 10
+0.0
+ 20
+290.0
+ 30
+0.0
+ 42
+75.0
+  0
+ENDSEC
+  0
+SECTION
+  2
+OBJECTS
+  0
+ENDSEC
+  0
+EOF
