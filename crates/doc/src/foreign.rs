@@ -6,7 +6,7 @@
 //! named object dictionary, a table record, a block, an entity); references to objects that are
 //! gone are dropped. Commands don't edit it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Handle, RawTag};
 
@@ -96,16 +96,29 @@ impl Foreign {
 }
 
 impl Foreign {
+    /// The kept objects by handle (the first of any that share one).
+    fn object_index(&self) -> BTreeMap<Handle, &ForeignObject> {
+        let mut m = BTreeMap::new();
+        for o in &self.objects {
+            m.entry(o.handle).or_insert(o);
+        }
+        m
+    }
+
     /// The kept object `root` and the kept objects it owns, directly or not (dictionary entries
     /// and child pointers, groups 350 and 360), `root` first.
     pub fn tree(&self, root: Handle) -> Vec<Handle> {
+        // Indexed once: a file can keep many objects, and a lookup per pointer would grow with
+        // their product.
+        let by_handle = self.object_index();
         let mut out = vec![root];
+        let mut seen = BTreeSet::from([root]);
         let mut i = 0;
         while let Some(&h) = out.get(i) {
             i += 1;
-            let Some(o) = self.objects.iter().find(|o| o.handle == h) else { continue };
+            let Some(o) = by_handle.get(&h) else { continue };
             for c in o.tags.iter().filter(|t| matches!(t.code, 350 | 360)).filter_map(|t| Handle::parse_hex(t.value.trim())) {
-                if !out.contains(&c) && out.len() < 4096 && self.objects.iter().any(|o| o.handle == c) {
+                if out.len() < 4096 && by_handle.contains_key(&c) && seen.insert(c) {
                     out.push(c);
                 }
             }
@@ -122,10 +135,11 @@ impl Foreign {
             return;
         }
         let map: BTreeMap<Handle, Handle> = tree.iter().copied().zip(fresh.iter().copied()).collect();
+        let by_handle = src.object_index();
         let mut kinds = Vec::new();
         for (n, h) in tree.iter().enumerate() {
-            let Some(o) = src.objects.iter().find(|o| o.handle == *h) else { continue };
-            let mut c = o.clone();
+            let Some(o) = by_handle.get(h) else { continue };
+            let mut c = (*o).clone();
             let Some(&new) = fresh.get(n) else { continue };
             c.handle = new;
             for t in &mut c.tags {
