@@ -416,7 +416,7 @@ fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>
 }
 
 /// Whether point `p` lies inside a stretch frame (two corners, or a polygon). A point on its edge is
-/// inside, for a polygon as for two corners.
+/// inside, for a polygon as for two corners: within a billionth of the edge's length of it.
 fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
     match frame {
         [a, b] => p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y),
@@ -426,7 +426,7 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
             for i in 0..f.len() {
                 let (Some(pi), Some(pj)) = (f.get(i), f.get(j)) else { break };
                 let edge = cadcraft_geom::Line { a: *pj, b: *pi };
-                if edge.dist(p) <= 1e-9 * (1.0 + pi.dist(*pj)) {
+                if edge.dist(p) <= 1e-9 * pi.dist(*pj) {
                     return true;
                 }
                 if (pi.y > p.y) != (pj.y > p.y) && p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x {
@@ -527,10 +527,14 @@ fn apply(
             // The points of a line or polyline that move are those inside the frame where the
             // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
             // doesn't go by the vertex lists the action stores, which a block from another program
-            // can get wrong.
-            let idx = match def.entities.get(*h).map(|e| &e.kind) {
-                Some(EntityKind::Line(l)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
-                Some(EntityKind::LwPolyline(pl)) if framed => inside(frame, pl.vertices.iter().map(|v| v.p)),
+            // can get wrong. A polyline's vertices are in its own plane: in the block's when its
+            // extrusion is along z (a mirrored one is read flipped into it), so a tilted one keeps
+            // the stored list.
+            let idx = match def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
+                Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
+                Some((EntityKind::LwPolyline(pl), n)) if framed && n.x.abs() <= 1e-9 && n.y.abs() <= 1e-9 => {
+                    inside(frame, pl.vertices.iter().map(|v| v.p))
+                }
                 _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
             };
             moves.entry(c).or_default().push((idx, v));

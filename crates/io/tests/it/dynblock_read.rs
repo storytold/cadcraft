@@ -500,6 +500,44 @@ fn a_point_on_the_edge_of_a_polygon_frame_is_inside_it() {
 }
 
 #[test]
+fn a_point_just_outside_a_tiny_frame_is_outside_it() {
+    // A frame 1e-8 across whose right edge is 5e-10 short of line 30's end (36, 0): the end is
+    // outside, so the line, with no point inside, moves whole. An edge's tolerance is a billionth of
+    // its length, not of a drawing unit.
+    let frame = "72 4\n1011 35.99999999\n1021 -1e-8\n1011 35.9999999995\n1021 -1e-8\n1011 35.9999999995\n1021 1e-8\n1011 35.99999999\n1021 1e-8\n";
+    let src = fixture().replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", frame);
+    assert_ne!(src, fixture());
+    let (mut d, r) = door_reference(&src);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    assert_eq!(shapes(&d, r)[0], [(-6.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
+fn a_tilted_polyline_keeps_the_stored_vertex_list() {
+    // Polyline 34 lies in a plane tilted about the y axis (extrusion (1,0,0)): its vertices are in
+    // that plane's coordinates, not the block's, so the frame isn't tested against them and the
+    // stored list (vertex 0) is used, as before. Polyline 35 is mirrored (extrusion (0,0,-1)): it
+    // is read flipped into the block's plane, (-20, 1) as (20, 1), so the frame is tested.
+    let polyline = |h: &str, [x0, x1]: [i32; 2], [ex, ey, ez]: [i32; 3]| {
+        format!(
+            "0 LWPOLYLINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbPolyline\n90 2\n70 0\n10 {x0}\n20 1\n10 {x1}\n20 1\n210 {ex}\n220 {ey}\n230 {ez}\n"
+        )
+    };
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+        .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 3\n331 30\n74 1\n94 1\n331 34\n74 1\n94 0\n331 35\n74 1\n94 0\n75 0")
+        .replace(
+            "21 25\n31 0\n0 ENDBLK\n",
+            &format!("21 25\n31 0\n{}{}0 ENDBLK\n", polyline("34", [20, 36], [1, 0, 0]), polyline("35", [-20, -36], [0, 0, -1])),
+        );
+    let (mut d, r) = door_reference(&src);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let s = shapes(&d, r);
+    assert_eq!(s[3], [(14.0, 1.0), (36.0, 1.0)]);
+    assert_eq!(s[4], [(20.0, 1.0), (30.0, 1.0)]);
+}
+
+#[test]
 fn a_frame_with_too_many_points_to_test_one_by_one_keeps_the_stored_lists() {
     // The same frame as a polygon of `n` points (its four corners, the last repeated). Up to 1000
     // points each point of the objects is tested against it; past that the stored list (here the
