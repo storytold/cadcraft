@@ -187,15 +187,16 @@ fn a_block_without_a_field_is_unchanged() {
     assert_eq!(first(&attrib, 360), None);
 }
 
-/// A DWG made from a drawing with fields on its attributes opens again with them.
+/// A DWG made from a drawing with fields on its attributes holds the fields of the definition and of the attribute.
 #[test]
 fn a_dwg_with_attribute_fields_reopens() {
     let d = read(&drawing(true, "246-302-A"), "t.dxf").unwrap();
     for version in [Version::R2010, Version::R2018] {
         let bytes = write_with(&d, "246-302-A.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
-        let back = read(&bytes, "246-302-A.dwg").unwrap();
-        let g = groups(&write(&back, "x.dxf").unwrap());
-        assert!(records(&g, "FIELD").len() >= 2, "{version:?}: the fields are in the reopened drawing");
+        read(&bytes, "246-302-A.dwg").unwrap();
+        let (dxf, _) = cadcraft_dwg::dwg_to_dxf_noted(&bytes, cadcraft_dwg::Limits::DEFAULT).unwrap();
+        let fields = records(&groups(&dxf), "FIELD").len();
+        assert_eq!(fields, 4, "{version:?}: the definition's and the attribute's fields are in the DWG");
     }
 }
 
