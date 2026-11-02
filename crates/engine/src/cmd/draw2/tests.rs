@@ -270,6 +270,118 @@ fn ellipse_arc_typed_angles_are_true_angles() {
     }
 }
 
+/// Typed ELLIPSE input against what AutoCAD 2024 stores for the same input (black-box: synthetic
+/// input in accoreconsole, read back with `entget`). The major axis points at the first axis
+/// endpoint; a point at the distance prompt gives its distance from the center; an other axis
+/// longer than the first becomes the major axis, the first turned 90° counterclockwise; the
+/// Included angle is added to the start angle.
+#[test]
+fn ellipse_axis_endpoints_match_autocad() {
+    type Case = (&'static str, [f64; 2], [f64; 2], f64, Option<[f64; 2]>);
+    // (input after ELLIPSE, center, major axis, ratio, arc start/end parameters)
+    let cases: [Case; 10] = [
+        // The other axis (27.02) is longer than the first half axis (26.42).
+        (
+            "16.459468652708743,28.120073391143574 -5.034438825478263,-20.14843889196848 27.021868057769268",
+            [5.712514913615239, 3.985817249587547],
+            [-24.6850622596004, 10.99222700689644],
+            0.9776866627982613,
+            None,
+        ),
+        (
+            "33.45015752893423,-27.997665254733153 1.0902141405158297,-9.876490849047837 _R 36.361957504949",
+            [17.27018583472502, -18.93707805189049],
+            [16.1799716942092, -9.060587202842658],
+            0.8052876303433125,
+            None,
+        ),
+        (
+            "0.5161247992610992,0.27380397971284964 0.49874786589184156,0.23294359917255586 0.0026647279687818256",
+            [0.5074363325764704, 0.2533737894427027],
+            [0.00868846668462886, 0.02043019027014691],
+            0.1200276615332929,
+            None,
+        ),
+        // Arcs: the angles are taken from the major axis, so a reversed axis draws the arc
+        // on the opposite side of the center.
+        (
+            "_A 612354.66928411,2398796.595432055 612364.9910379789,2398751.70959102 3.5361631006792016 259.40675054209663 162.0895061623204",
+            [612359.8301610444, 2398774.152511537],
+            [-5.160876934416592, 22.44292051764205],
+            0.1535548572193783,
+            Some([4.683678586016272, 2.014340486820176]),
+        ),
+        (
+            "_A -32.49789607178266,25.826299666765127 16.360636510348964,-6.670894598441254 9.326202777586586 _P 235.35128996877393 341.0349294763654",
+            [-8.068629780716847, 9.577702534161936],
+            [-24.42926629106581, 16.24859713260318],
+            0.317871961092373,
+            Some([4.107654908771007, 5.952182383669234]),
+        ),
+        (
+            "_A _C 15.895131938563559,-16.135236520373613 1.9672122380661037,-18.61293795336168 14.456880177932417 214.65903577683966 _I 232.7163597705933",
+            [15.89513193856356, -16.13523652037361],
+            [2.53204749973717, -14.23341561039267],
+            0.9785367111972643,
+            Some([3.756694588158375, 1.5259701966906878]),
+        ),
+        (
+            "_A _C 1.8822645373261935,-7.920292708078534 28.89115893105938,-23.280023918605742 38.7551404612689 136.20071263173944 _I 129.90755425686075",
+            [1.882264537326193, -7.920292708078534],
+            [19.15838502833398, 33.68853210335513],
+            0.8017236937148501,
+            Some([2.267136066480607, 4.657903136501946]),
+        ),
+        // The other axis given by a point.
+        (
+            "-16.377480557612035,55.44699770062272 -15.579405511585826,-24.406726331471475 -4.27081078679767,42.69814401696656",
+            [-15.97844303459893, 15.52013568457562],
+            [-0.3990375230131046, 39.92686201604709],
+            0.7411292927991227,
+            None,
+        ),
+        (
+            "8.137326847228081,16.045209411091605 -2.4500932561568627,22.585405165312338 -2.4956573993017335,12.374292543621266",
+            [2.843616795535609, 19.31530728820197],
+            [4.602217644463162, 7.450176331143755],
+            0.7105482899194384,
+            None,
+        ),
+        (
+            "_C 15.418189586495892,-18.741133769301225 43.29367724019212,5.337090633133826 12.043993630141971,-7.0535727363182446",
+            [15.41818958649589, -18.74113376930122],
+            [27.87548765369622, 24.07822440243505],
+            0.3302549104883693,
+            None,
+        ),
+    ];
+    use std::f64::consts::{PI, TAU};
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    let same_angle = |a: f64, b: f64| {
+        let d = (a - b).rem_euclid(TAU);
+        d < 1e-9 || TAU - d < 1e-9
+    };
+    for (input, center, major, ratio, arc) in cases {
+        let mut s = Session::new();
+        s.cmdline(&format!("ellipse {input}")).unwrap();
+        assert!(s.running.is_none(), "{input}: {}", s.prompt_text());
+        let EntityKind::Ellipse(e) = last(&s) else { panic!("{input}: no ellipse") };
+        assert!(same(e.center.x, center[0]) && same(e.center.y, center[1]), "{input}: center {:?}", e.center);
+        assert!(same(e.major.x, major[0]) && same(e.major.y, major[1]), "{input}: major {:?}", e.major);
+        assert!(same(e.ratio, ratio), "{input}: ratio {}", e.ratio);
+        let [start, end] = arc.unwrap_or([0.0, TAU]);
+        assert!(same_angle(e.start, start) && same_angle(e.end, end), "{input}: {} {}", e.start, e.end);
+    }
+    // Enter takes the default included angle, 180°: half the ellipse.
+    let mut s = Session::new();
+    s.cmdline("ellipse _A 10,0 -10,0 5 30 _I").unwrap();
+    assert!(s.prompt_text().contains("included angle"), "{}", s.prompt_text());
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let EntityKind::Ellipse(e) = last(&s) else { panic!("no ellipse") };
+    assert!(same_angle(e.end, e.start + PI), "{} {}", e.start, e.end);
+}
+
 // ---------------- DIVIDE / MEASURE ----------------
 
 #[test]
@@ -884,7 +996,8 @@ fn rectang_options_command_line() {
     s.cmdline("rectang 0,0 r p 0,0 1,1 d 2 2 5,5").unwrap();
     let pts = rect_pts(&s);
     assert!(pts.iter().any(|p| near(*p, 0.0, 8f64.sqrt())), "{pts:?}");
-    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 4,4").unwrap();
+    // RECTANG keeps the rotation of the rectangle before (45 degrees), as AutoCAD does: back to 0.
+    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 r 0 4,4").unwrap();
     match last(&s) {
         EntityKind::LwPolyline(p) => assert!(p.const_width == 0.5 && p.vertices.len() == 8),
         k => panic!("{k:?}"),

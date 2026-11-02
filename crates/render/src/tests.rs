@@ -1122,3 +1122,28 @@ fn raster_hatch_pattern_matches_one_by_one() {
         assert!(render(&l, &view, &o).unwrap().data() == render_one_by_one(&l, &view, &o).data());
     }
 }
+
+/// `Options::linetypes` off draws a dashed line, a dashed wide polyline and a linetype on a layer
+/// as the same whole line a Continuous one draws: what hit tests look at.
+#[test]
+fn without_linetypes_every_line_is_drawn_whole() {
+    let drawing = |lt: &str| {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        d.layer_mut("0").unwrap().linetype = lt.into();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(30.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), line).unwrap();
+        let vertices = [(0.0, 5.0), (30.0, 5.0)].map(|(x, y)| PolyVertex::new(Vec2::new(x, y))).to_vec();
+        let wide = cadcraft_doc::LwPolyline { vertices, closed: false, const_width: 0.2, elevation: 0.0, plinegen: false };
+        d.add(&Space::Model, Common::default(), EntityKind::LwPolyline(wide)).unwrap();
+        d
+    };
+    let whole = Options { linetypes: false, ..Options::default() };
+    let continuous = build(&drawing("Continuous"), &Space::Model, &Options::default());
+    let dashed = build(&drawing("DASHED"), &Space::Model, &whole);
+    assert_eq!(dashed.prims.len(), continuous.prims.len());
+    assert_eq!(dashed.verts, continuous.verts);
+    assert_eq!(dashed.tris, continuous.tris);
+    let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
+    assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
