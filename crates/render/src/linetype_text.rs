@@ -2,8 +2,8 @@
 //!
 //! A dash element may carry a text (DXF `74` bit 2, `9` string). As in a `.lin` definition,
 //! where the bracketed text follows the dash or gap that carries it, the text is placed where
-//! that element ends, at every repeat of the pattern (laid out from the start of the run like
-//! [`crate::linetype::apply`]):
+//! that element ends, at every repeat of the pattern (laid out on the run as
+//! [`crate::linetype::apply_as`] lays out its dashes, so none on a run drawn continuous):
 //! - height: the element's scale (`46`), times the text style's fixed height when it has one,
 //!   times the linetype scale;
 //! - origin: the anchor shifted by the X/Y offsets (`44`/`45`, times the linetype scale) along
@@ -17,6 +17,8 @@
 use cadcraft_doc::{Drawing, Linetype};
 use cadcraft_fonts::{Shaped, TextFont, TextParams};
 use cadcraft_geom::Vec2;
+
+use crate::linetype::Layout;
 
 /// Upper bound on the texts drawn along one run (hostile scales; `apply` caps the dashes).
 const MAX_TEXTS: usize = 10_000;
@@ -33,8 +35,8 @@ struct Element {
 
 /// The texts of `lt` along the polyline `pts`, in the coordinates of `pts`. Empty when the
 /// linetype has no text or its scaled pattern is drawn continuous (shorter than `min_pattern`,
-/// or repeating too often).
-pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Shaped> {
+/// or, in a display build, repeating too often: see [`crate::linetype::phase`]).
+pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, how: Layout) -> Vec<Shaped> {
     let mut out = Vec::new();
     if pts.len() < 2 || !lt.pattern.iter().any(|e| e.text.as_deref().is_some_and(|t| !t.trim().is_empty())) {
         return out;
@@ -42,18 +44,23 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern || len / total > 50_000.0 {
+    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern {
         return out;
     }
     let elements = elements(d, lt, scale);
+    let Some((start, stretch)) = crate::linetype::phase(len, lt, scale, min_pattern, how) else { return out };
     if elements.is_empty() {
         return out;
     }
     let mut walk = Walk { pts, i: 0, start: 0.0 };
-    let mut base = 0.0;
+    // From the period before the run's start (a centred or anchored pattern starts before it).
+    let mut base = start - total * stretch;
     'repeats: while base <= len {
         for el in &elements {
-            let s = base + el.at;
+            let s = base + el.at * stretch;
+            if s < 0.0 {
+                continue;
+            }
             if s > len + 1e-9 || out.len() >= MAX_TEXTS {
                 break 'repeats;
             }
@@ -64,7 +71,7 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
             sh.map(|q| origin + q.rotate(rot));
             out.push(sh);
         }
-        base += total;
+        base += total * stretch;
     }
     out
 }
@@ -159,20 +166,20 @@ mod tests {
     #[test]
     fn one_text_per_repeat_at_the_end_of_its_element() {
         let d = Drawing::new_imperial();
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0);
-        // Pattern 0.95 long: anchors at 0.7 and 1.65.
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0, Layout::Open);
+        // Pattern 0.95 long, centred on the 2.0 run (p0 = 0.2): anchors at 0.7 − 0.2 and 1.65 − 0.2.
         assert_eq!(t.len(), 2);
         let x = starts(&t);
-        assert!(x[0] >= 0.69 && x[0] < 0.75, "{x:?}");
-        assert!(x[1] >= 1.64 && x[1] < 1.70, "{x:?}");
+        assert!(x[0] >= 0.49 && x[0] < 0.55, "{x:?}");
+        assert!(x[1] >= 1.44 && x[1] < 1.50, "{x:?}");
     }
 
     #[test]
     fn no_text_when_drawn_continuous() {
         let d = Drawing::new_imperial();
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0, Layout::Open).is_empty());
         let plain = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0, Layout::Open).is_empty());
     }
 
     #[test]
@@ -186,7 +193,7 @@ mod tests {
         }
         let pts = [Vec2::ZERO, Vec2::ZERO, Vec2::new(1e6, 0.0), Vec2::new(1e6, 0.0)];
         for scale in [f64::NAN, 0.0, -1.0, 1e-9, 1e300] {
-            let t = texts(&d, &pts, &lt, scale, 0.0);
+            let t = texts(&d, &pts, &lt, scale, 0.0, Layout::Open);
             assert!(t.len() <= MAX_TEXTS);
         }
     }
