@@ -4,8 +4,12 @@
 //! - BREAK between two points of a closed polyline removes the stretch between them that doesn't
 //!   run through its start vertex, whichever point comes first; BREAK or BREAKATPOINT at one point
 //!   splits it there into two open polylines, and at its start vertex leaves it closed.
-//! - In Standard mode, a polyline that is one of the cutting edges (picked, or with every object)
-//!   is also cut at its own vertices and where it crosses itself.
+//! - A polyline that is one of the cutting edges (picked, or with every object, in Standard or
+//!   Quick mode) is also cut at its own vertices, where it crosses itself and where a vertex of it
+//!   touches another of its segments. A piece whose ends meet there is left closed.
+//!
+//! Quick mode was measured in AutoCAD 2024 itself, picking on screen: its scripted TRIM runs
+//! Standard mode only.
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::{EntityKind, Handle};
@@ -238,10 +242,93 @@ fn a_polyline_picked_as_an_edge_in_quick_mode_cuts_itself_too() {
 }
 
 #[test]
-fn quick_mode_still_cuts_only_at_other_objects() {
-    // Not measured: AutoCAD's scripted TRIM runs Standard mode only.
+fn quick_mode_with_every_object_cuts_a_polyline_at_its_own_vertex_too() {
+    // As Standard mode with every object: from the vertex at (40, 0), not from the line at x = 20.
     let mut s = Session::new();
     let (p, ..) = arc_polyline(&mut s);
     s.execute("trim", &json!({ "handle": p.hex(), "pick": [55, -6], "mode": "quick" })).unwrap();
-    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (20.0, 0.0, 0.0)]), (false, false, &FROM_C)]);
+    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (40.0, 0.0, 0.0)]), (false, false, &FROM_C)]);
+}
+
+/// A rectangle, then an open polyline whose last vertex (6.9, 6.2) touches its second segment
+/// inside the rectangle (reversed: whose first vertex does). The polyline's handle.
+fn touching(s: &mut Session, reversed: bool) -> Handle {
+    pline(s, json!([[3.9, 3.8], [8.3, 3.8], [8.3, 6.9], [3.9, 6.9]]), true);
+    let mut v = vec![[2.3, 3.3], [5.3, 8.0], [8.5, 4.4], [8.8, 7.8], [6.9, 6.2]];
+    if reversed {
+        v.reverse();
+    }
+    pline(s, json!(v), false)
+}
+
+const RECT: [Vertex; 4] = [(3.9, 3.8, 0.0), (8.3, 3.8, 0.0), (8.3, 6.9, 0.0), (3.9, 6.9, 0.0)];
+/// Where the second segment crosses the rectangle's top and right sides.
+const TOP: Vertex = (6.277777777777777, 6.9, 0.0);
+const RIGHT: Vertex = (8.3, 4.625, 0.0);
+
+#[test]
+fn a_polyline_is_cut_where_its_end_touches_it() {
+    let start: [Vertex; 3] = [(2.3, 3.3, 0.0), (5.3, 8.0, 0.0), TOP];
+    let looped: [Vertex; 3] = [(6.9, 6.2, 0.0), (8.5, 4.4, 0.0), (8.8, 7.8, 0.0)];
+    // Picked above the touch, in the rectangle: cut from the top side to the touch. What is left
+    // after it ends where it starts, so it is closed. Quick mode as picked on screen, and Standard
+    // mode with every object at the command line.
+    let mut s = Session::new();
+    let p = touching(&mut s, false);
+    s.execute("trim", &json!({ "handle": p.hex(), "pick": [6.58, 6.56], "mode": "quick" })).unwrap();
+    expect(&s, p, &[(false, true, &RECT), (true, false, &start), (false, true, &looped)]);
+    let mut s = Session::new();
+    let p = touching(&mut s, false);
+    run(&mut s, "TRIM O S\n\n6.58,6.56\n\n");
+    expect(&s, p, &[(false, true, &RECT), (true, false, &start), (false, true, &looped)]);
+    // Below the touch: cut from the touch to the right side.
+    let mut s = Session::new();
+    let p = touching(&mut s, false);
+    trim(&mut s, p, [7.604, 5.408], None);
+    let end: [Vertex; 4] = [RIGHT, (8.5, 4.4, 0.0), (8.8, 7.8, 0.0), (6.9, 6.2, 0.0)];
+    expect(&s, p, &[(false, true, &RECT), (true, false, &[(2.3, 3.3, 0.0), (5.3, 8.0, 0.0), (6.9, 6.2, 0.0)]), (false, false, &end)]);
+    // The first vertex touching: the closed loop is the piece that keeps the handle.
+    let mut s = Session::new();
+    let p = touching(&mut s, true);
+    trim(&mut s, p, [6.58, 6.56], None);
+    expect(
+        &s,
+        p,
+        &[
+            (false, true, &RECT),
+            (true, true, &[(6.9, 6.2, 0.0), (8.8, 7.8, 0.0), (8.5, 4.4, 0.0)]),
+            (false, false, &[TOP, (5.3, 8.0, 0.0), (2.3, 3.3, 0.0)]),
+        ],
+    );
+}
+
+#[test]
+fn a_closed_piece_keeps_its_arcs() {
+    let mut s = Session::new();
+    pline(&mut s, json!([[3.9, 3.8], [8.3, 3.8], [8.3, 6.9], [3.9, 6.9]]), true);
+    let p = pline(&mut s, json!([[2.3, 3.3], [5.3, 8.0], { "p": [8.5, 4.4], "bulge": 0.3 }, [8.8, 7.8], [6.9, 6.2]]), false);
+    trim(&mut s, p, [6.58, 6.56], None);
+    let looped: [Vertex; 3] = [(6.9, 6.2, 0.0), (8.5, 4.4, 0.3), (8.8, 7.8, 0.0)];
+    expect(&s, p, &[(false, true, &RECT), (true, false, &[(2.3, 3.3, 0.0), (5.3, 8.0, 0.0), TOP]), (false, true, &looped)]);
+}
+
+#[test]
+fn a_polyline_is_cut_where_a_vertex_of_it_touches_it() {
+    // The vertex (6, 6) lies on the first segment, which is cut there.
+    let v = json!([[0, 0], [10, 10], [12, 4], [6, 6], [4, 12]]);
+    let mut s = Session::new();
+    let p = pline(&mut s, v.clone(), false);
+    trim(&mut s, p, [3.0, 3.0], None);
+    expect(&s, p, &[(true, false, &[(6.0, 6.0, 0.0), (10.0, 10.0, 0.0), (12.0, 4.0, 0.0), (6.0, 6.0, 0.0), (4.0, 12.0, 0.0)])]);
+    let mut s = Session::new();
+    let p = pline(&mut s, v, false);
+    trim(&mut s, p, [8.0, 8.0], None);
+    expect(
+        &s,
+        p,
+        &[
+            (true, false, &[(0.0, 0.0, 0.0), (6.0, 6.0, 0.0)]),
+            (false, false, &[(10.0, 10.0, 0.0), (12.0, 4.0, 0.0), (6.0, 6.0, 0.0), (4.0, 12.0, 0.0)]),
+        ],
+    );
 }

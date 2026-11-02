@@ -13,10 +13,6 @@ pub(crate) struct Edges<'a> {
     /// Implied edges (EDGEMODE 1): lines and the end segments of open polylines count as running
     /// on without end, arcs as whole circles.
     pub implied: bool,
-    /// Quick mode (TRIMEXTENDMODE 1), where `only: None` means every object but the one trimmed.
-    /// A trimmed polyline that is one of the edges cuts itself too: picked as one, or with every
-    /// object in Standard mode.
-    pub quick: bool,
 }
 
 /// All primitives of the cutting edges (excluding `exclude`).
@@ -103,7 +99,9 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
     }
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let cut = edge_segments(s, edges, h)?;
-    let itself = edges.only.map_or(!edges.quick, |o| o.contains(&h));
+    // A polyline that is one of the edges (picked, or with every object in either mode) cuts
+    // itself too.
+    let itself = edges.only.is_none_or(|o| o.contains(&h));
     let pieces: Vec<EntityKind> = match &e.kind {
         EntityKind::Line(l) => {
             let ln = Line::new(l.a.xy(), l.b.xy());
@@ -284,8 +282,9 @@ const MAX_SELF_CROSSING_SEGMENTS: usize = 2048;
 const MAX_SELF_CROSSINGS: usize = 10_000;
 
 /// Where a polyline cuts itself, as lengths along it: the vertices between its segments (every
-/// vertex of a closed one, its start included) and the points where two of its segments cross.
-/// AutoCAD 2024 trims a polyline that is one of the cutting edges at these.
+/// vertex of a closed one, its start included), the points where two of its segments cross, and
+/// those where a vertex of it (an end included) touches another of its segments. AutoCAD 2024
+/// trims a polyline that is one of the cutting edges at these.
 fn self_cuts(segs: &[Segment], closed: bool) -> Vec<f64> {
     let mut starts = Vec::with_capacity(segs.len());
     let mut acc = 0.0;
@@ -307,9 +306,16 @@ fn self_cuts(segs: &[Segment], closed: bool) -> Vec<f64> {
             }
             for x in intersect_ext(a, b, false) {
                 let (ta, tb) = (param_on(a, x), param_on(b, x));
-                if inside(ta) && inside(tb) {
-                    ts.push(a0 + ta * a.len());
-                    ts.push(b0 + tb * b.len());
+                // A crossing cuts both segments; a vertex touching the other segment cuts that
+                // one (the vertex is a cut already). Two segments meeting at a vertex cut nothing
+                // more.
+                if inside(ta) || inside(tb) {
+                    if inside(ta) {
+                        ts.push(a0 + ta * a.len());
+                    }
+                    if inside(tb) {
+                        ts.push(b0 + tb * b.len());
+                    }
                     crossings += 1;
                     if crossings >= MAX_SELF_CROSSINGS {
                         return ts;
@@ -372,11 +378,20 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         }
         out.push(mk(sub_polyline(&doubled, a, b)));
     } else {
+        // A piece whose ends meet (the polyline touched itself there) is closed, without its
+        // repeated vertex, as AutoCAD leaves it.
+        let piece = |mut vs: Vec<PolyVertex>| {
+            let meets = vs.len() >= 4 && matches!((vs.first(), vs.last()), (Some(a), Some(b)) if a.p.near(b.p, 1e-9 * (1.0 + a.p.len())));
+            if meets {
+                vs.pop();
+            }
+            lwpoly(vs, meets)
+        };
         if lo.is_finite() {
-            out.push(mk(sub_polyline(&segs, 0.0, lo)));
+            out.push(piece(sub_polyline(&segs, 0.0, lo)));
         }
         if hi.is_finite() {
-            out.push(mk(sub_polyline(&segs, hi, total)));
+            out.push(piece(sub_polyline(&segs, hi, total)));
         }
     }
     Ok(out.into_iter().filter(|k| matches!(k, EntityKind::LwPolyline(l) if l.vertices.len() >= 2)).collect())
