@@ -224,16 +224,27 @@ fn separator(path: &str, text: &str) -> char {
     if first.contains(';') && !first.contains(',') { ';' } else { ',' }
 }
 
+/// The file to read for a data link: a path the user just `chosen` as given, a path stored in the
+/// drawing at `host` only through [`crate::doc_path::resolve`].
+fn link_file(id: &str, path: &str, host: Option<&str>, chosen: bool) -> Result<std::path::PathBuf> {
+    if chosen {
+        return Ok(std::path::PathBuf::from(path));
+    }
+    crate::doc_path::resolve(path, host.map(std::path::Path::new)).map_err(|r| bad(id, format!("{path}: not opened, {r}")))
+}
+
 /// Read a linked file through the host (natively the file system; not on the web).
-fn read_link(id: &str, path: &str) -> Result<String> {
+fn read_link(id: &str, file: &std::path::Path) -> Result<String> {
+    let path = file.display();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let meta = std::fs::metadata(path).map_err(|e| bad(id, format!("{path}: {e}")))?;
+        let meta = std::fs::metadata(file).map_err(|e| bad(id, format!("{path}: {e}")))?;
         if meta.len() > MAX_LINK_BYTES {
             return Err(bad(id, format!("{path}: larger than {} MB", MAX_LINK_BYTES >> 20)));
         }
-        let bytes = std::fs::read(path).map_err(|e| bad(id, format!("{path}: {e}")))?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        let bytes = std::fs::read(file).map_err(|e| bad(id, format!("{path}: {e}")))?;
+        let text = String::from_utf8_lossy(&bytes);
+        Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -278,14 +289,16 @@ fn fill(t: &mut Table, start: usize, data: &[Vec<String>]) {
     }
 }
 
-/// Re-read the linked file of table `h`.
-fn update(s: &mut Session, h: Handle) -> Result<(usize, usize)> {
+/// Re-read the linked file of table `h`; `chosen` says its path was just given by the user.
+fn update(s: &mut Session, h: Handle, chosen: bool) -> Result<(usize, usize)> {
     let id = "datalinkupdate";
     let link = match s.doc()?.entity(h).map(|e| &e.kind) {
         Some(EntityKind::Table(t)) => t.data_link.clone().ok_or_else(|| bad(id, "the table has no data link"))?,
         _ => return Err(bad(id, "object is not a table")),
     };
-    let text = read_link(id, &link.path)?;
+    let host = s.state()?.path.clone();
+    let file = link_file(id, &link.path, host.as_deref(), chosen)?;
+    let text = read_link(id, &file)?;
     let data = parse_csv(&text, separator(&link.path, &text));
     let mut size = (0, 0);
     edit(s, &json!({ "handle": h.hex() }), id, |t| {
@@ -313,7 +326,7 @@ fn run_datalink(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     let h = r.get("handle").and_then(Value::as_str).and_then(Handle::parse_hex).ok_or_else(|| bad(id, "no table"))?;
-    let (rows, cols) = update(s, h)?;
+    let (rows, cols) = update(s, h, true)?;
     Ok(json!({ "handle": h.hex(), "rows": rows, "cols": cols }))
 }
 
@@ -340,7 +353,7 @@ fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
     let mut updated = 0;
     let mut errors = Vec::new();
     for h in hs {
-        match update(s, h) {
+        match update(s, h, false) {
             Ok(_) => updated += 1,
             Err(e) => errors.push(e.to_string()),
         }
@@ -368,5 +381,19 @@ mod tests {
         assert_eq!(parse_csv(&tall, ',').len(), MAX_ROWS);
         assert_eq!(separator("a.tsv", "x,y"), '\t');
         assert_eq!(separator("a.csv", "x;y"), ';');
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn link_strips_utf8_bom() {
+        let path = std::env::temp_dir().join(format!("cadcraft_bom_link_{}.csv", std::process::id()));
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"\"Item, name\",Qty\r\nBolt,4\r\n");
+        std::fs::write(&path, bytes).expect("write temp csv");
+        let text = read_link("datalink", &path);
+        let _ = std::fs::remove_file(&path);
+        let text = text.expect("read link");
+        let rows = parse_csv(&text, separator("bom.csv", &text));
+        assert_eq!(rows, vec![vec!["Item, name", "Qty"], vec!["Bolt", "4"]]);
     }
 }

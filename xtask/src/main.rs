@@ -20,7 +20,9 @@ commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
-  ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
+  test            cargo nextest run (cargo test without nextest) plus the doctests
+  i18n            print the strings each interface language shows in English (never fails)
+  ci              fmt --check, clippy -D warnings, test, i18n, assets, layers, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -36,6 +38,8 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
+        Some("test") => cmd_test(),
+        Some("i18n") => cmd_i18n(),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
@@ -133,19 +137,48 @@ fn wasm_set() -> Result<Vec<String>, String> {
 
 fn cmd_wasm() -> Result<(), String> {
     let set = wasm_set()?;
-    let mut results = Vec::new();
+    let mut c = cargo();
+    c.args(["check", "--target", "wasm32-unknown-unknown", "--keep-going"]);
     for pkg in &set {
-        let mut c = cargo();
-        c.args(["check", "--target", "wasm32-unknown-unknown", "-p", pkg]);
-        let ok = run(c, &format!("cargo check --target wasm32-unknown-unknown -p {pkg}")).is_ok();
-        results.push((pkg.clone(), ok));
+        c.args(["-p", pkg]);
     }
-    println!("\nwasm32-unknown-unknown check:");
-    for (p, ok) in &results {
-        println!("  {:<6} {p}", if *ok { "ok" } else { "FAIL" });
+    run(c, &format!("cargo check --target wasm32-unknown-unknown --keep-going ({} crates)", set.len())).map_err(|e| format!("wasm check failed: {e}"))
+}
+
+/// Whether `cargo nextest` is installed.
+fn has_nextest() -> bool {
+    let mut c = cargo();
+    c.args(["nextest", "--version"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c.status().is_ok_and(|s| s.success())
+}
+
+/// Unit and integration tests (examples are not built) with nextest, or `cargo test` when
+/// nextest is missing, then the doctests, which nextest does not run.
+fn cmd_test() -> Result<(), String> {
+    let mut c = cargo();
+    if has_nextest() {
+        c.args(["nextest", "run", "--workspace", "--lib", "--bins", "--tests"]);
+        run(c, "cargo nextest run --workspace --lib --bins --tests")?;
+    } else {
+        eprintln!("note: cargo-nextest is not installed (cargo install cargo-nextest --locked); running cargo test");
+        c.args(["test", "--workspace", "--lib", "--bins", "--tests"]);
+        run(c, "cargo test --workspace --lib --bins --tests")?;
     }
-    let failed = results.iter().filter(|r| !r.1).count();
-    if failed == 0 { Ok(()) } else { Err(format!("{failed} crate(s) failed the wasm check")) }
+    let mut c = cargo();
+    c.args(["test", "--workspace", "--doc"]);
+    run(c, "cargo test --workspace --doc")
+}
+
+/// The translation gap report (`cadcraft-ui-egui`'s ignored `i18n::tests::translation_gaps`).
+/// A missing translation shows in English and never fails a build, so neither does this step.
+fn cmd_i18n() -> Result<(), String> {
+    let mut c = cargo();
+    // `--workspace` builds the same test binaries as the test step; `-p` alone would rebuild them.
+    c.args(["test", "--workspace", "--lib", "-q", "--", "--ignored", "--exact", "i18n::tests::translation_gaps", "--nocapture"]);
+    if let Err(e) = run(c, "cargo test --workspace --lib -q -- --ignored --exact i18n::tests::translation_gaps --nocapture") {
+        eprintln!("note: the translation gap report did not run: {e}");
+    }
+    Ok(())
 }
 
 fn cmd_ci() -> Result<(), String> {
@@ -163,18 +196,12 @@ fn cmd_ci() -> Result<(), String> {
             "clippy",
             Box::new(|| {
                 let mut c = cargo();
-                c.args(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]);
-                run(c, "cargo clippy --workspace --all-targets -- -D warnings")
+                c.args(["clippy", "--workspace", "--all-targets", "--keep-going", "--", "-D", "warnings"]);
+                run(c, "cargo clippy --workspace --all-targets --keep-going -- -D warnings")
             }),
         ),
-        (
-            "test",
-            Box::new(|| {
-                let mut c = cargo();
-                c.args(["test", "--workspace"]);
-                run(c, "cargo test --workspace")
-            }),
-        ),
+        ("test", Box::new(cmd_test)),
+        ("i18n", Box::new(cmd_i18n)),
         ("assets", Box::new(|| assets::run(&root()))),
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),

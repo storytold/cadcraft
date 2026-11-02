@@ -474,7 +474,7 @@ impl Interactive for TrimM {
                 Input::Point(p) => {
                     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
-                    let Some(h) = crate::select::pick(s.doc()?, &space, p, ap) else {
+                    let Some(h) = s.pick_object(&space, p, ap)? else {
                         // A pick in empty space opens a crossing window there.
                         self.stage = Stage::Crossing(Some(p));
                         return Ok(Step::Continue);

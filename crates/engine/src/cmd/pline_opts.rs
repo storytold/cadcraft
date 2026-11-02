@@ -90,19 +90,19 @@ impl PlineAsk {
             PlineAsk::Angle | PlineAsk::CenterAngle(_) | PlineAsk::RadiusAngle(_) => Prompt::new("Specify included angle", Accept::NUMBER),
             PlineAsk::AngleEnd(_) => end(&["CEnter", "Radius"]),
             PlineAsk::AngleCenter(_) | PlineAsk::Center => Prompt::new("Specify center point of arc", Accept::POINT).base(st),
-            PlineAsk::AngleRadius(_) | PlineAsk::Radius => Prompt::new("Specify radius of arc", Accept::POINT_OR_NUMBER).base(st),
+            PlineAsk::AngleRadius(_) | PlineAsk::Radius => Prompt::new("Specify radius of arc", Accept::POINT_OR_NUMBER).base(st).distance(),
             PlineAsk::Chord(a, _) => {
                 let d = shown_direction(s, chord_default(tangent, a));
                 Prompt::new("Specify direction of chord for arc", Accept::POINT_OR_NUMBER).base(st).default(d)
             }
             PlineAsk::CenterEnd(_) => end(&["Angle", "Length"]),
-            PlineAsk::CenterLength(_) => Prompt::new("Specify length of chord", Accept::POINT_OR_NUMBER).base(st),
+            PlineAsk::CenterLength(_) => Prompt::new("Specify length of chord", Accept::POINT_OR_NUMBER).base(st).distance(),
             PlineAsk::Direction => Prompt::new("Specify the tangent direction for the start point of arc", Accept::POINT_OR_NUMBER).base(st),
             PlineAsk::DirectionEnd(_) => Prompt::new("Specify endpoint of the arc", Accept::POINT).base(st),
             PlineAsk::RadiusEnd(_) => end(&["Angle"]),
             PlineAsk::Second => Prompt::new("Specify second point on arc", Accept::POINT).base(st),
             PlineAsk::SecondEnd(_) => Prompt::new("Specify end point of arc", Accept::POINT).base(st),
-            PlineAsk::Length => Prompt::new("Specify length of line", Accept::POINT_OR_NUMBER).base(st),
+            PlineAsk::Length => Prompt::new("Specify length of line", Accept::POINT_OR_NUMBER).base(st).distance(),
         }
     }
 
