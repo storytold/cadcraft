@@ -491,7 +491,7 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
 /// (a Hebrew text or layer name in a prompt, history line or typed value) would otherwise be
 /// turned around as a whole by the shaper, English words and numbers included.
 fn lay(p: &egui::Painter, s: String, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
-    p.layout_job(crate::i18n::job(&s, font, color))
+    p.layout_job(crate::i18n::job_ltr(&s, font, color))
 }
 
 /// The text shown left of the caret when it is not the whole of `buffer`: a buffer ending in a
