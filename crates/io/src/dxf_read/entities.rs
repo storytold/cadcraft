@@ -94,6 +94,9 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     crate::dxf_region::from_polyline(tags, pl)
 }
 
+/// Reads a SPLINE: its degree, knots, weights and control and fit points. Z is kept for each point
+/// group only when it has one value per point, and the spline is refitted when its control points
+/// are not valid.
 fn spline(t: &T) -> Spline {
     let degree = t.i(71).unwrap_or(3).clamp(1, 10) as usize;
     let knots = t.all_f(40);
@@ -105,7 +108,13 @@ fn spline(t: &T) -> Spline {
         cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
             .sanitized();
     let closed = t.i(70).unwrap_or(0) & 1 != 0;
-    let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
+    // Z (groups 30 and 31) is kept only when there is one per point; otherwise the points are planar.
+    // All-zero Z is stored as empty, the same as a planar spline built in code.
+    let z_of = |code: i32, n: usize| Some(t.all_f(code)).filter(|z| z.len() == n && z.iter().any(|v| *v != 0.0)).unwrap_or_default();
+    let fit_z = z_of(31, fit.len());
+    let control_z = z_of(30, control.len());
+    let mut sp =
+        Spline { degree, knots, control: control.clone(), weights, fit: fit.clone(), fit_z: Vec::new(), control_z: Vec::new(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
         sp = Spline::fit_with(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {
@@ -113,6 +122,12 @@ fn spline(t: &T) -> Spline {
     } else if fit.len() >= 3 {
         // DXF keeps the knots, not how they were spaced: recover it for later refits.
         sp.fit_opts.knots = sp.infer_knot_param();
+    }
+    if sp.fit.len() == fit_z.len() {
+        sp.fit_z = fit_z;
+    }
+    if sp.control.len() == control_z.len() {
+        sp.control_z = control_z;
     }
     sp
 }

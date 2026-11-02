@@ -304,6 +304,8 @@ impl Spline {
             control: self.control.iter().rev().copied().collect(),
             weights: self.weights.iter().rev().copied().collect(),
             fit: self.fit.iter().rev().copied().collect(),
+            fit_z: self.fit_z.iter().rev().copied().collect(),
+            control_z: self.control_z.iter().rev().copied().collect(),
             closed: self.closed,
             fit_opts: crate::FitOptions {
                 start_tangent: self.fit_opts.end_tangent.map(|t| -t),

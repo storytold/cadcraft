@@ -2896,3 +2896,40 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }
+
+/// A 3D fit-point SPLINE (group 31 varies, flag 8 clear) keeps its Z through a save. The spline
+/// model held X and Y only, so the saved curve came back flat on the XY plane.
+#[test]
+fn spline_3d_fit_points_keep_their_z() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n5\n40\n8\n0\n100\nAcDbSpline\n70\n0\n71\n3\n72\n0\n73\n0\n74\n4\n\
+11\n0\n21\n0\n31\n0\n11\n10\n21\n0\n31\n5\n11\n20\n21\n10\n31\n10\n11\n30\n21\n0\n31\n15\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(src.as_bytes()).unwrap();
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    let s = dxf_records(&pairs, "SPLINE")[0];
+    let zs: Vec<f64> = s.iter().filter(|p| p.0 == "31").map(|p| p.1.parse().unwrap()).collect();
+    assert_eq!(zs, vec![0.0, 5.0, 10.0, 15.0]);
+    let flags: i64 = group(s, "70").unwrap().parse().unwrap();
+    assert_eq!(flags & 8, 0, "a 3D spline is not planar");
+    assert_eq!(group(s, "72"), Some("0"), "fit points alone: the control polygon is rebuilt from them");
+    // A second save keeps them too.
+    let again = write_dxf(&read_dxf(out.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&again);
+    let zs: Vec<f64> = dxf_records(&pairs, "SPLINE")[0].iter().filter(|p| p.0 == "31").map(|p| p.1.parse().unwrap()).collect();
+    assert_eq!(zs, vec![0.0, 5.0, 10.0, 15.0]);
+}
+
+/// A planar spline still writes the planar flag and its knots and control points when they do not
+/// follow from fit points.
+#[test]
+fn planar_control_point_spline_keeps_its_form() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n5\n40\n8\n0\n100\nAcDbSpline\n70\n8\n71\n1\n72\n4\n73\n2\n74\n0\n\
+40\n0\n40\n0\n40\n1\n40\n1\n10\n0\n20\n0\n30\n0\n10\n5\n20\n5\n30\n0\n0\nENDSEC\n0\nEOF\n";
+    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&out);
+    let s = dxf_records(&pairs, "SPLINE")[0];
+    let flags: i64 = group(s, "70").unwrap().parse().unwrap();
+    assert_eq!(flags & 8, 8);
+    assert_eq!(group(s, "72"), Some("4"));
+    assert_eq!(group(s, "73"), Some("2"));
+}
