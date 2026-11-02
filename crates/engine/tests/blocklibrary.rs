@@ -91,6 +91,10 @@ fn lists_and_imports(s: &mut Session, file: &str) {
     assert!(!d.layers.iter().any(|l| l.name == "Spare"), "an unused layer of the library stays out");
     assert!(d.block("Pump").is_none(), "an unused block of the library stays out");
     s.execute("insert", &json!({ "name": "Gate", "at": [10, 10] })).unwrap();
+    // A block already here is never replaced, whatever the letter case.
+    assert!(s.execute("blocklibimport", &json!({ "path": file, "block": "Pump", "name": "gate" })).is_err());
+    assert_eq!(s.doc().unwrap().block("Gate").unwrap().entities.iter().count(), 1);
+    assert!(s.doc().unwrap().block("Pump").is_none());
     // A block made of another block brings that one too (and its layer), not the unused ones.
     s.execute("blocklibimport", &json!({ "path": file, "block": "Outer", "name": "Assembly" })).unwrap();
     let d = s.doc().unwrap();
@@ -180,6 +184,16 @@ fn bounds_a_huge_table() {
     assert!(names.windows(2).all(|w| w[0].to_ascii_lowercase() <= w[1].to_ascii_lowercase()));
 }
 
+/// BLOCKSPALETTE counts every object that draws a block: references and multileader block content.
+fn counts_what_draws_each_block() {
+    let mut s = Session::new();
+    s.doc_mut().unwrap().blocks.insert("Tag".into(), Arc::new(Block::new("Tag")));
+    s.execute("insert", &json!({ "name": "Tag", "at": [0, 0] })).unwrap();
+    s.execute("mleader", &json!({ "points": [[0, 0], [10, 5]], "block": "tag" })).unwrap();
+    let r = s.execute("blockspalette", &json!({})).unwrap();
+    assert_eq!(r["blocks"], json!([{ "name": "Tag", "description": "", "references": 2 }]));
+}
+
 /// The list file in the settings folder.
 fn checks_the_list_file(s: &mut Session, dir: &std::path::Path, dir_s: &str) {
     // The list file is checked when it is read: junk, bad entries, too many, too big.
@@ -259,6 +273,7 @@ fn libraries_list_import_and_are_kept() {
     keeps_the_list(&mut s, &dir, &dir_s, &file);
     refuses_hostile_input(&mut s, &dir, &dir_s);
     bounds_a_huge_table();
+    counts_what_draws_each_block();
     cadcraft_engine::settings_dir::set(Some(dir.clone()));
     checks_the_list_file(&mut s, &dir, &dir_s);
     cadcraft_engine::settings_dir::set(None);

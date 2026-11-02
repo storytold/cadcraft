@@ -324,7 +324,8 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// BLOCKSPALETTE as a JSON call: the drawing's own blocks (no anonymous, layout or xref blocks)
-/// with their descriptions and how many references use each. The app opens the palette instead.
+/// with their descriptions and how many objects draw each (block references, dimensions and
+/// multileader block content). The app opens the palette instead.
 fn run_blockspalette(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let counting = bool_or(p, "references", true);
@@ -332,8 +333,8 @@ fn run_blockspalette(s: &mut Session, p: &Value) -> Result<Value> {
     if counting {
         let mut count = |store: &cadcraft_doc::EntityStore| {
             for e in store.iter() {
-                if let EntityKind::Insert(i) = &e.kind {
-                    let n = counts.entry(i.block.to_ascii_lowercase()).or_insert(0);
+                if let Some(block) = referenced_block(e) {
+                    let n = counts.entry(block.to_ascii_lowercase()).or_insert(0);
                     *n = n.saturating_add(1);
                 }
             }

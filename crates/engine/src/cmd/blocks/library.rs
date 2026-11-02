@@ -107,7 +107,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .params("{op?: \"list\" (default)|\"add\"|\"remove\", path? (add, remove)} → {libraries: [path], path? (add: the entry as kept)}")
             .noundo(),
         CommandSpec::new("blocklibimport", "Import Library Block", run_import)
-            .params("{path: DWG/DXF file, block?: the block to take from it (default: the whole drawing), name?: the block to define (default: `block`, else the file name)} → {name}")
+            .params("{path: DWG/DXF file, block?: the block to take from it (default: the whole drawing), name?: the block to define (default: `block`, else the file name; never one the drawing already has)} → {name}")
             .enabled(has_doc),
     ]
 }
@@ -197,7 +197,8 @@ fn run_library(_s: &mut Session, p: &Value) -> Result<Value> {
     list_library(path)
 }
 
-/// BLOCKLIBIMPORT: define a library block (or a whole drawing) in the current drawing.
+/// BLOCKLIBIMPORT: define a library block (or a whole drawing) in the current drawing, under a
+/// name it does not have yet.
 fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| bad("blocklibimport", "`path` is required"))?;
     let block = str_param(p, "block").map(str::trim).filter(|s| !s.is_empty());
@@ -209,6 +210,11 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         .unwrap_or_else(|| block.map_or_else(|| stem(path), str::to_string));
     if !valid_block_name(&name) {
         return Err(bad("blocklibimport", format!("\"{name}\" is not a valid block name")));
+    }
+    // A block the drawing already has is never replaced, as in the palette: its references
+    // would change with it.
+    if s.doc()?.block(&name).is_some() {
+        return Err(bad("blocklibimport", format!("block \"{name}\" is already in the drawing")));
     }
     let mut src = (*cached_drawing(path)?).clone();
     let mut picked = None;
