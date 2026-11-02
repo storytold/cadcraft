@@ -475,6 +475,12 @@ fn mtext_empty_first_line_insertion_is_snappable() {
 
     // But clicking at the empty first line insertion point (100, 100) must not select the MText
     assert_eq!(pick(d, &space, Vec2::new(100.0, 100.0), 0.5), None, "empty first line should not be picked");
+
+    let mtext_h = d.model.last().unwrap().handle;
+    let win_text = Bounds2::new(Vec2::new(95.0, 80.0), Vec2::new(160.0, 95.0));
+    assert_eq!(select_window(d, &space, win_text, false), vec![mtext_h]);
+    let win_insert = Bounds2::new(Vec2::new(95.0, 98.0), Vec2::new(105.0, 105.0));
+    assert!(select_window(d, &space, win_insert, false).is_empty());
 }
 
 /// Modifying text style properties (e.g. widthFactor) invalidates the spatial index cache.
