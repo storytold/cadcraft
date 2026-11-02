@@ -189,9 +189,9 @@ pub fn read_stl(bytes: &[u8]) -> Result<Drawing> {
         if count <= MAX_FACES && count.checked_mul(50).and_then(|n| n.checked_add(84)) == Some(bytes.len()) {
             let mut d = Drawing::default();
             let mut attributes = false;
-            for facet in bytes[84..].chunks_exact(50) {
-                for raw in facet[..12].chunks_exact(4) {
-                    if !f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]).is_finite() {
+            for facet in bytes[84..].as_chunks::<50>().0 {
+                for raw in facet[..12].as_chunks::<4>().0 {
+                    if !f32::from_le_bytes(*raw).is_finite() {
                         return Err(error("non-finite STL normal"));
                     }
                 }

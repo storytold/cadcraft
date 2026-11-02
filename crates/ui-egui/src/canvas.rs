@@ -789,7 +789,7 @@ fn refresh_depth_image(app: &mut CadApp, ctx: &egui::Context, xf: &Xf) {
     };
     if let Some(image) = scene.render(&view) {
         let mut rgba = image.rgba.clone();
-        for (pixel, handle) in rgba.chunks_exact_mut(4).zip(&image.handles) {
+        for (pixel, handle) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(&image.handles) {
             if handle.is_some_and(|h| selection.contains(&h) || app.canvas.hover == Some(h)) {
                 pixel[0] /= 2;
                 pixel[1] = pixel[1] / 2 + 90;

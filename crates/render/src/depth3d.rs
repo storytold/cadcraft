@@ -102,12 +102,10 @@ impl Scene {
             let p3 = |p: Vec2| project(Vec3::new(p.x, p.y, 0.0));
             match prim.kind {
                 crate::Kind::Tris => {
-                    for tri in points.chunks_exact(3) {
-                        if let [a, b, c] = tri {
-                            let v = [p3(*a), p3(*b), p3(*c)];
-                            if v.iter().all(|p| p.p.is_finite() && p.z.is_finite()) {
-                                scene.triangles.push(Triangle { v, color, handle: prim.handle });
-                            }
+                    for [a, b, c] in points.as_chunks::<3>().0 {
+                        let v = [p3(*a), p3(*b), p3(*c)];
+                        if v.iter().all(|p| p.p.is_finite() && p.z.is_finite()) {
+                            scene.triangles.push(Triangle { v, color, handle: prim.handle });
                         }
                     }
                 }

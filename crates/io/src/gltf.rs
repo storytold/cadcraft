@@ -83,7 +83,7 @@ fn b64_decode(s: &str) -> Result<Vec<u8>> {
         };
         Ok(value)
     };
-    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+    for (i, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
         let last = i + 1 == bytes.len() / 4;
         let a = decode(chunk[0])?;
         let b = decode(chunk[1])?;
@@ -505,7 +505,7 @@ fn import_mesh(d: &mut Drawing, root: &Value, bin: &[u8], mesh: &Value, name: &s
             .and_then(|i| usize::try_from(i).ok())
             .ok_or_else(|| error("primitive has no POSITION accessor"))?;
         let vals = read_accessor(root, bin, pos_i, "VEC3", 3, 5126)?;
-        let vertices: Vec<Vec3> = vals.chunks_exact(3).map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+        let vertices: Vec<Vec3> = vals.as_chunks::<3>().0.iter().map(|&[x, y, z]| Vec3::new(x, y, z)).collect();
         if vertices.len() > MAX_VERTICES {
             return Err(error("too many vertices"));
         }
@@ -523,7 +523,7 @@ fn import_mesh(d: &mut Drawing, root: &Value, bin: &[u8], mesh: &Value, name: &s
         let det = transform_m[0][0] * (transform_m[1][1] * transform_m[2][2] - transform_m[1][2] * transform_m[2][1])
             - transform_m[0][1] * (transform_m[1][0] * transform_m[2][2] - transform_m[1][2] * transform_m[2][0])
             + transform_m[0][2] * (transform_m[1][0] * transform_m[2][1] - transform_m[1][1] * transform_m[2][0]);
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             let a = transform(transform_m, *vertices.get(tri[0] as usize).ok_or_else(|| error("position index out of range"))?)?;
             let mut b = transform(transform_m, *vertices.get(tri[1] as usize).ok_or_else(|| error("position index out of range"))?)?;
             let mut c = transform(transform_m, *vertices.get(tri[2] as usize).ok_or_else(|| error("position index out of range"))?)?;

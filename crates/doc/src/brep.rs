@@ -52,19 +52,16 @@ fn payload(tags: &[RawTag]) -> Result<Option<Vec<u8>>, String> {
         return Err("invalid exact-solid encoding".into());
     }
     hex.as_bytes()
-        .chunks_exact(2)
-        .map(|b| {
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[hi, lo]| {
             let digit = |x: u8| match x {
                 b'0'..=b'9' => Some(x - b'0'),
                 b'a'..=b'f' => Some(x - b'a' + 10),
                 _ => None,
             };
-            b.first()
-                .copied()
-                .and_then(digit)
-                .zip(b.get(1).copied().and_then(digit))
-                .map(|(a, b)| (a << 4) | b)
-                .ok_or_else(|| "invalid exact-solid encoding".into())
+            digit(hi).zip(digit(lo)).map(|(a, b)| (a << 4) | b).ok_or_else(|| "invalid exact-solid encoding".into())
         })
         .collect::<Result<Vec<_>, _>>()
         .map(Some)

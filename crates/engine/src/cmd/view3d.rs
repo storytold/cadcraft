@@ -274,9 +274,9 @@ pub fn render_png_of_with_options(d: &cadcraft_doc::Drawing, v: View3d, options:
     // The background comes from drawing nothing; the depth picture goes over it where it has pixels.
     let mut pixmap = raster::render(&cadcraft_render::DisplayList::default(), &view, &raster::RasterOptions::default())
         .ok_or_else(|| bad("render", "the 3D picture could not be drawn"))?;
-    for (dst, src) in pixmap.data_mut().chunks_exact_mut(4).zip(image.rgba.chunks_exact(4)) {
-        if src.get(3).is_some_and(|a| *a == 255) {
-            dst.copy_from_slice(src);
+    for (dst, src) in pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(image.rgba.as_chunks::<4>().0) {
+        if src[3] == 255 {
+            *dst = *src;
         }
     }
     let png = pixmap.encode_png().map_err(|e| bad("render", format!("PNG: {e}")))?;
