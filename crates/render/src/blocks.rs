@@ -1,8 +1,12 @@
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
-use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
 
+/// The context for the contents of block reference `e` placed through transform `m`: `m` is
+/// composed with the parent's transform, ByBlock/ByLayer colours, lineweights and linetypes
+/// resolve against the reference and its layer, the nesting depth grows by one, and the parent's
+/// linetype factor and cull window carry into the block.
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
     let color = match e.common.color {
@@ -34,12 +38,36 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         // The reference's own linetype scale (group 48) multiplies that of the objects inside,
         // as LTSCALE does for the drawing (tests/block_ltscale.rs).
         lt_factor: ctx.lt_factor * if e.common.ltscale.is_finite() && e.common.ltscale > 0.0 { e.common.ltscale } else { 1.0 },
+        cull: ctx.cull,
         block_pstyle: ctx.block_pstyle,
         // The reference's own, set by the caller (`Builder::transparency` while it draws).
         block_transparency: ctx.block_transparency,
     }
 }
 
+/// Whether a block entity can reach `win` (in the space `xf` maps to) when drawn through `xf`,
+/// measuring its bounds through this build's cache. False only when its bounds are known and miss
+/// the window: approximate bounds (text, dimensions) are safe, and a transform without finite
+/// bounds is not culled.
+fn reaches_window(cache: &mut cadcraft_doc::BoundsCache, win: Option<Bounds2>, d: &Drawing, e: &Entity, xf: &Mat3, depth: usize) -> bool {
+    let Some(win) = win else { return true };
+    let eb = cache.entity_bounds(d, e, depth);
+    if eb.is_empty() {
+        return true;
+    }
+    let corners = eb.corners().map(|c| xf.apply(c));
+    // `Bounds2::add` drops non-finite points: a box built from the corners that stayed finite would
+    // cover only part of the entity (an extreme insert scale), so keep it uncullable (#1719).
+    if corners.iter().any(|c| !c.is_finite()) {
+        return true;
+    }
+    Bounds2::from_points(corners).intersects(&win)
+}
+
+/// Append block reference `ins` to `b`: every array copy and nested block of its definition, in
+/// the colour `rgb` resolved for the reference, followed by its visible attributes. Stops at
+/// `MAX_BLOCK_DEPTH` and once the block-expansion budget is spent; inside a layout viewport,
+/// entities that cannot reach the cull window are skipped instead of built and clipped away.
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
@@ -58,6 +86,10 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 for be in blk.entities.iter() {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
+                        continue;
+                    }
+                    // A layout viewport only builds what can reach its model window (#1719).
+                    if !reaches_window(&mut b.bounds_cache, ctx.cull, ctx.d, be, &sub.xf, sub.depth) {
                         continue;
                     }
                     if !b.expand() {

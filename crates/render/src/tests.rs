@@ -1,3 +1,5 @@
+use crate::draw::entity;
+use crate::pipeline::top_ctx;
 use crate::raster::{RasterOptions, View, render};
 use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
@@ -212,6 +214,222 @@ fn viewport_contents_can_be_left_out_and_built_for_any_area() {
     assert!(viewport_content(&d, &paper, h, Bounds2::EMPTY, &opts).prims.is_empty());
     let nan = Bounds2::new(Vec2::new(f64::NAN, 0.0), Vec2::new(1.0, 1.0));
     assert!(viewport_content(&d, &paper, h, nan, &opts).prims.is_empty());
+}
+
+/// A line entity from `a` to `b` (both at z = 0) with handle `handle`, for block fixtures whose
+/// expanded-entity counts the viewport culling tests assert on.
+fn block_line(handle: u64, a: Vec2, b: Vec2) -> cadcraft_doc::Entity {
+    let line = cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) };
+    block_entity(handle, Common::default(), EntityKind::Line(line))
+}
+
+/// A block of many separated lines shown through a small viewport: only the lines that can reach
+/// the viewport's model window are expanded (issue #1719). Before, `insert()` built the whole
+/// block and the clip threw most of it away.
+#[test]
+fn viewport_expands_only_block_entities_that_reach_it() {
+    let mut d = Drawing::new_imperial();
+    // SITE: 500 lines a unit long, 10 units apart along x, plus a nested copy of the same spread
+    // (through a block reference) so the culling carries into nested blocks too.
+    let mut site = cadcraft_doc::Block::new("SITE");
+    for i in 0..500u64 {
+        let x = i as f64 * 10.0;
+        site.entities.push(block_line(i + 1, Vec2::new(x, 0.0), Vec2::new(x + 1.0, 0.0)));
+    }
+    let mut nested = cadcraft_doc::Block::new("NESTED");
+    for i in 0..300u64 {
+        let x = i as f64 * 10.0;
+        nested.entities.push(block_line(i + 1, Vec2::new(x, 2.0), Vec2::new(x + 1.0, 2.0)));
+    }
+    d.blocks.insert("NESTED".into(), std::sync::Arc::new(nested));
+    site.entities.push(block_entity(1000, Common::default(), insert_of("NESTED")));
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(site));
+    let model = Space::Model;
+    d.add(&model, Common::default(), insert_of("SITE")).unwrap();
+    // Paper viewport 20x20 showing the 20x20 model window around the origin (scale 1), widened
+    // by the 10 % slack: lines at x = 0 and x = 10 reach it; the other 798 do not.
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    // The two block references themselves and the four lines in reach (two in each block).
+    assert!(l.expanded <= 8, "{} block contents built through the viewport", l.expanded);
+    assert!(!viewport_points(&l).is_empty(), "the lines in the window are drawn");
+}
+
+/// A block reference that does reach the window still draws its visible objects, through its
+/// insert transform, clipped to the viewport.
+#[test]
+fn viewport_draws_and_clips_block_entities_that_reach_it() {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    // Through the window at model (1000, 0), one line above it, and one far away.
+    blk.entities.push(block_line(1, Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)));
+    blk.entities.push(block_line(2, Vec2::new(-100.0, 50.0), Vec2::new(100.0, 50.0)));
+    blk.entities.push(block_line(3, Vec2::new(900.0, 0.0), Vec2::new(901.0, 0.0)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.insert = Vec2::new(1000.0, 0.0).to3(0.0);
+    ins.scale = Vec3::new(2.0, 2.0, 1.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::new(1000.0, 0.0), 20.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    // Only the crossing line is built (the reference and one entity).
+    assert!(l.expanded <= 3, "{} block contents built through the viewport", l.expanded);
+    let pts = viewport_points(&l);
+    assert_eq!(pts.len(), 1, "the line through the window is drawn, the others are not");
+    // It is clipped to the viewport rectangle and sits at paper y = 5 (model y = 0).
+    let rect = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(15.0, 15.0)).expand(1e-9);
+    assert_eq!(pts[0].len(), 2);
+    assert!(pts[0].iter().all(|q| rect.contains(*q) && (q.y - 5.0).abs() < 1e-9));
+}
+
+/// Hostile insert scales (not a number, near-`f64::MAX`, and zero) must not panic when the new
+/// viewport culling measures a block entity's bounds: bounds that cannot be computed count as in
+/// reach and fall through to the normal draw path, so the plot still completes (#1719,
+/// never-crash standard).
+#[test]
+fn hostile_insert_transforms_do_not_panic_when_culled() {
+    for scale in [Vec3::new(f64::NAN, 1.0, 1.0), Vec3::new(1e308, 1e308, 1.0), Vec3::new(0.0, 0.0, 1.0)] {
+        let mut d = Drawing::new_imperial();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(block_line(1, Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+        ins.scale = scale;
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let paper = Space::Paper("Layout1".into());
+        d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+        let _ = build_plot(&d, &paper, &Options::default());
+    }
+}
+
+/// A viewport area so wide that the 10 % slack pushes the paper-space corners of its model window
+/// past `f64::MAX`: the corners that stayed finite cover only one corner of the window, so culling
+/// must switch off instead of skipping block contents at the visible centre (#1719 review).
+#[test]
+fn overflowing_viewport_window_corners_disable_culling() {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_line(1, Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    d.add(&Space::Model, Common::default(), insert_of("B")).unwrap();
+    let center = Vec2::new(1e308, 1e308);
+    let half = Vec2::new(0.75e308, 0.75e308);
+    let area = Bounds2::new(center - half, center + half);
+    assert!(area.min.is_finite() && area.max.is_finite(), "a finite area");
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(center, 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+    let h = d.space(&paper).unwrap().iter().find(|e| matches!(e.kind, EntityKind::Viewport(_))).unwrap().handle;
+    // The model window is area / 1, widened by 10 %: a corner lands at 1e308 + 0.825e308 = infinity
+    // while the block sits at the window's centre, in paper units at the viewport's centre.
+    let l = viewport_content(&d, &paper, h, area, &Options::default());
+    assert!(!viewport_points(&l).is_empty(), "the block at the visible centre is drawn");
+}
+
+/// A block reference whose extreme Y scale leaves only some axis-aligned bound corners finite: the
+/// finite ones cover a strip far from the drawable part near angle 0, so the circle must stay
+/// uncullable and be built, then clipped, rather than skipped (#1719 review).
+#[test]
+fn partially_non_finite_entity_bounds_stay_uncullable() {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_entity(1, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 1.0 })));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    // Model bounds transform to y = 0.65e308 +/- 1.3e308: the +Y corners overflow, and the finite
+    // ones stay at y = -0.65e308 while the circle draws at y = 0.65e308, inside the window.
+    ins.scale = Vec3::new(1.0, 1.3e308, 1.0);
+    ins.insert = Vec3::new(0.0, 0.65e308, 0.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::new(0.0, 0.65e308), 20.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    assert!(l.expanded >= 2, "the circle is expanded after the reference, not culled ({} built)", l.expanded);
+    assert!(!viewport_points(&l).is_empty(), "the circle's drawable part is drawn");
+}
+
+/// ATTMODE 2 (ATTDISP All) draws a nested reference's invisible attribute although its visible
+/// geometry is off-window: insert bounds count the attribute when it shows, so the viewport does
+/// not cull the reference that draws it (#1719 review).
+#[test]
+fn attmode_two_keeps_nested_inserts_with_invisible_attributes() {
+    let mut d = Drawing::new_imperial();
+    let mut far = cadcraft_doc::Block::new("FAR");
+    far.entities.push(block_line(1, Vec2::new(1e6, 0.0), Vec2::new(1e6 + 10.0, 0.0)));
+    d.blocks.insert("FAR".into(), std::sync::Arc::new(far));
+    let EntityKind::Insert(mut nested) = insert_of("FAR") else { panic!("an insert") };
+    nested.attribs.push(cadcraft_doc::Attrib {
+        tag: "TAG".into(),
+        text: cadcraft_doc::Text {
+            insert: Vec3::ZERO,
+            align_pt: None,
+            height: 1.0,
+            value: "HI".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: Default::default(),
+            valign: Default::default(),
+        },
+        invisible: true,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    });
+    let mut outer = cadcraft_doc::Block::new("OUTER");
+    outer.entities.push(block_entity(2, Common::default(), EntityKind::Insert(nested)));
+    d.blocks.insert("OUTER".into(), std::sync::Arc::new(outer));
+    d.add(&Space::Model, Common::default(), insert_of("OUTER")).unwrap();
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+    // ATTMODE 1: the invisible attribute does not count, and the visible geometry misses the window.
+    d.header.set_i64("ATTMODE", 1);
+    assert!(viewport_points(&build_plot(&d, &paper, &Options::default())).is_empty());
+    // ATTMODE 2: it is drawn at the reference's insertion point, inside the window.
+    d.header.set_i64("ATTMODE", 2);
+    assert!(!viewport_points(&build_plot(&d, &paper, &Options::default())).is_empty(), "the shown attribute is drawn");
+}
+
+/// One build measures each block definition once however many references it holds: OUTER's 50
+/// references to INNER share one bounds entry while the viewport culls them (#1719 review).
+#[test]
+fn viewport_culling_measures_repeated_nested_blocks_once() {
+    let mut d = Drawing::new_imperial();
+    let mut inner = cadcraft_doc::Block::new("INNER");
+    for i in 0..20u64 {
+        let x = i as f64;
+        inner.entities.push(block_line(i + 1, Vec2::new(x, 0.0), Vec2::new(x + 1.0, 0.0)));
+    }
+    d.blocks.insert("INNER".into(), std::sync::Arc::new(inner));
+    let mut outer = cadcraft_doc::Block::new("OUTER");
+    for i in 0..50u64 {
+        outer.entities.push(block_entity(i + 1, Common::default(), insert_of("INNER")));
+    }
+    d.blocks.insert("OUTER".into(), std::sync::Arc::new(outer));
+    let EntityKind::Insert(ins) = insert_of("OUTER") else { panic!("an insert") };
+    let e = block_entity(1, Common::default(), EntityKind::Insert(ins));
+    let opts = Options::default();
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts: &opts,
+        plotting: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_cache: cadcraft_doc::BoundsCache::new(),
+    };
+    // A window far from every reference: all 50 are measured (and skipped) through the one cache.
+    let mut ctx = top_ctx(&d, Mat3::IDENTITY, Handle(1), &[], &[]);
+    ctx.cull = Some(Bounds2::new(Vec2::new(1e6, -1.0), Vec2::new(1e6 + 1.0, 1.0)));
+    entity(&mut b, &ctx, &e);
+    // INNER's contents at depth 1: measured once, not once per reference.
+    assert_eq!(b.bounds_cache.len(), 1, "one bounds entry for INNER, not one per reference");
+    assert!(b.list.prims.is_empty(), "nothing reaches the window");
 }
 
 #[test]

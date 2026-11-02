@@ -26,7 +26,7 @@ pub mod units;
 mod wide;
 
 use cadcraft_color::{Color, Rgb};
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space};
+use cadcraft_doc::{BoundsCache, Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space};
 use cadcraft_geom::{Bounds2, Mat3, Polyline, Vec2};
 use pen::Pen;
 
@@ -96,6 +96,9 @@ struct Ctx<'a> {
     /// Extra linetype scale for model space seen through a viewport: 1 / viewport scale when
     /// `PSLTSCALE` is on (dashes keep their paper-space length at any viewport scale), else 1.
     lt_factor: f64,
+    /// The model window a layout viewport draws, in the space `xf` maps to (paper units): block
+    /// entities whose bounds through `xf` miss it are not expanded. `None` when not culling.
+    cull: Option<Bounds2>,
     /// Named plot style (table index) of the block reference being expanded, for `ByBlock`.
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
@@ -125,6 +128,9 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// Bounds of block contents measured while culling this build: repeated references to a block,
+    /// nested ones included, are measured once instead of once per reference (#1719).
+    bounds_cache: BoundsCache,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
