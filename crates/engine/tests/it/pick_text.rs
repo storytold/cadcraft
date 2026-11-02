@@ -426,3 +426,79 @@ fn mtext_wrapped_lines_in_large_scene_spatial_index() {
     let second_line_cross = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
     assert_eq!(select_window(d, &Space::Model, second_line_cross, true), vec![mtext_h]);
 }
+
+/// Annotative MText hidden at an unsupported annotation scale cannot be selected by pick or window.
+#[test]
+fn mtext_hidden_at_annotation_scale_is_not_selectable() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "AnnoStyle", "annotative": true, "current": true })).unwrap();
+    s.execute("mtext", &json!({ "at": [10.0, 10.0], "text": "ANNO TEXT", "height": 2.5 })).unwrap();
+    let d = s.doc().unwrap();
+    let h = d.model.last().unwrap().handle;
+
+    // At 1:1, it is visible and selectable by pick and window.
+    let full_window = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(30.0, 20.0));
+    assert_eq!(pick(d, &Space::Model, Vec2::new(12.0, 9.0), 1.0), Some(h));
+    assert_eq!(select_window(d, &Space::Model, full_window, false), vec![h]);
+
+    // Change scale to 1:20 and turn ANNOALLVISIBLE off (0).
+    s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "1:20" })).unwrap();
+    s.execute("setvar", &json!({ "name": "ANNOALLVISIBLE", "value": 0 })).unwrap();
+    let d = s.doc().unwrap();
+
+    // Hidden MText cannot be picked or window selected.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(12.0, 9.0), 1.0), None);
+    assert!(select_window(d, &Space::Model, full_window, false).is_empty());
+}
+
+/// MText with an empty first line still allows snapping to its INS insertion point.
+#[test]
+fn mtext_empty_first_line_insertion_is_snappable() {
+    use cadcraft_engine::pointmod::snap_candidates;
+    use cadcraft_engine::snap::mode;
+
+    let mut s = Session::new();
+    for i in 0..260 {
+        s.execute("point", &json!({ "at": [i * 10, 500] })).unwrap();
+    }
+    // MText with empty first line at insert (100, 100)
+    s.execute("mtext", &json!({ "at": [100.0, 100.0], "text": "\\PSecond Line", "height": 5.0, "attach": 1 })).unwrap();
+    let d = s.doc().unwrap();
+    let space = Space::Model;
+
+    // Snapping near insertion point (100, 100) must find INS snap candidate
+    let cands = snap_candidates(d, &space, Vec2::new(100.0, 100.0), 1.0, mode::INS, None, false);
+    assert!(
+        cands.iter().any(|hit| hit.mode == mode::INS && (hit.point - Vec2::new(100.0, 100.0)).len() < 1e-4),
+        "INS snap should be found: {cands:?}"
+    );
+
+    // But clicking at the empty first line insertion point (100, 100) must not select the MText
+    assert_eq!(pick(d, &space, Vec2::new(100.0, 100.0), 0.5), None, "empty first line should not be picked");
+}
+
+/// Modifying text style properties (e.g. widthFactor) invalidates the spatial index cache.
+#[test]
+fn mtext_bounds_invalidate_when_style_font_changes() {
+    let mut s = Session::new();
+    for i in 0..260 {
+        s.execute("point", &json!({ "at": [i * 10, 500] })).unwrap();
+    }
+    s.execute("style", &json!({ "name": "DynamicStyle", "font": "CADCraft Stroke", "widthFactor": 1.0, "current": true })).unwrap();
+    s.execute("mtext", &json!({ "at": [0.0, 0.0], "text": "DYNAMIC WIDTH", "height": 10.0, "style": "DynamicStyle" })).unwrap();
+    let d = s.doc().unwrap();
+    let h = d.model.last().unwrap().handle;
+
+    let ix_initial = cadcraft_engine::spatial::index(d, &Space::Model).unwrap();
+    let b1 = ix_initial.bounds(260);
+
+    // Change style's widthFactor to 2.5
+    s.execute("style", &json!({ "name": "DynamicStyle", "widthFactor": 2.5 })).unwrap();
+    let d2 = s.doc().unwrap();
+    let ix_updated = cadcraft_engine::spatial::index(d2, &Space::Model).unwrap();
+    let b2 = ix_updated.bounds(260);
+
+    assert!(b2.width() > b1.width() * 1.5, "b2.width ({}) should be significantly wider than b1.width ({})", b2.width(), b1.width());
+    let extended_pt = Vec2::new(b1.max.x + (b2.width() - b1.width()) * 0.5, b1.center().y);
+    assert_eq!(pick(d2, &Space::Model, extended_pt, 0.5), Some(h));
+}
