@@ -158,6 +158,16 @@ fn refuses_hostile_input(s: &mut Session, dir: &std::path::Path, dir_s: &str) {
     assert!(s.execute("blocklibimport", &json!({ "path": dir_s })).is_err(), "a folder is not a drawing");
     assert!(s.execute("blocklibrary", &json!({ "path": dir.join("missing.dxf").to_string_lossy() })).is_err());
 
+    // A file is a library by its name, not by its bytes: `part.bin` is refused before it is read.
+    let bin = dir.join("part.bin").to_string_lossy().to_string();
+    std::fs::write(&bin, b"x").unwrap();
+    let reads = READS.load(Ordering::SeqCst);
+    assert!(s.execute("blocklibrary", &json!({ "path": bin })).is_err());
+    assert!(s.execute("blocklibimport", &json!({ "path": bin, "block": "Valve", "name": "FromBin" })).is_err());
+    assert!(cadcraft_engine::cmd::read_library_file(&bin).is_err());
+    assert_eq!(READS.load(Ordering::SeqCst), reads, "the file was not parsed");
+    assert!(s.doc().unwrap().block("FromBin").is_none());
+
     // A library whose blocks hold each other imports without hanging, and the session goes on.
     let cycle = dir.join("cycle.dxf").to_string_lossy().to_string();
     std::fs::write(&cycle, b"x").unwrap();

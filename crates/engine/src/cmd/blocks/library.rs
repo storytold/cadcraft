@@ -70,6 +70,10 @@ fn stamp(path: &str) -> Option<(u64, Option<SystemTime>)> {
 /// A library drawing, read once and kept while the file is as it was: placing a block must not
 /// parse the whole file again.
 fn cached_drawing(path: &str) -> Result<Arc<Drawing>> {
+    // The reader sniffs the bytes, so a DXF named `part.bin` would load: the contract is DWG/DXF by name.
+    if !is_drawing(Path::new(path)) {
+        return Err(bad("blocklibrary", format!("{path}: expected a DWG or DXF file")));
+    }
     let now = stamp(path);
     if let Some(now) = now
         && let Ok(cache) = CACHE.lock()
