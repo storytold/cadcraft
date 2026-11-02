@@ -75,9 +75,17 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
     };
     let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
-    let mut records: Vec<(&str, &VportTile)> = match tiled {
-        Some(c) => c.tiles.iter().map(|t| (VportConfig::ACTIVE, t)).collect(),
-        None => vec![(VportConfig::ACTIVE, &single)],
+    // The first `*ACTIVE` record is the one a reader takes the view from, so it carries the saved
+    // view while keeping its own place on the screen and the tiles after it unchanged. Writing
+    // the stored tiles as they stand put the new view in HEADER and the old one here, and the
+    // read takes this one, so updating the view of a tiled drawing did not survive a round trip
+    // (noted in review).
+    let first = tiled.and_then(|c| c.tiles.first()).map(|t| VportTile { center, height, ..*t });
+    let mut records: Vec<(&str, &VportTile)> = match (tiled, first.as_ref()) {
+        (Some(c), Some(first)) => {
+            std::iter::once((VportConfig::ACTIVE, first)).chain(c.tiles.iter().skip(1).map(|t| (VportConfig::ACTIVE, t))).collect()
+        }
+        _ => vec![(VportConfig::ACTIVE, &single)],
     };
     records.extend(d.vports.iter().filter(|c| !c.is_active() && !c.name.is_empty()).flat_map(|c| c.tiles.iter().map(|t| (c.name.as_str(), t))));
     let th = table_head(w, "VPORT", records.len());

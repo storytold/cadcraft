@@ -324,17 +324,21 @@ fn vport_record(d: &mut Drawing, t: &T) {
     let centred = t.f(12).is_some() && t.f(22).is_some();
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
-    let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
-        && max.x > min.x + 1e-6
-        && max.y > min.y + 1e-6
-        && center.is_finite()
-        && height.is_finite()
-        && height > 0.0;
-    if name.is_empty() || !ok {
+    // One record carries two separate things: where the tile sits on the screen (10/11) and the
+    // view it shows (12/22, 40). They are judged apart, because a record can hold a usable view
+    // with a tile rectangle that is not usable -- a first `*ACTIVE` like that used to return
+    // before the view was read, so a file whose header has no view opened on the extent fit
+    // instead of where it was saved (noted in review).
+    let view_ok = center.is_finite() && height.is_finite() && height > 0.0;
+    let tile_ok = [min.x, min.y, max.x, max.y].into_iter().all(unit) && max.x > min.x + 1e-6 && max.y > min.y + 1e-6;
+    if name.is_empty() {
         return;
     }
-    if first_active && centred {
+    if first_active && centred && view_ok {
         d.header.set_saved_view(center, height);
+    }
+    if !view_ok || !tile_ok {
+        return;
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
     let clamp = |p: Vec2| Vec2::new(p.x.clamp(0.0, 1.0), p.y.clamp(0.0, 1.0));

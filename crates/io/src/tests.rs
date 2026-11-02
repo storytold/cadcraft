@@ -587,6 +587,58 @@ fn a_viewport_record_without_a_centre_keeps_the_header_view() {
     assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the header pair is kept");
 }
 
+/// Updating the saved view of a drawing that has several model-space tiles survives a round
+/// trip. The write put the new view in HEADER but emitted the stored tiles unchanged, and the
+/// read takes its view from the first `*ACTIVE` record, so the update was read back as the old
+/// view (noted in review of #1602).
+#[test]
+fn a_saved_view_set_on_a_tiled_drawing_survives_a_round_trip() {
+    let mut d = sample();
+    // Two tiles side by side, the first the current one, each with its own old view.
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0 };
+    d.vports.push(VportConfig {
+        name: VportConfig::ACTIVE.to_string(),
+        tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
+    });
+    d.header.set_saved_view(Vec2::new(70.0, 80.0), 30.0);
+
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(70.0, 80.0), 30.0)), "the view that was set is the one read back");
+    // The tiled configuration is still there, and the first tile keeps its own half of the screen.
+    let active = back.vports.iter().find(|c| c.is_active()).expect("the tiled configuration is kept");
+    assert_eq!(active.tiles.len(), 2, "both tiles are written: {:?}", active.tiles);
+    assert_eq!(active.tiles[0].max, Vec2::new(0.5, 1.0), "the first tile keeps its rectangle");
+    assert_eq!(active.tiles[1].center, Vec2::new(2.0, 2.0), "and the second tile keeps its own view");
+}
+
+/// A first `*ACTIVE` record can hold a usable view (12/22 centre, 40 height) with a tile
+/// rectangle that is not usable. The record used to be dropped whole before the view was read,
+/// so a file whose header carries no view opened on the extent fit rather than where it was
+/// saved (noted in review of #1602).
+#[test]
+fn a_viewport_record_with_a_bad_tile_still_gives_its_view() {
+    // No `$VIEWCTR`/`$VIEWSIZE`, and a tile whose corners are equal (10/11 both 0,0), so the
+    // rectangle is unusable while the view is not: centre 50,50 and height 20.
+    const BAD_TILE: &str = "\
+0\nSECTION\n2\nHEADER\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n\
+12\n50.0\n22\n50.0\n40\n20.0\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(BAD_TILE.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the view the record holds is read");
+    // The unusable rectangle is still refused, so the split did not make the tile permissive.
+    assert!(d.vports.iter().all(|c| c.tiles.is_empty()), "the tile itself is not kept: {:?}", d.vports);
+
+    // And a record with no usable view either leaves the header alone, as before.
+    const NEITHER: &str = "\
+0\nSECTION\n2\nHEADER\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n\
+12\n50.0\n22\n50.0\n40\n0.0\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let neither = read_dxf(NEITHER.as_bytes()).unwrap();
+    assert_eq!(neither.header.saved_view(), None, "a zero height is not a view, so the header keeps none");
+}
+
 #[test]
 fn dxf_roundtrips_page_setup() {
     let mut d = sample();
