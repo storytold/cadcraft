@@ -407,6 +407,67 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
     (atoms, fmts)
 }
 
+/// `word` split where a line may wrap inside it: between two Thai words, as Thai writes no
+/// spaces between words ([`crate::linebreak::thai_breaks`]). The pieces keep the word's segments
+/// and formats in order and are laid out side by side, so the text looks the same and only gains
+/// places to wrap. A word without Thai comes back whole.
+///
+/// Lines still wrap at spaces first, as before: only a word too wide for a line of its own (which
+/// would run out of the column) is split, so text that fits keeps its line breaks, as its author
+/// saw them.
+fn split_thai(word: Vec<(Seg, usize)>) -> Vec<Vec<(Seg, usize)>> {
+    if !word.iter().any(|(seg, _)| matches!(seg, Seg::Text(t) if t.chars().any(crate::complex::is_thai))) {
+        return vec![word];
+    }
+    // The word's characters, a stacked fraction standing as one object replacement character
+    // (never next to a Thai break).
+    let text: String = word
+        .iter()
+        .map(|(seg, _)| match seg {
+            Seg::Text(t) => t.as_str(),
+            Seg::Stack(..) => "\u{FFFC}",
+        })
+        .collect();
+    let breaks = crate::linebreak::thai_breaks(&text);
+    if breaks.is_empty() {
+        return vec![word];
+    }
+    let mut pieces = Vec::with_capacity(breaks.len().saturating_add(1));
+    let mut breaks = breaks.iter().copied().peekable();
+    let mut piece: Vec<(Seg, usize)> = Vec::new();
+    // Character offset of the segment being split.
+    let mut at = 0usize;
+    for (seg, format) in word {
+        let Seg::Text(t) = seg else {
+            piece.push((seg, format));
+            at += 1;
+            continue;
+        };
+        let n = t.chars().count();
+        let (mut rest, mut rest_at) = (t.as_str(), at);
+        while let Some(b) = breaks.next_if(|&b| b < at + n) {
+            let k = b.saturating_sub(rest_at);
+            let byte = rest.char_indices().nth(k).map_or(rest.len(), |(i, _)| i);
+            let (head, tail) = rest.split_at_checked(byte).unwrap_or((rest, ""));
+            if !head.is_empty() {
+                piece.push((Seg::Text(head.to_string()), format));
+            }
+            if !piece.is_empty() {
+                pieces.push(std::mem::take(&mut piece));
+            }
+            (rest, rest_at) = (tail, b.max(rest_at));
+        }
+        if !rest.is_empty() {
+            piece.push((Seg::Text(rest.to_string()), format));
+        }
+        at += n;
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    pieces
+}
+
 fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     match seg {
         Seg::Text(t) => text_width(&f.font, t, f.height, f.wf),
@@ -537,6 +598,8 @@ pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attac
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }
 
+/// The lines of MTEXT without paragraph codes: words wrap at spaces to `width` (0: no wrapping),
+/// and a word too wide for a line of its own wraps between its Thai words.
 fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line> {
     let fmt = |index: usize| fmts.get(index).unwrap_or(base);
     let mut lines = Vec::new();
@@ -566,32 +629,44 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 paragraph += 1;
                 last_fmt = *format;
             }
-            Atom::Word(segments) => {
-                let word_width: f64 = segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum();
-                let space_width =
-                    pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
-                if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
-                    finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
-                } else if !line.items.is_empty() || pending_space.is_some() {
-                    if let Some(format) = pending_space {
-                        let at = line.chars;
-                        line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
-                        line.text.push(' ');
-                        line.chars += 1;
+            Atom::Word(word) => {
+                let word_width =
+                    |segments: &[(Seg, usize)]| -> f64 { segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum() };
+                // Wider than the column: Thai breaks between its words (see `split_thai`).
+                let split;
+                let pieces = if width > 0.0 && word_width(word) > width + 1e-9 {
+                    split = split_thai(word.clone());
+                    split.as_slice()
+                } else {
+                    std::slice::from_ref(word)
+                };
+                for segments in pieces {
+                    let word_width = word_width(segments);
+                    let space_width =
+                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                    if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                        finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
+                    } else if !line.items.is_empty() || pending_space.is_some() {
+                        if let Some(format) = pending_space {
+                            let at = line.chars;
+                            line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
+                            line.text.push(' ');
+                            line.chars += 1;
+                        }
+                        line.width += space_width;
                     }
-                    line.width += space_width;
-                }
-                pending_space = None;
-                for (segment, format) in segments {
-                    let segment_width = seg_width(segment, fmt(*format));
-                    line.max_h = line.max_h.max(fmt(*format).height);
-                    let at = line.chars;
-                    let plain = seg_plain(segment);
-                    line.chars += plain.chars().count();
-                    line.text.push_str(&plain);
-                    line.items.push(Item { seg: Some(segment.clone()), fmt: *format, x: line.width, w: segment_width, at });
-                    line.width += segment_width;
-                    last_fmt = *format;
+                    pending_space = None;
+                    for (segment, format) in segments {
+                        let segment_width = seg_width(segment, fmt(*format));
+                        line.max_h = line.max_h.max(fmt(*format).height);
+                        let at = line.chars;
+                        let plain = seg_plain(segment);
+                        line.chars += plain.chars().count();
+                        line.text.push_str(&plain);
+                        line.items.push(Item { seg: Some(segment.clone()), fmt: *format, x: line.width, w: segment_width, at });
+                        line.width += segment_width;
+                        last_fmt = *format;
+                    }
                 }
             }
         }
@@ -608,10 +683,10 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
     let rotation = if p.rotation.is_finite() { p.rotation } else { 0.0 };
     let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, oblique: p.oblique, valign: 1 };
-    let (atoms, fmts) = parse(contents, base.clone());
     if para::needed(contents, p) {
         return para::layout(contents, p, &base);
     }
+    let (atoms, fmts) = parse(contents, base.clone());
     let fmt = |i: usize| fmts.get(i).unwrap_or(&base);
     let mut lines = plain_lines(&atoms, &fmts, &base, width);
     // Right-to-left text: each line in display order, its paragraph's direction from the
@@ -875,5 +950,89 @@ mod tests {
         }
         let long = "word ".repeat(5000);
         assert!(lay(&long, 10.0).lines.len() > 100);
+        // Thai with stacks, format runs, stray marks and unpaired braces in one word.
+        for s in ["ก\\S1/2;ข{\\C1;ภาษา}ไทย\u{0E4C}\u{0E4C}", "{\\H2x;ภาษา}{\\H3x;ไทย}", "\u{0E33}\u{0E49}\\S/;ไทย}}", "ภาษาไทย\tภาษาไทย"]
+        {
+            let _ = lay(s, 0.5);
+            let _ = lay(&format!("\\pi1,l2,t3;{s}"), 0.5);
+        }
+        // Too long to look up: one unbreakable word, like a long Latin word.
+        assert_eq!(lay(&"ภาษาไทย".repeat(20_000), 3.0).lines.len(), 1);
+    }
+
+    /// Thai writes no spaces between words: a long line wraps between words, in the plain and the
+    /// paragraph layout, without fonts installed (the line breaks don't depend on glyph widths).
+    #[test]
+    fn thai_wraps_between_words() {
+        let text = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคาเมทัลชีทแผ่นเรียบสีขาว";
+        let one = lay(text, 0.0);
+        assert_eq!(one.lines, vec![text]);
+        let wide = one.bounds.width();
+        for contents in [text.to_string(), format!("\\pi0,l0;{text}"), format!("{{\\C1;เหล็กกล่อง}}{}", text.trim_start_matches("เหล็กกล่อง"))]
+        {
+            let l = lay(&contents, wide / 3.0);
+            assert!(l.lines.len() >= 3, "{contents}: {:?}", l.lines);
+            assert_eq!(l.lines.concat(), text, "nothing lost or added: {:?}", l.lines);
+            for line in &l.lines {
+                let first = line.chars().next().unwrap_or(' ');
+                assert!(!crate::bidi::is_mark(first) && !matches!(first, 'ะ' | 'า' | 'ำ'), "{line}");
+                assert!(!line.ends_with(['เ', 'แ', 'โ', 'ใ', 'ไ']), "{line}");
+            }
+        }
+        // The pieces sit side by side with nothing between them: drawn with a Thai font they are
+        // as wide as the word laid out in one piece (up to kerning).
+        let pieces = split_thai(vec![(Seg::Text(text.to_string()), 0)]);
+        if one.pieces.iter().any(|p| !p.shaped.glyphs.is_empty()) {
+            let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, oblique: 0.0, valign: 1 };
+            let sum: f64 = pieces.iter().flatten().map(|(seg, _)| seg_width(seg, &base)).sum();
+            assert!((sum - wide).abs() < 0.01 * wide, "{sum} {wide}");
+        }
+        assert!(pieces.len() > 3);
+        // Latin and other words stay whole; stacks keep their place.
+        assert_eq!(split_thai(vec![(Seg::Text("hello".into()), 0)]).len(), 1);
+        let mixed = split_thai(vec![(Seg::Text("ภาษา".into()), 0), (Seg::Stack("1".into(), "2".into(), '/'), 0), (Seg::Text("ภาษาไทย".into()), 1)]);
+        let flat: Vec<String> = mixed.iter().map(|p| p.iter().map(|(s, _)| seg_plain(s)).collect()).collect();
+        assert_eq!(flat, ["ภาษา1/2ภาษา", "ไทย"]);
+    }
+
+    /// A Thai run that would fit a line at the left indent but not after a first-line indent or a
+    /// leading tab still breaks between its words instead of running out of the column. The indent
+    /// is well over the slack: with no Thai font the stroke font's pieces are narrower than the run
+    /// (each loses its trailing letter gap).
+    #[test]
+    fn thai_wraps_after_first_line_indent_and_tab() {
+        let text = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคา";
+        let wide = lay(text, 0.0).bounds.width();
+        for contents in [format!("\\pi4,l0;{text}"), format!("\\pxt4;\t{text}")] {
+            let l = lay(&contents, wide + 1.0);
+            assert!(l.lines.len() >= 2, "{contents}: {:?}", l.lines);
+            assert_eq!(l.lines.concat().trim_start(), text, "{contents}: {:?}", l.lines);
+        }
+    }
+
+    /// Text that fits at its spaces keeps those line breaks: a note from the sample drawing
+    /// (frame, box section 50x50 mm, painted white) at every column width from one word up never
+    /// breaks inside ทาสีขาว or any other spaced word, in the plain and the paragraph layout.
+    #[test]
+    fn spaced_thai_keeps_its_space_breaks() {
+        let text = "โครงแนวนอน เหล็กกล่อง ขนาด 50x50 mm. ทาสีขาว";
+        let words: Vec<&str> = text.split(' ').collect();
+        let widest = words.iter().map(|w| lay(w, 0.0).bounds.width()).fold(0.0, f64::max);
+        let full = lay(text, 0.0).bounds.width();
+        let mut width = widest * 1.001;
+        while width < full * 1.05 {
+            for contents in [text.to_string(), format!("\\pxql;\\A1;{text}")] {
+                let l = lay(&contents, width);
+                assert_eq!(l.lines.join(" "), text, "{width}: {:?}", l.lines);
+                assert!(l.lines.iter().flat_map(|line| line.split(' ')).all(|w| words.contains(&w)), "{width}: {:?}", l.lines);
+            }
+            width *= 1.05;
+        }
+        // After a Latin word, a Thai run too long for any line breaks between its words, filling
+        // the line it starts on.
+        let long = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคา";
+        let l = lay(&format!("abc {long}"), lay(long, 0.0).bounds.width() / 2.0);
+        assert!(l.lines.len() >= 3 && l.lines.first().is_some_and(|f| f.starts_with("abc ") && f.len() > 4), "{:?}", l.lines);
+        assert_eq!(l.lines.concat(), format!("abc {long}"));
     }
 }
