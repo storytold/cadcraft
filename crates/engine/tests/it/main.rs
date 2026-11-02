@@ -143,6 +143,7 @@ mod text_left_justify;
 mod tolerance;
 mod transparent;
 mod trim_closed_polyline;
+mod trim_cut_at_the_pick;
 mod trim_extend_options;
 mod trim_keeps_z_and_width;
 mod undo_count;
