@@ -24,6 +24,9 @@ log = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+# Reads eframe's app.ron to tell whether a window state was saved (main.rs `saved_window`).
+# Already in Cargo.lock through eframe; same version so nothing is built twice.
+ron = "0.12"
 
 [build-dependencies]
 winresource = "0.1"
