@@ -483,6 +483,7 @@ impl CadApp {
         }
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
+        }
         if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
             prefs["lastPgpDir"] = json!(dir);
         }
