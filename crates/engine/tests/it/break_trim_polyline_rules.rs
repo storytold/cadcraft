@@ -313,6 +313,33 @@ fn a_closed_piece_keeps_its_arcs() {
 }
 
 #[test]
+fn a_pick_right_on_a_vertex_takes_the_segment_it_ends() {
+    // Not measured. The vertex (10, 0) is the only cut: the pick takes the segment before it
+    // instead of erasing the polyline.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [10, 0], [10, 10]]), false);
+    trim(&mut s, p, [10.0, 0.0], None);
+    expect(&s, p, &[(true, false, &[(10.0, 0.0, 0.0), (10.0, 10.0, 0.0)])]);
+}
+
+#[test]
+fn a_piece_whose_ends_only_come_near_stays_open_far_from_the_origin() {
+    // 1e9 out, as survey coordinates in millimetres are: the piece left runs from the line's cut
+    // to the polyline's end, 0.58 away, and stays open.
+    let o = 1e9;
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[o + 2.3, 3.3], [o + 5.3, 8.0], [o + 8.5, 4.4], [o + 8.8, 7.8], [o + 7.4, 6.5]]), false);
+    line(&mut s, [o + 6.9, 5.0], [o + 6.9, 7.0]);
+    trim(&mut s, p, [o + 6.1, 7.1], None);
+    let got = polys(&s);
+    assert_eq!(got.len(), 2, "{got:?}");
+    let (h, closed, vs) = &got[1];
+    assert!(*h != p && !closed && vs.len() == 4, "{got:?}");
+    let last = vs[3];
+    assert!((last.0 - (o + 7.4)).abs() < 1e-6 && (last.1 - 6.5).abs() < 1e-6, "{last:?}");
+}
+
+#[test]
 fn a_polyline_is_cut_where_a_vertex_of_it_touches_it() {
     // The vertex (6, 6) lies on the first segment, which is cut there.
     let v = json!([[0, 0], [10, 10], [12, 4], [6, 6], [4, 12]]);
