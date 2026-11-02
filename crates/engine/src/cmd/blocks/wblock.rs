@@ -93,6 +93,7 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     let bytes = (hooks.write)(&d, path).map_err(|e| bad(cmd, e))?;
     // Through a temporary file, as SAVE writes, so a failed write keeps the file it replaces.
     #[cfg(not(target_arch = "wasm32"))]
+    crate::file_access::check_write(path).map_err(|e| bad(cmd, e))?;
     crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
     Ok((d.model.len(), bytes.len()))
 }

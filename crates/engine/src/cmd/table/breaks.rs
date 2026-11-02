@@ -238,6 +238,7 @@ fn read_link(id: &str, file: &std::path::Path) -> Result<String> {
     let path = file.display();
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_read(&file.to_string_lossy()).map_err(|e| bad(id, e))?;
         let meta = std::fs::metadata(file).map_err(|e| bad(id, format!("{path}: {e}")))?;
         if meta.len() > MAX_LINK_BYTES {
             return Err(bad(id, format!("{path}: larger than {} MB", MAX_LINK_BYTES >> 20)));
