@@ -275,6 +275,7 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
+/// The platform's system font directories, in search order.
 #[cfg(not(target_arch = "wasm32"))]
 fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -303,6 +304,7 @@ fn font_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Every font file under [`font_dirs`], by lower-case file stem.
 #[cfg(not(target_arch = "wasm32"))]
 fn scan() -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
