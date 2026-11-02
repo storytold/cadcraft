@@ -24,7 +24,7 @@ mod pick;
 mod viewport;
 mod widgets;
 
-use area_fill::{area_preview_fill, AreaPreviewCache};
+use area_fill::{AreaPreviewCache, area_preview_fill};
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};

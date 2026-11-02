@@ -18,9 +18,7 @@ fn edges_conflict(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
         return true;
     }
     let opposite = |a: f64, b: f64| (a > 0.0 && b < 0.0) || (a < 0.0 && b > 0.0);
-    let on_segment = |a: Vec2, b: Vec2, p: Vec2| {
-        p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y)
-    };
+    let on_segment = |a: Vec2, b: Vec2, p: Vec2| p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y);
     (opposite(o1, o2) && opposite(o3, o4))
         || (o1 == 0.0 && on_segment(a, b, c))
         || (o2 == 0.0 && on_segment(a, b, d))
@@ -104,11 +102,7 @@ impl AreaPreviewCache {
                 self.validation_rebuilds += 1;
             }
         }
-        if selected.contains(cursor) {
-            self.closed_valid
-        } else {
-            self.open_valid && cursor_edges_are_simple(selected, *cursor)
-        }
+        if selected.contains(cursor) { self.closed_valid } else { self.open_valid && cursor_edges_are_simple(selected, *cursor) }
     }
 }
 
@@ -147,12 +141,7 @@ fn area_preview_boundary_is_simple(boundary: &[Vec2]) -> bool {
 }
 
 /// Screen-only AREA rubber-band shading. This is not a HATCH and never enters the drawing.
-pub(super) fn area_preview_fill(
-    command: Option<&str>,
-    ents: &[cadcraft_doc::Entity],
-    xf: &Xf,
-    cache: &mut AreaPreviewCache,
-) -> Option<egui::Mesh> {
+pub(super) fn area_preview_fill(command: Option<&str>, ents: &[cadcraft_doc::Entity], xf: &Xf, cache: &mut AreaPreviewCache) -> Option<egui::Mesh> {
     if command != Some("area") {
         cache.clear();
         return None;
@@ -235,12 +224,18 @@ mod tests {
         let ents = s.preview(Vec2::new(0.0, 6.0));
         let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(3.0, 3.0), scale: 10.0 };
         let mesh = preview_fill(s.active_command_id(), &ents, &xf).unwrap();
-        let drawn_area: f32 = mesh.indices.as_chunks::<3>().0.iter().map(|tri| {
-            let a = mesh.vertices[tri[0] as usize].pos;
-            let b = mesh.vertices[tri[1] as usize].pos;
-            let c = mesh.vertices[tri[2] as usize].pos;
-            ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / 2.0
-        }).sum();
+        let drawn_area: f32 = mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|tri| {
+                let a = mesh.vertices[tri[0] as usize].pos;
+                let b = mesh.vertices[tri[1] as usize].pos;
+                let c = mesh.vertices[tri[2] as usize].pos;
+                ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / 2.0
+            })
+            .sum();
         // L-shaped polygon = (6 x 2) + (2 x 4) = 20 square drawing units.
         assert!((drawn_area / 100.0 - 20.0).abs() < 0.01);
         s.cancel();
