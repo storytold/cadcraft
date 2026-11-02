@@ -730,13 +730,14 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
 /// happens to each copied object (`moves`).
 struct ActionRun<'a> {
     m: &'a DynamicBlock,
+    /// The dynamic block's own objects: a stretch moves the points of each that lie in its frame
+    /// where the block has them.
+    def: &'a Block,
     values: &'a BTreeMap<i32, Value>,
     set: &'a BTreeMap<i32, Val>,
     param_of: HashMap<Handle, i32>,
     /// The reference's copy of each of the dynamic block's objects.
     copy_map: &'a HashMap<Handle, Handle>,
-    /// The dynamic block itself (a stretch frame tests where it has its objects' points).
-    def: &'a Block,
     new: BTreeMap<i32, Val>,
     moves: HashMap<Handle, Vec<Op>>,
 }
@@ -1002,11 +1003,11 @@ fn apply(
     // New values, starting from the change; actions add the parameters they carry along.
     let mut run = ActionRun {
         m: &m,
+        def: &def,
         values,
         set,
         param_of: m.parameters.iter().map(|p| (p.handle, p.node)).collect(),
         copy_map: &copy_map,
-        def: &def,
         new: set.clone(),
         moves: HashMap::new(),
     };
