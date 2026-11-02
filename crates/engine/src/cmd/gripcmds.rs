@@ -5,7 +5,8 @@ use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
 use super::curves;
-use super::*;
+use super::{CommandSpec, bad, bool_or, point_param, point_req, str_param, targets};
+
 use crate::grips::{GripAction, GripMode, grip_action, mode_matrix, stretch_grip};
 use crate::{EngineError, Result, Session};
 

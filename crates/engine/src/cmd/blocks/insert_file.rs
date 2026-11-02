@@ -59,7 +59,7 @@ pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
 }
 
 /// The file name without folders and extension (either separator, so Windows paths work anywhere).
-fn stem(path: &str) -> String {
+pub(super) fn stem(path: &str) -> String {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match file.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_string(),
@@ -109,7 +109,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(&mut d, e, &renames);
+            let e = adopt(&mut d, src, e, &renames);
             nb.entities.push(e);
         }
         d.blocks.insert(to.clone(), Arc::new(nb));
@@ -118,7 +118,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
     b.base = src.header.point("INSBASE").filter(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite()).unwrap_or_default();
     let mut ents = Vec::new();
     for e in src.model.iter() {
-        let e = adopt(&mut d, e, &renames);
+        let e = adopt(&mut d, src, e, &renames);
         d.ensure_layer(&e.common.layer);
         ents.push(e);
     }
@@ -149,6 +149,7 @@ fn merge_tables(d: &mut Drawing, src: &Drawing) {
     merge(&mut d.dim_styles, &src.dim_styles, |t| &t.name);
     merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name);
     merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
+    merge(&mut d.mline_styles, &src.mline_styles, |t| &t.name);
 }
 
 /// Which source blocks to copy, and under which name: new names keep theirs, generated
@@ -182,9 +183,20 @@ fn block_names(d: &Drawing, src: &Drawing, defining: &str) -> BTreeMap<String, S
 
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
 /// links to other source objects (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn adopt(d: &mut Drawing, src: &Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
     let mut e = e.clone();
+    let old = e.handle;
     e.handle = d.new_handle();
+    // An attribute definition keeps its field: its extension dictionary and the objects in it.
+    if matches!(e.kind, EntityKind::AttDef(_))
+        && let Some(root) = src.foreign.entities.get(&old).and_then(|x| x.xdict)
+    {
+        let tree = src.foreign.tree(root);
+        let fresh: Vec<Handle> = (0..tree.len() + 2).map(|_| d.new_handle()).collect();
+        let foreign = Arc::make_mut(&mut d.foreign);
+        foreign.adopt_tree(&src.foreign, &tree, &fresh, e.handle);
+        foreign.entities.entry(e.handle).or_default().xdict = fresh.first().copied();
+    }
     match &mut e.kind {
         EntityKind::Insert(i) => {
             if let Some(n) = renames.get(&i.block) {
@@ -254,5 +266,18 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    #[test]
+    fn inserted_file_brings_its_mline_styles() {
+        let mut src = Drawing::default();
+        src.mline_styles.push(cadcraft_doc::MLineStyle { name: "WALL".into(), ..Default::default() });
+        let mut d = Drawing::default();
+        merge_tables(&mut d, &src);
+        assert!(d.mline_styles.iter().any(|m| m.name == "WALL"));
+        // A style this drawing already has keeps its own definition.
+        let before = d.mline_styles.len();
+        merge_tables(&mut d, &src);
+        assert_eq!(d.mline_styles.len(), before);
     }
 }

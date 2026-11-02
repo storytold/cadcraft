@@ -10,12 +10,13 @@
 //! Not read (each is a follow-up): CSS class rules (`<style>`), `use` references, fills,
 //! gradients and hatch patterns, text, embedded raster images, rounded rectangle corners
 //! (`rx`/`ry`), and elliptical arcs under non-uniform transforms (those are flattened into
-//! line segments instead of losing the shape).
+//! line segments instead of losing the shape). What the drawing shows of those (all but fills,
+//! gradients and patterns) is named in a read note, so it is never left out silently.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use cadcraft_color::Color;
-use cadcraft_doc::*;
+use cadcraft_doc::{Circle, Common, Drawing, Ellipse, EntityKind, Layer, Line, LwPolyline, Space};
 use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
@@ -37,6 +38,9 @@ const MAX_LAYERS: usize = 256;
 const MAX_TRANSFORM_DEPTH: usize = 64;
 /// Flattened chords per elliptical arc under a non-uniform transform.
 const MAX_ARC_CHORDS: usize = 10_000;
+/// Generated vertices retained across the whole document (all paths and shapes), so repeated
+/// arc/curve flattening cannot amplify a compact input into unbounded geometry.
+const MAX_TOTAL_VERTS: usize = 8_000_000;
 
 /// Elements whose whole subtree is skipped (paint servers, text, raster images, metadata).
 const SKIP: &[&[u8]] = &[
@@ -125,11 +129,50 @@ struct Parser {
     layers: HashSet<String>,
     layer_color: u8,
     elements: usize,
+    /// Generated vertices still allowed across the whole document. Arc/curve flattening can turn
+    /// a compact path into many samples, and each flushed run is retained, so without a shared
+    /// budget repeated arcs amplify a small input into gigabytes of geometry (CWE-400).
+    verts_left: usize,
     /// > 0 while inside a skipped subtree; counts the starts seen there.
     skip: usize,
+    /// What was left out, by kind ([`LeftOut`]).
+    left_out: BTreeMap<LeftOut, usize>,
+}
+
+/// Drawn content the reader leaves out, named in the drawing's read note.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LeftOut {
+    Text,
+    Image,
+    Use,
+    Style,
+    RoundedCorners,
+}
+
+impl LeftOut {
+    /// The kind of a skipped element ([`SKIP`]) that the drawing shows.
+    fn of(name: &[u8]) -> Option<Self> {
+        match name {
+            b"text" => Some(Self::Text),
+            b"image" => Some(Self::Image),
+            _ => None,
+        }
+    }
+
+    fn describe(self, n: usize) -> String {
+        let (one, many) = match self {
+            Self::Text => ("text", "texts"),
+            Self::Image => ("raster image", "raster images"),
+            Self::Use => ("`<use>` copy", "`<use>` copies"),
+            Self::Style => ("`<style>` sheet (its class rules aren't applied)", "`<style>` sheets (their class rules aren't applied)"),
+            Self::RoundedCorners => ("rectangle with rounded corners (drawn square)", "rectangles with rounded corners (drawn square)"),
+        };
+        format!("{n} {}", if n == 1 { one } else { many })
+    }
 }
 
 impl Parser {
+    /// Initialize a metric SVG drawing with one document-wide generated-vertex allowance.
     fn new() -> Self {
         Parser {
             drawing: Drawing::new_metric(),
@@ -138,8 +181,23 @@ impl Parser {
             layers: HashSet::from(["0".to_string()]),
             layer_color: 1,
             elements: 0,
+            verts_left: MAX_TOTAL_VERTS,
             skip: 0,
+            left_out: BTreeMap::new(),
         }
+    }
+
+    fn left_out(&mut self, kind: LeftOut) {
+        *self.left_out.entry(kind).or_default() += 1;
+    }
+
+    /// The read note on what was left out, if anything was.
+    fn note(&self) -> Option<String> {
+        if self.left_out.is_empty() {
+            return None;
+        }
+        let list: Vec<String> = self.left_out.iter().map(|(k, n)| k.describe(*n)).collect();
+        Some(format!("SVG: CADCraft doesn't read these yet, so they were left out: {}", list.join(", ")))
     }
 
     fn parse(&mut self, text: &str) -> Result<()> {
@@ -149,35 +207,43 @@ impl Parser {
             match reader.read_event().map_err(parse_err)? {
                 Event::Start(e) => {
                     let name = e.name();
-                    self.on_start(name.as_ref(), &e)?;
+                    self.on_start(name.into_inner().as_bytes(), &e)?;
                 }
                 Event::Empty(e) => {
                     let name = e.name();
-                    self.on_element(name.as_ref(), &e)?;
+                    self.on_element(name.into_inner().as_bytes(), &e)?;
                 }
                 Event::End(e) => {
                     let name = e.name();
-                    self.on_end(name.as_ref());
+                    self.on_end(name.into_inner().as_bytes());
                 }
                 Event::Eof => break,
                 _ => {}
             }
         }
+        self.drawing.read_notes.extend(self.note());
         Ok(())
     }
 
     /// A start tag: open a transform frame, descend into a skipped subtree, or treat a
     /// shape written as start+end the same as a self-closed one.
     fn on_start(&mut self, name: &[u8], e: &BytesStart) -> Result<()> {
+        // A style sheet applies wherever it is (Inkscape keeps it in `<defs>`).
+        if name == b"style" {
+            self.left_out(LeftOut::Style);
+        }
         if self.skip > 0 {
             self.skip += 1;
             return Ok(());
         }
-        if SKIP.contains(&name) {
+        if hidden(e) {
             self.skip = 1;
             return Ok(());
         }
-        if hidden(e) {
+        if SKIP.contains(&name) {
+            if let Some(kind) = LeftOut::of(name) {
+                self.left_out(kind);
+            }
             self.skip = 1;
             return Ok(());
         }
@@ -189,9 +255,18 @@ impl Parser {
             return Ok(());
         }
         if SKIP.contains(&name) || hidden(e) {
+            if !hidden(e)
+                && let Some(kind) = LeftOut::of(name)
+            {
+                self.left_out(kind);
+            }
             return Ok(());
         }
         match name {
+            b"use" => {
+                self.left_out(LeftOut::Use);
+                Ok(())
+            }
             b"rect" => self.rect(e),
             b"circle" => self.circle(e),
             b"ellipse" => self.ellipse(e),
@@ -260,11 +335,20 @@ impl Parser {
         self.cur().apply_vec(v)
     }
 
+    /// Charge an entity against element and retained-vertex limits before adding it to model space.
     fn add(&mut self, kind: EntityKind) -> Result<()> {
         self.elements += 1;
         if self.elements > MAX_ELEMENTS {
             return Err(IoError::Format(format!("SVG: more than {MAX_ELEMENTS} elements")));
         }
+        // Charge the vertices this entity retains against the shared document budget, so repeated
+        // flattened arcs/curves cannot amplify a compact path into unbounded geometry (CWE-400).
+        let verts = match &kind {
+            EntityKind::LwPolyline(p) => p.vertices.len(),
+            EntityKind::Spline(s) => s.control.len(),
+            _ => 1,
+        };
+        self.verts_left = self.verts_left.checked_sub(verts).ok_or_else(|| IoError::Format("SVG: too much generated geometry".into()))?;
         let common = Common { layer: self.layer.clone(), ..Common::default() };
         self.drawing.add(&Space::Model, common, kind).map(|_| ()).map_err(parse_err)
     }
@@ -278,6 +362,9 @@ impl Parser {
         let h = num(e, b"height", 0.0);
         if w <= 0.0 || h <= 0.0 {
             return Ok(());
+        }
+        if num(e, b"rx", 0.0) > 0.0 || num(e, b"ry", 0.0) > 0.0 {
+            self.left_out(LeftOut::RoundedCorners);
         }
         let pts = [Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)];
         self.add_polyline(&pts.map(|p| self.map(p)), true)
@@ -440,7 +527,7 @@ impl Parser {
                     } else if *rx > 0.0 && *ry > 0.0 {
                         self.flush_run(&mut run, false)?;
                         self.flush_ctrl(&mut ctrl)?;
-                        for p in flatten_arc(&m, cur_user, *end, *rx, *ry, *rot, *large, *sweep)? {
+                        for p in flatten_arc(&m, cur_user, *end, (*rx, *ry), *rot, *large, *sweep)? {
                             if run.is_empty() {
                                 run.push(PolyVertex::new(cur));
                             }
@@ -491,7 +578,7 @@ fn hidden(e: &BytesStart) -> bool {
 
 fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
     for a in e.attributes().flatten() {
-        if a.key.as_ref() == name {
+        if a.key.into_inner().as_bytes() == name {
             return a.normalized_value(XmlVersion::Explicit1_0).ok().map(|v| v.into_owned());
         }
     }
@@ -533,8 +620,15 @@ fn viewport(e: &BytesStart) -> Result<Mat3> {
             _ => None,
         }
     });
-    let w_mm = attr(e, b"width").as_deref().and_then(parse_length_mm);
-    let h_mm = attr(e, b"height").as_deref().and_then(parse_length_mm);
+    // A bare or `px` root size is in CSS pixels, not millimetres.
+    let root_mm = |name: &[u8]| {
+        let raw = attr(e, name)?;
+        let mm = parse_length_mm(&raw)?;
+        let unit = raw.trim().trim_start_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E')).trim();
+        Some(if matches!(unit, "" | "px") { mm * 25.4 / 96.0 } else { mm })
+    };
+    let w_mm = root_mm(b"width");
+    let h_mm = root_mm(b"height");
     let unit = match (vb, w_mm, h_mm) {
         (Some((_, _, vw, _)), Some(w), _) if w > 0.0 => w / vw,
         (Some((_, _, _, vh)), _, Some(h)) if h > 0.0 => h / vh,
@@ -669,17 +763,33 @@ enum Tok {
 struct Tokenizer<'a> {
     s: &'a [u8],
     i: usize,
+    /// Start of the most recently returned token.
+    tok_start: usize,
 }
 
 impl<'a> Tokenizer<'a> {
     fn new(s: &'a str) -> Self {
-        Tokenizer { s: s.as_bytes(), i: 0 }
+        Tokenizer { s: s.as_bytes(), i: 0, tok_start: 0 }
+    }
+
+    /// Read an arc flag: a single `0` or `1` character, which needs no separator after it.
+    fn next_flag(&mut self) -> Option<f64> {
+        let mut nums = Numbers { s: self.s, i: self.i };
+        nums.skip_seps();
+        let v = match self.s.get(nums.i)? {
+            b'0' => 0.0,
+            b'1' => 1.0,
+            _ => return None,
+        };
+        self.i = nums.i + 1;
+        Some(v)
     }
 
     fn next_tok(&mut self) -> Option<Tok> {
         let mut nums = Numbers { s: self.s, i: self.i };
         nums.skip_seps();
         self.i = nums.i;
+        self.tok_start = self.i;
         let c = self.s.get(self.i).copied()?;
         if c.is_ascii_alphabetic() {
             self.i += 1;
@@ -756,7 +866,18 @@ fn parse_path(d: &str) -> Result<Vec<Subpath>> {
             _ => return Err(IoError::Format(format!("SVG: unknown path command `{}`", cmd as char))),
         };
         let mut args = [0.0f64; 7];
-        for slot in args.iter_mut().take(count) {
+        for (idx, slot) in args.iter_mut().enumerate().take(count) {
+            if abs == b'A' && (idx == 3 || idx == 4) {
+                // Flags are single characters; re-scan a pending number token from its start.
+                if matches!(lookahead, Some(Tok::Num(_))) {
+                    lookahead = None;
+                    tk.i = tk.tok_start;
+                }
+                if lookahead.is_none() {
+                    *slot = tk.next_flag().ok_or_else(|| IoError::Format("SVG: path command is missing coordinates".into()))?;
+                    continue;
+                }
+            }
             *slot = next_num(&mut tk, &mut lookahead)?;
         }
         let point = |x: f64, y: f64| if rel { cur + Vec2::new(x, y) } else { Vec2::new(x, y) };
@@ -883,7 +1004,7 @@ fn pick_sweep(ccw: f64, large: bool, sweep: bool) -> f64 {
 
 /// Flatten a general elliptical arc (any `rx`/`ry`/rotation) from `p0` to `p1` in user
 /// space, then map every sample through `m`.
-fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, rx: f64, ry: f64, rot_deg: f64, large: bool, sweep: bool) -> Result<Vec<Vec2>> {
+fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, (rx, ry): (f64, f64), rot_deg: f64, large: bool, sweep: bool) -> Result<Vec<Vec2>> {
     let (c, theta, delta) = elliptical_params(p0, p1, rx, ry, rot_deg.to_radians(), large, sweep)
         .ok_or_else(|| IoError::Format("SVG: elliptical arc cannot be converted".into()))?;
     let axes = Mat3::rotate(rot_deg.to_radians());
@@ -942,4 +1063,26 @@ fn elliptical_params(p0: Vec2, p1: Vec2, rx: f64, ry: f64, phi: f64, large: bool
     let theta = angle(1.0, 0.0, ux, uy);
     let ccw = angle(ux, uy, vx, vy).rem_euclid(std::f64::consts::TAU);
     Some((center, theta, pick_sweep(ccw, large, sweep)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arc_of(d: &str) -> (bool, bool, Vec2) {
+        let subs = parse_path(d).unwrap_or_else(|e| panic!("{d}: {e:?}"));
+        match &subs[0].segs[0] {
+            Seg::Arc { large, sweep, end, .. } => (*large, *sweep, *end),
+            _ => panic!("not an arc"),
+        }
+    }
+
+    #[test]
+    fn compact_arc_flags_read_as_single_characters() {
+        let spaced = arc_of("M10 10 a20 20 0 0 1 20 20");
+        assert_eq!(arc_of("M10 10 a20 20 0 01 20 20"), spaced);
+        assert_eq!(arc_of("M10 10 a20 20 0 0120 20"), spaced);
+        assert_eq!(arc_of("M10 10 a20 20 0 1 0 20 20"), (true, false, spaced.2));
+        assert!(arc_of("M10 10 a20 20 0 10-20 20").0);
+    }
 }
