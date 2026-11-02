@@ -628,10 +628,12 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         }
         w.i(75, i64::from(h.style));
         w.i(76, 1);
+        // Angle, scale and double flag are written for solid fills too, as read (AutoCAD and
+        // other writers keep them on SOLID hatches; readers ignore them there).
+        w.f(52, h.angle.to_degrees());
+        w.f(41, h.scale);
+        w.i(77, 0);
         if !h.solid {
-            w.f(52, h.angle.to_degrees());
-            w.f(41, h.scale);
-            w.i(77, 0);
             // The lines read from the file, else the library's pattern of that name.
             let lines = if h.pattern_lines.is_empty() {
                 cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
