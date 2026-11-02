@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use super::insert_file::{define_from, read_drawing, stem};
 use super::valid_block_name;
-use crate::cmd::{CommandSpec, bad, has_doc, str_param};
+use crate::cmd::{CommandSpec, always, bad, has_doc, str_param};
 use crate::{Result, Session};
 
 /// Most drawings one folder library lists.
@@ -106,9 +106,11 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("blocklibrary", "Block Library", run_library)
             .params("{path: a folder of DWG/DXF files, or one such file} → {kind: \"folder\", path, files: [{name, file}], truncated} | {kind: \"file\", path, blocks: [{name, description}], truncated}")
+            .enabled(always)
             .noundo(),
         CommandSpec::new("blocklibraries", "Block Libraries", run_libraries)
             .params("{op?: \"list\" (default)|\"add\"|\"remove\", path? (add, remove)} → {libraries: [path], path? (add: the entry as kept)}")
+            .enabled(always)
             .noundo(),
         CommandSpec::new("blocklibimport", "Import Library Block", run_import)
             .params("{path: DWG/DXF file, block?: the block to take from it (default: the whole drawing), name?: the block to define (default: `block`, else the file name; never one the drawing already has)} → {name}")

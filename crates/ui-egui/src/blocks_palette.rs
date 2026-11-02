@@ -557,6 +557,11 @@ fn build_within(d: &Drawing, ents: &[&Entity], mut opts: Options, cancel: &Arc<A
     if cancel.load(Ordering::Relaxed) { None } else { built.ok() }
 }
 
+/// What is left of `deadline` after `spent` (still `None` where there is no deadline).
+fn left(deadline: Option<Duration>, spent: Duration) -> Option<Duration> {
+    deadline.map(|d| d.saturating_sub(spent))
+}
+
 /// The picture of a block, drawn now.
 fn picture(lazy: &Lazy) -> Picture {
     let cancel = Arc::new(AtomicBool::new(false));
@@ -668,7 +673,12 @@ fn outline(d: &Drawing, b: &Block, cancel: &Arc<AtomicBool>, deadline: Option<Du
     // A coarse pass for the size, then one detailed to match it. The view height is given, so a
     // point is sized by the block and the drawing is not scanned for its extents.
     let coarse = Options { tolerance: 1.0, min_dash: NO_DASHES, lineweights: false, view_height: 1.0, ..Options::default() };
+    #[cfg(not(target_arch = "wasm32"))]
+    let started = std::time::Instant::now();
     let first = build_within(d, &ents, coarse, cancel, deadline)?;
+    // The two passes share one deadline: a preview takes `PREVIEW_DEADLINE` at most, not twice that.
+    #[cfg(not(target_arch = "wasm32"))]
+    let deadline = left(deadline, started.elapsed());
     let span = first.bounds.width().max(first.bounds.height());
     if !(span.is_finite() && span > 0.0) {
         return Some(Shape::default());
@@ -1298,6 +1308,15 @@ fn named(label: &str, wanted: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_two_passes_of_a_preview_share_its_deadline() {
+        use std::time::Duration;
+        let ms = Duration::from_millis;
+        assert_eq!(super::left(Some(ms(100)), ms(30)), Some(ms(70)));
+        assert_eq!(super::left(Some(ms(100)), ms(150)), Some(Duration::ZERO), "nothing is left, never a negative time");
+        assert_eq!(super::left(None, ms(30)), None, "no deadline stays none");
+    }
+
     #[test]
     fn the_filter_ignores_case_in_every_script() {
         assert!(super::named("ÉCROU M8", &"écrou".to_lowercase()));

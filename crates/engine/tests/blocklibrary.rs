@@ -175,6 +175,22 @@ fn refuses_hostile_input(s: &mut Session, dir: &std::path::Path, dir_s: &str) {
     s.execute("line", &json!({ "points": [[0, 0], [1, 1]] })).unwrap();
 }
 
+/// The Blocks palette can open on the Start tab: listing a library and the kept list need no
+/// drawing; importing one does.
+#[test]
+fn the_library_commands_that_read_no_drawing_run_without_one() {
+    let mut s = Session::empty();
+    let dir = std::env::temp_dir().join(format!("cadcraft-blocklibrary-nodoc-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pumps.dwg"), b"x").unwrap();
+    let r = s.execute("blocklibrary", &json!({ "path": dir.to_string_lossy() })).unwrap();
+    assert_eq!(r["files"].as_array().map(Vec::len), Some(1));
+    s.execute("blocklibraries", &json!({})).unwrap();
+    let err = s.execute("blocklibimport", &json!({ "path": dir.join("pumps.dwg").to_string_lossy() })).unwrap_err();
+    assert!(err.to_string().contains("no drawing"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A file with a huge block table.
 fn bounds_a_huge_table() {
     // A file with a huge block table lists a bounded part of it, and says so.
