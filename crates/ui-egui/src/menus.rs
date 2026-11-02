@@ -45,6 +45,22 @@ fn reference() -> &'static [Reference] {
     })
 }
 
+/// Put `entries` in `reference`'s order: the items the reference lists first, as it lists them,
+/// then the rest in registration order. Submenus the reference has are ordered the same way.
+fn order(entries: &mut [Entry], reference: &[Reference]) {
+    let position = |label: &str| reference.iter().position(|r| r.label == label).unwrap_or(usize::MAX);
+    entries.sort_by_key(|e| match e {
+        Entry::Item { label, .. } | Entry::Sub { label, .. } => position(label),
+    });
+    for e in entries {
+        if let Entry::Sub { label, children } = e
+            && let Some(r) = reference.iter().find(|r| r.label == *label)
+        {
+            order(children, &r.children);
+        }
+    }
+}
+
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
 const RECENT_ITEM: &str = "ui.recent.";
@@ -657,6 +673,11 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
         file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
+    }
+    for (menu, entries) in &mut out {
+        if let Some(r) = reference().iter().find(|r| r.label == menu) {
+            order(entries, &r.children);
+        }
     }
     out
 }
