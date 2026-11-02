@@ -7,7 +7,8 @@
 //!
 //! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
 //! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
-//! partitions on Android, and the XDG directories elsewhere. Web builds have no system fonts.
+//! partitions on Android and HarmonyOS, and the XDG directories elsewhere. Web builds have no
+//! system fonts.
 //!
 //! Two process-wide settings (like AutoCAD's profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
@@ -282,9 +283,10 @@ fn font_dirs() -> Vec<PathBuf> {
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(PathBuf::from(h).join("Library/Fonts"));
         }
-    } else if cfg!(target_os = "android") {
-        // The system fonts plus the product and vendor partitions, where devices keep faces of
-        // their own; an app may read all of them. Directories a device lacks are skipped.
+    } else if cfg!(any(target_os = "android", target_env = "ohos")) {
+        // Android and HarmonyOS keep system fonts under /system/fonts; Android devices also use
+        // the product and vendor partitions for faces of their own. An app may read all of them,
+        // and directories a device lacks are skipped.
         dirs.extend(["/system/fonts", "/product/fonts", "/system_ext/fonts", "/vendor/fonts"].map(Into::into));
     } else if cfg!(windows) {
         dirs.push("C:\\Windows\\Fonts".into());
@@ -1102,9 +1104,11 @@ mod scan_tests {
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/System/Library/Fonts")), "{dirs:?}");
         #[cfg(target_os = "android")]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(target_env = "ohos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
         #[cfg(windows)]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
-        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
     }
 }
