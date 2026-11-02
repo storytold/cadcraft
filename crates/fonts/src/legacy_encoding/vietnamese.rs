@@ -844,6 +844,20 @@ mod tests {
     }
 
     #[test]
+    fn test_font_name_starting_with_legacy_stem_but_modern_unicode_text_is_protected() {
+        // "VNIcons" starts with "vni", matching the legacy stem, but modern Unicode or ASCII
+        // text must be strictly protected by the Unicode guard and ASCII fast-path.
+        assert_eq!(
+            transcode_vietnamese("TÒA NHÀ", Some("VNIcons")),
+            "TÒA NHÀ",
+            "Unicode text must be protected even under a font matching the VNI stem"
+        );
+        assert_eq!(transcode_vietnamese("Home Search Settings", Some("VNIcons")), "Home Search Settings", "ASCII text must be protected");
+        // Genuine legacy VNI composite should still transcode as expected
+        assert_eq!(transcode_vietnamese("NHOÂM 6063", Some("VNIcons")), "NHÔM 6063", "Genuine VNI text should still transcode");
+    }
+
+    #[test]
     fn test_vni_nhom_day() {
         assert_eq!(transcode_vni("NHOÂM 3003 DAØY 2MM"), "NHÔM 3003 DÀY 2MM");
     }
