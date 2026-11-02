@@ -123,7 +123,7 @@ fn palette_icons_are_painted_in_code_and_shown_in_an_iconic_column() {
     let ctx = egui::Context::default();
     let mut paint = |panel: Panel| {
         let mut painted = false;
-        let mut content = Panels { app: &mut app };
+        let mut content = Panels { app: &mut app, close: None };
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background());
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(20.0, 20.0));
@@ -625,7 +625,8 @@ fn every_panel_header_has_a_close_button_that_closes_like_the_context_menu() {
     assert!(h.state().ui.docking.layout.contains(&Panel::Layers));
     h.get_by_role_and_label(egui::accesskit::Role::Tab, "Layers").click_button(PointerButton::Secondary);
     h.run_steps(3);
-    h.get_by_label("Close panel").click();
+    // The docking surface's stock tab menu item ("Close Panel"), not our tooltip.
+    h.get_by_label("Close Panel").click();
     h.run_steps(4);
     assert!(!h.state().ui.docking.layout.contains(&Panel::Layers));
 

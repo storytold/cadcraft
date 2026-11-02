@@ -457,7 +457,8 @@ fn stack_panels(layout: &Layout<Panel>) -> Vec<Panel> {
                 nodes.push(second);
             }
             Node::Stack { entries } => panels.extend(entries.iter().map(|entry| entry.panel)),
-            Node::Tabs { .. } => {}
+            // Tab groups draw their own header; nothing else stacks an accordion entry.
+            _ => {}
         }
     }
     panels
