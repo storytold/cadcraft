@@ -51,7 +51,10 @@ pub(crate) fn erase_kept(s: &mut Session, hs: &[Handle]) -> Result<usize> {
         }
     }
     let n = taken.len();
-    if n > 0 {
+    // During REFEDIT, removing an object outside the working set gets the command undone
+    // (`refedit::after_command`), so what OOPS had stays.
+    let refused = taken.iter().any(|t| crate::cmd::blocks::refedit::locked(d, t.entity.handle));
+    if n > 0 && !refused {
         s.state_mut()?.erased = Erased(taken);
     }
     Ok(n)
@@ -59,9 +62,10 @@ pub(crate) fn erase_kept(s: &mut Session, hs: &[Handle]) -> Result<usize> {
 
 pub(super) fn run_oops(s: &mut Session, _p: &Value) -> Result<Value> {
     let taken = s.state()?.erased.0.clone();
+    let editing = s.state()?.block_edit.as_ref().map(|b| b.name.clone());
     let back: Vec<bool> = {
         let d = s.doc()?;
-        let in_blocks = in_blocks(d, &taken);
+        let in_blocks = in_blocks(d, &taken, editing.as_deref());
         taken.iter().map(|t| !in_blocks.contains(&t.entity.handle) && can_return(d, t)).collect()
     };
     // Nothing to bring back leaves the drawing as it is: no undo step.
@@ -73,11 +77,16 @@ pub(super) fn run_oops(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 /// The handles of `taken` that a block's object has now (an undo can take the drawing back to
-/// before an erased object was made, and a block's new object take its handle).
-fn in_blocks(d: &Drawing, taken: &[Taken]) -> HashSet<Handle> {
+/// before an erased object was made, and a block's new object take its handle). The block open
+/// in the Block Editor (`editing`) doesn't count: its objects there keep the handles they have in
+/// it.
+fn in_blocks(d: &Drawing, taken: &[Taken], editing: Option<&str>) -> HashSet<Handle> {
     let hs: HashSet<Handle> = taken.iter().map(|t| t.entity.handle).collect();
     let mut out = HashSet::new();
     for b in d.blocks.values() {
+        if editing.is_some_and(|n| b.name.eq_ignore_ascii_case(n)) {
+            continue;
+        }
         // Through whichever is smaller.
         if b.entities.len() < hs.len() {
             out.extend(b.entities.iter().map(|e| e.handle).filter(|h| hs.contains(h)));

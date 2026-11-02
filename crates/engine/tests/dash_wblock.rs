@@ -284,3 +284,20 @@ fn oops_brings_back_what_it_erased_where_it_was() {
     let order: Vec<Handle> = s.doc().unwrap().model.iter().map(|e| e.handle).collect();
     assert_eq!(order, [a, b, c]);
 }
+
+#[test]
+fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
+    let (mut s, a, b, c) = drawing();
+    let dir = TempDir::new("dash-wblock");
+    s.execute("block", &json!({ "name": "BK", "base": [0, 0], "handles": [a.hex()], "keep": "convert" })).unwrap();
+    let ins = Handle::parse_hex(s.execute("entities", &json!({ "type": "INSERT" })).unwrap()["entities"][0]["handle"].as_str().unwrap()).unwrap();
+    s.execute("erase", &json!({ "handles": [c.hex()] })).unwrap();
+    s.execute("refedit", &json!({ "handle": ins.hex() })).unwrap();
+    // B isn't in the working set: -WBLOCK is refused and the drawing put back.
+    assert!(s.execute("-wblock", &json!({ "path": file(&dir, "out.dwg"), "handles": [b.hex()] })).is_err());
+    assert!(alive(&s, b));
+    s.execute("refclose", &json!({ "save": false })).unwrap();
+    // OOPS still has C, the last erase that stood.
+    s.execute("oops", &json!({})).unwrap();
+    assert!(alive(&s, c));
+}
