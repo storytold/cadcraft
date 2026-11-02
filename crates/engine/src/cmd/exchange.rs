@@ -82,7 +82,7 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the export write (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -119,6 +119,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let file = format!("export.{format}");
     let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
+    let folder = path.and_then(super::file::new_folder);
     let mut r = match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
@@ -126,6 +127,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
     };
+    super::file::report_new_folder(s, &mut r, folder);
     super::file::report_loss(s, &mut r, &file);
     Ok(r)
 }

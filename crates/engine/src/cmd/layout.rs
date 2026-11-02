@@ -840,8 +840,11 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 let path = _path;
                 // Exclusively create a fresh temporary file and rename it into place so a planted
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
-                crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages }))
+                let folder = super::file::new_folder(path);
+                crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+                let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages });
+                super::file::report_new_folder(s, &mut r, folder);
+                Ok(r)
             }
             #[cfg(target_arch = "wasm32")]
             {
