@@ -834,3 +834,40 @@ impl crate::Session {
         CursorSnap { point: p, snap: None, track: None, wait }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An object-snap point to rest the cursor on.
+    fn candidate() -> Acquired {
+        Acquired::Temporary { at: Vec2::new(1.0, 2.0) }
+    }
+
+    /// POLARMODE bit 8 reaches the tracker's configuration from the system variable (#1600), and
+    /// with it set the tracker acquires only while Shift is held: dwelling on a point does not,
+    /// while without the bit dwelling still does after `DWELL` seconds.
+    #[test]
+    fn shift_acquire_reaches_the_tracker_and_gates_dwelling() {
+        let mut s = crate::Settings::default();
+        s.polar_flags = polarmode::SHIFT_ACQUIRE | polarmode::RELATIVE;
+        assert!(TrackConfig::new(&s, 0.0).shift_acquire, "bit 8 reaches the tracker");
+        s.polar_flags &= !polarmode::SHIFT_ACQUIRE;
+        assert!(!TrackConfig::new(&s, 0.0).shift_acquire, "clearing bit 8 turns it off");
+
+        let c = candidate();
+        let mut held = Tracker::default();
+        for now in [0.0, DWELL, 10.0] {
+            held.hover(Some(c.clone()), now, true, false);
+        }
+        assert!(held.acquired.is_empty(), "resting the cursor does not acquire in Shift-to-acquire mode");
+        held.hover(Some(c.clone()), 10.1, true, true);
+        assert_eq!(held.acquired.len(), 1, "Shift acquires at once");
+
+        let mut dwell = Tracker::default();
+        dwell.hover(Some(c.clone()), 0.0, false, false);
+        assert!(dwell.acquired.is_empty(), "the cursor has only just arrived");
+        dwell.hover(Some(c.clone()), DWELL, false, false);
+        assert_eq!(dwell.acquired.len(), 1, "automatic mode acquires after the dwell");
+    }
+}
