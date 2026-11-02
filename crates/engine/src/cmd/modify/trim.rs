@@ -1,3 +1,5 @@
+use cadcraft_geom::Bounds2;
+
 use super::{
     Arc, EngineError, Entity, EntityKind, Handle, Line, PolyVertex, Polyline, Prim, Result, Segment, Session, TAU, Vec2, angle_in_sweep, arc,
     ccw_sweep, intersect_ext, line, lwpoly, norm_angle,
@@ -171,7 +173,10 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             }
             keep.into_iter().collect()
         }
-        EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick, itself)?,
+        EntityKind::LwPolyline(p) => match trim_polyline(p, &cut, pick, itself)? {
+            Some(pieces) => pieces,
+            None => return Ok(vec![h]),
+        },
         k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
     };
     replace_with_pieces(s, h, pieces)
@@ -275,71 +280,122 @@ pub(super) fn sub_polyline(segs: &[Segment], a: f64, b: f64) -> Vec<PolyVertex> 
     out
 }
 
-/// Upper bounds on the segments of a polyline searched for crossings with itself (the pairs grow
-/// with the square) and on the crossings kept (hostile files); a longer polyline still cuts itself
-/// at its vertices.
-const MAX_SELF_CROSSING_SEGMENTS: usize = 2048;
-const MAX_SELF_CROSSINGS: usize = 10_000;
+/// Two line segments of a polyline within this sine of parallel run on as one, straight on or
+/// doubling back: the vertex between them doesn't cut it, and they don't cut each other. AutoCAD
+/// 2024 cuts at a bend of 1e-8 and not at one of 8e-9, whatever the lengths.
+const STRAIGHT: f64 = 1e-8;
 
-/// Where a polyline cuts itself, as lengths along it: the vertices between its segments (every
-/// vertex of a closed one, its start included), the points where two of its segments cross, and
-/// those where a vertex of it (an end included) touches another of its segments. AutoCAD 2024
-/// trims a polyline that is one of the cutting edges at these.
-fn self_cuts(segs: &[Segment], closed: bool) -> Vec<f64> {
-    let mut starts = Vec::with_capacity(segs.len());
+/// Upper bounds on one trim's search for where a polyline crosses itself (hostile files): the pairs
+/// of segments searched (those the piece picked can reach, times those near them) and the
+/// crossings found. Past either the trim is refused, rather than made at some of its cuts.
+const MAX_SELF_PAIRS: usize = 1 << 24;
+const MAX_SELF_CROSSINGS: usize = 1 << 16;
+
+/// How near a cut a pick is on it, along the object: AutoCAD 2024 trims nothing for a pick within
+/// 5e-7 of a cut on an open polyline and trims for one 5.1e-7 away, from 1e-3 to 1e9 long (around
+/// a closed rectangle it reached a little further, to 1e-6).
+const ON_CUT: f64 = 5e-7;
+
+/// AutoCAD 2024's refusal to trim a closed polyline cut at one point only.
+pub(crate) const CUT_ONCE: &str = "Curve must intersect cutting edges at least twice.";
+
+/// Whether segments `a` and `b` of a polyline run on as one ([`STRAIGHT`]).
+fn runs_on(a: &Segment, b: &Segment) -> bool {
+    let (Segment::Line(a), Segment::Line(b)) = (a, b) else { return false };
+    let (u, v) = (a.b - a.a, b.b - b.a);
+    u.cross(v).abs() < STRAIGHT * u.len() * v.len()
+}
+
+/// Where a polyline that is one of the cutting edges cuts itself around segment `k`, the one
+/// picked, as lengths along it: at its vertices (every vertex of a closed one, its start included)
+/// but those it runs straight on through ([`runs_on`]), and, on `k` and the segments it runs
+/// straight on into, where another of its segments crosses them or a vertex of it (an end
+/// included) touches them. The piece picked lies within those segments, so crossings elsewhere
+/// don't bound it. AutoCAD 2024 trims a polyline that is one of the cutting edges at these.
+fn self_cuts(segs: &[Segment], closed: bool, k: usize) -> Result<Vec<f64>> {
+    let n = segs.len();
+    let mut starts = Vec::with_capacity(n);
     let mut acc = 0.0;
     for s in segs {
         starts.push(acc);
         acc += s.len();
     }
-    let mut ts: Vec<f64> = starts.iter().copied().skip(usize::from(!closed)).collect();
-    if segs.len() > MAX_SELF_CROSSING_SEGMENTS {
-        return ts;
+    let before = |i: usize| {
+        if i > 0 {
+            Some(i - 1)
+        } else if closed {
+            n.checked_sub(1)
+        } else {
+            None
+        }
+    };
+    let after = |i: usize| {
+        if i + 1 < n {
+            Some(i + 1)
+        } else if closed {
+            Some(0)
+        } else {
+            None
+        }
+    };
+    // Whether the polyline runs straight on through the vertex segment `i` starts at.
+    let straight = |i: usize| matches!((before(i).and_then(|j| segs.get(j)), segs.get(i)), (Some(a), Some(b)) if runs_on(a, b));
+    let mut ts: Vec<f64> = (usize::from(!closed)..n).filter(|i| !straight(*i)).filter_map(|i| starts.get(i).copied()).collect();
+    let mut run = vec![k];
+    let mut i = k;
+    while let Some(j) = before(i).filter(|_| straight(i) && run.len() < n) {
+        run.push(j);
+        i = j;
     }
-    let inside = |t: f64| t > 1e-9 && t < 1.0 - 1e-9;
-    let parts: Vec<_> = segs.iter().zip(starts).map(|(s, t0)| (s, s.bounds(), t0)).collect();
-    let mut crossings = 0;
-    for (i, (a, box_a, a0)) in parts.iter().enumerate() {
-        for (b, box_b, b0) in parts.iter().skip(i + 1) {
-            if !box_a.intersects(box_b) {
+    let mut i = k;
+    while let Some(j) = after(i).filter(|j| straight(*j) && run.len() < n) {
+        run.push(j);
+        i = j;
+    }
+    let boxes: Vec<_> = segs.iter().map(Segment::bounds).collect();
+    let reach = run.iter().filter_map(|i| boxes.get(*i)).fold(Bounds2::EMPTY, |r, b| r.union(b));
+    let near: Vec<usize> = (0..n).filter(|j| boxes.get(*j).is_some_and(|b| b.intersects(&reach))).collect();
+    if run.len().saturating_mul(near.len()) > MAX_SELF_PAIRS {
+        return Err(EngineError::Other("Too many segments to trim the polyline where it crosses itself.".into()));
+    }
+    // A crossing, or a vertex of another segment touching this one, cuts it; so does a crossing
+    // where it runs straight on into the next. Two segments meeting at a vertex cut nothing more.
+    let cuts = |t: f64, i: usize| (t > 1e-9 && t < 1.0 - 1e-9) || (t <= 1e-9 && straight(i)) || (t >= 1.0 - 1e-9 && after(i).is_some_and(straight));
+    let vertices = ts.len();
+    for &i in &run {
+        let (Some(a), Some(box_a), Some(a0)) = (segs.get(i), boxes.get(i), starts.get(i)) else { continue };
+        for &j in &near {
+            let (Some(b), Some(box_b)) = (segs.get(j), boxes.get(j)) else { continue };
+            if j == i || runs_on(a, b) || !box_a.intersects(box_b) {
                 continue;
             }
             for x in intersect_ext(a, b, false) {
-                let (ta, tb) = (param_on(a, x), param_on(b, x));
-                // A crossing cuts both segments; a vertex touching the other segment cuts that
-                // one (the vertex is a cut already). Two segments meeting at a vertex cut nothing
-                // more.
-                if inside(ta) || inside(tb) {
-                    if inside(ta) {
-                        ts.push(a0 + ta * a.len());
-                    }
-                    if inside(tb) {
-                        ts.push(b0 + tb * b.len());
-                    }
-                    crossings += 1;
-                    if crossings >= MAX_SELF_CROSSINGS {
-                        return ts;
+                let t = param_on(a, x);
+                if cuts(t, i) {
+                    ts.push(a0 + t * a.len());
+                    if ts.len() - vertices > MAX_SELF_CROSSINGS {
+                        return Err(EngineError::Other("Too many crossings to trim the polyline where it crosses itself.".into()));
                     }
                 }
             }
         }
     }
-    ts
+    Ok(ts)
 }
 
 /// Trim a polyline at the piece containing `pick`, between the cuts by `cut` and, when it is one
-/// of the cutting edges (`itself`), by its own vertices and crossings ([`self_cuts`]).
-fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itself: bool) -> Result<Vec<EntityKind>> {
+/// of the cutting edges (`itself`), by its own ([`self_cuts`]). `None`: the pick is on a cut
+/// ([`ON_CUT`]), which trims nothing.
+fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itself: bool) -> Result<Option<Vec<EntityKind>>> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let segs = pl.segments();
     let total: f64 = segs.iter().map(Segment::len).sum();
     let mut ts: Vec<f64> = Vec::new();
     let mut acc = 0.0;
-    let mut tp = 0.0;
-    // The pick is at the start of the segment it was found on (1), at its end (-1), or between.
-    let mut at_end = 0.0;
+    // The pick's length along the polyline and the segment it is on.
+    let (mut tp, mut k) = (0.0, 0);
     let mut best = f64::INFINITY;
-    for s in &segs {
+    for (i, s) in segs.iter().enumerate() {
         let len = s.len();
         for x in cut.iter().flat_map(|c| intersect_ext(s, c, false)) {
             ts.push(acc + param_on(s, x) * len);
@@ -347,42 +403,34 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         let c = s.closest(pick);
         if c.dist(pick) < best {
             best = c.dist(pick);
-            let u = param_on(s, c);
-            tp = acc + u * len;
-            at_end = if u >= 1.0 - 1e-12 {
-                -1.0
-            } else if u <= 1e-12 {
-                1.0
-            } else {
-                0.0
-            };
+            tp = acc + param_on(s, c) * len;
+            k = i;
         }
         acc += len;
     }
-    ts.retain(|t| *t > 1e-9 && *t < total - 1e-9);
     if itself {
-        // A closed polyline also cuts itself at its start vertex.
-        ts.extend(self_cuts(&segs, p.closed).into_iter().filter(|t| (*t > 1e-9 || p.closed) && *t < total - 1e-9));
+        ts.extend(self_cuts(&segs, p.closed, k)?);
+    }
+    // An open polyline's ends cut nothing; a closed one's start vertex cuts it like any other (a
+    // cut there is at 0 or at its length, which the pieces below take as one).
+    if !p.closed {
+        ts.retain(|t| *t > 1e-9 && *t < total - 1e-9);
     }
     ts.sort_by(f64::total_cmp);
     if ts.is_empty() {
         return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
     }
-    // A pick on a cut (a vertex picked exactly: the same length within rounding) takes the piece
-    // of the segment it was found on, rather than neither piece (which would erase the whole
-    // polyline): from that cut to the next when the pick is at its segment's start, from the one
-    // before to that cut otherwise. A pick off every cut takes the piece between the cuts either
-    // side of it.
-    let on = 4.0 * f64::EPSILON * (total + 1.0);
-    let on_cut = ts.iter().enumerate().map(|(i, t)| (i, (t - tp).abs())).filter(|(_, d)| *d <= on).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
-    let (lo, hi) = match on_cut {
-        Some(i) if at_end > 0.0 => (ts.get(i).copied().unwrap_or(f64::NEG_INFINITY), ts.get(i + 1).copied().unwrap_or(f64::INFINITY)),
-        Some(i) => (i.checked_sub(1).and_then(|j| ts.get(j)).copied().unwrap_or(f64::NEG_INFINITY), ts.get(i).copied().unwrap_or(f64::INFINITY)),
-        None => (
-            ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max),
-            ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min),
-        ),
-    };
+    // How far apart two lengths along the polyline are, round its start too when it is closed.
+    let apart = |s: f64, t: f64| if p.closed { (s - t).abs().min(total - (s - t).abs()) } else { (s - t).abs() };
+    if p.closed && ts.first().is_some_and(|f| ts.iter().all(|t| apart(*f, *t) <= ON_CUT)) {
+        return Err(EngineError::Other(CUT_ONCE.into()));
+    }
+    // A pick on a cut trims nothing.
+    if ts.iter().any(|t| apart(*t, tp) <= ON_CUT) {
+        return Ok(None);
+    }
+    let lo = ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max);
+    let hi = ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min);
     let mk = |vs: Vec<PolyVertex>| lwpoly(vs, false);
     let mut out = Vec::new();
     if p.closed {
@@ -394,11 +442,7 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
             if hi.is_finite() { hi } else { ts.first().copied().unwrap_or(total) + total },
         );
         let doubled: Vec<Segment> = segs.iter().chain(segs.iter()).copied().collect();
-        let (a, mut b) = if hi > total { (hi - total, lo) } else { (hi, lo + total) };
-        // A single cut leaves the whole outline, opened there.
-        if b <= a + 1e-9 {
-            b += total;
-        }
+        let (a, b) = if hi > total { (hi - total, lo) } else { (hi, lo + total) };
         out.push(mk(sub_polyline(&doubled, a, b)));
     } else {
         // A piece whose ends meet (the polyline touched itself there) is closed, without its
@@ -419,7 +463,7 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
             out.push(piece(sub_polyline(&segs, hi, total)));
         }
     }
-    Ok(out.into_iter().filter(|k| matches!(k, EntityKind::LwPolyline(l) if l.vertices.len() >= 2)).collect())
+    Ok(Some(out.into_iter().filter(|k| matches!(k, EntityKind::LwPolyline(l) if l.vertices.len() >= 2)).collect()))
 }
 
 pub(super) fn param_on(s: &Segment, p: Vec2) -> f64 {
