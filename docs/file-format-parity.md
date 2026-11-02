@@ -113,7 +113,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | PDF output (PLOT, EXPORTPDF) | multi-sheet, layers, searchable text, hyperlinks | vector PDF with lineweights, real text in embedded TrueType subsets, layers (OCG), several sheets per file and hyperlinks (#567, #571); object transparency as PDF alpha when "Plot transparency" is on (the option isn't saved in DXF/DWG: no public plot layout flag) | 1–2 |
 | PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | no | 15–25 |
 | Raster images attach (PNG, JPEG, TIFF, BMP …) | yes | IMAGE entity exists, no attach/loading/display path | 6–10 |
-| PNG / JPEG / BMP / TIFF export | PNGOUT, JPGOUT, BMPOUT, TIFOUT | PNG; SVG too (AutoCAD doesn't export SVG), with TEXT/MTEXT in installed fonts optionally written as searchable, editable `<text>` elements with `text: "text"` (glyph outlines stay the default) (#1876) | 1–2 |
+| PNG / JPEG / BMP / TIFF export | PNGOUT, JPGOUT, BMPOUT, TIFOUT | PNG; SVG too (AutoCAD doesn't export SVG) | 1–2 |
 | DWF/DWFx export, DWF underlay | yes | no | 10–15 |
 | DGN import/export/underlay | yes | no (needs a public spec; owner decision) | 25–40 |
 | WMF, EPS, ACIS SAT, STL, FBX, IGES/STEP (Windows), 3DS | various | no; most are 3D and wait for M11 | 20–40 |
@@ -149,7 +149,6 @@ our output in AutoCAD black-box.
 | 2026-10-19 | minor | Pre-2007 DXF saves write text in the file's code page (`Ação` as ANSI_1252 bytes, not `A\U+00E7\U+00E3o`); characters outside it stay `\U+` escapes |
 | 2026-10-20 | minor | DIMENSION: the `*D` block's MTEXT, and the MTEXT EXPLODE leaves, hold the diameter sign as `%%c` instead of the decoded U+2300, which no SHX font has, so other programs plotted diameter dimensions in an SHX style without the sign (#1645) |
 | 2026-10-21 | minor | Proxy objects and entities keep their class through a save: group 91 renumbered to the written CLASSES (the class it names is kept), a proxy whose number names no class dropped (#1812) |
-| 2026-10-22 | minor | SVG output: TEXT and MTEXT in installed TrueType/OpenType fonts can be written as searchable, editable `<text>` elements with their font family, em size, position, rotation, width factor and obliquing, keeping the source's repeated and leading spaces (`xml:space="preserve"`); opt in with `text: "text"`, geometry stays the default (#1876) |
 | 2026-10-17 | minor | DWG read: DGN line style components no line style definition reaches are left out before the DXF bridge, with a read note; an 83 MB site plan with 888,483 of them (1.2 GB of DXF, over the limit) now opens (#1482) |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
