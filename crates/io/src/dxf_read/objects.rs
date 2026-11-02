@@ -274,6 +274,10 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     .into();
     p.plot_window = [t.fd(48, 0.0), t.fd(49, 0.0), t.fd(140, 0.0), t.fd(141, 0.0)].map(|v| if v.is_finite() { v } else { 0.0 });
     p.plot_style_table = t.s(7).unwrap_or_default();
+    // Paper image origin: kept as the file has it, so a save puts the sheet back where it was (#2109).
+    // 0,0 is what a page without one writes, so it reads back as none.
+    p.image_origin =
+        t.f(148).zip(t.f(149)).map(|(x, y)| Vec2::new(x, y)).filter(|o| o.is_finite() && o.x.abs() < 1e12 && o.y.abs() < 1e12 && *o != Vec2::ZERO);
     p
 }
 
