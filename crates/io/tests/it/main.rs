@@ -54,6 +54,7 @@ mod pdf_read;
 mod plot_layout_scale;
 mod plot_model_png_scale;
 mod plot_styles;
+mod polyface_roundtrip;
 mod portable_fonts;
 mod region_roundtrip;
 mod roundtrip;

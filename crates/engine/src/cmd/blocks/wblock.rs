@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use super::super::curves::KW;
 use super::super::machines::{SelOutcome, SelectPhase};
+use super::super::modify::erase_kept;
 use super::super::{CommandSpec, bad, point_param, str_param, targets};
 use super::insert_file::stem;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
@@ -16,7 +17,7 @@ pub(super) fn wblock_spec() -> CommandSpec {
 }
 
 /// -WBLOCK erases the objects it writes, whatever its mOde option says: AutoCAD 2024 does, and
-/// keeps "Object conversion=Delete" as the setting.
+/// keeps "Object conversion=Delete" as the setting. OOPS brings them back, as after ERASE.
 pub(super) fn dash_wblock_spec() -> CommandSpec {
     CommandSpec::new("-wblock", "Write Block", run_dash_wblock)
         .params("{path, name? | handles?, base?} (the objects written are erased)")
@@ -124,10 +125,7 @@ fn moved(e: &Entity, m: &Mat3) -> Entity {
 }
 
 fn erase(s: &mut Session, hs: &[Handle]) -> Result<()> {
-    let doc = s.doc_mut()?;
-    for h in hs {
-        doc.remove_entity(*h);
-    }
+    erase_kept(s, hs)?;
     s.set_selection(Vec::new());
     Ok(())
 }

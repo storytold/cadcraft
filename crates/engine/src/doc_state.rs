@@ -35,6 +35,8 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// What the last erase removed, for OOPS.
+    pub(crate) erased: crate::cmd::Erased,
     /// The fonts missing on Windows that a save last named: the next save names them again only
     /// when they change.
     pub(crate) fonts_noted: String,
@@ -64,6 +66,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            erased: Default::default(),
             fonts_noted: String::new(),
         }
     }

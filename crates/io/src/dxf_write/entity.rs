@@ -32,6 +32,64 @@ pub(super) fn hatch_reactors(d: &Drawing) -> HashMap<Handle, Vec<String>> {
     out
 }
 
+/// A polyface mesh as one POLYLINE record: the vertices (flags 64 | 128), then one face record
+/// (128) per face that names them (the others draw nothing and are dropped, as on read). Counts
+/// and indices are 16-bit groups (71–74), and no index is above the vertex count: a mesh too large
+/// for them is written as its 3D faces rather than with numbers cut short.
+fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, owner: &str, paper: bool, cx: &Ctx) {
+    let faces: Vec<&[i32; 4]> = m.faces.iter().filter(|f| m.face3d(f).is_some()).collect();
+    let max = usize::try_from(i16::MAX).unwrap_or(usize::MAX);
+    if m.vertices.len() > max || faces.len() > max {
+        for (i, f) in m.faces3d().into_iter().enumerate() {
+            let handle = if i == 0 { e.handle } else { Handle(w.next_handle()) };
+            let face = Entity { handle, common: e.common.clone(), kind: EntityKind::Face3d(f) };
+            entity(w, d, &face, owner, paper, cx);
+        }
+        return;
+    }
+    w.s(0, "POLYLINE");
+    common(w, e, owner, paper, "AcDbPolyFaceMesh");
+    w.i(66, 1);
+    w.p(10, Vec3::ZERO);
+    w.i(70, 64);
+    w.i(71, m.vertices.len() as i64);
+    w.i(72, faces.len() as i64);
+    for q in &m.vertices {
+        let vh = w.h();
+        w.s(0, "VERTEX");
+        w.s(5, vh);
+        w.s(330, e.handle.hex());
+        w.s(100, "AcDbEntity");
+        w.s(8, &e.common.layer);
+        w.s(100, "AcDbVertex");
+        w.s(100, "AcDbPolyFaceMeshVertex");
+        w.p(10, *q);
+        w.i(70, 192);
+    }
+    for f in faces {
+        let vh = w.h();
+        w.s(0, "VERTEX");
+        w.s(5, vh);
+        w.s(330, e.handle.hex());
+        w.s(100, "AcDbEntity");
+        w.s(8, &e.common.layer);
+        w.s(100, "AcDbFaceRecord");
+        w.p(10, Vec3::ZERO);
+        w.i(70, 128);
+        for (code, ix) in [71, 72, 73, 74].into_iter().zip(f) {
+            if *ix != 0 {
+                w.i(code, i64::from(*ix));
+            }
+        }
+    }
+    let sh = w.h();
+    w.s(0, "SEQEND");
+    w.s(5, sh);
+    w.s(330, e.handle.hex());
+    w.s(100, "AcDbEntity");
+    w.s(8, &e.common.layer);
+}
+
 pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     write_basic_entity(w, d, e, owner, paper, cx);
     write_text_entity(w, d, e, owner, paper, cx);
@@ -45,7 +103,7 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
     write_other_entity(w, d, e, owner, paper, cx);
 }
 
-fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Line(l) => {
             w.s(0, "LINE");
@@ -144,6 +202,7 @@ fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
             w.s(100, "AcDbEntity");
             w.s(8, &e.common.layer);
         }
+        EntityKind::PolyfaceMesh(m) => polyface(w, d, e, m, owner, paper, cx),
         EntityKind::Spline(s) => {
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
