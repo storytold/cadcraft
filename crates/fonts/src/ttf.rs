@@ -5,6 +5,10 @@
 //! (`Noto Sans CJK TC`) among installed files with a similar name. TrueType collections
 //! (`.ttc` / `.otc`) are scanned too; a stem lookup takes their first face.
 //!
+//! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
+//! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
+//! partitions on Android, and the XDG directories elsewhere. Web builds have no system fonts.
+//!
 //! Two process-wide settings (like AutoCAD's profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
 //!   file we don't read, a missing TTF). Empty = the built-in stroke font.
@@ -271,14 +275,17 @@ fn lock() -> MutexGuard<'static, Db> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn scan() -> HashMap<String, PathBuf> {
-    let mut out = HashMap::new();
+fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into));
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(PathBuf::from(h).join("Library/Fonts"));
         }
+    } else if cfg!(target_os = "android") {
+        // The system fonts plus the product and vendor partitions, where devices keep faces of
+        // their own; an app may read all of them. Directories a device lacks are skipped.
+        dirs.extend(["/system/fonts", "/product/fonts", "/system_ext/fonts", "/vendor/fonts"].map(Into::into));
     } else if cfg!(windows) {
         dirs.push("C:\\Windows\\Fonts".into());
         if let Some(l) = std::env::var_os("LOCALAPPDATA") {
@@ -291,7 +298,13 @@ fn scan() -> HashMap<String, PathBuf> {
             dirs.push(PathBuf::from(h).join(".local/share/fonts"));
         }
     }
-    let mut stack = dirs;
+    dirs
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scan() -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
+    let mut stack = font_dirs();
     let mut seen = 0usize;
     while let Some(d) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
@@ -1072,5 +1085,26 @@ mod geometry_budget_tests {
         assert!(!shaped.is_empty());
         assert_eq!(shaped.glyphs, vec![contours]);
         assert!(shaped.text.is_empty());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod scan_tests {
+    use super::*;
+
+    /// Each platform searches its own system font directories. A branch that is missing or
+    /// misnamed leaves a device with no fonts at all, so the platform's main location is checked
+    /// here rather than discovered by a drawing full of missing-glyph boxes.
+    #[test]
+    fn the_platforms_system_font_directory_is_searched() {
+        let dirs = font_dirs();
+        #[cfg(target_os = "macos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/System/Library/Fonts")), "{dirs:?}");
+        #[cfg(target_os = "android")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(windows)]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
     }
 }
