@@ -217,6 +217,11 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "dist", p, "p1")?;
     let b = point3_req(s, "dist", p, "p2")?;
     let d = b - a;
+    if !d.len().is_finite() {
+        return Err(bad("dist", "the distance is too large"));
+    }
+    s.distance = d.len();
+    s.last_point = a.xy();
     Ok(json!({
         "distance": d.len(),
         "angle": d.xy().angle().to_degrees(),
@@ -430,6 +435,8 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(what) = too_large(a, per) {
         return Err(bad("area", format!("the {what} is too large")));
     }
+    s.area = a;
+    s.perimeter = per;
     Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
 }
 
@@ -516,6 +523,13 @@ pub(super) fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
             total
         }
         EntityKind::Region(r) => (r.area(), r.perimeter()),
+        // Like an open polyline: the area closed by the chord, the perimeter its own length.
+        EntityKind::Spline(sp) if sp.is_valid() => {
+            let b = sp.bounds();
+            let pts = sp.tessellate_spans((b.min.dist(b.max) * 1e-7).max(1e-12));
+            // A length past f64's range is too large to report, as a polyline's is, not 0.
+            (cadcraft_geom::shoelace(&pts).abs(), sp.checked_length().unwrap_or(f64::INFINITY))
+        }
         _ => return Err(bad("area", "object has no area")),
     })
 }
@@ -872,16 +886,25 @@ impl Interactive for DistM {
                 self.first_source = s.picked_viewport;
                 Ok(Step::Continue)
             }
-            (Some(a), Input::Point(b)) => {
+            (Some(first), Input::Point(b)) => {
                 let (a, b) = match (self.first_source, s.picked_viewport) {
                     (Some(first), Some(second)) if first.viewport == second.viewport => (first.point, second.point),
-                    _ => (a, b),
+                    _ => (first, b),
                 };
                 let (za, zb) = if self.first_source.is_some() || s.picked_viewport.is_some() { (0.0, 0.0) } else { (z_at(s, a), z_at(s, b)) };
-                let t = dist_text(s, Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                let (a, b) = (Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                if !(b - a).len().is_finite() {
+                    // The first point stays LASTPOINT, as after a measurement.
+                    s.last_point = first;
+                    return Err(bad("dist", "the distance is too large"));
+                }
+                let t = dist_text(s, a, b);
                 for l in t.lines() {
                     s.echo(l.to_string());
                 }
+                // As in AutoCAD, the second point doesn't become LASTPOINT: the first stays.
+                s.distance = (b - a).len();
+                s.last_point = first;
                 Ok(Step::Done)
             }
             (Some(a), Input::Keyword(k)) if k == "Multiple points" => {
@@ -909,7 +932,11 @@ impl DistM {
             .as_deref()
             .or(self.multi.as_deref())
             .map_or(0.0, |pts| if closed { arcs::polyline(pts, &self.bulges, true).len() } else { path_len(pts, &self.bulges) });
+        if !d.is_finite() {
+            return Err(bad("dist", "the distance is too large"));
+        }
         s.echo(format!("Distance = {}", fmt_d(s, d)));
+        s.distance = d;
         Ok(Step::Done)
     }
 }
@@ -1123,10 +1150,14 @@ impl AreaM {
             return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
         s.echo(area_text(s, a, per));
+        // AREA: this area, or in Add and Subtract mode the running total; PERIMETER: this area's.
+        s.perimeter = per;
         if self.mode == AreaMode::Single {
+            s.area = a;
             return Step::Done;
         }
         self.total = total;
+        s.area = total;
         s.echo(format!("Total area = {}", fmt_d(s, self.total)));
         Step::Continue
     }

@@ -202,6 +202,83 @@ fn bounds_keep_their_cap_over_huge_knot_spans() {
     }
 }
 
+#[test]
+fn tessellate_spans_measures_narrow_knot_spans() {
+    // A degree-1 spline is its control polygon: the triangle (0,0) (1,0) (0,1), though two of its
+    // three spans are a billionth of the domain. One grid over the domain steps over them and
+    // sees no area; spread over the spans, the corners are there.
+    let control = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::ZERO];
+    let s = Spline { degree: 1, knots: vec![0.0, 0.0, 1e-9, 2e-9, 1.0, 1.0], control, ..Spline::default() };
+    assert!(s.is_valid());
+    assert!(crate::shoelace(&s.tessellate(1e-3)).abs() < 1e-6);
+    let pts = s.tessellate_spans(1e-3);
+    assert!(pts.iter().any(|p| p.near(Vec2::new(1.0, 0.0), 1e-12)), "{pts:?}");
+    assert!((crate::shoelace(&pts).abs() - 0.5).abs() < 1e-12);
+    // An ordinary spline measures as `tessellate` does, within the sampling's sag.
+    let w = wiggly(false);
+    let (a, b) = (crate::shoelace(&w.tessellate(1e-4)), crate::shoelace(&w.tessellate_spans(1e-4)));
+    assert!((a - b).abs() <= 1e-4 * a.abs().max(1.0), "{a} {b}");
+}
+
+/// The square (0,0) (100,0) (100,100) (0,100) as a degree-1 spline: `edge` spans of width 1
+/// along the bottom, then two spans a millionth wide up the right side and across the top.
+fn square_with_narrow_spans(edge: usize) -> Spline {
+    let mut control: Vec<Vec2> = (0..=edge).map(|i| Vec2::new(100.0 * i as f64 / edge as f64, 0.0)).collect();
+    control.extend([Vec2::new(100.0, 100.0), Vec2::new(0.0, 100.0)]);
+    let end = edge as f64;
+    let mut knots: Vec<f64> = (0..=edge).map(|i| i as f64).collect();
+    knots.insert(0, 0.0);
+    knots.extend([end + 1e-6, end + 2e-6, end + 2e-6]);
+    Spline { degree: 1, knots, control, ..Spline::default() }
+}
+
+#[test]
+fn tessellate_spans_covers_every_span_however_many() {
+    // A degree-1 spline's spans are straight: one segment each, its control points, however many
+    // there are. The narrow spans are measured, not stepped over by a grid.
+    for edge in [3000, MAX_SAMPLES + 500] {
+        let s = square_with_narrow_spans(edge);
+        assert!(s.is_valid());
+        let pts = s.tessellate_spans(1e-9);
+        assert_eq!(pts.len(), s.control.len());
+        assert!(pts.iter().zip(&s.control).all(|(p, c)| p.near(*c, 1e-9)));
+        assert!((crate::shoelace(&pts).abs() - 1e4).abs() < 1e-6, "{}", crate::shoelace(&pts));
+    }
+    let s = square_with_narrow_spans(MAX_SAMPLES + 500);
+    assert!(crate::shoelace(&s.samples(MAX_SAMPLES).collect::<Vec<_>>()).abs() < 0.6e4);
+}
+
+#[test]
+fn tessellate_spans_samples_where_the_curve_bends() {
+    // A quadratic spline along the x-axis but for one control point 1000 above it: three spans
+    // bend, and the area under them is 1750/3 (a fine grid gives 583.3333334). Their chords alone
+    // would give 750. Below the sample cap and past it, the straight spans keep one segment each
+    // (their samples are the only ones on the axis but the curve's end) and the bent spans take
+    // all the rest.
+    for edge in [40, MAX_SAMPLES + 500] {
+        let mut control: Vec<Vec2> = (0..=edge).map(|i| Vec2::new(i as f64, 0.0)).collect();
+        control.extend([Vec2::new(edge as f64 + 0.5, 1000.0), Vec2::new(edge as f64 + 1.0, 0.0), Vec2::new(edge as f64 + 2.0, 0.0)]);
+        let s = Spline::from_control(control, 2);
+        let pts = s.tessellate_spans(1e-9);
+        let area = crate::shoelace(&pts).abs();
+        assert!((area - 1750.0 / 3.0).abs() < 1e-6 * area, "{edge}: {area}");
+        assert_eq!(pts.iter().filter(|p| p.y == 0.0).count(), edge + 1, "{edge}");
+        assert_eq!(pts.len(), s.control.len() - 2 + s.sample_count(1e-9) + 1, "{edge}");
+    }
+}
+
+#[test]
+fn span_bend_bounds_the_area_off_the_chord() {
+    let mut s = Spline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(3.0, 0.0), Vec2::new(4.0, 2.0)], 2);
+    // Collinear control points: a straight span.
+    assert_eq!(s.span_bend(0), 0.0);
+    // (1,0) (3,0) (4,2): twice their triangle's area.
+    assert!((s.span_bend(1) - 4.0).abs() < 1e-12, "{}", s.span_bend(1));
+    // A weight that isn't positive: the polygon's length squared.
+    s.weights = vec![1.0, -0.5, 1.0, 1.0];
+    assert!((s.span_bend(0) - 9.0).abs() < 1e-12, "{}", s.span_bend(0));
+}
+
 fn scaled(s: &Spline, k: f64) -> Spline {
     Spline { control: s.control.iter().map(|c| *c * k).collect(), fit: s.fit.iter().map(|c| *c * k).collect(), ..s.clone() }
 }
