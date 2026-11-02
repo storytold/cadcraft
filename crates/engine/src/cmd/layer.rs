@@ -7,7 +7,8 @@ use cadcraft_doc::{Layer, Lineweight};
 use serde_json::{Value, json};
 
 use super::machines::SelectRun;
-use super::*;
+use super::{CommandSpec, bad, bool_or, ok, str_param, targets};
+
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -181,7 +182,7 @@ fn loaded_linetype(d: &cadcraft_doc::Drawing, cmd: &str, p: &Value) -> Result<Op
 }
 
 fn valid_name(n: &str) -> bool {
-    !n.trim().is_empty() && n.len() <= 255 && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
+    !n.trim().is_empty() && n.len() <= 255 && !n.chars().any(|c| c.is_control() || "<>/\\\":;?*|,=`".contains(c))
 }
 
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
@@ -249,6 +250,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 repoint(&mut std::sync::Arc::make_mut(block).entities, &old, &nn);
             }
         }
+        merge::rename_in_viewports(d, &old, &nn);
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }

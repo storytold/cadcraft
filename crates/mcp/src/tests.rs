@@ -4,12 +4,16 @@ use serde_json::{Value, json};
 
 use crate::{Headless, Server};
 
+/// Send one JSON-RPC request to the server and return the parsed reply; fails the test if the
+/// server does not answer or answers with invalid JSON.
 fn call(s: &mut Server, id: u64, method: &str, params: Value) -> Value {
     let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
     let r = s.handle_line(&line).expect("reply");
     serde_json::from_str(&r).unwrap()
 }
 
+/// Call an MCP tool and return its decoded result: JSON text is parsed, an image is passed
+/// through, and a tool error fails the test with the reported message.
 fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     let r = call(s, 99, "tools/call", json!({"name": name, "arguments": args}));
     let c = &r["result"]["content"][0];
@@ -17,6 +21,8 @@ fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     if c["type"] == "text" { serde_json::from_str(c["text"].as_str().unwrap()).unwrap_or(Value::Null) } else { c.clone() }
 }
 
+/// The MCP handshake works: `initialize` names the server, the `initialized` notification is
+/// accepted, `tools/list` offers the command line, and an unknown method is -32601.
 #[test]
 fn lifecycle_and_tools() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -30,6 +36,8 @@ fn lifecycle_and_tools() {
     assert_eq!(bad["error"]["code"], -32601);
 }
 
+/// Guards that an agent can complete a drawing (plate, holes, layer, text) using only the MCP
+/// tools, and verify it only through MCP: counts, selection queries, undo and a PNG render.
 #[test]
 fn agent_draws_a_plate_with_holes() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -70,6 +78,8 @@ fn agent_draws_a_plate_with_holes() {
     assert!(img["data"].as_str().unwrap().len() > 100);
 }
 
+/// Guards that bad input is reported, not fatal: a refused command and a screenshot without a
+/// UI are `isError` results, and malformed JSON is a parse error (-32700).
 #[test]
 fn errors_are_tool_errors_not_crashes() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -111,6 +121,19 @@ fn bad_tool_calls_are_invalid_params() {
     assert_eq!(s.handle_line("[]").map(|r| serde_json::from_str::<Value>(&r).unwrap()["error"]["code"].clone()), Some(json!(-32600)));
 }
 
+/// `open` reads both DXF and DWG, so `tools/list` must advertise both (#1875).
+#[test]
+fn open_tool_description_names_dxf_and_dwg() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let open = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "open").unwrap();
+    let desc = open["description"].as_str().unwrap();
+    assert!(desc.contains("DXF"), "`open` must still name DXF: {desc}");
+    assert!(desc.contains("DWG"), "`open` reads DWG too: {desc}");
+}
+
+/// Guards that `query_entities` advertises its `selected` filter and honours it (active-space
+/// selection only, both ways) without changing the drawing.
 #[test]
 fn query_entities_selection_filter_is_discoverable_and_forwarded() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -149,6 +172,8 @@ fn query_entities_pages_and_windows_by_geometry() {
     assert_eq!(r["count"], 1, "only the circle is entirely inside: {r}");
 }
 
+/// Guards that the `list_commands` filter matches ids, labels and aliases but not parameter
+/// docs, so searching `circle` does not return QSELECT merely for mentioning circles.
 #[test]
 fn list_commands_filter_matches_names_not_docs() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -160,6 +185,8 @@ fn list_commands_filter_matches_names_not_docs() {
     assert!(r.as_array().unwrap().iter().any(|c| c["id"] == "pline"), "aliases and ids match");
 }
 
+/// Guards that `find_text` returns TEXT and MTEXT with their placement, strips MTEXT formatting,
+/// and filters by text, layer and window; a windowed render keeps that area's aspect ratio.
 #[test]
 fn find_text_reads_texts_and_render_shows_one_area() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -199,6 +226,8 @@ fn find_text_reads_texts_and_render_shows_one_area() {
     assert_eq!((w, h), (1600, 800));
 }
 
+/// Guards a lazy Remote bridge: it serves tools without the app, reports how to start it
+/// (`--control`), and reaches the app once that app starts listening on the port.
 #[test]
 fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     // Nothing listens on a port that was just freed.

@@ -1,6 +1,6 @@
 //! Where MCP tool calls end up: a control-channel method call.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -28,6 +28,8 @@ pub struct Remote {
     /// The per-session control token for this port, read from the owner-only token file on first
     /// use so requests can authenticate (CWE-306).
     token: Option<String>,
+    /// Longest reply line accepted (`MAX_REPLY_LINE`; smaller in tests).
+    max_reply: usize,
 }
 
 /// The port component of a `HOST:PORT` address, for locating the token file.
@@ -38,10 +40,29 @@ fn port_of(addr: &str) -> Option<u16> {
 /// How long a launched app has to open its control port.
 const LAUNCH_WAIT: Duration = Duration::from_secs(30);
 
+/// Longest reply line in bytes the client will buffer. It matches the control server's request
+/// cap (256 MiB, room for whole drawings and images as base64), so a peer squatting on the port
+/// can't make the client allocate without bound (#1925).
+const MAX_REPLY_LINE: usize = 256 * 1024 * 1024;
+
+/// Read one `\n`-terminated reply of at most `max` bytes (newline excluded). `Ok(0)` is end of
+/// stream; a longer line is an `InvalidData` error and the rest of it stays unread.
+fn read_reply_line(reader: &mut impl BufRead, reply: &mut String, max: usize) -> std::io::Result<usize> {
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    let n = reader.take(limit).read_line(reply)?;
+    if n > max && !reply.ends_with('\n') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("reply from the control port is longer than {max} bytes; is that CADCraft's control server?"),
+        ));
+    }
+    Ok(n)
+}
+
 impl Remote {
     /// Connect to a running control server; its session token is read lazily when the first request is sent.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None, max_reply: MAX_REPLY_LINE };
         r.reconnect()?;
         Ok(r)
     }
@@ -49,7 +70,7 @@ impl Remote {
     /// the server before the app is open. With `launch`, a call that finds nothing at `addr`
     /// opens the app with that control port first (macOS) and waits for it.
     pub fn lazy(addr: &str, launch: bool) -> Self {
-        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None }
+        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, max_reply: MAX_REPLY_LINE }
     }
 
     /// The per-session token for this port, read (and cached) from the owner-only token file. A
@@ -120,7 +141,7 @@ impl Remote {
             return Err((e, true));
         }
         let mut reply = String::new();
-        match reader.read_line(&mut reply) {
+        match read_reply_line(reader, &mut reply, self.max_reply) {
             Ok(0) => {
                 self.conn = None;
                 Err((std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed"), true))
@@ -184,17 +205,20 @@ fn is_read_only(method: &str) -> bool {
     )
 }
 
-impl Backend for Remote {
-    /// Send a control request with the token when available, refreshing it before a safe retry.
-    /// A mutation that may have reached the server is never resent automatically.
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
+impl Remote {
+    /// Put the current token (if any) on `req`, replacing the one it carries.
+    fn set_token(&mut self, req: &mut Value) {
         let token = self.token().map(str::to_string);
-        let mut req = json!({"id": id, "method": method, "params": params});
-        if let (Some(obj), Some(token)) = (req.as_object_mut(), token) {
-            obj.insert("token".into(), Value::String(token));
+        if let Some(obj) = req.as_object_mut() {
+            obj.remove("token");
+            if let Some(token) = token {
+                obj.insert("token".into(), Value::String(token));
+            }
         }
+    }
+    /// Send `req` and parse the reply, refreshing the token before a safe retry after a transport
+    /// error. A mutation that may have reached the server is never resent automatically.
+    fn exchange(&mut self, method: &str, req: &mut Value) -> Result<Value, String> {
         let reply = match self.roundtrip(&req.to_string()) {
             Ok(r) => r,
             Err((e, sent)) => {
@@ -208,12 +232,7 @@ impl Backend for Remote {
                     ));
                 }
                 // A restarted server may have rotated its token before dropping the old socket.
-                if let Some(obj) = req.as_object_mut() {
-                    obj.remove("token");
-                    if let Some(token) = self.token() {
-                        obj.insert("token".into(), Value::String(token.to_owned()));
-                    }
-                }
+                self.set_token(req);
                 self.roundtrip(&req.to_string()).map_err(|(e, _)| {
                     self.token = None;
                     self.conn = None;
@@ -221,12 +240,37 @@ impl Backend for Remote {
                 })?
             }
         };
-        let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))?;
+        serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))
+    }
+}
+
+/// An `unauthorized` reply (the app also closes the connection).
+fn unauthorized(v: &Value) -> bool {
+    v.get("error").and_then(Value::as_str).is_some_and(|e| e.starts_with("unauthorized"))
+}
+
+impl Backend for Remote {
+    /// Send a control request with the token when available. A refused token is read again and the
+    /// request resent once, only when the app says it did not run it.
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut req = json!({"id": id, "method": method, "params": params});
+        self.set_token(&mut req);
+        let mut v = self.exchange(method, &mut req)?;
+        // The token is read before `--launch` opens the app, which then writes a new one (#2087); the
+        // file can also be left over from an earlier session. Once, so a wrong token can't loop.
+        if unauthorized(&v) && v.get("state").and_then(Value::as_str) == Some("not-run") {
+            self.token = None;
+            self.conn = None;
+            self.set_token(&mut req);
+            v = self.exchange(method, &mut req)?;
+        }
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
             let e = v.get("error").and_then(Value::as_str).unwrap_or("error");
-            if e.starts_with("unauthorized") {
+            if unauthorized(&v) {
                 self.token = None;
                 self.conn = None;
             }
@@ -405,6 +449,38 @@ impl Backend for Headless {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::sync::Arc;
+
+    /// A peer squatting on the control port can't make the client buffer an endless reply line (#1925).
+    #[test]
+    fn an_overlong_reply_is_refused_without_buffering_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
+            // No newline: the reply never ends. A bounded client gives up after the limit.
+            let _ = conn.write_all(&[b'x'; 4096]);
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        let mut remote = Remote::connect(&addr).unwrap();
+        remote.max_reply = 100;
+        let err = remote.roundtrip("{}").unwrap_err().0;
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+        assert!(err.to_string().contains("longer than 100 bytes"), "{err}");
+        assert!(remote.conn.is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn replies_up_to_the_limit_are_read() {
+        let mut input: &[u8] = b"0123456789\nrest\n";
+        let mut reply = String::new();
+        assert_eq!(read_reply_line(&mut input, &mut reply, 10).unwrap(), 11);
+        assert_eq!(reply, "0123456789\n");
+    }
 
     /// A server that reads one request per connection and closes without replying must not see the request twice.
     #[test]
@@ -478,6 +554,85 @@ mod tests {
         let mut remote = Remote::connect(&addr.to_string()).unwrap();
         assert_eq!(remote.call("ping", json!({})).unwrap(), json!("pong"));
         server.join().unwrap();
+    }
+    /// Answer one request per connection like the app's control server: `reply` sees the request
+    /// and the connection number and says what to send back; the server closes after each reply.
+    /// Returns how many requests arrived, waiting a short while for each next connection.
+    fn fake_app(listener: TcpListener, reply: impl Fn(&Value, usize) -> Value + Send + 'static) -> std::thread::JoinHandle<usize> {
+        std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let mut seen = 0;
+            loop {
+                let start = std::time::Instant::now();
+                let conn = loop {
+                    match listener.accept() {
+                        Ok((conn, _)) => break Some(conn),
+                        Err(_) if start.elapsed() < Duration::from_millis(500) => std::thread::sleep(Duration::from_millis(10)),
+                        Err(_) => break None,
+                    }
+                };
+                let Some(conn) = conn else { return seen };
+                conn.set_nonblocking(false).unwrap();
+                let mut line = String::new();
+                BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let mut out = conn;
+                writeln!(out, "{}", reply(&serde_json::from_str(&line).unwrap(), seen)).unwrap();
+                seen += 1;
+            }
+        })
+    }
+
+    /// `--launch` reads the token before it opens the app, so the first request carries the token
+    /// of an earlier session (or none); the app refuses it without running it, and the call is
+    /// resent once with the token the app has just written (#2087).
+    #[test]
+    fn unauthorized_not_run_is_resent_once_with_the_new_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let old = crate::control_token::issue(addr.port()).unwrap();
+        let fresh = Arc::new(std::sync::Mutex::new(String::new()));
+        let f = fresh.clone();
+        let server = fake_app(listener, move |req, n| {
+            if n == 0 {
+                assert_eq!(req["token"].as_str(), Some(old.as_str()));
+                // The app starts and writes its own session's token.
+                *f.lock().unwrap() = crate::control_token::issue(addr.port()).unwrap();
+                json!({"ok": false, "error": "unauthorized: missing or invalid control token", "state": "not-run"})
+            } else if req["token"].as_str() == Some(f.lock().unwrap().as_str()) {
+                json!({"ok": true, "result": "drawing"})
+            } else {
+                json!({"ok": false, "error": "unauthorized: missing or invalid control token", "state": "not-run"})
+            }
+        });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let first = remote.call("engine.execute", json!({"command": "circle", "params": {}}));
+        let requests = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        assert_eq!(first, Ok(json!("drawing")));
+        assert_eq!(requests, 2);
+        assert_eq!(remote.token.as_deref(), Some(fresh.lock().unwrap().as_str()));
+    }
+
+    /// A token the app keeps refusing is resent once, not in a loop, and a refusal that doesn't
+    /// say the request never ran is not resent at all.
+    #[test]
+    fn unauthorized_is_resent_at_most_once_and_only_when_not_run() {
+        for (state, connections) in [(Some("not-run"), 2), (Some("may-have-run"), 1), (None, 1)] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let server = fake_app(listener, move |_, _| {
+                let mut r = json!({"ok": false, "error": "unauthorized: missing or invalid control token"});
+                if let (Some(o), Some(state)) = (r.as_object_mut(), state) {
+                    o.insert("state".into(), json!(state));
+                }
+                r
+            });
+            let mut remote = Remote::lazy(&addr, false);
+            let err = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
+            assert!(err.starts_with("unauthorized"), "{err}");
+            assert_eq!(server.join().unwrap(), connections, "{state:?}");
+            assert!(remote.token.is_none() && remote.conn.is_none());
+        }
     }
     /// A failed mutation write reports uncertain delivery and does not open a retry connection.
     #[test]

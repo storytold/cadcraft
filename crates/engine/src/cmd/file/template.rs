@@ -10,7 +10,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use cadcraft_doc::Drawing;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{Result, Session, bad, io};
 
 /// The default template (profile setting, process-wide like FONTALT): empty = none.
 fn default_template() -> MutexGuard<'static, String> {
