@@ -89,14 +89,6 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
             });
         }
     }
-    // DIMTFILL 1: a background-colour mask, over the lines and arrowheads, under the text.
-    if style.text_fill == 1 && g.text_fill.len() == 4 {
-        v.push(Entity {
-            handle: Handle(0),
-            common: e.common.clone(),
-            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: g.text_fill.clone() }),
-        });
-    }
     // DIMTFILL 2: the text background as a SOLID in DIMTFILLCLR, over the lines and
     // arrowheads, under the text and its marks (SOLID corners go 1, 2, 4, 3).
     if style.text_fill == 2
@@ -110,7 +102,6 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
             kind: EntityKind::Solid(cadcraft_doc::Solid { corners: [v3(*p0), v3(*p1), v3(*p3), v3(*p2)] }),
         });
     }
-    v.extend(marks(true).filter_map(&line_entity));
     if !g.value.is_empty() {
         v.push(Entity {
             handle: Handle(0),
@@ -126,9 +117,14 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: (style.text_fill == 1 && g.text_height > 0.0 && !g.text_fill.is_empty()).then(|| cadcraft_doc::MTextMask {
+                    scale: 1.0 + style.text_gap.abs() * style.effective_scale(d.header.f64("DIMSCALE", 1.0)) / g.text_height,
+                    ..cadcraft_doc::MTextMask::default()
+                }),
             }),
         });
     }
+    v.extend(marks(true).filter_map(&line_entity));
     v
 }
 

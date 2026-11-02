@@ -89,7 +89,10 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
     let o = t.insert.xy();
     let pts = [Vec2::new(dx, top + dy), Vec2::new(dx + w, top + dy), Vec2::new(dx + w, top - h + dy), Vec2::new(dx, top - h + dy)]
         .map(|p| o + p.rotate(t.rotation));
-    Bounds2::from_points(pts)
+    let bounds = Bounds2::from_points(pts);
+    let margin = t.background.map(|m| (m.normalized().scale - 1.0) * t.height).unwrap_or(0.0);
+    let margin = margin * (t.rotation.cos().abs() + t.rotation.sin().abs());
+    if margin.is_finite() && margin > 0.0 { bounds.expand(margin) } else { bounds }
 }
 
 /// The box of what `e` draws (block contents on layers turned off left out).
@@ -354,6 +357,7 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }
     }
 
@@ -420,6 +424,7 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         };
         let ml = crate::MLeader {
             leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],

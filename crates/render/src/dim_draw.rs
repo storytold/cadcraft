@@ -138,6 +138,10 @@ pub(crate) fn block_text_box(d: &Drawing, be: &Entity, gap: f64) -> Option<Vec<V
         EntityKind::Text(t) => return text_box(d, t, gap),
         _ => return None,
     };
+    mtext_box(d, t, gap)
+}
+
+pub(crate) fn mtext_box(d: &Drawing, t: &cadcraft_doc::MText, gap: f64) -> Option<Vec<Vec2>> {
     let (bounds, at, rot) = (layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }).bounds, t.insert.xy(), t.rotation);
     if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 {
         return None;

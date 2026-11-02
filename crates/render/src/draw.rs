@@ -120,13 +120,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             b.shaped(ctx, rgb, lw, &sh);
         }
         EntityKind::MText(t) => {
-            if !b.opts.text {
+            if !b.opts.text && t.background.is_none() {
                 return;
             }
             if e.common.matches_layout_orientation() && t.rotation != 0.0 {
-                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw, &e.common.layer);
             } else {
-                mtext(b, ctx, t, rgb, lw);
+                mtext(b, ctx, t, rgb, lw, &e.common.layer);
             }
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
@@ -279,7 +279,7 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
         let land = m.landing.xy();
         let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
         b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-        mtext(b, ctx, t, rgb, lw);
+        mtext(b, ctx, t, rgb, lw, &e.common.layer);
     }
     if let Some(ins) = &m.block {
         if m.dogleg > 0.0 && !m.leaders.is_empty() {
@@ -316,9 +316,8 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
         let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
-        // DIMTFILL: the block's MTEXT carries no background mask here, so a background
-        // around each of the block's texts is drawn before the block's first text or first
-        // line of the text's marks, except for a text that a SOLID or WIPEOUT of the block covers.
+        // DIMTFILL fallback for blocks without native MTEXT masks: draw a background before
+        // the first text or text mark, unless a visible SOLID/WIPEOUT already covers the text.
         let style = ctx.d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
         let g = if style.text_fill != 0 { dimension_in(ctx.d, dm) } else { DimGeometry::default() };
         let gap = style.text_gap.abs() * style.effective_scale(ctx.d.header.f64("DIMSCALE", 1.0));
@@ -330,6 +329,7 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .iter()
                 .map(|be| &**be)
                 .filter(|be| matches!(be.kind, EntityKind::Solid(_) | EntityKind::Wipeout(_)))
+                .filter(|be| !ctx.d.is_hidden_object(be.handle) && resolve(&sub, be, b.plotting).4)
                 .take(MAX_FILL_BACKGROUNDS)
                 .collect();
             // A text's own box (no gap): a fill holding all its corners is its background.
@@ -338,8 +338,9 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
             blk.entities
                 .iter()
                 .filter(|be| matches!(be.kind, EntityKind::MText(_) | EntityKind::Text(_)))
+                .filter(|be| !ctx.d.is_hidden_object(be.handle) && resolve(&sub, be, b.plotting).4)
                 .take(MAX_FILL_TEXTS)
-                .filter(|be| !covered(be))
+                .filter(|be| !matches!(&be.kind, EntityKind::MText(t) if t.background.is_some()) && !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
                 .collect()
         };

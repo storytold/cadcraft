@@ -148,6 +148,7 @@ fn a_dimension_read_with_its_block_keeps_the_block_and_gets_the_background() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     };
     blk.entities.push(Entity::new(Handle(2), EntityKind::MText(text)));
     d.blocks.insert("*D1".into(), std::sync::Arc::new(blk));
@@ -180,6 +181,7 @@ fn every_text_of_a_block_gets_a_background() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         };
         blk.entities.push(Entity::new(Handle(i as u64 + 1), EntityKind::MText(text)));
     }
@@ -216,6 +218,7 @@ fn a_block_that_holds_its_background_gets_no_second_one() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         };
         blk.entities.push(Entity::new(Handle(2), EntityKind::MText(text)));
         d.blocks.insert("*D1".into(), std::sync::Arc::new(blk));
@@ -260,6 +263,97 @@ fn a_block_with_turned_text_gets_a_turned_background() {
     assert!(hi.y - lo.y > 1.5 * (hi.x - lo.x), "turned: {lo:?} {hi:?}");
     let text: Vec<Vec2> = list.prims[mask + 1..].iter().flat_map(|p| list.points(p).to_vec()).collect();
     assert!(!text.is_empty() && text.iter().all(|p| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y), "the text inside {lo:?} {hi:?}");
+}
+
+#[test]
+fn invisible_stored_backgrounds_do_not_suppress_the_dimension_fill() {
+    for mode in ["visible", "entity", "layer_off", "layer_frozen", "no_plot", "isolated"] {
+        let mut d = Drawing::new_imperial();
+        d.dim_styles.push(style(1, Color::ByBlock));
+        let mut layer = cadcraft_doc::Layer::new("Mask");
+        layer.on = mode != "layer_off";
+        layer.frozen = mode == "layer_frozen";
+        layer.plot = mode != "no_plot";
+        d.layers.push(layer);
+        let mut block = Block::new("*D1");
+        let common = Common { layer: "Mask".into(), visible: mode != "entity", ..Common::default() };
+        block.entities.push(Entity {
+            handle: Handle(1),
+            common,
+            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout {
+                boundary: [(18., 18.), (22., 18.), (22., 22.), (18., 22.)].map(|(x, y)| Vec2::new(x, y)).to_vec(),
+            }),
+        });
+        let text = MText {
+            insert: Vec3::new(20., 20., 0.),
+            height: 0.18,
+            width: 0.,
+            attach: 5,
+            rotation: 0.,
+            style: "Standard".into(),
+            contents: "10.0000".into(),
+            line_spacing: 1.,
+            line_spacing_exact: false,
+            columns: None,
+            background: None,
+        };
+        block.entities.push(Entity::new(Handle(2), EntityKind::MText(text)));
+        d.blocks.insert("*D1".into(), std::sync::Arc::new(block));
+        d.add(&Space::Model, Common::default(), EntityKind::Dimension(Dimension { block: Some("*D1".into()), ..dimension() })).unwrap();
+        if mode == "isolated" {
+            d.hidden_objects.insert(Handle(1));
+        }
+        for plotting in [false, true] {
+            let list = if plotting {
+                cadcraft_render::build_plot(&d, &Space::Model, &Options::default())
+            } else {
+                build(&d, &Space::Model, &Options::default())
+            };
+            let masks: Vec<_> = list.prims.iter().filter(|p| p.kind == Kind::Mask).collect();
+            assert_eq!(masks.len(), 1, "{mode}, plotting={plotting}: the stored or fallback mask");
+            let bounds = cadcraft_geom::Bounds2::from_points(list.points(masks[0]).iter().copied());
+            let stored_visible = mode == "visible" || (mode == "no_plot" && !plotting);
+            assert_eq!(bounds.width() > 3.0, stored_visible, "{mode}, plotting={plotting}");
+        }
+    }
+}
+
+#[test]
+fn hidden_backgrounds_do_not_consume_the_coverage_budget() {
+    let mut d = Drawing::new_imperial();
+    d.dim_styles.push(style(1, Color::ByBlock));
+    let mut block = Block::new("*D1");
+    for h in 1..=256 {
+        block.entities.push(Entity {
+            handle: Handle(h),
+            common: Common { visible: false, ..Common::default() },
+            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: vec![Vec2::ZERO; 4] }),
+        });
+    }
+    block.entities.push(Entity::new(
+        Handle(300),
+        EntityKind::Solid(cadcraft_doc::Solid { corners: [(18., 18.), (22., 18.), (18., 22.), (22., 22.)].map(|(x, y)| Vec3::new(x, y, 0.)) }),
+    ));
+    block.entities.push(Entity::new(
+        Handle(301),
+        EntityKind::MText(MText {
+            insert: Vec3::new(20., 20., 0.),
+            height: 0.18,
+            width: 0.,
+            attach: 5,
+            rotation: 0.,
+            style: "Standard".into(),
+            contents: "10.0000".into(),
+            line_spacing: 1.,
+            line_spacing_exact: false,
+            columns: None,
+            background: None,
+        }),
+    ));
+    d.blocks.insert("*D1".into(), std::sync::Arc::new(block));
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Dimension { block: Some("*D1".into()), ..dimension() })).unwrap();
+    let list = build(&d, &Space::Model, &Options::default());
+    assert!(!list.prims.iter().any(|p| p.kind == Kind::Mask), "the visible SOLID was considered after the hidden candidates");
 }
 
 #[test]

@@ -32,6 +32,7 @@ fn text_mleader() -> MLeader {
             line_spacing: 1.25,
             line_spacing_exact: true,
             columns: None,
+            background: None,
         }),
         style: "Callout".into(),
         arrow_size: 0.3,

@@ -97,14 +97,6 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
             });
         }
     }
-    // DIMTFILL 1: a background-colour mask, under the text and its marks.
-    if style.text_fill == 1 && g.text_fill.len() == 4 {
-        out.push(Entity {
-            handle: Handle(0),
-            common: in_color(Color::ByBlock),
-            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: g.text_fill.clone() }),
-        });
-    }
     // DIMTFILL 2: the text background in DIMTFILLCLR (SOLID corners go 1, 2, 4, 3).
     if style.text_fill == 2
         && let [p0, p1, p2, p3] = g.text_fill.as_slice()
@@ -114,9 +106,6 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
             common: in_color(style.text_fill_color),
             kind: EntityKind::Solid(Solid { corners: [p0.to3(0.0), p1.to3(0.0), p3.to3(0.0), p2.to3(0.0)] }),
         });
-    }
-    for (i, l) in g.lines.iter().enumerate().filter(|(i, _)| g.text_marks.contains(i)) {
-        out.extend(line_entities(i, l));
     }
     if !g.value.is_empty() {
         out.push(Entity {
@@ -133,8 +122,15 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: (style.text_fill == 1 && g.text_height > 0.0 && !g.text_fill.is_empty()).then(|| cadcraft_doc::MTextMask {
+                    scale: 1.0 + style.text_gap.abs() * style.effective_scale(d.header.f64("DIMSCALE", 1.0)) / g.text_height,
+                    ..cadcraft_doc::MTextMask::default()
+                }),
             }),
         });
+    }
+    for (i, l) in g.lines.iter().enumerate().filter(|(i, _)| g.text_marks.contains(i)) {
+        out.extend(line_entities(i, l));
     }
     out
 }
@@ -187,6 +183,7 @@ pub(crate) fn table_block_entities(d: &Drawing, t: &Table, layer: &str) -> Vec<E
                     line_spacing: 1.0,
                     line_spacing_exact: false,
                     columns: None,
+                    background: None,
                 }),
             });
         }

@@ -5,11 +5,70 @@
 //! ATTRIB and DIMENSION strings use the same encoding ([`encode_line`]): AutoCAD reads a bare
 //! `^2` in `10^2` as a control character.
 
-use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
+use cadcraft_doc::{MText, MTextColumnType, MTextColumns, MTextMask};
 use cadcraft_dxf::Tag;
 
 /// Upper bound on column heights read from a file.
 const MAX_COLUMNS: usize = 1_000;
+
+/// Native background flags are a bit field: 1 enables the fill, 2 uses the drawing colour.
+/// R2000 has no native MTEXT fill; keep its mask in bounded CADCraft xdata instead.
+pub(crate) fn read_background(tags: &[Tag]) -> Option<MTextMask> {
+    let t = super::common::T(tags);
+    if let Some(flags) = t.i(90)
+        && (flags < 0 || flags & 3 == 0)
+    {
+        return None;
+    }
+    if t.i(90).unwrap_or(0) & 3 != 0 {
+        let color = t
+            .i(421)
+            .and_then(|c| u32::try_from(c).ok())
+            .filter(|c| *c <= 0xFF_FFFF)
+            .map(|c| cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb::from_u32(c)))
+            .unwrap_or_else(|| {
+                cadcraft_doc::color::Color::from_aci(t.i(63).and_then(|v| i16::try_from(v).ok()).filter(|v| (0..=256).contains(v)).unwrap_or(256))
+            });
+        return Some(MTextMask { use_background: t.i(90).unwrap_or(0) & 2 != 0, color, scale: t.fd(45, 1.5) }.normalized());
+    }
+    let mut own_app = false;
+    for (i, tag) in tags.iter().enumerate() {
+        let value = match &tag.value {
+            cadcraft_dxf::Value::Str(s) => s.as_str(),
+            _ => "",
+        };
+        if tag.code == 1001 {
+            own_app = value.eq_ignore_ascii_case(crate::dxf_ext::APP);
+        }
+        if own_app
+            && tag.code == 1000
+            && value == "MTEXTMASK"
+            && let Some(next) = i.checked_add(1).and_then(|i| tags.get(i)).filter(|v| v.code == 1000)
+            && let cadcraft_dxf::Value::Str(value) = &next.value
+            && value.len() <= 512
+            && let Ok(mask) = serde_json::from_str::<MTextMask>(value)
+        {
+            return Some(mask.normalized());
+        }
+    }
+    None
+}
+
+pub(crate) fn background_tags(mask: Option<MTextMask>, native: bool) -> Vec<Tag> {
+    let Some(mask) = mask.map(MTextMask::normalized) else { return Vec::new() };
+    if !native {
+        return match serde_json::to_string(&mask) {
+            Ok(value) => vec![Tag::s(1001, crate::dxf_ext::APP), Tag::s(1000, "MTEXTMASK"), Tag::s(1000, value)],
+            Err(_) => Vec::new(),
+        };
+    }
+    let mut tags = vec![Tag::i(90, if mask.use_background { 3 } else { 1 }), Tag::f(45, mask.scale), Tag::i(441, 0)];
+    match mask.color {
+        cadcraft_doc::color::Color::True(rgb) => tags.push(Tag::i(421, i64::from(rgb.to_u32()))),
+        color => tags.push(Tag::i(63, i64::from(color.to_aci()))),
+    }
+    tags
+}
 
 /// Decode the contents' `^I` (tab), `^J` (line feed) and `^ ` (caret). Other carets stay as
 /// they are (older files write stacked tolerances `\S+0.1^-0.1;` with a bare caret).

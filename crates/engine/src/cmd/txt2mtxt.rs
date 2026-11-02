@@ -107,6 +107,7 @@ fn convert(s: &mut Session, hs: &[Handle], o: &Txt2MtxtOptions) -> Result<(Vec<H
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     };
     let first = *first;
     let rest: Vec<Handle> = items.iter().skip(1).map(|(h, ..)| *h).collect();
@@ -196,6 +197,7 @@ fn single(t: &Text) -> MText {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     }
 }
 

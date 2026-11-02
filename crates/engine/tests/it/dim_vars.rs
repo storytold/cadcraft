@@ -140,30 +140,28 @@ fn exploding_background_colour_fill_keeps_a_mask_and_undo_restores_the_dimension
     let result = s.execute("explode", &json!({"handles": [h.hex()]})).unwrap();
     let d = s.doc().unwrap();
     assert!(d.entity(h).is_none());
-    let masks: Vec<_> = d
+    assert!(!d.model.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))));
+    let (text_index, text_entity, text) = d
         .model
         .iter()
         .enumerate()
-        .filter_map(|(i, e)| match &e.kind {
-            EntityKind::Wipeout(w) => Some((i, e, w)),
+        .find_map(|(i, e)| match &e.kind {
+            EntityKind::MText(t) => Some((i, e, t)),
             _ => None,
         })
-        .collect();
-    assert_eq!(masks.len(), 1);
-    let (mask_index, mask, w) = masks[0];
-    assert_eq!(w.boundary, g.text_fill);
-    assert_eq!(mask.common, before.entity(h).unwrap().common);
-    assert!(result["handles"].as_array().unwrap().contains(&json!(mask.handle.hex())));
-    let text = d.model.iter().position(|e| matches!(e.kind, EntityKind::MText(_))).unwrap();
-    assert!(mask_index < text);
-    assert!(
-        d.model.iter().enumerate().filter(|(_, e)| matches!(e.kind, EntityKind::Solid(_))).all(|(i, _)| i < mask_index),
-        "arrowheads stay behind the mask"
-    );
+        .unwrap();
+    let mask = text.background.expect("EXPLODE leaves a masked MTEXT");
+    assert!(mask.use_background);
+    assert!((mask.scale - 1.5).abs() < 1e-9);
+    assert_eq!(text.height, g.text_height);
+    assert_eq!(text_entity.common, before.entity(h).unwrap().common);
+    assert!(result["handles"].as_array().unwrap().contains(&json!(text_entity.handle.hex())));
+    assert!(d.model.iter().enumerate().filter(|(_, e)| matches!(e.kind, EntityKind::Solid(_))).all(|(i, _)| i < text_index));
+    assert_eq!(d.header.i64("WIPEOUTFRAME", 1), 1);
     s.execute("undo", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap(), &before);
     s.execute("redo", &json!({})).unwrap();
-    assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Wipeout(_))).count(), 1);
+    assert!(s.doc().unwrap().model.iter().any(|e| matches!(&e.kind, EntityKind::MText(t) if t.background.is_some())));
 }
 
 #[test]

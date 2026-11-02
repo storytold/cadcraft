@@ -335,7 +335,13 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
+            if cx.target >= Version::R2004 {
+                w.t.extend(crate::dxf_read::mtext_dxf::background_tags(t.background, true));
+            }
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
+            if cx.target < Version::R2004 {
+                w.t.extend(crate::dxf_read::mtext_dxf::background_tags(t.background, false));
+            }
         }
         _ => {}
     }

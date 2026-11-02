@@ -63,7 +63,31 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
     }
 }
 
-pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32, layer: &str) {
+    if b.opts.fill
+        && let Some(mask) = t.background.map(cadcraft_doc::MTextMask::normalized)
+    {
+        let gap = (mask.scale - 1.0) * t.height;
+        if gap.is_finite()
+            && let Some(corners) = super::dim_draw::mtext_box(ctx.d, t, gap)
+        {
+            let layer = if layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { layer };
+            let layer_color = ctx.layer_color(layer).unwrap_or(Color::Index(7));
+            let own = if rgb.aci7 { Color::Index(7) } else { Color::True(rgb.rgb) };
+            let n = b.list.prims.len();
+            if let [a, c, d, e] = corners.as_slice() {
+                b.tris(ctx, ink(mask.color, layer_color, own), &[*a, *c, *d, *a, *d, *e]);
+            }
+            if mask.use_background
+                && let Some(p) = b.list.prims.get_mut(n)
+            {
+                p.kind = super::Kind::Mask;
+            }
+        }
+    }
+    if !b.opts.text {
+        return;
+    }
     let l = layout_mtext_entity(ctx.d, t);
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);

@@ -177,6 +177,7 @@ pub(super) fn multiline_tags(w: &mut W, a: &Attrib, attdef: bool) {
     }
     w.i(73, if m.line_spacing_exact { 2 } else { 1 });
     w.f(44, m.line_spacing);
+    w.t.extend(crate::dxf_read::mtext_dxf::background_tags(m.background, true));
 }
 
 /// ATTRIB/ATTDEF flags (group 70): 1 invisible, 2 constant, 4 verify, 8 preset.

@@ -204,58 +204,59 @@ fn dimension_block_holds_the_text_background() {
 #[test]
 fn background_colour_mask_is_native_in_saved_dimension_blocks() {
     let mut d = Drawing::new_imperial();
-    d.header.set_i64("WIPEOUTFRAME", 0);
+    assert_eq!(d.header.i64("WIPEOUTFRAME", 1), 1);
     let mut dm = linear();
     dm.text_rotation = 0.43;
     dm.marks.inspect = Some(cadcraft_doc::Inspection { shape: 1, label: "A".into(), rate: String::new() });
-    // Per-object fill and scale override the unfilled Standard style.
     dm.overrides = serde_json::json!({"textFill": 1, "scale": 2.0}).as_object().unwrap().clone();
-    let expected = cadcraft_render::dimension_in(&d, &dm).text_fill;
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
-    for version in [Version::R2000, Version::R2018] {
+    // A user's own WIPEOUT keeps its visible frame while dimension backgrounds have none.
+    let user = d
+        .add(
+            &Space::Model,
+            Common::default(),
+            EntityKind::Wipeout(cadcraft_doc::Wipeout {
+                boundary: [(-20., -20.), (-19., -20.), (-19., -19.), (-20., -19.)].map(|(x, y)| cadcraft_geom::Vec2::new(x, y)).to_vec(),
+            }),
+        )
+        .unwrap();
+    for version in [Version::R2000, Version::R2004, Version::R2018] {
         for name in ["mask.dxf", "mask.dwg"] {
             let options = SaveOptions { version: Some(version), binary: false };
             let bytes = cadcraft_io::write_with(&d, name, &options).unwrap();
-            if name.ends_with(".dxf") {
-                let text = std::str::from_utf8(&bytes).unwrap();
-                assert!(text.contains("  1\r\nWIPEOUT\r\n"), "generated WIPEOUT needs its CLASS record");
+            if name.ends_with(".dxf") && version != Version::R2000 {
+                assert!(std::str::from_utf8(&bytes).unwrap().contains(" 90\r\n3\r\n"), "native MTEXT background flags");
             }
             let mut back = cadcraft_io::read(&bytes, name).unwrap();
             for pass in 0..2 {
-                assert_eq!(back.header.i64("WIPEOUTFRAME", 1), 0, "{version:?} {name} save {pass}");
-                let block = back
+                assert_eq!(back.header.i64("WIPEOUTFRAME", 1), 1, "{version:?} {name} save {pass}");
+                let (handle, block) = back
                     .model
                     .iter()
                     .find_map(|e| match &e.kind {
-                        EntityKind::Dimension(dm) => dm.block.as_deref().and_then(|name| back.block(name)),
+                        EntityKind::Dimension(dm) => Some((e.handle, back.block(dm.block.as_deref().unwrap()).unwrap())),
                         _ => None,
                     })
                     .unwrap();
-                let masks: Vec<_> = block
+                assert!(!block.entities.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))));
+                let (text_index, text) = block
                     .entities
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, e)| match &e.kind {
-                        EntityKind::Wipeout(w) => Some((i, w)),
+                    .find_map(|(i, e)| match &e.kind {
+                        EntityKind::MText(t) => Some((i, t)),
                         _ => None,
                     })
-                    .collect();
-                assert_eq!(masks.len(), 1, "{version:?} {name} save {pass}");
-                for (actual, expected) in masks[0].1.vertices().iter().zip(&expected) {
-                    assert!(actual.dist(*expected) < 1e-8, "{actual:?} != {expected:?}");
-                }
-                assert_eq!(masks[0].1.vertices().len(), 4);
-                let text = block.entities.iter().position(|e| matches!(e.kind, EntityKind::MText(_))).unwrap();
-                assert!(masks[0].0 < text);
-                assert!(
-                    block.entities.iter().skip(masks[0].0 + 1).take(text - masks[0].0 - 1).any(|e| matches!(e.kind, EntityKind::Line(_))),
-                    "inspection marks stay above the mask"
-                );
+                    .unwrap();
+                let mask = text.background.expect("the text carries its own mask");
+                assert!(mask.use_background);
+                assert!((mask.scale - 1.5).abs() < 1e-9, "{version:?} {name} scale {}", mask.scale);
+                assert!(block.entities.iter().skip(text_index + 1).any(|e| matches!(e.kind, EntityKind::Line(_))), "marks above the text background");
                 let list = cadcraft_render::build(&back, &Space::Model, &cadcraft_render::Options::default());
-                assert_eq!(
-                    list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Mask).count(),
-                    1,
-                    "the stored mask must not get another generated background"
+                assert_eq!(list.prims.iter().filter(|p| p.handle == handle && p.kind == cadcraft_render::Kind::Mask).count(), 1);
+                assert!(
+                    list.prims.iter().any(|p| p.handle == user && p.kind == cadcraft_render::Kind::Polyline),
+                    "the user's WIPEOUT frame is unchanged"
                 );
                 back = cadcraft_io::read(&cadcraft_io::write_with(&back, name, &options).unwrap(), name).unwrap();
             }
@@ -267,7 +268,7 @@ fn background_colour_mask_is_native_in_saved_dimension_blocks() {
 fn dimension_block_alone_masks_underlying_geometry_on_light_and_dark_backgrounds() {
     use cadcraft_render::raster::{RasterOptions, View, render};
     let mut d = Drawing::new_imperial();
-    d.header.set_i64("WIPEOUTFRAME", 0);
+    assert_eq!(d.header.i64("WIPEOUTFRAME", 1), 1);
     d.dim_styles.push(DimStyle { name: "Fill".into(), text_fill: 1, text_gap: 0.5, ..DimStyle::default() });
     // A red rectangle underneath the whole text box makes a missing mask visible.
     d.add(
@@ -301,6 +302,13 @@ fn dimension_block_alone_masks_underlying_geometry_on_light_and_dark_backgrounds
         let build = if plot { cadcraft_render::build_plot } else { cadcraft_render::build };
         let list = build(&back, &Space::Model, &options);
         assert_eq!(list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Mask).count(), 1);
+        assert!(
+            !list
+                .prims
+                .iter()
+                .any(|p| p.kind == cadcraft_render::Kind::Polyline && list.points(p).len() == 5 && list.points(p).first() == list.points(p).last()),
+            "no rectangular WIPEOUT frame with the default setting"
+        );
         for background in [cadcraft_color::Rgb(255, 255, 255), cadcraft_color::Rgb(33, 40, 48)] {
             let pixels = render(&list, &view, &RasterOptions { background, antialias: false, ..Default::default() }).unwrap();
             let center_pixel = pixels.pixel(300, 120).unwrap();

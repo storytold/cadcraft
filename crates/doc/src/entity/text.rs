@@ -83,6 +83,32 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// Native MTEXT background fill (DXF 90, 45, 63/421); independent of WIPEOUTFRAME.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<MTextMask>,
+}
+
+/// A frame-free MTEXT fill. The scale adds `(scale - 1) * text height` on each side.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct MTextMask {
+    pub use_background: bool,
+    pub color: super::Color,
+    pub scale: f64,
+}
+
+impl Default for MTextMask {
+    fn default() -> Self {
+        Self { use_background: true, color: super::Color::ByLayer, scale: 1.5 }
+    }
+}
+
+impl MTextMask {
+    /// Reject non-finite or excessive expansion from files and control parameters.
+    pub fn normalized(self) -> Self {
+        let scale = if self.scale.is_finite() && (1.0..=1_000_000.0).contains(&self.scale) { self.scale } else { 1.5 };
+        Self { scale, ..self }
+    }
 }
 
 fn attach_tl() -> u8 {

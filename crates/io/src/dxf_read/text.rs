@@ -89,6 +89,7 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         line_spacing: t.fd(44, 1.0),
         line_spacing_exact: t.i(73) == Some(2),
         columns: columns.map(|(c, _)| c),
+        background: mtext_dxf::read_background(tags),
     }
 }
 
