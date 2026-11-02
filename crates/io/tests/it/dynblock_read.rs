@@ -479,6 +479,27 @@ fn a_zero_distance_multiplier_moves_as_one_without_its_angle_offset() {
 }
 
 #[test]
+fn a_point_on_the_edge_of_a_polygon_frame_is_inside_it() {
+    // Line 30 ends at (36, 0), and its start is outside every frame here. On the edge of the frame
+    // (34,-2)-(36,2) given as two corners, the end is inside and moves alone. The same frame as a
+    // polygon, and triangles whose slanted edge passes through (36, 0), exactly or up to rounding,
+    // take it the same way.
+    let frames = [
+        "72 2\n1011 34\n1021 -2\n1011 36\n1021 2\n",
+        "72 4\n1011 34\n1021 -2\n1011 36\n1021 -2\n1011 36\n1021 2\n1011 34\n1021 2\n",
+        "72 3\n1011 34\n1021 -2\n1011 38\n1021 2\n1011 34\n1021 2\n",
+        "72 3\n1011 35.7\n1021 -0.3\n1011 36.7\n1021 0.7\n1011 30\n1021 10\n",
+    ];
+    for frame in frames {
+        let src = fixture().replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", frame);
+        assert_ne!(src, fixture());
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)], "{frame}");
+    }
+}
+
+#[test]
 fn a_frame_with_too_many_points_to_test_one_by_one_keeps_the_stored_lists() {
     // The same frame as a polygon of `n` points (its four corners, the last repeated). Up to 1000
     // points each point of the objects is tested against it; past that the stored list (here the

@@ -415,7 +415,8 @@ fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>
     (!idx.is_empty()).then_some(idx)
 }
 
-/// Whether point `p` lies inside a stretch frame (two corners, or a polygon).
+/// Whether point `p` lies inside a stretch frame (two corners, or a polygon). A point on its edge is
+/// inside, for a polygon as for two corners.
 fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
     match frame {
         [a, b] => p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y),
@@ -424,6 +425,10 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
             let mut j = f.len() - 1;
             for i in 0..f.len() {
                 let (Some(pi), Some(pj)) = (f.get(i), f.get(j)) else { break };
+                let edge = cadcraft_geom::Line { a: *pj, b: *pi };
+                if edge.dist(p) <= 1e-9 * (1.0 + pi.dist(*pj)) {
+                    return true;
+                }
                 if (pi.y > p.y) != (pj.y > p.y) && p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x {
                     inside = !inside;
                 }
