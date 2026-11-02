@@ -700,6 +700,17 @@ fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>
     (!idx.is_empty()).then_some(idx)
 }
 
+/// The distance from `p` to the segment `a`-`b`, however short (`Line::dist` takes one shorter than
+/// `EPS` for its first point). It is measured from `a`, so a short segment far from the origin keeps
+/// the digits rounding there would drop.
+fn segment_dist(a: Vec2, b: Vec2, p: Vec2) -> f64 {
+    let d = b - a;
+    let w = p - a;
+    let l2 = d.len2();
+    let t = if l2 > 0.0 { (w.dot(d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (w - d * t).len()
+}
+
 /// Whether point `p` lies inside a stretch frame (two corners, or a polygon). A point on its edge is
 /// inside, for a polygon as for two corners: within a billionth of the edge's length of it.
 fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
@@ -710,8 +721,7 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
             let mut j = f.len() - 1;
             for i in 0..f.len() {
                 let (Some(pi), Some(pj)) = (f.get(i), f.get(j)) else { break };
-                let edge = cadcraft_geom::Line { a: *pj, b: *pi };
-                if edge.dist(p) <= 1e-9 * pi.dist(*pj) {
+                if segment_dist(*pj, *pi, p) <= 1e-9 * pi.dist(*pj) {
                     return true;
                 }
                 if (pi.y > p.y) != (pj.y > p.y) && p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x {
@@ -872,8 +882,9 @@ impl ActionRun<'_> {
             // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
             // doesn't go by the vertex lists the action stores, which a block from another program
             // can get wrong. A polyline's vertices are in its own plane: in the block's when its
-            // extrusion is along z (a mirrored one is read flipped into it), so a tilted one keeps
-            // the stored list.
+            // extrusion is exactly along z (a mirrored one is read flipped into it). Any tilt, however
+            // small, moves them by as much as the elevation times the tilt, so a tilted one keeps the
+            // stored list.
             let idx = match self.def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
                 Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
                 Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => inside(frame, pl.vertices.iter().map(|v| v.p)),
