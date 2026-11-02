@@ -403,6 +403,18 @@ fn move_entity(e: &mut Entity, vertices: Option<&[i32]>, v: Vec2) {
     }
 }
 
+/// Most points of a stretch frame whose objects' points are tested against it one by one. A frame
+/// is two corners or a short polygon; testing every point of every object against every edge of a
+/// longer one would grow with their product, so the action's own vertex lists are used instead.
+const MAX_FRAME_POINTS: usize = 1000;
+
+/// The indices of `points` inside stretch frame `frame`, or `None` when none is: an object the
+/// action selects that lies outside its frame moves whole.
+fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>> {
+    let idx: Vec<i32> = points.enumerate().filter(|(_, p)| in_frame(frame, *p)).filter_map(|(i, _)| i32::try_from(i).ok()).collect();
+    (!idx.is_empty()).then_some(idx)
+}
+
 /// Whether point `p` lies inside a stretch frame (two corners, or a polygon).
 fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
     match frame {
@@ -464,7 +476,10 @@ fn apply(
                 _ => 0.0,
             })
         };
-        let mult = if mult == 0.0 { 1.0 } else { mult };
+        // A zero multiplier would move nothing. AutoCAD 2024 moves such an action by the
+        // parameter's change and leaves its angle offset out (measured on a stretch action written
+        // with multiplier 0, angle offset 1 and group 280 = 1).
+        let (mult, angle) = if mult == 0.0 { (1.0, 0.0) } else { (mult, angle) };
         let v = Vec2::new(comp(0), comp(1)).rotate(angle) * mult;
         if !(v.x.is_finite() && v.y.is_finite()) || (v.x == 0.0 && v.y == 0.0) {
             continue;
@@ -473,6 +488,8 @@ fn apply(
         // this action's selection, so a selection that repeats a handle does not re-scan the
         // vertex list and re-clone its index vector per occurrence (CWE-400).
         let vtx_by_handle: HashMap<Handle, &Vec<i32>> = vertices.iter().rev().map(|(vh, i)| (*vh, i)).collect();
+        // Whether the frame (two corners or a polygon) is tested point by point.
+        let framed = (2..=MAX_FRAME_POINTS).contains(&frame.len());
         let mut handled: HashSet<Handle> = HashSet::new();
         for h in &a.selection {
             if !handled.insert(*h) {
@@ -502,7 +519,15 @@ fn apply(
                 continue;
             }
             let Some(c) = copy_of(h) else { continue };
-            let idx = vtx_by_handle.get(h).map(|i| (*i).clone());
+            // The points of a line or polyline that move are those inside the frame where the
+            // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
+            // doesn't go by the vertex lists the action stores, which a block from another program
+            // can get wrong.
+            let idx = match def.entities.get(*h).map(|e| &e.kind) {
+                Some(EntityKind::Line(l)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
+                Some(EntityKind::LwPolyline(pl)) if framed => inside(frame, pl.vertices.iter().map(|v| v.p)),
+                _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
+            };
             moves.entry(c).or_default().push((idx, v));
         }
     }

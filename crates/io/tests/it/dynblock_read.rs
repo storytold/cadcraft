@@ -406,6 +406,101 @@ fn parameters_in_a_stretch_selection_are_carried_along() {
     assert_eq!(tags[grip + 1..grip + 3], [(300, "GRIPLOC".to_string()), (11, "-15".to_string())]);
 }
 
+/// A reference to Door at the origin with Door's own values, in a drawing read from `src`.
+fn door_reference(src: &str) -> (cadcraft_doc::Drawing, Handle) {
+    let mut d = read_dxf(dxf(src).as_bytes()).unwrap();
+    let ins = cadcraft_doc::Insert {
+        block: "Door".into(),
+        insert: cadcraft_doc::geom::Vec3::new(0.0, 0.0, 0.0),
+        scale: cadcraft_doc::geom::Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(ins)).unwrap();
+    (d, r)
+}
+
+/// The points of the lines and polylines of reference `r`'s block, in its order.
+fn shapes(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Line(l) => Some(vec![(l.a.x, l.a.y), (l.b.x, l.b.y)]),
+            cadcraft_doc::EntityKind::LwPolyline(p) => Some(p.vertices.iter().map(|v| (v.p.x, v.p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_stretch_moves_the_points_inside_its_frame_not_the_listed_ones() {
+    // The stretch (frame (34,-2)-(38,2)) also acts on line 32, which is all outside the frame, and
+    // on a polyline whose last two vertices are inside it; and the vertex lists it stores are
+    // wrong for all three. AutoCAD 2024 moves the points inside the frame, measured on a dynamic
+    // block from another program whose lists didn't match its objects: every point of its lines and
+    // polylines moved exactly when it was inside the frame, whatever the lists said. A selected
+    // line or polyline all outside the frame moves whole, as in AutoCAD's own stretched copies.
+    let polyline = "0 LWPOLYLINE\n5 33\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbPolyline\n90 3\n70 0\n10 20\n20 1\n10 36\n20 1\n10 36\n20 -1\n";
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 32\n330 33\n1010 40")
+        .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 3\n331 30\n74 1\n94 0\n331 32\n74 1\n94 1\n331 33\n74 1\n94 0\n75 0")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{polyline}0 ENDBLK\n"));
+    let (mut d, r) = door_reference(&src);
+    let ActionKind::Stretch { vertices, .. } = &dynamic_block(&d, "Door").unwrap().actions[0].kind else { panic!("a stretch action") };
+    assert_eq!(vertices, &[(h("30"), vec![0]), (h("32"), vec![1]), (h("33"), vec![0])]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let want: Vec<Vec<(f64, f64)>> = vec![
+        vec![(0.0, 0.0), (30.0, 0.0)],
+        vec![(0.0, 0.0), (0.0, 36.0)],
+        vec![(-6.0, 0.0), (19.0, 25.0)],
+        vec![(20.0, 1.0), (30.0, 1.0), (30.0, -1.0)],
+    ];
+    assert_eq!(shapes(&d, r), want);
+}
+
+#[test]
+fn a_zero_distance_multiplier_moves_as_one_without_its_angle_offset() {
+    // A stretch written with multiplier 0 and angle offset 1 (radian), and group 280 = 1. AutoCAD
+    // 2024 moved such an action by the parameter's change, straight along it.
+    let src = fixture().replace("140 1\n141 0\n280 0", "140 0\n141 1\n280 1");
+    assert_ne!(src, fixture());
+    let (mut d, r) = door_reference(&src);
+    let ActionKind::Stretch { multiplier, angle_offset, .. } = &dynamic_block(&d, "Door").unwrap().actions[0].kind else {
+        panic!("a stretch action")
+    };
+    assert_eq!((*multiplier, *angle_offset), (0.0, 1.0));
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
+fn a_frame_with_too_many_points_to_test_one_by_one_keeps_the_stored_lists() {
+    // The same frame as a polygon of `n` points (its four corners, the last repeated). Up to 1000
+    // points each point of the objects is tested against it; past that the stored list (here the
+    // line's start, outside the frame) is used, so a huge frame doesn't make every point test every
+    // edge.
+    let frame = |n: usize| {
+        let mut f = format!("72 {n}\n1011 34\n1021 -2\n1011 38\n1021 -2\n1011 38\n1021 2\n");
+        f.push_str(&"1011 34\n1021 2\n".repeat(n - 3));
+        f
+    };
+    for (n, want) in [(1000, [(0.0, 0.0), (30.0, 0.0)]), (1001, [(-6.0, 0.0), (36.0, 0.0)])] {
+        let src = fixture()
+            .replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", &frame(n))
+            .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 1\n331 30\n74 1\n94 0\n75 0");
+        let (mut d, r) = door_reference(&src);
+        let ActionKind::Stretch { frame, .. } = &dynamic_block(&d, "Door").unwrap().actions[0].kind else { panic!("a stretch action") };
+        assert_eq!(frame.len(), n);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(shapes(&d, r)[0], want, "{n} frame points");
+    }
+}
+
 /// The object entry `key` of dictionary `dict` refers to.
 fn dict_entry(d: &cadcraft_doc::Drawing, dict: Handle, key: &str) -> Option<Handle> {
     let o = d.foreign.objects.iter().find(|o| o.handle == dict)?;
