@@ -1,6 +1,6 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
+use cadcraft_doc::{AnnoDraw, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_scaled, entity_bounds};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -8,6 +8,17 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    match d.anno_draw(e) {
+        AnnoDraw::Hidden => Vec::new(),
+        AnnoDraw::Scaled(f) => {
+            let scaled = anno_scaled(e, f);
+            raw_hit_polylines(d, &scaled, tol)
+        }
+        AnnoDraw::Plain => raw_hit_polylines(d, e, tol),
+    }
+}
+
+fn raw_hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::MText(t) => {
             let insert = t.insert.xy();
@@ -129,6 +140,17 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
 /// hit along its lines, so without this the cursor found the object only between the letters'
 /// edges and the lines.
 fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+    match d.anno_draw(e) {
+        AnnoDraw::Hidden => false,
+        AnnoDraw::Scaled(f) => {
+            let scaled = anno_scaled(e, f);
+            raw_in_text(d, &scaled, p)
+        }
+        AnnoDraw::Plain => raw_in_text(d, e, p),
+    }
+}
+
+fn raw_in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
     match &e.kind {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
@@ -223,6 +245,17 @@ pub(crate) fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds
 
 /// Tight selection bounds for `e` (using laid-out line boxes for `MText`).
 pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    match d.anno_draw(e) {
+        AnnoDraw::Hidden => Bounds2::EMPTY,
+        AnnoDraw::Scaled(f) => {
+            let scaled = anno_scaled(e, f);
+            raw_select_bounds(d, &scaled, None)
+        }
+        AnnoDraw::Plain => raw_select_bounds(d, e, known),
+    }
+}
+
+fn raw_select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
     match &e.kind {
         EntityKind::MText(t) => mtext_world_bounds(d, t),
         EntityKind::MLeader(m) => {
@@ -236,6 +269,54 @@ pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> 
     }
 }
 
+/// Bounds of `e` used for snap candidate pre-filtering and spatial indexing.
+/// Includes the insertion point for MText and MLeader so that snapping to INS
+/// on text with an empty first line or at the anchor is not filtered out.
+pub(crate) fn snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    match d.anno_draw(e) {
+        AnnoDraw::Hidden => Bounds2::EMPTY,
+        AnnoDraw::Scaled(f) => {
+            let scaled = anno_scaled(e, f);
+            raw_snap_bounds(d, &scaled, None)
+        }
+        AnnoDraw::Plain => raw_snap_bounds(d, e, known),
+    }
+}
+
+fn raw_snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    let mut b = raw_select_bounds(d, e, known);
+    match &e.kind {
+        EntityKind::MText(t) => {
+            if b.is_empty() {
+                let p = t.insert.xy();
+                b = Bounds2::new(p, p);
+            } else {
+                b.add(t.insert.xy());
+            }
+        }
+        EntityKind::MLeader(m) => {
+            if let Some(t) = &m.text {
+                if b.is_empty() {
+                    let p = t.insert.xy();
+                    b = Bounds2::new(p, p);
+                } else {
+                    b.add(t.insert.xy());
+                }
+            }
+            if let Some(blk) = &m.block {
+                if b.is_empty() {
+                    let p = blk.insert.xy();
+                    b = Bounds2::new(p, p);
+                } else {
+                    b.add(blk.insert.xy());
+                }
+            }
+        }
+        _ => {}
+    }
+    b
+}
+
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
 fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     let turn = |q: Vec2| q.rotate(-angle);
@@ -244,7 +325,7 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
 }
 
 fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+    d.is_visible(e) && d.anno_draw(e) != AnnoDraw::Hidden
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
