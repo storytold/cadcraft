@@ -130,7 +130,6 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     }
     let file = format!("export.{format}");
-    let lost = super::file::loss_on_save(s, &file);
     // A png follows the 3D camera when one is set; every other format goes through the io layer.
     let bytes = match if format == "png" { super::view3d::render_png(s, 2400, 1600)? } else { None } {
         Some(png) => png,
@@ -143,7 +142,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
     };
-    super::file::report_not_saved(s, &mut r, &lost);
+    super::file::report_loss(s, &mut r, &file);
     Ok(r)
 }
 

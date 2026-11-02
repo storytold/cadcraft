@@ -95,6 +95,12 @@ pub struct Session {
     pub last_point: Vec2,
     /// LASTPOINT with its elevation, retained for relative XYZ entry in 3D prompts.
     pub last_point3: Vec3,
+    /// AREA and PERIMETER: the last area AREA or MEASUREGEOM measured (in their Add and Subtract
+    /// modes the running total) and that area's perimeter. Not saved, as in AutoCAD.
+    pub area: f64,
+    pub perimeter: f64,
+    /// DISTANCE: the last distance DIST or MEASUREGEOM measured (with Multiple points, the total).
+    pub distance: f64,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -201,6 +207,9 @@ impl Session {
             last_command: None,
             last_point: Vec2::ZERO,
             last_point3: Vec3::ZERO,
+            area: 0.0,
+            perimeter: 0.0,
+            distance: 0.0,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),
