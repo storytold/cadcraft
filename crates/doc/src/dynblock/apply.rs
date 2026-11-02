@@ -532,7 +532,7 @@ fn apply(
             // the stored list.
             let idx = match def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
                 Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
-                Some((EntityKind::LwPolyline(pl), n)) if framed && n.x.abs() <= 1e-9 && n.y.abs() <= 1e-9 => {
+                Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => {
                     inside(frame, pl.vertices.iter().map(|v| v.p))
                 }
                 _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
