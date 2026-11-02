@@ -101,7 +101,7 @@ static UNSAVED: AtomicBool = AtomicBool::new(false);
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("blocklibrary", "Block Library", run_library)
-            .params("{path: a folder of DWG/DXF files, or one such file} → {kind: \"folder\", path, files: [{name, file}]} | {kind: \"file\", path, blocks: [{name, description}]}")
+            .params("{path: a folder of DWG/DXF files, or one such file} → {kind: \"folder\", path, files: [{name, file}], truncated} | {kind: \"file\", path, blocks: [{name, description}], truncated}")
             .noundo(),
         CommandSpec::new("blocklibraries", "Block Libraries", run_libraries)
             .params("{op?: \"list\" (default)|\"add\"|\"remove\", path? (add, remove)} → {libraries: [path], path? (add: the entry as kept)}")

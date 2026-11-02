@@ -913,8 +913,9 @@ fn repeat_placement(app: &mut CadApp, ui: &egui::Ui, st: &mut State) {
     }
     let prompt = app.session.prompt_text();
     if prompt != "Command:" {
-        // Still placing it; any other running command ends the repeating.
-        if !prompt.starts_with("INSERT") {
+        // Still placing it. A command started since ends the repeating; a transparent 'ZOOM or 'PAN
+        // inside the INSERT (prompt `>>ZOOM`) does not count as one.
+        if app.session.commands_started != placing.started {
             st.repeating = None;
         }
         return;

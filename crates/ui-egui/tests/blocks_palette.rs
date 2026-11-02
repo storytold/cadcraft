@@ -171,6 +171,33 @@ fn another_command_between_two_frames_ends_the_repeat() {
     h.state_mut().session.input(Input::Cancel).unwrap();
 }
 
+/// A transparent command run inside the placing INSERT (`'ZOOM`) is not another command: the
+/// INSERT resumes and the block goes on being placed again.
+#[test]
+fn a_transparent_command_while_placing_keeps_the_repeat() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::geom::Vec2;
+    let mut app = drawing();
+    for panel in ["layers", "properties"] {
+        app.run("ui.dock", json!({ "operation": "close", "panel": panel })).unwrap();
+    }
+    app.cmdline("BLOCKSPALETTE");
+    app.ui.in_window_menu = false;
+    let mut h = harness(app);
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    h.state_mut().session.start("'zoom").unwrap();
+    assert!(h.state().session.prompt_text().starts_with(">>ZOOM"), "{}", h.state().session.prompt_text());
+    h.run_steps(3);
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT Specify insertion point"), "{}", h.state().session.prompt_text());
+    h.state_mut().session.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT Specify insertion point"), "the repeat went on: {}", h.state().session.prompt_text());
+    h.state_mut().session.input(Input::Cancel).unwrap();
+}
+
 /// INSERT started as the palette starts it stops at the insertion point.
 #[test]
 fn insert_started_by_the_palette_flow_waits_for_the_point() {
