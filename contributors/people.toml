@@ -103,3 +103,5 @@ sync_github_name = true
 [people.Obtrusive8276]
 display_name = "Nicopicks"
 sync_github_name = false
+[people.starise]
+real_name = "Andrea Brandi"
