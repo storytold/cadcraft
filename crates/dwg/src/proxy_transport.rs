@@ -12,16 +12,16 @@ fn class_number(index: usize) -> Result<i16, String> {
     index.checked_add(500).and_then(|n| i16::try_from(n).ok()).ok_or_else(|| "DXF: too many application classes".into())
 }
 
-/// Replace the dependency's private registered-class envelope with a standard proxy.
-pub(super) fn prepare(doc: &mut CadDocument) -> Result<(), String> {
+/// Convert representable application records and report only the records left out.
+pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
     let classes: Vec<_> = doc.classes.iter().cloned().collect();
     let mut numbers = HashMap::new();
     let mut identities = HashMap::new();
     for (index, class) in classes.iter().enumerate() {
-        let number = class_number(index)?;
-        numbers.entry(i32::from(class.class_number)).and_modify(|v| *v = None).or_insert(Some(i32::from(number)));
+        let number = class_number(index).ok();
+        numbers.entry(i32::from(class.class_number)).and_modify(|v| *v = None).or_insert(number.map(i32::from));
         let identity = (class.dxf_name.as_str(), class.cpp_class_name.as_str(), class.is_an_entity);
-        identities.entry(identity).and_modify(|v| *v = None).or_insert(Some(number));
+        identities.entry(identity).and_modify(|v| *v = None).or_insert(number);
     }
     let identity = |dxf: &str, cpp: &str, entity: bool| {
         identities
@@ -29,7 +29,7 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Result<(), String> {
             .copied()
             .flatten()
             .map(i32::from)
-            .ok_or_else(|| format!("DWG: missing or ambiguous application CLASS for {dxf} ({cpp})"))
+            .ok_or_else(|| format!("missing or ambiguous application CLASS for {dxf:.80} ({cpp:.80})"))
     };
     let source = doc.dwg_source_version.unwrap_or(doc.version).version_code();
     let dwg_version = match source {
@@ -41,10 +41,10 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Result<(), String> {
         1024 => 29,
         1027 => 31,
         1032 => 33,
-        _ => return Ok(()),
+        _ => return Vec::new(),
     };
     let maintenance = i32::from(doc.maintenance_version);
-    let remap = |id: i32| numbers.get(&id).copied().flatten().ok_or_else(|| format!("DWG: proxy names missing application class {id}"));
+    let remap = |id: i32| numbers.get(&id).copied().flatten().ok_or_else(|| format!("proxy names missing or ambiguous application class {id}"));
     // Only mutate proxies: entities_mut invalidates the decoder's verbatim records for every entity.
     let handles: Vec<_> = doc
         .entities()
@@ -57,46 +57,81 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Result<(), String> {
             _ => None,
         })
         .collect();
+    let mut notes = Vec::new();
+    let mut entity_count = 0usize;
+    let mut object_count = 0usize;
     for handle in handles {
-        let text_payload = match doc.get_entity(handle) {
-            Some(EntityType::Extended(e)) if matches!(e.data, ExtendedEntityData::RegisteredClass(_)) => {
-                if let ExtendedEntityData::RegisteredClass(data) = &e.data
-                    && !data.properties.is_empty()
-                {
-                    return Err(format!("DWG: cannot transport semantic properties of {} as an opaque proxy", data.dxf_name));
+        let converted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(EntityType::Extended(entity)) = doc.get_entity(handle) else { return Ok(None) };
+            let data = match &entity.data {
+                ExtendedEntityData::Proxy(data) => {
+                    let mut proxy = data.clone();
+                    proxy.class_id = remap(proxy.class_id)?;
+                    ExtendedEntityData::Proxy(proxy)
                 }
-                e.common.raw_record.as_deref().map(registered_text).transpose()?.unwrap_or_default()
+                ExtendedEntityData::RegisteredClass(data) => {
+                    if !data.properties.is_empty() {
+                        return Err(format!("cannot transport semantic properties of {:.80} as an opaque proxy", data.dxf_name));
+                    }
+                    let class_id = identity(&data.dxf_name, &data.cpp_class_name, true)?;
+                    let text_payload = entity.common.raw_record.as_deref().map(registered_text).transpose()?.unwrap_or_default();
+                    ExtendedEntityData::Proxy(ProxyEntityData {
+                        proxy_id: 498,
+                        class_id,
+                        dxf_subclass: String::new(),
+                        version: (maintenance << 16) | dwg_version,
+                        dwg_version,
+                        maintenance_version: maintenance,
+                        from_dxf: false,
+                        graphics: ProxyPayload::from_bytes(entity.common.graphic_data.as_deref().unwrap_or_default()),
+                        payload: data.payload.clone(),
+                        text_payload,
+                        object_ids: data.object_ids.clone(),
+                    })
+                }
+                _ => return Ok(None),
+            };
+            Ok(Some(data))
+        }))
+        .unwrap_or_else(|_| Err("application record conversion failed".into()));
+        match converted {
+            Ok(Some(data)) => {
+                if let Some(EntityType::Extended(entity)) = doc.get_entity_mut(handle) {
+                    entity.data = data;
+                }
             }
-            _ => ProxyPayload::default(),
-        };
-        let Some(EntityType::Extended(entity)) = doc.get_entity_mut(handle) else { continue };
-        match &mut entity.data {
-            ExtendedEntityData::Proxy(data) => data.class_id = remap(data.class_id)?,
-            ExtendedEntityData::RegisteredClass(data) => {
-                let class_id = identity(&data.dxf_name, &data.cpp_class_name, true)?;
-                entity.data = ExtendedEntityData::Proxy(ProxyEntityData {
-                    proxy_id: 498,
-                    class_id,
-                    dxf_subclass: String::new(),
-                    version: (maintenance << 16) | dwg_version,
-                    dwg_version,
-                    maintenance_version: maintenance,
-                    from_dxf: false,
-                    graphics: ProxyPayload::from_bytes(entity.common.graphic_data.as_deref().unwrap_or_default()),
-                    payload: data.payload.clone(),
-                    text_payload,
-                    object_ids: data.object_ids.clone(),
-                });
+            Ok(None) => {}
+            Err(why) => {
+                doc.remove_entity(handle);
+                entity_count = entity_count.saturating_add(1);
+                skipped_note(&mut notes, "entity", handle, &why);
             }
-            _ => {}
         }
     }
-    for object in doc.objects.values_mut() {
+    doc.objects.retain(|handle, object| {
         if let ObjectType::ProxyObject(proxy) = object {
-            proxy.class_id = remap(proxy.class_id)?;
+            match remap(proxy.class_id) {
+                Ok(id) => proxy.class_id = id,
+                Err(why) => {
+                    object_count = object_count.saturating_add(1);
+                    skipped_note(&mut notes, "object", *handle, &why);
+                    return false;
+                }
+            }
         }
+        true
+    });
+    if entity_count > 0 || object_count > 0 {
+        notes.insert(0, format!("DWG: partial read; application proxy records left out (entities: {entity_count}, objects: {object_count})"));
     }
-    Ok(())
+    notes
+}
+
+fn skipped_note(notes: &mut Vec<String>, kind: &str, handle: acadrust::types::Handle, why: &str) {
+    if notes.len() < 6 {
+        let why: String = why.chars().take(256).collect();
+        notes.push(format!("DWG: proxy {kind} {handle} left out: {why}"));
+    }
 }
 
 /// The decoder's registered-class representation omits the separate R2007+ string stream.
@@ -191,7 +226,7 @@ fn read_class(tags: &[Tag], number: i16) -> Result<DxfClass, String> {
 }
 
 /// Keep source class positions and metadata, adding missing decoder defaults only afterwards.
-pub(super) fn restore_classes(doc: &mut CadDocument, classes: Vec<DxfClass>) -> Result<(), String> {
+pub(super) fn restore_classes(doc: &mut CadDocument, source: impl FnOnce() -> Result<Vec<DxfClass>, String>) -> Result<(), String> {
     let mut proxies = Vec::new();
     for entity in doc.entities() {
         if let EntityType::Extended(e) = entity
@@ -208,6 +243,7 @@ pub(super) fn restore_classes(doc: &mut CadDocument, classes: Vec<DxfClass>) -> 
     if proxies.is_empty() {
         return Ok(());
     }
+    let classes = source()?;
     for (number, entity) in proxies {
         let index = number.checked_sub(500).and_then(|n| usize::try_from(n).ok());
         if !index.and_then(|i| classes.get(i)).is_some_and(|c| c.is_an_entity == entity) {
@@ -286,7 +322,7 @@ mod tests {
             assert_eq!(classes[0].instance_count, 7);
             assert!(classes[0].was_zombie);
             let mut doc = proxy_doc();
-            restore_classes(&mut doc, classes.clone()).unwrap();
+            restore_classes(&mut doc, || Ok(classes.clone())).unwrap();
             assert_eq!(doc.classes.iter().take(2).cloned().collect::<Vec<_>>(), classes);
         }
     }
@@ -302,11 +338,47 @@ mod tests {
             }
             let mut class = DxfClass::new_entity("ENTITY", "Entity");
             class.class_number = 500;
-            assert!(restore_classes(&mut doc, vec![class]).is_err());
+            assert!(restore_classes(&mut doc, || Ok(vec![class])).is_err());
         }
-        assert!(restore_classes(&mut proxy_doc(), vec![DxfClass::new("A", "A"), DxfClass::new("B", "B")]).is_err());
+        assert!(restore_classes(&mut proxy_doc(), || Ok(vec![DxfClass::new("A", "A"), DxfClass::new("B", "B")])).is_err());
     }
 
+    #[test]
+    fn unrepresentable_proxies_keep_other_geometry_and_bounded_diagnostics() {
+        use acadrust::entities::{Line, RawRecord};
+        use acadrust::objects::ProxyObject;
+        use acadrust::types::{Handle, Vector3};
+        for count in [1, 10] {
+            let mut doc = proxy_doc();
+            if let Some(EntityType::Extended(e)) = doc.entities_mut().next()
+                && let ExtendedEntityData::Proxy(p) = &mut e.data
+            {
+                p.class_id = i32::MAX;
+            }
+            let template = doc.entities().next().unwrap().clone();
+            for _ in 1..count {
+                let mut entity = template.clone();
+                entity.common_mut().handle = Handle::NULL;
+                doc.add_entity(entity).unwrap();
+            }
+            let object = Handle::new(u64::MAX - 1);
+            assert!(!doc.objects.contains_key(&object));
+            doc.objects.insert(object, ObjectType::ProxyObject(ProxyObject { handle: object, class_id: i32::MAX, ..Default::default() }));
+            let line = doc.add_entity(EntityType::Line(Line::from_points(Vector3::new(2.0, 3.0, 0.0), Vector3::new(12.0, 13.0, 0.0)))).unwrap();
+            let raw = RawRecord { data: vec![0xAA, 0x55], handle_bits: 0, version: DxfVersion::AC1032 };
+            doc.get_entity_mut(line).unwrap().common_mut().raw_record = Some(std::sync::Arc::new(raw.clone()));
+            let notes = prepare(&mut doc);
+            assert_eq!(notes.len(), (count + 1).min(6) + 1);
+            assert!(notes.iter().all(|n| n.starts_with("DWG:")));
+            assert!(notes[0].contains(&format!("entities: {count}, objects: 1")));
+            assert_eq!(doc.entities().count(), 1);
+            assert!(!doc.objects.contains_key(&object));
+            let Some(EntityType::Line(actual)) = doc.get_entity(line) else { panic!("readable line") };
+            assert_eq!(actual.start, Vector3::new(2.0, 3.0, 0.0));
+            assert_eq!(actual.end, Vector3::new(12.0, 13.0, 0.0));
+            assert_eq!(doc.get_entity(line).unwrap().common().raw_record.as_deref(), Some(&raw));
+        }
+    }
     #[test]
     fn opaque_registered_class_ambiguity_is_not_guessed() {
         let mut doc = CadDocument::new();
@@ -323,11 +395,12 @@ mod tests {
             }),
         })))
         .unwrap();
-        assert!(prepare(&mut doc).unwrap_err().contains("ambiguous"));
+        assert!(prepare(&mut doc).iter().any(|n| n.contains("ambiguous")));
+        assert_eq!(doc.entities().count(), 0);
         assert!(class_number(usize::MAX).is_err());
     }
     #[test]
-    fn semantic_records_keep_their_verbatim_data_and_mixed_payloads_are_rejected() {
+    fn semantic_records_keep_verbatim_data_and_mixed_payloads_are_reported() {
         use acadrust::entities::RawRecord;
         use acadrust::objects::{SemanticProperty, SemanticPropertyValue};
         for payload in [ProxyPayload::default(), ProxyPayload::from_bits(&[0x80], 1)] {
@@ -352,10 +425,11 @@ mod tests {
             doc.get_entity_mut(handle).unwrap().common_mut().raw_record = Some(std::sync::Arc::new(raw.clone()));
             assert_eq!(doc.get_entity(handle).unwrap().common().raw_record.as_deref(), Some(&raw));
             if payload.bit_count == 0 {
-                prepare(&mut doc).unwrap();
+                assert!(prepare(&mut doc).is_empty());
                 assert_eq!(doc.get_entity(handle).unwrap().common().raw_record.as_deref(), Some(&raw));
             } else {
-                assert!(prepare(&mut doc).unwrap_err().contains("semantic properties"));
+                assert!(prepare(&mut doc).iter().any(|n| n.contains("semantic properties")));
+                assert!(doc.get_entity(handle).is_none());
             }
         }
     }
@@ -411,7 +485,7 @@ mod string_stream_tests {
                 object_ids: vec![],
             });
             entity.common.raw_record = Some(raw);
-            prepare(&mut decoded).unwrap();
+            assert!(prepare(&mut decoded).is_empty());
             for _ in 0..2 {
                 let mut dxf = Vec::new();
                 acadrust::DxfWriter::new(&decoded).write_to_writer(&mut dxf).unwrap();

@@ -187,3 +187,48 @@ fn proxies_inside_block_definitions_survive_repeated_saves() {
         assert!(block.entities.iter().any(|e| matches!(e.kind, EntityKind::Unknown(_))));
     }
 }
+
+#[test]
+fn unused_malformed_classes_do_not_block_plain_geometry() {
+    for (name, cpp, flags, count) in [("", "Unused", 0, 0), ("UNUSED", "", 0, 0), ("UNUSED", "Unused", 65536, 0), ("UNUSED", "Unused", 0, i64::MAX)] {
+        let dxf = format!(
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n0\nENDSEC\n0\nSECTION\n2\nCLASSES\n0\nCLASS\n1\n{name}\n2\n{cpp}\n3\nSynthetic\n90\n{flags}\n91\n{count}\n281\n1\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n10\n100\nAcDbEntity\n8\n0\n100\nAcDbLine\n10\n2\n20\n3\n11\n12\n21\n13\n0\nENDSEC\n0\nEOF\n"
+        );
+        let bytes = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1032").unwrap();
+        let drawing = cadcraft_io::read(&bytes, "plain.dwg").unwrap();
+        let lines: Vec<_> = drawing.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l) } else { None }).collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].a.x, 2.0);
+        assert_eq!(lines[0].a.y, 3.0);
+        assert_eq!(lines[0].b.x, 12.0);
+        assert_eq!(lines[0].b.y, 13.0);
+    }
+}
+
+#[test]
+fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
+    let source = String::from_utf8(duplicate_class_dxf()).unwrap();
+    for (entity, object) in [("acad_proxy_entity", "acad_proxy_object"), ("AcAd_PrOxY_EnTiTy", "AcAd_PrOxY_ObJeCt")] {
+        let dxf = source.replace("ACAD_PROXY_ENTITY", entity).replace("ACAD_PROXY_OBJECT", object);
+        let drawing = cadcraft_io::read(dxf.as_bytes(), "source.dxf").unwrap();
+        assert_eq!(drawing.entity_count(), 3);
+        let out = cadcraft_io::write_with(&drawing, "copy.dxf", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
+        let tags = cadcraft_dxf::parse(&out).unwrap();
+        assert!(tags.iter().any(|t| t.code == 0 && t.str() == entity));
+        let bytes = cadcraft_io::write_with(&drawing, "copy.dwg", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
+        let decoded = cadcraft_dwg::dwg_to_dxf(&bytes).unwrap();
+        let tags = cadcraft_dxf::parse(&decoded).unwrap();
+        let proxies: Vec<_> = cadcraft_dxf::sections(&tags)
+            .iter()
+            .flat_map(|s| cadcraft_dxf::records(&s.tags))
+            .filter(|(kind, _)| kind.starts_with("ACAD_PROXY_"))
+            .collect();
+        assert_eq!(proxies.len(), 3);
+        for (_, tags) in proxies {
+            assert!(tags.iter().any(|t| t.code == 310 && t.str() == "A580"));
+            assert!(tags.iter().any(|t| matches!(t.code, 93 | 161) && t.i64() == 9));
+        }
+        let recovered = cadcraft_io::read(&bytes, "copy.dwg").unwrap();
+        assert_eq!(recovered.entity_count(), 3);
+    }
+}
