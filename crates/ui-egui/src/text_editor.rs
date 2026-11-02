@@ -23,12 +23,21 @@ pub fn editing(ctx: &egui::Context) -> Option<String> {
     ctx.data(|d| d.get_temp::<String>(state_id()))
 }
 
+/// The height the field's letters are given while the editor is open, in points: the text's
+/// height on screen, kept within 13 to 48.
+pub fn letter_px(ctx: &egui::Context) -> Option<f32> {
+    editing(ctx).and(ctx.data(|d| d.get_temp::<f32>(state_id().with("px"))))
+}
+
 /// Show the field while TEXTEDIT asks for a picked single-line text's new value; clears its state
 /// otherwise.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let asking = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point);
     let (Some(t), true) = (app.session.editing_text(), asking) else {
-        ctx.data_mut(|d| d.remove::<String>(state_id()));
+        ctx.data_mut(|d| {
+            d.remove::<String>(state_id());
+            d.remove::<f32>(state_id().with("px"));
+        });
         return;
     };
     let Some(xf) = app.canvas.xf else { return };
@@ -38,7 +47,11 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let px = ((t.height * xf.scale) as f32).clamp(MIN_PX, MAX_PX);
     let font = FontId::proportional(px);
     let text_w = ctx.fonts_mut(|f| f.layout_no_wrap(buf.clone(), font.clone(), tk.text).size().x);
-    let width = (text_w + px * 2.0).clamp(120.0, (xf.rect.width() * 0.9).max(120.0));
+    // At least 120 points wide, but never wider than the drawing area less the frame (its stroke
+    // and margin take 3 points on each side), so in a narrow tiled viewport the text and the caret
+    // stay in sight.
+    let room = (xf.rect.width() - 6.0).max(1.0);
+    let width = (text_w + px * 2.0).clamp(120.0, (xf.rect.width() * 0.9).max(120.0)).min(room);
     // The field over the text: anchored by its justification (rotation is ignored while editing).
     let at = xf.to_screen(t.justify_point());
     let x = match t.halign {
@@ -78,10 +91,16 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
     match done {
         None => {
-            ctx.data_mut(|d| d.insert_temp(state_id(), buf));
+            ctx.data_mut(|d| {
+                d.insert_temp(state_id(), buf);
+                d.insert_temp(state_id().with("px"), px);
+            });
         }
         Some(commit) => {
-            ctx.data_mut(|d| d.remove::<String>(state_id()));
+            ctx.data_mut(|d| {
+                d.remove::<String>(state_id());
+                d.remove::<f32>(state_id().with("px"));
+            });
             // Enter commits the field; Escape, or Enter on a blank field (as a blank answer at the
             // command line), answers the prompt with Enter, which keeps the text: an empty text
             // would draw nothing and be hard to pick again.

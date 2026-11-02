@@ -167,11 +167,27 @@ fn the_undo_option_takes_back_an_edit_made_in_the_field() {
 /// One text, `height` tall and turned `rotation` degrees at `at`, in a view `view` units tall
 /// around `center`.
 fn one_text(at: [f64; 2], height: f64, rotation: f64, center: [f64; 2], view: f64) -> Harness<'static, CadApp> {
+    one_text_in(vec2(1600.0, 1000.0), None, at, height, rotation, center, view)
+}
+
+/// [`one_text`] in a window `size` large, its drawing area tiled by `-VPORTS` with `tiles`.
+fn one_text_in(
+    size: egui::Vec2,
+    tiles: Option<serde_json::Value>,
+    at: [f64; 2],
+    height: f64,
+    rotation: f64,
+    center: [f64; 2],
+    view: f64,
+) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.run("text", json!({ "at": at, "text": "EDIT ME", "height": height, "rotation": rotation })).unwrap();
+    if let Some(tiles) = tiles {
+        app.run("-vports", tiles).unwrap();
+    }
     app.session.execute("view.set", &json!({ "center": center, "height": view })).unwrap();
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+    let mut h = Harness::builder().with_size(size).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -218,17 +234,39 @@ fn a_turned_text_is_edited_in_a_level_field_and_keeps_its_angle() {
 }
 
 /// However small or large the text is on screen, the field's letters are 13 to 48 pixels tall,
-/// so a text seen from far away can still be read and one seen up close still fits.
+/// so a text seen from far away can still be read and one seen up close still fits. (The field's
+/// own height adds the interface font's line spacing and the frame, which differ by platform.)
 #[test]
 fn the_field_stays_legible_for_a_tiny_and_a_huge_text_on_screen() {
     // 2.5 units in a view 2,000 units tall: about a pixel. In one 2 units tall: over 1,000.
-    for (view, what, low, high) in [(2000.0, "tiny", 13.0, 30.0), (2.0, "huge", 40.0, 66.0)] {
+    for (view, what, letters) in [(2000.0, "tiny", 13.0), (2.0, "huge", 48.0)] {
         let mut h = one_text([0.0, 0.0], 2.5, 0.0, [4.0, 1.2], view);
         double_click(&mut h, Vec2::new(4.0, 1.2));
         assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("EDIT ME"), "{what}");
+        assert_eq!(text_editor::letter_px(&h.ctx), Some(letters), "{what}: the field's letters");
         let field = field_inside_the_canvas(&mut h, what);
-        assert!((low..=high).contains(&field.height()), "{what}: the field is {} px tall", field.height());
+        assert!(field.height() >= letters, "{what}: the field ({} px) holds its letters", field.height());
         key(&mut h, Key::Escape);
         assert_eq!(value(&h, 0), "EDIT ME", "{what}");
+        assert_eq!(text_editor::letter_px(&h.ctx), None, "{what}: closed");
     }
+}
+
+/// In a tiled viewport narrower than the field's least width (120 points), the field is no wider
+/// than the viewport, so the text and the caret stay in sight.
+#[test]
+fn the_field_fits_a_narrow_tiled_viewport() {
+    // Three tiles side by side in a narrow window: the current one about 100 points wide.
+    let three = json!({ "option": "3", "arrangement": "vertical" });
+    let mut h = one_text_in(vec2(480.0, 700.0), Some(three), [0.0, 0.0], 2.5, 0.0, [4.0, 1.2], 40.0);
+    let tile = h.state().canvas.xf.unwrap().rect;
+    assert!(tile.width() < 120.0, "a tile narrower than the field's least width: {tile:?}");
+    double_click(&mut h, Vec2::new(4.0, 1.2));
+    assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("EDIT ME"));
+    let field = field_inside_the_canvas(&mut h, "narrow");
+    assert!(field.width() > 0.0, "{field:?}");
+    h.event(Event::Text("!".into()));
+    h.run_steps(2);
+    key(&mut h, Key::Enter);
+    assert_eq!(value(&h, 0), "EDIT ME!");
 }
