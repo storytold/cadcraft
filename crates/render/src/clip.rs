@@ -215,7 +215,7 @@ pub fn boundary_polygon(k: &EntityKind) -> Option<Vec<Vec2>> {
             g.tessellate(r * e.ratio.min(1.0) * 2e-3, &mut pts);
         }
         EntityKind::Spline(s) => {
-            if s.control.len() > 100_000 || s.knots.len() > 100_000 {
+            if s.control.len() > 100_000 || s.knots.len() > 100_000 || s.degree > cadcraft_geom::MAX_SPLINE_DEGREE {
                 return None;
             }
             pts = s.tessellate(tol_for(Bounds2::from_points(s.control.iter().copied())));

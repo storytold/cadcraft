@@ -28,3 +28,28 @@ fn the_2008_rt_contents_replace_the_entity_contents() {
         d.model.iter().filter_map(|e| if let EntityKind::MText(m) = &e.kind { Some(m.contents.clone()) } else { None }).collect();
     assert_eq!(contents, vec!["\\pxqc;ABC".to_string(), "plain".to_string()]);
 }
+
+fn read_texts(objects: &str) -> Vec<String> {
+    let dxf = format!(
+        "  0\nSECTION\n  2\nENTITIES\n{}  0\nENDSEC\n  0\nSECTION\n  2\nOBJECTS\n{objects}  0\nENDSEC\n  0\nEOF\n",
+        mtext("A1", "entity", Some("D1")),
+    );
+    let d = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    d.model.iter().filter_map(|e| if let EntityKind::MText(m) = &e.kind { Some(m.contents.clone()) } else { None }).collect()
+}
+
+/// A long text (more than one 255-character chunk) comes back whole.
+#[test]
+fn a_long_2008_rt_text_is_read_whole() {
+    let long = "x".repeat(2000);
+    assert_eq!(read_texts(&objects("A1", "D1", "X1", &long)), vec![long]);
+}
+
+/// Dictionaries owning each other, or themselves, neither loop nor change the text.
+#[test]
+fn owner_cycles_are_harmless() {
+    let own = objects("D1", "D1", "X1", "\\pxqc;ABC");
+    assert_eq!(read_texts(&own), vec!["entity".to_string()]);
+    let cycle = format!("{}{}", objects("D2", "D1", "X1", "A"), objects("D1", "D2", "X2", "B"));
+    assert_eq!(read_texts(&cycle), vec!["entity".to_string()]);
+}

@@ -124,8 +124,15 @@ impl Spline {
         if !self.is_valid() {
             return Vec2::ZERO;
         }
+        self.derivative_unchecked(t)
+    }
+
+    /// First derivative without re-validating the spline. The caller must have confirmed
+    /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
+    /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
+    fn derivative_unchecked(&self, t: f64) -> Vec2 {
         let p = self.degree;
-        let n = self.control.len() - 1;
+        let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
         let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
         let span = find_span(n, p, t, &self.knots);
@@ -470,15 +477,17 @@ impl Spline {
         out
     }
 
-    /// Arc length of one integration panel.
+    /// Arc length of one integration panel. The spline is validated once by the public callers
+    /// ([`Spline::length_between`]/[`Spline::length`]) before any panel is measured, so the speed
+    /// closure uses the unchecked derivative to avoid re-scanning the knots per sample.
     fn panel_length(&self, a: f64, b: f64) -> f64 {
-        let speed = |t: f64| self.derivative(t).len();
+        let speed = |t: f64| self.derivative_unchecked(t).len();
         adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
-        if !self.is_valid() || !(a.is_finite() && b.is_finite()) {
+        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
             return 0.0;
         }
         let (lo, hi) = self.domain();
@@ -548,7 +557,14 @@ impl Ellipse {
         }
         let n = ((sweep / TAU) * 128.0).ceil().clamp(1.0, 512.0) as usize;
         let h = sweep / n as f64;
-        let l: f64 = (0..n).map(|i| gauss(t0 + h * i as f64, t0 + h * (i + 1) as f64, |t| self.derivative(t).len())).sum();
+        // Each panel halved where it needs it: a flat ellipse turns sharply at its ends.
+        let speed = |t: f64| self.derivative(t).len();
+        let l: f64 = (0..n)
+            .map(|i| {
+                let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+            })
+            .sum();
         if l.is_finite() { l } else { 0.0 }
     }
 
@@ -768,5 +784,8 @@ mod tests {
         assert!((t + FRAC_PI_2).abs() < 1e-9);
         assert!(e.param_at_length(0.0, e.length() * 2.0).is_none());
         assert!(e.param_at_length(f64::NAN, 1.0).is_none());
+        // A 100:1 ellipse, against the arithmetic-geometric mean's 40.010983297227.
+        let flat = Ellipse::full(Vec2::ZERO, Vec2::new(10.0, 0.0), 0.01);
+        assert!((flat.length() - 40.010_983_297_227).abs() < 1e-9, "{}", flat.length());
     }
 }

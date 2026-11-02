@@ -170,6 +170,118 @@ fn pasteblock_makes_a_block_of_the_clipboard() {
     assert!(d.block("DOOR").is_some() && d.layer("HINGE").is_some());
 }
 
+#[test]
+fn cutbase_cuts_with_the_given_base_point() {
+    let mut s = Session::empty();
+    let mut da = drawing_a();
+    if let Some(l) = da.layer_mut("WALLS") {
+        l.locked = true;
+    }
+    let a = s.open_drawing(da, "A", None);
+    let b = s.open_drawing(drawing_b(), "B", None);
+    s.active = a;
+    let r = s.execute("cutbase", &json!({ "handles": handles(&s), "base": [5, 5] })).unwrap();
+    // The wall is on a locked layer, so only the door is cut.
+    assert_eq!(r, json!({ "cut": 1, "message": "1 object was on a locked layer." }));
+    assert_eq!(s.clipboard.len(), 1);
+    assert_eq!(s.clipboard_base, Vec2::new(5.0, 5.0));
+    let left = model(&s);
+    assert_eq!(left.len(), 1);
+    assert!(matches!(&left[0].kind, EntityKind::Line(_)), "the wall stays");
+
+    // PASTECLIP places the base point at the insertion point.
+    s.active = b;
+    s.execute("pasteclip", &json!({ "at": [105, 5] })).unwrap();
+    let pasted = model(&s);
+    assert!(matches!(&pasted[0].kind, EntityKind::Insert(i) if i.block == "DOOR" && i.insert.x == 115.0 && i.insert.y == 20.0));
+
+    // Undo in A brings the door back.
+    s.active = a;
+    s.execute("u", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), 2);
+}
+
+#[test]
+fn cutting_only_locked_objects_keeps_the_clipboard() {
+    let mut s = Session::empty();
+    let mut da = drawing_a();
+    for l in &mut da.layers {
+        l.locked = true;
+    }
+    s.open_drawing(da, "A", None);
+    let hs = handles(&s);
+    s.execute("copyclip", &json!({ "handles": [hs[0]] })).unwrap();
+    let held = s.clipboard.clone();
+    let r = s.execute("cutclip", &json!({ "handles": hs })).unwrap();
+    assert_eq!(r, json!({ "cut": 0, "message": "2 objects were on a locked layer. Nothing was cut." }));
+    assert_eq!(model(&s).len(), 2, "nothing was erased");
+    assert_eq!(s.clipboard.len(), 1, "the clipboard keeps what it held");
+    assert_eq!(s.clipboard[0].handle, held[0].handle);
+
+    // CUTBASE at the command line says so too.
+    s.start("cutbase").unwrap();
+    s.input(cadcraft_engine::Input::Point(Vec2::new(3.0, 4.0))).unwrap();
+    let wall = s.doc().unwrap().model.iter().next().unwrap().handle;
+    s.input(cadcraft_engine::Input::Pick(vec![wall])).unwrap();
+    s.input(cadcraft_engine::Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert!(s.log.iter().any(|l| l.contains("1 object was on a locked layer. Nothing was cut.")), "{:?}", s.log);
+    assert_eq!(s.clipboard.len(), 1);
+    assert_eq!(model(&s).len(), 2);
+}
+
+#[test]
+fn cutbase_and_copybase_need_a_base_point_and_take_each_object_once() {
+    let mut s = Session::empty();
+    s.open_drawing(drawing_a(), "A", None);
+    let hs = handles(&s);
+    for cmd in ["cutbase", "copybase"] {
+        for p in [json!({ "handles": hs }), json!({ "handles": hs, "base": [5] })] {
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains("`base` ([x, y]) is required"), "{cmd}: {e}");
+        }
+    }
+    assert_eq!(model(&s).len(), 2, "nothing was cut");
+    assert!(s.clipboard.is_empty(), "nothing was copied");
+
+    // A handle listed twice is copied and cut once.
+    let twice = json!({ "handles": [hs[1], hs[1]], "base": [0, 0] });
+    assert_eq!(s.execute("copybase", &twice).unwrap(), json!({ "copied": 1 }));
+    assert_eq!(s.clipboard.len(), 1);
+    assert_eq!(s.execute("cutbase", &twice).unwrap(), json!({ "cut": 1 }));
+    assert_eq!(s.clipboard.len(), 1);
+    assert_eq!(model(&s).len(), 1);
+}
+
+#[test]
+fn cutbase_asks_for_the_base_point_then_the_objects() {
+    let mut s = Session::empty();
+    s.open_drawing(drawing_a(), "A", None);
+    let hs: Vec<Handle> = s.doc().unwrap().model.iter().map(|e| e.handle).collect();
+    let undo_before = s.state().unwrap().undo.len();
+    s.start("cutbase").unwrap();
+    assert!(s.prompt_text().contains("Specify base point"), "{}", s.prompt_text());
+    s.input(cadcraft_engine::Input::Point(Vec2::new(3.0, 4.0))).unwrap();
+    assert!(s.prompt_text().contains("Select objects"), "{}", s.prompt_text());
+    s.input(cadcraft_engine::Input::Pick(vec![hs[1]])).unwrap();
+    s.input(cadcraft_engine::Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.clipboard.len(), 1);
+    assert_eq!(s.clipboard_base, Vec2::new(3.0, 4.0));
+    assert_eq!(model(&s).iter().map(|e| e.handle).collect::<Vec<_>>(), [hs[0]]);
+    assert_eq!(s.state().unwrap().undo.len(), undo_before + 1, "one undo step");
+
+    // With a pickfirst selection, the base point is the only prompt.
+    s.set_selection(vec![hs[0]]);
+    s.start("cutbase").unwrap();
+    assert!(s.prompt_text().contains("Specify base point"), "{}", s.prompt_text());
+    s.input(cadcraft_engine::Input::Point(Vec2::new(1.0, 2.0))).unwrap();
+    assert!(s.running.is_none());
+    assert!(s.doc().unwrap().model.is_empty());
+    assert_eq!(s.clipboard_base, Vec2::new(1.0, 2.0));
+    assert!(s.selection().is_empty());
+}
+
 /// A stand-in for the DXF writer and reader: "writes" the drawing to memory.
 static WRITTEN: Mutex<Option<Drawing>> = Mutex::new(None);
 
