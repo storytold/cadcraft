@@ -150,6 +150,38 @@ fn saving_sat_text_solids_as_dxf_2013_reports_them() {
     assert!(r.get("notSaved").is_none() && s.log.len() == n);
 }
 
+/// The interactive save asks with the same list, and EXPORT reports it, so overwriting a 2013+
+/// DXF never drops solids on a command-line note alone (#2334).
+#[test]
+fn a_dxf_2013_loss_is_known_before_saving() {
+    use cadcraft_engine::cmd::file::loss_on_save;
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0
+EOF
+".to_vec()), plot: None });
+    let sat = |d: &mut Drawing| {
+        let tags = vec![RawTag { code: 8, value: "0".into() }, RawTag { code: 1, value: "400 1 1 0".into() }];
+        d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "REGION".into(), tags })).unwrap();
+    };
+    let mut modern = Drawing::new_imperial();
+    modern.header.set_str("ACADVER", "AC1032");
+    sat(&mut modern);
+    let mut s = Session::empty();
+    s.open_drawing(modern, "region.dxf", None);
+    assert_eq!(loss_on_save(&s, "region.dxf"), [("REGION".to_string(), 1)].into_iter().collect());
+
+    let path = std::env::temp_dir().join(format!("cadcraft-sat-export-{}.dxf", std::process::id()));
+    let r = s.execute("export", &json!({ "path": path.to_string_lossy() })).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r["notSaved"], json!({ "REGION": 1 }));
+    assert!(s.log.iter().any(|l| l.contains("Not saved in the DXF file")), "{:?}", s.log);
+
+    let mut old = Drawing::new_imperial();
+    old.header.set_str("ACADVER", "AC1024");
+    sat(&mut old);
+    s.open_drawing(old, "region.dxf", None);
+    assert!(loss_on_save(&s, "region.dxf").is_empty(), "2010 keeps SAT text");
+}
+
 /// In the Block Editor the file still holds the host drawing: its solids and version decide the
 /// note, not the edited block's (#2334).
 #[test]

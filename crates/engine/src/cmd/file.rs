@@ -794,11 +794,27 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 /// when the format keeps everything. The interactive save asks with this; [`save_reporting`]
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
+    let version = drawing_version(s, path);
+    if is_dxf_file(path) && version >= Version::R2013 {
+        // The drawing a file holds: the host while the Block Editor is open.
+        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    }
     if !drops_unknown(path) {
         return Default::default();
     }
-    let version = drawing_version(s, path);
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
+}
+
+/// Report what the file `path`, just written at the drawing's own version, left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+    if is_dxf_file(path) {
+        if drawing_version(s, path) >= Version::R2013 {
+            report_sat_text_dropped(s, r);
+        }
+    } else {
+        let lost = loss_on_save(s, path);
+        report_not_saved(s, r, &lost);
+    }
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
