@@ -80,7 +80,14 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
     // the stored tiles as they stand put the new view in HEADER and the old one here, and the
     // read takes this one, so updating the view of a tiled drawing did not survive a round trip
     // (noted in review).
-    let first = tiled.and_then(|c| c.tiles.first()).map(|t| VportTile { center, height, ..*t });
+    //
+    // Only where there is a saved view to carry. `center` and `height` are the extents fallback
+    // when the header holds none, and a tiled drawing can hold none -- `-VPORTS` splits the
+    // current view into tiles without setting one -- so overriding regardless replaced a tile's
+    // own good view with that fallback, and the drawing opened on the extents instead of where
+    // its tile was (noted in review).
+    let saved = d.header.saved_view().is_some();
+    let first = tiled.and_then(|c| c.tiles.first()).map(|t| if saved { VportTile { center, height, ..*t } } else { *t });
     let mut records: Vec<(&str, &VportTile)> = match (tiled, first.as_ref()) {
         (Some(c), Some(first)) => {
             std::iter::once((VportConfig::ACTIVE, first)).chain(c.tiles.iter().skip(1).map(|t| (VportConfig::ACTIVE, t))).collect()

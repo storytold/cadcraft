@@ -591,6 +591,30 @@ fn a_viewport_record_without_a_centre_keeps_the_header_view() {
 /// trip. The write put the new view in HEADER but emitted the stored tiles unchanged, and the
 /// read takes its view from the first `*ACTIVE` record, so the update was read back as the old
 /// view (noted in review of #1602).
+/// A tiled drawing need not hold a saved view: `-VPORTS` splits the current view into tiles and
+/// sets none. The first tile's own view is then the only one there is, and must not be replaced
+/// by the extents fallback `vport_table` computes for a drawing with no view (noted in review).
+#[test]
+fn a_tiled_drawing_with_no_saved_view_keeps_its_first_tiles_view() {
+    let mut d = sample();
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0 };
+    d.vports.push(VportConfig {
+        name: VportConfig::ACTIVE.to_string(),
+        tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
+    });
+    assert_eq!(d.header.saved_view(), None, "the drawing holds no saved view");
+
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    let active = back.vports.iter().find(|c| c.is_active()).expect("the tiled configuration is kept");
+    assert_eq!(active.tiles.len(), 2, "both tiles are written: {:?}", active.tiles);
+    assert_eq!(active.tiles[0].center, Vec2::new(1.0, 1.0), "the first tile keeps its own view");
+    assert_eq!(active.tiles[0].height, 10.0, "and its own height");
+    assert_eq!(active.tiles[1].center, Vec2::new(2.0, 2.0), "the second tile keeps its own view");
+    // The read takes the header's view from that first record, so it is the tile's view and not
+    // the extents fit the writer would otherwise have put there.
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(1.0, 1.0), 10.0)), "read from the first tile");
+}
+
 #[test]
 fn a_saved_view_set_on_a_tiled_drawing_survives_a_round_trip() {
     let mut d = sample();
