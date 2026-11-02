@@ -272,3 +272,47 @@ fn many_objects_stay_fast() {
     assert_eq!(count(&s), 4001);
     assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
 }
+
+#[test]
+fn within_the_tolerance_does_not_chain() {
+    // At 0.01, the arc is within the tolerance of both circles, but the circles are 0.016 apart:
+    // the arc goes, both circles stay, whichever comes first in draw order.
+    let circle = |s: &mut Session, x: f64| s.execute("circle", &json!({ "center": [x, 0], "radius": 3 })).unwrap();
+    let arc_at = |s: &mut Session, x: f64, start: f64, end: f64| {
+        s.execute("arc", &json!({ "center": [x, 0], "radius": 3, "start": start, "end": end })).unwrap()
+    };
+    let kinds = |s: &Session| s.doc().unwrap().model.iter().map(|e| e.kind.type_name()).collect::<Vec<_>>();
+    let mut s = Session::new();
+    circle(&mut s, 50.0);
+    arc_at(&mut s, 50.008, 0.0, 90.0);
+    circle(&mut s, 50.016);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!((r["duplicates"].as_u64(), r["overlapping"].as_u64()), (Some(0), Some(1)), "{r}");
+    assert_eq!(kinds(&s), ["Circle", "Circle"]);
+    let mut s = Session::new();
+    arc_at(&mut s, 50.008, 0.0, 90.0);
+    circle(&mut s, 50.0);
+    circle(&mut s, 50.016);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["deleted"], 1, "{r}");
+    assert_eq!(kinds(&s), ["Circle", "Circle"]);
+    // Arcs alone: the third is 0.016 from the first, so it is not combined with it.
+    let mut s = Session::new();
+    arc_at(&mut s, 0.0, 0.0, 90.0);
+    arc_at(&mut s, 0.008, 45.0, 180.0);
+    arc_at(&mut s, 0.016, 100.0, 200.0);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["overlapping"], 1, "{r}");
+    assert_eq!(kinds(&s), ["Arc", "Arc"]);
+    // A followed line displaces the first one, which a third line matched: the third is 0.016 from
+    // the followed line, so it stays.
+    let mut s = Session::new();
+    let first = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let third = line(&mut s, [0.0, 0.008], [10.0, 0.008]);
+    let followed = line(&mut s, [0.0, -0.008], [10.0, -0.008]);
+    s.execute("dimlinear", &json!({ "object": followed.hex(), "at": [5, 5] })).unwrap();
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["deleted"], 1, "{r}");
+    let d = s.doc().unwrap();
+    assert!(d.entity(first).is_none() && d.entity(third).is_some() && d.entity(followed).is_some());
+}
