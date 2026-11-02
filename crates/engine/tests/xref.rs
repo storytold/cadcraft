@@ -2,7 +2,7 @@
 //! loading with `xref|name` symbols, saving only the reference, reopening, Reload/Unload/Detach/
 //! Path, Bind and XBIND, overlays, missing files, circular and deeply nested references.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use cadcraft_engine::Session;
@@ -12,6 +12,11 @@ use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Block, Circle, Drawing, Entity, EntityKind, Handle, Insert, Layer, Line, Linetype, MAX_BLOCK_DEPTH, XrefStatus};
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 fn hooks() {
     set_io(IoHooks {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
@@ -20,12 +25,9 @@ fn hooks() {
     });
 }
 
-/// A fresh folder for one test.
-fn folder(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("cadcraft-xref-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A fresh folder for one test, removed when the test ends.
+fn folder(tag: &str) -> TempDir {
+    TempDir::new(&format!("xref-{tag}"))
 }
 
 fn save(d: &Drawing, path: &Path) {

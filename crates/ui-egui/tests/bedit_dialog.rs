@@ -95,9 +95,10 @@ fn a_selected_reference_and_json_calls_skip_the_dialog() {
     app.start("bedit");
     assert!(app.ui.dialog.is_none());
     assert_eq!(app.session.state().unwrap().block_editor(), Some("Window"));
-    // In the editor BEDIT says why it can't run instead of opening the dialog.
+    // In the editor BEDIT opens the dialog, to switch to another block.
     app.start("bedit");
-    assert!(app.ui.dialog.is_none());
+    assert_eq!(app.ui.dialog.as_deref(), Some("bedit"));
+    app.ui.dialog = None;
     app.run("bclose", json!({})).unwrap();
 
     app.run("bedit", json!({ "name": "door" })).unwrap();
@@ -174,4 +175,66 @@ fn opening_a_drawing_with_authoring_elements_offers_the_block_editor() {
     assert!(app.session.state().unwrap().path.is_some(), "opened");
     assert!(app.ui.dialog.is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A name the Block Editor can't switch to is refused before the dialog asks about the changes not
+/// saved, so the question never traps the user.
+#[test]
+fn a_bad_name_is_refused_before_the_dialog_asks_to_save() {
+    let mut app = app_with_blocks();
+    app.run("bedit", json!({ "name": "door" })).unwrap();
+    app.run("line", json!({ "points": [[0, 0], [0, 4]] })).unwrap();
+    app.start("bedit");
+    app.bedit.name = "*U1".into();
+    assert!(!bedit::confirm(&mut app));
+    assert!(!app.bedit.ask_save, "no question");
+    assert!(app.bedit.error.is_some(), "the dialog says why");
+    assert!(app.session.state().unwrap().block_unsaved(), "nothing lost");
+}
+
+/// In the Block Editor, BEDIT opens the dialog on the block being edited; OK on another block
+/// switches to it, first asking whether to save the changes not saved yet (Cancel goes back).
+#[test]
+fn in_the_block_editor_the_dialog_switches_blocks_asking_to_save_first() {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    let mut app = app_with_blocks();
+    app.run("bedit", json!({ "name": "door" })).unwrap();
+    app.start("bedit");
+    assert_eq!((app.ui.dialog.as_deref(), app.bedit.name.as_str()), (Some("bedit"), "door"), "starts on the block edited");
+    // Nothing changed: OK switches at once.
+    app.bedit.name = "Window".into();
+    assert!(bedit::confirm(&mut app));
+    assert_eq!(app.session.state().unwrap().block_editor(), Some("Window"));
+
+    app.run("line", json!({ "points": [[0, 0], [0, 4]] })).unwrap();
+    app.start("bedit");
+    app.bedit.name = "door".into();
+    assert!(!bedit::confirm(&mut app), "asks first");
+    assert!(app.bedit.ask_save);
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("Save changes to block \"Window\"").is_some());
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+    assert!(!h.state().bedit.ask_save, "back to the list");
+    assert_eq!(h.state().session.state().unwrap().block_editor(), Some("Window"));
+    assert!(h.state().session.state().unwrap().block_unsaved(), "nothing lost");
+
+    assert!(!bedit::confirm(h.state_mut()));
+    h.run_steps(2);
+    h.get_by_label("Yes").click();
+    h.run_steps(2);
+    let st = h.state().session.state().unwrap();
+    assert_eq!(st.block_editor(), Some("door"));
+    assert!(h.state().ui.dialog.is_none(), "the dialog closed");
+    let window = h.state().session.doc().unwrap().block("Window").map(|b| b.entities.len());
+    assert_eq!(window, Some(2), "Window saved with its new line before switching");
 }
