@@ -220,8 +220,9 @@ impl Builder<'_> {
         if sh.glyphs.is_empty() {
             return;
         }
-        let fill = self.opts.fill && ctx.d.header.i64("TEXTFILL", 1) != 0;
-        // Plots note which filled outlines are font glyphs (see `DisplayList::texts`).
+        let fill = self.opts.fill && (ctx.d.header.i64("TEXTFILL", 1) != 0 || self.opts.text_glyphs);
+        // Plots note which filled outlines are font glyphs (see `DisplayList::texts`); so do
+        // exports that want to write text.
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
         for (i, g) in sh.glyphs.iter().enumerate() {
@@ -239,7 +240,7 @@ impl Builder<'_> {
                     self.tris(ctx, color, &tris);
                     tris.len()
                 };
-                if let Some(t) = glyph.filter(|_| self.plotting)
+                if let Some(t) = glyph.filter(|_| self.plotting || self.opts.text_glyphs)
                     && self.list.prims.len() > at
                     && let (Ok(prim), Ok(verts)) = (u32::try_from(at), u32::try_from(len))
                 {

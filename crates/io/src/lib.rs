@@ -113,6 +113,16 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
     }
 }
 
+/// Like [`write`], with the export command's JSON options. SVG honours `text?: "text" |
+/// "geometry"` ([`svg::TextMode`]: glyph outlines by default, `<text>` elements for `"text"`);
+/// other formats ignore it.
+pub fn export_with(d: &Drawing, name: &str, opts: &serde_json::Value) -> Result<Vec<u8>> {
+    match ext(name).as_str() {
+        "svg" => Ok(svg::export_window_with_text(d, &Space::Model, None, true, svg::TextMode::from_json(opts)).into_bytes()),
+        _ => write(d, name),
+    }
+}
+
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
 /// drawing units, centred and scaled to fit the image without distortion) instead of the
 /// extents. Formats that are not images (DXF, DWG) ignore the window. The window is checked with

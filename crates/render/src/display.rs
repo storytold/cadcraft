@@ -50,8 +50,9 @@ pub struct DisplayList {
     /// it is drawn on (block contents on layer 0: the block reference's; [`NO_LAYER`] when the
     /// layer isn't in the table), for PDF layers. Empty for other lists.
     pub prim_layers: Vec<u32>,
-    /// Plots: outline-font glyphs that a plotter can write as text instead of drawing the
-    /// filled outline primitive they stand for ([`PlotText::prim`]), in drawing order.
+    /// Plots and text exports: outline-font glyphs that a plotter can write as text instead of
+    /// drawing the filled outline primitive they stand for ([`PlotText::prim`]), in drawing
+    /// order. Empty for other builds.
     pub texts: Vec<PlotText>,
     pub bounds: Bounds2,
     /// The paper sheet when the list was built for a layout (paper space); the UI draws the

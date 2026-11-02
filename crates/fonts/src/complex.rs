@@ -134,7 +134,8 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                                 .copied()
                                 .flatten()
                                 .filter(|c| !c.is_whitespace())
-                                .and_then(|c| ttf::text_glyph_at(&outline, c, origin, h / outline.cap, wf, shear));
+                                // Shaped runs carry no source-space count: the shaper drops spaces into advances.
+                                .and_then(|c| ttf::text_glyph_at(&outline, c, origin, h / outline.cap, wf, shear, 0));
                             out.push_glyph(contours, text);
                         }
                         let adv = g.advance * k;

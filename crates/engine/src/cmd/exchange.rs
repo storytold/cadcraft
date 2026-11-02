@@ -30,6 +30,8 @@ const MAX_PREVIEW_PX: u64 = 4096;
 /// Most sheets one PUBLISH plots.
 const MAX_SHEETS: usize = 256;
 
+/// The File menu's exchange commands: IMPORT, EXPORT (with its SVG `text` option), PREVIEW,
+/// PUBLISH, PDFBOOK and the not-yet-available ATTACH, SHARE and 3DORBIT.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("import", "Import...", run_import)
@@ -39,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension), text?: \"text\" | \"geometry\" (SVG: glyph outlines by default; `text: \"text\"` opts in to TEXT/MTEXT as <text> elements)} → {format, bytes, path? | data}")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
@@ -107,6 +109,9 @@ pub(super) fn deliver_file(cmd: &str, path: &str, bytes: &[u8], hook: Option<sup
 
 // ---------- EXPORT ----------
 
+/// EXPORT: write the drawing in `format` (or `path`'s extension) to `path`, or return the bytes
+/// as base64 `data`. The host's exporter receives the JSON options (such as SVG `text`) when it
+/// installed one; otherwise the plain writer is used.
 fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     let hooks = io().ok_or_else(|| bad("export", "file formats are not available in this build"))?;
     let path = str_param(p, "path");
@@ -117,7 +122,11 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
+    let bytes = match super::file::export_with() {
+        Some(write) => write(s.doc()?, &format!("export.{format}"), p),
+        None => (hooks.write)(s.doc()?, &format!("export.{format}")),
+    }
+    .map_err(|e| bad("export", e))?;
     match path {
         Some(path) => {
             write_file("export", path, &bytes)?;

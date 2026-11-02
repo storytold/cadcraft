@@ -4,9 +4,18 @@
 //! (CFF-flavoured OpenType) aren't embedded either.
 
 use skrifa::FontRef;
+use skrifa::instance::{LocationRef, Size};
 use skrifa::raw::types::Tag;
 
 use crate::ttf::Face;
+
+/// A glyph's horizontal advance in thousandths of an em (the units SVG measures text in), from
+/// the face's own metrics: 0 when the face or the glyph has none.
+pub fn advance(face: &Face, gid: u16) -> f64 {
+    use skrifa::MetadataProvider as _;
+    let Some(font) = face.font() else { return 0.0 };
+    font.glyph_metrics(Size::new(1000.0), LocationRef::default()).advance_width(skrifa::GlyphId::new(u32::from(gid))).map_or(0.0, f64::from)
+}
 
 /// Whether a face may be embedded as a subset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
