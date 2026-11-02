@@ -11,10 +11,12 @@ fn record(dxf: &str, h: &str) -> Vec<(String, String)> {
     pairs[start..end].iter().map(|(c, v)| (c.to_string(), v.to_string())).collect()
 }
 
+/// The first value of group `code` in a record, parsed as a number.
 fn value(rec: &[(String, String)], code: &str) -> Option<f64> {
     rec.iter().find(|p| p.0 == code).and_then(|p| p.1.parse().ok())
 }
 
+/// Saving the fixture keeps groups 52, 41 and 77 of the SOLID and the ANSI31 hatch.
 #[test]
 fn hatch_fixture_keeps_angle_scale_and_double_flag() {
     let src = include_str!("../data/hatch_solid_and_pattern.dxf");
