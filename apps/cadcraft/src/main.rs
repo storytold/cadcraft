@@ -276,6 +276,9 @@ fn main() -> eframe::Result {
     if let Some(list) = &vars.font_fallback {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
+    // The user-level plot style library: shared by every drawing, after the drawing's tables and
+    // before the built-ins.
+    cadcraft_engine::plotstyle_library::init_plot_style_library();
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11

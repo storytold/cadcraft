@@ -1377,3 +1377,5 @@
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Save to library	Зберегти до бібліотеки
+	A library table: shared by every drawing; editing it keeps a copy in this drawing.	Таблиця бібліотеки: спільна для всіх креслень; редагування зберігає копію в цьому кресленні.

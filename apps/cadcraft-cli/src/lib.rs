@@ -94,6 +94,7 @@ where
     };
     // The engine's hooks are set-once, so installing them on every call is harmless.
     install_io();
+    cadcraft_engine::plotstyle_library::init_plot_style_library();
     match &cli.command {
         Command::Convert(a) => a.settings.apply(),
         Command::Run(a) => a.settings.apply(),

@@ -24,6 +24,7 @@ pub mod grips;
 mod guard;
 pub mod lisp;
 pub mod mtext_edit;
+pub mod plotstyle_library;
 pub mod pointmod;
 pub mod prompt;
 mod recent;
