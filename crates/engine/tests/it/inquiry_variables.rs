@@ -159,6 +159,23 @@ fn area_of_a_spline_with_more_spans_than_samples_counts_each() {
 }
 
 #[test]
+fn a_spline_too_long_to_measure_is_refused_and_not_kept() {
+    let mut s = Session::new();
+    lisp(&mut s, "(command \"_.AREA\" '(0.0 0.0) '(10.0 0.0) '(10.0 10.0) \"\")");
+    // Finite ends 2e308 apart: its chord closes no area, but its length is past f64's range. That is
+    // too large to report, as a polyline's is, not a perimeter of 0.
+    let spline = Spline::from_line(Vec2::new(-1e308, 0.0), Vec2::new(1e308, 0.0), 1);
+    let space = s.space();
+    let h = s.doc_mut().unwrap().add(&space, Common::default(), EntityKind::Spline(spline)).unwrap();
+    let err = s.execute("area", &json!({ "handle": h.hex() })).unwrap_err();
+    assert!(err.to_string().contains("the perimeter is too large"), "{err}");
+    lisp(&mut s, &format!("(command \"_.AREA\" \"_O\" (list (handent \"{}\") '(0.0 0.0)))", h.hex()));
+    assert!(s.log.iter().any(|l| l.contains("The perimeter is too large.")), "{:?}", s.log);
+    assert!(close(var(&s, "AREA"), 50.0), "{}", var(&s, "AREA"));
+    assert!(close(var(&s, "PERIMETER"), 20.0 + 200f64.sqrt()), "{}", var(&s, "PERIMETER"));
+}
+
+#[test]
 fn dist_sets_the_distance_and_leaves_lastpoint_at_the_first_point() {
     let mut s = Session::new();
     lisp(&mut s, "(command \"_.DIST\" '(0.5 0.25) '(0.53 0.29))");

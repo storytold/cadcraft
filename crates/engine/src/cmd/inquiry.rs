@@ -519,7 +519,8 @@ pub(super) fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
         EntityKind::Spline(sp) if sp.is_valid() => {
             let b = sp.bounds();
             let pts = sp.tessellate_spans((b.min.dist(b.max) * 1e-7).max(1e-12));
-            (cadcraft_geom::shoelace(&pts).abs(), sp.length())
+            // A length past f64's range is too large to report, as a polyline's is, not 0.
+            (cadcraft_geom::shoelace(&pts).abs(), sp.checked_length().unwrap_or(f64::INFINITY))
         }
         _ => return Err(bad("area", "object has no area")),
     })
