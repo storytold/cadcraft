@@ -103,6 +103,8 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
     write_other_entity(w, d, e, owner, paper, cx);
 }
 
+/// Writes the entities that have no kind-specific writer of their own (LINE, POINT, CIRCLE, ...):
+/// one arm per kind, each writing the entity name, its common groups and its geometry.
 fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Line(l) => {

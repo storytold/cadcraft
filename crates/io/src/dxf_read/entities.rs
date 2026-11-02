@@ -94,6 +94,9 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     crate::dxf_region::from_polyline(tags, pl)
 }
 
+/// Reads a SPLINE: its degree, knots, weights and control and fit points. Z is kept for each point
+/// group only when it has one value per point, and the spline is refitted when its control points
+/// are not valid.
 fn spline(t: &T) -> Spline {
     let degree = t.i(71).unwrap_or(3).clamp(1, 10) as usize;
     let knots = t.all_f(40);

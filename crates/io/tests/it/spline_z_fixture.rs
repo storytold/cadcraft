@@ -11,10 +11,12 @@ fn record(dxf: &str, h: &str) -> Vec<(String, String)> {
     pairs[start..end].iter().map(|(c, v)| (c.to_string(), v.to_string())).collect()
 }
 
+/// The values of every group with `code` in a record, parsed as numbers.
 fn values(rec: &[(String, String)], code: &str) -> Vec<f64> {
     rec.iter().filter(|p| p.0 == code).map(|p| p.1.parse().unwrap()).collect()
 }
 
+/// Saving the fixture keeps the Z of the fit-point spline and of the control-point spline.
 #[test]
 fn spline_fixture_keeps_the_z_of_its_points() {
     let src = include_str!("../data/spline_3d_fit_points.dxf");
