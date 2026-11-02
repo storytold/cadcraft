@@ -278,13 +278,24 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
     }
 }
 
+/// The text an AutoCAD field's TEXT or MTEXT is written with while its field is unchanged: as
+/// the file showed it, matching the value the field caches. A text whose shown value differs
+/// from that cache loses its field in AutoCAD (#2318 review: a date field read on another day).
+fn field_text_as_read<'a>(d: &'a Drawing, e: &Entity, formula: Option<&str>) -> Option<&'a str> {
+    let (f, v) = d.foreign.entities.get(&e.handle)?.field_text.as_ref()?;
+    (Some(f.as_str()) == formula).then_some(v.as_str())
+}
+
 fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Text(t) => {
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
-            text_tags(w, d, t, None, None);
+            match field_text_as_read(d, e, t.formula.as_deref()) {
+                Some(v) => text_tags(w, d, &cadcraft_doc::Text { value: v.to_string(), ..t.clone() }, None, None),
+                None => text_tags(w, d, t, None, None),
+            }
             formula_xdata(w, t.formula.as_deref());
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
@@ -321,7 +332,8 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Drawing direction: 5, by style.
             w.i(72, 5);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
-            let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&t.contents).chars().collect();
+            let contents = field_text_as_read(d, e, t.formula.as_deref()).unwrap_or(&t.contents);
+            let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(contents).chars().collect();
             let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
             let n = chunks.len();
             for (i, c) in chunks.iter().enumerate() {
