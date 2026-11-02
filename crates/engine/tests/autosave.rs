@@ -185,6 +185,14 @@ fn autosave_files_are_written_in_the_background_and_removed_on_exit() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(std::fs::read(&path).unwrap().ends_with(b"EOF\n"));
+    // The file exists before the write finishes (the folder sync comes after the rename); until
+    // it has, the drawing is busy and the change drawn below would not be planned.
+    for _ in 0..500 {
+        if !a.writing() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     // While the app runs, its lock keeps its files out of recovery. SAVETIME and SAVEFILEPATH
     // are system variables (process-wide, so set in this test only).
     assert_eq!(cadcraft_engine::sysvars::get(&s, "SAVETIME"), Some(json!(10)));

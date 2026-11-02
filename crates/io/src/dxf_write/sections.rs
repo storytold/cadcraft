@@ -90,9 +90,10 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(50, s.oblique.to_degrees());
         w.i(71, if s.backwards { 2 } else { 0 } | if s.upside_down { 4 } else { 0 });
         w.f(42, 0.2);
-        // The built-in font goes out as `txt`, which every reader has; CADCraft's own name
-        // travels in `CADCRAFT` xdata (`1000 FONT`, name) so the style reopens with it.
-        let file = if s.font == cadcraft_fonts_name() { "txt" } else { s.font.as_str() };
+        // The built-in font goes out as `txt`, which every reader has, and a Linux font as its
+        // Windows one with portable fonts; CADCraft's own name travels in `CADCRAFT` xdata
+        // (`1000 FONT`, name) so the style reopens with it.
+        let file = if s.font == cadcraft_fonts_name() { "txt" } else { cadcraft_fonts::windows::written_font(&s.font, d.portable_fonts) };
         w.s(3, file);
         w.s(4, &s.big_font);
         if s.annotative {
@@ -383,6 +384,8 @@ struct LayoutWriteData<'a> {
     flags: i64,
     page: &'a PageSetup,
     view: Option<(Vec2, f64)>,
+    /// The layout's limits as read (`None`: the default 0,0 to 12,9).
+    limits: Option<(Vec2, Vec2)>,
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
@@ -447,14 +450,18 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(7, &page.plot_style_table);
     w.i(75, if page.scale_to_fit { 0 } else { 16 });
     w.f(147, scale);
-    w.f(148, 0.0);
-    w.f(149, 0.0);
+    // The paper image origin the file had (#2109), else 0,0.
+    let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
+    w.f(148, origin.x);
+    w.f(149, origin.y);
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
     w.i(71, tab);
-    w.p2(10, Vec2::ZERO);
-    w.p2(11, Vec2::new(12.0, 9.0));
+    // The layout's limits as the file had them (#2109), else 0,0 to 12,9.
+    let (lo, hi) = data.limits.filter(|(a, b)| a.is_finite() && b.is_finite()).unwrap_or((Vec2::ZERO, Vec2::new(12.0, 9.0)));
+    w.p2(10, lo);
+    w.p2(11, hi);
     w.p(12, Vec3::ZERO);
     w.p(14, Vec3::ZERO);
     w.p(15, Vec3::ZERO);
@@ -523,7 +530,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None },
+        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, limits: None },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
@@ -538,6 +545,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 flags: 1,
                 page: &l.page,
                 view: l.view,
+                limits: l.limits,
             },
         );
     }
@@ -873,7 +881,20 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
             if let EntityKind::Dimension(dm) = &e.kind {
                 let (flags, refs) = std_assoc_refs(d, dm);
                 if !refs.is_empty() {
-                    cx.assoc.insert(e.handle, AssocObj { xdict: w.h(), handle: w.h(), flags, refs });
+                    let assoc = AssocObj { xdict: w.h(), handle: w.h(), flags, refs };
+                    // Source geometry must name the DIMASSOC as well, or other readers do not
+                    // follow later edits. Both objects of an intersection need the reactor.
+                    for source in assoc.refs.iter().flat_map(|r| std::iter::once(r.main).chain(r.other)) {
+                        // common_x already gives the dimension its own DIMASSOC reactor.
+                        if source == e.handle {
+                            continue;
+                        }
+                        let reactors = w.reactors.entry(source).or_default();
+                        if !reactors.contains(&assoc.handle) {
+                            reactors.push(assoc.handle.clone());
+                        }
+                    }
+                    cx.assoc.insert(e.handle, assoc);
                 }
             }
         }
@@ -882,7 +903,8 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
 /// file ends up in: `version`, or the DWG version the bridge writes) has.
-pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
+/// `frozen_341`: see [`Ctx::frozen_341`].
+pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -915,7 +937,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         .collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let mut cx = Ctx { paper_views: paper_views(d), target, ..Ctx::default() };
+    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
     let mut dim_defs = dimension_block_definitions(d, &all_spaces, &dim_plan, &mut w, &mut cx);
@@ -1117,16 +1139,29 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     }
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334).
-    crate::dxf_raw::finish(&mut w.t, d, version >= Version::R2013);
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
-    add_class_instance_counts(&mut w.t);
+    add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
     w.t
 }
 
-/// Write DXF Reference group 91 on every CLASS record. Count records after `dxf_raw::finish`
-/// restores foreign classes and objects so every class gets its actual instance count.
-fn add_class_instance_counts(tags: &mut Vec<Tag>) {
+/// DXF Reference group 91 of CLASS records, the instance count, which came with the 2004 format.
+/// From 2004 every CLASS record gets its actual count, counted after `dxf_raw::finish` restores
+/// foreign classes and objects (AutoCAD rejects a 2004+ file without it, #635). An R2000 file has
+/// none, not even on a class kept from a newer file: AutoCAD LT 2026 stops responding when an
+/// R2000 file's CLASS records carry a 91.
+fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
+    if target < Version::R2004 {
+        let mut in_class = false;
+        tags.retain(|t| {
+            if t.code == 0 {
+                in_class = t.str() == "CLASS";
+            }
+            !(in_class && t.code == 91)
+        });
+        return;
+    }
     let mut counts: HashMap<String, i64> = HashMap::new();
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();

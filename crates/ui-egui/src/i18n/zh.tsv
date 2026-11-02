@@ -489,6 +489,7 @@
 	On	开启
 	On/Off	开/关
 	One of the Crafting Apps by the ArtCraft team and community.	由 ArtCraft 团队和社区打造的 Crafting 系列应用之一。
+	Oops	恢复已擦除对象
 	Open (⌘O)	打开 (⌘O)
 	Open Sample Drawing	打开示例图形
 	Open sample drawing	打开示例图形
@@ -1349,3 +1350,110 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+# Menu and command labels the October 2026 update missed (#1129).
+	Align Multileaders	对齐多重引线
+	Analyze Usage	分析使用情况
+	Break-line Symbol	折断线符号
+	Change	更改
+	Change Properties	修改特性
+	Clear Recent Files	清除最近的文件
+	Close Block Editor	关闭块编辑器
+	Collect	合并
+	Collect Multileaders	合并多重引线
+	Convert Text to Mtext	将文字转换为多行文字
+	Customize	自定义
+	Drag Dynamic Grip	拖动动态夹点
+	Dynamic Block Data	动态块数据
+	Dynamic Block Grips	动态块夹点
+	Dynamic Block Reference	动态块参照
+	Edit Command Aliases (PGP)...	编辑命令别名 (PGP)...
+	Edit Multileader	编辑多重引线
+	Evaluate LISP	求值 LISP
+	Explode Attributes to Text	将属性分解为文字
+	Express Tools	扩展工具
+	Groups	编组
+	Hatch Pick	拾取图案填充
+	Implied Loops	隐含环
+	Justify	对正
+	Move/Copy/Rotate	移动/复制/旋转
+	Save Block	保存块
+	Save Block As	块另存为
+	Save Layout as Template	将布局另存为样板
+	Set Dynamic Property	设置动态特性
+	Units	单位
+
+# The strings the report listed as missing for zh.
+	Add…	添加…
+	Alias	别名
+	Alias file: {file}	别名文件：{file}
+	Associative	关联
+	AutoLISP (LSP)	AutoLISP (LSP)
+	B	B
+	Backup copy	备份副本
+	Block to create or edit	要创建或编辑的块
+	Choose the command the alias starts.	选择别名要启动的命令。
+	Click the ruler to add a tab stop, right-click to remove one	单击标尺可添加制表位，右键单击可将其删除
+	Command	命令
+	Create backup copy with each save	每次保存时创建备份副本
+	Crossing selection color:	交叉选择颜色：
+	Custom	自定义
+	Define each corner of the selection window with a separate click.	分别单击以定义选择窗口的各个角点。
+	Discard	放弃
+	Edit Block Definition	编辑块定义
+	Edit…	编辑…
+	Exclude:	排除：
+	Font	字体
+	Grips	夹点
+	Hatches	图案填充
+	Imperial (inches)	英制（英寸）
+	Indicate selection area	指示选择区域
+	Interface scale	界面缩放
+	Island	孤岛
+	Italic	斜体
+	Metric (millimetres)	公制（毫米）
+	More than {n} aliases.	超过 {n} 个别名。
+	Multiline text	多行文字
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	启动时的新建图形和第一个图形使用这些单位，除非设置了默认样板 (QNEWTEMPLATE)。
+	New block	新建块
+	No alias file loaded. REINIT replaces these aliases with a file's.	未加载别名文件。REINIT 将用文件中的别名替换这些别名。
+	Object grouping	对象编组
+	Object selection limit for display of grips	显示夹点时对象选择的数目上限
+	Objects on locked layers	锁定图层上的对象
+	Open in Block Editor	在块编辑器中打开
+	Origin: {x}, {y}	原点：{x}, {y}
+	Overline	上划线
+	Save alias	保存别名
+	Save changes to block "{name}"?	保存对块“{name}”的更改吗？
+	Select boundaries to remove	选择要删除的边界
+	Select using two clicks only	仅用两次单击选择
+	Selection Area Effect	选择区域效果
+	Selection Preview Filter	选择预览过滤器
+	Selection area opacity:	选择区域不透明度：
+	Selection effect color	选择效果颜色
+	Selection modes	选择模式
+	Selection preview	选择预览
+	Show grips	显示夹点
+	Tables	表格
+	Text color	文字颜色
+	This drawing	此图形
+	Type an alias name.	输入别名名称。
+	Underline	下划线
+	Units of new drawings	新图形的单位
+	Unsaved changes	未保存的更改
+	Visual Effect Settings	视觉效果设置
+	Visual Effect Settings...	视觉效果设置...
+	When a command is active	命令处于活动状态时
+	When no command is active	无活动命令时
+	Window selection color:	窗口选择颜色：
+	X	X
+	Xrefs	外部参照
+	Y	Y
+	built-in	内置
+	contains authoring elements. Open in Block Editor?	包含编写元素。在块编辑器中打开吗？
+	overrides built-in	覆盖内置
+	{alias} is already defined; select it and use Edit.	{alias} 已定义；请选择它并使用编辑。
+	{command} is an unknown command.	{command} 是未知命令。
+menu	Dimension	标注
+menu	Draw	绘图
+menu	Modify	修改
+menu	View	视图

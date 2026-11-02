@@ -105,9 +105,50 @@ impl Interactive for Guarded {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::Running;
+
+    thread_local! {
+        static PANIC_AFTER_COMMAND: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Called at the start of the passes after a command, which nothing can make panic on demand.
+    pub(crate) fn panic_if_armed() {
+        assert!(!PANIC_AFTER_COMMAND.get(), "a pass after the command panicked");
+    }
+
+    /// A panic in the passes after a JSON command: an error, and the drawing as it was.
+    #[test]
+    fn a_panic_after_a_command_restores_the_drawing() {
+        let mut s = Session::new();
+        s.execute("line", &serde_json::json!({"points": [[0, 0], [1, 0]]})).unwrap();
+        let undo = s.state().unwrap().undo.len();
+        PANIC_AFTER_COMMAND.set(true);
+        let r = s.execute("circle", &serde_json::json!({"center": [0, 0], "radius": 1}));
+        PANIC_AFTER_COMMAND.set(false);
+        assert!(matches!(&r, Err(EngineError::Internal(id, m)) if id == "circle" && m.contains("after the command")), "{r:?}");
+        assert_eq!(points(&s), 1, "the circle is gone with the failed command");
+        assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step for it");
+        s.execute("circle", &serde_json::json!({"center": [0, 0], "radius": 1})).unwrap();
+        assert_eq!(points(&s), 2, "the session still works");
+    }
+
+    /// The same at the end of an interactive command, where nothing returns the error to a caller.
+    #[test]
+    fn a_panic_after_an_interactive_command_restores_the_drawing() {
+        let mut s = Session::new();
+        s.cmdline("line 0,0 1,0").unwrap();
+        PANIC_AFTER_COMMAND.set(true);
+        let r = s.input(Input::Enter);
+        PANIC_AFTER_COMMAND.set(false);
+        assert!(r.is_ok(), "{r:?}");
+        assert!(s.running.is_none());
+        assert_eq!(points(&s), 0, "the drawing is restored");
+        assert!(s.log.iter().any(|l| l.contains("Internal error in line")), "{:?}", s.log);
+        s.cmdline("line 0,0 1,0").unwrap();
+        assert!(s.running.is_some(), "the session still works");
+    }
 
     fn dot(p: Vec2) -> EntityKind {
         EntityKind::Point(cadcraft_doc::Point { p: p.to3(0.0), angle: 0.0 })

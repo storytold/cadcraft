@@ -502,6 +502,10 @@ fn retained_objects(
     let modelled_entry = |tags: &[Tag], handle: &str| {
         entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && MODELLED_XDICT_KEYS.contains(&up(key).as_str()))
     };
+    // is_xdict reads the whole record; a dictionary that owns many objects (ACAD_GROUP with
+    // hundreds of thousands of groups) would be read once per child (#862).
+    let mut xdict_memo: HashMap<usize, bool> = HashMap::new();
+    let mut is_xdict = |index: usize| *xdict_memo.entry(index).or_insert_with(|| is_xdict(index));
     let mut retained = HashMap::new();
     for index in 0..objects.len() {
         let mut path = Vec::new();
@@ -842,7 +846,7 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
+pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
@@ -989,8 +993,10 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
             let (Some(zero), Some(ub)) = (t.first(), t.get(1..)) else { continue };
             let ur = Rec { sec: sec.clone(), kind: zero.str(), start: 0, end: 0 };
             let x = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
+            // Reactors the writer planned for this source (a DIMASSOC, an associative hatch).
+            let extra = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| reactors.get(&h)).map_or(&[][..], Vec::as_slice);
             out.push(zero.clone());
-            record(&map, &ur, ub, x.as_deref(), true, false, &mut out);
+            record(&map, &ur, ub, x.as_deref(), Some(extra), false, &mut out);
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
@@ -998,7 +1004,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
             out.extend(b.iter().cloned());
             continue;
         }
-        record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &mut out);
+        record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
     }
     add_appids(&mut out);
     let top = max_handle(&out).saturating_add(1);
@@ -1082,10 +1088,23 @@ fn plan_unknown(
     out
 }
 
+/// The reactor handles a written record gains: the kept foreign ones (remapped) unless the record
+/// is an unknown entity that already carries its own, then `extra` (handles of the written file,
+/// such as a DIMASSOC), without repeating any the record already names. They go into the one
+/// `{ACAD_REACTORS` group the record has, or a new one, so no reactor is lost to a second group.
+fn reactors_to_add(map: &Map, h: &Head, x: Option<&ForeignExtra>, unknown: Option<&[String]>) -> Vec<String> {
+    let extra = unknown.unwrap_or_default();
+    let mut have: HashSet<String> = h.reactors.iter().cloned().collect();
+    let kept = x.filter(|_| !(unknown.is_some() && h.has_reactors)).into_iter().flat_map(|x| x.reactors.iter()).filter_map(|r| map.get(&r.hex()));
+    kept.chain(extra.iter().cloned()).filter(|r| r != "0" && have.insert(norm(r))).collect()
+}
+
 /// A written record with its kept extras, remapped references (unknown entities) and kept
 /// dictionary entries (the named object dictionary).
-fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, out: &mut Vec<Tag>) {
+fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Option<&[String]>, root: bool, out: &mut Vec<Tag>) {
     let h = head(b);
+    let adds = reactors_to_add(map, &h, x, unknown);
+    let mut in_reactors = false;
     let entity = matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind != "BLOCK";
     let xdata_at = b.iter().position(|t| t.code == 1001).unwrap_or(b.len());
     let own_apps: HashSet<String> = b.iter().filter(|t| t.code == 1001).map(|t| up(&t.str())).collect();
@@ -1102,6 +1121,12 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
     let rgb = b.iter().take(xdata_at).find(|t| t.code == 420).map(Tag::str);
     let has_book = b.iter().take(xdata_at).any(|t| t.code == 430);
     let handle_at = b.iter().position(|t| matches!(t.code, 5 | 105));
+    // A kept extension dictionary follows the reactors group, as the DXF reference orders them.
+    let reactors_end = b.iter().position(|t| t.code == 102 && t.str().trim() == "{ACAD_REACTORS").and_then(|s| {
+        let rest = b.get(s + 1..)?;
+        rest.iter().position(|t| t.code == 102 && t.str().trim() == "}").map(|e| s + 1 + e)
+    });
+    let xdict_at = if h.has_reactors { reactors_end.or(handle_at) } else { handle_at };
     let mut seen_owner = false;
     for (i, t) in b.iter().enumerate() {
         if i == props_at
@@ -1120,8 +1145,18 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
         {
             xdata(map, x, &own_apps, out);
         }
+        if t.code == 102 {
+            match t.str().trim() {
+                "{ACAD_REACTORS" => in_reactors = true,
+                "}" if in_reactors => {
+                    in_reactors = false;
+                    out.extend(adds.iter().map(|a| Tag::s(330, a.clone())));
+                }
+                _ => {}
+            }
+        }
         let mut t = t.clone();
-        if unknown && i < xdata_at && is_pointer(t.code) && t.code != 102 {
+        if unknown.is_some() && i < xdata_at && is_pointer(t.code) && t.code != 102 {
             if t.code == 330 && !seen_owner {
                 seen_owner = true;
             } else {
@@ -1129,18 +1164,17 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             }
         }
         out.push(t);
-        if Some(i) == handle_at
+        if Some(i) == handle_at && !h.has_reactors && !adds.is_empty() {
+            out.push(Tag::s(102, "{ACAD_REACTORS"));
+            out.extend(adds.iter().map(|a| Tag::s(330, a.clone())));
+            out.push(Tag::s(102, "}"));
+        }
+        if Some(i) == xdict_at
             && let Some(x) = x
+            && h.xdict.is_none()
+            && let Some(xd) = x.xdict
         {
-            if !h.has_reactors {
-                let rs: Vec<String> = x.reactors.iter().map(|r| r.hex()).collect();
-                map.handle_group(out, "ACAD_REACTORS", 330, &rs);
-            }
-            if h.xdict.is_none()
-                && let Some(xd) = x.xdict
-            {
-                map.handle_group(out, "ACAD_XDICTIONARY", 360, &[xd.hex()]);
-            }
+            map.handle_group(out, "ACAD_XDICTIONARY", 360, &[xd.hex()]);
         }
     }
     if let Some(x) = x {
