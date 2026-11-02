@@ -830,6 +830,17 @@ fn non_unicode_output_names() {
         n.extend_from_slice(ext.as_bytes());
         s.0.join(OsString::from_vec(n))
     };
+    // Some filesystems reject names that are not valid UTF-8 (for example, APFS returns
+    // EILSEQ). Skip only that unsupported case; unrelated IO errors must still fail the test.
+    let probe = latin1("probe");
+    match std::fs::write(&probe, []) {
+        Ok(()) => std::fs::remove_file(&probe).expect("remove non-Unicode filename probe"),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput || (cfg!(target_os = "macos") && e.raw_os_error() == Some(92)) => {
+            eprintln!("filesystem does not support non-Unicode filenames: {e}");
+            return;
+        }
+        Err(e) => panic!("non-Unicode filename probe failed unexpectedly: {e}"),
+    }
     let run = |args: Vec<OsString>| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = cadcraft_cli::run(args, &mut out, &mut err);

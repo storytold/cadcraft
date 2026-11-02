@@ -26,6 +26,10 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => {
             let Some(pick) = app.services.pick_open.as_ref() else { return no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#) };
             match pick() {
+                Some(path) if std::path::Path::new(&path).extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) => {
+                    app.open_path(std::path::Path::new(&path));
+                    Ok(Value::Null)
+                }
                 Some(path) => app.run("import", json!({ "path": path })),
                 None => Ok(Value::Null),
             }

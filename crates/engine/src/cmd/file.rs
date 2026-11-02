@@ -279,6 +279,14 @@ pub struct ReadFile {
     binary_dxf: bool,
     name: String,
     path: Option<String>,
+    imported: bool,
+}
+
+impl ReadFile {
+    /// Import is a new, unsaved drawing: never associate the source document with SAVE.
+    pub fn imported(drawing: Drawing, suggested_name: String) -> Self {
+        Self { drawing, binary_dxf: false, name: suggested_name, path: None, imported: true }
+    }
 }
 
 /// Read and decode `path` (the slow half of `OPEN {path}`). Needs no session; runs anywhere.
@@ -308,8 +316,13 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
 
 /// Add a [`read_file`] result to the session as the active drawing: the fast half of OPEN.
 pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
-    let ReadFile { drawing, binary_dxf, name, path } = f;
+    let ReadFile { drawing, binary_dxf, name, path, imported } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
+    if imported && let Some(st) = s.docs.get_mut(i) {
+        // An imported drawing is new work, so quitting before saving must prompt.
+        st.saved = std::sync::Arc::new(Drawing::new_metric());
+        st.imported_pdf = true;
+    }
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, true))
 }
@@ -320,7 +333,7 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path, imported: false })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -337,7 +350,7 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 }
 
 pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>) -> Result<usize> {
-    let ReadFile { drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
+    let ReadFile { drawing, binary_dxf, name, path, .. } = read_bytes(bytes, name, path)?;
     Ok(add_read(s, drawing, binary_dxf, &name, path))
 }
 
