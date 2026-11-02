@@ -53,6 +53,38 @@ fn save_lists_the_entities_the_file_does_not_keep() {
 }
 
 #[test]
+fn export_and_wblock_say_what_a_dwg_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    let mut d = Drawing::new_imperial();
+    let h = d.add(&Space::Model, Common::default(), unknown("ACME_WIDGET")).unwrap().hex();
+    let mut s = Session::empty();
+    s.open_drawing(d, "foreign.dxf", None);
+    let file = |ext: &str| std::env::temp_dir().join(format!("cadcraft-leaves-out-{}.{ext}", std::process::id())).to_string_lossy().into_owned();
+    let msg = "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): 1 ACME_WIDGET";
+
+    let (dwg, dxf) = (file("dwg"), file("dxf"));
+    for (cmd, p) in [("export", json!({ "path": dwg })), ("wblock", json!({ "path": dwg, "handles": [h] }))] {
+        s.log.clear();
+        let r = s.execute(cmd, &p).unwrap();
+        assert_eq!(r["notSaved"], json!({ "ACME_WIDGET": 1 }), "{cmd}");
+        assert!(s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+    }
+    // -WBLOCK takes the objects out of the drawing, so last.
+    let r = s.execute("-wblock", &json!({ "path": dwg, "handles": [h] })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACME_WIDGET": 1 }));
+    let _ = std::fs::remove_file(&dwg);
+
+    // DXF keeps them.
+    s.execute("undo", &json!({})).unwrap();
+    for (cmd, p) in [("export", json!({ "path": dxf })), ("wblock", json!({ "path": dxf, "handles": [h] }))] {
+        s.log.clear();
+        assert!(s.execute(cmd, &p).unwrap().get("notSaved").is_none(), "{cmd}");
+        assert!(!s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+    }
+    let _ = std::fs::remove_file(&dxf);
+}
+
+#[test]
 fn templates_report_what_dwg_does_not_keep() {
     use cadcraft_engine::cmd::file::drops_unknown;
     assert!(drops_unknown("a.dwg") && drops_unknown("B.DWT"));
