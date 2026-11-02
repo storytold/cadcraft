@@ -181,7 +181,7 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
             _ => return Err(bad(cmd, "`mode` must be \"quick\" or \"standard\"")),
         },
     };
-    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)?, quick };
+    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)? };
     let key = if extending { "extended" } else { "trimmed" };
     if p.get("fence").is_some_and(|v| !v.is_null()) {
         let pts = points_param(p, "fence")
@@ -243,7 +243,7 @@ impl TrimM {
         TrimM { extend, edges: None, stage: Stage::Pick, undo: Vec::new() }
     }
     fn edges(&self, quick: bool, implied: bool) -> Edges<'_> {
-        Edges { only: self.edges.as_deref(), implied: !quick && implied, quick }
+        Edges { only: self.edges.as_deref(), implied: !quick && implied }
     }
     fn select_edges(&mut self, s: &mut Session) {
         s.echo(if self.extend { "Select boundary edges ..." } else { "Select cutting edges ..." });
