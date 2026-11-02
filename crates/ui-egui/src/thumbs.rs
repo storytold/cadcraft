@@ -368,18 +368,24 @@ fn config_dir() -> Option<std::path::PathBuf> {
     var("XDG_CONFIG_HOME").map(|x| x.join("cadcraft")).or_else(|| var("HOME").map(|h| h.join(".config/cadcraft")))
 }
 
-/// The cached preview file of `path`: named after the path, the file's size and its date.
+/// The cached preview file of `path`: named after the path and its [`Version`], the same one
+/// the in-memory preview is checked against, so a save the memory notices (a same-size rewrite
+/// within one second included) never brings back the old file on disk (#2327 review).
 #[cfg(not(target_arch = "wasm32"))]
 fn cache_file(path: &str) -> Option<std::path::PathBuf> {
+    Some(config_dir()?.join("thumbnails").join(cache_name(path, version(path)?)))
+}
+
+/// The file name of `path`'s cached preview at version `v`.
+#[cfg(not(target_arch = "wasm32"))]
+fn cache_name(path: &str, v: Version) -> String {
     use std::hash::{Hash, Hasher};
-    let m = std::fs::metadata(path).ok()?;
-    let mtime = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     // FNV-1a: stable across builds (the std hasher is not promised to be).
     let mut h = Fnv(0xcbf2_9ce4_8422_2325);
     path.hash(&mut h);
-    m.len().hash(&mut h);
-    mtime.hash(&mut h);
-    Some(config_dir()?.join("thumbnails").join(format!("{:016x}.png", h.finish())))
+    v.0.hash(&mut h);
+    v.1.hash(&mut h);
+    format!("{:016x}.png", h.finish())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -453,6 +459,18 @@ mod tests {
         assert!(super::exists(&p, 20.0));
         assert!(super::store().lock().unwrap().thumbs.contains_key(&p));
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The disk cache tells versions apart as finely as the in-memory check does: a same-size
+    /// rewrite within one second gets a new cached file, not the old preview back (#2327 review:
+    /// the disk name used whole seconds).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_rewrite_within_a_second_gets_a_new_cache_file() {
+        let t = 1_700_000_000_000_000_000u128;
+        assert_ne!(super::cache_name("a.dwg", (10, t)), super::cache_name("a.dwg", (10, t + 1_000)));
+        assert_eq!(super::cache_name("a.dwg", (10, t)), super::cache_name("a.dwg", (10, t)));
+        assert_ne!(super::cache_name("a.dwg", (10, t)), super::cache_name("b.dwg", (10, t)));
     }
 
     /// The section is read as group code / value pairs from the line after its name: the bytes
