@@ -57,11 +57,11 @@ fn region_with_islands_survives_save_and_reopen() {
 
     // Other readers see four closed polylines on the region's layer.
     let tags = cadcraft_dxf::parse(saved.as_bytes()).unwrap();
-    let ents = records(&sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap().tags);
-    let polys: Vec<_> = ents.iter().filter(|(k, _)| k == "LWPOLYLINE").collect();
+    let ents = records(sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+    let polys: Vec<_> = ents.iter().filter(|(k, _)| *k == "LWPOLYLINE").collect();
     assert_eq!(polys.len(), 5);
     assert_eq!(polys.iter().filter(|(_, t)| t.iter().any(|g| g.code == 8 && g.str() == "Areas")).count(), 4);
-    assert!(!ents.iter().any(|(k, _)| k == "REGION"));
+    assert!(!ents.iter().any(|(k, _)| *k == "REGION"));
 
     // Saving again is stable.
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&back).as_bytes()).unwrap();

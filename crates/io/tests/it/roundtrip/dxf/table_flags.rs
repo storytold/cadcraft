@@ -61,10 +61,10 @@ fn output(drawing: &Drawing, table: &str, version: Version, binary: bool) -> Vec
     let bytes = write_with(drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
     let tags = cadcraft_dxf::parse(&bytes).unwrap();
     let sections = sections(&tags);
-    let tables = records(&sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
-    let matching: Vec<_> = tables.into_iter().filter(|(kind, groups)| kind == table && groups.contains(&Tag::s(2, "Flags"))).collect();
+    let tables = records(sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
+    let matching: Vec<_> = tables.into_iter().filter(|(kind, groups)| *kind == table && groups.contains(&Tag::s(2, "Flags"))).collect();
     assert_eq!(matching.len(), 1, "{version} binary={binary} {table}");
-    matching.into_iter().next().unwrap().1
+    matching.into_iter().next().unwrap().1.to_vec()
 }
 
 fn group(tags: &[Tag], expected: Tag, context: &str) {

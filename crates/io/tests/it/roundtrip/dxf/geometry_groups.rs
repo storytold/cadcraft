@@ -123,10 +123,10 @@ fn writes_extended_entities_with_independent_groups() {
                 let bytes = write_with(&source.drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
                 let tags = cadcraft_dxf::parse(&bytes).unwrap();
                 let sections = sections(&tags);
-                let records = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+                let records = records(sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
                 assert_eq!(records.len(), 1);
                 let (kind, groups) = &records[0];
-                assert_eq!(kind, name);
+                assert_eq!(*kind, name);
                 for code in fixture.output.iter().map(|t| t.code) {
                     let expected: Vec<_> = fixture.output.iter().filter(|t| t.code == code).collect();
                     let actual: Vec<_> = groups.iter().filter(|t| t.code == code).collect();

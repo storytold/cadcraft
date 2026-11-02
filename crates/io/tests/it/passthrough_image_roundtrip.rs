@@ -116,7 +116,7 @@ fn images(d: &Drawing) -> Vec<Image> {
 fn section(dxf: &str, name: &str) -> Vec<(String, Vec<Tag>)> {
     let tags = cadcraft_dxf::parse(dxf.as_bytes()).unwrap();
     let s = sections(&tags).into_iter().find(|s| s.name == name).unwrap();
-    records(&s.tags)
+    records(s.tags).into_iter().map(|(k, t)| (k.to_string(), t.to_vec())).collect()
 }
 
 fn val(tags: &[Tag], code: i32) -> String {
@@ -142,7 +142,7 @@ fn image_and_its_definition_survive_save_and_reopen() {
 
     // The saved objects link up as the DXF Reference describes.
     let ents = section(&saved, "ENTITIES");
-    let (_, it) = ents.iter().find(|(k, _)| k == "IMAGE").unwrap();
+    let (_, it) = ents.iter().find(|(k, _)| *k == "IMAGE").unwrap();
     let objs = section(&saved, "OBJECTS");
     let find = |kind: &str| objs.iter().filter(|(k, _)| k == kind).map(|(_, t)| t.clone()).collect::<Vec<_>>();
     let [def] = find("IMAGEDEF").try_into().unwrap();
@@ -172,8 +172,8 @@ fn images_of_one_file_share_a_definition() {
     d.add(&cadcraft_doc::Space::Model, e.common.clone(), e.kind.clone()).unwrap();
     let saved = cadcraft_io::write_dxf(&d);
     let objs = section(&saved, "OBJECTS");
-    assert_eq!(objs.iter().filter(|(k, _)| k == "IMAGEDEF").count(), 1);
-    assert_eq!(objs.iter().filter(|(k, _)| k == "IMAGEDEF_REACTOR").count(), 2);
+    assert_eq!(objs.iter().filter(|(k, _)| *k == "IMAGEDEF").count(), 1);
+    assert_eq!(objs.iter().filter(|(k, _)| *k == "IMAGEDEF_REACTOR").count(), 2);
     let back = cadcraft_io::read_dxf(saved.as_bytes()).unwrap();
     assert!(images(&back).iter().all(|i| i.path == "images/logo.png" && i.name == "logo"));
     assert_eq!(images(&back).len(), 2);

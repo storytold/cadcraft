@@ -93,8 +93,8 @@ fn xref_layers_are_saved_as_dependent_layer_records() {
     let layers: Vec<(String, i64)> = sections(&tags)
         .iter()
         .filter(|s| s.name == "TABLES")
-        .flat_map(|s| records(&s.tags))
-        .filter(|(k, _)| k == "LAYER")
+        .flat_map(|s| records(s.tags))
+        .filter(|(k, _)| *k == "LAYER")
         .map(|(_, t)| {
             let get = |c: i32| t.iter().find(|x| x.code == c);
             (get(2).map(Tag::str).unwrap_or_default(), get(70).map(Tag::i64).unwrap_or(0))
@@ -114,8 +114,8 @@ fn block_records(text: &str) -> Vec<(String, i64, String)> {
     sections(&tags)
         .iter()
         .filter(|s| s.name == "BLOCKS")
-        .flat_map(|s| records(&s.tags))
-        .filter(|(k, _)| k == "BLOCK")
+        .flat_map(|s| records(s.tags))
+        .filter(|(k, _)| *k == "BLOCK")
         .map(|(_, t)| {
             let get = |c: i32| t.iter().find(|x| x.code == c);
             (get(2).map(Tag::str).unwrap_or_default(), get(70).map(Tag::i64).unwrap_or(0), get(1).map(Tag::str).unwrap_or_default())

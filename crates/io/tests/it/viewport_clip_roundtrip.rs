@@ -106,8 +106,8 @@ fn hostile_clip_handles_do_not_panic() {
         if got.clip.is_none_or(|h| back.entity(h).is_none() || h == v) {
             let again = groups(&cadcraft_io::write_dxf(&back));
             let start = again.iter().position(|g| *g == ("5".to_string(), v.hex())).unwrap();
-            let record = again[start..].iter().take_while(|(c, _)| c != "0");
-            assert!(!record.into_iter().any(|(c, _)| c == "340"), "{bad}");
+            let record = again[start..].iter().take_while(|(c, _)| *c != "0");
+            assert!(!record.into_iter().any(|(c, _)| *c == "340"), "{bad}");
         }
     }
     // The clipping flag without a 340 group: a rectangular viewport.

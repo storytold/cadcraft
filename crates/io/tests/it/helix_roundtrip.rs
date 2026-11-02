@@ -67,9 +67,9 @@ fn helix_survives_save_and_reopen() {
     // The file: a spline whose last control point is the helix's end, the helix data, a CLASS.
     let tags = cadcraft_dxf::parse(saved.as_bytes()).unwrap();
     let secs = sections(&tags);
-    let recs = |name: &str| records(&secs.iter().find(|s| s.name == name).unwrap().tags);
+    let recs = |name: &str| records(secs.iter().find(|s| s.name == name).unwrap().tags);
     let ents = recs("ENTITIES");
-    let (_, ht) = ents.iter().find(|(k, _)| k == "HELIX").unwrap();
+    let (_, ht) = ents.iter().find(|(k, _)| *k == "HELIX").unwrap();
     let marker = |m: &str| ht.iter().position(|t| t.code == 100 && t.str() == m).unwrap();
     let (sp, hx) = (marker("AcDbSpline"), marker("AcDbHelix"));
     assert!(sp < hx);

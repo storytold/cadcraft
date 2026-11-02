@@ -55,7 +55,7 @@ fn writes_spacing_to_header_and_active_vport_and_roundtrips() {
     let table = &sections.iter().find(|s| s.name == "TABLES").unwrap().tags;
     let records = records(table);
     let (_, active) =
-        records.iter().find(|(kind, t)| kind == "VPORT" && t.iter().any(|t| t.code == 2 && t.str().eq_ignore_ascii_case("*ACTIVE"))).unwrap();
+        records.iter().find(|(kind, t)| *kind == "VPORT" && t.iter().any(|t| t.code == 2 && t.str().eq_ignore_ascii_case("*ACTIVE"))).unwrap();
     assert_eq!((number(active, 14), number(active, 24)), (snap.x, snap.y));
     assert_eq!((number(active, 15), number(active, 25)), (grid.x, grid.y));
     assert_units(&cadcraft_io::read_dxf(text.as_bytes()).unwrap(), snap, grid);

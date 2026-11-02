@@ -86,17 +86,17 @@ fn mlines_and_styles_survive_save_and_reopen() {
     // The file links up as the DXF Reference describes.
     let tags = cadcraft_dxf::parse(saved.as_bytes()).unwrap();
     let secs = sections(&tags);
-    let recs = |name: &str| records(&secs.iter().find(|s| s.name == name).unwrap().tags);
+    let recs = |name: &str| records(secs.iter().find(|s| s.name == name).unwrap().tags);
     let val = |t: &[Tag], c: i32| t.iter().find(|g| g.code == c).map(Tag::str).unwrap_or_default();
     let ents = recs("ENTITIES");
-    let (_, ml) = ents.iter().find(|(k, _)| k == "MLINE").unwrap();
+    let (_, ml) = ents.iter().find(|(k, _)| *k == "MLINE").unwrap();
     let objs = recs("OBJECTS");
-    let (_, st) = objs.iter().find(|(k, t)| k == "MLINESTYLE" && val(t, 2) == "Wall").unwrap();
+    let (_, st) = objs.iter().find(|(k, t)| *k == "MLINESTYLE" && val(t, 2) == "Wall").unwrap();
     assert_eq!(val(ml, 340), val(st, 5));
     assert_eq!(val(ml, 73), "3");
     // Flags: fill, joints, start line and inner arcs, end outer arc.
     assert_eq!(val(st, 70), (1 + 2 + 16 + 32 + 1024).to_string());
-    assert!(objs.iter().any(|(k, t)| k == "DICTIONARY" && t.iter().any(|g| g.code == 3 && g.str() == "ACAD_MLINESTYLE")));
+    assert!(objs.iter().any(|(k, t)| *k == "DICTIONARY" && t.iter().any(|g| g.code == 3 && g.str() == "ACAD_MLINESTYLE")));
 
     // Saving again is stable.
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&back).as_bytes()).unwrap();
