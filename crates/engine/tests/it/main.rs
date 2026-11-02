@@ -20,6 +20,7 @@ mod break_closed_polyline;
 mod break_join_locked_layers;
 mod break_keeps_z;
 mod burst;
+mod calibrate;
 mod change_command;
 mod chprop_command;
 mod classic_array;
