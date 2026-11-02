@@ -752,6 +752,22 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         let tb_styles: Vec<String> = d.table_styles.iter().map(|l| l.name.clone()).collect();
         let mut action: Option<(&str, Value)> = None;
         let mut act = |c: &'static str, p: Value| action = Some((c, p));
+        // In the Block Editor, the edited block's name and description come first.
+        let edited = app.session.state().ok().and_then(|st| {
+            let be = st.block_edit.as_ref().filter(|be| !be.current)?;
+            let b = d.block(&be.name).or_else(|| be.host.doc.block(&be.name));
+            Some((be.name.clone(), b.map(|b| b.description.clone()).unwrap_or_default()))
+        });
+        if let Some((name, description)) = edited {
+            prop_row(ui, "Name", |ui| {
+                value_box(ui, &name, false, false).on_hover_text(crate::tl!("Read-only"));
+            });
+            prop_row(ui, "Description", |ui| {
+                if let Some(text) = edit_field(ui, ui.scope_id().with("block_description"), description) {
+                    act("blocks.description", json!({ "description": text }));
+                }
+            });
+        }
         prop_row(ui, "Color", |ui| {
             ui.menu_button(format!("■ {}", crate::i18n::t(&Color::from_aci(h.i64("CECOLOR", 256) as i16).name())), |ui| {
                 for (n, c) in [
@@ -1565,6 +1581,57 @@ mod tests {
             },
             MenuState { count, picked: "Choose".into() },
         )
+    }
+
+    #[test]
+    fn keyboard_navigation_reveals_choices_without_explicit_scrolling() {
+        for scale in [1.0, 2.0] {
+            let mut h = choice_menu(true, 20, vec2(400.0, 600.0), scale);
+            h.get_by_label("Choose").focus();
+            h.run();
+            h.key_press(egui::Key::Enter);
+            h.run();
+            for index in 0..20 {
+                h.key_press(egui::Key::ArrowDown);
+                h.run();
+                let label = format!("Choice {index:02}");
+                assert!(h.get_by_label(&label).is_focused());
+                assert!(visible_text(&h, &label).is_some(), "keyboard focus must be visible: {label}");
+            }
+            h.key_press(egui::Key::ArrowDown);
+            h.run();
+            assert!(visible_text(&h, "Choice 00").is_some(), "wrapping down reveals the first choice");
+            h.key_press(egui::Key::ArrowUp);
+            h.run();
+            assert!(visible_text(&h, "Choice 19").is_some(), "wrapping up reveals the last choice");
+            h.key_press(egui::Key::Enter);
+            h.run();
+            assert_eq!(h.state().picked, "Choice 19");
+            assert!(h.query_by_label("Choice 00").is_none(), "activation closes the menu");
+        }
+    }
+
+    #[test]
+    fn current_property_layer_menu_supports_keyboard_selection() {
+        let mut h = Harness::builder().with_size(vec2(400.0, 600.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(&ui.ctx().clone());
+                properties_section(app, ui);
+            },
+            many_layers(),
+        );
+        h.get_by_label("Layer 00").focus();
+        h.run();
+        h.key_press(egui::Key::Enter);
+        h.run();
+        h.key_press(egui::Key::ArrowUp);
+        h.run();
+        assert!(h.get_by_label("Layer 59").is_focused());
+        assert!(visible_text(&h, "Layer 59").is_some());
+        h.key_press(egui::Key::Enter);
+        h.run();
+        assert_eq!(h.state().session.doc().unwrap().header.str("CLAYER", ""), "Layer 59");
+        assert!(h.query_by_label("Layer 01").is_none());
     }
 
     #[test]

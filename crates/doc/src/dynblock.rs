@@ -5,7 +5,7 @@
 //! whose `ACAD_ENHANCEDBLOCK` entry is an evaluation graph (`ACAD_EVALUATION_GRAPH`), and the
 //! graph lists the block's *parameters* (a distance, a point, visibility states, a lookup…) and
 //! *actions* (what changing a parameter does to the block's objects: stretch, move, look up…).
-//! [`dynamic_block`] reads them into the model below without changing the kept data, so a drawing
+//! [`dynamic_block`](crate::dynblock::dynamic_block) reads them into the model below without changing the kept data, so a drawing
 //! saved again still carries them exactly as read.
 //!
 //! Every count and index here comes from the file: they are capped by the data actually present
@@ -194,7 +194,9 @@ pub struct Action {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ActionKind {
-    /// Moves the vertices inside `frame` of the objects listed (all of an object not listed).
+    /// Moves the points of its objects inside `frame`: a line's or polyline's points inside it
+    /// (the whole of one outside it), any other object whole. `vertices` are the point indices the
+    /// file lists for each object, used only when the frame can't be tested (see `apply`).
     Stretch {
         frame: Vec<Vec2>,
         #[serde(serialize_with = "hex_vertices")]

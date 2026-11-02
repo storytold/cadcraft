@@ -67,6 +67,7 @@
 	Blend	Сгладить
 	Block	Блок
 	Block Attribute Manager...	Диспетчер атрибутов блоков...
+	Block Description...	Описание блока...
 	Block Editor	Редактор блоков
 	Block Reference	Вхождение блока
 	Block...	Блок...
@@ -452,6 +453,7 @@
 	N	С
 	Name	Название
 	Name (A–Z)	Название (А–Я)
+	Named Viewports...	Именованные видовые экраны...
 	Nearest	Ближайшая точка
 	New	Создать
 	New (metric)	Создать (метрический)
@@ -488,6 +490,7 @@
 	On	Включено
 	On/Off	Включить/выключить
 	One of the Crafting Apps by the ArtCraft team and community.	Одна из программ Crafting Apps от команды и сообщества ArtCraft.
+	Oops	Восстановить стертые объекты
 	Open (⌘O)	Открыть (⌘O)
 	Open Sample Drawing	Открыть образец чертежа
 	Open sample drawing	Открыть образец чертежа

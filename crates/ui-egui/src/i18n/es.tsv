@@ -74,6 +74,8 @@
 	AutoConstrain	Restricciones automáticas
 	Automatic save every	Guardado automático cada
 	Automatic save file location	Ubicación de los archivos de guardado automático
+	Backup copy	Copia de seguridad
+	Create backup copy with each save	Crear una copia de seguridad en cada guardado
 	Axis, End	Eje, extremo
 	B	N
 	Base	Base
@@ -87,6 +89,7 @@
 	Blend	Fusión de curvas
 	Block	Bloque
 	Block Attribute Manager...	Administrador de atributos de bloque...
+	Block Description...	Descripción de bloque...
 	Block Editor	Editor de bloques
 	Block Reference	Referencia de bloque
 	Block...	Bloque...
@@ -567,6 +570,7 @@
 	N	N
 	Name	Nombre
 	Name (A–Z)	Nombre (A–Z)
+	Named Viewports...	Ventanas gráficas con nombre...
 	Named Views...	Vistas con nombre...
 	Nearest	Cercano
 	New	Nuevo
@@ -616,6 +620,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Una de las Crafting Apps del equipo y la comunidad de ArtCraft.
 	Only in this drawing: {n}	Solo en este dibujo: {n}
 	Only in {name}: {n}	Solo en {name}: {n}
+	Oops	Restaurar objetos borrados
 	Open	Abrir
 	Open (⌘O)	Abrir (⌘O)
 	Open Sample Drawing	Abrir dibujo de ejemplo

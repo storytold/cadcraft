@@ -1,4 +1,5 @@
-//! Array commands: ARRAY, ARRAYRECT and ARRAYPOLAR (ARRAYPATH lives in `modify2`).
+//! Array commands: ARRAY, ARRAYRECT, ARRAYPOLAR and the classic -ARRAY (ARRAYPATH lives in
+//! `modify2`).
 //!
 //! Arrays are associative by default (ARRAYASSOCIATIVITY): the source objects move into an
 //! anonymous source block and the array becomes one block reference to an anonymous array block
@@ -21,6 +22,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, point_param, point_
 
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+mod classic;
 mod edit;
 
 /// Most preview entities drawn while the array is edited.
@@ -48,6 +50,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 "{handles?, center, count, angle? (degrees, default 360), rotate?: bool, rows? (1), rowSpacing?, rowElevation?, levels? (1), levelSpacing?, base? ([x, y], default the first object's centre), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
             )
             .interactive(|_| Ok(Box::new(PolarM::default()))),
+        CommandSpec::new("-array", "Array", classic::run_classic)
+            .params("{handles?, type?: \"rectangular\" (default) | \"polar\", rows? (1), cols? (1), rowSpacing?, colSpacing?, center, count, angle? (degrees, default 360), rotate?: bool (default true), base? ([x, y], default the DXF group 10 point of the last object)} → {created}: separate copies, as the classic -ARRAY makes them")
+            .interactive(|_| Ok(Box::new(classic::ClassicM::default()))),
     ]
     .into_iter()
     .chain(edit::specs())
@@ -328,16 +333,19 @@ fn run_array(s: &mut Session, p: &Value) -> Result<Value> {
     (spec.run)(s, p)
 }
 
-/// A count parameter (at least 1).
-fn count_or(p: &Value, key: &str, default: u64) -> u64 {
-    p.get(key).and_then(Value::as_u64).unwrap_or(default).max(1)
+/// A count parameter (at least 1); a missing key gives the default, an invalid value is refused.
+fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, format!("`{key}` must be a whole number of at least 1"))),
+    }
 }
 
 fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let rows = count_or(p, "rows", 3);
-    let cols = count_or(p, "cols", 4);
-    let levels = count_or(p, "levels", 1);
+    let rows = count_or("arrayrect", p, "rows", 3)?;
+    let cols = count_or("arrayrect", p, "cols", 4)?;
+    let levels = count_or("arrayrect", p, "levels", 1)?;
     check_size(s, rows.saturating_mul(cols).saturating_mul(levels), hs.len())?;
     let kind = ArrayKind::Rect(RectArray {
         cols: count32(cols),
@@ -360,9 +368,9 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let c = point_req("arraypolar", p, "center")?;
-    let n = count_or(p, "count", 6);
-    let rows = count_or(p, "rows", 1);
-    let levels = count_or(p, "levels", 1);
+    let n = count_or("arraypolar", p, "count", 6)?;
+    let rows = count_or("arraypolar", p, "rows", 1)?;
+    let levels = count_or("arraypolar", p, "levels", 1)?;
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
     let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
     let row_spacing = f64_or(p, "rowSpacing", 1.0);

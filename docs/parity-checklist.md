@@ -1,22 +1,22 @@
 # Parity checklist
 
-> **Generated:** 2026-10-25 by `cargo xtask parity`. Do not edit by hand.
+> **Generated:** 2026-10-30 by `cargo xtask parity`. Do not edit by hand.
 
 Menu-breadth parity: a reference menu item counts as covered when a CADCraft command is registered under the same menu label. It measures breadth, not depth; see [target-app-parity.md](target-app-parity.md) for the weighted assessment.
 
-**Menu breadth: 296 / 491 items (60%)** · 441 registered commands.
+**Menu breadth: 298 / 491 items (61%)** · 444 registered commands.
 
 | Menu | Items | Covered | % |
 |---|---|---|---|
 | File | 22 | 13 | 59% |
 | Edit | 13 | 12 | 92% |
-| View | 75 | 36 | 48% |
+| View | 75 | 37 | 49% |
 | Insert | 11 | 5 | 45% |
 | Format | 27 | 26 | 96% |
 | Tools | 85 | 66 | 78% |
 | Draw | 87 | 55 | 63% |
 | Dimension | 28 | 28 | 100% |
-| Modify | 113 | 52 | 46% |
+| Modify | 113 | 53 | 47% |
 | Window | 22 | 3 | 14% |
 | Help | 8 | 0 | 0% |
 
@@ -37,7 +37,6 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - View > Orbit > Free Orbit
 - View > Camera > Adjust Distance
 - View > Camera > Swivel
-- View > Viewports > Named Viewports...
 - View > 3D Views > Viewpoint
 - View > 3D Views > Plan View > Current UCS
 - View > 3D Views > Plan View > World UCS
@@ -134,7 +133,6 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - Modify > Object > Image > Quality
 - Modify > Object > Image > Transparency
 - Modify > Object > Image > Frame
-- Modify > Object > Block Description...
 - Modify > Clip > Image
 - Modify > Clip > Xref
 - Modify > 3D Operations > 3D Move

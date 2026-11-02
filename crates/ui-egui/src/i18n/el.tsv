@@ -100,6 +100,7 @@
 	Blend	Ομαλή σύνδεση (Blend)
 	Block	Μπλοκ (Block)
 	Block Attribute Manager...	Διαχείριση ιδιοτήτων μπλοκ (Block Attributes)...
+	Block Description...	Περιγραφή μπλοκ...
 	Block Editor	Επεξεργαστής μπλοκ (Block Editor)
 	Block Reference	Αναφορά μπλοκ (Block Reference)
 	Block to create or edit	Μπλοκ προς δημιουργία ή επεξεργασία
@@ -640,6 +641,7 @@
 	Name	Όνομα
 	Name (A–Z)	Όνομα (Α–Ω)
 	Named	Με όνομα
+	Named Viewports...	Αποθηκευμένα παράθυρα προβολής...
 	Named Views...	Αποθηκευμένες όψεις...
 	Nearest	Πλησιέστερο (Nearest)
 	New	Νέο
@@ -700,6 +702,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Μία από τις εφαρμογές Crafting Apps της ομάδας και της κοινότητας ArtCraft.
 	Only in this drawing: {n}	Μόνο σε αυτό το σχέδιο: {n}
 	Only in {name}: {n}	Μόνο στο {name}: {n}
+	Oops	Επαναφορά διαγραμμένων αντικειμένων
 	Open	Άνοιγμα
 	Open (⌘O)	Άνοιγμα (⌘O)
 	Open a drawing first.	Ανοίξτε πρώτα ένα σχέδιο.

@@ -1,4 +1,5 @@
 mod animation_effects;
+mod block_description_palette;
 mod chrome_geometry;
 mod context_menu;
 mod context_menus;
@@ -17,6 +18,7 @@ mod lisp_files;
 mod measure_distance_snapping;
 mod menubar_hover;
 mod mspace_viewport_view;
+mod named_viewports_dialog;
 mod native_menu_text_keys;
 mod native_windows;
 mod options_dialog;
@@ -35,3 +37,4 @@ mod toolsets_gear;
 mod toolsets_parametric;
 mod viewport_double_click_selection;
 mod workspace_focus;
+mod zoomed_far_in;
