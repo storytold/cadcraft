@@ -118,7 +118,6 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
     let file = format!("export.{format}");
-    let lost = super::file::loss_on_save(s, &file);
     let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
     let mut r = match path {
         Some(path) => {
@@ -127,7 +126,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
     };
-    super::file::report_not_saved(s, &mut r, &lost);
+    super::file::report_loss(s, &mut r, &file);
     Ok(r)
 }
 
