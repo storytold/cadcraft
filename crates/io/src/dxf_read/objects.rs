@@ -153,11 +153,12 @@ impl Objects {
         }
     }
 
+    /// Add the groups named by the ACAD_GROUP dictionary entries, with the members that exist.
+    /// A name already present (compared case-insensitively) is replaced by the later definition.
     fn apply_groups(&self, d: &mut Drawing) {
-        // Groups (named by their ACAD_GROUP dictionary entries); members that exist.
-        // Names are matched case-insensitively through an index: a drawing can carry
-        // hundreds of thousands of (often empty) anonymous groups, and a linear search per
-        // group made loading quadratic (#862).
+        // Names are matched through an index: a drawing can carry hundreds of thousands of
+        // (often empty) anonymous groups, and a linear search per group made loading quadratic
+        // (#862).
         let mut by_name: HashMap<String, usize> = HashMap::new();
         for (i, g) in d.groups.iter().enumerate() {
             by_name.entry(g.name.to_ascii_lowercase()).or_insert(i);
