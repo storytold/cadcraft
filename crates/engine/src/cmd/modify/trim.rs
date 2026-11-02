@@ -336,6 +336,8 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
     let mut ts: Vec<f64> = Vec::new();
     let mut acc = 0.0;
     let mut tp = 0.0;
+    // The pick is at the start of the segment it was found on (1), at its end (-1), or between.
+    let mut at_end = 0.0;
     let mut best = f64::INFINITY;
     for s in &segs {
         let len = s.len();
@@ -345,7 +347,15 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         let c = s.closest(pick);
         if c.dist(pick) < best {
             best = c.dist(pick);
-            tp = acc + param_on(s, c) * len;
+            let u = param_on(s, c);
+            tp = acc + u * len;
+            at_end = if u >= 1.0 - 1e-12 {
+                -1.0
+            } else if u <= 1e-12 {
+                1.0
+            } else {
+                0.0
+            };
         }
         acc += len;
     }
@@ -357,6 +367,12 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
     ts.sort_by(f64::total_cmp);
     if ts.is_empty() {
         return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
+    }
+    // A pick right on a cut (a vertex picked exactly) takes the piece of the segment it was found
+    // on, rather than neither piece (which would erase the whole polyline).
+    let near = 1e-9 * total;
+    if ts.iter().any(|t| (t - tp).abs() <= near) {
+        tp += if at_end > 0.0 { 2.0 * near } else { -2.0 * near };
     }
     let lo = ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max);
     let hi = ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min);
@@ -381,7 +397,9 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         // A piece whose ends meet (the polyline touched itself there) is closed, without its
         // repeated vertex, as AutoCAD leaves it.
         let piece = |mut vs: Vec<PolyVertex>| {
-            let meets = vs.len() >= 4 && matches!((vs.first(), vs.last()), (Some(a), Some(b)) if a.p.near(b.p, 1e-9 * (1.0 + a.p.len())));
+            // Within rounding of the coordinates, however far from the origin, and no more.
+            let meets = vs.len() >= 4
+                && matches!((vs.first(), vs.last()), (Some(a), Some(b)) if a.p.near(b.p, 64.0 * f64::EPSILON * (1.0 + a.p.len().max(b.p.len()))));
             if meets {
                 vs.pop();
             }
