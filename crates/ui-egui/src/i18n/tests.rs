@@ -40,6 +40,17 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
+/// A prompt with options is translated without its own "or": the command line adds the
+/// translated " or [" before the options ("Select polyline or [Multiple]").
+#[test]
+fn prompts_with_options_leave_or_to_the_command_line() {
+    assert_eq!(format!("{}{}", tr("de", "Select polyline"), tr("de", " or [")), "Wählen Sie eine Polylinie oder [");
+    assert_eq!(format!("{}{}", tr("ko", "Specify helix height"), tr("ko", " or [")), "나선 높이 지정 또는 [");
+    assert_eq!(format!("{}{}", tr("zh", "Enter delta length"), tr("zh", " or [")), "输入增量长度 或 [");
+    assert_eq!(format!("{}{}", tr("vi", "Select polyline"), tr("vi", " or [")), "Chọn polyline hoặc [");
+    assert_eq!(format!("{}{}", tr("vi", "Specify base radius"), tr("vi", " or [")), "Chỉ định bán kính đáy hoặc [");
+}
+
 /// What each language shows in English for now. Missing translations never fail a build:
 /// `cargo xtask i18n`, a step of `cargo xtask ci`, runs this to print the list.
 #[test]
@@ -355,6 +366,35 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> String {
         output.textures_delta.clear();
     }
     text
+}
+
+/// The command line in the window draws a prompt's keywords itself; it puts the same words before
+/// them as the engine's prompt text: " [" after a prompt for an option ("Enter an option [?/Make/…")
+/// and after a question ("Fix any errors detected? [Yes/No]"), " or [" where the keywords are
+/// offered besides what is asked ("Specify next point or [Undo]"), " or [" translated.
+#[test]
+fn the_command_line_says_or_before_keywords_as_the_prompt_does() {
+    let ctx = egui::Context::default();
+    for lang in ["en", "de"] {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("ui.language", json!({ "lang": lang })).unwrap();
+        app.logic(&ctx);
+        app.session.cmdline("-layer").unwrap();
+        let text = render(&mut app, &ctx);
+        let option = format!("\n{}\n [\n", tr(lang, "Enter an option"));
+        assert!(text.contains(&option), "{lang}: {option:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("line").unwrap();
+        app.session.cmdline("0,0").unwrap();
+        let text = render(&mut app, &ctx);
+        let besides = format!("\n{}\n{}\n", tr(lang, "Specify next point"), tr(lang, " or ["));
+        assert!(text.contains(&besides), "{lang}: {besides:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("audit").unwrap();
+        let text = render(&mut app, &ctx);
+        let question = format!("\n{}\n [\n", tr(lang, "Fix any errors detected?"));
+        assert!(text.contains(&question), "{lang}: {question:?} in {text:?}");
+    }
 }
 
 #[test]

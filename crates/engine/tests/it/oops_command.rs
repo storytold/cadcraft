@@ -230,3 +230,31 @@ fn a_reference_edited_in_place_keeps_its_objects_and_the_drawings_apart() {
     assert_eq!(oops(&mut s), json!({ "restored": 1 }));
     assert_eq!(order(&s, &hs), "C E");
 }
+
+#[test]
+fn a_block_refused_during_refedit_leaves_oops_as_it_was() {
+    let (mut s, hs) = drawing();
+    s.execute("block", &json!({ "name": "BK", "base": [0, 0], "handles": [hs[0].hex()], "keep": "convert" })).unwrap();
+    let ins = *handles(&s).last().unwrap();
+    s.execute("erase", &json!({ "handles": [hs[3].hex()] })).unwrap();
+    s.execute("refedit", &json!({ "handle": ins.hex() })).unwrap();
+    // B isn't in the working set: the block is refused and the drawing put back.
+    let r = s.execute("block", &json!({ "name": "BK2", "base": [0, 0], "handles": [hs[1].hex()], "keep": "delete" }));
+    assert!(r.is_err(), "{r:?}");
+    s.execute("refclose", &json!({ "save": false })).unwrap();
+    // OOPS still has D, the last erase that stood.
+    assert_eq!(oops(&mut s), json!({ "restored": 1 }));
+    assert!(s.doc().unwrap().entity(hs[3]).is_some());
+}
+
+#[test]
+fn an_erase_in_the_block_editor_comes_back_there() {
+    let (mut s, hs) = drawing();
+    s.execute("block", &json!({ "name": "BK", "base": [0, 0], "handles": [hs[0].hex(), hs[1].hex()], "keep": "retain" })).unwrap();
+    s.execute("bedit", &json!({ "name": "BK" })).unwrap();
+    let inside = handles(&s);
+    assert_eq!(inside.len(), 2);
+    s.execute("erase", &json!({ "handles": [inside[0].hex()] })).unwrap();
+    assert_eq!(oops(&mut s), json!({ "restored": 1 }));
+    assert_eq!(handles(&s), inside);
+}
