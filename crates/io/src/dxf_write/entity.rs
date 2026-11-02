@@ -206,11 +206,19 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         EntityKind::Spline(s) => {
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
-            let flags = 8 | i64::from(s.closed) | if s.is_periodic() { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
+            // Planar (flag 8) only when every Z is zero; a 3D spline keeps its Z in groups 30 and 31.
+            let planar = s.fit_z.iter().all(|z| *z == 0.0) && s.control_z.iter().all(|z| *z == 0.0);
+            // Fit-only form (no knots, no control points) when the control polygon is exactly what the
+            // fit points give: AutoCAD rebuilds it from them. Rational splines keep their full form.
+            // Only with the default knot parametrisation: DXF keeps no other, so a read would lose it.
+            let fit_only = s.weights.is_empty() && s.fit_opts.knots == Default::default() && s.control_follows_fit();
+            let periodic = if fit_only { s.closed } else { s.is_periodic() };
+            let flags = i64::from(planar) * 8 | i64::from(s.closed) | if periodic { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
+            let (knots, control): (&[f64], &[Vec2]) = if fit_only { (&[], &[]) } else { (&s.knots, &s.control) };
             w.i(70, flags);
             w.i(71, s.degree as i64);
-            w.i(72, s.knots.len() as i64);
-            w.i(73, s.control.len() as i64);
+            w.i(72, knots.len() as i64);
+            w.i(73, control.len() as i64);
             w.i(74, s.fit.len() as i64);
             w.f(42, 1e-10);
             w.f(43, 1e-10);
@@ -224,17 +232,17 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                     w.p(13, t.to3(0.0));
                 }
             }
-            for k in &s.knots {
+            for k in knots {
                 w.f(40, *k);
             }
-            for (i, c) in s.control.iter().enumerate() {
-                w.p(10, c.to3(0.0));
+            for (i, c) in control.iter().enumerate() {
+                w.p(10, c.to3(s.control_z.get(i).copied().unwrap_or(0.0)));
                 if let Some(wt) = s.weights.get(i) {
                     w.f(41, *wt);
                 }
             }
-            for f in &s.fit {
-                w.p(11, f.to3(0.0));
+            for (i, f) in s.fit.iter().enumerate() {
+                w.p(11, f.to3(s.fit_z.get(i).copied().unwrap_or(0.0)));
             }
         }
         EntityKind::Helix(h) => {

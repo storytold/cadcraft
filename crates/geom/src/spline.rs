@@ -20,6 +20,13 @@ pub struct Spline {
     pub weights: Vec<f64>,
     #[serde(default)]
     pub fit: Vec<Vec2>,
+    /// Z of each fit point (DXF group 31), kept for 3D splines. Empty = all zero. The curve
+    /// itself is planar (XY), so this is carried through DXF only and never drawn.
+    #[serde(default)]
+    pub fit_z: Vec<f64>,
+    /// Z of each control point (DXF group 30). Empty = all zero.
+    #[serde(default)]
+    pub control_z: Vec<f64>,
     #[serde(default)]
     pub closed: bool,
     /// How the curve was built from `fit` (knot parametrisation, end tangents, fit tolerance), so
@@ -34,7 +41,19 @@ impl Spline {
         let n = control.len();
         let degree = degree.clamp(1, n.saturating_sub(1).max(1));
         let knots = clamped_uniform_knots(n, degree);
-        Spline { degree, knots, control, weights: Vec::new(), fit: Vec::new(), closed: false, fit_opts: FitOptions::default() }
+        Spline { degree, knots, control, weights: Vec::new(), fit: Vec::new(), fit_z: Vec::new(), control_z: Vec::new(), closed: false, fit_opts: FitOptions::default() }
+    }
+
+    /// True when the control polygon is exactly what the fit points produce, so a DXF writer may
+    /// store the fit points alone (AutoCAD rebuilds the control points from them).
+    pub fn control_follows_fit(&self) -> bool {
+        if self.fit.is_empty() {
+            return false;
+        }
+        let d = Spline::fit_with(&self.fit, self.closed, self.fit_opts);
+        d.degree == self.degree
+            && d.control.len() == self.control.len()
+            && d.control.iter().zip(&self.control).all(|(a, b)| (*a - *b).len() <= 1e-9 * (1.0 + b.len()))
     }
 
     /// Cubic interpolation through fit points (chord-length parametrisation, natural-ish ends
