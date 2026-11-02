@@ -389,6 +389,8 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
     }
 }
 
+/// Writes a DIMENSION: its block name, definition point and style, and group 42 with the measurement
+/// in the unit the dimension stores. An angular dimension stored in degrees is written in degrees.
 fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Dimension(dm) = &e.kind {
         w.s(0, "DIMENSION");

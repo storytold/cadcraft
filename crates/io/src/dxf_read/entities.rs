@@ -130,6 +130,9 @@ fn spline(t: &T) -> Spline {
     sp
 }
 
+/// Reads one entity from its DXF tags, or returns None for the paper-space viewport the writer adds.
+/// `table_cells_left` is the cell budget of the whole file: a table charges its cells to it, and a
+/// table that exceeds what is left comes back empty.
 pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {
     // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
     if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {

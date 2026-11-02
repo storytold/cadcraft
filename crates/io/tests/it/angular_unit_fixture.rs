@@ -11,10 +11,12 @@ fn record(dxf: &str, h: &str) -> Vec<(String, String)> {
     pairs[start..end].iter().map(|(c, v)| (c.to_string(), v.to_string())).collect()
 }
 
+/// The first value of group `code` in a record, parsed as a number.
 fn value(rec: &[(String, String)], code: &str) -> Option<f64> {
     rec.iter().find(|p| p.0 == code).and_then(|p| p.1.parse().ok())
 }
 
+/// Saving the fixture keeps group 42 of every dimension in its unit, so the angular 60 degrees stays in degrees.
 #[test]
 fn dimension_fixture_keeps_group_42_in_its_unit() {
     let src = include_str!("../data/dimensions_all_kinds.dxf");

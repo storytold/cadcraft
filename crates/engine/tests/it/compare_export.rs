@@ -292,6 +292,8 @@ fn a_named_block_defined_differently_in_the_other_drawing_shows_the_other_defini
     assert_eq!(ends(&s, "COMPARE_COMPARED_PART"), vec![1.0]);
 }
 
+/// A dimension that draws a block shows the other drawing's definition of that block when only the
+/// block differs.
 #[test]
 fn a_named_block_whose_dimension_draws_another_block_shows_the_other_definition() {
     use cadcraft_engine::doc::{DimKind, Dimension};
@@ -378,6 +380,8 @@ fn a_named_block_whose_dimension_draws_another_block_shows_the_other_definition(
     }
 }
 
+/// The same dimension and block as above, but the block has another generated name in the other
+/// drawing: this drawing keeps its own definition.
 #[test]
 fn a_named_block_whose_dimension_block_has_another_generated_name_keeps_this_drawings_definition() {
     use cadcraft_engine::doc::{DimKind, Dimension};
@@ -495,6 +499,8 @@ fn a_named_block_with_the_same_relative_image_path_from_another_folder_shows_the
     assert_eq!(std::path::Path::new(&paths[0]).parent(), Some(std::path::absolute(&dir).unwrap().as_path()));
 }
 
+/// The copy of a dimension's block keeps the geometry it was read with when the snapshot is saved,
+/// even where the dimension's parameters would draw something else.
 #[test]
 fn a_dimension_block_copy_keeps_its_geometry_when_the_snapshot_is_saved() {
     use cadcraft_engine::doc::{DimKind, Dimension};
@@ -809,6 +815,7 @@ fn says_when_blocks_both_drawings_define_differently_were_left_out() {
     assert!(r["message"].as_str().unwrap().contains("some blocks of the other drawing were too many or too large to copy"), "{}", r["message"]);
 }
 
+/// A dimension whose block copy would pass the block nesting limit is drawn again instead of copied.
 #[test]
 fn a_dimension_whose_block_is_past_the_nesting_limit_is_drawn_again() {
     use cadcraft_engine::doc::{DimKind, Dimension, MAX_BLOCK_DEPTH};

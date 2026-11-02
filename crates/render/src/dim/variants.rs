@@ -151,6 +151,8 @@ pub(super) fn draw_radius_or_diameter(config: &DimConfig<'_>, g: &mut DimGeometr
     *text_mid_out = text_mid;
 }
 
+/// Draws an angular dimension: its arc, extension lines and arrows, and its text on the arc's middle.
+/// The text angle and midpoint are written to the out parameters for the caller.
 pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_angle_out: &mut f64, text_mid_out: &mut Vec2) {
     let d = config.dimension;
     let st = config.style;

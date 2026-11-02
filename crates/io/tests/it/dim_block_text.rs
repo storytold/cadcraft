@@ -53,6 +53,8 @@ fn dimension_block_text_has_the_drawn_height() {
     assert!(near(zero, 0.18), "DIMSCALE 0 in model space is scale 1, not ~0: {zero}");
 }
 
+/// Builds a metric drawing with one 39.4 degree angular dimension, in a style that uses a comma as the
+/// decimal separator.
 fn angular_drawing(separator_override: Option<&str>) -> Drawing {
     let mut d = Drawing::new_metric();
     d.dim_styles.push(DimStyle { name: "Comma".into(), decimal_separator: ",".into(), angular_decimals: 1, ..DimStyle::default() });
