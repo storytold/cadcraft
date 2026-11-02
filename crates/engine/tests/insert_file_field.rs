@@ -31,6 +31,8 @@ fn object(handle: u64, kind: &str, tags: Vec<RawTag>) -> ForeignObject {
 fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
     let mut d = Drawing::new_imperial();
     let text = Text {
+        backwards: false,
+        upside_down: false,
         formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
