@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -389,27 +389,71 @@ struct Library {
     slot: Slot,
 }
 
-/// What a library holds, read once and kept until Refresh, or `None` while it is being read.
+/// How many libraries may be read at once: a quick switch between big libraries must not pile up
+/// threads reading them. A read beyond that waits, and the palette says it is reading.
+const MAX_READS: usize = 4;
+
+/// The reads running, counted so that no more than `max` run at once.
+struct Reads {
+    running: AtomicUsize,
+    max: usize,
+}
+
+static READS: Reads = Reads { running: AtomicUsize::new(0), max: MAX_READS };
+
+/// One place among the running reads, given back when it is dropped.
+struct Read<'a>(&'a Reads);
+
+impl Reads {
+    /// A place for a new read, or `None` while `max` are running.
+    fn take(&self) -> Option<Read<'_>> {
+        let mut n = self.running.load(Ordering::Acquire);
+        while n < self.max {
+            match self.running.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Some(Read(self)),
+                Err(now) => n = now,
+            }
+        }
+        None
+    }
+}
+
+impl Drop for Read<'_> {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// What a library holds, read once and kept until Refresh, or `None` while it is being read (or
+/// waits for a place among the running reads).
 fn library_items(ui: &egui::Ui, path: &str, refresh: u32, pictures: &SharedPictures) -> Option<Loaded> {
     let id = egui::Id::unique("blocks-library");
     let known = ui.data(|d| d.get_temp::<Library>(id)).filter(|l| l.path == path && l.refresh == refresh);
-    let library = known.unwrap_or_else(|| {
-        pictures.lock().unwrap_or_else(PoisonError::into_inner).drop_libraries();
-        let library = Library { path: path.to_string(), refresh, slot: read_in_background(ui.ctx(), path) };
-        ui.data_mut(|d| d.insert_temp(id, library.clone()));
-        library
-    });
+    let library = match known {
+        Some(library) => library,
+        None => {
+            let Some(place) = READS.take() else {
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+                return None;
+            };
+            pictures.lock().unwrap_or_else(PoisonError::into_inner).drop_libraries();
+            let library = Library { path: path.to_string(), refresh, slot: read_in_background(ui.ctx(), path, place) };
+            ui.data_mut(|d| d.insert_temp(id, library.clone()));
+            library
+        }
+    };
     library.slot.lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 /// Read a library on a worker thread: a big drawing or a slow network folder must not stop the
 /// interface. The web has no threads and reads it now, as OPEN does.
-fn read_in_background(ctx: &egui::Context, path: &str) -> Slot {
+fn read_in_background(ctx: &egui::Context, path: &str, place: Read<'static>) -> Slot {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let slot = Slot::default();
         let (out, ctx, owned) = (slot.clone(), ctx.clone(), path.to_string());
         let worker = std::thread::Builder::new().name("block-library".into()).spawn(move || {
+            let _place = place;
             let loaded = catch_unwind(|| read_library(&owned)).unwrap_or_else(|_| Err(format!("{owned}: the file could not be read")));
             *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(loaded);
             ctx.request_repaint();
@@ -422,7 +466,7 @@ fn read_in_background(ctx: &egui::Context, path: &str) -> Slot {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = ctx;
+        let _ = (ctx, place);
         Arc::new(Mutex::new(Some(read_library(path))))
     }
 }
@@ -1324,6 +1368,20 @@ mod tests {
         assert_eq!(red.lines.first().map(|(c, _)| *c), Some(Some(egui::Color32::from_rgb(255, 0, 0))));
         let plain = shape(d, d.block("PLAIN").unwrap());
         assert_eq!(plain.lines.first().map(|(c, _)| *c), Some(None), "colour 7 follows the theme");
+    }
+
+    /// No more than `max` library reads run at once; a place comes back when its read ends.
+    #[test]
+    fn library_reads_are_limited_and_given_back() {
+        let reads = super::Reads { running: std::sync::atomic::AtomicUsize::new(0), max: 2 };
+        let first = reads.take().expect("a first place");
+        let second = reads.take().expect("a second place");
+        assert!(reads.take().is_none(), "a third read waits");
+        drop(first);
+        let third = reads.take().expect("a place came back");
+        assert!(reads.take().is_none());
+        drop((second, third));
+        assert!(reads.take().is_some());
     }
 
     /// A quick right-click cancels the placement the palette started, at its insertion point only: a

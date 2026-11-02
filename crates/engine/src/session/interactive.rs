@@ -320,7 +320,11 @@ impl Session {
                 let seed = run.before.handseed;
                 self.finish(run, false);
                 let added = self.doc().is_ok_and(|d| d.handseed != seed);
-                self.last_finished = Some((self.commands_started, added));
+                // A transparent command ending inside another (`'ZOOM` in an INSERT) is not that
+                // command ending: it shares its number.
+                if self.suspended.is_none() {
+                    self.last_finished = Some((self.commands_started, added));
+                }
                 self.resume_suspended();
                 Ok(())
             }

@@ -198,6 +198,30 @@ fn a_transparent_command_while_placing_keeps_the_repeat() {
     h.state_mut().session.input(Input::Cancel).unwrap();
 }
 
+/// A transparent command that ends inside the placing INSERT (an object added meanwhile by a JSON
+/// command) is not the INSERT ending: cancelling the INSERT then places nothing again.
+#[test]
+fn a_transparent_command_ending_inside_the_insert_does_not_count_as_a_placement() {
+    use cadcraft_engine::Input;
+    let mut app = drawing();
+    for panel in ["layers", "properties"] {
+        app.run("ui.dock", json!({ "operation": "close", "panel": panel })).unwrap();
+    }
+    app.cmdline("BLOCKSPALETTE");
+    app.ui.in_window_menu = false;
+    let mut h = harness(app);
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    h.state_mut().session.start("'zoom").unwrap();
+    h.state_mut().run("line", json!({ "points": [[4, 4], [5, 5]] })).unwrap();
+    h.state_mut().session.input(Input::Keyword("Extents".into())).unwrap();
+    assert!(h.state().session.prompt_text().starts_with("INSERT Specify insertion point"), "{}", h.state().session.prompt_text());
+    h.run_steps(3);
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().session.prompt_text(), "Command:", "the cancelled INSERT is not placed again");
+}
+
 /// INSERT started as the palette starts it stops at the insertion point.
 #[test]
 fn insert_started_by_the_palette_flow_waits_for_the_point() {
