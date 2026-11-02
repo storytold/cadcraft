@@ -285,6 +285,14 @@ fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
         EntityKind::MText(t) => Some(t.insert.z),
         EntityKind::Insert(i) => Some(i.insert.z),
         EntityKind::Face3d(f) => face_z(&f.corners, p).or_else(|| along(&f.corners, true)),
+        // Drawn as its faces' visible edges: the Z on the nearest one.
+        EntityKind::PolyfaceMesh(m) => m
+            .faces3d()
+            .iter()
+            .flat_map(cadcraft_doc::Face3d::visible_edges)
+            .map(|(a, b)| on_segment(a, b))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(z, _)| z),
         _ => None,
     }
 }

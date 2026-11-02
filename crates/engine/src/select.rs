@@ -29,7 +29,7 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
+                    &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
@@ -501,6 +501,56 @@ mod tests {
         assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
         // Only one within reach: that one, whatever the order.
         assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
+    }
+
+    /// A block holding a diagonal dashed line, inserted at `scale`.
+    fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        let mut line =
+            Entity::new(Handle(1), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(length, length, 0.0) }));
+        line.common.linetype = "DASHED".into();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(line);
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let insert = cadcraft_doc::Insert {
+            block: "B".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(scale, scale, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        (d, h)
+    }
+
+    /// Every mouse move over a block hit-tests what it draws. Two blocks with a fine pattern on
+    /// long lines (inserted at 0.001) made 5.8 million dashes, and half a second, per move (#1285).
+    #[test]
+    fn hit_testing_a_block_does_not_lay_out_its_dashes() {
+        let (d, h) = dashed_block(20_000.0, 0.001);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
+        // The line, and the block's bounding rectangle.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+    }
+
+    /// A dashed line in a block is hit across its gaps, as one outside a block is.
+    #[test]
+    fn a_dashed_line_in_a_block_is_picked_in_a_gap() {
+        let (d, h) = dashed_block(100.0, 1.0);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        let (a, b) = (drawn.prims.first().unwrap(), drawn.prims.get(1).unwrap());
+        let (end, start) = (*drawn.points(a).last().unwrap(), *drawn.points(b).first().unwrap());
+        assert!(end.dist(start) > 0.01, "a gap between the first two dashes");
+        let gap = end + (start - end) * 0.5;
+        assert_eq!(pick(&d, &Space::Model, gap, end.dist(start) / 8.0), Some(h));
     }
 }
 
