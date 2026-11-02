@@ -19,8 +19,13 @@ cadcraft-fonts = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
+craft-pdf = { workspace = true, features = ["write"] }
 quick-xml = { workspace = true }
 
 [dev-dependencies]
+# Reads CADCraft's DWG output as written (tests only; the same version as cadcraft-dwg's).
+acadrust = "0.6.5"
 tiny-skia = { workspace = true }
+# Reads plotted PDFs back.
+craft-pdf = { workspace = true, features = ["read"] }

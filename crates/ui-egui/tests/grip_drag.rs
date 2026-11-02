@@ -86,3 +86,38 @@ fn a_grip_moves_by_dragging_it() {
     hh.state_mut().session.execute("u", &json!({})).unwrap();
     assert!(near(second_vertex(&hh, h), (20.0, 0.0)));
 }
+
+#[test]
+fn escape_cancels_a_dragged_grip() {
+    let (mut hh, h) = harness();
+    let g = screen(&hh, 20.0, 0.0);
+    hh.event(Event::PointerMoved(g));
+    hh.run_steps(2);
+    button(&mut hh, g, true);
+    let to = screen(&hh, 25.0, 3.0);
+    for k in 1..=10 {
+        hh.event(Event::PointerMoved(g + (to - g) * (k as f32 / 10.0)));
+        hh.run_steps(1);
+    }
+    hh.event(Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
+    hh.run_steps(1);
+    button(&mut hh, to, false);
+    hh.run_steps(2);
+    assert!(near(second_vertex(&hh, h), (20.0, 0.0)), "{:?}", second_vertex(&hh, h));
+}
+
+#[test]
+fn a_click_that_moves_a_pixel_is_not_a_drag() {
+    let (mut hh, h) = harness();
+    let g = screen(&hh, 20.0, 0.0);
+    hh.event(Event::PointerMoved(g));
+    hh.run_steps(2);
+    button(&mut hh, g, true);
+    hh.event(Event::PointerMoved(g + vec2(1.0, 0.0)));
+    hh.run_steps(1);
+    button(&mut hh, g + vec2(1.0, 0.0), false);
+    hh.run_steps(2);
+    // The press-release was a click: the grip edit is still waiting for its point.
+    assert!(hh.state().session.running.is_some(), "a click starts the grip edit and waits");
+    assert!(near(second_vertex(&hh, h), (20.0, 0.0)));
+}

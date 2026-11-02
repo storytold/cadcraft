@@ -5,7 +5,8 @@ use cadcraft_geom::{PolyVertex, Vec2};
 use serde_json::{Value, json};
 
 use super::helpers::{line, lwpoly, v3};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, point_req, str_param};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

@@ -21,8 +21,9 @@ impl Rgb {
         format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
     }
     pub fn parse_hex(s: &str) -> Option<Rgb> {
-        let s = s.trim().trim_start_matches('#');
-        if s.len() != 6 || !s.is_ascii() {
+        let s = s.trim();
+        let s = s.strip_prefix('#').unwrap_or(s);
+        if s.len() != 6 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
         u32::from_str_radix(s, 16).ok().map(Rgb::from_u32)
@@ -110,9 +111,9 @@ impl Color {
             _ => {}
         }
         if let Some(rest) = t.strip_prefix("color ") {
-            return rest.trim().parse::<u8>().ok().filter(|i| *i >= 1).map(Color::Index);
+            return parse_digits::<u8>(rest.trim()).filter(|i| *i >= 1).map(Color::Index);
         }
-        if let Ok(i) = t.parse::<u16>() {
+        if let Some(i) = parse_digits::<u16>(&t) {
             return match i {
                 0 => Some(Color::ByBlock),
                 256 => Some(Color::ByLayer),
@@ -123,12 +124,20 @@ impl Color {
         if t.starts_with('#') {
             return Rgb::parse_hex(&t).map(Color::True);
         }
-        let parts: Vec<_> = t.split(',').map(|p| p.trim().parse::<u8>()).collect();
-        if let [Ok(r), Ok(g), Ok(b)] = parts.as_slice() {
+        let parts: Vec<_> = t.split(',').map(|p| parse_digits::<u8>(p.trim())).collect();
+        if let [Some(r), Some(g), Some(b)] = parts.as_slice() {
             return Some(Color::True(Rgb(*r, *g, *b)));
         }
         None
     }
+}
+
+/// Parse an unsigned integer made of ASCII digits only (no sign, unlike `str::parse`).
+fn parse_digits<T: std::str::FromStr>(s: &str) -> Option<T> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
 }
 
 /// The RGB of ACI `i` (0 and out-of-range map to white/7).
@@ -156,7 +165,7 @@ fn build_palette() -> [Rgb; 256] {
     for (slot, c) in p.iter_mut().zip(base) {
         *slot = c;
     }
-    let values = [255.0, 165.0, 127.0, 76.0, 38.0];
+    let values = [255.0, 204.0, 153.0, 127.0, 76.0];
     for i in 10..250usize {
         let hue = (i - 10) / 10; // 0..24, 15° each
         let sub = i % 10;
@@ -226,12 +235,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_hex_rejects_non_hex_digits() {
+        assert_eq!(Rgb::parse_hex("+12345"), None);
+        assert_eq!(Rgb::parse_hex("-12345"), None);
+        assert_eq!(Color::parse("#+12345"), None);
+        assert_eq!(Rgb::parse_hex("#012345"), Some(Rgb(1, 35, 69)));
+    }
+
+    #[test]
+    fn parse_rejects_plus_sign() {
+        assert_eq!(Color::parse("+5"), None);
+        assert_eq!(Color::parse(" +256"), None);
+        assert_eq!(Color::parse("color +5"), None);
+        assert_eq!(Color::parse("+1,+2,+3"), None);
+        assert_eq!(Color::parse("1,+2,3"), None);
+        assert_eq!(Color::parse("5"), Some(Color::Index(5)));
+        assert_eq!(Color::parse("256"), Some(Color::ByLayer));
+        assert_eq!(Color::parse("color 5"), Some(Color::Index(5)));
+        assert_eq!(Color::parse("1, 2, 3"), Some(Color::True(Rgb(1, 2, 3))));
+    }
+
+    #[test]
+    fn parse_hex_rejects_repeated_hash() {
+        assert_eq!(Rgb::parse_hex("##ff0000"), None);
+        assert_eq!(Rgb::parse_hex("###ff0000"), None);
+        assert_eq!(Color::parse("##ff0000"), None);
+        assert_eq!(Rgb::parse_hex("#ff0000"), Some(Rgb(255, 0, 0)));
+        assert_eq!(Rgb::parse_hex("ff0000"), Some(Rgb(255, 0, 0)));
+    }
+
+    #[test]
     fn palette_known_entries() {
         assert_eq!(aci_rgb(1), Rgb(255, 0, 0));
         assert_eq!(aci_rgb(10), Rgb(255, 0, 0));
         assert_eq!(aci_rgb(11), Rgb(255, 127, 127));
-        assert_eq!(aci_rgb(12), Rgb(165, 0, 0));
-        assert_eq!(aci_rgb(13), Rgb(165, 82, 82));
+        assert_eq!(aci_rgb(12), Rgb(204, 0, 0));
+        assert_eq!(aci_rgb(13), Rgb(204, 102, 102));
+        assert_eq!(aci_rgb(14), Rgb(153, 0, 0));
+        assert_eq!(aci_rgb(15), Rgb(153, 76, 76));
+        assert_eq!(aci_rgb(16), Rgb(127, 0, 0));
+        assert_eq!(aci_rgb(18), Rgb(76, 0, 0));
         assert_eq!(aci_rgb(20), Rgb(255, 63, 0));
         assert_eq!(aci_rgb(30), Rgb(255, 127, 0));
         assert_eq!(aci_rgb(50), Rgb(255, 255, 0));

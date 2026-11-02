@@ -177,6 +177,11 @@ pub struct DimStyle {
     pub dim_line_color: Color,
     pub ext_line_color: Color,
     pub text_color: Color,
+    /// DIMTFILL, the background of the text: 0 none, 1 the drawing's background color,
+    /// 2 `text_fill_color`.
+    pub text_fill: u8,
+    /// DIMTFILLCLR: the text background color when `text_fill` is 2.
+    pub text_fill_color: Color,
     pub text_style: String,
     /// DIMPOST prefix/suffix "<>" template.
     pub post: String,
@@ -296,6 +301,8 @@ pub const DIMVARS: &[(&str, &str)] = &[
     ("DIMCLRD", "dimLineColor"),
     ("DIMCLRE", "extLineColor"),
     ("DIMCLRT", "textColor"),
+    ("DIMTFILL", "textFill"),
+    ("DIMTFILLCLR", "textFillColor"),
     ("DIMTXSTY", "textStyle"),
     ("DIMPOST", "post"),
     ("DIMCEN", "centerMark"),
@@ -367,6 +374,8 @@ impl Default for DimStyle {
             dim_line_color: Color::ByBlock,
             ext_line_color: Color::ByBlock,
             text_color: Color::ByBlock,
+            text_fill: 0,
+            text_fill_color: Color::ByBlock,
             text_style: "Standard".into(),
             post: String::new(),
             center_mark: 0.09,
@@ -432,6 +441,49 @@ impl DimStyle {
             .or_else(|| ["name", "annotative"].into_iter().find(|f| f.eq_ignore_ascii_case(name)))
     }
 
+    /// The value `v` takes for a field whose current value is `old`: coerced to the field's type where
+    /// the text or number can be read as it.
+    fn coerce_value(old: &serde_json::Value, v: &serde_json::Value, field: &str) -> serde_json::Value {
+        use serde_json::Value;
+        match (old, v) {
+            (Value::Bool(_), Value::Number(n)) => Value::Bool(n.as_f64().is_some_and(|x| x != 0.0)),
+            (Value::Bool(_), Value::String(t)) => Value::Bool(matches!(t.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes")),
+            (Value::Number(_), Value::String(t)) => match t.trim().parse::<f64>() {
+                Ok(x) => serde_json::json!(x),
+                // Lineweight names.
+                Err(_) if matches!(field, "dimLineweight" | "extLineweight") => match t.trim().to_ascii_lowercase().as_str() {
+                    "bylayer" => serde_json::json!(-1),
+                    "byblock" => serde_json::json!(-2),
+                    "default" => serde_json::json!(-3),
+                    _ => v.clone(),
+                },
+                Err(_) => v.clone(),
+            },
+            (Value::Number(_), Value::Bool(b)) => serde_json::json!(u8::from(*b)),
+            (Value::String(_), Value::Number(n)) => Value::String(n.to_string()),
+            (Value::Object(_), Value::Number(n)) => {
+                let c = n.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci);
+                c.and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone())
+            }
+            (Value::Object(_), Value::String(t)) => Color::parse(t).and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone()),
+            _ => v.clone(),
+        }
+    }
+
+    /// Whether `coerced` is outside the range its `field` can take.
+    fn out_of_range(field: &str, coerced: &serde_json::Value) -> bool {
+        let x = coerced.as_f64();
+        match field {
+            "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
+            "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
+            "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
+            "textMove" | "tolJust" | "arcSymbol" | "textFill" => x.is_some_and(|x| x > 2.0),
+            "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
+            "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
+            _ => false,
+        }
+    }
+
     /// Set fields from a JSON object of field or DIM* variable names (numbers, booleans as
     /// 0/1, colours as ACI numbers or names). Returns the names that were not recognised or
     /// had unusable values.
@@ -449,51 +501,29 @@ impl DimStyle {
                 rejected.push(k.clone());
                 continue;
             };
-            let coerced = match (&old, v) {
-                (Value::Bool(_), Value::Number(n)) => Value::Bool(n.as_f64().is_some_and(|x| x != 0.0)),
-                (Value::Bool(_), Value::String(t)) => Value::Bool(matches!(t.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes")),
-                (Value::Number(_), Value::String(t)) => match t.trim().parse::<f64>() {
-                    Ok(x) => serde_json::json!(x),
-                    // Lineweight names.
-                    Err(_) if matches!(field, "dimLineweight" | "extLineweight") => match t.trim().to_ascii_lowercase().as_str() {
-                        "bylayer" => serde_json::json!(-1),
-                        "byblock" => serde_json::json!(-2),
-                        "default" => serde_json::json!(-3),
-                        _ => v.clone(),
-                    },
-                    Err(_) => v.clone(),
-                },
-                (Value::Number(_), Value::Bool(b)) => serde_json::json!(u8::from(*b)),
-                (Value::String(_), Value::Number(n)) => Value::String(n.to_string()),
-                (Value::Object(_), Value::Number(n)) => {
-                    let c = n.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci);
-                    c.and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone())
-                }
-                (Value::Object(_), Value::String(t)) => Color::parse(t).and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone()),
-                _ => v.clone(),
-            };
+            let coerced = Self::coerce_value(&old, v, field);
             // Integers stored in u8 fields: round floats.
             let coerced = match (&old, &coerced) {
                 // Lineweights (i16): whole hundredths of a mm or -1/-2/-3.
                 (Value::Number(_), Value::Number(n)) if matches!(field, "dimLineweight" | "extLineweight") && !n.is_i64() => {
-                    serde_json::json!(n.as_f64().filter(|x| x.is_finite()).unwrap_or(0.0).round().clamp(-3.0, 211.0) as i64)
+                    serde_json::json!(n.as_f64().filter(|x| x.is_finite()).unwrap_or(0.0).round() as i64)
                 }
+                (Value::Number(_), Value::Number(_)) if matches!(field, "dimLineweight" | "extLineweight") => coerced,
+                // A value below 0 or one that rounds above 255 is refused; DIMADEC -1 reads as 0.
                 (Value::Number(o), Value::Number(n)) if o.is_u64() && !n.is_u64() => {
-                    serde_json::json!(n.as_f64().filter(|x| x.is_finite()).unwrap_or(0.0).round().clamp(0.0, 255.0) as u64)
+                    let min = if field == "angularDecimals" { -1.0 } else { 0.0 };
+                    match n.as_f64().filter(|x| x.is_finite() && *x >= min).map(f64::round).filter(|x| *x <= 255.0) {
+                        Some(x) => serde_json::json!(x.max(0.0) as u64),
+                        None => {
+                            rejected.push(k.clone());
+                            continue;
+                        }
+                    }
                 }
                 _ => coerced,
             };
             // Sizes that can't be negative (text height and tolerance scale: not zero either).
-            let x = coerced.as_f64();
-            let out_of_range = match field {
-                "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
-                "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
-                "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
-                "textMove" | "tolJust" | "arcSymbol" => x.is_some_and(|x| x > 2.0),
-                "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
-                "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
-                _ => false,
-            };
+            let out_of_range = Self::out_of_range(field, &coerced);
             if out_of_range {
                 rejected.push(k.clone());
                 continue;
@@ -616,6 +646,13 @@ impl Default for MLeaderStyle {
     }
 }
 
+impl MLeaderStyle {
+    /// The Standard style for metric drawings: text and arrows as high as ISO-25's.
+    pub fn metric() -> Self {
+        MLeaderStyle { arrow_size: 2.5, text_height: 2.5, landing_gap: 0.625, dogleg: 5.0, ..Default::default() }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TableStyle {
@@ -633,6 +670,13 @@ pub struct TableStyle {
 impl Default for TableStyle {
     fn default() -> Self {
         TableStyle { name: "Standard".into(), text_height: 0.18, margin: 0.06, title: true, header: true, cell_styles: Vec::new() }
+    }
+}
+
+impl TableStyle {
+    /// The Standard style for metric drawings: text as high as ISO-25's.
+    pub fn metric() -> Self {
+        TableStyle { text_height: 2.5, margin: 1.0, ..Default::default() }
     }
 }
 
@@ -738,6 +782,8 @@ pub struct PageSetup {
     pub landscape: bool,
     /// "layout" | "extents" | "display" | "window" | "limits".
     pub plot_area: String,
+    /// Plot window corners `[x1, y1, x2, y2]` (DXF plot layout groups 48, 49, 140, 141); used when `plot_area` is "window".
+    pub plot_window: [f64; 4],
     pub scale_to_fit: bool,
     /// Paper units per drawing unit.
     pub scale: f64,
@@ -750,6 +796,9 @@ pub struct PageSetup {
     /// Plot objects with their transparency ("Plot transparency"; PLOTTRANSPARENCYOVERRIDE can
     /// override it). The DXF plot layout flags have no bit for it, so it is not saved in DXF.
     pub plot_transparency: bool,
+    /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
+    /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
+    pub paper_mm: bool,
 }
 
 impl Default for PageSetup {
@@ -762,6 +811,7 @@ impl Default for PageSetup {
             margins_mm: [6.35, 6.35, 6.35, 6.35],
             landscape: true,
             plot_area: "layout".into(),
+            plot_window: [0.0; 4],
             scale_to_fit: false,
             scale: 1.0,
             plot_style_table: String::new(),
@@ -769,6 +819,7 @@ impl Default for PageSetup {
             lineweights: true,
             show_plot_styles: false,
             plot_transparency: false,
+            paper_mm: false,
         }
     }
 }
@@ -836,7 +887,7 @@ pub struct VportConfig {
 
 impl VportConfig {
     /// The name of the configuration shown.
-    pub const ACTIVE: &'static str = "*Active";
+    pub const ACTIVE: &str = "*Active";
     pub fn is_active(&self) -> bool {
         self.name.eq_ignore_ascii_case(Self::ACTIVE)
     }
