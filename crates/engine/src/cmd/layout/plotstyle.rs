@@ -9,14 +9,9 @@
 use cadcraft_doc::{Drawing, PlotStyle, PlotStyleKind, PlotStyleSource, PlotStyleTable};
 use serde_json::{Value, json};
 
-<<<<<<< HEAD
 use super::super::targets;
 use super::{CommandSpec, Result, Session, bad, str_param};
 use crate::plotstyle_library;
-=======
-use super::*;
-use crate::plotstyle_library;
->>>>>>> 9f54eb6 (plot styles: a user library shared across drawings)
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
