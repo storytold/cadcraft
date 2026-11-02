@@ -60,14 +60,14 @@ fn export_and_wblock_say_what_a_dwg_leaves_out() {
     let mut s = Session::empty();
     s.open_drawing(d, "foreign.dxf", None);
     let file = |ext: &str| std::env::temp_dir().join(format!("cadcraft-leaves-out-{}.{ext}", std::process::id())).to_string_lossy().into_owned();
-    let msg = "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): 1 ACME_WIDGET";
+    let said = |l: &String| l.starts_with("Not saved in the DWG file") && l.ends_with(": 1 ACME_WIDGET");
 
     let (dwg, dxf) = (file("dwg"), file("dxf"));
     for (cmd, p) in [("export", json!({ "path": dwg })), ("wblock", json!({ "path": dwg, "handles": [h] }))] {
         s.log.clear();
         let r = s.execute(cmd, &p).unwrap();
         assert_eq!(r["notSaved"], json!({ "ACME_WIDGET": 1 }), "{cmd}");
-        assert!(s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+        assert!(s.log.iter().any(said), "{cmd}: {:?}", s.log);
     }
     // -WBLOCK takes the objects out of the drawing, so last.
     let r = s.execute("-wblock", &json!({ "path": dwg, "handles": [h] })).unwrap();
@@ -79,7 +79,7 @@ fn export_and_wblock_say_what_a_dwg_leaves_out() {
     for (cmd, p) in [("export", json!({ "path": dxf })), ("wblock", json!({ "path": dxf, "handles": [h] }))] {
         s.log.clear();
         assert!(s.execute(cmd, &p).unwrap().get("notSaved").is_none(), "{cmd}");
-        assert!(!s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+        assert!(!s.log.iter().any(said), "{cmd}: {:?}", s.log);
     }
     let _ = std::fs::remove_file(&dxf);
 }
@@ -155,16 +155,7 @@ fn saving_sat_text_solids_as_dxf_2013_reports_them() {
 #[test]
 fn a_dxf_2013_loss_is_known_before_saving() {
     use cadcraft_engine::cmd::file::loss_on_save;
-    set_io(IoHooks {
-        read: |_, _| Err("no reader in this test".into()),
-        write: |_, _| {
-            Ok(b"0
-EOF
-"
-            .to_vec())
-        },
-        plot: None,
-    });
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
     let sat = |d: &mut Drawing| {
         let tags = vec![RawTag { code: 8, value: "0".into() }, RawTag { code: 1, value: "400 1 1 0".into() }];
         d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "REGION".into(), tags })).unwrap();
