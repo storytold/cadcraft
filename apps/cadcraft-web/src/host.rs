@@ -4,6 +4,9 @@
 //! - `cadcraft:ready` (to the parent): `{ version }`, the app is listening; send a drawing now.
 //! - `cadcraft:open` (from the parent): `{ name, bytes }`, bytes an `ArrayBuffer` or
 //!   `Uint8Array`. It opens like a file picked with File › Open or dropped on the window.
+//! - `cadcraft:opened` (to the parent): `{ name }`, the drawing it sent is loaded and showing.
+//! - `cadcraft:open-failed` (to the parent): `{ name, error }` when that drawing couldn't be
+//!   opened, so the parent doesn't wait out its timeout (#1666).
 //! - `cadcraft:save` (to the parent): `{ name, bytes }` (a transferred `ArrayBuffer`) for every
 //!   file CADCraft would otherwise download (SAVE, SAVEAS, exports): it replaces the engine's
 //!   delivery hook. The parent stores the file and reports failures itself.
@@ -65,6 +68,13 @@ impl Bridge {
         self.send(&[("type", "cadcraft:failed".into()), ("error", error.into())]);
     }
 
+    /// Answer a drawing the parent sent: `cadcraft:opened` once it is loaded and showing, or
+    /// `cadcraft:open-failed` with the reason. Sent once per `cadcraft:open` (#1666).
+    pub fn post_open(&self, reply: &crate::OpenReply) {
+        let fields: Vec<(&str, JsValue)> = reply.fields().into_iter().map(|(key, value)| (key, value.into())).collect();
+        self.send(&fields);
+    }
+
     /// Hear drawings from the parent; they arrive through the upload inbox.
     pub fn listen(&self, inbox: crate::upload::Inbox) {
         let parent = self.parent.clone();
@@ -84,7 +94,7 @@ impl Bridge {
             // Refuse an oversized drawing before copying it into the app's memory.
             let Some(array) = byte_array(&data) else { return };
             if let Some(e) = CadApp::open_size_error(&name, u64::from(array.length())) {
-                inbox.refuse(e);
+                inbox.refuse(&name, e);
                 return;
             }
             inbox.receive(name, array.to_vec());
