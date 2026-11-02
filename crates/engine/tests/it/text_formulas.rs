@@ -262,3 +262,46 @@ fn an_unchanged_multiline_formula_in_the_editors_form_is_kept() {
     let after = s.doc().unwrap().model.iter().find_map(|e| if let EntityKind::MText(t) = &e.kind { Some(t.clone()) } else { None }).unwrap();
     assert_eq!(after.formula, before.formula);
 }
+
+/// A dimension formula with braces and a backslash goes through the in-place editor as
+/// multiline text and comes back unchanged when accepted as it is (#2320 review: the braces
+/// were read as formatting, so `=UPPER("{a}")` became `=UPPER("a")`). A changed formula from the
+/// editor is read without its codes too.
+#[test]
+fn a_dimension_formula_keeps_its_braces_through_the_editor() {
+    use cadcraft_engine::Input;
+    let mut s = Session::new();
+    let r = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [1250, 0], "at": [600, 100] })).unwrap();
+    let h = r["handle"].as_str().or_else(|| r["handles"][0].as_str()).unwrap().to_string();
+    let formula = r#"=UPPER("{a}")&"\x""#;
+    s.execute("textedit", &json!({ "handle": h, "text": formula })).unwrap();
+    let dim = |s: &Session| {
+        let d = s.doc().unwrap();
+        match &d.model.iter().find(|e| e.handle.hex() == h).unwrap().kind {
+            EntityKind::Dimension(dm) => dm.clone(),
+            _ => panic!(),
+        }
+    };
+    assert_eq!(dim(&s).marks.formula.as_deref(), Some(formula), "the JSON form takes the formula as typed");
+    let at = cadcraft_render::dimension_in(s.doc().unwrap(), &dim(&s)).text_pos;
+    let open = |s: &mut Session| {
+        s.start("textedit").unwrap();
+        s.input(Input::Point(at)).unwrap();
+        s.text_editor().expect("the editor opens")
+    };
+    let ed = open(&mut s);
+    assert_eq!(ed.mtext.contents, cadcraft_doc::mtext_literal(formula), "braces and backslash as letters");
+    // What the editor sends back for unchanged contents.
+    let sent = cadcraft_engine::mtext_edit::Formatted::from_contents(&ed.mtext.contents).to_contents();
+    s.input(Input::Text(sent)).unwrap();
+    assert_eq!(dim(&s).marks.formula.as_deref(), Some(formula), "unchanged, the formula stays");
+    s.cancel();
+    // An edited formula from the editor: its escaped braces are letters again.
+    let ed = open(&mut s);
+    let edited = cadcraft_doc::mtext_literal(r#"=LOWER("{B}")"#);
+    let sent = cadcraft_engine::mtext_edit::Formatted::from_contents(&edited).to_contents();
+    assert_eq!(ed.kind, cadcraft_engine::EditorKind::Dimension { measured: "1250.0000".into() });
+    s.input(Input::Text(sent)).unwrap();
+    assert_eq!(dim(&s).marks.formula.as_deref(), Some(r#"=LOWER("{B}")"#));
+    assert_eq!(dim(&s).text, "{b}", "the result, braces as letters");
+}
