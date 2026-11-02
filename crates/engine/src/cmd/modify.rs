@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["e", "delete"])
             .params("{handles?: [hex]} (default: selection)")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Erase)))),
-        CommandSpec::new("oops", "Oops", run_oops).params("{} (brings back what the last ERASE or BLOCK removed)"),
+        CommandSpec::new("oops", "Oops", run_oops).params("{} (brings back what the last ERASE, BLOCK or -WBLOCK removed)"),
         CommandSpec::new("move", "Move", run_move)
             .menu(&["Modify", "Move"])
             .alias(&["m"])

@@ -1,6 +1,7 @@
 //! OOPS: bring back the objects the last ERASE (or the Delete key) removed, or BLOCK deleting the
-//! objects it makes a block of, with their handles and each where it was in the draw order, as
-//! AutoCAD 2024 does (accoreconsole, the drawing's `entnext` order read back afterwards).
+//! objects it makes a block of, or -WBLOCK the objects it writes, with their handles and each where
+//! it was in the draw order, as AutoCAD 2024 does (accoreconsole, the drawing's `entnext` order read
+//! back afterwards).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
