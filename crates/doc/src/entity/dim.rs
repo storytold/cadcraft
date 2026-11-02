@@ -62,6 +62,25 @@ pub struct Dimension {
     /// Oblique extension lines, jogs, breaks and inspection frames.
     #[serde(default, skip_serializing_if = "DimMarks::is_empty")]
     pub marks: DimMarks,
+    /// Unit of the stored angle (DXF group 42) of an angular dimension, kept from the file read
+    /// so a file that stores degrees saves degrees again. Radians for dimensions made here.
+    #[serde(default, skip_serializing_if = "AngleUnit::is_radians")]
+    pub angle_unit: AngleUnit,
+}
+
+/// Unit of an angular dimension's stored measurement (DXF group 42).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AngleUnit {
+    #[default]
+    Radians,
+    Degrees,
+}
+
+impl AngleUnit {
+    pub fn is_radians(&self) -> bool {
+        *self == AngleUnit::Radians
+    }
 }
 
 /// What dimension edits add to a dimension's drawing: DIMEDIT Oblique, DIMJOGLINE, DIMJOGGED,

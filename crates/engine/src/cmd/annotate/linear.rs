@@ -73,6 +73,7 @@ fn chained(s: &Session, prev: &Dimension, next: Vec2, baseline: bool) -> EntityK
         block: None,
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
         user_text_pos: false,
         ..prev.clone()
     })

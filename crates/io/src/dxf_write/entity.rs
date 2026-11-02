@@ -412,7 +412,8 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         };
         w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
-        w.f(42, g.measurement);
+        let angular = matches!(dm.kind, DimKind::Angular | DimKind::Angular3P);
+        w.f(42, if angular && dm.angle_unit == cadcraft_doc::AngleUnit::Degrees { g.measurement.to_degrees() } else { g.measurement });
         if !dm.text.is_empty() {
             w.s(1, crate::dxf_read::mtext_dxf::encode_line(&dm.text));
         }

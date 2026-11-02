@@ -32,6 +32,7 @@ fn dim(kind: DimKind, p13: Vec2, p14: Vec2, defpt: Vec2) -> EntityKind {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
     })
 }
 
@@ -182,6 +183,7 @@ pub fn bracket() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            angle_unit: Default::default(),
         }),
     );
     add(
@@ -203,6 +205,7 @@ pub fn bracket() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            angle_unit: Default::default(),
         }),
     );
 

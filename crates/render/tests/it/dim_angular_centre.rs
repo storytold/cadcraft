@@ -23,6 +23,7 @@ fn dim(kind: DimKind) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
     }
 }
 

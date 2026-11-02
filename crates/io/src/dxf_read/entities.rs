@@ -9,6 +9,19 @@ use super::{
 };
 use cadcraft_doc::PolyfaceMesh;
 
+/// The unit a file stores an angular dimension's group 42 in: degrees when it matches the angle
+/// measured from the definition points in degrees, radians otherwise (also when it matches
+/// neither, as CADCraft writes).
+pub(crate) fn angle_unit_of(dm: &Dimension) -> cadcraft_doc::AngleUnit {
+    use cadcraft_doc::AngleUnit;
+    if !matches!(dm.kind, DimKind::Angular | DimKind::Angular3P) {
+        return AngleUnit::Radians;
+    }
+    let rad = cadcraft_render::dimension_geometry(dm, &cadcraft_doc::DimStyle::default(), 1.0).measurement;
+    let close = |a: f64, b: f64| b.abs() > 0.0 && ((a - b) / b).abs() <= 1e-6;
+    if close(dm.measurement, rad.to_degrees()) && !close(dm.measurement, rad) { AngleUnit::Degrees } else { AngleUnit::Radians }
+}
+
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
     entity_with_table_budget(kind, tags, &mut 4_000_000)
@@ -182,7 +195,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 8 => DimKind::ArcLength,
                 _ => DimKind::Aligned,
             };
-            EntityKind::Dimension(Dimension {
+            let mut dm = Dimension {
                 kind,
                 defpt: t.p(10),
                 // The text midpoint is the one OCS point of a DIMENSION.
@@ -200,7 +213,10 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),
-            })
+                angle_unit: Default::default(),
+            };
+            dm.angle_unit = angle_unit_of(&dm);
+            EntityKind::Dimension(dm)
         }
         "LEADER" => EntityKind::Leader(Leader {
             // Each group 10 starts a vertex. Scope Y/Z to it so an omitted Z cannot

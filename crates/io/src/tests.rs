@@ -98,6 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            angle_unit: Default::default(),
         }),
     )
     .unwrap();
@@ -558,6 +559,7 @@ fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
     }
 }
 
@@ -2868,4 +2870,79 @@ fn angular_dimension_with_a_leg_from_the_vertex_measures_60_degrees() {
     let m: f64 = group(dxf_records(&pairs, "DIMENSION")[0], "42").unwrap().parse().unwrap();
     // Group 42 is in radians for a dimension made here (see `an_angular_dimension_stores_its_angle_in_radians`).
     assert!((m.to_degrees() - 60.0).abs() < 1e-6, "group 42 = {m}");
+}
+/// A 60° three-point angular dimension: vertex (p15) at the origin, legs along 0° and 60°.
+fn angular_60(unit: AngleUnit) -> Drawing {
+    let polar = |deg: f64, r: f64| Vec3::new(r * deg.to_radians().cos(), r * deg.to_radians().sin(), 0.0);
+    let mut d = Drawing::new_metric();
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Dimension(Dimension {
+            kind: DimKind::Angular3P,
+            defpt: polar(30.0, 15.0),
+            text_mid: Vec3::ZERO,
+            p13: polar(0.0, 20.0),
+            p14: polar(60.0, 20.0),
+            p15: Vec3::ZERO,
+            p16: Vec3::ZERO,
+            text: String::new(),
+            style: "Standard".into(),
+            measurement: 0.0,
+            text_rotation: 0.0,
+            user_text_pos: false,
+            block: None,
+            overrides: Default::default(),
+            assoc: Vec::new(),
+            marks: Default::default(),
+            angle_unit: unit,
+        }),
+    )
+    .unwrap();
+    d
+}
+
+/// The DIMENSION's group 42 in a DXF text.
+fn dim_group_42(dxf: &str) -> f64 {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| *l == "DIMENSION").unwrap();
+    let i = (at + 1..lines.len()).step_by(2).find(|&i| lines[i] == "42").unwrap();
+    lines[i + 1].parse().unwrap()
+}
+
+/// A file with the angle in `stored`: read, its unit, and the group 42 written back.
+fn angular_resave(stored: &str) -> (AngleUnit, f64) {
+    let src = write_dxf(&angular_60(AngleUnit::Radians));
+    let lines: Vec<&str> = src.lines().collect();
+    let at = lines.iter().position(|l| l.trim() == "DIMENSION").unwrap();
+    let i = (at + 1..lines.len()).step_by(2).find(|&i| lines[i].trim() == "42").unwrap();
+    let mut patched: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    patched[i + 1] = stored.into();
+    let d = read_dxf(patched.join("\n").as_bytes()).unwrap();
+    let unit = d
+        .model
+        .iter()
+        .find_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm.angle_unit) } else { None })
+        .unwrap();
+    (unit, dim_group_42(&write_dxf(&d)))
+}
+
+#[test]
+fn angular_group_42_in_degrees_is_saved_in_degrees() {
+    let (unit, out) = angular_resave("60.0");
+    assert_eq!(unit, AngleUnit::Degrees);
+    assert!((out - 60.0).abs() < 1e-9, "group 42 = {out}");
+}
+
+#[test]
+fn angular_group_42_in_radians_is_saved_in_radians() {
+    let (unit, out) = angular_resave("1.0471975511965976");
+    assert_eq!(unit, AngleUnit::Radians);
+    assert!((out - 1.0471975511965976).abs() < 1e-9, "group 42 = {out}");
+}
+
+#[test]
+fn angular_made_here_saves_group_42_in_radians() {
+    let out = dim_group_42(&write_dxf(&angular_60(AngleUnit::default())));
+    assert!((out - 60f64.to_radians()).abs() < 1e-9, "group 42 = {out}");
 }

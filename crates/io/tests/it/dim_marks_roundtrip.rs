@@ -24,6 +24,7 @@ fn dim(kind: DimKind, marks: DimMarks) -> EntityKind {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks,
+        angle_unit: Default::default(),
     })
 }
 

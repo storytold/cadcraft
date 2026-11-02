@@ -23,6 +23,7 @@ fn linear(len: f64) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
     }
 }
 

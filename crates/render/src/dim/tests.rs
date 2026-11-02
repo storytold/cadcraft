@@ -19,6 +19,7 @@ fn lin(p1: (f64, f64), p2: (f64, f64), on: (f64, f64), rot: f64) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        angle_unit: Default::default(),
     }
 }
 
