@@ -133,6 +133,27 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     if formulas.is_empty() {
         return;
     }
+    // The text each field showed in the file, kept beside its formula (see `ForeignExtra::field_text`).
+    let shown: Vec<(Handle, String, String)> = d
+        .model
+        .iter()
+        .chain(d.layouts.iter().flat_map(|l| l.entities.iter()))
+        .chain(d.blocks.values().flat_map(|b| b.entities.iter()))
+        .filter_map(|e| {
+            let f = formulas.get(&e.handle)?;
+            match &e.kind {
+                EntityKind::Text(t) => Some((e.handle, f.clone(), t.value.clone())),
+                EntityKind::MText(t) => Some((e.handle, f.clone(), t.contents.clone())),
+                _ => None,
+            }
+        })
+        .collect();
+    if !shown.is_empty() {
+        let foreign = std::sync::Arc::make_mut(&mut d.foreign);
+        for (h, f, v) in shown {
+            foreign.entities.entry(h).or_default().field_text = Some((f, v));
+        }
+    }
     let set = |store: &mut EntityStore| {
         let hs: Vec<Handle> = store.iter().filter(|e| formulas.contains_key(&e.handle)).map(|e| e.handle).collect();
         for h in hs {
