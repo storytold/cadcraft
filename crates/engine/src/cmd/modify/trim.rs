@@ -370,18 +370,19 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
     }
     // A pick on a cut (a vertex picked exactly: the same length within rounding) takes the piece
     // of the segment it was found on, rather than neither piece (which would erase the whole
-    // polyline): the cuts are split just past that cut when the pick is at its segment's start,
-    // just before it otherwise. A pick off every cut splits them where it is.
+    // polyline): from that cut to the next when the pick is at its segment's start, from the one
+    // before to that cut otherwise. A pick off every cut takes the piece between the cuts either
+    // side of it.
     let on = 4.0 * f64::EPSILON * (total + 1.0);
-    let split = if !ts.iter().any(|t| (t - tp).abs() <= on) {
-        tp
-    } else if at_end > 0.0 {
-        tp + 2.0 * on
-    } else {
-        tp - 2.0 * on
+    let on_cut = ts.iter().enumerate().map(|(i, t)| (i, (t - tp).abs())).filter(|(_, d)| *d <= on).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
+    let (lo, hi) = match on_cut {
+        Some(i) if at_end > 0.0 => (ts.get(i).copied().unwrap_or(f64::NEG_INFINITY), ts.get(i + 1).copied().unwrap_or(f64::INFINITY)),
+        Some(i) => (i.checked_sub(1).and_then(|j| ts.get(j)).copied().unwrap_or(f64::NEG_INFINITY), ts.get(i).copied().unwrap_or(f64::INFINITY)),
+        None => (
+            ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max),
+            ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min),
+        ),
     };
-    let lo = ts.iter().copied().filter(|t| *t < split).fold(f64::NEG_INFINITY, f64::max);
-    let hi = ts.iter().copied().filter(|t| *t > split).fold(f64::INFINITY, f64::min);
     let mk = |vs: Vec<PolyVertex>| lwpoly(vs, false);
     let mut out = Vec::new();
     if p.closed {

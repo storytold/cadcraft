@@ -337,6 +337,25 @@ fn a_pick_inside_a_segment_stays_on_its_side_of_a_cut() {
 }
 
 #[test]
+fn a_pick_on_a_vertex_next_to_a_very_short_segment_takes_that_segment() {
+    // 1e9 out, a segment 5e-7 long, a few roundings of the length, so both its ends are within
+    // rounding of a pick on the vertex it ends at: that pick takes it, not the long segment before.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [1e9, 0], [1e9, 5e-7], [1e9, 10]]), false);
+    trim(&mut s, p, [1e9, 5e-7], None);
+    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (1e9, 0.0, 0.0)]), (false, false, &[(1e9, 5e-7, 0.0), (1e9, 10.0, 0.0)])]);
+}
+
+#[test]
+fn a_pick_on_a_closed_polylines_start_vertex_takes_its_first_segment() {
+    // Not measured. The pick is at the start of the first segment, which it was found on.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [10, 0], [10, 10], [0, 10]]), true);
+    trim(&mut s, p, [0.0, 0.0], None);
+    expect(&s, p, &[(true, false, &[(10.0, 0.0, 0.0), (10.0, 10.0, 0.0), (0.0, 10.0, 0.0), (0.0, 0.0, 0.0)])]);
+}
+
+#[test]
 fn a_piece_whose_ends_only_come_near_stays_open_far_from_the_origin() {
     // 1e9 out, as survey coordinates in millimetres are: the piece left runs from the line's cut
     // to the polyline's end, 0.58 away, and stays open.
