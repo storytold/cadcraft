@@ -129,18 +129,22 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
             "`format` must be dxf, dwg, svg, png, pdf, obj, stl, gltf, glb, 3mf, step or iges (or give a `path` with one of those extensions)",
         ));
     }
+    let file = format!("export.{format}");
+    let lost = super::file::loss_on_save(s, &file);
     // A png follows the 3D camera when one is set; every other format goes through the io layer.
     let bytes = match if format == "png" { super::view3d::render_png(s, 2400, 1600)? } else { None } {
         Some(png) => png,
-        None => (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?,
+        None => (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?,
     };
-    match path {
+    let mut r = match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
-            Ok(json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") }))
+            json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") })
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() })),
-    }
+        None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
+    };
+    super::file::report_not_saved(s, &mut r, &lost);
+    Ok(r)
 }
 
 // ---------- IMPORT ----------

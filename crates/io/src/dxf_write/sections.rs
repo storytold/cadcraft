@@ -384,6 +384,8 @@ struct LayoutWriteData<'a> {
     flags: i64,
     page: &'a PageSetup,
     view: Option<(Vec2, f64)>,
+    /// The layout's limits as read (`None`: the default 0,0 to 12,9).
+    limits: Option<(Vec2, Vec2)>,
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
@@ -448,14 +450,18 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(7, &page.plot_style_table);
     w.i(75, if page.scale_to_fit { 0 } else { 16 });
     w.f(147, scale);
-    w.f(148, 0.0);
-    w.f(149, 0.0);
+    // The paper image origin the file had (#2109), else 0,0.
+    let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
+    w.f(148, origin.x);
+    w.f(149, origin.y);
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
     w.i(71, tab);
-    w.p2(10, Vec2::ZERO);
-    w.p2(11, Vec2::new(12.0, 9.0));
+    // The layout's limits as the file had them (#2109), else 0,0 to 12,9.
+    let (lo, hi) = data.limits.filter(|(a, b)| a.is_finite() && b.is_finite()).unwrap_or((Vec2::ZERO, Vec2::new(12.0, 9.0)));
+    w.p2(10, lo);
+    w.p2(11, hi);
     w.p(12, Vec3::ZERO);
     w.p(14, Vec3::ZERO);
     w.p(15, Vec3::ZERO);
@@ -524,7 +530,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None },
+        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, limits: None },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
@@ -539,6 +545,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 flags: 1,
                 page: &l.page,
                 view: l.view,
+                limits: l.limits,
             },
         );
     }

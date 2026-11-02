@@ -311,3 +311,17 @@ fn zoom_extents_in_a_layout_viewport_ignores_the_model_tab_camera() {
     let with_camera = s.state().unwrap().view();
     assert!((with_camera.center - plan.center).len() < 1e-9 && (with_camera.height - plan.height).abs() < 1e-9, "{plan:?} vs {with_camera:?}");
 }
+
+/// PLOT and EXPORTPDF help name the `device` parameter, and PLOT's help every built-in device (#2557).
+#[test]
+fn plot_help_names_the_device_and_the_built_in_devices() {
+    for id in ["plot", "exportpdf"] {
+        let help = crate::find_command(id).map(|c| c.params).unwrap_or_default();
+        assert!(help.contains("device?"), "{id}: {help}");
+    }
+    let help = crate::find_command("plot").map(|c| c.params).unwrap_or_default();
+    for name in ["CADCraft PDF", "CADCraft PNG", "CADCraft SVG"] {
+        assert!(super::super::plotters::find_device(name).is_some(), "{name} is not a device");
+        assert!(help.contains(name), "plot help lacks {name}");
+    }
+}
