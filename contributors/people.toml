@@ -99,3 +99,7 @@ sync_github_name = true
 
 [people.GULERTOLGA]
 sync_github_name = true
+
+[people.Tyler-Chiriboga]
+real_name = "Tyler Chiriboga"
+sync_github_name = true
