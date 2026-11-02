@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **繁體中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,8 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. Unsupported languages fall back to English.
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. For Chinese, explicit script wins over region: `zh-TW` and `zh-HK` → `zh-Hant`,
+`zh-Hant` → `zh-Hant`, while `zh-Hans-TW` and bare `zh` → `zh`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
 
@@ -22,7 +23,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `zh-Hant`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -154,3 +155,57 @@ The implementation follows the display-time catalog pattern used by
 
 Translations are original work under `MIT OR Apache-2.0`, written from the meaning of
 CADCraft's English strings. Do not copy proprietary localization resources.
+
+## Traditional Chinese prototype (zh-Hant)
+
+The additional **繁體中文** choice uses the saved/control code `zh-Hant`. Explicit choice
+wins over the system locale. Auto recognizes `zh-Hant` and unscripted `zh-TW`, `zh-HK`,
+`zh-MO`, including underscore/POSIX forms. The choice uses the existing cadcraft.prefs storage; no separate legacy storage key is added. An explicit `Hans` or another script wins over
+region and does not select Traditional Chinese; bare `zh` and explicit `Hans` select Simplified Chinese (`zh`). BCP 47
+extensions do not change script selection.
+
+The Traditional Chinese catalog contains 1357 entries after seven supplemental entries
+from @icec8c8. Against upstream `7cee285`, the Ukrainian reference contains 1368 entries;
+11 reference keys still fall back to English. This is not complete interface coverage. The earlier
+integration from `b275021` to `9bfecc7` added 29 keys and removed the obsolete `WCS ⌄`
+key, increasing the catalog from 1322 to 1350 entries. Commands, accepted English
+keywords, CLI/MCP/control labels, drawing text and user names retain their source spelling.
+Traditional Chinese count entries have one plural form.
+
+Traditional Chinese prefers readable Microsoft JhengHei on Windows and Noto Sans CJK TC
+single-face OTF candidates on Linux/FreeBSD, then falls back to the existing generic CJK font.
+Unreadable, empty or oversized Traditional and generic CJK candidates are skipped. Other interfaces retain their
+existing system-font choices. On macOS, PingFang collections are scanned for the `PingFang TC` family name;
+the discovered face index is passed to egui rather than assuming a fixed collection order.
+Unreadable collections or collections without that family retain the generic fallback.
+This selection logic has portable synthetic tests; installed PingFang rendering still needs
+macOS validation. All embedded CJK faces remain available. The Traditional
+interface orders Hant faces first, while Simplified Chinese orders Hans faces first.
+The availability gate accepts installed CJK fonts or embedded Hans/Hant faces, including
+web builds made with CRAFT_FONTS_DIR. Without either, English is shown while the saved
+Chinese preference remains intact. No font files are added by this contribution.
+
+Regression tests cover script/region selection, saved preferences, plural templates,
+unchanged automation/user data, font ordering and stale reference keys. Missing translations
+remain non-fatal and are reported by `translation_gaps` through `cargo xtask i18n`.
+The current integration and supplement received static source/catalog checks only; no
+automated or simulated repository tests were run. Compilation, cargo xtask ci,
+native/embedded-font rendering, DPI, layout and persistence remain unverified here.
+The shared glyph test installs CJK fonts for `zh-Hant`; without an available font it
+prints a skip message and leaves glyph coverage unverified. Existing dedicated glyph
+and live-switch tests can also return early without CJK fonts, so a passing test count
+alone does not establish that Chinese rendering was exercised.
+
+In [PR #529's supplemental proposal](https://github.com/storytold/cadcraft/pull/529#issuecomment-6360828340),
+@icec8c8 reports Windows/Rust 1.99.0/MSVC validation of `8314bfb` plus the original patch
+(SHA-256 `5f8cdf1087ea7a797e7dfb7af04c4f3e110186067eb622234ff388dbb003765a`):
+23 i18n tests, a separately executed gap report, seven CI stages and a native Options
+screenshot review. These are contributor-reported historical results, not independently
+reproduced here or official CI results for this integration.
+
+Upstream already fixed the Unix-only `walk` test usage and retains the unconditional
+extreme-day calendar calculation assertion. The end-to-end `SystemTime` assertion for
+`u64::MAX / 2` seconds runs only where `checked_add` can represent it; otherwise that
+path is not validated. This supplement does not change those upstream tests.
+Original catalog attribution credits @rg147258; the seven additional entries by
+@icec8c8 are AI-assisted English-source translations under MIT OR Apache-2.0.

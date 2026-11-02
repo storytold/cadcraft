@@ -74,6 +74,15 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// Whether a localized legacy or typographic family name exactly matches `family`.
+    /// Collection callers use the name, rather than assuming a stable face index.
+    pub fn has_family_name(&self, family: &str) -> bool {
+        let Some(font) = self.font() else { return false };
+        [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME]
+            .into_iter()
+            .any(|id| font.localized_strings(id).any(|name| name.to_string().eq_ignore_ascii_case(family)))
+    }
+
     /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
     pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
         let Some(f) = self.font() else { return vec![None; chars.len()] };
