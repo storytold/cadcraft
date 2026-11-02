@@ -27,6 +27,13 @@ pub const MAX_PARAMS: usize = 4000;
 pub const MAX_SPLINE_POINTS: usize = 500;
 /// Most characteristic points of a block reference used as rigid constraint points.
 pub const MAX_RIGID_POINTS: usize = 256;
+/// Block members examined when sampling rigid points, counting those that contribute none, so a
+/// block padded with point-less entities cannot make sampling (repeated per Insert) unbounded.
+const MAX_RIGID_MEMBERS: usize = 100_000;
+/// Shared across every model built for one analysis request.
+pub(crate) const MAX_RIGID_WORK: usize = 1_000_000;
+/// How far past 1 a solved ellipse ratio may land by rounding and still be stored as 1.
+const RATIO_TOL: f64 = 1e-9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -74,6 +81,21 @@ pub(crate) struct Model {
     rigid: HashMap<Handle, Vec<Vec2>>,
 }
 
+impl Model {
+    /// Work for a spline that an endpoint residual actually reconstructs. Fit interpolation
+    /// uses dense Gaussian elimination (cubic); control splines clone and evaluate their template.
+    pub(crate) fn spline_reconstruct_cost(&self, handle: Handle) -> f64 {
+        let Some(s) = self.splines.get(&handle) else { return 0.0 };
+        let n = s.fit.len() as f64;
+        if fit_mode(s) {
+            n * n * n
+        } else {
+            let n = s.control.len() as f64;
+            n * n
+        }
+    }
+}
+
 /// Can this entity take part in constraints?
 pub fn supported(kind: &EntityKind) -> bool {
     matches!(
@@ -93,13 +115,26 @@ pub fn supported(kind: &EntityKind) -> bool {
 /// centres, vertices, nested insertion points) of the block's own objects, at most
 /// [`MAX_RIGID_POINTS`]. Nested blocks are not entered.
 pub fn rigid_points(d: &Drawing, ins: &Insert) -> Vec<Vec2> {
+    let mut members_left = MAX_RIGID_MEMBERS;
+    rigid_points_budgeted(d, ins, &mut members_left)
+}
+
+/// Sample finite block points within per-insert and caller-shared member limits.
+/// Members that contribute no points still consume traversal work; nested blocks are not entered.
+fn rigid_points_budgeted(d: &Drawing, ins: &Insert, members_left: &mut usize) -> Vec<Vec2> {
     let Some(block) = d.block(&ins.block) else { return Vec::new() };
     let m = ins.transform(block.base.xy());
     let mut out = Vec::new();
+    // Bound the members examined, not only the points collected: entities that contribute no
+    // points (Text, Ray, …) still cost traversal, so a block full of them — scanned again for
+    // every Insert — would otherwise be unbounded (CWE-407).
+    let mut examined = 0usize;
     for e in block.entities.iter() {
-        if out.len() >= MAX_RIGID_POINTS {
+        examined += 1;
+        if out.len() >= MAX_RIGID_POINTS || examined > MAX_RIGID_MEMBERS || *members_left == 0 {
             break;
         }
+        *members_left -= 1;
         let pts: Vec<Vec2> = match &e.kind {
             EntityKind::Line(l) => vec![l.a.xy(), l.b.xy()],
             EntityKind::Arc(a) => {
@@ -152,6 +187,83 @@ fn fit_mode(s: &GSpline) -> bool {
 impl Model {
     /// Build a model for the given entities. Unsupported or missing entities are skipped.
     pub fn build(d: &Drawing, handles: &[Handle]) -> Model {
+        let mut members_left = MAX_RIGID_WORK;
+        Self::build_budgeted(d, handles, &mut members_left)
+    }
+
+    /// Add the parameters of one supported entity to `m`, and return its shape; `None` when it is
+    /// left out (too large, degenerate or unsupported).
+    fn add_params(m: &mut Model, d: &Drawing, h: Handle, kind: &EntityKind, off: usize, members_left: &mut usize) -> Option<Shape> {
+        let shape = match kind {
+            EntityKind::Line(l) => {
+                m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
+                Shape::Line
+            }
+            EntityKind::Circle(c) => {
+                m.x0.extend([c.center.x, c.center.y, c.radius]);
+                Shape::Circle
+            }
+            EntityKind::Arc(a) => {
+                m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
+                Shape::Arc
+            }
+            EntityKind::LwPolyline(p) => {
+                if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
+                    return None;
+                }
+                for v in &p.vertices {
+                    m.x0.extend([v.p.x, v.p.y]);
+                }
+                Shape::Poly { n: p.vertices.len(), closed: p.closed }
+            }
+            EntityKind::Point(p) => {
+                m.x0.extend([p.p.x, p.p.y]);
+                Shape::Point
+            }
+            EntityKind::Ellipse(el) => {
+                let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
+                let arc = !ell.is_full();
+                m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
+                if arc {
+                    m.x0.extend([el.start, el.end]);
+                }
+                Shape::Ellipse { arc }
+            }
+            EntityKind::Spline(sp) => {
+                let fit = fit_mode(sp);
+                let pts = if fit { &sp.fit } else { &sp.control };
+                let n = pts.len();
+                if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
+                    return None;
+                }
+                for p in pts {
+                    m.x0.extend([p.x, p.y]);
+                }
+                // Fit points interpolate exactly, so the curve's ends are the first and last
+                // fit point; a control polygon's ends are its first and last points when the
+                // knots are clamped.
+                let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
+                // Missing weights default to 1 in eval; only excess weights are unused.
+                let mut kept = sp.clone();
+                kept.weights.truncate(kept.control.len());
+                m.splines.insert(h, kept);
+                Shape::Spline { n, fit, ends }
+            }
+            EntityKind::Insert(ins) => {
+                let base = Vec2::new(ins.insert.x, ins.insert.y);
+                let pts: Vec<Vec2> = rigid_points_budgeted(d, ins, members_left).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
+                m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
+                let n = pts.len();
+                m.rigid.insert(h, pts);
+                Shape::Insert { n }
+            }
+            _ => return None,
+        };
+        Some(shape)
+    }
+
+    /// Build solver parameters for supported entities while sharing rigid-member sampling work with other models.
+    pub(crate) fn build_budgeted(d: &Drawing, handles: &[Handle], members_left: &mut usize) -> Model {
         let mut m = Model::default();
         for &h in handles {
             if m.index.contains_key(&h) {
@@ -159,68 +271,7 @@ impl Model {
             }
             let Some(e) = d.entity(h) else { continue };
             let off = m.x0.len();
-            let shape = match &e.kind {
-                EntityKind::Line(l) => {
-                    m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
-                    Shape::Line
-                }
-                EntityKind::Circle(c) => {
-                    m.x0.extend([c.center.x, c.center.y, c.radius]);
-                    Shape::Circle
-                }
-                EntityKind::Arc(a) => {
-                    m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
-                    Shape::Arc
-                }
-                EntityKind::LwPolyline(p) => {
-                    if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
-                        continue;
-                    }
-                    for v in &p.vertices {
-                        m.x0.extend([v.p.x, v.p.y]);
-                    }
-                    Shape::Poly { n: p.vertices.len(), closed: p.closed }
-                }
-                EntityKind::Point(p) => {
-                    m.x0.extend([p.p.x, p.p.y]);
-                    Shape::Point
-                }
-                EntityKind::Ellipse(el) => {
-                    let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
-                    let arc = !ell.is_full();
-                    m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
-                    if arc {
-                        m.x0.extend([el.start, el.end]);
-                    }
-                    Shape::Ellipse { arc }
-                }
-                EntityKind::Spline(sp) => {
-                    let fit = fit_mode(sp);
-                    let pts = if fit { &sp.fit } else { &sp.control };
-                    let n = pts.len();
-                    if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
-                        continue;
-                    }
-                    for p in pts {
-                        m.x0.extend([p.x, p.y]);
-                    }
-                    // Fit points interpolate exactly, so the curve's ends are the first and last
-                    // fit point; a control polygon's ends are its first and last points when the
-                    // knots are clamped.
-                    let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
-                    m.splines.insert(h, sp.clone());
-                    Shape::Spline { n, fit, ends }
-                }
-                EntityKind::Insert(ins) => {
-                    let base = Vec2::new(ins.insert.x, ins.insert.y);
-                    let pts: Vec<Vec2> = rigid_points(d, ins).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
-                    m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
-                    let n = pts.len();
-                    m.rigid.insert(h, pts);
-                    Shape::Insert { n }
-                }
-                _ => continue,
-            };
+            let Some(shape) = Self::add_params(&mut m, d, h, &e.kind, off, members_left) else { continue };
             if m.x0.len() > MAX_PARAMS || m.x0.get(off..).unwrap_or(&[]).iter().any(|v| !v.is_finite()) {
                 m.x0.truncate(off);
                 continue;
@@ -435,6 +486,18 @@ impl Model {
         }
     }
 
+    /// The points of an object a Fix locks directly (ends, centre, vertices, insertion point).
+    pub fn point_refs(&self, h: Handle) -> Vec<GeomRef> {
+        let Some(s) = self.slot(h) else { return Vec::new() };
+        let at = |sub: Sub| GeomRef { handle: h, sub };
+        match s.shape {
+            Shape::Line => vec![at(Sub::Start), at(Sub::End)],
+            Shape::Point => vec![at(Sub::Whole)],
+            Shape::Circle | Shape::Arc | Shape::Ellipse { .. } | Shape::Insert { .. } => vec![at(Sub::Center)],
+            Shape::Poly { n, .. } | Shape::Spline { n, .. } => (0..n).filter_map(|i| u32::try_from(i).ok()).map(|i| at(Sub::Vertex(i))).collect(),
+        }
+    }
+
     /// Parameters a Fix on this reference locks directly. `None` when the reference is a derived
     /// point (fixed through a residual instead).
     pub fn lock_indices(&self, r: &GeomRef) -> Option<Vec<usize>> {
@@ -460,6 +523,57 @@ impl Model {
             _ => return None,
         };
         Some(v)
+    }
+
+    /// Can `write_back` store `x` as it is? An ellipse keeps 0 < ratio <= 1, its major axis the
+    /// longer one: a solution past that is stored with its axes swapped or its minor axis
+    /// mirrored (see [`Model::stored_form`]), which renumbers the axis ends.
+    pub fn storable(&self, x: &[f64]) -> bool {
+        self.slots.iter().all(|s| match s.shape {
+            Shape::Ellipse { .. } => x.get(s.off + 4).is_some_and(|r| *r > 0.0 && *r <= 1.0 + RATIO_TOL),
+            _ => true,
+        })
+    }
+
+    /// `x` with every ellipse re-expressed as [`Model::write_back`] stores it (the same curve with
+    /// the major axis the longer one, a full ellipse's negative ratio made positive), so the
+    /// constraints can be checked against what would be stored. `None` when an elliptical arc has
+    /// a negative ratio or an ellipse a zero one.
+    pub fn stored_form(&self, x: &[f64]) -> Option<Vec<f64>> {
+        let mut xc = x.to_vec();
+        for s in &self.slots {
+            let Shape::Ellipse { arc } = s.shape else { continue };
+            let o = s.off;
+            let mut ratio = *x.get(o + 4)?;
+            if ratio < 0.0 && !arc {
+                ratio = -ratio;
+            }
+            if ratio <= 0.0 {
+                return None;
+            }
+            if ratio > 1.0 + RATIO_TOL {
+                let major = p2(x, o + 2)?.perp() * ratio;
+                *xc.get_mut(o + 2)? = major.x;
+                *xc.get_mut(o + 3)? = major.y;
+                ratio = 1.0 / ratio;
+                if arc {
+                    *xc.get_mut(o + 5)? -= std::f64::consts::FRAC_PI_2;
+                    *xc.get_mut(o + 6)? -= std::f64::consts::FRAC_PI_2;
+                }
+            }
+            *xc.get_mut(o + 4)? = ratio;
+        }
+        Some(xc)
+    }
+
+    /// The parameter `stored_form` gives the point at parameter `t` on ellipse `h` (unchanged for
+    /// any other object): `-t` where a negative ratio was made positive, a quarter turn back where
+    /// the axes were swapped.
+    pub fn stored_t(&self, x: &[f64], h: Handle, t: f64) -> f64 {
+        let Some(s) = self.slot(h) else { return t };
+        let (Shape::Ellipse { .. }, Some(&ratio)) = (s.shape, x.get(s.off + 4)) else { return t };
+        let (t, ratio) = if ratio < 0.0 { (-t, -ratio) } else { (t, ratio) };
+        if ratio > 1.0 + RATIO_TOL { t - std::f64::consts::FRAC_PI_2 } else { t }
     }
 
     /// Write solved parameters back. Returns the handles that moved.
@@ -530,8 +644,9 @@ impl Model {
                             [a, b] if arc => (*a, *b),
                             _ => (el.start, el.end),
                         };
-                        // Keep the stored form: the major axis is the longer one.
-                        if ratio > 1.0 {
+                        // Keep the stored form: the major axis is the longer one. `storable` lets a
+                        // solved ratio exceed 1 only by rounding: that is a circle, not a swap.
+                        if ratio > 1.0 + RATIO_TOL {
                             major = major.perp() * ratio;
                             ratio = 1.0 / ratio;
                             if arc {
@@ -571,5 +686,62 @@ impl Model {
             }
         }
         moved
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use cadcraft_doc::{Block, Common, Entity, Line, Space};
+    use cadcraft_geom::Vec3;
+    use std::sync::Arc;
+
+    /// Writing an unchanged model back leaves partial rational weights and the original spline geometry intact.
+    #[test]
+    fn write_back_keeps_partial_rational_weights() {
+        let mut drawing = Drawing::default();
+        let mut spline = GSpline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 2.0), Vec2::new(3.0, 0.0)], 2);
+        spline.weights = vec![2.0, 0.5];
+        let h = drawing.add(&Space::Model, Common::default(), EntityKind::Spline(spline.clone())).unwrap();
+        let model = Model::build(&drawing, &[h]);
+        model.write_back(&mut drawing, &model.x0);
+        let EntityKind::Spline(after) = &drawing.entity(h).unwrap().kind else { panic!("spline") };
+        assert_eq!(after.weights, spline.weights);
+        for i in 0..=10 {
+            assert!(after.eval(i as f64 / 10.0).near(spline.eval(i as f64 / 10.0), 1e-12));
+        }
+    }
+
+    /// A second model receives no sampled block points after the first model spends the shared member budget.
+    #[test]
+    fn rigid_sampling_budget_is_shared_between_models() {
+        let mut d = Drawing::default();
+        let mut block = Block::new("BAR");
+        for _ in 0..3 {
+            block.entities.push(Entity {
+                handle: d.new_handle(),
+                common: Common::default(),
+                kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }),
+            });
+        }
+        d.blocks.insert("BAR".into(), Arc::new(block));
+        let ins = Insert {
+            block: "BAR".into(),
+            insert: Vec3::ZERO,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let mut budget = 2;
+        let first = Model::build_budgeted(&d, &[h], &mut budget);
+        assert_eq!(first.rigid[&h].len(), 4);
+        assert_eq!(budget, 0);
+        let next = Model::build_budgeted(&d, &[h], &mut budget);
+        assert!(next.rigid[&h].is_empty());
     }
 }

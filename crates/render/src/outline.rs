@@ -95,7 +95,17 @@ fn odd_cover(spans: &[(f64, f64)]) -> Vec<(f64, f64)> {
 }
 
 /// Joins segments that share end points into polylines (closed loops come back to their start).
-fn chain(segs: Vec<(Vec2, Vec2)>) -> Vec<Vec<Vec2>> {
+fn chain(mut segs: Vec<(Vec2, Vec2)>) -> Vec<Vec<Vec2>> {
+    // Hash-map iteration must not choose a contour's starting point or direction: each
+    // redraw would shift the dash phase. Canonicalize endpoints and traversal order using
+    // coordinates, so translating a region keeps the same starts and directions too.
+    let cmp = |a: Vec2, b: Vec2| a.x.total_cmp(&b.x).then_with(|| a.y.total_cmp(&b.y));
+    for (a, b) in &mut segs {
+        if cmp(*a, *b).is_gt() {
+            std::mem::swap(a, b);
+        }
+    }
+    segs.sort_unstable_by(|(a, b), (c, d)| cmp(*a, *c).then_with(|| cmp(*b, *d)));
     let mut at: HashMap<Key, Vec<usize>> = HashMap::new();
     for (i, (a, b)) in segs.iter().enumerate() {
         at.entry(key(*a)).or_default().push(i);
@@ -155,6 +165,28 @@ mod tests {
         let expected = perimeter(10.0) + perimeter(6.0);
         assert!((total_len(&lines) - expected).abs() < 1e-6, "{} vs {expected}: no slab cuts left inside", total_len(&lines));
         assert!(lines.iter().all(|l| l.first().zip(l.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-9)), "loops close");
+    }
+
+    #[test]
+    fn contours_keep_their_start_direction_and_order_between_calls() {
+        let p = |x, y| Vec2::new(x, y);
+        // An outline-font-like hole and a separate filled island, triangulated by slabs.
+        let tris = crate::fill::triangulate_evenodd(&[
+            vec![p(-4.0, -3.0), p(5.0, -3.0), p(5.0, 6.0), p(-4.0, 6.0)],
+            vec![p(-2.0, -1.0), p(3.0, -1.0), p(3.0, 4.0), p(-2.0, 4.0)],
+            vec![p(8.0, 0.0), p(11.0, 0.0), p(11.0, 2.0), p(8.0, 2.0)],
+        ]);
+        let expected = fill_outlines(&tris);
+        assert_eq!(expected.len(), 3);
+        for _ in 0..64 {
+            assert_eq!(fill_outlines(&tris), expected, "a repaint must not move the dash origin or reverse its direction");
+        }
+        let reversed: Vec<Vec2> = tris.as_chunks::<3>().0.iter().rev().flat_map(|tri| tri.iter().rev().copied()).collect();
+        assert_eq!(fill_outlines(&reversed), expected, "triangle order and winding do not move the contour's dash origin");
+        let shift = p(100.0, 100.0);
+        let moved: Vec<_> = tris.iter().map(|q| *q + shift).collect();
+        let moved_expected: Vec<Vec<_>> = expected.iter().map(|line| line.iter().map(|q| *q + shift).collect()).collect();
+        assert_eq!(fill_outlines(&moved), moved_expected, "translation preserves the contour's relative dash anchor");
     }
 
     #[test]
