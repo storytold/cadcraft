@@ -479,23 +479,41 @@ enum Strings {
 fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
     let mut out = Vec::with_capacity(tags.len() * 16);
     for t in tags {
+        if let Value::Hex(h) = &t.value {
+            // A binary chunk holds at most 127 bytes (254 hex digits); longer data is several
+            // groups of the same code. An empty chunk is still one group.
+            let mut chunks: Vec<&[u8]> = h.as_bytes().chunks(2 * MAX_HEX_CHUNK).collect();
+            if chunks.is_empty() {
+                chunks.push(&[]);
+            }
+            for chunk in chunks {
+                let _ = write!(out, "{:>3}\r\n", t.code);
+                out.extend_from_slice(chunk);
+                out.extend_from_slice(b"\r\n");
+            }
+            continue;
+        }
         let _ = write!(out, "{:>3}\r\n", t.code);
         match &t.value {
             Value::Str(s) => push_string(s, strings, &mut out),
             Value::Real(r) => out.extend_from_slice(format_real(*r).as_bytes()),
             Value::Int(i) => out.extend_from_slice(i.to_string().as_bytes()),
             Value::Bool(b) => out.extend_from_slice(i64::from(*b).to_string().as_bytes()),
-            Value::Hex(h) => out.extend_from_slice(h.as_bytes()),
+            Value::Hex(_) => {}
         }
         out.extend_from_slice(b"\r\n");
     }
     out
 }
 
+/// The most bytes the DXF Reference allows in one binary chunk (groups 310–319, 1004), though
+/// the binary form's length byte could count 255.
+const MAX_HEX_CHUNK: usize = 127;
+
 /// Write tags as binary DXF (DXF Reference, "Binary DXF Files", R13+ layout): the sentinel,
 /// then per tag a 2-byte little-endian group code and the value in the binary form of the code's
 /// [`Kind`]: a zero-terminated string, an 8-byte real, a 2-, 4- or 8-byte integer, a 1-byte
-/// boolean, or a binary chunk (one length byte, then up to 255 bytes; longer data is split into
+/// boolean, or a binary chunk (one length byte, then up to 127 bytes; longer data is split into
 /// several groups of the same code). Strings are UTF-8 when `utf8` (R2007+), otherwise escaped as
 /// in [`write_ascii`]. A tag's value is converted to its code's kind, so a number written as text
 /// is stored as a number; a code outside the 16-bit range is skipped.
@@ -552,7 +570,7 @@ fn binary(tags: &[Tag], strings: Strings) -> Vec<u8> {
             Kind::Hex => {
                 let bytes = hex_bytes(&t.value.as_str());
                 // An empty chunk is still one group, as in ASCII.
-                let mut chunks: Vec<&[u8]> = bytes.chunks(255).collect();
+                let mut chunks: Vec<&[u8]> = bytes.chunks(MAX_HEX_CHUNK).collect();
                 if chunks.is_empty() {
                     chunks.push(&[]);
                 }

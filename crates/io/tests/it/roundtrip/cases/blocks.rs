@@ -93,6 +93,7 @@ pub(crate) fn attributes(family: &str) -> Vec<Case> {
     let variants = match family {
         "flags" => 0..2,
         "constant" => 2..4,
+        "carets" => 0..1,
         _ => 0..4,
     };
     for variant in variants {
@@ -106,6 +107,12 @@ pub(crate) fn attributes(family: &str) -> Vec<Case> {
                 definition.constant = variant & 2 != 0;
                 value.invisible = definition.invisible;
                 value.constant = definition.constant;
+            }
+            "carets" => {
+                // DXF writes a caret as `^ ` and a tab as `^I`; a DWG holds them as typed.
+                definition.prompt = "Prompt ^ one".into();
+                definition.text.value = "Default ^ two".into();
+                value.text.value = "Value ^ three ^I\tfour^".into();
             }
             "modes" => {
                 definition.modes.verify = variant & 1 != 0;

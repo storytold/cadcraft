@@ -95,6 +95,24 @@ pub(crate) fn tolerances() -> Vec<Case> {
     )]
 }
 
+/// A dimension whose text has a caret before a space and a typed `^I`.
+pub(crate) fn dimension_carets() -> Vec<Case> {
+    let mut cases = dimensions();
+    cases.truncate(1);
+    for case in &mut cases {
+        case.name = "dimension/carets".into();
+        let handles: Vec<_> = case.drawing.model.iter().map(|e| e.handle).collect();
+        for handle in handles {
+            case.drawing.model.modify(handle, |e| {
+                if let EntityKind::Dimension(d) = &mut e.kind {
+                    d.text = "<> ^ mm ^I".into();
+                }
+            });
+        }
+    }
+    cases
+}
+
 pub(crate) fn dimensions() -> Vec<Case> {
     [DimKind::Linear { rotation: 0.0 }, DimKind::Aligned]
         .map(|kind| {

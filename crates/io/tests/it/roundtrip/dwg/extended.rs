@@ -244,7 +244,6 @@ fn leaders_3d() {
     check(geometry::leaders(true));
 }
 #[test]
-#[ignore = "Confirmed shared DXF loss: ATTRIB constant flag becomes false"]
 fn constant_attributes() {
     check(blocks::attributes("constant"));
 }
@@ -334,7 +333,6 @@ fn header_variables() {
     collection(collections::headers(), collections::assert_headers);
 }
 #[test]
-#[ignore = "Confirmed DWG loss: current layer CLAYER becomes 0"]
 fn header_current_layer() {
     collection(collections::named_header_reference("CLAYER"), collections::assert_headers);
 }

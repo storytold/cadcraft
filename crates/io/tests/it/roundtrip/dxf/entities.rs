@@ -75,6 +75,10 @@ fn text_literal_escapes() {
     check(cases::text_literal_escapes());
 }
 #[test]
+fn text_carets() {
+    check(cases::text_carets());
+}
+#[test]
 fn text_heights() {
     check(cases::text_heights());
 }
@@ -109,13 +113,16 @@ fn text_alignment_without_points() {
 }
 
 #[test]
-#[ignore = "Known writer loss: ByBlock plot style becomes ByLayer on the first R2000 ASCII save"]
 fn plot_style_byblock_is_preserved() {
     check(cases::byblock_plot_style());
 }
 
 #[test]
-#[ignore = "Known writer loss: groups 210/220/230 are omitted; a LINE's normal becomes (0,0,1)"]
 fn nondefault_extrusion_is_preserved() {
     check(cases::extrusions());
+}
+
+#[test]
+fn nondefault_extrusion_keeps_arcs_ellipses_and_text() {
+    check(cases::extrusion_entities());
 }

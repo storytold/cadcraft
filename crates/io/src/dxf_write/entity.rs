@@ -3,7 +3,8 @@ use super::common::{attrib_common, common, common_x, dim_xdata, layer_and_props,
 use super::ctx::Ctx;
 use super::layout::paper_view;
 use super::{
-    Bounds2, Color, DimKind, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3, Version, W, dxf_ext,
+    Bounds2, Color, DimKind, Drawing, Entity, EntityKind, Gradient, HAlign, Handle, HashMap, Hatch, Leader, MLeader, Point, Text, VAlign, Vec2, Vec3,
+    Version, W, dxf_ext,
 };
 
 /// The persistent reactors of boundary objects: each source object of an associative hatch in
@@ -126,27 +127,43 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             w.s(0, "CIRCLE");
             common(w, e, owner, paper, "AcDbCircle");
             thickness(w, e);
-            w.p(10, c.center);
+            w.p(10, to_ocs(e, c.center));
             w.f(40, c.radius);
+            extrusion(w, e);
         }
         EntityKind::Arc(a) => {
             w.s(0, "ARC");
             common(w, e, owner, paper, "AcDbCircle");
             thickness(w, e);
-            w.p(10, a.center);
+            w.p(10, to_ocs(e, a.center));
             w.f(40, a.radius);
+            extrusion(w, e);
             w.s(100, "AcDbArc");
-            w.f(50, a.start.to_degrees());
-            w.f(51, a.end.to_degrees());
+            // The reader turns the angles round in a mirrored OCS; this is its inverse.
+            let (start, end) = if e.common.extrusion.z < 0.0 {
+                (cadcraft_geom::norm_angle(std::f64::consts::PI - a.end), cadcraft_geom::norm_angle(std::f64::consts::PI - a.start))
+            } else {
+                (a.start, a.end)
+            };
+            w.f(50, start.to_degrees());
+            w.f(51, end.to_degrees());
         }
         EntityKind::Ellipse(el) => {
             w.s(0, "ELLIPSE");
             common(w, e, owner, paper, "AcDbEllipse");
             w.p(10, el.center);
             w.p(11, el.major);
+            extrusion(w, e);
             w.f(40, el.ratio);
-            w.f(41, el.start);
-            w.f(42, el.end);
+            // Centre and major axis are WCS, so only the parameters turn round under (0,0,-1); a
+            // full ellipse is symmetric and stays as it is (the reader's rule, inverted).
+            let (start, end) = if e.common.extrusion.z < 0.0 && (cadcraft_geom::ccw_sweep(el.start, el.end) - std::f64::consts::TAU).abs() > 1e-9 {
+                (cadcraft_geom::norm_angle(-el.end), cadcraft_geom::norm_angle(-el.start))
+            } else {
+                (el.start, el.end)
+            };
+            w.f(41, start);
+            w.f(42, end);
         }
         EntityKind::LwPolyline(p) => {
             w.s(0, "LWPOLYLINE");
@@ -284,7 +301,12 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
-            text_tags(w, d, t, None, None);
+            if e.common.extrusion.z < 0.0 {
+                text_tags(w, d, &unmirror_text(e, t), None, None);
+            } else {
+                text_tags(w, d, t, None, None);
+            }
+            extrusion(w, e);
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -315,7 +337,16 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.p(10, t.insert);
             w.f(40, t.height);
             w.f(41, t.width);
-            w.i(71, i64::from(t.attach));
+            // Under (0,0,-1) the reader turns the text round and swaps left/right attachment;
+            // this is its inverse (both are involutions).
+            let mirrored = e.common.extrusion.z < 0.0;
+            let attach = match t.attach {
+                1 | 4 | 7 if mirrored => t.attach + 2,
+                3 | 6 | 9 if mirrored => t.attach - 2,
+                a => a,
+            };
+            let rotation = if mirrored { cadcraft_geom::norm_angle(t.rotation + std::f64::consts::PI) } else { t.rotation };
+            w.i(71, i64::from(attach));
             // Drawing direction: 5, by style.
             w.i(72, 5);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
@@ -329,9 +360,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
                 w.s(1, "");
             }
             w.s(7, &t.style);
-            if t.rotation != 0.0 {
-                w.f(50, t.rotation.to_degrees());
+            if rotation != 0.0 {
+                w.f(50, rotation.to_degrees());
             }
+            extrusion(w, e);
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
@@ -831,6 +863,52 @@ fn thickness(w: &mut W, e: &Entity) {
     if e.common.thickness != 0.0 {
         w.f(39, e.common.thickness);
     }
+}
+
+/// A TEXT as the reader would have it before mirroring it for an extrusion of (0,0,-1): the
+/// inverse of `mirror_text` (rotation turned round, left/right justification and the start/end
+/// points swapped), with the points in the OCS.
+fn unmirror_text(e: &Entity, t: &Text) -> Text {
+    let mut r = t.clone();
+    r.rotation = cadcraft_geom::norm_angle(-t.rotation);
+    let baseline = t.valign == VAlign::Baseline;
+    match t.halign {
+        HAlign::Right => {
+            r.halign = HAlign::Left;
+            r.align_pt = if baseline { None } else { Some(t.align_pt.unwrap_or(t.insert)) };
+        }
+        HAlign::Left => {
+            r.halign = HAlign::Right;
+            r.align_pt = Some(t.insert);
+        }
+        HAlign::Aligned | HAlign::Fit => {
+            r.insert = t.align_pt.unwrap_or(t.insert);
+            r.align_pt = Some(t.insert);
+        }
+        HAlign::Center | HAlign::Middle => {}
+    }
+    r.insert = to_ocs(e, r.insert);
+    r.align_pt = r.align_pt.map(|p| to_ocs(e, p));
+    r
+}
+
+/// A model (world) point in the entity's OCS, for the entities whose DXF points are OCS: the
+/// inverse of the reader's OCS → WCS. The frame is orthonormal, so its inverse is its transpose.
+fn to_ocs(e: &Entity, p: Vec3) -> Vec3 {
+    let n = e.common.extrusion;
+    if !n.is_finite() || n == Vec3::ZERO {
+        return p;
+    }
+    let m = cadcraft_geom::Mat4::ocs(n);
+    if m == cadcraft_geom::Mat4::IDENTITY {
+        return p;
+    }
+    let m = &m.m;
+    Vec3::new(
+        m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z,
+        m[0][1] * p.x + m[1][1] * p.y + m[2][1] * p.z,
+        m[0][2] * p.x + m[1][2] * p.y + m[2][2] * p.z,
+    )
 }
 
 /// The extrusion (210) of an entity whose points are world coordinates, when it is not the Z axis.

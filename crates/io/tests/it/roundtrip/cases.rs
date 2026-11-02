@@ -154,6 +154,46 @@ pub(super) fn extrusions() -> Vec<Case> {
         .into()
 }
 
+/// Arcs, an elliptical arc, MTEXT and justified TEXT under each non-default extrusion: the reader
+/// turns angles, rotation and justification round for (0,0,-1), so the writer must turn them back.
+pub(super) fn extrusion_entities() -> Vec<Case> {
+    use cadcraft_doc::{Arc, Ellipse, MText};
+    [Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, 1.0, 0.0)]
+        .map(|extrusion| {
+            let mirrored = extrusion.z < 0.0;
+            let common = Common { extrusion, ..Common::default() };
+            let mut drawing = drawing();
+            let mut kinds = vec![
+                EntityKind::Arc(Arc { center: Vec3::new(-7.25, 11.5, 4.75), radius: 3.125, start: 0.5, end: 2.25 }),
+                EntityKind::Ellipse(Ellipse { center: Vec3::new(1.5, -2.5, 3.0), major: Vec3::new(4.0, 0.0, 0.0), ratio: 0.5, start: 0.5, end: 2.0 }),
+                EntityKind::MText(MText {
+                    insert: Vec3::new(2.5, -3.75, 4.125),
+                    height: 2.0,
+                    width: 20.0,
+                    attach: 1,
+                    rotation: 0.5,
+                    style: "Standard".into(),
+                    contents: "Mirrored".into(),
+                    line_spacing: 1.0,
+                    line_spacing_exact: false,
+                    columns: None,
+                }),
+                EntityKind::Text(Text { rotation: 0.75, ..text() }),
+            ];
+            if mirrored {
+                // Reader-reachable forms of right-justified and aligned text under (0,0,-1).
+                let p = Vec3::new(2.5, -3.75, 4.125);
+                kinds.push(EntityKind::Text(Text { halign: HAlign::Right, align_pt: Some(p), ..text() }));
+                kinds.push(EntityKind::Text(Text { halign: HAlign::Aligned, align_pt: Some(Vec3::new(9.5, -3.75, 4.125)), ..text() }));
+            }
+            for kind in kinds {
+                drawing.add(&Space::Model, common.clone(), kind).unwrap();
+            }
+            Case { name: format!("extrusion-entities/{extrusion:?}"), drawing }
+        })
+        .into()
+}
+
 pub(super) fn foreign_xdata() -> Vec<Case> {
     let xdata = vec![
         RawTag { code: 1001, value: "ROUNDTRIP_TEST".into() },
@@ -199,6 +239,11 @@ pub(super) fn text_values() -> Vec<Case> {
 
 pub(super) fn text_literal_escapes() -> Vec<Case> {
     vec![entity_case("text/value/literal-escapes", Common::default(), EntityKind::Text(Text { value: r"\U+0041 \M+183A4 \P %%c".into(), ..text() }))]
+}
+
+/// A caret before a space, a typed `^I` and a plain tab in a TEXT: DXF encodes them, a DWG holds them as typed.
+pub(super) fn text_carets() -> Vec<Case> {
+    vec![entity_case("text/value/carets", Common::default(), EntityKind::Text(Text { value: "A ^ B ^I\tC^".into(), ..text() }))]
 }
 
 pub(super) fn text_heights() -> Vec<Case> {

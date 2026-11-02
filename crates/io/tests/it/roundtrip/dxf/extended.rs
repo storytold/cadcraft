@@ -168,7 +168,6 @@ fn mtext_long() {
     check(geometry::mtext_long());
 }
 #[test]
-#[ignore = "Confirmed DXF loss: MTEXT column group 48 is also read as Common.ltscale"]
 fn mtext_columns() {
     check(geometry::mtext_columns());
 }
@@ -203,12 +202,10 @@ fn wipeout_implicit_closure() {
     }
 }
 #[test]
-#[ignore = "Confirmed DXF loss: LEADER vertex Z coordinates become zero"]
 fn leaders_3d() {
     check(geometry::leaders(true));
 }
 #[test]
-#[ignore = "Confirmed DXF loss: ATTRIB constant flag becomes false"]
 fn constant_attributes() {
     check(blocks::attributes("constant"));
 }
@@ -239,6 +236,14 @@ fn unreferenced_blocks() {
 #[test]
 fn attribute_flags() {
     check(blocks::attributes("flags"));
+}
+#[test]
+fn attribute_carets() {
+    check(blocks::attributes("carets"));
+}
+#[test]
+fn dimension_carets() {
+    check(complex::dimension_carets());
 }
 #[test]
 fn attribute_modes() {

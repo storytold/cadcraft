@@ -119,7 +119,6 @@ fn plot_style_byblock_is_preserved() {
     check(cases::byblock_plot_style());
 }
 #[test]
-#[ignore = "Confirmed loss on the shared DXF path: non-default extrusion becomes (0,0,1)"]
 fn nondefault_extrusion_is_preserved() {
     check(cases::extrusions());
 }

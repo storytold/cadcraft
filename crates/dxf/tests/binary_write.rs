@@ -44,9 +44,11 @@ fn binary_converts_values_to_their_codes_kind() {
     let back = parse(&write_binary(&tags, true)).unwrap();
     assert_eq!(back[0], Tag::i(70, 12));
     assert_eq!(back[1], Tag::i(62, i64::from(i16::MAX)));
-    assert_eq!(back[2].code, 310);
-    assert_eq!(back[3].code, 310, "300 bytes are split into chunks of at most 255");
-    assert_eq!(back[2].str().len() + back[3].str().len(), 600);
+    // 300 bytes are split into chunks of at most 127 (the DXF Reference's limit): 127 + 127 + 46.
+    let chunks: Vec<_> = back.iter().filter(|t| t.code == 310).collect();
+    assert_eq!(chunks.len(), 3);
+    assert!(chunks.iter().all(|t| t.str().len() <= 254));
+    assert_eq!(chunks.iter().map(|t| t.str().len()).sum::<usize>(), 600);
 }
 
 #[test]

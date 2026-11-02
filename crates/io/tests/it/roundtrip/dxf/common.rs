@@ -168,14 +168,12 @@ fn reads_line_extrusion_without_changing_world_space_endpoints() {
 }
 
 #[test]
-#[ignore = "Known writer loss: a non-default extrusion is omitted; the independent LINE read test passes"]
 fn writes_nondefault_extrusion_groups() {
     // X/Y may be omitted at zero, but Z=-1 must not disappear into the default Z=1.
     assert_write(Common { extrusion: Vec3::new(0.0, 0.0, -1.0), ..Common::default() }, &[Tag::f(230, -1.0)], &[]);
 }
 
 #[test]
-#[ignore = "Known writer loss: ByLayer and ByBlock plot styles produce identical files"]
 fn writer_must_distinguish_bylayer_from_byblock_plot_style() {
     // The available group-380 HEADER enum is not sufficient evidence for a universal entity
     // encoding; do not prescribe an unverified tag here. Identical complete outputs prove the
