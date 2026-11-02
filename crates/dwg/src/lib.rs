@@ -142,7 +142,7 @@ fn mb(n: u64) -> String {
 #[cfg(not(no_dwg_bridge))]
 pub mod worker;
 #[cfg(not(no_dwg_bridge))]
-pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_noted, serve_if_asked, use_own_worker, use_worker};
+pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_noted, encode_noted_with, serve_if_asked, use_own_worker, use_worker};
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -731,13 +731,13 @@ mod native {
     const MIN_DWG_VERSION: acadrust::DxfVersion = acadrust::DxfVersion::AC1018;
 
     /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
-    /// (AC1018).
+    /// (AC1018), within [`Limits::DEFAULT`].
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
-        convert(dxf, None).map(|(dwg, _)| dwg)
+        convert(dxf, None, Limits::DEFAULT).map(|(dwg, _)| dwg)
     }
 
     /// Convert DXF bytes into a DWG file of `version`, a code from [`super::VERSIONS`] ("AC1032"),
-    /// whatever version the DXF declares.
+    /// whatever version the DXF declares, within [`Limits::DEFAULT`].
     pub fn dxf_to_dwg_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
         dxf_to_dwg_noted(dxf, version).map(|(dwg, _)| dwg)
     }
@@ -746,6 +746,13 @@ mod native {
     /// DXF type it can't write (other programs' custom entities and objects that the DWG reader
     /// didn't read from a DWG of this version), empty when the DWG keeps everything.
     pub fn dxf_to_dwg_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
+        dxf_to_dwg_noted_with(dxf, version, Limits::DEFAULT)
+    }
+
+    /// [`dxf_to_dwg_noted`] within `limits`: the DXF may be as large as `limits.max_dxf_bytes`.
+    /// Saving a drawing as DWG takes [`Limits::for_machine`], as opening one does, so a plan whose
+    /// rendition was over the default 1 GB can be saved as DWG where it could be opened.
+    pub fn dxf_to_dwg_noted_with(dxf: &[u8], version: &str, limits: Limits) -> Result<(Vec<u8>, super::Unwritten), String> {
         let v = match version.trim().to_ascii_uppercase().as_str() {
             "AC1015" => acadrust::DxfVersion::AC1015,
             "AC1018" => acadrust::DxfVersion::AC1018,
@@ -755,7 +762,7 @@ mod native {
             "AC1032" => acadrust::DxfVersion::AC1032,
             _ => return Err(super::unsupported(version)),
         };
-        convert(dxf, Some(v))
+        convert(dxf, Some(v), limits)
     }
 
     /// The current dimension and text styles' names from their handles: a DWG stores the
@@ -803,16 +810,19 @@ mod native {
         }
     }
 
-    fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<(Vec<u8>, super::Unwritten), String> {
+    fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>, limits: Limits) -> Result<(Vec<u8>, super::Unwritten), String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
         // interrupted once it starts (CWE-789). This bounds the large-input variant; the decoder
         // runs inside `catch_unwind` so a decode failure is reported rather than crashing.
-        if dxf.len() > Limits::DEFAULT.max_dxf_bytes {
+        if dxf.len() > limits.max_dxf_bytes {
             return Err(format!(
-                "DXF: the input is {}, larger than the {} CADCraft converts to DWG",
+                "DXF: the input is {}, larger than the {} CADCraft converts to DWG; it assumes {} of free memory \
+                 (CADCRAFT_MEMORY_GB sets what to assume, up to {})",
                 mb(dxf.len() as u64),
-                mb(Limits::DEFAULT.max_dxf_bytes as u64)
+                mb(limits.max_dxf_bytes as u64),
+                gb(limits.assumed_memory),
+                gb(Limits::MAX_DXF_BYTES * Limits::MEMORY_PER_DXF_BYTE)
             ));
         }
         let data = dxf.to_vec();
@@ -1001,7 +1011,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_noted};
+pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_noted, dxf_to_dwg_noted_with};
 
 /// What saving as DWG left out: how many records of each DXF type (upper case) the DWG writer
 /// can't write.
@@ -1056,6 +1066,10 @@ pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
 pub fn encode_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, Unwritten), String> {
     dxf_to_dwg_noted(dxf, version)
 }
+#[cfg(no_dwg_bridge)]
+pub fn encode_noted_with(dxf: &[u8], version: &str, limits: Limits) -> Result<(Vec<u8>, Unwritten), String> {
+    dxf_to_dwg_noted_with(dxf, version, limits)
+}
 
 #[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -1081,6 +1095,10 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 pub fn dxf_to_dwg_noted(_dxf: &[u8], _version: &str) -> Result<(Vec<u8>, Unwritten), String> {
     Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
+#[cfg(no_dwg_bridge)]
+pub fn dxf_to_dwg_noted_with(_dxf: &[u8], _version: &str, _limits: Limits) -> Result<(Vec<u8>, Unwritten), String> {
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -1092,14 +1110,16 @@ mod tests {
         use super::{Limits, gb, meminfo_available, memory_gb};
         assert_eq!(Limits::for_memory(Limits::DEFAULT_MEMORY), Limits::DEFAULT);
         assert_eq!(Limits::for_memory(2 << 30), Limits::DEFAULT, "less free memory keeps today's limit");
+        // In `u64`: a 32-bit build's `usize` can't hold these, and its limits stop at `usize::MAX`.
+        let fit = |n: u64| usize::try_from(n).unwrap_or(usize::MAX);
         let big = Limits::for_memory(125 << 30);
-        assert_eq!(big.max_dxf_bytes, (125usize << 30) / 16);
+        assert_eq!(big.max_dxf_bytes, fit((125u64 << 30) / 16));
         assert_eq!(big.assumed_memory, 125 << 30);
         assert_eq!(big.max_dwg_bytes, Limits::DEFAULT.max_dwg_bytes);
         assert_eq!(gb(big.assumed_memory), "125.0 GB");
         assert_eq!(Limits::for_memory(0), Limits::DEFAULT, "no free memory keeps today's limit too");
         let cap = Limits::for_memory(200 << 30);
-        assert_eq!(cap.max_dxf_bytes as u64, Limits::MAX_DXF_BYTES, "200 GB free: capped at 8 GB of DXF");
+        assert_eq!(cap.max_dxf_bytes, fit(Limits::MAX_DXF_BYTES), "200 GB free: capped at 8 GB of DXF");
         assert_eq!(gb(cap.assumed_memory), "128.0 GB", "the message names the memory the cap assumes");
         assert_eq!(Limits::for_memory(u64::MAX), cap, "the largest value: the cap, no overflow");
         assert_eq!(meminfo_available("MemTotal:       131072000 kB\nMemFree:          1 kB\nMemAvailable:   104857600 kB\n"), Some(100 << 30));
@@ -1147,6 +1167,22 @@ mod tests {
         let _panic = PanicIn::at("post_process");
         let err = dwg_to_dxf(&dwg).unwrap_err();
         assert!(err.contains("the DWG post-processing failed on this file"), "{err}");
+    }
+
+    /// The DXF to DWG conversion takes the limit it is given, as the DWG to DXF one does: a DXF
+    /// over it is refused with the memory the limit assumes named, and saving a drawing as DWG
+    /// passes `Limits::for_machine`, so what opened can be saved.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn converting_to_dwg_takes_the_limit_it_is_given() {
+        let dxf = MINIMAL_DXF.as_bytes();
+        let below = Limits { max_dxf_bytes: dxf.len() - 1, ..Limits::DEFAULT };
+        let err = dxf_to_dwg_noted_with(dxf, "AC1032", below).unwrap_err();
+        assert!(err.contains("CADCraft converts to DWG; it assumes 16.0 GB of free memory"), "{err}");
+        assert!(err.contains("CADCRAFT_MEMORY_GB sets what to assume, up to 128.0 GB"), "{err}");
+        assert!(dxf_to_dwg_noted_with(dxf, "AC1032", Limits { max_dxf_bytes: dxf.len(), ..Limits::DEFAULT }).is_ok(), "at the limit");
+        assert!(dxf_to_dwg_noted_with(dxf, "AC1018", Limits::for_memory(64 << 30)).is_ok());
+        assert!(dxf_to_dwg_as(dxf, "AC1032").is_ok(), "the default limit");
     }
 
     /// The DXF to DWG conversion reports a panic in its fix-ups as an error, not a crash (#2402).

@@ -143,9 +143,11 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 }
 
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
-/// there is one.
+/// there is one. The DXF may be as large as the machine's free memory allows
+/// (`Limits::for_machine`), as on reading, so a drawing that opened can be saved.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    cadcraft_dwg::encode_noted(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
+    let limits = cadcraft_dwg::Limits::for_machine();
+    cadcraft_dwg::encode_noted_with(dxf_write::dwg_bridge(d, version).as_bytes(), version.code(), limits).map_err(IoError::Format)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

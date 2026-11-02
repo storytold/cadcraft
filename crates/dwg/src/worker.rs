@@ -36,8 +36,9 @@ const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MAX_NOTES_BYTES: u64 = 64 << 20;
 /// Most bytes accepted as a written DWG.
 const MAX_DWG_REPLY: u64 = 2 << 30;
-/// Most bytes one request holds: the largest input, whichever the direction, and its header.
-const MAX_REQUEST: u64 = (2 << 30) + 256;
+/// Most bytes one request holds: the largest input, whichever the direction (a DXF to write may
+/// take up to [`Limits::MAX_DXF_BYTES`]), and its header.
+const MAX_REQUEST: u64 = Limits::MAX_DXF_BYTES + 256;
 
 struct Worker {
     program: PathBuf,
@@ -88,12 +89,22 @@ pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
 /// [`super::dxf_to_dwg_noted`] in the worker, when there is one. What the writer left out comes
 /// back as notes of `TYPE<tab>count`.
 pub fn encode_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
+    encode_noted_with(dxf, version, Limits::DEFAULT)
+}
+
+/// [`super::dxf_to_dwg_noted_with`] in the worker, when there is one: [`encode_noted`] within
+/// `limits`.
+pub fn encode_noted_with(dxf: &[u8], version: &str, limits: Limits) -> Result<(Vec<u8>, super::Unwritten), String> {
     if u8::try_from(version.len()).is_err() {
         return Err(super::unsupported(version));
     }
-    match call(&request(ENCODE, Limits::DEFAULT, version), dxf, MAX_DWG_REPLY, "writing this file") {
+    // Before starting a process, and so the same limit holds with or without one.
+    if dxf.len() > limits.max_dxf_bytes {
+        return super::dxf_to_dwg_noted_with(dxf, version, limits);
+    }
+    match call(&request(ENCODE, limits, version), dxf, MAX_DWG_REPLY, "writing this file") {
         Some(reply) => reply?.map(|(dwg, notes)| (dwg, unwritten_from(&notes))),
-        None => super::dxf_to_dwg_noted(dxf, version),
+        None => super::dxf_to_dwg_noted_with(dxf, version, limits),
     }
 }
 
@@ -257,9 +268,11 @@ fn handle(mut b: &[u8]) -> Reply {
     let assumed_memory = take_u64(&mut b).ok_or_else(bad)?;
     let version_len = take(&mut b, 1).and_then(<[u8]>::first).copied().ok_or_else(bad)?;
     let version = take(&mut b, usize::from(version_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
+    let limits = Limits { max_dwg_bytes, max_dxf_bytes, assumed_memory };
     match op {
-        DECODE => super::dwg_to_dxf_noted(b, Limits { max_dwg_bytes, max_dxf_bytes, assumed_memory }),
-        ENCODE => super::dxf_to_dwg_noted(b, version).map(|(dwg, left_out)| (dwg, left_out.iter().map(|(kind, n)| format!("{kind}\t{n}")).collect())),
+        DECODE => super::dwg_to_dxf_noted(b, limits),
+        ENCODE => super::dxf_to_dwg_noted_with(b, version, limits)
+            .map(|(dwg, left_out)| (dwg, left_out.iter().map(|(kind, n)| format!("{kind}\t{n}")).collect())),
         CRASH => std::process::abort(),
         _ => Err(bad()),
     }
