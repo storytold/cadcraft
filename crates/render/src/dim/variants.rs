@@ -168,7 +168,11 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
         (d.p15.xy(), d.p13.xy(), d.p14.xy(), d.defpt.xy())
     } else {
         let v = cadcraft_geom::line_line_infinite(d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.p15.xy()).map(|x| x.0).unwrap_or(d.p14.xy());
-        (v, d.p14.xy(), d.p15.xy(), d.p16.xy())
+        // Each leg's direction from the vertex: a line's far end, or its other end when that
+        // one is the vertex (a second line starting at the vertex, p15 = vertex, gave a zero leg
+        // and a 360° sweep).
+        let leg = |far: Vec2, near: Vec2| if far.dist(v) > 1e-9 { far } else { near };
+        (v, leg(d.p14.xy(), d.p13.xy()), leg(d.p15.xy(), d.defpt.xy()), d.p16.xy())
     };
     let r = vertex.dist(arc_pt).max(1e-9);
     let s = vertex.angle_to(a1);

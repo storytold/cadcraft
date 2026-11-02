@@ -2852,3 +2852,20 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }
+
+/// A two-line angular dimension whose second line starts at the vertex (p15 = vertex) measures the
+/// angle between the lines. The zero leg from the vertex to itself gave a 360° sweep.
+#[test]
+fn angular_dimension_with_a_leg_from_the_vertex_measures_60_degrees() {
+    let mut dm = dim(DimKind::Angular, Vec3::new(200.0, 0.0, 0.0), Vec3::new(260.0, 0.0, 0.0));
+    dm.p15 = Vec3::new(200.0, 0.0, 0.0);
+    dm.defpt = Vec3::new(230.0, 51.961_524_227_066_32, 0.0);
+    dm.p16 = Vec3::new(220.0, 5.0, 0.0);
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    let m: f64 = group(dxf_records(&pairs, "DIMENSION")[0], "42").unwrap().parse().unwrap();
+    // Group 42 is in radians for a dimension made here (see `an_angular_dimension_stores_its_angle_in_radians`).
+    assert!((m.to_degrees() - 60.0).abs() < 1e-6, "group 42 = {m}");
+}
