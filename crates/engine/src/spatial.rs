@@ -36,7 +36,10 @@ struct ChunkIx {
     serial: u32,
     key: usize,
     ents: Vec<Arc<Entity>>,
+    /// Selection bounds for each entity in the chunk (drawn geometry, tight lines).
     bounds: Vec<Bounds2>,
+    /// Bounds indexed in the R-tree (includes insertion points for snap candidate discovery).
+    tree_bounds: Vec<Bounds2>,
     /// Local indices of xlines and rays (unbounded; always candidates for pick and crossing).
     infinite: Vec<u32>,
 }
@@ -44,21 +47,22 @@ struct ChunkIx {
 impl ChunkIx {
     fn build(d: &Drawing, key: usize, items: &[Arc<Entity>]) -> ChunkIx {
         let mut infinite = Vec::new();
-        let bounds = items
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
-                    infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
-                }
-                crate::select::snap_bounds(d, e, None)
-            })
-            .collect();
+        let mut bounds = Vec::with_capacity(items.len());
+        let mut tree_bounds = Vec::with_capacity(items.len());
+        for (i, e) in items.iter().enumerate() {
+            if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
+                infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
+            }
+            let sel_b = crate::select::select_bounds(d, e, None);
+            let snap_b = crate::select::snap_bounds(d, e, Some(sel_b));
+            bounds.push(sel_b);
+            tree_bounds.push(snap_b);
+        }
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ChunkIx { serial, key, ents: items.to_vec(), bounds, infinite }
+        ChunkIx { serial, key, ents: items.to_vec(), bounds, tree_bounds, infinite }
     }
     fn items(&self) -> impl Iterator<Item = Item> + '_ {
-        self.bounds.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| {
+        self.tree_bounds.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| {
             GeomWithData::new(Rectangle::from_corners([b.min.x, b.min.y], [b.max.x, b.max.y]), (self.serial, u32::try_from(i).unwrap_or(u32::MAX)))
         })
     }

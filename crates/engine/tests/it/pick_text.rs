@@ -534,3 +534,71 @@ fn annotative_text_and_mtext_do_not_double_scale_in_selection() {
     let poly_inside = [Vec2::new(5.0, 88.0), Vec2::new(8.0, 88.0), Vec2::new(6.5, 92.0)];
     assert_eq!(select_polygon(d, &Space::Model, &poly_inside, true), vec![h_mtext], "crossing polygon inside scaled MText must select");
 }
+
+/// MLeader window selection excludes block insertion point from selection bounds,
+/// while preserving the insertion point for INS snap candidate discovery.
+#[test]
+fn mleader_window_selection_excludes_insertion_point() {
+    use cadcraft_doc::{Block, Circle, Entity, Insert, MLeader};
+    use cadcraft_engine::pointmod::snap_candidates;
+    use cadcraft_engine::snap::mode;
+    use cadcraft_geom::Vec3;
+    use std::sync::Arc;
+
+    let mut s = Session::new();
+    // 1. Create a block with geometry at (-50, -50).
+    // When inserted at (50, 50), the geometry sits at world coordinates (0, 0).
+    let mut blk = Block::new("OFFSET_BLK");
+    blk.entities.push(Entity::new(Handle(100), EntityKind::Circle(Circle { center: Vec3::new(-50.0, -50.0, 0.0), radius: 2.0 })));
+    s.doc_mut().unwrap().blocks.insert("OFFSET_BLK".into(), Arc::new(blk));
+
+    // 2. Add 260 points so spatial index is active (> 256 entities).
+    for i in 0..260 {
+        s.execute("point", &json!({ "at": [i * 10, 500] })).unwrap();
+    }
+
+    // 3. Add an MLeader whose leaders/landing span [0, 10] x [0, 10] and block is inserted at (50, 50).
+    // Its visible geometry is within [-5, 15] x [-5, 15], but insertion point is at (50, 50).
+    let ml = MLeader {
+        leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 0.0)]],
+        landing: Vec3::new(10.0, 10.0, 0.0),
+        dogleg: 1.0,
+        text: None,
+        style: "Standard".into(),
+        arrow_size: 1.0,
+        spline: false,
+        block: Some(Insert {
+            block: "OFFSET_BLK".into(),
+            insert: Vec3::new(50.0, 50.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            attribs: Vec::new(),
+        }),
+    };
+    let ml_h = s.add_entity(EntityKind::MLeader(ml)).unwrap();
+    let d = s.doc().unwrap();
+
+    // 4. Normal window enclosing the visible geometry [-5, 15] x [-5, 15] must select the MLeader
+    // even though the insertion point (50, 50) is outside the window.
+    let win_geom = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(15.0, 15.0));
+    assert_eq!(
+        select_window(d, &Space::Model, win_geom, false),
+        vec![ml_h],
+        "normal window enclosing drawn geometry must select MLeader even when insertion point is outside"
+    );
+
+    // 5. Normal window around the insertion point only [45, 55] x [45, 55] must NOT select the MLeader.
+    let win_insert = Bounds2::new(Vec2::new(45.0, 45.0), Vec2::new(55.0, 55.0));
+    assert!(select_window(d, &Space::Model, win_insert, false).is_empty(), "window around detached insertion point only must not select MLeader");
+
+    // 6. Snapping near insertion point (50, 50) must find INS snap candidate via spatial index.
+    let cands = snap_candidates(d, &Space::Model, Vec2::new(50.0, 50.0), 1.0, mode::INS, None, false);
+    assert!(
+        cands.iter().any(|hit| hit.mode == mode::INS && (hit.point - Vec2::new(50.0, 50.0)).len() < 1e-4),
+        "INS snap should be found at block insertion point: {cands:?}"
+    );
+}
