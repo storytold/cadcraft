@@ -3,7 +3,7 @@
 //! all said Z = 0, so a topographic drawing's levels couldn't be read in CADCraft.
 
 use cadcraft_engine::Session;
-use cadcraft_engine::doc::{EntityKind, Face3d, Handle, Line, LwPolyline, Point};
+use cadcraft_engine::doc::{EntityKind, Face3d, Handle, Line, LwPolyline, Point, PolyfaceMesh};
 use cadcraft_engine::geom::{PolyVertex, Vec2, Vec3};
 use serde_json::json;
 
@@ -54,6 +54,16 @@ fn id_reports_the_z_of_what_is_at_the_point() {
     s.cmdline("id").unwrap();
     s.cmdline("10,10").unwrap();
     assert!(s.log.iter().any(|l| l.contains("Z = 1883.5460")), "{:?}", s.log.iter().rev().take(3).collect::<Vec<_>>());
+}
+
+#[test]
+fn id_reports_the_z_on_a_polyface_mesh() {
+    let mut s = Session::new();
+    // A sloped TIN as two triangles: z = 1000 + x / 10 over (0..100, 0..100).
+    let vertices = vec![Vec3::new(0.0, 0.0, 1000.0), Vec3::new(100.0, 0.0, 1010.0), Vec3::new(100.0, 100.0, 1010.0), Vec3::new(0.0, 100.0, 1000.0)];
+    add(&mut s, EntityKind::PolyfaceMesh(PolyfaceMesh { vertices, faces: vec![[1, 2, -3, 0], [3, 4, -1, 0]] }));
+    s.cmdline("zoom e").ok();
+    assert!((z(&mut s, [50.0, 0.0]) - 1005.0).abs() < 1e-9, "on the mesh's edge");
 }
 
 fn z_given(s: &mut Session) -> f64 {

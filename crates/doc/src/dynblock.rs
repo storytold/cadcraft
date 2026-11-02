@@ -240,7 +240,9 @@ pub struct Action {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ActionKind {
-    /// Moves the vertices inside `frame` of the objects listed (all of an object not listed).
+    /// Moves the points of its objects inside `frame`: a line's or polyline's points inside it
+    /// (the whole of one outside it), any other object whole. `vertices` are the point indices the
+    /// file lists for each object, used only when the frame can't be tested (see `apply`).
     Stretch {
         frame: Vec<Vec2>,
         #[serde(serialize_with = "hex_vertices")]
