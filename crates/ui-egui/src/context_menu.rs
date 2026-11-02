@@ -200,9 +200,7 @@ pub fn choose(app: &mut CadApp, id: &str) {
         app.cmd.buffer.clear();
         app.cmdline("");
     } else if id == CANCEL {
-        // Escape.
-        app.cmd.buffer.clear();
-        app.session.cancel();
+        crate::cmdline::escape(app);
     } else if let Some(text) = id.strip_prefix(TYPE) {
         app.cmd.buffer.clear();
         app.cmdline(text);

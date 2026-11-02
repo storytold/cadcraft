@@ -1241,6 +1241,8 @@ fn insert(app: &mut CadApp, item: &Item, st: &State, explode: bool) -> bool {
             return false;
         }
     }
+    // The canvas reads this: a right-click at the insertion point cancels this placement.
+    app.canvas.palette_insert = Some(app.session.commands_started);
     true
 }
 
@@ -1321,6 +1323,34 @@ mod tests {
         assert_eq!(red.lines.first().map(|(c, _)| *c), Some(Some(egui::Color32::from_rgb(255, 0, 0))));
         let plain = shape(d, d.block("PLAIN").unwrap());
         assert_eq!(plain.lines.first().map(|(c, _)| *c), Some(None), "colour 7 follows the theme");
+    }
+
+    /// A quick right-click cancels the placement the palette started, at its insertion point only: a
+    /// typed INSERT keeps AutoCAD's Enter, and so does the palette's own scale prompt.
+    #[test]
+    fn right_click_cancels_a_palette_placement_at_its_insertion_point() {
+        use crate::canvas::right_click_cancels_placing;
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.session.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
+        make_block(&mut app.session, "BOLT");
+        let st = State { scale_on_screen: true, ..State::default() };
+        assert!(insert(&mut app, &item("BOLT"), &st, false));
+        assert!(right_click_cancels_placing(&app));
+        app.session.input(cadcraft_engine::Input::Keyword("Scale".into())).unwrap();
+        let asked = app.session.current_prompt().map(|p| p.message).unwrap_or_default();
+        assert_ne!(asked, "Specify insertion point", "the scale prompt is on screen: {asked}");
+        assert!(!right_click_cancels_placing(&app), "the scale prompt keeps Enter");
+        app.session.cancel();
+
+        assert!(insert(&mut app, &item("BOLT"), &State::default(), false));
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".into()));
+        assert!(right_click_cancels_placing(&app));
+        app.session.cancel();
+        assert!(!right_click_cancels_placing(&app), "nothing runs");
+
+        app.session.start("insert").unwrap();
+        app.session.input(cadcraft_engine::Input::Text("BOLT".into())).unwrap();
+        assert!(!right_click_cancels_placing(&app), "a typed INSERT is not the palette's");
     }
 
     fn item(name: &str) -> Item {
