@@ -323,6 +323,20 @@ fn a_pick_right_on_a_vertex_takes_the_segment_it_ends() {
 }
 
 #[test]
+fn a_pick_inside_a_segment_stays_on_its_side_of_a_cut() {
+    // A segment a millionth long between two vertices: a pick in it takes it, not the one before.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [10, 0], [10.000001, 0], [10000, 0]]), false);
+    trim(&mut s, p, [10.0000005, 0.0], None);
+    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)]), (false, false, &[(10.000001, 0.0, 0.0), (10000.0, 0.0, 0.0)])]);
+    // 1e9 long: half a unit up the second segment is on the second segment.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [1e9, 0], [1e9, 10]]), false);
+    trim(&mut s, p, [1e9, 0.5], None);
+    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (1e9, 0.0, 0.0)])]);
+}
+
+#[test]
 fn a_piece_whose_ends_only_come_near_stays_open_far_from_the_origin() {
     // 1e9 out, as survey coordinates in millimetres are: the piece left runs from the line's cut
     // to the polyline's end, 0.58 away, and stays open.
