@@ -13,4 +13,4 @@ workspace = true
 # 0.6.7 and 0.6.8 fix that but read some damaged DWGs as empty with no note (tests.rs, #800).
 [target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dependencies]
 # MPL-2.0: used as an unmodified dependency only (see plan/adr/0001 and NOTICE).
-acadrust = "0.6.5"
+acadrust = "0.6.6"

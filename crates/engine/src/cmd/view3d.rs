@@ -234,6 +234,8 @@ pub struct Render3d {
     pub png: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    /// The display list ran past the block-expansion budget and left block contents out (#1278).
+    pub truncated: bool,
 }
 
 /// The size a `width` x `height` request is drawn at: itself, or scaled down to keep the aspect
@@ -268,8 +270,8 @@ pub fn render_png_of_with_options(d: &cadcraft_doc::Drawing, v: View3d, options:
     if !camera.azimuth.is_finite() || !camera.elevation.is_finite() {
         return Err(bad("render", "invalid 3D camera angles"));
     }
-    let bounds = build_3d_with_options(d, &cadcraft_doc::Space::Model, &Options::default(), camera, options).bounds;
-    let view = raster::View::fit(&bounds, w, h, 0.05);
+    let list = build_3d_with_options(d, &cadcraft_doc::Space::Model, &Options::default(), camera, options);
+    let view = raster::View::fit(&list.bounds, w, h, 0.05);
     let image = Scene::new_with_options(d, camera, options).render(&view).ok_or_else(|| bad("render", "the 3D picture could not be drawn"))?;
     // The background comes from drawing nothing; the depth picture goes over it where it has pixels.
     let mut pixmap = raster::render(&cadcraft_render::DisplayList::default(), &view, &raster::RasterOptions::default())
@@ -280,7 +282,7 @@ pub fn render_png_of_with_options(d: &cadcraft_doc::Drawing, v: View3d, options:
         }
     }
     let png = pixmap.encode_png().map_err(|e| bad("render", format!("PNG: {e}")))?;
-    Ok(Render3d { png, width: w, height: h })
+    Ok(Render3d { png, width: w, height: h, truncated: list.truncated })
 }
 
 /// A PNG of model space seen through the session's 3D camera (see [`render_png_of`]); `None` when
@@ -324,6 +326,7 @@ mod tests {
     use std::f64::consts::{FRAC_PI_4, FRAC_PI_6};
 
     use super::*;
+    use cadcraft_geom::Vec3;
     use cadcraft_render::view3d::build_3d;
     use serde_json::json;
 
@@ -501,6 +504,37 @@ mod tests {
     fn png_size(png: &[u8]) -> (u32, u32) {
         let n = |i: usize| u32::from_be_bytes([png[i], png[i + 1], png[i + 2], png[i + 3]]);
         (n(16), n(20))
+    }
+
+    /// A 3D picture says when the block-expansion budget left block contents out, as the 2D
+    /// render does (#1278): a cube is whole, a MINSERT past the budget is not.
+    #[test]
+    fn the_3d_picture_reports_a_spent_block_budget() {
+        let v = View3d { azimuth: -FRAC_PI_4, elevation: FRAC_PI_6, orbiting: false };
+        let mut s = Session::new();
+        cube(&mut s);
+        assert!(!render_png_of(s.doc().unwrap(), v, 32, 32).unwrap().truncated);
+        let mut d = cadcraft_doc::Drawing::new_imperial();
+        let mut block = cadcraft_doc::Block::new("A");
+        block.entities.push(cadcraft_doc::Entity {
+            handle: cadcraft_doc::Handle(0x200),
+            common: cadcraft_doc::Common::default(),
+            kind: cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(1.0, 1.0, 1.0) }),
+        });
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "A".into(),
+            insert: Vec3::ZERO,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1_500,
+            rows: 1_500,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(insert)).unwrap();
+        assert!(render_png_of(&d, v, 32, 32).unwrap().truncated);
     }
 
     #[test]

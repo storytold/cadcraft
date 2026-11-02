@@ -212,6 +212,10 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                         inner
                     }
                 };
+                // The block draws translated by the insertion point (group 12), so its bounds
+                // move with it (#2634); the cache above keeps the block's own bounds.
+                let off = dm.insertion_point.xy();
+                let inner = if off == Vec2::ZERO { inner } else { Bounds2 { min: inner.min + off, max: inner.max + off } };
                 b = b.union(&inner);
             }
             b

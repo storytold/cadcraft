@@ -417,7 +417,9 @@ impl Backend for Headless {
                     if let Some(path) = str_p("path") {
                         std::fs::write(&path, &r.png).map_err(|e| format!("{path}: {e}"))?;
                     }
-                    return Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&r.png), "width": r.width, "height": r.height}));
+                    return Ok(
+                        json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&r.png), "width": r.width, "height": r.height, "truncated": r.truncated}),
+                    );
                 }
                 let list = cadcraft_render::build(&st.doc, &st.space, &opts);
                 let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
@@ -435,7 +437,7 @@ impl Backend for Headless {
                 if let Some(path) = str_p("path") {
                     std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
                 }
-                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
+                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated}))
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;
