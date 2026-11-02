@@ -104,8 +104,9 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
                 attach: 5,
                 rotation: g.text_angle,
                 style: d.dim_style(&dm.style).map(|st| st.text_style.clone()).unwrap_or_else(|| dm.style.clone()),
+                // The editor holds multiline text: a formula's `\`, `{` and `}` go in as letters.
                 contents: match dm.marks.formula.clone().filter(|f| crate::textformula::is_formula(f)) {
-                    Some(f) => f,
+                    Some(f) => cadcraft_doc::mtext_literal(&f),
                     None if dm.text.is_empty() => "<>".into(),
                     None => dm.text.clone(),
                 },
@@ -119,7 +120,10 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
     }
 }
 
-pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
+/// Set the text of object `h`. `from_editor`: `text` comes from the in-place editor, which
+/// writes a dimension's text as multiline text (a formula's braces and backslashes escaped);
+/// otherwise a dimension's text is taken as typed.
+pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str, from_editor: bool) -> Result<()> {
     if curves::is_locked(s, h) {
         return Err(other("The object is on a locked layer."));
     }
@@ -134,19 +138,24 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         EntityKind::MLeader(m) => {
             m.text.as_ref().map(|t| f(&t.formula).map(|f| cadcraft_doc::mtext_literal(&f)).unwrap_or_else(|| t.contents.clone())).unwrap_or_default()
         }
+        EntityKind::Dimension(d) if from_editor => f(&d.marks.formula).map(|f| cadcraft_doc::mtext_literal(&f)).unwrap_or_else(|| d.text.clone()),
         EntityKind::Dimension(d) => f(&d.marks.formula).unwrap_or_else(|| d.text.clone()),
         _ => String::new(),
     };
     // Multiline text comes back from the editor rewritten (its codes in the editor's own form):
     // compared in that form, an edit that changed nothing keeps the formula.
     let canonical = |x: &str| crate::mtext_edit::Formatted::from_contents(x).to_contents();
-    let multiline = matches!(k, EntityKind::MText(_) | EntityKind::MLeader(_));
+    let multiline = matches!(k, EntityKind::MText(_) | EntityKind::MLeader(_)) || (from_editor && matches!(k, EntityKind::Dimension(_)));
     let unchanged = shown == text || shown == text.replace('\n', "\\P") || (multiline && canonical(&shown) == canonical(&text.replace('\n', "\\P")));
     match &mut k {
         EntityKind::Text(t) => t.value = text.to_string(),
         EntityKind::AttDef(a) => a.text.value = text.to_string(),
         EntityKind::MText(t) => t.contents = text.replace('\n', "\\P"),
         EntityKind::Dimension(d) => {
+            // A formula from the editor is read without its codes (its escaped braces and
+            // backslashes are letters again); other text stays multiline text, as an override is.
+            let plain = cadcraft_fonts::plain_mtext(text);
+            let text = if from_editor && crate::textformula::is_formula(&plain) { plain.trim() } else { text };
             d.text = if text == "<>" { String::new() } else { text.to_string() };
             d.block = None;
         }
@@ -182,7 +191,7 @@ pub(super) fn run_textedit(s: &mut Session, p: &Value) -> Result<Value> {
     if text.len() > 1_000_000 {
         return Err(bad("textedit", "text is too long"));
     }
-    set_text(s, h, text)?;
+    set_text(s, h, text, false)?;
     Ok(json!({ "handle": h.hex() }))
 }
 
@@ -242,7 +251,7 @@ impl Interactive for TextEditM {
             (Some((h, _)), Input::Text(t) | Input::Keyword(t)) => {
                 let h = *h;
                 let before = curves::entity(s, h)?.kind;
-                set_text(s, h, &t)?;
+                set_text(s, h, &t, true)?;
                 self.edits.push((h, before));
                 self.h = None;
                 self.editor = None;
