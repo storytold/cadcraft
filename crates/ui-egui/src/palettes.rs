@@ -710,6 +710,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);
     let sel = app.session.selection();
+    let uid = app.session.state().ok().map(|st| st.uid);
     let Ok(d) = app.session.doc() else { return };
     ui.add_space(4.0);
     let h = &d.header;
@@ -1162,6 +1163,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     group(ui, "Attributes");
                     for (i, a) in atts.iter().enumerate() {
                         prop_row(ui, &a.tag, |ui| {
+                            // The buffer is the drawing's too: handles repeat across drawings, and a
+                            // pending value must not follow a tab switch.
                             // A value with line breaks is edited in the Edit Attributes dialog;
                             // a single-line field would join its lines.
                             if !a.editable || a.value.contains('\n') {
@@ -1171,7 +1174,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                                 } else {
                                     crate::tl!("Constant")
                                 });
-                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", e.handle, i)), a.value.clone()) {
+                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", uid, e.handle, i)), a.value.clone()) {
                                 // By place: another attribute may share the tag.
                                 att_set = Some(json!({ "handle": e.handle.hex(), "at": { i.to_string(): v } }));
                             }

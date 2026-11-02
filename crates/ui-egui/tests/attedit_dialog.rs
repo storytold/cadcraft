@@ -177,3 +177,61 @@ fn the_dialog_closes_in_another_drawing() {
     app.session.active = 0;
     assert_eq!(value(&app, h, "NOTE"), "n");
 }
+
+/// Rows are addressed by place, so a dialog opened before the attributes were reordered must not
+/// write its typed value into whichever attribute now has that place: Apply reloads and says so.
+#[test]
+fn a_stale_dialog_does_not_overwrite_another_attribute() {
+    let (mut app, h) = app_with_reference();
+    menus::activate(&mut app, "attedit");
+    app.attedit.rows[1].typed = "EG".into();
+    app.run("battman", json!({ "name": "Tag", "action": "order", "order": ["NOTE", "NO"] })).unwrap();
+    assert!(!attedit::apply(&mut app));
+    assert_eq!((value(&app, h, "NO"), value(&app, h, "NOTE")), ("7".into(), "n".into()), "nothing was written");
+    assert!(app.attedit.error.is_some());
+    let rows: Vec<_> = app.attedit.rows.iter().map(|r| (r.tag.as_str(), r.typed.as_str())).collect();
+    assert_eq!(rows, [("NOTE", "n"), ("NO", "7")], "the dialog shows the drawing's current order");
+
+    // Typing again after the reload applies to the right attribute.
+    app.attedit.rows[0].typed = "EG".into();
+    assert!(attedit::apply(&mut app));
+    assert_eq!((value(&app, h, "NO"), value(&app, h, "NOTE")), ("7".into(), "EG".into()));
+
+    // The same through undo: the dialog opens on the reordered attributes, then the order is undone.
+    menus::activate(&mut app, "attedit");
+    app.attedit.rows[0].typed = "again".into();
+    app.run("undo", json!({})).unwrap();
+    app.run("undo", json!({})).unwrap();
+    assert!(!attedit::apply(&mut app));
+    assert_eq!(value(&app, h, "NO"), "7");
+}
+
+/// The Properties palette's pending text is the drawing's: typed in one drawing and committed
+/// after another (with the same handle and tags) is chosen, it must not be applied there.
+#[test]
+fn a_pending_properties_value_does_not_follow_a_drawing_switch() {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    let (app, h) = app_with_reference();
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run();
+    let field = harness.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some("n")).expect("the NOTE field");
+    field.focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.event(egui::Event::Text("EG".into()));
+    harness.run();
+
+    harness.state_mut().session.new_drawing(false);
+    assert_eq!(add_reference(harness.state_mut()), h);
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NOTE"), "n", "the other drawing's reference is untouched");
+}

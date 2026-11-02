@@ -126,12 +126,27 @@ fn changed(rows: &[Row]) -> Map<String, Value> {
     rows.iter().enumerate().filter(|(_, r)| r.editable && r.typed != r.value).map(|(i, r)| (i.to_string(), Value::String(r.typed.clone()))).collect()
 }
 
+/// True while the reference's attributes are still the ones the dialog listed (tag and value, in
+/// the same places).
+fn rows_unchanged(app: &CadApp, h: Handle) -> bool {
+    let Ok(st) = app.session.state() else { return false };
+    let now = cadcraft_engine::attributes(&st.doc, h);
+    now.len() == app.attedit.rows.len() && now.iter().zip(&app.attedit.rows).all(|(a, r)| a.tag == r.tag && a.value == r.value)
+}
+
 /// Apply: run `attedit` with the changed values; true when it went through (or nothing changed).
 pub fn apply(app: &mut CadApp) -> bool {
     let Some(h) = edited(app) else { return false };
     let values = changed(&app.attedit.rows);
     if values.is_empty() {
         return true;
+    }
+    if !rows_unchanged(app, h) {
+        // Another command reordered, renamed or edited the attributes while the dialog was open:
+        // a row index would address a different attribute now. Show what the drawing has.
+        load(app, h);
+        app.attedit.error = Some(crate::tl!("The attributes changed while this dialog was open. Review them and apply again.").into());
+        return false;
     }
     match app.run("attedit", json!({ "handle": h.hex(), "at": values })) {
         Ok(_) => {
