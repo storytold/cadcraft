@@ -22,7 +22,7 @@ out="$(env -u APPDIR "$APPDIR/AppRun" drawing.dxf --control 7979)" || fail "app 
 [ "$out" = "stub: drawing.dxf --control 7979" ] || fail "app arguments not forwarded: $out"
 
 # 2. APPDIR from the AppImage runtime wins over the script's own location.
-out="$(APPDIR="$APPDIR" "$APPDIR/AppRun" x)" || fail "launch with APPDIR set exited non-zero"
+out="$(env APPDIR="$APPDIR" "$APPDIR/AppRun" x)" || fail "launch with APPDIR set exited non-zero"
 [ "$out" = "stub: x" ] || fail "APPDIR launch: $out"
 
 # 3. `cli <args>` runs cadcraft-cli with the remaining arguments.
