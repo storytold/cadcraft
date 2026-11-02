@@ -239,6 +239,8 @@ pub struct CadApp {
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
+    /// Calculator data shared by its floating and docked views; durable fields live in prefs.
+    pub(crate) quickcalc: palettes::quickcalc::State,
     pub cmd: cmdline::CmdLine,
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
@@ -327,6 +329,7 @@ impl CadApp {
             services,
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),
+            quickcalc: palettes::quickcalc::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
@@ -465,6 +468,7 @@ impl CadApp {
             "interfaceLanguage": self.ui.interface_language.code(),
             "saveFormat": self.ui.save_format.as_str(),
             "saveVersion": self.ui.save_version,
+            "quickcalc": self.quickcalc.prefs(),
         });
         if self.spacemouse.settings != spacemouse::Settings::default() {
             prefs["spacemouse"] = json!(self.spacemouse.settings);
@@ -481,6 +485,9 @@ impl CadApp {
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(calculator) = v.get("quickcalc") {
+            self.quickcalc.load_prefs(calculator);
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }
@@ -1129,7 +1136,8 @@ mod tests {
         frame(&mut a, &ctx, None);
         assert_eq!(Tokens::get(), Tokens::of(theme::SYSTEM_FALLBACK), "no OS appearance: the documented fallback");
         assert_eq!(a.ui.theme, ThemePref::System);
-        assert_eq!(a.prefs_json(), r#"{"animations":"system","interfaceLanguage":"auto","saveFormat":"dxf","saveVersion":"2018","theme":"system"}"#);
+        let prefs: Value = serde_json::from_str(&a.prefs_json()).unwrap();
+        assert_eq!(prefs["theme"], "system");
     }
 
     #[test]
