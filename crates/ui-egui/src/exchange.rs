@@ -68,7 +68,7 @@ struct FromPlot {
 
 const FROM_PLOT: &str = "cc_plot_preview_from_plot";
 
-/// Show the Plot dialog's settings as they plot (PLOT with `params`, a PNG); Print... and Close
+/// Show the Plot dialog's settings as they plot (PLOT with `params`, a PNG); Plot... and Close
 /// return to the dialog.
 pub(crate) fn preview_plot(app: &mut CadApp, ctx: &egui::Context, params: Value, info: String) {
     PREVIEW_GEN.fetch_add(1, Ordering::Relaxed);
@@ -99,7 +99,7 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> Result<(TextureHandle, Strin
     Ok((tex, info))
 }
 
-/// The Plot Preview window: the sheet as it plots, with Print and Close.
+/// The Plot Preview window: the sheet as it plots, with Plot and Close.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let id = egui::Id::unique("cc_plot_preview");
     let generation = PREVIEW_GEN.load(Ordering::Relaxed);
@@ -112,8 +112,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             p
         }
     };
-    let (mut close, mut print) = (false, false);
-    egui::Window::new("Plot Preview").open(open).collapsible(false).resizable(false).show(ctx, |ui| {
+    let (mut close, mut plot) = (false, false);
+    egui::Window::new(crate::tl!("Plot Preview")).id(id).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
         match &preview.shown {
             Ok((tex, info)) => {
                 ui.label(info);
@@ -127,14 +127,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            print = ui.button("Print...").clicked();
-            close = ui.button("Close").clicked();
+            plot = ui.button(crate::tl!("Plot...")).clicked();
+            close = ui.button(crate::tl!("Close")).clicked();
         });
     });
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }
-    if close || print {
+    if close || plot {
         *open = false;
     }
     let from_plot = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))).is_some();
@@ -145,10 +145,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
     }
     if from_plot && !*open {
-        // Back to the Plot dialog with its settings; Print... plots them.
-        crate::managers::set_flag(ctx, crate::managers::PLOT_NOW, print);
+        // Back to the Plot dialog with its settings; Plot... plots them.
+        crate::managers::set_flag(ctx, crate::managers::PLOT_NOW, plot);
         app.ui.dialog = Some("plot".into());
-    } else if print {
+    } else if plot {
         app.start("plot");
     }
 }
