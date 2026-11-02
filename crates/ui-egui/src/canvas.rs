@@ -24,7 +24,8 @@ mod viewport;
 mod widgets;
 
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
-use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
+pub(crate) use cycle::over_canvas_menu;
+use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
 use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
@@ -293,11 +294,30 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         let _ = app.session.zoom_about(factor, about);
     }
     let pinch = ui.input(|i| crate::animation::zoom_delta(i, &opts, app.shows_animations()));
+    // A touch-screen pinch zooms about the fingers, not the (virtual) mouse crosshair.
+    let pinch_centre = ui.input(|i| i.multi_touch().map(|t| t.center_pos)).filter(|at| nav.rect.contains(*at));
+    // Fingers that landed off the canvas (on a panel, a menu) belong there, wherever they move.
+    let touch_elsewhere = app.touch.passing();
     if inside
+        && !touch_elsewhere
         && (pinch - 1.0).abs() > 1e-4
-        && let Some(at) = p.hover_pos
+        && let Some(at) = pinch_centre.or(p.hover_pos)
     {
         let _ = app.session.zoom_about(f64::from(pinch), nav.xf.to_world(at));
+    }
+    // Two fingers pan with their midpoint; one finger drives the crosshair ([`crate::touch`]).
+    if !touch_elsewhere
+        && let Some(touch) = ui.input(|i| i.multi_touch())
+        && nav.rect.contains(touch.center_pos)
+        && touch.translation_delta != egui::Vec2::ZERO
+        && let Ok(st) = app.session.state_mut()
+    {
+        let view = st.view();
+        st.set_view_quiet(cadcraft_engine::View {
+            center: view.center
+                - Vec2::new(f64::from(touch.translation_delta.x) / nav.xf.scale, -f64::from(touch.translation_delta.y) / nav.xf.scale),
+            height: view.height,
+        });
     }
 }
 
