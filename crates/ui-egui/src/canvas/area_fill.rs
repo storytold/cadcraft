@@ -123,7 +123,9 @@ fn area_preview_boundary_is_simple(boundary: &[Vec2]) -> bool {
         return false;
     }
     for (i, &a) in boundary.iter().enumerate() {
-        let Some(&b) = boundary.get((i + 1) % n) else { return false };
+        let Some(&b) = boundary.get((i + 1) % n) else {
+            return false;
+        };
         if a == b {
             return false;
         }
@@ -133,7 +135,9 @@ fn area_preview_boundary_is_simple(boundary: &[Vec2]) -> bool {
             if i == 0 && j == n - 1 {
                 continue;
             }
-            let Some(&d) = boundary.get((j + 1) % n) else { return false };
+            let Some(&d) = boundary.get((j + 1) % n) else {
+                return false;
+            };
             if edges_conflict(a, b, c, d) {
                 return false;
             }
@@ -219,7 +223,7 @@ mod tests {
         assert_eq!(s.active_command_id(), None);
         assert_eq!(s.doc().unwrap().model.len(), initial);
     }
-    
+
     /// A simple concave boundary shades its notch correctly without filling its bounding box.
     #[test]
     fn area_preview_concave_polygon_respects_notch() {
@@ -242,7 +246,7 @@ mod tests {
         s.cancel();
         assert_eq!(s.active_command_id(), None);
     }
-    
+
     /// Collinear AREA points create no triangles, even though the outline remains.
     #[test]
     fn area_preview_collinear_points_have_no_fill() {
@@ -255,7 +259,7 @@ mod tests {
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         s.cancel();
     }
-    
+
     /// A stationary cursor repeats only the temporary preview vertex; the valid triangle stays shaded.
     #[test]
     fn area_preview_keeps_fill_when_cursor_equals_last_selected_point() {
@@ -274,7 +278,7 @@ mod tests {
         s.cancel();
         assert_eq!(s.active_command_id(), None);
     }
-    
+
     /// Revisit the first or an interior selected point without hiding a valid AREA fill.
     #[test]
     fn area_preview_keeps_fill_when_cursor_returns_to_earlier_selected_points() {
@@ -323,7 +327,7 @@ mod tests {
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         s.cancel();
     }
-    
+
     /// A self-crossing bowtie has zero signed shoelace area; its two visual lobes must not be shaded.
     #[test]
     fn area_preview_bowtie_does_not_show_misleading_fill() {
@@ -341,19 +345,15 @@ mod tests {
         s.cancel();
         assert_eq!(s.active_command_id(), None);
     }
-    
+
     /// Touching nonadjacent edges, duplicate points and invalid coordinates are not safe to shade.
     #[test]
     fn area_preview_rejects_touching_and_degenerate_boundaries() {
         let v = |x, y| Vec2::new(x, y);
-        assert!(!area_preview_boundary_is_simple(&[
-            v(0.0, 0.0), v(4.0, 0.0), v(4.0, 4.0), v(2.0, 2.0), v(0.0, 4.0), v(2.0, 2.0)
-        ]));
+        assert!(!area_preview_boundary_is_simple(&[v(0.0, 0.0), v(4.0, 0.0), v(4.0, 4.0), v(2.0, 2.0), v(0.0, 4.0), v(2.0, 2.0)]));
         assert!(!area_preview_boundary_is_simple(&[v(0.0, 0.0), v(4.0, 0.0), v(4.0, 0.0), v(0.0, 4.0)]));
         assert!(!area_preview_boundary_is_simple(&[v(0.0, 0.0), v(f64::NAN, 2.0), v(0.0, 4.0)]));
-        assert!(area_preview_boundary_is_simple(&[
-            v(0.0, 0.0), v(6.0, 0.0), v(6.0, 2.0), v(2.0, 2.0), v(2.0, 6.0), v(0.0, 6.0)
-        ]));
+        assert!(area_preview_boundary_is_simple(&[v(0.0, 0.0), v(6.0, 0.0), v(6.0, 2.0), v(2.0, 2.0), v(2.0, 6.0), v(0.0, 6.0)]));
     }
 
     /// Moving the cursor never repeats the expensive selected-edge validation.
