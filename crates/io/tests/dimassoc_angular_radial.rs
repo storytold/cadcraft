@@ -27,6 +27,7 @@ fn dim(kind: DimKind, defpt: Vec3, p13: Vec3, p14: Vec3, p15: Vec3, p16: Vec3, a
         overrides: Default::default(),
         assoc,
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 

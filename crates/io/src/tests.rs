@@ -98,6 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            insertion_point: Vec3::ZERO,
         }),
     )
     .unwrap();
@@ -558,6 +559,7 @@ fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
