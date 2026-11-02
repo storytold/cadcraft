@@ -245,3 +245,40 @@ fn a_field_the_reader_declines_is_kept_on_save() {
         assert!(out2.contains("AcDbField"));
     }
 }
+
+/// A text with an AutoCAD date field, worked out for another day than it was saved on, is
+/// written back with the text the file showed while its field is unchanged: AutoCAD drops a
+/// field whose text differs from the value cached in it (#2318 review, a date field saved on an
+/// earlier day). Once the text no longer holds that field, its own text is written.
+#[test]
+fn a_field_text_is_written_as_read_while_the_field_is_unchanged() {
+    let field = "Date: %<\\AcVar Date \\f \"yyyy\">%";
+    let read = cadcraft_io::read(with_field(field).as_bytes(), "a.dxf").unwrap();
+    let (h, t) = read.model.iter().find_map(|e| if let EntityKind::Text(t) = &e.kind { Some((e.handle, t.clone())) } else { None }).unwrap();
+    assert_eq!(t.value, "old");
+    let value_written = |d: &Drawing| {
+        let back = cadcraft_io::read(&cadcraft_io::write(d, "a.dxf").unwrap(), "a.dxf").unwrap();
+        back.model.iter().find_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).unwrap()
+    };
+    // Worked out for today (as opening the drawing does): the file still gets the text it showed.
+    let mut today = read.clone();
+    today
+        .modify_entity(h, |e| {
+            if let EntityKind::Text(x) = &mut e.kind {
+                x.value = "Date: 2026".into();
+            }
+        })
+        .unwrap();
+    assert_eq!(value_written(&today), "old");
+    // Another formula: the text as it is now.
+    let mut edited = read;
+    edited
+        .modify_entity(h, |e| {
+            if let EntityKind::Text(x) = &mut e.kind {
+                x.value = "3".into();
+                x.formula = Some("=1+2".into());
+            }
+        })
+        .unwrap();
+    assert_eq!(value_written(&edited), "3");
+}
