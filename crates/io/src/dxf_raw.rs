@@ -502,6 +502,10 @@ fn retained_objects(
     let modelled_entry = |tags: &[Tag], handle: &str| {
         entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && MODELLED_XDICT_KEYS.contains(&up(key).as_str()))
     };
+    // is_xdict reads the whole record; a dictionary that owns many objects (ACAD_GROUP with
+    // hundreds of thousands of groups) would be read once per child (#862).
+    let mut xdict_memo: HashMap<usize, bool> = HashMap::new();
+    let mut is_xdict = |index: usize| *xdict_memo.entry(index).or_insert_with(|| is_xdict(index));
     let mut retained = HashMap::new();
     for index in 0..objects.len() {
         let mut path = Vec::new();

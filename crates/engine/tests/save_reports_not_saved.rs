@@ -53,6 +53,38 @@ fn save_lists_the_entities_the_file_does_not_keep() {
 }
 
 #[test]
+fn export_and_wblock_say_what_a_dwg_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    let mut d = Drawing::new_imperial();
+    let h = d.add(&Space::Model, Common::default(), unknown("ACME_WIDGET")).unwrap().hex();
+    let mut s = Session::empty();
+    s.open_drawing(d, "foreign.dxf", None);
+    let file = |ext: &str| std::env::temp_dir().join(format!("cadcraft-leaves-out-{}.{ext}", std::process::id())).to_string_lossy().into_owned();
+    let msg = "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): 1 ACME_WIDGET";
+
+    let (dwg, dxf) = (file("dwg"), file("dxf"));
+    for (cmd, p) in [("export", json!({ "path": dwg })), ("wblock", json!({ "path": dwg, "handles": [h] }))] {
+        s.log.clear();
+        let r = s.execute(cmd, &p).unwrap();
+        assert_eq!(r["notSaved"], json!({ "ACME_WIDGET": 1 }), "{cmd}");
+        assert!(s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+    }
+    // -WBLOCK takes the objects out of the drawing, so last.
+    let r = s.execute("-wblock", &json!({ "path": dwg, "handles": [h] })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACME_WIDGET": 1 }));
+    let _ = std::fs::remove_file(&dwg);
+
+    // DXF keeps them.
+    s.execute("undo", &json!({})).unwrap();
+    for (cmd, p) in [("export", json!({ "path": dxf })), ("wblock", json!({ "path": dxf, "handles": [h] }))] {
+        s.log.clear();
+        assert!(s.execute(cmd, &p).unwrap().get("notSaved").is_none(), "{cmd}");
+        assert!(!s.log.iter().any(|l| l == msg), "{cmd}: {:?}", s.log);
+    }
+    let _ = std::fs::remove_file(&dxf);
+}
+
+#[test]
 fn templates_report_what_dwg_does_not_keep() {
     use cadcraft_engine::cmd::file::drops_unknown;
     assert!(drops_unknown("a.dwg") && drops_unknown("B.DWT"));
@@ -81,4 +113,24 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     assert_eq!(not_saved_as(&d, Version::R2018), [("3DSOLID".to_string(), 1), ("REGION".to_string(), 1)].into_iter().collect());
     // Before 2013 a file has no data store: every solid loses its geometry.
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
+}
+
+/// The DWG bridge writes OLE objects (`ole2frame_roundtrip` in the io tests), so saving one as
+/// DWG reports nothing for them, at any version, while other unmodelled types are still listed.
+/// The type is matched as stored: the bridge gets it as stored too, and acadrust reads only the
+/// upper-case spelling into its OLE entity, so any other spelling is still reported.
+#[test]
+fn ole_objects_are_not_reported() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), unknown("OLE2FRAME")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("ole2frame")).unwrap();
+    let mut b = Block::new("Logo");
+    let h = d.new_handle();
+    b.entities.push(cadcraft_engine::doc::Entity { handle: h, common: Common::default(), kind: unknown("OLE2FRAME") });
+    d.blocks.insert("Logo".into(), std::sync::Arc::new(b));
+    for v in [Version::R2000, Version::R2010, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
 }
