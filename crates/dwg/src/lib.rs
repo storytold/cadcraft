@@ -678,7 +678,8 @@ mod native {
     /// reader puts its own default classes first and numbers the DXF's after them, so the DXF
     /// number named another class in the DWG: a 2018 drawing's piping proxies became
     /// LARGE_RADIAL_DIMENSION and SECTIONOBJECT, and the ODA File Converter refused the file. A
-    /// number that names no class of the DXF is left as it is.
+    /// proxy whose number names no class of the DXF is left out: kept as it is, its number would
+    /// name some other class of the DWG, for the same reason.
     ///
     /// Before 2013 (AC1027) acadrust writes only the classes it knows a pre-2013 DWG needs, and a
     /// proxy's class is not one of them: the proxy would name a missing class (the ODA refuses
@@ -715,24 +716,34 @@ mod native {
             let name = classes.get(usize::try_from(id.checked_sub(500)?).ok()?)?;
             doc.classes.get_by_name(name).map(|c| i32::from(c.class_number))
         };
-        let objects: Vec<(acadrust::Handle, i32)> = doc
+        let objects: Vec<(acadrust::Handle, Option<i32>)> = doc
             .objects
             .iter()
             .filter_map(|(h, o)| match o {
-                acadrust::objects::ObjectType::ProxyObject(p) => number(p.class_id).map(|n| (*h, n)),
+                acadrust::objects::ObjectType::ProxyObject(p) => Some((*h, number(p.class_id))),
                 _ => None,
             })
             .collect();
-        let entities: Vec<(acadrust::Handle, i32)> = doc
+        let entities: Vec<(acadrust::Handle, Option<i32>)> = doc
             .entities()
             .filter_map(|e| match e {
                 acadrust::entities::EntityType::Extended(x) => match &x.data {
-                    acadrust::entities::ExtendedEntityData::Proxy(p) => number(p.class_id).map(|n| (x.common.handle, n)),
+                    acadrust::entities::ExtendedEntityData::Proxy(p) => Some((x.common.handle, number(p.class_id))),
                     _ => None,
                 },
                 _ => None,
             })
             .collect();
+        let unmapped = |list: &[(acadrust::Handle, Option<i32>)]| list.iter().filter(|(_, n)| n.is_none()).map(|(h, _)| *h).collect::<Vec<_>>();
+        let (gone_objects, gone_entities) = (unmapped(&objects), unmapped(&entities));
+        for h in &gone_objects {
+            doc.objects.remove(h);
+        }
+        for h in &gone_entities {
+            doc.remove_entity(*h);
+        }
+        let objects = objects.into_iter().filter_map(|(h, n)| Some((h, n?)));
+        let entities = entities.into_iter().filter_map(|(h, n)| Some((h, n?)));
         for (h, n) in objects {
             if let Some(acadrust::objects::ObjectType::ProxyObject(p)) = doc.objects.get_mut(&h) {
                 p.class_id = n;
@@ -747,7 +758,7 @@ mod native {
                 }
             }
         }
-        0
+        gone_objects.len() + gone_entities.len()
     }
 
     /// The current layer (`$CLAYER`) by its name, the same way as [`current_dimstyle`]: a DWG

@@ -2883,6 +2883,41 @@ fn proxies_keep_their_class_in_dwg() {
     }
 }
 
+/// An ASCII DXF given to the DWG conversion directly, with a proxy whose number names no class of
+/// its CLASSES ([`proxy_file`]'s "Stray", 537): kept with that number it would name some other
+/// class of the DWG, so the DWG leaves it out, as CADCraft's own save does, and keeps the proxies
+/// whose classes it can name.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
+    use acadrust::entities::{EntityType, ExtendedEntityData};
+    use acadrust::objects::ObjectType;
+    let dwg = cadcraft_dwg::dxf_to_dwg_as(&proxy_file(), "AC1032").unwrap();
+    let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
+    let class_of = |id: i32| doc.classes.iter().find(|c| i32::from(c.class_number) == id).map(|c| c.dxf_name.clone());
+    let mut objects: Vec<Option<String>> = doc
+        .objects
+        .values()
+        .filter_map(|o| match o {
+            ObjectType::ProxyObject(p) => Some(class_of(p.class_id)),
+            _ => None,
+        })
+        .collect();
+    objects.sort();
+    assert_eq!(objects, [Some("VISUALSTYLE".to_string()), Some("WIDGETX".to_string())]);
+    let entities: Vec<Option<String>> = doc
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Proxy(p) => Some(class_of(p.class_id)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(entities, [Some("WIDGETX".to_string())]);
+}
+
 /// A binary DXF given to the DWG conversion directly: its CLASSES aren't read, so the proxies'
 /// numbers can't be mapped to the DWG's classes. Kept as they were, they named other classes
 /// (the ODA refuses such a file), so the DWG leaves them out, as a pre-2013 DWG does, and the
