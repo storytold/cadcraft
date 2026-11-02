@@ -8,19 +8,22 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
-    match d.anno_draw(e) {
-        AnnoDraw::Hidden => Vec::new(),
-        AnnoDraw::Scaled(f) => {
-            let scaled = anno_scaled(e, f);
-            raw_hit_polylines(d, &scaled, tol)
-        }
-        AnnoDraw::Plain => raw_hit_polylines(d, e, tol),
+    if d.anno_draw(e) == AnnoDraw::Hidden {
+        return Vec::new();
     }
-}
-
-fn raw_hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::MText(t) => {
+            let scaled;
+            let t = match d.anno_draw(e) {
+                AnnoDraw::Scaled(f) => {
+                    scaled = anno_scaled(e, f);
+                    match &scaled.kind {
+                        EntityKind::MText(st) => st,
+                        _ => t,
+                    }
+                }
+                _ => t,
+            };
             let insert = t.insert.xy();
             let unturn = |q: Vec2| insert + q.rotate(t.rotation);
             mtext_line_bounds(d, t)
@@ -245,25 +248,41 @@ pub(crate) fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds
 
 /// Tight selection bounds for `e` (using laid-out line boxes for `MText`).
 pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    match d.anno_draw(e) {
-        AnnoDraw::Hidden => Bounds2::EMPTY,
-        AnnoDraw::Scaled(f) => {
-            let scaled = anno_scaled(e, f);
-            raw_select_bounds(d, &scaled, None)
-        }
-        AnnoDraw::Plain => raw_select_bounds(d, e, known),
-    }
-}
-
-fn raw_select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
     match &e.kind {
-        EntityKind::MText(t) => mtext_world_bounds(d, t),
+        EntityKind::MText(t) => match d.anno_draw(e) {
+            AnnoDraw::Hidden => Bounds2::EMPTY,
+            AnnoDraw::Scaled(f) => {
+                let scaled = anno_scaled(e, f);
+                match &scaled.kind {
+                    EntityKind::MText(st) => mtext_world_bounds(d, st),
+                    _ => mtext_world_bounds(d, t),
+                }
+            }
+            AnnoDraw::Plain => mtext_world_bounds(d, t),
+        },
         EntityKind::MLeader(m) => {
             let mut b = bounds_of(d, e, known);
-            if let Some(t) = &m.text {
-                b = b.union(&mtext_world_bounds(d, t));
+            if b.is_empty() {
+                return Bounds2::EMPTY;
             }
-            b
+            match d.anno_draw(e) {
+                AnnoDraw::Hidden => Bounds2::EMPTY,
+                AnnoDraw::Scaled(f) => {
+                    let scaled = anno_scaled(e, f);
+                    if let EntityKind::MLeader(sm) = &scaled.kind
+                        && let Some(st) = &sm.text
+                    {
+                        b = b.union(&mtext_world_bounds(d, st));
+                    }
+                    b
+                }
+                AnnoDraw::Plain => {
+                    if let Some(t) = &m.text {
+                        b = b.union(&mtext_world_bounds(d, t));
+                    }
+                    b
+                }
+            }
         }
         _ => bounds_of(d, e, known),
     }
@@ -273,42 +292,45 @@ fn raw_select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2
 /// Includes the insertion point for MText and MLeader so that snapping to INS
 /// on text with an empty first line or at the anchor is not filtered out.
 pub(crate) fn snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    match d.anno_draw(e) {
-        AnnoDraw::Hidden => Bounds2::EMPTY,
-        AnnoDraw::Scaled(f) => {
-            let scaled = anno_scaled(e, f);
-            raw_snap_bounds(d, &scaled, None)
-        }
-        AnnoDraw::Plain => raw_snap_bounds(d, e, known),
+    if d.anno_draw(e) == AnnoDraw::Hidden {
+        return Bounds2::EMPTY;
     }
-}
-
-fn raw_snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    let mut b = raw_select_bounds(d, e, known);
+    let mut b = select_bounds(d, e, known);
     match &e.kind {
         EntityKind::MText(t) => {
+            let p = t.insert.xy();
             if b.is_empty() {
-                let p = t.insert.xy();
                 b = Bounds2::new(p, p);
             } else {
-                b.add(t.insert.xy());
+                b.add(p);
             }
         }
         EntityKind::MLeader(m) => {
+            let scaled;
+            let m = match d.anno_draw(e) {
+                AnnoDraw::Scaled(f) => {
+                    scaled = anno_scaled(e, f);
+                    match &scaled.kind {
+                        EntityKind::MLeader(sm) => sm,
+                        _ => m,
+                    }
+                }
+                _ => m,
+            };
             if let Some(t) = &m.text {
+                let p = t.insert.xy();
                 if b.is_empty() {
-                    let p = t.insert.xy();
                     b = Bounds2::new(p, p);
                 } else {
-                    b.add(t.insert.xy());
+                    b.add(p);
                 }
             }
             if let Some(blk) = &m.block {
+                let p = blk.insert.xy();
                 if b.is_empty() {
-                    let p = blk.insert.xy();
                     b = Bounds2::new(p, p);
                 } else {
-                    b.add(blk.insert.xy());
+                    b.add(p);
                 }
             }
         }
@@ -462,7 +484,7 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
     if hit
         || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::Insert(_)))
-        || matches!(&e.kind, EntityKind::MText(t) if in_mtext(d, t, bx.center()))
+        || (matches!(e.kind, EntityKind::MText(_)) && in_text(d, e, bx.center()))
     {
         return true;
     }
@@ -539,7 +561,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         });
         let mut pts = polys.iter().flatten();
         let hit = if crossing {
-            crosses || pts.any(|p| point_in_polygon(poly, *p)) || matches!(&e.kind, EntityKind::MText(t) if in_mtext(d, t, *first))
+            crosses || pts.any(|p| point_in_polygon(poly, *p)) || (matches!(e.kind, EntityKind::MText(_)) && in_text(d, e, *first))
         } else {
             !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
         };
