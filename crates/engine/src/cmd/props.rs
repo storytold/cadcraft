@@ -16,8 +16,11 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, point_value, str_param, targets};
 
+use crate::EngineError;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+/// This module's command table: property reads and edits, MATCHPROP, the Format-menu settings
+/// (colour, linetype, lineweight, units, limits, text/dimension/table/multileader styles) and RENAME.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
@@ -62,8 +65,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dimstyle", "Dimension Style...", run_dimstyle)
             .menu(&["Format", "Dimension Style..."])
             .alias(&["d", "dst", "ddim"])
-            .params("{name, current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles"),
-        CommandSpec::new("dimstyle.dimension", "Dimension Style...", run_dimstyle).menu(&["Dimension", "Dimension Style..."]).params("same as `dimstyle`"),
+            .params("{name, current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles")
+            .interactive(|_| Ok(Box::new(DimstyleM))),
+        CommandSpec::new("dimstyle.dimension", "Dimension Style...", run_dimstyle)
+            .menu(&["Dimension", "Dimension Style..."])
+            .params("same as `dimstyle`")
+            .interactive(|_| Ok(Box::new(DimstyleM))),
         CommandSpec::new("dimstyle.list", "List Dimension Styles", run_dimstyle_list).params("{name?} → styles (with all variables for `name`)").noundo(),
         CommandSpec::new("dimstyle.rename", "Rename Dimension Style", run_dimstyle_rename).params("{from, to}"),
         CommandSpec::new("dimstyle.delete", "Delete Dimension Style", run_dimstyle_delete).params("{name} (not Standard, the current style or one in use)"),
@@ -862,10 +869,14 @@ fn run_style_delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(styles_json(d))
 }
 
+/// The `{current, styles}` summary that every dimension-style command returns.
 fn dimstyles_json(d: &cadcraft_doc::Drawing) -> Value {
     json!({ "current": d.header.str("DIMSTYLE", "Standard"), "styles": d.dim_styles.iter().map(|s| s.name.clone()).collect::<Vec<_>>() })
 }
 
+/// DIMSTYLE's JSON form: create the style `name` if it does not exist yet, apply the style fields
+/// and DIM* variables given as parameters, and make it current unless `current` is false. Returns
+/// the `{current, styles}` summary, plus an `ignored` list when parameters were not accepted.
 fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("dimstyle", "`name` is required"))?.trim().to_string();
     if name.is_empty() || name.len() > 255 {
@@ -902,6 +913,66 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
+/// DIMSTYLE at the command line: `?` lists the styles, a name makes that style current.
+/// (The Dimension Style Manager dialog is not implemented yet.)
+struct DimstyleM;
+
+impl Interactive for DimstyleM {
+    /// The name shown while the DIMSTYLE prompt is active.
+    fn name(&self) -> &'static str {
+        "DIMSTYLE"
+    }
+    /// Echo the current dimension style before asking for one, as DIMSTYLE does.
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let cur = s.doc()?.header.str("DIMSTYLE", "Standard");
+        s.echo(format!("Current dimension style: {cur}"));
+        Ok(Step::Continue)
+    }
+    /// Ask for a dimension style name, with `?` for the list and the current style as the default.
+    fn prompt(&self, s: &Session) -> Prompt {
+        let cur = s.doc().map(|d| d.header.str("DIMSTYLE", "Standard")).unwrap_or_else(|_| "Standard".to_string());
+        Prompt::new("Enter dimension style name", Accept::TEXT).kw(&["?"]).default(cur)
+    }
+    /// `?` lists the styles and asks again; a style name makes it current (an unknown name is
+    /// reported and the prompt stays); `Enter` or `Cancel` leaves the command.
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            Input::Keyword(k) if k == "?" => {
+                let r = run_dimstyle_list(s, &Value::Null)?;
+                let names = r["styles"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+                s.echo(format!("Dimension styles: {names}"));
+                Ok(Step::Continue)
+            }
+            Input::Text(t) => {
+                let name = t.trim();
+                if name.is_empty() {
+                    return Ok(Step::Done);
+                }
+                match run_dimstyle_current(s, &json!({ "name": name })) {
+                    Ok(r) => {
+                        let cur = r["current"].as_str().unwrap_or(name).to_string();
+                        s.echo(format!("Current dimension style: {cur}"));
+                        Ok(Step::Done)
+                    }
+                    Err(e) => {
+                        // Re-prompt with the refusal alone: the user typed DIMSTYLE, so naming the
+                        // JSON sub-command it calls (`dimstyle.current`) would only confuse.
+                        s.echo(match e {
+                            EngineError::BadParams { msg, .. } => msg,
+                            other => other.to_string(),
+                        });
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// `dimstyle.list`: the current style and every style name, plus the full style record and its
+/// DIM* variables when `name` is given.
 fn run_dimstyle_list(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let mut out = dimstyles_json(d);

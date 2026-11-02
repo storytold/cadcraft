@@ -8,6 +8,8 @@ use super::{CommandSpec, always, bad, bool_or, point_param, points_param, str_pa
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+/// This module's command table: CAL, the QuickCalc picks, FIND, MEASUREGEOM and the Radius/Angle
+/// measurements that also appear under Tools ▸ Inquiry.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("cal", "QuickCalc", run_cal)
@@ -26,7 +28,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{mode: point|distance|angle|intersection, points: [[x,y],...]} → {value} | {point}")
             .noundo()
             .interactive(|_| Ok(Box::<PickM>::default())),
-        CommandSpec::new("find", "Find...", run_find).menu(&["Edit", "Find..."]).params("{find, replace?, matchCase?: bool, wholeWord?: bool}"),
+        CommandSpec::new("find", "Find...", run_find)
+            .menu(&["Edit", "Find..."])
+            .params("{find, replace?, matchCase?: bool, wholeWord?: bool}")
+            .interactive(|_| Ok(Box::<FindM>::default())),
         CommandSpec::new("measuregeom", "Measure Geometry", run_measuregeom)
             .params("{mode: distance|radius|angle|area|volume, ...}")
             .noundo()
@@ -223,6 +228,10 @@ fn replace_in(text: &str, find: &str, rep: &str, case: bool, whole: bool) -> (St
     (out, n)
 }
 
+/// FIND's programmatic form: count the occurrences of `find` in text, MText, attribute, dimension,
+/// multileader and table text. With `replace`, rewrite them in place (an empty string removes the
+/// matching text); without it, select the entities that contain a match. `matchCase` and
+/// `wholeWord` narrow the search (both off by default). Returns `{matches, total, message}`.
 fn run_find(s: &mut Session, p: &Value) -> Result<Value> {
     let find = str_param(p, "find").ok_or_else(|| bad("find", "`find` is required"))?.to_string();
     let rep = str_param(p, "replace").map(str::to_string);
@@ -287,6 +296,115 @@ fn run_find(s: &mut Session, p: &Value) -> Result<Value> {
     let msg =
         if rep.is_some() { format!("{total} replacement(s) in {n} object(s)") } else { format!("{total} match(es) in {} object(s)", found.len()) };
     Ok(json!({ "matches": found, "total": total, "message": msg }))
+}
+
+/// What FIND asks next.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum FindStage {
+    #[default]
+    Find,
+    Replace,
+    Options,
+}
+
+/// FIND at the command line: the search text, the replacement (`Enter` for none), then the same
+/// options the Find and Replace dialog offers (Match case, Whole word), plus `Remove` for a
+/// replacement with empty text.
+#[derive(Default)]
+struct FindM {
+    find: String,
+    replace: Option<String>,
+    match_case: bool,
+    whole_word: bool,
+    stage: FindStage,
+}
+
+/// `on`/`off`, the words the command line uses when echoing a toggled search option.
+fn on_off(b: bool) -> &'static str {
+    if b { "on" } else { "off" }
+}
+
+impl FindM {
+    /// Run FIND with the values collected so far, echo its summary and end the command.
+    fn search(&self, s: &mut Session) -> Result<Step> {
+        let r = run_find(s, &json!({ "find": self.find, "replace": self.replace, "matchCase": self.match_case, "wholeWord": self.whole_word }))?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m.to_string());
+        }
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for FindM {
+    /// The name shown while the FIND prompts are active.
+    fn name(&self) -> &'static str {
+        "FIND"
+    }
+    /// The prompt for the current step: the search text, the replacement (`Enter` to only find;
+    /// everything typed there is the replacement), or the search options with the keywords
+    /// `Match case`, `Whole word`, `Remove` and `Done` (the default).
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.stage {
+            FindStage::Find => Prompt::new("Find what", Accept::TEXT),
+            // No keywords here: a replacement that spells one (`R`, `Remove`) is text, not an
+            // action, so replacing a revision letter never deletes the text (#1799 review).
+            FindStage::Replace => Prompt::new("Replace with (Enter to only find)", Accept::TEXT),
+            FindStage::Options => Prompt::new("Search options", Accept::TEXT).kw(&["Match case", "Whole word", "Remove", "Done"]).default("Done"),
+        }
+    }
+    /// Advance FIND through its steps: a non-empty search text moves on to the replacement, `Enter`
+    /// there means "find only", and the option keywords toggle their flag (echoing the new state),
+    /// empty the replacement for `Remove`, or run the search for `Done`. Empty text at the first
+    /// prompt or `Cancel` leaves the command.
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match self.stage {
+            FindStage::Find => match i {
+                Input::Text(t) if !t.trim().is_empty() => {
+                    self.find = t;
+                    self.stage = FindStage::Replace;
+                    Ok(Step::Continue)
+                }
+                Input::Text(_) | Input::Enter | Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            FindStage::Replace => match i {
+                Input::Text(t) => {
+                    // Empty text is a replacement too; `Enter` above is the find-only path.
+                    self.replace = Some(t);
+                    self.stage = FindStage::Options;
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.replace = None;
+                    self.stage = FindStage::Options;
+                    Ok(Step::Continue)
+                }
+                Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            FindStage::Options => match i {
+                Input::Keyword(k) if k == "Match case" => {
+                    self.match_case = !self.match_case;
+                    s.echo(format!("Match case: {}", on_off(self.match_case)));
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Whole word" => {
+                    self.whole_word = !self.whole_word;
+                    s.echo(format!("Whole word: {}", on_off(self.whole_word)));
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Remove" => {
+                    self.replace = Some(String::new());
+                    s.echo("Remove: the matching text is deleted".to_string());
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Done" => self.search(s),
+                Input::Enter => self.search(s),
+                Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+        }
+    }
 }
 
 // ---------------- MEASUREGEOM ----------------
