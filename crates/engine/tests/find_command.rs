@@ -64,9 +64,9 @@ fn find_without_replacement_selects_the_matches() {
     assert_eq!(s.selection().len(), 1, "the match is selected");
 }
 
-/// Regression: `Remove` at the replacement prompt is a replacement with empty text (not `Enter`,
-/// which only finds): FIND deletes the matching text. `Enter` still selects the matches only
-/// (`find_without_replacement_selects_the_matches`).
+/// Regression: `Remove` is a keyword of the search options (not of the replacement prompt), so it
+/// deletes the matching text instead of replacing it. `Enter` at the replacement prompt still only
+/// selects the matches (`find_without_replacement_selects_the_matches`).
 #[test]
 fn find_remove_keyword_deletes_the_matching_text() {
     let mut s = Session::new();
@@ -74,13 +74,34 @@ fn find_remove_keyword_deletes_the_matching_text() {
     add_text(&mut s, [0.0, 5.0], "pin");
     s.cmdline("find").unwrap();
     s.cmdline("bolt").unwrap();
+    s.cmdline("").unwrap(); // No replacement: find only, unless Remove is chosen next.
+    assert!(s.prompt_text().contains("Search options"), "{}", s.prompt_text());
     assert!(s.prompt_text().contains("Remove"), "the empty replacement is offered: {}", s.prompt_text());
     s.cmdline("remove").unwrap(); // Remove: replace with nothing.
-    assert!(s.prompt_text().contains("Search options"), "{}", s.prompt_text());
     s.cmdline("").unwrap(); // <Done>
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(texts(&s), vec![String::new(), "pin".to_string()], "the match is deleted, not selected");
     assert!(s.selection().is_empty(), "removing is not a find-only selection");
+}
+
+/// Regression: everything typed at the replacement prompt is the replacement, so replacing a word
+/// with `R` or `Remove` writes that text instead of running a keyword and deleting it (#1799).
+#[test]
+fn find_replaces_with_text_that_spells_an_option_keyword() {
+    let mut s = Session::new();
+    add_text(&mut s, [0.0, 0.0], "MOUNTING BRACKET");
+    add_text(&mut s, [0.0, 5.0], "REMOVE ME");
+    s.cmdline("find").unwrap();
+    s.cmdline("MOUNTING").unwrap();
+    s.cmdline("R").unwrap();
+    s.cmdline("").unwrap(); // <Done>
+    assert_eq!(texts(&s)[0], "R BRACKET", "a one-letter replacement is text");
+
+    s.cmdline("find").unwrap();
+    s.cmdline("REMOVE").unwrap();
+    s.cmdline("Remove").unwrap();
+    s.cmdline("").unwrap(); // <Done>
+    assert_eq!(texts(&s)[1], "Remove ME", "a replacement that spells the keyword is text");
 }
 
 /// Regression: the JSON form still runs in one call, reports the match/replacement counts and

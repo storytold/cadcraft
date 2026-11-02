@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, point_value, str_param, targets};
 
+use crate::EngineError;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// This module's command table: property reads and edits, MATCHPROP, the Format-menu settings
@@ -955,7 +956,12 @@ impl Interactive for DimstyleM {
                         Ok(Step::Done)
                     }
                     Err(e) => {
-                        s.echo(e.to_string());
+                        // Re-prompt with the refusal alone: the user typed DIMSTYLE, so naming the
+                        // JSON sub-command it calls (`dimstyle.current`) would only confuse.
+                        s.echo(match e {
+                            EngineError::BadParams { msg, .. } => msg,
+                            other => other.to_string(),
+                        });
                         Ok(Step::Continue)
                     }
                 }

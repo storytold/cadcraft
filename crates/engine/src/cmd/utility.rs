@@ -307,8 +307,9 @@ enum FindStage {
     Options,
 }
 
-/// FIND at the command line: the search text, the replacement (`Enter` for none, `Remove` for an
-/// empty one), then the same options the Find and Replace dialog offers (Match case, Whole word).
+/// FIND at the command line: the search text, the replacement (`Enter` for none), then the same
+/// options the Find and Replace dialog offers (Match case, Whole word), plus `Remove` for a
+/// replacement with empty text.
 #[derive(Default)]
 struct FindM {
     find: String,
@@ -339,20 +340,22 @@ impl Interactive for FindM {
     fn name(&self) -> &'static str {
         "FIND"
     }
-    /// The prompt for the current step: the search text, the replacement (`Enter` to only find,
-    /// `Remove` to replace with nothing), or the search options with the keywords `Match case`,
-    /// `Whole word` and `Done` (the default).
+    /// The prompt for the current step: the search text, the replacement (`Enter` to only find;
+    /// everything typed there is the replacement), or the search options with the keywords
+    /// `Match case`, `Whole word`, `Remove` and `Done` (the default).
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.stage {
             FindStage::Find => Prompt::new("Find what", Accept::TEXT),
-            FindStage::Replace => Prompt::new("Replace with (Enter to only find)", Accept::TEXT).kw(&["Remove"]),
-            FindStage::Options => Prompt::new("Search options", Accept::TEXT).kw(&["Match case", "Whole word", "Done"]).default("Done"),
+            // No keywords here: a replacement that spells one (`R`, `Remove`) is text, not an
+            // action, so replacing a revision letter never deletes the text (#1799 review).
+            FindStage::Replace => Prompt::new("Replace with (Enter to only find)", Accept::TEXT),
+            FindStage::Options => Prompt::new("Search options", Accept::TEXT).kw(&["Match case", "Whole word", "Remove", "Done"]).default("Done"),
         }
     }
     /// Advance FIND through its steps: a non-empty search text moves on to the replacement, `Enter`
-    /// there means "find only" and `Remove` a replacement with empty text, and the option keywords
-    /// toggle their flag (echoing the new state) or, for `Done`, run the search. Empty text at the
-    /// first prompt or `Cancel` leaves the command.
+    /// there means "find only", and the option keywords toggle their flag (echoing the new state),
+    /// empty the replacement for `Remove`, or run the search for `Done`. Empty text at the first
+    /// prompt or `Cancel` leaves the command.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match self.stage {
             FindStage::Find => match i {
@@ -368,11 +371,6 @@ impl Interactive for FindM {
                 Input::Text(t) => {
                     // Empty text is a replacement too; `Enter` above is the find-only path.
                     self.replace = Some(t);
-                    self.stage = FindStage::Options;
-                    Ok(Step::Continue)
-                }
-                Input::Keyword(k) if k == "Remove" => {
-                    self.replace = Some(String::new());
                     self.stage = FindStage::Options;
                     Ok(Step::Continue)
                 }
@@ -393,6 +391,11 @@ impl Interactive for FindM {
                 Input::Keyword(k) if k == "Whole word" => {
                     self.whole_word = !self.whole_word;
                     s.echo(format!("Whole word: {}", on_off(self.whole_word)));
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Remove" => {
+                    self.replace = Some(String::new());
+                    s.echo("Remove: the matching text is deleted".to_string());
                     Ok(Step::Continue)
                 }
                 Input::Keyword(k) if k == "Done" => self.search(s),
