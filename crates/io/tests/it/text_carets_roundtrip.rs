@@ -7,6 +7,8 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn text(value: &str) -> Text {
     Text {
+        backwards: false,
+        upside_down: false,
         formula: None,
         insert: Vec3::new(1.0, 1.0, 0.0),
         align_pt: None,
