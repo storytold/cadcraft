@@ -255,7 +255,7 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
     };
     w.p(10, insert);
     w.f(40, t.height);
-    w.s(1, &t.value);
+    w.s(1, crate::dxf_read::mtext_dxf::encode_line(&t.value));
     if t.rotation != 0.0 {
         w.f(50, t.rotation.to_degrees());
     }
@@ -293,7 +293,7 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
                 w.i(280, 0);
             }
             if let Some(prompt) = attdef_prompt {
-                w.s(3, prompt);
+                w.s(3, crate::dxf_read::mtext_dxf::encode_line(prompt));
             }
             w.s(2, &a.tag);
             w.i(70, attrib_flags(a));

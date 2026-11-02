@@ -99,13 +99,15 @@ fn frozen_layers_use_native_331_and_leave_paper_entities_visible() {
     d.add(&Space::Model, Common { layer: "Notes".into(), ..Common::default() }, line.clone()).unwrap();
     let h = d.add(&paper, Common { layer: "Notes".into(), ..Common::default() }, line).unwrap();
     d.add(&paper, Common::default(), EntityKind::Viewport(Viewport { id: 1, frozen_layers: vec!["Notes".into()], ..Viewport::default() })).unwrap();
-    let tags = cadcraft_dxf::parse(write_dxf(&d).as_bytes()).unwrap();
+    let opts = cadcraft_io::SaveOptions { version: Some(cadcraft_io::Version::R2018), binary: false };
+    let saved = cadcraft_io::write_with(&d, "freeze.dxf", &opts).unwrap();
+    let tags = cadcraft_dxf::parse(&saved).unwrap();
     let sections = cadcraft_dxf::sections(&tags);
     let entities = sections.iter().find(|s| s.name == "ENTITIES").unwrap();
     let records = cadcraft_dxf::records(&entities.tags);
     let vp = records.iter().find(|(kind, _)| kind == "VIEWPORT").unwrap();
     assert!(vp.1.iter().any(|t| t.code == 331), "standard frozen-layer reference");
-    assert!(!vp.1.iter().any(|t| t.code == 341), "do not rely on the legacy CADCraft group");
+    assert!(!vp.1.iter().any(|t| t.code == 341), "R2018 uses 331; 341 belongs to R2000 DXF");
     // Strip application xdata: native references alone must carry the frozen layers.
     let mut native = Vec::new();
     let mut xdata = false;
