@@ -76,8 +76,17 @@ fn escapes_next_to_other_text_and_backslashes() {
     let slashes = "\\".repeat(100_000);
     assert_eq!(one(&slashes), slashes);
     // The same strings through the binary reader.
+    // Built by hand: the writer escapes a literal `\U+` (#2050), so it would not produce an escape.
+    let mut file = b"AutoCAD Binary DXF\r\n\x1a\0".to_vec();
+    file.extend_from_slice(&1i16.to_le_bytes());
+    file.extend_from_slice("é\\U+0041\\ ü".as_bytes());
+    file.push(0);
+    file.extend_from_slice(&0i16.to_le_bytes());
+    file.extend_from_slice(b"EOF\0");
+    assert_eq!(parse(&file).unwrap()[0].str(), "éA\\ ü");
+    // And the writer keeps the literal text literal.
     let tags = [Tag::s(1, "é\\U+0041\\ ü"), Tag::s(0, "EOF")];
-    assert_eq!(parse(&write_binary(&tags, true)).unwrap()[0].str(), "éA\\ ü");
+    assert_eq!(parse(&write_binary(&tags, true)).unwrap()[0].str(), "é\\U+0041\\ ü");
 }
 
 #[test]
