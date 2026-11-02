@@ -168,7 +168,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Workspaces | Drafting & Annotation, 3D Modeling | no |
 | Browser panel layout storage | not applicable | Versioned, validated panel placement and visibility saved through the browser host; floating palettes remain embedded. Requires available browser storage and a completed host save; named workspaces and drawing persistence are separate. |
 | Options / Preferences dialog | many tabs | **no** (issue #23) |
-| Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); user aliases persist in the profile (#1899); no CUI or tool palettes |
+| Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); no CUI or tool palettes |
 | Themes | Dark, Light | Dark, Light, System (#179) |
 | Accessibility | VoiceOver basics | AccessKit through eframe; screen-reader coverage untested; magnifier issue #39; animation effects follow the OS setting (View ▸ Accessibility ▸ Animation Effects: System, On, Off) |
 
@@ -211,7 +211,6 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |
 | 2026-10-14 | minor | Hatch Edit dialog adds boundaries from picked points or closed objects and removes selected loops |
 | 2026-10-14 | minor | Holding Shift overrides ortho while it is held (on when ORTHOMODE is off, off when it is on), as in AutoCAD |
-| 2026-10-22 | minor | ALIASEDIT aliases are kept in the user profile and restored after a restart (#1899) |
 | 2026-10-16 | minor | ALIASEDIT opens the Command Aliases dialog (#1381) |
 | 2026-10-18 | minor | In-window menu bar: once a menu is open, pointing at another title closes it and opens that one (#1567) |
 | 2026-10-13 | minor | Options ▸ Selection adds Select using two clicks only; PICKDRAG 0 disables drag-window creation/completion, 2 preserves clicks or drag, and the preference survives restart; UI pointer and profile regressions |
