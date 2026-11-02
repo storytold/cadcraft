@@ -2,16 +2,18 @@
 
 use cadcraft_doc::{EntityKind, VAlign};
 
-fn attrib(kind: &str) -> String {
-    format!("  0\n{kind}\n  8\n0\n 10\n1\n 20\n1\n 30\n0\n 40\n1.4\n  1\n3\n  2\nVAL\n 70\n0\n 72\n1\n 11\n1\n 21\n1\n 31\n0\n 73\n0\n 74\n2\n")
+fn attrib(kind: &str, field_len: i32) -> String {
+    format!(
+        "  0\n{kind}\n  8\n0\n 10\n1\n 20\n1\n 30\n0\n 40\n1.4\n  1\n3\n  2\nVAL\n 70\n0\n 72\n1\n 11\n1\n 21\n1\n 31\n0\n 73\n{field_len}\n 74\n2\n"
+    )
 }
 
-#[test]
-fn attribute_vertical_justification_is_group_74() {
+/// Reads an ATTDEF and an ATTRIB (inside an INSERT) written with the given group 73.
+fn read(field_len: i32) {
     let dxf = format!(
         "  0\nSECTION\n  2\nENTITIES\n{}  0\nINSERT\n  8\n0\n  2\nB\n 66\n1\n 10\n0\n 20\n0\n 30\n0\n{}  0\nSEQEND\n  0\nENDSEC\n  0\nEOF\n",
-        attrib("ATTDEF"),
-        attrib("ATTRIB")
+        attrib("ATTDEF", field_len),
+        attrib("ATTRIB", field_len)
     );
     let d = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
     let mut seen = 0;
@@ -29,4 +31,16 @@ fn attribute_vertical_justification_is_group_74() {
         }
     }
     assert_eq!(seen, 2);
+}
+
+#[test]
+fn attribute_vertical_justification_is_group_74() {
+    read(0);
+}
+
+/// A non-zero field length (group 73) must not be taken for a vertical justification.
+#[test]
+fn attribute_field_length_is_not_a_justification() {
+    read(5);
+    read(2);
 }

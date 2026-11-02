@@ -68,11 +68,12 @@ struct Parser<'a> {
     i: usize,
     vars: &'a Map<String, Value>,
     depth: usize,
+    unary_depth: usize,
 }
 
 impl Parser<'_> {
     fn peek(&mut self) -> Option<u8> {
-        while self.s.get(self.i).is_some_and(|c| c.is_ascii_whitespace()) {
+        while self.s.get(self.i).is_some_and(u8::is_ascii_whitespace) {
             self.i += 1;
         }
         self.s.get(self.i).copied()
@@ -121,19 +122,31 @@ impl Parser<'_> {
         }
         Ok(v)
     }
+    /// A unary operand reached by a leading `-`/`+` or after `^`. These recurse without passing
+    /// through `expr`, so they are bounded by their own counter (`unary_depth`), leaving the
+    /// parenthesis/bracket limit in `depth` untouched.
+    fn operand(&mut self) -> Result<Val, String> {
+        if self.unary_depth >= MAX_DEPTH {
+            return Err("expression too deeply nested".into());
+        }
+        self.unary_depth += 1;
+        let v = self.unary();
+        self.unary_depth -= 1;
+        v
+    }
     fn unary(&mut self) -> Result<Val, String> {
         if self.eat(b'-') {
-            return Ok(match self.unary()? {
+            return Ok(match self.operand()? {
                 Val::Num(v) => Val::Num(-v),
                 Val::Pt(p) => Val::Pt(Vec2::ZERO - p),
             });
         }
         if self.eat(b'+') {
-            return self.unary();
+            return self.operand();
         }
         let b = self.atom()?;
         if self.eat(b'^') {
-            let e = self.unary()?.num("^")?;
+            let e = self.operand()?.num("^")?;
             return Ok(Val::Num(b.num("^")?.powf(e)));
         }
         Ok(b)
@@ -320,6 +333,9 @@ fn call(name: &str, args: &[Val]) -> Result<Val, String> {
         "min" | "max" => {
             arity(1, MAX_ARGS)?;
             let vs = (0..args.len()).map(n).collect::<Result<Vec<_>, _>>()?;
+            if vs.iter().any(|v| !v.is_finite()) {
+                return Err("result is not a finite number".into());
+            }
             let f = if name == "min" { f64::min } else { f64::max };
             Ok(Val::Num(vs.into_iter().reduce(f).unwrap_or(0.0)))
         }
@@ -395,7 +411,7 @@ pub fn eval_val(expr: &str, vars: &Map<String, Value>) -> Result<Val, String> {
     if expr.len() > MAX_LEN {
         return Err("expression too long".into());
     }
-    let mut p = Parser { s: expr.as_bytes(), i: 0, vars, depth: 0 };
+    let mut p = Parser { s: expr.as_bytes(), i: 0, vars, depth: 0, unary_depth: 0 };
     let v = p.expr()?;
     if p.peek().is_some() {
         return Err(format!("unexpected `{}`", expr.get(p.i..).unwrap_or("")));
@@ -584,8 +600,31 @@ mod tests {
         assert!(ev("[1").is_err());
         assert!(ev(&"[".repeat(5000)).is_err());
         assert_eq!(ev("min(3,1,2)"), Ok(Val::Num(1.0)));
+        assert!(ev("min(sqrt(-1), 5)").is_err());
+        assert!(ev("max(5, ln(-1))").is_err());
+        assert!(ev("min(exp(1000), 5)").is_err());
+        assert!(ev("max(exp(1000), 5)").is_err());
         assert_eq!(ev("1e-3*2"), Ok(Val::Num(0.002)));
         assert!(ev("max(1,2,3,4,5,6,7,8,9)").is_err());
+    }
+
+    #[test]
+    fn deep_unary_chain_does_not_overflow_the_stack() {
+        assert!(ev(&format!("{}1", "-".repeat(600))).is_err());
+        assert!(ev(&format!("{}1", "+".repeat(600))).is_err());
+        assert!(ev(&format!("2{}", "^2".repeat(600))).is_err());
+        // The size from the report: under MAX_LEN, but ~10,000 frames deep without a guard.
+        assert!(ev(&format!("{}1", "-".repeat(9990))).is_err());
+        assert!(ev(&format!("2{}", "^2".repeat(4990))).is_err());
+        assert_eq!(ev("--1"), Ok(Val::Num(1.0)));
+        assert_eq!(ev("2^3^2"), Ok(Val::Num(512.0)));
+    }
+
+    #[test]
+    fn parenthesis_nesting_just_under_the_limit_still_parses() {
+        let n = MAX_DEPTH - 1;
+        assert_eq!(ev(&format!("{}1{}", "(".repeat(n), ")".repeat(n))), Ok(Val::Num(1.0)));
+        assert!(ev(&format!("{}1{}", "(".repeat(n + 1), ")".repeat(n + 1))).is_err());
     }
 
     #[test]

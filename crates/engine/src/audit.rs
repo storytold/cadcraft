@@ -82,6 +82,12 @@ impl Report {
             "message": self.message(),
         })
     }
+
+    /// Format this report for an AUDITCTL `.adt` log file.
+    pub fn format_adt(&self, title: &str, path: Option<&str>) -> String {
+        let name = path.unwrap_or(title);
+        format!("Audit of drawing: {name}\n\n{}\n", self.message())
+    }
 }
 
 /// Audit `d` without changing it.
@@ -454,17 +460,13 @@ fn references(d: &mut Drawing, out: &mut Vec<Issue>) {
                         m.style = "Standard".into();
                     }
                 }
-                EntityKind::Table(t) => {
-                    if !has_name(&d.table_styles, &t.style, |s| &s.name) {
-                        note("table style", &t.style);
-                        t.style = "Standard".into();
-                    }
+                EntityKind::Table(t) if !has_name(&d.table_styles, &t.style, |s| &s.name) => {
+                    note("table style", &t.style);
+                    t.style = "Standard".into();
                 }
-                EntityKind::Leader(l) => {
-                    if !ok_dim(d, &l.style) {
-                        note("dimension style", &l.style);
-                        l.style = "Standard".into();
-                    }
+                EntityKind::Leader(l) if !ok_dim(d, &l.style) => {
+                    note("dimension style", &l.style);
+                    l.style = "Standard".into();
                 }
                 EntityKind::Dimension(dim) => {
                     if !ok_dim(d, &dim.style) {

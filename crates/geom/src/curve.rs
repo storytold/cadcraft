@@ -437,6 +437,10 @@ pub fn bulge_to_arc(a: Vec2, b: Vec2, bulge: f64) -> Option<(Arc, bool)> {
         return None;
     }
     let theta = 4.0 * bulge.atan(); // signed included angle
+    // A sweep at or below EPS would be read back as a full circle by `ccw_sweep`; it is a straight segment.
+    if theta.abs() <= EPS {
+        return None;
+    }
     let chord = a.dist(b);
     let r = chord / (2.0 * (theta / 2.0).sin().abs());
     let mid = a.mid(b);
@@ -550,6 +554,42 @@ impl Polyline {
     pub fn contains(&self, p: Vec2) -> bool {
         point_in_polygon(&self.tessellate(1e-3), p)
     }
+    /// Area centroid of the closed polyline, exact with bulges: the chord triangles fanned from the
+    /// first vertex plus each bulge's circular segment, weighted by signed area. `None` at zero area.
+    pub fn centroid(&self) -> Option<Vec2> {
+        let origin = self.vertices.first()?.p;
+        let n = self.vertices.len();
+        let (mut area, mut mx, mut my) = (0.0, 0.0, 0.0);
+        let mut add = |a: f64, c: Vec2| {
+            area += a;
+            mx += a * c.x;
+            my += a * c.y;
+        };
+        for i in 0..n {
+            let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else { continue };
+            let (pa, pb) = (a.p - origin, b.p - origin);
+            add(pa.cross(pb) / 2.0, (pa + pb) * (1.0 / 3.0));
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
+                let t = arc.sweep();
+                let seg = arc.radius * arc.radius * (t - t.sin()) / 2.0;
+                if seg > 0.0 {
+                    // A circular segment's centroid lies on the bisector, 4r·sin³(θ/2) / 3(θ − sin θ) from the centre.
+                    let d = 4.0 * arc.radius * (t / 2.0).sin().powi(3) / (3.0 * (t - t.sin()));
+                    let dir = (arc.mid_point() - arc.center).normalized();
+                    add(if ccw { seg } else { -seg }, arc.center - origin + dir * d);
+                }
+            }
+        }
+        let scale = self.vertices.iter().map(|v| (v.p - origin).len()).fold(0.0, f64::max);
+        (area.is_finite() && area.abs() > 1e-12 * scale * scale).then(|| origin + Vec2::new(mx / area, my / area))
+    }
+}
+
+/// Area centroid of a closed polygon. `None` at zero area.
+pub fn polygon_centroid(pts: &[Vec2]) -> Option<Vec2> {
+    Polyline::from_points(pts, true).centroid()
 }
 
 /// Signed polygon area (CCW positive).

@@ -6,7 +6,8 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelectRun, number};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, f64_req, ok, point_param, point_req, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
 mod named_views;

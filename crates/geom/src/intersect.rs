@@ -62,22 +62,29 @@ pub fn circle_circle(c1: &Circle, c2: &Circle) -> Vec<Vec2> {
 
     // Work at the scale of the two circles: fixed absolute tolerances classify
     // small secants as tangencies, and raw radius squares overflow on large drawings.
+    // Measure the chord from the smaller circle: from the larger one the half-chord is a
+    // difference of nearly equal numbers, so a tiny circle crossing a huge one is lost.
+    let swapped = r2 < r1;
+    let (from, dir) = if swapped { (c2.center, -(delta / d)) } else { (c1.center, delta / d) };
     let scale = d.max(r1).max(r2);
     let (ds, r1s, r2s) = (d / scale, r1 / scale, r2 / scale);
     if ds > r1s + r2s || ds < (r1s - r2s).abs() {
         return Vec::new();
     }
-    let a = ((r1s - r2s) * (r1s + r2s) + ds * ds) / (2.0 * ds);
-    let h2 = (r1s - a) * (r1s + a);
-    if h2 < -1e-12 {
+    let (rs, ro) = if swapped { (r2s, r1s) } else { (r1s, r2s) };
+    let a = ((rs - ro) * (rs + ro) + ds * ds) / (2.0 * ds);
+    let h2 = (rs - a) * (rs + a);
+    // Tangency is judged against the smaller circle, which sets the size of the chord, with
+    // room for the rounding in `a` (a few ulps of the unit scale over ds, times 2a in h2).
+    let tol = (1e-12 * rs * rs).max(8.0 * f64::EPSILON * rs / ds);
+    if h2 < -tol {
         return Vec::new();
     }
-    let dir = delta / d;
-    let p = c1.center + dir * (a * scale);
+    let p = from + dir * (a * scale);
     if !p.is_finite() {
         return Vec::new();
     }
-    if h2 <= 1e-12 {
+    if h2 <= tol {
         return vec![p];
     }
     let step = dir.perp() * (h2.sqrt() * scale);
@@ -85,7 +92,8 @@ pub fn circle_circle(c1: &Circle, c2: &Circle) -> Vec<Vec2> {
     if !p1.is_finite() || !p2.is_finite() {
         return Vec::new();
     }
-    vec![p1, p2]
+    // Keep the result order independent of which circle was used as the base.
+    if swapped { vec![p2, p1] } else { vec![p1, p2] }
 }
 
 fn on_arc(a: &Arc, p: Vec2) -> bool {

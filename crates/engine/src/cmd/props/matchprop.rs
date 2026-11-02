@@ -6,7 +6,8 @@
 use cadcraft_doc::{Entity, EntityKind, Handle};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{bad, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Which properties MATCHPROP copies (its Settings).
