@@ -315,7 +315,9 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12 translates a saved dimension block without moving its entities.
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL fallback for blocks without native MTEXT masks: draw a background before
         // the first text or text mark, unless a visible SOLID/WIPEOUT already covers the text.
         let style = ctx.d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
@@ -342,6 +344,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !matches!(&be.kind, EntityKind::MText(t) if t.background.is_some()) && !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();

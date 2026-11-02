@@ -405,6 +405,12 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
         let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
         w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+        // Group 12: a block read from a file keeps the dimension's moved-by offset (AutoCAD
+        // draws the block translated by it); regenerated geometry already sits where the
+        // definition points place it, so it writes no offset.
+        if dm.block.is_some() && dm.insertion_point != Vec3::ZERO {
+            w.p(12, dm.insertion_point);
+        }
         let ty: i64 = match dm.kind {
             DimKind::Linear { .. } => 0,
             DimKind::Aligned => 1,
