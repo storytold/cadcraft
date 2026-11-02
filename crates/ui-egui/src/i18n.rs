@@ -449,10 +449,28 @@ fn display_pieces(s: &str) -> Vec<String> {
 /// `s` (a file, drawing, block or layer name…) laid out on one line in reading order: right-to-left
 /// runs read as they do in the file manager, `שלום.dwg` with the extension on the right.
 pub fn job(s: &str, font: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    job_in(s, font, color, !interface_rtl())
+}
+
+/// [`job`] for a line that reads left to right whatever the interface language (the command
+/// line: its commands, options and coordinates are Latin).
+pub fn job_ltr(s: &str, font: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    job_in(s, font, color, true)
+}
+
+/// Whether the interface language reads right to left (Arabic): its labels keep their own
+/// direction, so an ellipsis or a Latin word in an Arabic label sits where an Arabic reader
+/// expects it (#2317 review).
+fn interface_rtl() -> bool {
+    CURRENT.with(|c| matches!(c.get(), "ar" | "he" | "fa" | "ur"))
+}
+
+fn job_in(s: &str, font: egui::FontId, color: egui::Color32, ltr: bool) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::simple_singleline(s.to_string(), font, color);
-    // The text shaper orders right-to-left runs itself (UAX #9); the line reads left to right, as
-    // the interface does, so a Hebrew name keeps its extension on the right.
-    if has_rtl(s) {
+    // The text shaper orders right-to-left runs itself (UAX #9); in a left-to-right interface the
+    // line reads left to right, as the interface does, so a Hebrew name keeps its extension on
+    // the right. In a right-to-left interface the shaper picks the direction from the text.
+    if ltr && has_rtl(s) {
         job.direction = egui::epaint::text::TextDirection::LeftToRight;
     }
     job
@@ -484,6 +502,21 @@ pub fn ltr(s: &str) -> std::borrow::Cow<'_, str> {
 
 #[cfg(test)]
 mod ltr_tests {
+    /// In an Arabic interface Arabic labels keep their own direction; elsewhere a right-to-left
+    /// name reads left to right like the interface. The command line is always left to right.
+    #[test]
+    fn arabic_interface_labels_keep_their_direction() {
+        use egui::epaint::text::TextDirection;
+        let f = || egui::FontId::proportional(12.0);
+        let c = egui::Color32::WHITE;
+        let ar = super::with_language("ar", || super::job("حفظ باسم...", f(), c).direction);
+        let en = super::with_language("en", || super::job("حفظ باسم...", f(), c).direction);
+        let cmd = super::with_language("ar", || super::job_ltr("حفظ باسم...", f(), c).direction);
+        assert_ne!(ar, TextDirection::LeftToRight);
+        assert_eq!(en, TextDirection::LeftToRight);
+        assert_eq!(cmd, TextDirection::LeftToRight);
+    }
+
     #[test]
     fn hebrew_file_names_keep_the_extension_on_the_right() {
         assert_eq!(super::ltr("שלום.dwg"), "םולש.dwg");
