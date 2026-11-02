@@ -110,7 +110,11 @@ fn other_drawing(s: &Session, p: &Value) -> Result<(Arc<Drawing>, String)> {
 fn read_path(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("compare", format!("{_path}: {e}")))
+        crate::file_access::check_read(_path).map_err(|e| bad("compare", e))?;
+        {
+            crate::file_access::check_read(_path).map_err(|e| bad("compare", e))?;
+            std::fs::read(_path).map_err(|e| bad("compare", format!("{_path}: {e}")))
+        }
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("compare", "paths are not available on the web: open the other drawing and compare with it by name (`document`)"))

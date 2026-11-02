@@ -600,6 +600,7 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::file_access::check_write(_path).map_err(|e| bad(cmd, e))?;
                         std::fs::write(_path, &text).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         Ok(json!({ "name": name, "path": _path }))
                     }

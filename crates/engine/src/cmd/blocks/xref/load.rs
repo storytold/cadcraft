@@ -223,6 +223,7 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
+        crate::file_access::check_read(&file.to_string_lossy())?;
         let left = MAX_XREF_TOTAL_BYTES.saturating_sub(cx.bytes);
         let limit = MAX_XREF_BYTES.min(left);
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
