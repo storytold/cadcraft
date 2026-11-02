@@ -29,3 +29,36 @@ fn groups_survive_dwg_round_trip() {
         .collect();
     assert_eq!(got, vec![("Doors", "front", false, vec![5.0, 0.0]), ("*A1", "", true, vec![0.0])]);
 }
+
+/// Drawings can carry hundreds of thousands of empty anonymous groups (#862). Reading them stays
+/// linear: every group arrives, and a name repeated in another case still keeps one group, the
+/// later definition.
+#[test]
+fn many_anonymous_groups_read_and_names_merge_case_insensitively() {
+    const N: usize = 20_000;
+    let mut dict = String::from("0\nDICTIONARY\n5\nC\n3\nACAD_GROUP\n350\nD\n0\nDICTIONARY\n5\nD\n330\nC\n");
+    let mut groups = String::new();
+    for i in 1..=N {
+        let h = format!("{:X}", 0x1000 + i);
+        dict.push_str(&format!("3\n*A{i}\n350\n{h}\n"));
+        groups.push_str(&format!("0\nGROUP\n5\n{h}\n330\nD\n300\n\n70\n1\n71\n1\n"));
+    }
+    for (name, h, text) in [("Doors", "100", "first"), ("DOORS", "101", "second")] {
+        dict.push_str(&format!("3\n{name}\n350\n{h}\n"));
+        groups.push_str(&format!("0\nGROUP\n5\n{h}\n330\nD\n300\n{text}\n70\n0\n71\n1\n340\n2A\n"));
+    }
+    let dxf = format!(
+        "0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n2A\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n{dict}{groups}0\nENDSEC\n0\nEOF\n"
+    );
+    let d = cadcraft_io::read_dxf(dxf.as_bytes()).expect("read");
+    assert_eq!(d.groups.len(), N + 1);
+    assert!(d.groups.iter().take(N).enumerate().all(|(i, g)| g.name == format!("*A{}", i + 1) && g.members.is_empty()));
+    let doors: Vec<(&str, &str, usize)> = d
+        .groups
+        .iter()
+        .filter(|g| g.name.eq_ignore_ascii_case("doors"))
+        .map(|g| (g.name.as_str(), g.description.as_str(), g.members.len()))
+        .collect();
+    assert_eq!(doors, [("DOORS", "second", 1)]);
+}
