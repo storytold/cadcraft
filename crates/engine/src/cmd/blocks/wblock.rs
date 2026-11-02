@@ -113,6 +113,11 @@ fn with_objects(src: &Drawing, ents: impl Iterator<Item = Entity>) -> Drawing {
     d.scales = src.scales.clone();
     d.blocks = src.blocks.clone();
     d.header.set("INSBASE", cadcraft_doc::HVal::Point(Vec3::ZERO));
+    // The copied blocks keep their objects' handles, so the new ones start above them.
+    let kept: Vec<Handle> = d.blocks.values().flat_map(|b| b.entities.iter().map(|e| e.handle)).collect();
+    for h in kept {
+        d.bump_handseed(h);
+    }
     for mut e in ents {
         e.handle = d.new_handle();
         d.model.push(e);
