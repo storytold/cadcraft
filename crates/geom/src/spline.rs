@@ -41,7 +41,17 @@ impl Spline {
         let n = control.len();
         let degree = degree.clamp(1, n.saturating_sub(1).max(1));
         let knots = clamped_uniform_knots(n, degree);
-        Spline { degree, knots, control, weights: Vec::new(), fit: Vec::new(), fit_z: Vec::new(), control_z: Vec::new(), closed: false, fit_opts: FitOptions::default() }
+        Spline {
+            degree,
+            knots,
+            control,
+            weights: Vec::new(),
+            fit: Vec::new(),
+            fit_z: Vec::new(),
+            control_z: Vec::new(),
+            closed: false,
+            fit_opts: FitOptions::default(),
+        }
     }
 
     /// True when the control polygon is exactly what the fit points produce, so a DXF writer may

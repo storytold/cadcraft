@@ -110,7 +110,8 @@ fn spline(t: &T) -> Spline {
     let z_of = |code: i32, n: usize| Some(t.all_f(code)).filter(|z| z.len() == n && z.iter().any(|v| *v != 0.0)).unwrap_or_default();
     let fit_z = z_of(31, fit.len());
     let control_z = z_of(30, control.len());
-    let mut sp = Spline { degree, knots, control: control.clone(), weights, fit: fit.clone(), fit_z: Vec::new(), control_z: Vec::new(), closed, fit_opts };
+    let mut sp =
+        Spline { degree, knots, control: control.clone(), weights, fit: fit.clone(), fit_z: Vec::new(), control_z: Vec::new(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
         sp = Spline::fit_with(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {

@@ -2889,4 +2889,3 @@ fn planar_control_point_spline_keeps_its_form() {
     assert_eq!(group(s, "72"), Some("4"));
     assert_eq!(group(s, "73"), Some("2"));
 }
-

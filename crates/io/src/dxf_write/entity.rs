@@ -213,7 +213,7 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             // Only with the default knot parametrisation: DXF keeps no other, so a read would lose it.
             let fit_only = s.weights.is_empty() && s.fit_opts.knots == Default::default() && s.control_follows_fit();
             let periodic = if fit_only { s.closed } else { s.is_periodic() };
-            let flags = i64::from(planar) * 8 | i64::from(s.closed) | if periodic { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
+            let flags = if planar { 8 } else { 0 } | i64::from(s.closed) | if periodic { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
             let (knots, control): (&[f64], &[Vec2]) = if fit_only { (&[], &[]) } else { (&s.knots, &s.control) };
             w.i(70, flags);
             w.i(71, s.degree as i64);

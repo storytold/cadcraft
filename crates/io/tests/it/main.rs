@@ -62,6 +62,7 @@ mod roundtrip_audit;
 mod skipped_records;
 mod sortents;
 mod spline_fit_data;
+mod spline_z_fixture;
 mod split_entities_section;
 mod style_typeface;
 mod svg_arc_budget;
