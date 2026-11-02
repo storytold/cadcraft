@@ -416,12 +416,14 @@ fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>
 }
 
 /// The distance from `p` to the segment `a`-`b`, however short (`Line::dist` takes one shorter than
-/// `EPS` for its first point).
+/// `EPS` for its first point). It is measured from `a`, so a short segment far from the origin keeps
+/// the digits rounding there would drop.
 fn segment_dist(a: Vec2, b: Vec2, p: Vec2) -> f64 {
     let d = b - a;
+    let w = p - a;
     let l2 = d.len2();
-    let t = if l2 > 0.0 { ((p - a).dot(d) / l2).clamp(0.0, 1.0) } else { 0.0 };
-    (a + d * t).dist(p)
+    let t = if l2 > 0.0 { (w.dot(d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (w - d * t).len()
 }
 
 /// Whether point `p` lies inside a stretch frame (two corners, or a polygon). A point on its edge is

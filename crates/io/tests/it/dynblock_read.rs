@@ -514,6 +514,20 @@ fn a_point_just_outside_a_tiny_frame_is_outside_it() {
 }
 
 #[test]
+fn a_point_less_than_a_rounding_off_a_short_edge_is_outside_it() {
+    // A triangle frame whose right edge runs from (35.99999999999999, -2e-10) to
+    // (36.00000000000001, 3e-10): line 30's end (36, 0) is 1.4e-15 off it, past a billionth of the
+    // edge's length (5e-19), and outside the frame, so the line moves whole. Measured from the
+    // edge's start, the distance keeps digits that rounding near x = 36 would drop.
+    let frame = "72 3\n1011 35.99999999999999\n1021 -2e-10\n1011 36.00000000000001\n1021 3e-10\n1011 35.999999999\n1021 0\n";
+    let src = fixture().replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", frame);
+    assert_ne!(src, fixture());
+    let (mut d, r) = door_reference(&src);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    assert_eq!(shapes(&d, r)[0], [(-6.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
 fn a_point_past_the_end_of_a_frame_edge_is_outside_it() {
     // The frame's right edge runs along x = 36 from y = -2 to -1: line 30's end (36, 0) is on that
     // edge's line but past its end, outside the frame, so the line moves whole.
