@@ -291,10 +291,15 @@ const STRAIGHT: f64 = 1e-8;
 const MAX_SELF_PAIRS: usize = 1 << 24;
 const MAX_SELF_CROSSINGS: usize = 1 << 16;
 
-/// How near a cut a pick is on it, along the object: AutoCAD 2024 trims nothing for a pick within
-/// 5e-7 of a cut on an open polyline and trims for one 5.1e-7 away, from 1e-3 to 1e9 long (around
-/// a closed rectangle it reached a little further, to 1e-6).
+/// How near a cut a pick is on it, along the object. AutoCAD 2024 trims nothing for a pick that
+/// near one of a polyline's own cuts, and passes over a cut by another edge, the trim running on
+/// across it. On open polylines from 1e-3 to 1e9 long it was within 5e-7, and 5.1e-7 away trimmed
+/// at the cut (around a closed rectangle it reached a little further, to 1e-6).
 const ON_CUT: f64 = 5e-7;
+
+/// The refusal when every cut was passed over ([`ON_CUT`]): the object meets an edge, at the pick,
+/// so Quick mode leaves it in place rather than erasing it as one no edge crosses.
+const ON_THE_CUT: &str = "The pick is on the cut: nothing to trim.";
 
 /// AutoCAD 2024's refusal to trim a closed polyline cut at one point only.
 pub(crate) const CUT_ONCE: &str = "Curve must intersect cutting edges at least twice.";
@@ -384,8 +389,8 @@ fn self_cuts(segs: &[Segment], closed: bool, k: usize) -> Result<Vec<f64>> {
 }
 
 /// Trim a polyline at the piece containing `pick`, between the cuts by `cut` and, when it is one
-/// of the cutting edges (`itself`), by its own ([`self_cuts`]). `None`: the pick is on a cut
-/// ([`ON_CUT`]), which trims nothing.
+/// of the cutting edges (`itself`), by its own ([`self_cuts`]). `None`: the pick is on one of its
+/// own cuts ([`ON_CUT`]), which trims nothing.
 fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itself: bool) -> Result<Option<Vec<EntityKind>>> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let segs = pl.segments();
@@ -408,26 +413,30 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         }
         acc += len;
     }
-    if itself {
-        ts.extend(self_cuts(&segs, p.closed, k)?);
-    }
+    let mut own = if itself { self_cuts(&segs, p.closed, k)? } else { Vec::new() };
     // An open polyline's ends cut nothing; a closed one's start vertex cuts it like any other (a
     // cut there is at 0 or at its length, which the pieces below take as one).
     if !p.closed {
         ts.retain(|t| *t > 1e-9 && *t < total - 1e-9);
-    }
-    ts.sort_by(f64::total_cmp);
-    if ts.is_empty() {
-        return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
+        own.retain(|t| *t > 1e-9 && *t < total - 1e-9);
     }
     // How far apart two lengths along the polyline are, round its start too when it is closed.
     let apart = |s: f64, t: f64| if p.closed { (s - t).abs().min(total - (s - t).abs()) } else { (s - t).abs() };
+    // A pick on one of its own cuts trims nothing; a cut by another edge there is passed over, and
+    // the piece runs on across it.
+    if own.iter().any(|t| apart(*t, tp) <= ON_CUT) {
+        return Ok(None);
+    }
+    let found = ts.len();
+    ts.retain(|t| apart(*t, tp) > ON_CUT);
+    let passed = ts.len() < found;
+    ts.extend(own);
+    ts.sort_by(f64::total_cmp);
+    if ts.is_empty() {
+        return Err(EngineError::Other(if passed { ON_THE_CUT } else { "Object does not intersect a cutting edge." }.into()));
+    }
     if p.closed && ts.first().is_some_and(|f| ts.iter().all(|t| apart(*f, *t) <= ON_CUT)) {
         return Err(EngineError::Other(CUT_ONCE.into()));
-    }
-    // A pick on a cut trims nothing.
-    if ts.iter().any(|t| apart(*t, tp) <= ON_CUT) {
-        return Ok(None);
     }
     let lo = ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max);
     let hi = ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min);

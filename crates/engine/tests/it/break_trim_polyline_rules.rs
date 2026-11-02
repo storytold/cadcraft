@@ -8,8 +8,9 @@
 //!   Quick mode) is also cut at its own vertices, where it crosses itself and where a vertex of it
 //!   touches another of its segments. A piece whose ends meet there is left closed. A vertex
 //!   between two line segments in line (within 1e-8, straight on or doubling back) doesn't cut it.
-//! - A pick within 5e-7 of a cut along the polyline, whatever its size, trims nothing. An edge
-//!   through a closed polyline's start vertex cuts it there.
+//! - A pick within 5e-7 of one of the polyline's own cuts, whatever its size, trims nothing; a cut
+//!   by another edge that near the pick is passed over. An edge through a closed polyline's start
+//!   vertex cuts it there.
 //!
 //! Quick mode was measured in AutoCAD 2024 itself, picking on screen: its scripted TRIM runs
 //! Standard mode only.
@@ -325,14 +326,32 @@ fn a_pick_half_a_unit_from_a_vertex_1e9_out_trims_the_segment_it_is_on() {
 
 // ---------------- a pick on a cut ----------------
 
-/// The polyline `v`, with a line from `a` to `b` when given, trimmed at `pick` with every object
-/// as an edge, or only the line when `only_line`; returns the polyline's handle.
-fn trimmed(v: Value, closed: bool, edge: Option<([f64; 2], [f64; 2])>, only_line: bool, pick: [f64; 2]) -> (Session, Handle) {
+type Edge = ([f64; 2], [f64; 2]);
+
+/// The polyline `v`, with lines `edges`, trimmed at `pick` with every object as an edge, or only
+/// the lines when `only_lines`; the polyline's handle and whether the trim was made.
+fn attempt(v: Value, closed: bool, edges: &[Edge], only_lines: bool, pick: [f64; 2]) -> (Session, Handle, bool) {
     let mut s = Session::new();
     let p = pline(&mut s, v, closed);
-    let l = edge.map(|(a, b)| line(&mut s, a, b));
-    trim(&mut s, p, pick, l.filter(|_| only_line).as_ref().map(std::slice::from_ref));
+    let ls: Vec<String> = edges.iter().map(|(a, b)| line(&mut s, *a, *b).hex()).collect();
+    let mut params = json!({ "handle": p.hex(), "pick": pick });
+    if only_lines {
+        params["edges"] = json!(ls);
+    }
+    let made = s.execute("trim", &params).is_ok();
+    (s, p, made)
+}
+
+/// [`attempt`] with at most one line, which must trim.
+fn trimmed(v: Value, closed: bool, edge: Option<Edge>, only_line: bool, pick: [f64; 2]) -> (Session, Handle) {
+    let (s, p, made) = attempt(v, closed, edge.as_slice(), only_line, pick);
+    assert!(made, "{pick:?}");
     (s, p)
+}
+
+/// A vertical line through x = `x`.
+fn at(x: f64) -> Edge {
+    ([x, -5.0], [x, 5.0])
 }
 
 #[test]
@@ -370,31 +389,57 @@ fn a_pick_on_a_cut_is_within_the_same_distance_at_any_size() {
 }
 
 #[test]
-fn a_pick_on_a_cut_by_another_edge_trims_nothing() {
-    // The line x = 5 is the edge: picks on it and 4e-7 past it leave the polyline as it was, one
-    // 6e-7 past it trims the rest.
-    let v = || json!([[0, 0], [10, 0], [10, 10]]);
-    let edge = Some(([5.0, -5.0], [5.0, 5.0]));
+fn a_cut_by_another_edge_at_the_pick_is_passed_over() {
+    // A pick within 5e-7 of a cut by another edge runs the piece on across it, to the next cut
+    // either side; 6e-7 away the cut holds.
+    let flat = || json!([[0, 0], [10, 0]]);
+    let piece = |a: f64, b: f64| [(a, 0.0, 0.0), (b, 0.0, 0.0)];
+    for pick in [[3.0, 0.0], [3.0000004, 0.0]] {
+        let (s, p, _) = attempt(flat(), false, &[at(3.0), at(7.0)], true, pick);
+        expect(&s, p, &[(true, false, &piece(7.0, 10.0))]);
+    }
+    let (s, p, _) = attempt(flat(), false, &[at(3.0), at(7.0)], true, [3.0000006, 0.0]);
+    expect(&s, p, &[(true, false, &piece(0.0, 3.0)), (false, false, &piece(7.0, 10.0))]);
+    // Lines at 3, 5 and 7: picked on 5, 3 to 7 goes; picked on 7, 5 to the end.
+    let (s, p, _) = attempt(flat(), false, &[at(3.0), at(5.0), at(7.0)], true, [5.0, 0.0]);
+    expect(&s, p, &[(true, false, &piece(0.0, 3.0)), (false, false, &piece(7.0, 10.0))]);
+    let (s, p, _) = attempt(flat(), false, &[at(3.0), at(5.0), at(7.0)], true, [7.0, 0.0]);
+    expect(&s, p, &[(true, false, &piece(0.0, 5.0))]);
+    // Every object an edge: on to the polyline's own vertex (10, 0).
+    let (s, p, _) = attempt(json!([[0, 0], [10, 0], [10, 10]]), false, &[at(5.0)], false, [5.0, 0.0]);
+    expect(&s, p, &[(true, false, &[(10.0, 0.0, 0.0), (10.0, 10.0, 0.0)])]);
+    // A closed rectangle cut at x = 30 and 70 top and bottom, picked on the bottom at 30: round
+    // its start vertex, from 30 on the top to 70 on the bottom.
+    let tall = |x: f64| ([x, -5.0], [x, 15.0]);
+    let (s, p, _) = attempt(json!([[0, 0], [100, 0], [100, 10], [0, 10]]), true, &[tall(30.0), tall(70.0)], true, [30.0, 0.0]);
+    expect(&s, p, &[(true, false, &[(70.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 10.0, 0.0), (30.0, 10.0, 0.0)])]);
+    // One line only, picked on its cut or 4e-7 past it: no cut is left, and nothing is trimmed.
     for pick in [[5.0, 0.0], [5.0000004, 0.0]] {
-        let (s, p) = trimmed(v(), false, edge, true, pick);
+        let (s, p, made) = attempt(json!([[0, 0], [10, 0], [10, 10]]), false, &[at(5.0)], true, pick);
+        assert!(!made);
         expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0)])]);
     }
-    let (s, p) = trimmed(v(), false, edge, true, [5.0000006, 0.0]);
-    expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)])]);
+    // In Quick mode too: the polyline meets the line, so it isn't erased as one no edge crosses.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [10, 0]]), false);
+    line(&mut s, [5.0, -5.0], [5.0, 5.0]);
+    assert!(s.execute("trim", &json!({ "handle": p.hex(), "pick": [5, 0], "mode": "quick" })).is_err());
+    expect(&s, p, &[(true, false, &piece(0.0, 10.0))]);
 }
 
 #[test]
 fn a_pick_on_a_vertex_an_edge_runs_through_trims_nothing() {
-    // The line's cut is found on the segments either side of the vertex, a rounding apart: the
-    // pick on the vertex still leaves the polyline as it was, rather than splitting it there.
+    // The line's cut is found on the segments either side of the vertex, a rounding apart. Both
+    // are passed over, so no cut is left and the polyline stays as it was, not split there.
     let cases = [
         ([[5.5, 1.1], [23.3, 7.7], [30.1, 29.9]], ([23.3, 7.7], [45.7, 2.3])),
         ([[5.5, 1.1], [23.3, 7.7], [30.1, 29.9]], ([2.0 * 23.3 - 45.7, 2.0 * 7.7 - 2.3], [45.7, 2.3])),
         ([[1.3, 2.7], [37.9, 11.3], [55.1, 48.7]], ([4.5, 43.5], [71.3, -20.9])),
     ];
     for (v, edge) in cases {
-        let (s, p) = trimmed(json!(v), false, Some(edge), true, v[1]);
+        let (s, p, made) = attempt(json!(v), false, &[edge], true, v[1]);
         let whole: Vec<Vertex> = v.iter().map(|q| (q[0], q[1], 0.0)).collect();
+        assert!(!made);
         expect(&s, p, &[(true, false, &whole)]);
     }
 }
@@ -402,7 +447,8 @@ fn a_pick_on_a_vertex_an_edge_runs_through_trims_nothing() {
 #[test]
 fn an_edge_through_a_closed_polylines_start_vertex_cuts_it_there() {
     // The line cuts the rectangle at (0, 0) and at (10, 10) on its top. The pick takes the piece
-    // it is on, whichever vertex the rectangle starts at; 4e-7 from (0, 0) it trims nothing.
+    // it is on, whichever vertex the rectangle starts at. 4e-7 from (0, 0) that cut is passed
+    // over, which leaves one, and the trim is refused.
     let rect = || json!([[0, 0], [100, 0], [100, 10], [0, 10]]);
     let edge = Some(([-5.0, -5.0], [15.0, 15.0]));
     let left: [Vertex; 3] = [(10.0, 10.0, 0.0), (0.0, 10.0, 0.0), (0.0, 0.0, 0.0)];
@@ -413,7 +459,8 @@ fn an_edge_through_a_closed_polylines_start_vertex_cuts_it_there() {
     let (s, p) = trimmed(rect(), true, edge, true, [0.0, 5.0]);
     expect(&s, p, &[(true, false, &[(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 10.0, 0.0), (10.0, 10.0, 0.0)])]);
     let whole: [Vertex; 4] = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 10.0, 0.0), (0.0, 10.0, 0.0)];
-    let (s, p) = trimmed(rect(), true, edge, true, [0.0, 4e-7]);
+    let (s, p, made) = attempt(rect(), true, edge.as_slice(), true, [0.0, 4e-7]);
+    assert!(!made);
     expect(&s, p, &[(true, true, &whole)]);
     // The rectangle alone, picked on its start vertex, and 4e-7 from it on its last segment.
     for pick in [[0.0, 0.0], [0.0, 4e-7]] {
