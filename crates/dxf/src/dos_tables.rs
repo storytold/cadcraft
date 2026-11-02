@@ -1,6 +1,17 @@
 //! More DOS code pages for `$DWGCODEPAGE` (`DOS855` …): the upper halves (bytes 0x80–0xFF) of the IBM PC
 //! code page definitions, as Unicode characters; the lower halves are ASCII. Bytes the code page leaves
 //! unassigned are U+FFFD.
+//!
+//! Source check (the tables were checked against these files, not generated from them):
+//! - DOS737, 775, 855, 857, 860, 861, 863, 864, 865 and 869 were checked byte for byte (all 128 bytes
+//!   0x80–0xFF of each) against the Unicode Consortium mapping files CP737.TXT, CP775.TXT, CP855.TXT,
+//!   CP857.TXT, CP860.TXT, CP861.TXT, CP863.TXT, CP864.TXT, CP865.TXT and CP869.TXT in
+//!   <https://unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/>. Bytes those files list as `#UNDEFINED`
+//!   are U+FFFD here.
+//! - DOS720 has no Unicode Consortium mapping file, so it was checked only against Python's `cp720`
+//!   codec (not a published mapping file). 120 of the 128 bytes agree. The 8 bytes 0x80, 0x81, 0x84, 0x86,
+//!   0x8D, 0x8E, 0x8F and 0x90 decode to U+FFFD here (unassigned), while that codec maps them to the C1
+//!   controls U+0080..U+0090.
 
 pub(crate) const DOS720: [char; 128] = [
     '\u{FFFD}', '\u{FFFD}', '\u{00E9}', '\u{00E2}', '\u{FFFD}', '\u{00E0}', '\u{FFFD}', '\u{00E7}', '\u{00EA}', '\u{00EB}', '\u{00E8}', '\u{00EF}',
