@@ -107,3 +107,52 @@ fn autosave_save_version_and_right_click_in_options() {
     assert!(text.contains("Cancel") && text.contains("Snap Overrides"), "the menu opens:\n{text}");
     assert!(a.session.prompt_text().contains("next point"), "no Enter: {}", a.session.prompt_text());
 }
+
+#[test]
+fn interface_scale_in_options() {
+    let mut a = app();
+    assert_eq!(a.run("options", json!({})).unwrap()["interfaceScale"], json!(1.0));
+
+    let r = a.run("options", json!({"interfaceScale": 1.5})).unwrap();
+    assert_eq!(r["interfaceScale"], json!(1.5));
+    let ctx = egui::Context::default();
+    frame(&mut a, &ctx, Vec::new(), 0.0);
+    // egui applies a newly requested zoom factor at the start of the next pass.
+    frame(&mut a, &ctx, Vec::new(), 0.1);
+    assert_eq!(ctx.zoom_factor(), 1.5, "applied as egui's zoom factor");
+
+    // Refused all or nothing.
+    let before = a.run("options", json!({})).unwrap();
+    for bad in [
+        json!({"interfaceScale": 0.4, "PICKBOX": 9}),
+        json!({"interfaceScale": 3.1}),
+        json!({"interfaceScale": "big", "snapMarkerSize": 20}),
+        json!({"interfaceScale": null}),
+        json!({"interfaceScale": f64::NAN}),
+    ] {
+        let err = a.run("options", bad.clone()).expect_err(&bad.to_string());
+        assert!(err.to_string().contains("interfaceScale must be from 0.5 to 3"), "{bad}: {err}");
+        assert_eq!(a.run("options", json!({})).unwrap(), before, "{bad} changed nothing");
+    }
+
+    // It survives a restart; an out-of-range saved value is skipped.
+    let mut b = app();
+    b.load_profile(&a.profile_json());
+    assert_eq!(b.options.interface_scale, 1.5);
+    let mut c = app();
+    c.load_profile(&a.profile_json().replace("\"interfaceScale\":1.5", "\"interfaceScale\":9.0"));
+    assert_eq!(c.options.interface_scale, 1.0);
+
+    // Reset brings back the system's own size.
+    assert_eq!(a.run("options", json!({"reset": true})).unwrap()["interfaceScale"], json!(1.0));
+    frame(&mut a, &ctx, Vec::new(), 0.2);
+    frame(&mut a, &ctx, Vec::new(), 0.3);
+    assert_eq!(ctx.zoom_factor(), 1.0);
+
+    // The Display tab shows it.
+    a.run("options", json!({"interfaceScale": 1.25})).unwrap();
+    a.ui.dialog = Some("options:display".into());
+    frame(&mut a, &ctx, Vec::new(), 0.4);
+    let text = frame(&mut a, &ctx, Vec::new(), 0.5);
+    assert!(text.contains("Interface scale") && text.contains("125 %"), "{text}");
+}

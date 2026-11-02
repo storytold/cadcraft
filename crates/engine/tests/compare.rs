@@ -104,16 +104,40 @@ fn navigates_areas_and_closes() {
     assert!(s.compare.is_none());
 }
 
-#[test]
-fn compares_a_file_read_through_the_io_hooks() {
-    // Test file format: the bytes are "x" — a drawing holding a line from 0,0 to x,0.
+/// The file-reading hook both tests here share (it is set once per process). Test file format:
+/// "xref" is a drawing with a reference to xref Y at `y.dwg`; a number x is a drawing holding a
+/// line from 0,0 to x,0.
+fn hooks() {
     fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
-        let x: f64 = String::from_utf8_lossy(bytes).trim().parse().map_err(|_| "bad test file")?;
         let mut d = Drawing::new_imperial();
+        if bytes == b"xref" {
+            let mut y = Block::new("Y");
+            y.xref_path = Some("y.dwg".into());
+            d.blocks.insert("Y".into(), Arc::new(y));
+            let insert = Insert {
+                block: "Y".into(),
+                insert: Vec3::ZERO,
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: Vec::new(),
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).map_err(|e| e.to_string())?;
+            return Ok(d);
+        }
+        let x: f64 = String::from_utf8_lossy(bytes).trim().parse().map_err(|_| "bad test file")?;
         d.add(&Space::Model, Common::default(), line(0.0, 0.0, x, 0.0)).map_err(|e| e.to_string())?;
         Ok(d)
     }
     set_io(IoHooks { read, write: |_, _| Err("no writer in this test".into()), plot: None });
+}
+
+#[test]
+fn compares_a_file_read_through_the_io_hooks() {
+    hooks();
     let dir = std::env::temp_dir().join(format!("cadcraft-compare-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("other.dxf");
@@ -193,4 +217,45 @@ fn derived_dimension_fields_are_not_differences() {
     s.open_drawing(other, "B", None);
     let r = s.execute("compare", &json!({"document": 0})).unwrap();
     assert_eq!(counts(&r), (0, 0, 0, 1), "{r}");
+}
+
+/// COMPAREEXPORT (#2049): an xref path relative to the compared file keeps that file's folder.
+#[test]
+fn relative_xref_paths_of_a_compared_file_take_that_files_folder() {
+    hooks();
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("compareexport-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("other.dxf");
+    std::fs::write(&path, "xref").unwrap();
+    // Named by its absolute path and by a path relative to the working directory.
+    let mut names = vec![path.to_string_lossy().to_string()];
+    names.extend(relative_to_cwd(&path));
+    for name in names {
+        let mut s = Session::new();
+        s.execute("compare", &json!({"path": name})).unwrap();
+        // The compared file's xref is only there; the copy keeps the file's folder.
+        s.execute("compareexport", &json!({})).unwrap();
+        let got = s.doc().unwrap().block("Y").unwrap().xref_path.clone().unwrap();
+        let got = std::path::Path::new(&got);
+        assert!(got.is_absolute(), "{got:?}, compared as {name}");
+        assert_eq!(got.file_name(), Some(std::ffi::OsStr::new("y.dwg")));
+        assert_eq!(got.parent().unwrap().canonicalize().unwrap(), dir.canonicalize().unwrap(), "compared as {name}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `p` as a path relative to the working directory (`..` steps up to the shared folder), when
+/// the two share a root.
+fn relative_to_cwd(p: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+    let cwd = std::env::current_dir().ok()?;
+    let (a, b): (Vec<Component>, Vec<Component>) = (cwd.components().collect(), p.components().collect());
+    let shared = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    if shared == 0 {
+        return None;
+    }
+    let mut rel = std::path::PathBuf::new();
+    a[shared..].iter().for_each(|_| rel.push(".."));
+    b[shared..].iter().for_each(|c| rel.push(c));
+    Some(rel.to_string_lossy().to_string())
 }

@@ -1,6 +1,6 @@
 # Releasing CADCraft
 
-The canonical recipe is craftrules' [`release/playbook.md`](https://github.com/storytold/craftrules/blob/main/release/playbook.md); this file covers only what's CADCraft-specific.
+This file describes how CADCraft is released.
 
 - **Version:** `[workspace.package] version` in the root `Cargo.toml` is the single source. `cargo xtask version` prints it; `cargo xtask version set X.Y.Z[-pre]` changes it. The app shows it in About, `cadcraft --version` and `cadcraft-cli --version`; release builds also embed the commit (`CADCRAFT_BUILD_SHA`).
 - **Cut a release:** bump the version on `main`, then push `main` to `release` (`git push origin main:release`). Every push to `release` runs `.github/workflows/release.yml` and creates or updates the draft GitHub Release `CADCraft v<version>`. A `workflow_dispatch` run with `version: X.Y.Z-rc.N` makes a test build. A dispatch on any other branch is a dry run: the unsigned jobs (version, Linux, Linux riscv64, Flatpak, FreeBSD, web) build, the `release` environment refuses the signing jobs (macOS, Windows), and no release is drafted.
