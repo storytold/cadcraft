@@ -117,6 +117,7 @@ pub fn support_text(cmd: &str, p: &serde_json::Value, path_key: &str, text_key: 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_support_file(cmd: &str, path: &str) -> crate::Result<String> {
     use std::io::Read;
+    crate::file_access::check_read(path).map_err(|e| super::bad(cmd, e))?;
     let f = std::fs::File::open(path).map_err(|e| super::bad(cmd, format!("{path}: {e}")))?;
     let mut bytes = Vec::new();
     f.take(MAX_SUPPORT_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(|e| super::bad(cmd, format!("{path}: {e}")))?;

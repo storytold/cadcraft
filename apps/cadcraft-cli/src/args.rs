@@ -276,6 +276,12 @@ pub(crate) struct McpArgs {
     /// port first (macOS)
     #[arg(long, requires = "connect")]
     pub(crate) launch: bool,
+    /// The only folder the agent's commands may read from (headless only)
+    #[arg(long, value_name = "DIR")]
+    pub(crate) automation_read_root: Option<String>,
+    /// The only folder the agent's commands may write to (headless only)
+    #[arg(long, value_name = "DIR")]
+    pub(crate) automation_write_root: Option<String>,
     #[command(flatten)]
     pub(crate) settings: Settings,
 }
@@ -408,12 +414,17 @@ enum UsageError {
     /// The output is one of the input files, so writing it would replace the original.
     #[error("{} is an input file, so the result would replace the original: choose another output, or pass --in-place to overwrite it", .0.display())]
     OutIsInput(PathBuf),
+    /// The automation roots confine the headless server; a running app enforces its own access.
+    #[error(
+        "--automation-read-root and --automation-write-root confine the headless MCP server; a running app enforces its own file access (not yet available: see issue #1585)"
+    )]
+    AutomationRootsNeedHeadless,
 }
 
 impl UsageError {
     fn into_clap(self, cmd: &mut clap::Command) -> clap::Error {
         let kind = match self {
-            Self::FramingNeedsImage { .. } | Self::OutIsInput(_) => ErrorKind::ArgumentConflict,
+            Self::FramingNeedsImage { .. } | Self::OutIsInput(_) | Self::AutomationRootsNeedHeadless => ErrorKind::ArgumentConflict,
         };
         cmd.error(kind, self)
     }
@@ -485,6 +496,13 @@ fn framing_error(cli: &Cli) -> Option<UsageError> {
     (!cadcraft_io::is_image(out)).then(|| UsageError::FramingNeedsImage { flag, out: out.to_path_buf() })
 }
 
+/// The automation roots confine the headless server only, as the other Craft apps' do.
+fn roots_need_headless(cli: &Cli) -> Option<UsageError> {
+    let Command::Mcp(m) = &cli.command else { return None };
+    (m.connect.is_some() && (m.automation_read_root.is_some() || m.automation_write_root.is_some()))
+        .then_some(UsageError::AutomationRootsNeedHeadless)
+}
+
 /// An output that is the same file as an input, without `--in-place`. An output that doesn't exist
 /// can't be an input, and an I/O error in the comparison is left to the open or write that follows.
 fn out_is_input(cli: &Cli) -> Option<UsageError> {
@@ -503,8 +521,8 @@ fn out_is_input(cli: &Cli) -> Option<UsageError> {
 /// The backend `cadcraft-cli mcp` serves from.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum McpTarget {
-    /// An in-process drawing session (no `--connect`).
-    Headless,
+    /// An in-process drawing session (no `--connect`), optionally confined to the two folders.
+    Headless { read_root: Option<String>, write_root: Option<String> },
     /// The running app's control channel at `HOST:PORT`; `lazy`: reached at the first call;
     /// `launch`: opened then if it isn't running.
     Connect { addr: String, lazy: bool, launch: bool },
@@ -515,7 +533,7 @@ impl McpArgs {
         match &self.connect {
             // `--launch` connects at the first call too (the app opens then).
             Some(addr) => McpTarget::Connect { addr: addr.clone(), lazy: self.lazy || self.launch, launch: self.launch },
-            None => McpTarget::Headless,
+            None => McpTarget::Headless { read_root: self.automation_read_root.clone(), write_root: self.automation_write_root.clone() },
         }
     }
 }
@@ -588,7 +606,7 @@ fn parse_with(mut cmd: clap::Command, args: &[OsString]) -> Result<Cli, clap::Er
     if let (Command::Run(r), Some((_, m))) = (&mut cli.command, matches.subcommand()) {
         (r.drawings, r.steps) = run_order(m);
     }
-    if let Some(e) = framing_error(&cli).or_else(|| out_is_input(&cli)) {
+    if let Some(e) = framing_error(&cli).or_else(|| out_is_input(&cli)).or_else(|| roots_need_headless(&cli)) {
         if let Some(sub) = matches.subcommand_name().and_then(|n| cmd.find_subcommand_mut(n)) {
             return Err(e.into_clap(sub));
         }
@@ -646,7 +664,21 @@ mod tests {
 
     #[test]
     fn mcp_without_connect_is_headless() {
-        assert_eq!(mcp(&[]).unwrap(), McpTarget::Headless);
+        assert_eq!(mcp(&[]).unwrap(), McpTarget::Headless { read_root: None, write_root: None });
+    }
+
+    /// The automation roots confine a headless server; `--connect` is refused with the reason
+    /// (the running app's control channel is not confined yet, #1585).
+    #[test]
+    fn mcp_automation_roots_confine_a_headless_server_only() {
+        assert_eq!(
+            mcp(&["--automation-read-root", "/work", "--automation-write-root=/work/out"]).unwrap(),
+            McpTarget::Headless { read_root: Some("/work".into()), write_root: Some("/work/out".into()) }
+        );
+        let e = mcp(&["--connect", "127.0.0.1:7979", "--automation-read-root", "/work"]).unwrap_err().to_string();
+        assert!(e.contains("headless MCP server") && e.contains("#1585"), "{e}");
+        let e = mcp(&["--automation-write-root=/work", "--connect", "127.0.0.1:7979"]).unwrap_err().to_string();
+        assert!(e.contains("headless MCP server"), "{e}");
     }
 
     #[test]

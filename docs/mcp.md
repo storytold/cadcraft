@@ -32,6 +32,44 @@ Example client configuration (Claude Code / Claude Desktop):
 { "mcpServers": { "cadcraft": { "command": "cadcraft-cli", "args": ["mcp"] } } }
 ```
 
+## Confining file access
+
+```sh
+cadcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
+```
+
+The two flags (PhotoCraft, VectorCraft and the other Craft apps take the same ones, so one client
+configuration works across the suite) keep the agent to the folders you give it:
+
+- Every file a command **reads** must lie inside the **read root**: `open`, `recover`, `compare`,
+  `script`, `import`, `insert`, `xattach` and every xref it loads, `new` templates, `appload` and
+  LISP `load`/`open`, support files (`linetype`, `hatch.patterns`, `aliasedit`, `reinit`), data
+  links, and plot style and plotter configuration files named by a path.
+- Every file a command **writes** must lie inside the **write root**: `save`/`qsave`/`saveas`
+  (including the temporary file written beside the destination), `export`, `plot`, `publish`,
+  `pdfbook`, `wblock`, data extraction, table export, plot style and plotter saves, and
+  `render {path}`.
+- Read and write access are separate. Give the same folder twice for both; a root left out grants
+  none of its access (with only `--automation-read-root`, nothing can be written to disk). Without
+  either flag nothing changes.
+- A path is made absolute against the server's working directory, then its links are followed: a
+  file or folder link that leads out of a root is outside it. For a file that doesn't exist yet,
+  its nearest existing folder's links are followed and the rest must be plain names, so `..` below
+  a folder that doesn't exist is refused, as is a link that leads nowhere. The result is compared
+  with the root by whole folder names: `/work2/x` is not inside `/work`. On Windows case is ignored,
+  UNC paths are resolved like drive-letter ones, and device names (`CON`, `NUL`, `COM1`…) are
+  refused.
+- A refused path is an ordinary tool error with `isError: true` that the agent can read and
+  correct, for example `automation path rejected: outside the write root
+  /work/project/out: /etc/x.png` or `automation filesystem access is not granted: write authority
+  is absent: /work/project/out/x.png`.
+- The roots must be existing folders; a missing one stops the server with an error. Each flag is
+  given once (`--flag <dir>` or `--flag=<dir>`).
+
+The flags confine the headless server. `--connect` with them is an error, since the server would
+otherwise talk to an app that isn't confined; the app's control channel does not take them yet
+(#1585). Without `--connect` the server writes the files itself, so every check happens here.
+
 ## Tools
 
 | Tool | What it does |

@@ -143,6 +143,10 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     // An unsaved drawing has no folder of its own to hold the log.
     let Some(path) = &path_str else { return };
     let adt_path = std::path::PathBuf::from(path).with_extension("adt");
+    if let Err(e) = crate::file_access::check_write(&adt_path.to_string_lossy()) {
+        log::warn!("AUDITCTL: not writing audit log {}: {e}", adt_path.display());
+        return;
+    }
     let content = report.format_adt(&title, path_str.as_deref());
     // Write through an exclusively-created temporary and rename over the companion path, so a
     // planted `.adt` symlink beside the drawing cannot redirect the report onto another file
@@ -157,6 +161,7 @@ fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
+    crate::file_access::check_read(path).map_err(|e| bad(cmd, e))?;
     std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
