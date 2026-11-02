@@ -66,6 +66,8 @@ fn mb(n: u64) -> String {
 pub mod worker;
 #[cfg(not(no_dwg_bridge))]
 pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_noted, serve_if_asked, use_own_worker, use_worker};
+#[cfg(not(no_dwg_bridge))]
+mod proxy_transport;
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -107,6 +109,7 @@ mod native {
         }
         let mut notes = read_notes(&outcome.stats);
         let mut doc = outcome.document;
+        guarded(AssertUnwindSafe(|| super::proxy_transport::prepare(&mut doc))).map_err(|_| "the DWG proxy conversion failed".to_string())??;
         let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
@@ -734,6 +737,7 @@ mod native {
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
+        let classes = super::proxy_transport::read_classes(dxf)?;
         let data = dxf.to_vec();
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
@@ -746,6 +750,8 @@ mod native {
             None if doc.version < MIN_DWG_VERSION => doc.version = MIN_DWG_VERSION,
             None => {}
         }
+        guarded(AssertUnwindSafe(|| super::proxy_transport::restore_classes(&mut doc, classes)))
+            .map_err(|_| "the DXF proxy class conversion failed".to_string())??;
         // The fix-ups run on the third-party reader's document, so a panic in one is an error, not a crash.
         let unwritten = guarded(AssertUnwindSafe(|| {
             super::fail_in_test("convert");

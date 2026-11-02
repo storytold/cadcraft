@@ -772,6 +772,10 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
             if DWG_WRITES.contains(&u.dxf_type.as_str()) {
                 continue;
             }
+            // A valid proxy keeps its opaque data and source class in modern DWG.
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.preserves_proxy_entity(&u.tags) {
+                continue;
+            }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
             *n = n.saturating_add(1);
         }

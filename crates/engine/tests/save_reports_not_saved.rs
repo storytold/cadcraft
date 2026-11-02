@@ -241,3 +241,20 @@ fn ole_objects_are_not_reported() {
         assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
     }
 }
+
+#[test]
+fn retained_proxy_is_not_reported_as_lost_in_modern_dwg() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    let mut drawing = Drawing::new_metric();
+    let tags = vec![RawTag { code: 91, value: "500".into() }];
+    drawing.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags })).unwrap();
+    let foreign = std::sync::Arc::make_mut(&mut drawing.foreign);
+    foreign.complete_class_table = true;
+    foreign.classes = vec![vec![RawTag { code: 1, value: "CUSTOM".into() }, RawTag { code: 281, value: "1".into() }]];
+    assert!(not_saved_as(&drawing, Version::R2013).is_empty());
+    assert!(not_saved_as(&drawing, Version::R2018).is_empty());
+    assert_eq!(not_saved_as(&drawing, Version::R2010).get("ACAD_PROXY_ENTITY"), Some(&1));
+    std::sync::Arc::make_mut(&mut drawing.foreign).classes.clear();
+    assert_eq!(not_saved_as(&drawing, Version::R2018).get("ACAD_PROXY_ENTITY"), Some(&1));
+
+}
