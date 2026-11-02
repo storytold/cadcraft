@@ -1396,3 +1396,47 @@ fn extents_cache_keys_on_revision_and_doc_identity() {
     assert!(st.extents_of(&Space::Model).is_empty(), "an empty drawing has no extents");
     assert_eq!(st.extents_cache[0].2, Arc::as_ptr(&st.doc) as usize, "the cache must follow the new drawing");
 }
+
+/// ReviewerA's ask on #1109: every drawing change must invalidate the cached extents — layer
+/// visibility included. A frozen layer's entities are invisible, so the extents shrink.
+#[test]
+fn extents_follow_layer_visibility() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    s.execute("layer.new", &json!({"name": "Far", "current": true})).unwrap();
+    s.execute("circle", &json!({"center": [1000, 0], "radius": 1})).unwrap();
+    // Leave Far (it cannot be frozen while current) and check both cache-invalidating steps.
+    s.execute("layer.new", &json!({"name": "Work", "current": true})).unwrap();
+    let ext = |s: &mut Session| {
+        let e = s.execute("drawing.inspect", &json!({})).unwrap()["extents"].clone();
+        (e[0][0].as_f64().unwrap_or(f64::NAN), e[1][0].as_f64().unwrap_or(f64::NAN))
+    };
+    assert_eq!(ext(&mut s), (-1.0, 1001.0), "both layers visible");
+    s.execute("layer.set", &json!({"name": "Far", "frozen": true})).unwrap();
+    assert_eq!(ext(&mut s), (-1.0, 1.0), "a frozen layer's entities leave the extents");
+    s.execute("layer.set", &json!({"name": "Far", "frozen": false})).unwrap();
+    assert_eq!(ext(&mut s), (-1.0, 1001.0), "thawing restores them");
+}
+
+/// ReviewerA's ask on #1109: redefining a block must invalidate the cached extents of every
+/// drawing that references it (the Block Editor bumps the revision on BSAVE/BCLOSE).
+#[test]
+fn extents_follow_block_redefinition() {
+    let mut s = Session::new();
+    s.execute("bedit", &json!({"name": "B", "create": true})).unwrap();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    s.execute("bsave", &json!({})).unwrap();
+    s.execute("bclose", &json!({})).unwrap();
+    s.execute("insert", &json!({"name": "B", "at": [500, 0]})).unwrap();
+    let ext = |s: &mut Session| {
+        let e = s.execute("drawing.inspect", &json!({})).unwrap()["extents"].clone();
+        (e[0][0].as_f64().unwrap_or(f64::NAN), e[1][0].as_f64().unwrap_or(f64::NAN))
+    };
+    assert_eq!(ext(&mut s), (499.0, 501.0), "the reference spans the block's radius-1 circle");
+    // Redefine the block with a radius-10 circle: the same reference now spans wider.
+    s.execute("bedit", &json!({"name": "B"})).unwrap();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 10})).unwrap();
+    s.execute("bsave", &json!({})).unwrap();
+    s.execute("bclose", &json!({})).unwrap();
+    assert_eq!(ext(&mut s), (490.0, 510.0), "redefining the block must invalidate the cache");
+}
