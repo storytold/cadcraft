@@ -290,7 +290,6 @@ pub fn format(source: &str, values: &[(&str, String)]) -> String {
     result
 }
 
-/// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).
 /// Polish plurals: one (1), few (2–4, 22–24), many (0, 5–21, 25–31).
 pub fn plural_pl(n: u64) -> usize {
     if n == 1 {
@@ -302,6 +301,7 @@ pub fn plural_pl(n: u64) -> usize {
     }
 }
 
+/// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).
 pub fn plural_uk(n: u64) -> usize {
     match (n % 10, n % 100) {
         (1, 11) | (2..=4, 12..=14) => 2,
