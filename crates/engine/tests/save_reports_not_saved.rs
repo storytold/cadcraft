@@ -155,9 +155,16 @@ fn saving_sat_text_solids_as_dxf_2013_reports_them() {
 #[test]
 fn a_dxf_2013_loss_is_known_before_saving() {
     use cadcraft_engine::cmd::file::loss_on_save;
-    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0
+    set_io(IoHooks {
+        read: |_, _| Err("no reader in this test".into()),
+        write: |_, _| {
+            Ok(b"0
 EOF
-".to_vec()), plot: None });
+"
+            .to_vec())
+        },
+        plot: None,
+    });
     let sat = |d: &mut Drawing| {
         let tags = vec![RawTag { code: 8, value: "0".into() }, RawTag { code: 1, value: "400 1 1 0".into() }];
         d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "REGION".into(), tags })).unwrap();
