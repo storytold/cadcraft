@@ -9,10 +9,17 @@ use egui_kittest::kittest::{NodeT, Queryable, by};
 use serde_json::{Value, json};
 
 fn harness() -> Harness<'static, CadApp> {
+    harness_from_prefs("{}", false)
+}
+
+fn harness_from_prefs(prefs: &str, render: bool) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
+    app.load_prefs(prefs);
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;
-    let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
+    let builder = Harness::builder().with_size(vec2(1280.0, 800.0));
+    let builder = if render { builder.wgpu() } else { builder };
+    let mut h = builder.build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -21,6 +28,44 @@ fn harness() -> Harness<'static, CadApp> {
     );
     h.run_steps(5);
     h
+}
+
+#[test]
+fn restarting_restores_calculator_data_and_ui_edits_are_saved_when_hidden() {
+    let prefs = json!({"quickcalc": {
+        "history": [["2+3", "5"]], "vars": [["width", 5]], "ans": 5
+    }})
+    .to_string();
+    let screenshot = std::env::var_os("CADCRAFT_QUICKCALC_SHOT");
+    let mut h = harness_from_prefs(&prefs, screenshot.is_some());
+    h.state_mut().run("ui.panel.quickcalc", Value::Null).unwrap();
+    h.run_steps(5);
+    assert!(h.query_all(by().value("2+3")).next().is_some());
+    expression(&h).click();
+    h.run_steps(3);
+    expression(&h).type_text("ans+width");
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "=").click();
+    h.run_steps(3);
+    let prefs: Value = serde_json::from_str(&h.state().prefs_json()).unwrap();
+    assert_eq!(prefs["quickcalc"]["ans"], 10.0);
+    assert_eq!(prefs["quickcalc"]["history"][1], json!(["ans+width", "10"]));
+    if let Some(path) = screenshot {
+        h.render().unwrap().save(std::path::PathBuf::from(path)).unwrap();
+    }
+
+    h.get_by_role_and_label(Role::Button, "Clear History").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Button, "×").click();
+    h.run_steps(3);
+    h.state_mut().run("ui.toggle.quickcalc", Value::Null).unwrap();
+    h.run_steps(5);
+    let mut restarted = CadApp::new(Session::default(), Services::default());
+    restarted.load_prefs(&h.state().prefs_json());
+    let prefs: Value = serde_json::from_str(&restarted.prefs_json()).unwrap();
+    assert_eq!(prefs["quickcalc"]["history"], json!([]));
+    assert_eq!(prefs["quickcalc"]["vars"], json!([]));
+    assert_eq!(prefs["quickcalc"]["ans"], 10.0);
 }
 
 /// In these tests QuickCalc floats alone; scope to its body to avoid the Properties text fields.
@@ -43,7 +88,7 @@ fn platform_shortcut_toggles_with_expression_focus_and_preserves_drafting() {
         h.key_press_modifiers(modifiers, Key::Num8);
         h.run_steps(5);
         assert!(h.state().ui.docking.layout.contains(&Panel::QuickCalc));
-        let floating = h.state().ui.docking.layout.floating.iter().find(|group| group.panels.contains(&Panel::QuickCalc)).unwrap().rect;
+        let floating = h.state().ui.docking.layout.floating.iter().find(|group| group.contains(&Panel::QuickCalc)).unwrap().rect;
         expression(&h).click();
         h.run_steps(3);
         expression(&h).type_text("2+3");
@@ -55,7 +100,7 @@ fn platform_shortcut_toggles_with_expression_focus_and_preserves_drafting() {
         h.key_press_modifiers(modifiers, Key::Num8);
         h.run_steps(5);
         assert_eq!(h.get(by().role(Role::TextInput).value("2+3")).value().as_deref(), Some("2+3"));
-        assert_eq!(h.state().ui.docking.layout.floating.iter().find(|group| group.panels.contains(&Panel::QuickCalc)).unwrap().rect, floating);
+        assert_eq!(h.state().ui.docking.layout.floating.iter().find(|group| group.contains(&Panel::QuickCalc)).unwrap().rect, floating);
         assert_eq!(h.state().session.running.as_ref().unwrap().id, "line");
         assert_eq!(h.state().cmd.buffer, "12,34");
         assert_eq!(h.state().session.doc().unwrap(), &drawing);
@@ -131,7 +176,7 @@ fn explicit_opens_still_reveal_and_calculations_do_not_open_the_palette() {
     app.run("ui.dock", json!({"operation":"activate", "panel":"toolSets"})).unwrap();
     app.run("ui.panel.quickcalc", Value::Null).unwrap();
     let mut workspace = app.ui.docking.clone();
-    workspace.reveal_panel(Panel::QuickCalc).unwrap();
+    cadcraft_ui_egui::docking::reveal_panel(&mut workspace, Panel::QuickCalc).unwrap();
     assert_eq!(app.ui.docking.layout, workspace.layout, "explicit open must activate an inactive tab");
 }
 

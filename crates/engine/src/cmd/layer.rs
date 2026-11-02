@@ -7,7 +7,8 @@ use cadcraft_doc::{Layer, Lineweight};
 use serde_json::{Value, json};
 
 use super::machines::SelectRun;
-use super::*;
+use super::{CommandSpec, bad, bool_or, ok, str_param, targets};
+
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -249,6 +250,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 repoint(&mut std::sync::Arc::make_mut(block).entities, &old, &nn);
             }
         }
+        merge::rename_in_viewports(d, &old, &nn);
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }

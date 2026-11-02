@@ -150,10 +150,14 @@ fn hostile_saved_profiles_are_ignored() {
 fn model_background_reaches_the_drawing_area_tokens() {
     let mut a = app();
     let ctx = egui::Context::default();
-    a.logic(&ctx);
+    let frame = |a: &mut CadApp| {
+        let mut out = ctx.run_ui(Default::default(), |ui| a.ui(ui));
+        out.textures_delta.clear();
+    };
+    frame(&mut a);
     assert_eq!(Tokens::get().canvas, Tokens::DARK.canvas);
     a.run("options", json!({"modelBackground": "#ffffff", "paperBackground": "#202020"})).unwrap();
-    a.logic(&ctx);
+    frame(&mut a);
     let t = Tokens::get();
     assert_eq!(t.canvas, Color32::WHITE);
     assert_eq!(t.paper, Color32::from_gray(0x20));
@@ -161,7 +165,7 @@ fn model_background_reaches_the_drawing_area_tokens() {
     assert_ne!(t.grid_minor, Tokens::DARK.grid_minor);
     assert_eq!(t.chrome, Tokens::DARK.chrome, "the interface keeps its theme");
     a.run("options", json!({"reset": true})).unwrap();
-    a.logic(&ctx);
+    frame(&mut a);
     assert_eq!(Tokens::get(), Tokens::DARK);
 }
 
@@ -234,7 +238,7 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
         assert!(!text.contains(label), "{label} offered");
     }
     // Visual Effect Settings: the selection area and the preview filter.
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("cc_options_visual_effects"), true));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_visual_effects"), true));
     let text = render(&mut a, &ctx);
     for label in [
         "Selection Area Effect",

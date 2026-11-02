@@ -8,6 +8,9 @@ license.workspace = true
 [lints]
 workspace = true
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The same targets as build.rs's `no_dwg_bridge` leave acadrust out: wasm32, and FreeBSD aarch64,
+# where acadrust 0.6.6 passes a `*const c_char` (u8 there) to its own `*const i8` sysctlbyname.
+# 0.6.7 and 0.6.8 fix that but read some damaged DWGs as empty with no note (tests.rs, #800).
+[target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dependencies]
 # MPL-2.0: used as an unmodified dependency only (see plan/adr/0001 and NOTICE).
 acadrust = "0.6.5"

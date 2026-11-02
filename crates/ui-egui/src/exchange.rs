@@ -72,14 +72,14 @@ const FROM_PLOT: &str = "cc_plot_preview_from_plot";
 /// return to the dialog.
 pub(crate) fn preview_plot(app: &mut CadApp, ctx: &egui::Context, params: Value, info: String) {
     PREVIEW_GEN.fetch_add(1, Ordering::Relaxed);
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(FROM_PLOT), FromPlot { params, info }));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(FROM_PLOT), FromPlot { params, info }));
     app.ui.dialog = Some("preview".into());
 }
 
 /// Render the plot preview of the current layout (or model), or of the Plot dialog's settings,
 /// as a texture.
 fn render(app: &mut CadApp, ctx: &egui::Context) -> Result<(TextureHandle, String), String> {
-    if let Some(f) = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::new(FROM_PLOT))) {
+    if let Some(f) = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))) {
         let r = app.session.execute("plot", &f.params).map_err(|e| e.to_string())?;
         let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
         let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
@@ -101,7 +101,7 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> Result<(TextureHandle, Strin
 
 /// The Plot Preview window: the sheet as it plots, with Print and Close.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    let id = egui::Id::new("cc_plot_preview");
+    let id = egui::Id::unique("cc_plot_preview");
     let generation = PREVIEW_GEN.load(Ordering::Relaxed);
     let cached = ctx.data(|d| d.get_temp::<Preview>(id)).filter(|p| p.generation == generation);
     let preview = match cached {
@@ -137,11 +137,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if close || print {
         *open = false;
     }
-    let from_plot = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::new(FROM_PLOT))).is_some();
+    let from_plot = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))).is_some();
     if !*open {
         ctx.data_mut(|d| {
             d.remove::<Preview>(id);
-            d.remove::<FromPlot>(egui::Id::new(FROM_PLOT));
+            d.remove::<FromPlot>(egui::Id::unique(FROM_PLOT));
         });
     }
     if from_plot && !*open {

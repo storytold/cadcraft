@@ -3,9 +3,10 @@
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services};
+use egui::accesskit::Role;
 use egui::{Event, Modifiers, PointerButton, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{By, Queryable};
 use serde_json::json;
 
 fn harness() -> Harness<'static, CadApp> {
@@ -26,7 +27,11 @@ fn harness() -> Harness<'static, CadApp> {
 }
 
 fn double_click_label(h: &mut Harness<'_, CadApp>, label: &str) {
-    let pos = h.get_by_label(label).rect().center();
+    // Click the visible name label itself. The expression field beside it is `labelled_by` that
+    // label, and kittest's `get_by_label` deliberately returns the labelled widget (the field),
+    // so a plain `get_by_label` would double-click the wrong node. `include_labels` plus the
+    // Label role selects the row's name text, keeping this a real pointer/keyboard test.
+    let pos = h.get(By::new().role(Role::Label).label(label).include_labels()).rect().center();
     h.event(Event::PointerMoved(pos));
     h.run_steps(2);
     for _ in 0..2 {
@@ -47,6 +52,7 @@ fn parameters(h: &Harness<'_, CadApp>) -> Vec<(String, String)> {
 fn double_click_types_a_new_name_and_enter_renames() {
     let mut h = harness();
     double_click_label(&mut h, "user1");
+    assert!(h.get_by_role_and_label(Role::TextInput, "Name").is_focused(), "the rename field has the keyboard focus");
     h.event(Event::Text("width".into()));
     h.run_steps(2);
     assert_eq!(h.state().cmd.buffer, "", "the command line got the keys");

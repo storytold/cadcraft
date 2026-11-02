@@ -333,6 +333,9 @@ fn call(name: &str, args: &[Val]) -> Result<Val, String> {
         "min" | "max" => {
             arity(1, MAX_ARGS)?;
             let vs = (0..args.len()).map(n).collect::<Result<Vec<_>, _>>()?;
+            if vs.iter().any(|v| !v.is_finite()) {
+                return Err("result is not a finite number".into());
+            }
             let f = if name == "min" { f64::min } else { f64::max };
             Ok(Val::Num(vs.into_iter().reduce(f).unwrap_or(0.0)))
         }
@@ -597,6 +600,10 @@ mod tests {
         assert!(ev("[1").is_err());
         assert!(ev(&"[".repeat(5000)).is_err());
         assert_eq!(ev("min(3,1,2)"), Ok(Val::Num(1.0)));
+        assert!(ev("min(sqrt(-1), 5)").is_err());
+        assert!(ev("max(5, ln(-1))").is_err());
+        assert!(ev("min(exp(1000), 5)").is_err());
+        assert!(ev("max(exp(1000), 5)").is_err());
         assert_eq!(ev("1e-3*2"), Ok(Val::Num(0.002)));
         assert!(ev("max(1,2,3,4,5,6,7,8,9)").is_err());
     }
