@@ -368,14 +368,20 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
     if ts.is_empty() {
         return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
     }
-    // A pick right on a cut (a vertex picked exactly) takes the piece of the segment it was found
-    // on, rather than neither piece (which would erase the whole polyline).
-    let near = 1e-9 * total;
-    if ts.iter().any(|t| (t - tp).abs() <= near) {
-        tp += if at_end > 0.0 { 2.0 * near } else { -2.0 * near };
-    }
-    let lo = ts.iter().copied().filter(|t| *t < tp).fold(f64::NEG_INFINITY, f64::max);
-    let hi = ts.iter().copied().filter(|t| *t > tp).fold(f64::INFINITY, f64::min);
+    // A pick on a cut (a vertex picked exactly: the same length within rounding) takes the piece
+    // of the segment it was found on, rather than neither piece (which would erase the whole
+    // polyline): the cuts are split just past that cut when the pick is at its segment's start,
+    // just before it otherwise. A pick off every cut splits them where it is.
+    let on = 4.0 * f64::EPSILON * (total + 1.0);
+    let split = if !ts.iter().any(|t| (t - tp).abs() <= on) {
+        tp
+    } else if at_end > 0.0 {
+        tp + 2.0 * on
+    } else {
+        tp - 2.0 * on
+    };
+    let lo = ts.iter().copied().filter(|t| *t < split).fold(f64::NEG_INFINITY, f64::max);
+    let hi = ts.iter().copied().filter(|t| *t > split).fold(f64::INFINITY, f64::min);
     let mk = |vs: Vec<PolyVertex>| lwpoly(vs, false);
     let mut out = Vec::new();
     if p.closed {
