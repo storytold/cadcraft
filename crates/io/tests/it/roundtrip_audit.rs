@@ -1010,3 +1010,182 @@ fn dwg_keeps_extension_dictionaries_xrecords_and_entity_xdata() {
     assert_eq!(d.block("DOOR").map(|b| b.description.as_str()), Some("A door leaf"));
     assert!(d.ucss.iter().any(|u| u.name == "TILTED"));
 }
+
+/// A linear dimension whose two extension origins are snapped to `a` and `b`, so the saved file
+/// carries a DIMASSOC naming both objects.
+fn add_associated_dimension(d: &mut Drawing, a: cadcraft_doc::Handle, b: cadcraft_doc::Handle) {
+    use cadcraft_doc::{AssocSnap, Common, DimAssoc, DimKind, Dimension, Space};
+    use cadcraft_geom::Vec3;
+    let at = |point: &str, handle| DimAssoc { point: point.into(), handle, snap: AssocSnap::Mid };
+    let dm = Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        defpt: Vec3::new(5.0, -3.0, 0.0),
+        text_mid: Vec3::ZERO,
+        p13: Vec3::ZERO,
+        p14: Vec3::new(10.0, 0.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: String::new(),
+        style: "Standard".into(),
+        measurement: 0.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: None,
+        overrides: Default::default(),
+        assoc: vec![at("p13", a), at("p14", b)],
+        marks: Default::default(),
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).expect("add dimension");
+}
+
+/// The handle of the one DIMASSOC object of a written file.
+fn dimassoc_handle(o: &Out) -> String {
+    let assocs = o.of("DIMASSOC");
+    assert_eq!(assocs.len(), 1, "one DIMASSOC");
+    h(assocs.first().copied().unwrap_or_default())
+}
+
+/// A source object that already has a reactor to a kept foreign object (the fixture's line 2A
+/// names ACME_OBJECT 42) keeps it when a DIMASSOC reactor is added: one group with both (review on #2589).
+#[test]
+fn a_dimension_source_keeps_its_foreign_reactors_next_to_the_dimassoc() {
+    let mut d = read_dxf(fixture().as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x2A), cadcraft_doc::Handle(0x2A));
+    let o = Out::new(&write_dxf(&d));
+    let line = o.of("LINE").into_iter().find(|t| h(t).eq_ignore_ascii_case("2A")).expect("line 2A");
+    assert_eq!(line.iter().filter(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").count(), 1, "one reactor group");
+    let reactors = group(line, "ACAD_REACTORS");
+    assert!(reactors.contains(&dimassoc_handle(&o)), "DIMASSOC reactor: {reactors:?}");
+    assert!(reactors.iter().any(|r| o.handle(r).is_some_and(|(k, _)| k == "ACME_OBJECT")), "foreign reactor kept: {reactors:?}");
+    assert!(o.dangling().is_empty(), "{:?}", o.dangling());
+}
+/// An unmodelled entity a DIMASSOC refers to gets the reactor too, next to what it had (review on #2589).
+#[test]
+fn an_unknown_dimension_source_carries_the_dimassoc_reactor() {
+    let mut d = read_dxf(fixture().as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x30), cadcraft_doc::Handle(0x2A));
+    let o = Out::new(&write_dxf(&d));
+    let widget = entity_by_text(&o, "ACME_WIDGET", "widget-in-model");
+    let reactors = group(widget, "ACAD_REACTORS");
+    assert!(reactors.contains(&dimassoc_handle(&o)), "DIMASSOC reactor: {reactors:?}");
+    assert_eq!(widget.iter().filter(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").count(), 1);
+    assert_eq!(owner(widget), h(o.named("BLOCK_RECORD", "*Model_Space")), "owner unchanged");
+    assert!(o.dangling().is_empty(), "{:?}", o.dangling());
+}
+
+/// The handles of the `{ACAD_REACTORS` group of the record of handle `at`, after checking the
+/// written text holds exactly one such group, placed as the DXF reference orders a record:
+/// handle (5), then the reactors, then the owner (330), then the first subclass marker (100) and
+/// any xdata (1001). Each handle appears once and names a DIMASSOC when `assoc_only` is set.
+fn one_reactor_group(o: &Out, at: &str, assoc_only: bool) -> Vec<String> {
+    let (_, rec) = o.handle(at).expect("source record");
+    let codes: Vec<(i32, String)> = rec.iter().map(|t| (t.code, t.str())).collect();
+    let starts: Vec<usize> = (0..codes.len()).filter(|&i| codes[i].0 == 102 && codes[i].1 == "{ACAD_REACTORS").collect();
+    assert_eq!(starts.len(), 1, "exactly one reactor group in {codes:?}");
+    let start = starts[0];
+    let end = start + codes[start..].iter().position(|c| c.0 == 102 && c.1 == "}").expect("group end");
+    let handles: Vec<String> = codes[start + 1..end].iter().map(|c| c.1.clone()).collect();
+    assert!(codes[start + 1..end].iter().all(|c| c.0 == 330), "only 330 groups inside: {codes:?}");
+    let unique: std::collections::HashSet<String> = handles.iter().map(|r| r.to_ascii_uppercase()).collect();
+    assert_eq!(unique.len(), handles.len(), "each reactor once: {handles:?}");
+    let pos = |code: i32| codes.iter().position(|c| c.0 == code);
+    assert_eq!(pos(5), Some(0), "handle first");
+    let owner_at = end + 1 + codes[end + 1..].iter().position(|c| c.0 == 330).expect("owner");
+    assert!(owner_at > end, "owner after the reactors: {codes:?}");
+    assert!(end < pos(100).expect("subclass marker"), "reactors before the first subclass marker");
+    if let Some(x) = pos(1001) {
+        assert!(end < x, "reactors before the xdata");
+    }
+    if assoc_only {
+        for r in &handles {
+            assert_eq!(o.handle(r).map(|(k, _)| k), Some("DIMASSOC"), "{r} resolves to a DIMASSOC");
+        }
+    }
+    handles
+}
+
+/// A record that already has a reactors group (line 2A names ACME_OBJECT 42) comes out with one
+/// group holding the foreign handle and the DIMASSOC, each once, in the same order after a
+/// second save and with the extension dictionary group still between it and the owner.
+/// Pinning test for the merge (review on #2589).
+#[test]
+fn a_record_with_a_reactor_group_gets_one_group_with_every_handle_once() {
+    let mut d = read_dxf(fixture().as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x2A), cadcraft_doc::Handle(0x2A));
+    let text = write_dxf(&d);
+    let o = Out::new(&text);
+    let reactors = one_reactor_group(&o, "2A", false);
+    assert_eq!(reactors.len(), 2, "foreign + DIMASSOC: {reactors:?}");
+    let assoc = dimassoc_handle(&o);
+    assert_eq!(reactors.iter().filter(|r| r.eq_ignore_ascii_case(&assoc)).count(), 1);
+    assert!(reactors.iter().any(|r| o.handle(r).is_some_and(|(k, _)| k == "ACME_OBJECT")));
+    let (_, line) = o.handle("2A").expect("line");
+    let order: Vec<i32> = line.iter().map(|t| t.code).collect();
+    let start = |name: &str| line.iter().position(|t| t.code == 102 && t.str() == format!("{{{name}"));
+    let (rx, xd) = (start("ACAD_REACTORS"), start("ACAD_XDICTIONARY"));
+    assert!(rx.is_some() && xd.is_some() && rx < xd, "reactors group before the extension dictionary group: {order:?}");
+    assert_eq!(group(line, "ACAD_XDICTIONARY").len(), 1);
+    // Our reader accepts it, the association survives, and a second save keeps the same group.
+    let back = read_dxf(text.as_bytes()).expect("reopen");
+    let again = Out::new(&write_dxf(&back));
+    assert_eq!(again.of("DIMASSOC").len(), 1);
+    let second = one_reactor_group(&again, "2A", false);
+    assert_eq!(second.len(), 2, "{second:?}");
+    assert!(second.iter().any(|r| again.handle(r).is_some_and(|(k, _)| k == "DIMASSOC")));
+    assert!(again.dangling().is_empty(), "{:?}", again.dangling());
+}
+
+/// A record with no reactors group (line 2A with its group removed, keeping the extension
+/// dictionary and the xdata) gets a new one in the preamble, between the handle and the owner,
+/// so before the first subclass marker and the xdata. Pinning test (review on #2589).
+#[test]
+fn a_record_without_a_reactor_group_gets_a_new_one_in_the_preamble() {
+    let bare = fixture().replacen("5\n2A\n102\n{ACAD_REACTORS\n330\n42\n102\n}\n", "5\n2A\n", 1);
+    assert_ne!(bare, fixture(), "the fixture line lost its reactors");
+    let mut d = read_dxf(bare.as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x2A), cadcraft_doc::Handle(0x2A));
+    let text = write_dxf(&d);
+    let o = Out::new(&text);
+    let (_, line) = o.handle("2A").expect("line");
+    assert!(line.iter().any(|t| t.code == 1001), "the record keeps its xdata");
+    let xdict_at = line.iter().position(|t| t.code == 102 && t.str() == "{ACAD_XDICTIONARY").expect("xdict group");
+    let reactors = one_reactor_group(&o, "2A", true);
+    assert_eq!(reactors, vec![dimassoc_handle(&o)]);
+    // The preamble is the handle, then the reactors group and the extension dictionary group in
+    // the DXF reference's order, then the owner: nothing else in between.
+    let reactors_at = line.iter().position(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").expect("reactor group");
+    let owner_at = line.iter().position(|t| t.code == 330 && t.str() != reactors[0]).expect("owner");
+    assert!(reactors_at < xdict_at && xdict_at < owner_at, "reactors {reactors_at}, xdict {xdict_at}, owner {owner_at}");
+    assert!(line.iter().take(owner_at).all(|t| matches!(t.code, 5 | 102 | 330 | 360)), "only handle and groups before the owner");
+    // Reading it back keeps the association and the DIMASSOC still resolves.
+    let back = read_dxf(text.as_bytes()).expect("reopen");
+    let again = Out::new(&write_dxf(&back));
+    one_reactor_group(&again, "2A", true);
+    assert!(again.dangling().is_empty(), "{:?}", again.dangling());
+}
+
+/// A new line used by two dimensions (so by two DIMASSOC objects) lists both, once each, in one
+/// group that sits between its handle and its owner. Pinning test (review on #2589).
+#[test]
+fn a_source_used_by_two_associations_lists_both_dimassocs_once() {
+    use cadcraft_doc::{Common, Line, Space};
+    use cadcraft_geom::Vec3;
+    let mut d = Drawing::new_metric();
+    let line = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })).expect("add line");
+    add_associated_dimension(&mut d, line, line);
+    add_associated_dimension(&mut d, line, line);
+    let text = write_dxf(&d);
+    let o = Out::new(&text);
+    let assocs: Vec<String> = o.of("DIMASSOC").into_iter().map(h).collect();
+    assert_eq!(assocs.len(), 2, "one DIMASSOC per dimension");
+    let reactors = one_reactor_group(&o, &line.hex(), true);
+    let mut got: Vec<String> = reactors.iter().map(|r| r.to_ascii_uppercase()).collect();
+    let mut want: Vec<String> = assocs.iter().map(|r| r.to_ascii_uppercase()).collect();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want, "both associations, once each");
+    let back = read_dxf(text.as_bytes()).expect("reopen");
+    let again = Out::new(&write_dxf(&back));
+    assert_eq!(one_reactor_group(&again, &line.hex(), true).len(), 2);
+    assert!(again.dangling().is_empty(), "{:?}", again.dangling());
+}
