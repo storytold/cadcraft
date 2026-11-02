@@ -129,6 +129,7 @@ fn request(op: u8, limits: Limits, version: &str) -> Vec<u8> {
     r.extend((limits.max_dwg_bytes as u64).to_le_bytes());
     r.extend((limits.max_dxf_bytes as u64).to_le_bytes());
     r.extend(limits.assumed_memory.to_le_bytes());
+    r.push(u8::from(limits.follows_machine));
     r.push(u8::try_from(version.len()).unwrap_or(0));
     r.extend(version.as_bytes());
     r
@@ -266,9 +267,14 @@ fn handle(mut b: &[u8]) -> Reply {
     let max_dwg_bytes = take_u64(&mut b).and_then(|n| usize::try_from(n).ok()).ok_or_else(bad)?;
     let max_dxf_bytes = take_u64(&mut b).and_then(|n| usize::try_from(n).ok()).ok_or_else(bad)?;
     let assumed_memory = take_u64(&mut b).ok_or_else(bad)?;
+    let follows_machine = match take(&mut b, 1).and_then(<[u8]>::first) {
+        Some(0) => false,
+        Some(1) => true,
+        _ => return Err(bad()),
+    };
     let version_len = take(&mut b, 1).and_then(<[u8]>::first).copied().ok_or_else(bad)?;
     let version = take(&mut b, usize::from(version_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
-    let limits = Limits { max_dwg_bytes, max_dxf_bytes, assumed_memory };
+    let limits = Limits { max_dwg_bytes, max_dxf_bytes, assumed_memory, follows_machine };
     match op {
         DECODE => super::dwg_to_dxf_noted(b, limits),
         ENCODE => super::dxf_to_dwg_noted_with(b, version, limits)
@@ -335,6 +341,25 @@ mod tests {
         ] {
             assert!(handle(request).is_err(), "{request:?}");
         }
+    }
+
+    /// Every field of the limits reaches the worker: a DXF one byte over its limit is refused there
+    /// with the memory the limit assumes, and `CADCRAFT_MEMORY_GB` named only for limits that
+    /// follow the machine.
+    #[test]
+    fn the_limits_reach_the_worker_whole() {
+        let dxf = b"0\nEOF\n";
+        let limits = Limits { max_dxf_bytes: dxf.len() - 1, ..Limits::for_memory(64 << 30) };
+        for follows_machine in [false, true] {
+            let mut request = self::request(ENCODE, Limits { follows_machine, ..limits }, "AC1032");
+            request.extend(dxf);
+            let e = handle(&request).unwrap_err();
+            assert!(e.contains("CADCraft converts to DWG; it assumes 64.0 GB of free memory at 16 bytes per byte"), "{e}");
+            assert_eq!(e.contains("CADCRAFT_MEMORY_GB"), follows_machine, "{e}");
+        }
+        let mut odd = self::request(DECODE, Limits::DEFAULT, "");
+        odd[2 + 3 * 8] = 2;
+        assert_eq!(handle(&odd), Err("the DWG worker got a request it can't read (a different CADCraft version?)".to_string()), "a flag is 0 or 1");
     }
 
     #[test]

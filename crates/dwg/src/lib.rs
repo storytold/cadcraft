@@ -51,6 +51,10 @@ pub struct Limits {
     /// The free memory `max_dxf_bytes` assumes, in bytes: what the rendition takes at
     /// [`Self::MEMORY_PER_DXF_BYTE`]; named in the message when the limit is exceeded.
     pub assumed_memory: u64,
+    /// Whether these limits follow the machine's free memory ([`Self::for_machine`],
+    /// [`Self::for_saving`]), so that `CADCRAFT_MEMORY_GB` changes them. The message for an
+    /// exceeded limit names the variable only then.
+    pub follows_machine: bool,
 }
 
 impl Limits {
@@ -70,8 +74,9 @@ impl Limits {
     pub const MAX_DXF_BYTES: u64 = 8 << 30;
 
     /// 512 MB of DWG, 1 GB of DXF (more than the DXF reader's group-code limit fills), assuming
-    /// 16 GB of free memory.
-    pub const DEFAULT: Limits = Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30, assumed_memory: Self::DEFAULT_MEMORY };
+    /// 16 GB of free memory. Fixed: `CADCRAFT_MEMORY_GB` doesn't change it.
+    pub const DEFAULT: Limits =
+        Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30, assumed_memory: Self::DEFAULT_MEMORY, follows_machine: false };
 
     /// The limits for a machine with `free` bytes of memory to spare: the DXF rendition may take
     /// what that holds at [`Self::MEMORY_PER_DXF_BYTE`], never less than [`Self::DEFAULT`]'s
@@ -87,9 +92,27 @@ impl Limits {
     }
 
     /// The limits for this machine: [`Self::for_memory`] of its free memory ([`free_memory`]),
-    /// or [`Self::DEFAULT`] where that isn't known.
+    /// or [`Self::DEFAULT`] where that isn't known. Opening a DWG takes these.
     pub fn for_machine() -> Limits {
-        free_memory().map_or(Self::DEFAULT, Self::for_memory)
+        Self::following_machine(free_memory())
+    }
+
+    /// The limits for converting a drawing this process already holds, as saving it as DWG does:
+    /// [`Self::for_memory`] of the free memory plus the memory the process holds now (Linux:
+    /// `VmRSS` in `/proc/self/status`). The drawing being saved is part of what the process holds,
+    /// and [`Self::MEMORY_PER_DXF_BYTE`] counts the whole process (saving a 239 MB plan peaked at
+    /// 12.5 bytes per byte of DXF with the open drawing included), so a drawing gets at least the
+    /// limit it opened under unless something else has taken memory since. A set
+    /// `CADCRAFT_MEMORY_GB` is taken as it is, as on opening, and where the free memory isn't known
+    /// the limit is [`Self::DEFAULT`]'s; [`Self::MAX_DXF_BYTES`] caps it either way.
+    pub fn for_saving() -> Limits {
+        Self::following_machine(saving_memory(set_memory(), os_free_memory(), held_memory()))
+    }
+
+    /// [`Self::for_memory`] of `free`, or [`Self::DEFAULT`]'s limits without it, marked as
+    /// following the machine.
+    fn following_machine(free: Option<u64>) -> Limits {
+        Limits { follows_machine: true, ..free.map_or(Self::DEFAULT, Self::for_memory) }
     }
 }
 
@@ -100,7 +123,18 @@ impl Limits {
 /// nothing. So on Windows and macOS the limit stays at [`Limits::DEFAULT`]'s 1 GB of DXF unless
 /// the variable is set: a plan whose rendition is larger opens there only with it.
 pub fn free_memory() -> Option<u64> {
-    std::env::var("CADCRAFT_MEMORY_GB").ok().and_then(|v| memory_gb(&v)).or_else(os_free_memory)
+    set_memory().or_else(os_free_memory)
+}
+
+/// The memory `CADCRAFT_MEMORY_GB` says to assume, if it is set to a positive number.
+fn set_memory() -> Option<u64> {
+    std::env::var("CADCRAFT_MEMORY_GB").ok().and_then(|v| memory_gb(&v))
+}
+
+/// The memory [`Limits::for_saving`] assumes: the set figure as it is, else the free memory plus
+/// what the process holds (only the free memory where that isn't known), else nothing.
+fn saving_memory(set: Option<u64>, free: Option<u64>, held: Option<u64>) -> Option<u64> {
+    set.or_else(|| free.map(|f| f.saturating_add(held.unwrap_or(0))))
 }
 
 /// `CADCRAFT_MEMORY_GB`'s value in bytes: a positive number of gigabytes, else nothing.
@@ -111,7 +145,7 @@ fn memory_gb(value: &str) -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn os_free_memory() -> Option<u64> {
-    meminfo_available(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    kb_field(&std::fs::read_to_string("/proc/meminfo").ok()?, "MemAvailable")
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -119,10 +153,22 @@ fn os_free_memory() -> Option<u64> {
     None
 }
 
-/// The `MemAvailable` line of a `/proc/meminfo` text ("MemAvailable:   104857600 kB"), in bytes.
+/// The memory this process holds: its resident set (`VmRSS` in `/proc/self/status`).
+#[cfg(target_os = "linux")]
+fn held_memory() -> Option<u64> {
+    kb_field(&std::fs::read_to_string("/proc/self/status").ok()?, "VmRSS")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn held_memory() -> Option<u64> {
+    None
+}
+
+/// A field in kilobytes of a `/proc` text (`MemAvailable:   104857600 kB` in `/proc/meminfo`,
+/// `VmRSS:     2048 kB` in `/proc/self/status`), in bytes.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn meminfo_available(text: &str) -> Option<u64> {
-    let kb = text.lines().find_map(|l| l.strip_prefix("MemAvailable:"))?.trim().trim_end_matches("kB").trim();
+fn kb_field(text: &str, field: &str) -> Option<u64> {
+    let kb = text.lines().find_map(|l| l.strip_prefix(field)?.strip_prefix(':'))?.trim().trim_end_matches("kB").trim();
     kb.parse::<u64>().ok()?.checked_mul(1024)
 }
 
@@ -150,6 +196,17 @@ mod native {
     use std::panic::AssertUnwindSafe;
 
     use super::{Limits, gb, mb};
+
+    /// What an exceeded limit assumes, for its message: the free memory and the bytes taken per
+    /// byte of drawing data, and, when the limit follows the machine, the variable that sets it.
+    fn assumption(limits: Limits) -> String {
+        let set = if limits.follows_machine {
+            format!(" (CADCRAFT_MEMORY_GB sets what to assume, up to {})", gb(Limits::MAX_DXF_BYTES * Limits::MEMORY_PER_DXF_BYTE))
+        } else {
+            String::new()
+        };
+        format!("it assumes {} of free memory at {} bytes per byte of drawing data{set}", gb(limits.assumed_memory), Limits::MEMORY_PER_DXF_BYTE)
+    }
 
     /// Read DWG bytes and return an ASCII DXF rendition, within [`Limits::DEFAULT`].
     pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -197,14 +254,11 @@ mod native {
         .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
             return Err(format!(
-                "DWG: converting this {} file produced more than {} of drawing data (the limit); it assumes {} of free \
-                 memory at {} bytes per byte of drawing data (CADCRAFT_MEMORY_GB sets what to assume, up to {}); \
+                "DWG: converting this {} file produced more than {} of drawing data (the limit); {}; \
                  the file is probably damaged, or uses objects the DWG reader misreads",
                 mb(bytes.len() as u64),
                 mb(limits.max_dxf_bytes as u64),
-                gb(limits.assumed_memory),
-                Limits::MEMORY_PER_DXF_BYTE,
-                gb(Limits::MAX_DXF_BYTES * Limits::MEMORY_PER_DXF_BYTE)
+                assumption(limits)
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
@@ -750,8 +804,9 @@ mod native {
     }
 
     /// [`dxf_to_dwg_noted`] within `limits`: the DXF may be as large as `limits.max_dxf_bytes`.
-    /// Saving a drawing as DWG takes [`Limits::for_machine`], as opening one does, so a plan whose
-    /// rendition was over the default 1 GB can be saved as DWG where it could be opened.
+    /// Saving a drawing as DWG takes [`Limits::for_saving`], which counts the memory the open
+    /// drawing holds, so a plan whose rendition was over the default 1 GB can be saved as DWG
+    /// where it could be opened.
     pub fn dxf_to_dwg_noted_with(dxf: &[u8], version: &str, limits: Limits) -> Result<(Vec<u8>, super::Unwritten), String> {
         let v = match version.trim().to_ascii_uppercase().as_str() {
             "AC1015" => acadrust::DxfVersion::AC1015,
@@ -817,12 +872,10 @@ mod native {
         // runs inside `catch_unwind` so a decode failure is reported rather than crashing.
         if dxf.len() > limits.max_dxf_bytes {
             return Err(format!(
-                "DXF: the input is {}, larger than the {} CADCraft converts to DWG; it assumes {} of free memory \
-                 (CADCRAFT_MEMORY_GB sets what to assume, up to {})",
+                "DXF: the input is {}, larger than the {} CADCraft converts to DWG; {}",
                 mb(dxf.len() as u64),
                 mb(limits.max_dxf_bytes as u64),
-                gb(limits.assumed_memory),
-                gb(Limits::MAX_DXF_BYTES * Limits::MEMORY_PER_DXF_BYTE)
+                assumption(limits)
             ));
         }
         let data = dxf.to_vec();
@@ -1107,7 +1160,7 @@ mod tests {
     /// from a `/proc/meminfo` text; `CADCRAFT_MEMORY_GB` is a positive number of gigabytes.
     #[test]
     fn limits_follow_the_free_memory_and_never_fall_below_the_default() {
-        use super::{Limits, gb, meminfo_available, memory_gb};
+        use super::{Limits, gb, kb_field, memory_gb};
         assert_eq!(Limits::for_memory(Limits::DEFAULT_MEMORY), Limits::DEFAULT);
         assert_eq!(Limits::for_memory(2 << 30), Limits::DEFAULT, "less free memory keeps today's limit");
         // In `u64`: a 32-bit build's `usize` can't hold these, and its limits stop at `usize::MAX`.
@@ -1122,14 +1175,36 @@ mod tests {
         assert_eq!(cap.max_dxf_bytes, fit(Limits::MAX_DXF_BYTES), "200 GB free: capped at 8 GB of DXF");
         assert_eq!(gb(cap.assumed_memory), "128.0 GB", "the message names the memory the cap assumes");
         assert_eq!(Limits::for_memory(u64::MAX), cap, "the largest value: the cap, no overflow");
-        assert_eq!(meminfo_available("MemTotal:       131072000 kB\nMemFree:          1 kB\nMemAvailable:   104857600 kB\n"), Some(100 << 30));
-        assert_eq!(meminfo_available("MemTotal:       131072000 kB\n"), None);
-        assert_eq!(meminfo_available("MemAvailable:   lots\n"), None);
+        let meminfo = "MemTotal:       131072000 kB\nMemFree:          1 kB\nMemAvailable:   104857600 kB\n";
+        assert_eq!(kb_field(meminfo, "MemAvailable"), Some(100 << 30));
+        assert_eq!(kb_field("MemTotal:       131072000 kB\n", "MemAvailable"), None);
+        assert_eq!(kb_field("MemAvailable:   lots\n", "MemAvailable"), None);
+        assert_eq!(kb_field("Name:\tcadcraft\nVmRSSx:\t1 kB\nVmRSS:\t    2048 kB\n", "VmRSS"), Some(2 << 20));
         assert_eq!(memory_gb("12"), Some(12 << 30));
         assert_eq!(memory_gb(" 0.5 "), Some(1 << 29));
         for bad in ["", "0", "-1", "x", "inf", "NaN"] {
             assert_eq!(memory_gb(bad), None, "{bad:?}");
         }
+    }
+
+    /// Saving counts the memory the process holds as free too: the drawing being saved is part of
+    /// it, and the 16 bytes per byte of DXF count the whole process. A 2 GB rendition opened with
+    /// 48 GB free (a 3 GB limit) leaves about 24 GB free; saving it gets the 3 GB it opened under,
+    /// not 1.5 GB. A set `CADCRAFT_MEMORY_GB` is taken as it is, as on opening; only the limits
+    /// that follow the machine are marked so, for the message.
+    #[test]
+    fn saving_counts_the_memory_the_process_holds() {
+        use super::{Limits, saving_memory};
+        let opened = Limits::for_memory(48 << 30);
+        assert_eq!(saving_memory(None, Some(24 << 30), Some(24 << 30)).map(Limits::for_memory), Some(opened));
+        assert_ne!(Limits::for_memory(24 << 30), opened, "the free memory alone gives less");
+        assert_eq!(saving_memory(Some(32 << 30), Some(24 << 30), Some(24 << 30)), Some(32 << 30), "set: as it is");
+        assert_eq!(saving_memory(None, Some(24 << 30), None), Some(24 << 30), "what the process holds unknown: the free memory");
+        assert_eq!(saving_memory(None, None, Some(24 << 30)), None, "free memory unknown: the default, as on opening");
+        assert_eq!(saving_memory(None, Some(u64::MAX), Some(1 << 30)), Some(u64::MAX), "no overflow");
+        assert_eq!(Limits::for_memory(u64::MAX).max_dxf_bytes, Limits::for_memory(200 << 30).max_dxf_bytes, "capped");
+        assert!(Limits::for_machine().follows_machine && Limits::for_saving().follows_machine);
+        assert!(!Limits::DEFAULT.follows_machine && !Limits::for_memory(64 << 30).follows_machine);
     }
 
     use super::*;
@@ -1171,15 +1246,19 @@ mod tests {
 
     /// The DXF to DWG conversion takes the limit it is given, as the DWG to DXF one does: a DXF
     /// over it is refused with the memory the limit assumes named, and saving a drawing as DWG
-    /// passes `Limits::for_machine`, so what opened can be saved.
+    /// passes `Limits::for_saving`, so what opened can be saved. The message names
+    /// `CADCRAFT_MEMORY_GB` only for limits that follow the machine; it doesn't change the fixed
+    /// default that `dxf_to_dwg` and `dxf_to_dwg_as` use.
     #[cfg(not(no_dwg_bridge))]
     #[test]
     fn converting_to_dwg_takes_the_limit_it_is_given() {
         let dxf = MINIMAL_DXF.as_bytes();
         let below = Limits { max_dxf_bytes: dxf.len() - 1, ..Limits::DEFAULT };
         let err = dxf_to_dwg_noted_with(dxf, "AC1032", below).unwrap_err();
-        assert!(err.contains("CADCraft converts to DWG; it assumes 16.0 GB of free memory"), "{err}");
-        assert!(err.contains("CADCRAFT_MEMORY_GB sets what to assume, up to 128.0 GB"), "{err}");
+        assert!(err.contains("CADCraft converts to DWG; it assumes 16.0 GB of free memory at 16 bytes per byte of drawing data"), "{err}");
+        assert!(!err.contains("CADCRAFT_MEMORY_GB"), "the fixed limit isn't the variable's: {err}");
+        let err = dxf_to_dwg_noted_with(dxf, "AC1032", Limits { follows_machine: true, ..below }).unwrap_err();
+        assert!(err.ends_with("of drawing data (CADCRAFT_MEMORY_GB sets what to assume, up to 128.0 GB)"), "{err}");
         assert!(dxf_to_dwg_noted_with(dxf, "AC1032", Limits { max_dxf_bytes: dxf.len(), ..Limits::DEFAULT }).is_ok(), "at the limit");
         assert!(dxf_to_dwg_noted_with(dxf, "AC1018", Limits::for_memory(64 << 30)).is_ok());
         assert!(dxf_to_dwg_as(dxf, "AC1032").is_ok(), "the default limit");

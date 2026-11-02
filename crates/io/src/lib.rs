@@ -143,10 +143,10 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 }
 
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
-/// there is one. The DXF may be as large as the machine's free memory allows
-/// (`Limits::for_machine`), as on reading, so a drawing that opened can be saved.
+/// there is one. The DXF may be as large as the machine's memory allows, counting what the open
+/// drawing holds (`Limits::for_saving`), so a drawing that opened can be saved.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    let limits = cadcraft_dwg::Limits::for_machine();
+    let limits = cadcraft_dwg::Limits::for_saving();
     cadcraft_dwg::encode_noted_with(dxf_write::dwg_bridge(d, version).as_bytes(), version.code(), limits).map_err(IoError::Format)
 }
 
