@@ -33,6 +33,8 @@ pub mod credits;
 pub mod dialogs;
 pub mod docking;
 pub mod fault;
+// The Find and Replace window behind the FIND command.
+pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
