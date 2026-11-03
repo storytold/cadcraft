@@ -116,7 +116,9 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
-        if !paper && !plotting && opts.view.is_some() {
+        // Worked out once per windowed screen build (model space, or a layout and the
+        // viewports in it) for the large blocks culled against the window.
+        if !plotting && opts.view.is_some() {
             b.bounds_context = Some(bounds_context(d));
         }
         let shown = on_screen(d, store, opts, paper || plotting);

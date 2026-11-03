@@ -75,7 +75,7 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         named: None,
         shared_budget: None,
         transparency: 0,
-        bounds_context: None,
+        bounds_context: opts.view.map(|_| crate::pipeline::bounds_context(d)),
     };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
