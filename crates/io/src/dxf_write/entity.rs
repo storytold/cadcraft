@@ -399,6 +399,12 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
         let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
         w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+        // Group 12: a block read from a file keeps the dimension's moved-by offset (AutoCAD
+        // draws the block translated by it); regenerated geometry already sits where the
+        // definition points place it, so it writes no offset.
+        if dm.block.is_some() && dm.insertion_point != Vec3::ZERO {
+            w.p(12, dm.insertion_point);
+        }
         let ty: i64 = match dm.kind {
             DimKind::Linear { .. } => 0,
             DimKind::Aligned => 1,
@@ -594,6 +600,9 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
     }
 }
 
+/// Writes a HATCH: its pattern name, solid and associative flags, its boundary loops, and the
+/// pattern angle, scale and double flag (written for solid hatches too). Pattern lines are written
+/// only for non-solid hatches.
 fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
     if let EntityKind::Hatch(h) = &e.kind {
         w.s(0, "HATCH");
@@ -628,10 +637,12 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         }
         w.i(75, i64::from(h.style));
         w.i(76, 1);
+        // Angle, scale and double flag are written for solid fills too, as read (AutoCAD and
+        // other writers keep them on SOLID hatches; readers ignore them there).
+        w.f(52, h.angle.to_degrees());
+        w.f(41, h.scale);
+        w.i(77, 0);
         if !h.solid {
-            w.f(52, h.angle.to_degrees());
-            w.f(41, h.scale);
-            w.i(77, 0);
             // The lines read from the file, else the library's pattern of that name.
             let lines = if h.pattern_lines.is_empty() {
                 cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
