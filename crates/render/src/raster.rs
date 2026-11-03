@@ -222,6 +222,37 @@ impl Hairlines {
     }
 }
 
+/// Blank (white) everything outside `printable`, a rectangle in paper units with the origin at the
+/// sheet's bottom-left, on a pixmap showing the whole sheet at `px_per_unit` pixels per paper unit.
+/// A placed plot is clipped to the printable area this way, in the PNG plot and in the preview.
+pub fn blank_outside_printable(pm: &mut Pixmap, printable: &Bounds2, px_per_unit: f64) {
+    let ph = f64::from(pm.height());
+    blank_outside_pixels(
+        pm,
+        (printable.min.x * px_per_unit, ph - printable.max.y * px_per_unit),
+        (printable.max.x * px_per_unit, ph - printable.min.y * px_per_unit),
+    );
+}
+
+/// Blank (white) everything outside the pixel rectangle from `top_left` to `bottom_right` (image
+/// coordinates, y down; rounded and clamped to the image). For a pixmap whose view does not map
+/// the sheet onto the whole image, map the printable corners through `View::to_screen`.
+pub fn blank_outside_pixels(pm: &mut Pixmap, top_left: (f64, f64), bottom_right: (f64, f64)) {
+    let (pw, ph) = (pm.width(), pm.height());
+    let col = |x: f64| x.round().clamp(0.0, f64::from(pw)) as usize;
+    let row = |y: f64| y.round().clamp(0.0, f64::from(ph)) as usize;
+    let (x0, x1) = (col(top_left.0), col(bottom_right.0));
+    let (y0, y1) = (row(top_left.1), row(bottom_right.1));
+    let stride = pw as usize * 4;
+    for (r, line) in pm.data_mut().chunks_exact_mut(stride.max(4)).enumerate() {
+        for (c, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            if r < y0 || r >= y1 || c < x0 || c >= x1 {
+                px.copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
+}
+
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()

@@ -48,7 +48,7 @@ mod wipeout;
 
 pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
 pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
-pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline3d, RayLine, Solid};
+pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, PolyfaceMesh, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop};
 pub use layout::{Image, Table, TableCell, Viewport};
@@ -86,6 +86,7 @@ pub enum EntityKind {
     Solid(Solid),
     Trace(Solid),
     Face3d(Face3d),
+    PolyfaceMesh(PolyfaceMesh),
     Region(Region),
     Viewport(Viewport),
     Image(Image),
@@ -140,6 +141,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "2D Solid",
             EntityKind::Trace(_) => "Trace",
             EntityKind::Face3d(_) => "3D Face",
+            EntityKind::PolyfaceMesh(_) => "Polyface Mesh",
             EntityKind::Region(_) => "Region",
             EntityKind::Viewport(_) => "Viewport",
             EntityKind::Image(_) => "Raster Image",
@@ -175,6 +177,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "SOLID",
             EntityKind::Trace(_) => "TRACE",
             EntityKind::Face3d(_) => "3DFACE",
+            EntityKind::PolyfaceMesh(_) => "POLYLINE",
             EntityKind::Region(_) => "REGION",
             EntityKind::Viewport(_) => "VIEWPORT",
             EntityKind::Image(_) => "IMAGE",
@@ -218,10 +221,10 @@ impl EntityKind {
                 let c = &s.corners;
                 vec![Prim::Fill(vec![c[0].xy(), c[1].xy(), c[3].xy(), c[2].xy()])]
             }
-            EntityKind::Face3d(f) => {
-                let c = &f.corners;
-                let pts = [c[0].xy(), c[1].xy(), c[2].xy(), c[3].xy(), c[0].xy()];
-                pts.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
+            EntityKind::Face3d(f) => f.visible_edges().into_iter().map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect(),
+            // Each face's visible edges (an edge flagged hidden, by a negative index, isn't drawn).
+            EntityKind::PolyfaceMesh(m) => {
+                m.faces3d().iter().flat_map(Face3d::visible_edges).map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect()
             }
             EntityKind::Region(r) => r.segments().into_iter().map(Prim::Seg).collect(),
             EntityKind::Hatch(h) => {
@@ -424,6 +427,7 @@ impl EntityKind {
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
             EntityKind::Face3d(f) => f.corners.iter_mut().for_each(t3),
+            EntityKind::PolyfaceMesh(pm) => pm.vertices.iter_mut().for_each(t3),
             EntityKind::Region(r) => {
                 for v in r.loops.iter_mut().flat_map(|l| l.vertices.iter_mut()) {
                     v.p = m.apply(v.p);
@@ -462,6 +466,92 @@ impl EntityKind {
                 t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
             }
             EntityKind::Unknown(_) => {}
+        }
+    }
+
+    /// Scale every height of the object by `f` about the height `base_z`: the Z of its points,
+    /// its elevation. With [`EntityKind::transform`] scaling about the base point's XY this is a
+    /// uniform 3D scale about the base point, as AutoCAD 2024's SCALE makes it. Sizes `transform`
+    /// already scales (text and helix heights, an insert's Z scale) are left alone; splines,
+    /// regions and wipeouts lie in the XY plane.
+    pub fn scale_heights(&mut self, base_z: f64, f: f64) {
+        let scale = |h: &mut f64| *h = base_z + (*h - base_z) * f;
+        let z = |p: &mut Vec3| scale(&mut p.z);
+        let text_z = |t: &mut Text| {
+            z(&mut t.insert);
+            if let Some(a) = &mut t.align_pt {
+                z(a);
+            }
+        };
+        let attribs_z = |attribs: &mut Vec<Attrib>| {
+            for a in attribs {
+                text_z(&mut a.text);
+                if let Some(ml) = &mut a.multiline {
+                    z(&mut ml.mtext.insert);
+                }
+            }
+        };
+        match self {
+            EntityKind::Line(l) => {
+                z(&mut l.a);
+                z(&mut l.b);
+            }
+            EntityKind::Point(p) => z(&mut p.p),
+            EntityKind::Circle(c) => z(&mut c.center),
+            EntityKind::Arc(a) => z(&mut a.center),
+            EntityKind::Ellipse(e) => z(&mut e.center),
+            EntityKind::LwPolyline(p) => scale(&mut p.elevation),
+            EntityKind::Polyline3d(p) => p.points.iter_mut().for_each(z),
+            EntityKind::Helix(h) => z(&mut h.center),
+            EntityKind::Ray(r) | EntityKind::XLine(r) => z(&mut r.base),
+            EntityKind::Text(t) => text_z(t),
+            EntityKind::AttDef(a) => {
+                text_z(&mut a.text);
+                if let Some(ml) = &mut a.multiline {
+                    z(&mut ml.mtext.insert);
+                }
+            }
+            EntityKind::MText(t) => z(&mut t.insert),
+            EntityKind::Insert(i) => {
+                z(&mut i.insert);
+                attribs_z(&mut i.attribs);
+            }
+            EntityKind::Dimension(d) => {
+                for p in [&mut d.defpt, &mut d.text_mid, &mut d.p13, &mut d.p14, &mut d.p15, &mut d.p16] {
+                    z(p);
+                }
+                if let Some(j) = &mut d.marks.jog_line {
+                    z(j);
+                }
+                if let Some(j) = &mut d.marks.jogged {
+                    z(&mut j.center);
+                    z(&mut j.jog);
+                }
+                d.marks.breaks.iter_mut().for_each(|b| z(&mut b.at));
+                d.block = None;
+            }
+            EntityKind::MLine(ml) => ml.vertices.iter_mut().for_each(|v| z(&mut v.p)),
+            EntityKind::Leader(l) => l.vertices.iter_mut().for_each(z),
+            EntityKind::MLeader(ml) => {
+                ml.leaders.iter_mut().flatten().for_each(z);
+                z(&mut ml.landing);
+                if let Some(t) = &mut ml.text {
+                    z(&mut t.insert);
+                }
+                if let Some(b) = &mut ml.block {
+                    z(&mut b.insert);
+                    attribs_z(&mut b.attribs);
+                }
+            }
+            EntityKind::Hatch(h) => scale(&mut h.elevation),
+            EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(z),
+            EntityKind::Face3d(fc) => fc.corners.iter_mut().for_each(z),
+            EntityKind::PolyfaceMesh(m) => m.vertices.iter_mut().for_each(z),
+            EntityKind::Viewport(v) => z(&mut v.center),
+            EntityKind::Image(i) => z(&mut i.insert),
+            EntityKind::Table(t) => z(&mut t.insert),
+            EntityKind::Tolerance(t) => z(&mut t.insert),
+            EntityKind::Spline(_) | EntityKind::Region(_) | EntityKind::Wipeout(_) | EntityKind::Unknown(_) => {}
         }
     }
 
@@ -526,6 +616,7 @@ impl EntityKind {
             }
             EntityKind::Solid(s) | EntityKind::Trace(s) => s.corners.iter().map(|c| c.xy()).collect(),
             EntityKind::Face3d(f) => f.corners.iter().map(|c| c.xy()).collect(),
+            EntityKind::PolyfaceMesh(m) => m.vertices.iter().map(|v| v.xy()).collect(),
             EntityKind::Region(r) => vec![r.bounds().center()],
             EntityKind::Viewport(v) => {
                 let c = v.center.xy();
