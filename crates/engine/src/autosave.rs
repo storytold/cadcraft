@@ -168,10 +168,12 @@ pub struct Autosaver {
     last_beat: Option<f64>,
     /// Who-has-it-open locks of the drawings open from files ([`crate::drawlock`]).
     #[cfg(not(target_arch = "wasm32"))]
-    locks: crate::drawlock::Locks,
-    /// The lock file this app holds the system lock on, open for as long as the lock is wanted.
+    drawing_locks: crate::drawlock::Locks,
+    /// This app's lock files: one per folder, because SAVEFILEPATH can change while files remain
+    /// in the old folder. Each with the file it holds open for the system lock, or `None` where
+    /// locks don't work and only the file's age counts.
     #[cfg(not(target_arch = "wasm32"))]
-    lock: Option<(std::path::PathBuf, std::fs::File)>,
+    locks: Vec<(std::path::PathBuf, Option<std::fs::File>)>,
 }
 
 impl Autosaver {
@@ -188,9 +190,9 @@ impl Autosaver {
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
             #[cfg(not(target_arch = "wasm32"))]
-            locks: crate::drawlock::Locks::default(),
+            drawing_locks: crate::drawlock::Locks::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            lock: None,
+            locks: Vec::new(),
         }
     }
 
@@ -208,9 +210,9 @@ impl Autosaver {
         self.docs.values().filter_map(|t| t.file.clone()).collect()
     }
 
-    /// Why a drawing currently has no up-to-date recovery copy, for the host to show the user.
-    pub fn failure(&self) -> Option<&str> {
-        self.failed.values().next().map(String::as_str)
+    /// The drawings with no up-to-date recovery copy and why, for the host to show the user.
+    pub fn failures(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.failed.iter().map(|(uid, why)| (*uid, why.as_str()))
     }
 
     /// What to do at `now` (seconds, any fixed origin) with SAVETIME `minutes` and autosave folder
@@ -453,23 +455,23 @@ mod native {
             let jobs = self.plan(s, now, minutes, &dir);
             self.perform(jobs);
             self.heartbeat(&dir, now);
-            self.locks.sync(s, &self.instance);
+            self.drawing_locks.sync(s, &self.instance);
             // The drawing locks need their heartbeat even with nothing to autosave (SAVETIME 0,
             // every drawing saved): left untouched they go stale and another app takes them over.
             let due = self.next_due(now, minutes).map(Duration::from_secs_f64);
-            due.into_iter().chain(self.locks.next_beat()).min()
+            due.into_iter().chain(self.drawing_locks.next_beat()).min()
         }
 
         /// Keep the drawing locks with `locks` instead of the default ones (e.g. a shorter
         /// heartbeat, see [`crate::drawlock::Locks::with_heartbeat`]).
         pub fn with_locks(mut self, locks: crate::drawlock::Locks) -> Self {
-            self.locks = locks;
+            self.drawing_locks = locks;
             self
         }
 
         /// What the drawing locks have to tell the user (someone else has a drawing open).
         pub fn take_lock_notes(&mut self) -> Vec<String> {
-            self.locks.take_notes()
+            self.drawing_locks.take_notes()
         }
 
         /// Autosave every drawing with changes not yet autosaved right away, without waiting for
@@ -493,6 +495,12 @@ mod native {
             self.running.iter().any(|(_, h)| !h.is_finished())
         }
 
+        /// Whether a write's result hasn't been taken in yet, finished or not: the host needs
+        /// another [`Autosaver::tick`] to learn whether it failed.
+        pub fn results_pending(&self) -> bool {
+            !self.running.is_empty()
+        }
+
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
         /// so it is tried again SAVETIME later even if it doesn't change, and [`Autosaver::failure`]
@@ -501,14 +509,39 @@ mod native {
             let (done, running) = std::mem::take(&mut self.running).into_iter().partition::<Vec<_>, _>(|(_, h)| h.is_finished());
             self.running = running;
             for (uid, h) in done {
-                self.busy.remove(&uid);
-                match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
-                    Ok(()) => {
-                        self.failed.remove(&uid);
-                    }
-                    Err(e) => self.unwritten(uid, e),
-                }
+                self.settle(uid, h);
             }
+        }
+
+        fn settle(&mut self, uid: u64, h: std::thread::JoinHandle<std::result::Result<(), String>>) {
+            self.busy.remove(&uid);
+            match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
+                Ok(()) => {
+                    self.failed.remove(&uid);
+                }
+                Err(e) => self.unwritten(uid, e),
+            }
+        }
+
+        /// Write every drawing with changes not yet autosaved and wait until it is done, because
+        /// the app has gone wrong and may not get another frame. Unlike [`Autosaver::save_now`]
+        /// this also runs when SAVETIME is 0: unsaved work comes before that preference. Returns
+        /// how many drawings were written.
+        pub fn emergency_save(&mut self, s: &Session) -> usize {
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            let now = self.start.elapsed().as_secs_f64();
+            let dir = savefilepath();
+            let jobs = self.plan_with(s, now, savetime().max(1), &dir, true);
+            let uids: Vec<u64> = jobs.iter().filter_map(|j| if let Job::Write { uid, .. } = j { Some(*uid) } else { None }).collect();
+            self.perform(jobs);
+            self.last_beat = None;
+            self.heartbeat(&dir, now);
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            uids.iter().filter(|uid| !self.failed.contains_key(uid)).count()
         }
 
         fn unwritten(&mut self, uid: u64, why: String) {
@@ -566,23 +599,32 @@ mod native {
             }
         }
 
-        /// Refresh the lock file at `path`, taking the system lock on it first if this app doesn't
-        /// hold it there yet. Without one the file still works by its age.
+        /// Refresh this app's lock files, and start one at `path` if there isn't one yet, taking
+        /// the system lock on it if it can. Without that lock the file still works by its age.
+        /// Only trouble at `path` is an error: an older folder may be gone by now.
         fn refresh_lock(&mut self, path: &Path) -> std::io::Result<()> {
-            if let Some((held, file)) = &self.lock
-                && held == path
-            {
-                return file.set_modified(SystemTime::now());
-            }
-            self.lock = None;
             let id = std::process::id();
+            let mut current = None;
+            for (held, file) in &self.locks {
+                let refreshed = match file {
+                    Some(file) => file.set_modified(SystemTime::now()),
+                    None => std::fs::write(held, id.to_string()),
+                };
+                if held == path {
+                    current = Some(refreshed);
+                }
+            }
+            if let Some(refreshed) = current {
+                return refreshed;
+            }
             let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
             if file.try_lock().is_err() {
+                self.locks.push((path.to_path_buf(), None));
                 return std::fs::write(path, id.to_string());
             }
             file.set_len(0)?;
             file.write_all(format!("{id}{LOCK_HELD}").as_bytes())?;
-            self.lock = Some((path.to_path_buf(), file));
+            self.locks.push((path.to_path_buf(), Some(file)));
             Ok(())
         }
 
@@ -593,12 +635,15 @@ mod native {
                 let _ = h.join();
             }
             self.busy.clear();
-            self.locks.release_all(&self.instance);
+            self.drawing_locks.release_all(&self.instance);
             for path in self.files() {
                 discard(&path);
             }
             self.docs.clear();
-            self.lock = None;
+            for (path, file) in self.locks.drain(..) {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
             let dir = savefilepath();
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
