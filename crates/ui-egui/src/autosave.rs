@@ -32,6 +32,15 @@ pub fn load_prefs(json: &str) {
     }
 }
 
+/// What the autosave failure notice says (see [`failure_notice`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutosaveNotice {
+    pub message: String,
+    /// The user closed it. The failure stays recorded so the notice doesn't come back on every
+    /// retry; it does for the next failure after a write has worked.
+    pub dismissed: bool,
+}
+
 /// What the GPU error notice says (see [`gpu_notice`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpuNotice {
@@ -89,6 +98,24 @@ impl CadApp {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wait) = self.autosave.as_mut().and_then(|s| s.tick(&self.session)) {
             _ctx.request_repaint_after(wait);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.note_autosave_failure(_ctx);
+    }
+
+    /// Keep [`Self::autosave_notice`] in step with autosave: a new failure is said once at the
+    /// command line and shown until it is dismissed or a write works.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn note_autosave_failure(&mut self, ctx: &egui::Context) {
+        let failure = self.autosave.as_ref().and_then(|s| s.failure()).map(str::to_string);
+        match (failure, &mut self.autosave_notice) {
+            (None, notice) => *notice = None,
+            (Some(message), Some(n)) => n.message = message,
+            (Some(message), notice) => {
+                self.session.echo(format!("Autosave failed: {message}"));
+                *notice = Some(AutosaveNotice { message, dismissed: false });
+                ctx.request_repaint();
+            }
         }
     }
 
@@ -239,6 +266,37 @@ pub fn gpu_notice(app: &mut CadApp, ctx: &egui::Context) {
         });
     if dismiss {
         app.gpu_notice = None;
+    }
+}
+
+/// The notice that autosave isn't working, so unsaved changes have no recovery copy. It doesn't
+/// block the drawing: the user needs to be able to save.
+pub fn failure_notice(app: &mut CadApp, ctx: &egui::Context) {
+    let Some(n) = app.autosave_notice.as_ref().filter(|n| !n.dismissed) else { return };
+    let t = Tokens::get();
+    let mut dismiss = false;
+    egui::Window::new("Autosave failed")
+        .id(egui::Id::unique("cc_autosave_notice"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))
+        .show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label("CADCraft could not write a recovery copy, so recent changes would be lost if the app stopped now.");
+            ui.label(RichText::new("Save your work. Autosave tries again after the SAVETIME interval; its folder is in Options.").strong());
+            ui.add_space(4.0);
+            ui.collapsing("Details", |ui| {
+                ui.label(RichText::new(&n.message).color(t.text_dim).monospace());
+            });
+            // A row just as tall as the button (a plain right-to-left layout takes the rest).
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Dismiss").clicked() {
+                    dismiss = true;
+                }
+            });
+        });
+    if dismiss && let Some(n) = &mut app.autosave_notice {
+        n.dismissed = true;
     }
 }
 

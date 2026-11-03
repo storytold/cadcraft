@@ -12,7 +12,7 @@
 //! [`Autosaver::tick`] carries it out, writing on a background thread. SAVETIME and SAVEFILEPATH
 //! are profile settings: process-wide, not saved in the drawing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -149,9 +149,12 @@ pub struct Autosaver {
     docs: HashMap<u64, Tracked>,
     /// Drawings whose autosave is being written right now.
     busy: HashSet<u64>,
-    /// Writes in progress; each tells whether its file was written.
+    /// Why the last autosave of each drawing failed, until one succeeds or the drawing no longer
+    /// needs it. Ordered, so [`Autosaver::failure`] doesn't change between frames.
+    failed: BTreeMap<u64, String>,
+    /// Writes in progress; each ends with why its file wasn't written, if it wasn't.
     #[cfg(not(target_arch = "wasm32"))]
-    running: Vec<(u64, std::thread::JoinHandle<bool>)>,
+    running: Vec<(u64, std::thread::JoinHandle<std::result::Result<(), String>>)>,
     #[cfg(not(target_arch = "wasm32"))]
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
@@ -164,6 +167,7 @@ impl Autosaver {
             instance: instance.into(),
             docs: HashMap::new(),
             busy: HashSet::new(),
+            failed: BTreeMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             running: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -185,6 +189,11 @@ impl Autosaver {
     /// The autosave files this app has written or adopted.
     pub fn files(&self) -> Vec<String> {
         self.docs.values().filter_map(|t| t.file.clone()).collect()
+    }
+
+    /// Why a drawing currently has no up-to-date recovery copy, for the host to show the user.
+    pub fn failure(&self) -> Option<&str> {
+        self.failed.values().next().map(String::as_str)
     }
 
     /// What to do at `now` (seconds, any fixed origin) with SAVETIME `minutes` and autosave folder
@@ -220,6 +229,7 @@ impl Autosaver {
                     jobs.push(Job::Delete { path });
                 }
                 *t = Tracked::default();
+                self.failed.remove(&st.uid);
                 continue;
             }
             let same = |w: &Option<Weak<Drawing>>, d: &Arc<Drawing>| w.as_ref().is_some_and(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(d)));
@@ -248,6 +258,8 @@ impl Autosaver {
             t.since = None;
             jobs.push(Job::Write { uid: st.uid, path, doc });
         }
+        let docs = &self.docs;
+        self.failed.retain(|uid, _| docs.contains_key(uid));
         jobs
     }
 
@@ -425,22 +437,27 @@ mod native {
 
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
-        /// so it is tried again SAVETIME later even if it doesn't change.
+        /// so it is tried again SAVETIME later even if it doesn't change, and [`Autosaver::failure`]
+        /// says why until a write succeeds.
         pub fn reap(&mut self) {
             let (done, running) = std::mem::take(&mut self.running).into_iter().partition::<Vec<_>, _>(|(_, h)| h.is_finished());
             self.running = running;
             for (uid, h) in done {
                 self.busy.remove(&uid);
-                if !h.join().unwrap_or(false) {
-                    self.unwritten(uid);
+                match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
+                    Ok(()) => {
+                        self.failed.remove(&uid);
+                    }
+                    Err(e) => self.unwritten(uid, e),
                 }
             }
         }
 
-        fn unwritten(&mut self, uid: u64) {
+        fn unwritten(&mut self, uid: u64, why: String) {
             if let Some(t) = self.docs.get_mut(&uid) {
                 t.written = None;
             }
+            self.failed.insert(uid, why);
         }
 
         /// Carry out jobs from [`Autosaver::plan`]: writes on a background thread, deletes now.
@@ -451,16 +468,17 @@ mod native {
                     Job::Write { uid, path, doc } => {
                         let Some(write) = crate::cmd::file::io().map(|h| h.write) else {
                             log::warn!("autosave: file formats are not available in this build");
+                            self.unwritten(uid, "file formats are not available in this build".to_string());
                             continue;
                         };
                         let spawned = std::thread::Builder::new().name("autosave".into()).spawn(move || match write_file(write, &doc, &path) {
                             Ok(()) => {
                                 log::info!("autosaved {path}");
-                                true
+                                Ok(())
                             }
                             Err(e) => {
                                 log::warn!("autosave {path}: {e}");
-                                false
+                                Err(format!("{path}: {e}"))
                             }
                         });
                         match spawned {
@@ -470,7 +488,7 @@ mod native {
                             }
                             Err(e) => {
                                 log::warn!("autosave: {e}");
-                                self.unwritten(uid);
+                                self.unwritten(uid, e.to_string());
                             }
                         }
                     }
