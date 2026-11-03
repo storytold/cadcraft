@@ -1,5 +1,5 @@
 //! Autosave and Drawing Recovery in the app. The engine decides what to write and writes it
-//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME and SAVEFILEPATH with
+//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME, SAVEFILEPATH and ISAVEBAK with
 //! the preferences, and shows the Drawing Recovery list after a crash: each autosaved drawing can
 //! be opened (as an unsaved copy) or discarded. On the web there is no autosave yet.
 
@@ -13,9 +13,9 @@ use crate::theme::Tokens;
 /// The host storage key for [`prefs_json`].
 pub const PREFS_KEY: &str = "cadcraft.autosave";
 
-/// SAVETIME and SAVEFILEPATH as JSON for the host's storage.
+/// SAVETIME, SAVEFILEPATH and ISAVEBAK as JSON for the host's storage.
 pub fn prefs_json() -> String {
-    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath() }).to_string()
+    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath(), "backup": autosave::isavebak() }).to_string()
 }
 
 /// Restore what [`prefs_json`] saved; malformed values are ignored.
@@ -27,6 +27,18 @@ pub fn load_prefs(json: &str) {
     if let Some(p) = v.get("saveFilePath").and_then(Value::as_str) {
         autosave::set_savefilepath(p);
     }
+    if let Some(b) = v.get("backup").and_then(Value::as_bool) {
+        autosave::set_isavebak(b);
+    }
+}
+
+/// What the autosave failure notice says (see [`failure_notice`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutosaveNotice {
+    pub message: String,
+    /// The user closed it. The failure stays recorded so the notice doesn't come back on every
+    /// retry; it does for the next failure after a write has worked.
+    pub dismissed: bool,
 }
 
 /// What the GPU error notice says (see [`gpu_notice`]).
@@ -93,6 +105,24 @@ impl CadApp {
         for note in self.autosave.as_mut().map(|s| s.take_lock_notes()).unwrap_or_default() {
             self.session.echo(note.clone());
             self.set_status(note);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.note_autosave_failure(_ctx);
+    }
+
+    /// Keep [`Self::autosave_notice`] in step with autosave: a new failure is said once at the
+    /// command line and shown until it is dismissed or a write works.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn note_autosave_failure(&mut self, ctx: &egui::Context) {
+        let failure = self.autosave.as_ref().and_then(|s| s.failure()).map(str::to_string);
+        match (failure, &mut self.autosave_notice) {
+            (None, notice) => *notice = None,
+            (Some(message), Some(n)) => n.message = message,
+            (Some(message), notice) => {
+                self.session.echo(format!("Autosave failed: {message}"));
+                *notice = Some(AutosaveNotice { message, dismissed: false });
+                ctx.request_repaint();
+            }
         }
     }
 
@@ -243,6 +273,37 @@ pub fn gpu_notice(app: &mut CadApp, ctx: &egui::Context) {
         });
     if dismiss {
         app.gpu_notice = None;
+    }
+}
+
+/// The notice that autosave isn't working, so unsaved changes have no recovery copy. It doesn't
+/// block the drawing: the user needs to be able to save.
+pub fn failure_notice(app: &mut CadApp, ctx: &egui::Context) {
+    let Some(n) = app.autosave_notice.as_ref().filter(|n| !n.dismissed) else { return };
+    let t = Tokens::get();
+    let mut dismiss = false;
+    egui::Window::new("Autosave failed")
+        .id(egui::Id::unique("cc_autosave_notice"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))
+        .show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label("CADCraft could not write a recovery copy, so recent changes would be lost if the app stopped now.");
+            ui.label(RichText::new("Save your work. Autosave tries again after the SAVETIME interval; its folder is in Options.").strong());
+            ui.add_space(4.0);
+            ui.collapsing("Details", |ui| {
+                ui.label(RichText::new(&n.message).color(t.text_dim).monospace());
+            });
+            // A row just as tall as the button (a plain right-to-left layout takes the rest).
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Dismiss").clicked() {
+                    dismiss = true;
+                }
+            });
+        });
+    if dismiss && let Some(n) = &mut app.autosave_notice {
+        n.dismissed = true;
     }
 }
 
