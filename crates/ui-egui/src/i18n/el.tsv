@@ -94,6 +94,7 @@
 	Automatic save file location	Θέση αρχείων αυτόματης αποθήκευσης
 	Axis, End	Άξονας, τέλος
 	B	B
+	Backup copy	Αντίγραφο ασφαλείας
 	Base	Βάση
 	Baseline	Γραμμή βάσης (Baseline)
 	Batch Publish	Μαζική δημοσίευση
@@ -151,6 +152,8 @@
 	Center, Start, Length	Κέντρο, αρχή, μήκος
 	Centered	Κεντραρισμένο
 	Chamfer	Λοξότμηση (Chamfer)
+	Change	Αλλαγή
+	Change Properties	Αλλαγή ιδιοτήτων
 	Change Space	Αλλαγή χώρου σχεδίασης
 	Change to Current Layer	Μεταφορά στο τρέχον επίπεδο (Layer)
 	Changed: {n}	Αλλαγές: {n}
@@ -175,6 +178,7 @@
 	Close Comparison	Κλείσιμο σύγκρισης
 	Command	Εντολή
 	Convert Text to Mtext	Μετατροπή κειμένου σε πολυγραμμικό κείμενο (MText)
+	Create backup copy with each save	Δημιουργία αντιγράφου ασφαλείας σε κάθε αποθήκευση
 	Customize	Προσαρμογή
 	Define each corner of the selection window with a separate click.	Ορίστε κάθε γωνία του παραθύρου επιλογής με ξεχωριστό κλικ.
 	Discard	Απόρριψη
@@ -222,13 +226,17 @@
 	Metric (millimetres)	Μετρικό (χιλιοστά)
 	More than {n} aliases.	Περισσότερα από {n} ψευδώνυμα.
 	Move/Copy/Rotate	Μετακίνηση/Αντιγραφή/Περιστροφή
+	Multiple Insert	Πολλαπλή εισαγωγή
 	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Τα νέα σχέδια και το πρώτο σχέδιο κατά την εκκίνηση χρησιμοποιούν αυτές τις μονάδες, εκτός αν έχει οριστεί προεπιλεγμένο πρότυπο (QNEWTEMPLATE).
 	No alias file loaded. REINIT replaces these aliases with a file's.	Δεν έχει φορτωθεί αρχείο ψευδωνύμων. Η εντολή REINIT αντικαθιστά αυτά τα ψευδώνυμα με αυτά ενός αρχείου.
+	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο
 	Save alias	Αποθήκευση ψευδωνύμου
+	Save changes to block "{name}"?	Να αποθηκευτούν οι αλλαγές στο μπλοκ «{name}»;
 	Save changes to {name}?	Να αποθηκευτούν οι αλλαγές στο {name};
 	Select boundaries to remove	Επιλέξτε περιγράμματα για αφαίρεση
 	Select using two clicks only	Επιλογή μόνο με δύο κλικ
 	Type an alias name.	Πληκτρολογήστε ένα όνομα ψευδωνύμου.
+	Units	Μονάδες
 	Units of new drawings	Μονάδες νέων σχεδίων
 	Your changes will be lost if you don't save them.	Οι αλλαγές σας θα χαθούν αν δεν τις αποθηκεύσετε.
 	built-in	ενσωματωμένο
