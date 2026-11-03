@@ -1143,6 +1143,49 @@ fn rectang_rotation_follows_the_angle_settings() {
 
 /// Area allows for cut corners only while they fit: a fillet too large for the resulting sides
 /// leaves square corners, so the rectangle is the full area asked for (4 × 1, not 4 × 1.858).
+/// Corners exactly as long as the shorter side allows still fit; a hair longer and the corners
+/// stay square, each still written twice (AutoCAD 2024, `entget` of a 4 x 2 rectangle).
+#[test]
+fn rectang_corners_at_the_limit_fit_and_just_over_stay_square() {
+    let b = (std::f64::consts::PI / 8.0).tan();
+    let fit: [(&str, &[(f64, f64, f64)]); 4] = [
+        (
+            "_F 0.9999",
+            &[
+                (0.0, 0.9999, b),
+                (0.9999, 0.0, 0.0),
+                (3.0001, 0.0, b),
+                (4.0, 0.9999, 0.0),
+                (4.0, 1.0001, b),
+                (3.0001, 2.0, 0.0),
+                (0.9999, 2.0, b),
+                (0.0, 1.0001, 0.0),
+            ],
+        ),
+        ("_F 1", &[(0.0, 1.0, b), (1.0, 0.0, 0.0), (3.0, 0.0, b), (4.0, 1.0, 0.0), (4.0, 1.0, b), (3.0, 2.0, 0.0), (1.0, 2.0, b), (0.0, 1.0, 0.0)]),
+        (
+            "_C 1 1",
+            &[(0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (3.0, 0.0, 0.0), (4.0, 1.0, 0.0), (4.0, 1.0, 0.0), (3.0, 2.0, 0.0), (1.0, 2.0, 0.0), (0.0, 1.0, 0.0)],
+        ),
+        (
+            "_C 1.2 0.8",
+            &[(0.0, 1.2, 0.0), (0.8, 0.0, 0.0), (2.8, 0.0, 0.0), (4.0, 0.8, 0.0), (4.0, 0.8, 0.0), (3.2, 2.0, 0.0), (1.2, 2.0, 0.0), (0.0, 1.2, 0.0)],
+        ),
+    ];
+    let square =
+        [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 2.0, 0.0), (4.0, 2.0, 0.0), (0.0, 2.0, 0.0), (0.0, 2.0, 0.0)];
+    let over: [(&str, &[(f64, f64, f64)]); 2] = [("_F 1.0001", &square), ("_C 1.2 0.81", &square)];
+    for (corners, want) in fit.into_iter().chain(over) {
+        let mut s = Session::new();
+        s.cmdline(&format!("rectang {corners} 0,0 4,2")).unwrap();
+        let EntityKind::LwPolyline(p) = last(&s) else { panic!("no polyline") };
+        let got: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect();
+        let ok = got.len() == want.len()
+            && got.iter().zip(want).all(|(g, w)| (g.0 - w.0).abs() < 1e-9 && (g.1 - w.1).abs() < 1e-9 && (g.2 - w.2).abs() < 1e-6);
+        assert!(ok, "{corners}: {got:?}");
+    }
+}
+
 #[test]
 fn rectang_area_with_corners_too_large_stays_exact() {
     let check = |s: &Session| {
