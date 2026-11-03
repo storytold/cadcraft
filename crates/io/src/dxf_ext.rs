@@ -118,6 +118,10 @@ pub(crate) const DIM_CODES: &[(&str, i32, K)] = &[
     ("arrowBlock2", 344, K::Block),
     ("fixedExtLength", 49, K::Real),
     ("jogAngle", 50, K::Angle),
+    // DIMTFILL and DIMTFILLCLR (Open Design Specification for .dwg files 5.4.1, DIMSTYLE). In a
+    // DIMSTYLE record 70 also holds the record's flags, which come first.
+    ("textFill", 69, K::Int),
+    ("textFillColor", 70, K::Color),
     ("angularZeroSuppression", 79, K::Int),
     ("arcSymbol", 90, K::Int),
     ("textVerticalPos", 145, K::Real),
@@ -140,15 +144,26 @@ pub(crate) const DIM_CODES: &[(&str, i32, K)] = &[
 
 /// DIMSAH: separate arrow blocks in use.
 pub(crate) const DIMSAH: i32 = 173;
+/// DIMPOST's group in DIMSTYLE records.
+pub(crate) const DIMPOST: i32 = 3;
 
-/// Variables newer than R2000: DIMFXL, DIMJOGANG, DIMARCSYM, DIMFXLON, DIMLTYPE, DIMLTEX1,
-/// DIMLTEX2. Files of [`NEWER_SINCE`] or later get them as DIMSTYLE groups; R2000 files get them
-/// in a style's `CADCRAFT` "DIMVARS" xdata (`1070 <code>` then the value, like DSTYLE) instead of
-/// groups an R2000 reader doesn't expect. The reader takes both.
-pub(crate) const NEWER_CODES: &[i32] = &[49, 50, 90, 290, 345, 346, 347];
-/// The first version with [`NEWER_CODES`] as DIMSTYLE groups: all came with AutoCAD 2006, whose
-/// files are the 2004 format (AC1018).
+/// Variables newer than R2000: DIMFXL, DIMJOGANG, DIMTFILL, DIMTFILLCLR, DIMARCSYM, DIMFXLON,
+/// DIMLTYPE, DIMLTEX1, DIMLTEX2. Files of a variable's [`newer_since`] version or later get it as
+/// a DIMSTYLE group (R2004, and R2007 for DIMTFILL and DIMTFILLCLR); older files get it in a
+/// style's `CADCRAFT` "DIMVARS" xdata (`1070 <code>` then the value, like DSTYLE) instead of a
+/// group an older reader doesn't expect. The reader takes both.
+pub(crate) const NEWER_CODES: &[i32] = &[49, 50, 69, 70, 90, 290, 345, 346, 347];
+/// The first version with [`NEWER_CODES`] as DIMSTYLE groups, except DIMTFILL and DIMTFILLCLR
+/// (see [`newer_since`]): the others came with AutoCAD 2006, whose files are the 2004 format
+/// (AC1018).
 pub(crate) const NEWER_SINCE: Version = Version::R2004;
+
+/// The first version that has `code` (one of [`NEWER_CODES`]) as a DIMSTYLE group: R2007 for
+/// DIMTFILL and DIMTFILLCLR (Open Design Specification for .dwg files 5.4.1), else
+/// [`NEWER_SINCE`].
+pub(crate) fn newer_since(code: i32) -> Version {
+    if matches!(code, 69 | 70) { Version::R2007 } else { NEWER_SINCE }
+}
 /// Xdata list name of [`NEWER_CODES`] values.
 pub(crate) const DIMVARS_LIST: &str = "DIMVARS";
 
@@ -283,7 +298,7 @@ pub(crate) fn arrow_block_name(name: &str) -> Option<(String, Arrowhead)> {
         return None;
     }
     let kind = Arrowhead::parse(n);
-    let norm: String = n.trim_start_matches('_').chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+    let norm: String = n.trim_start_matches('_').chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase();
     if kind == Arrowhead::ClosedFilled && !matches!(norm.as_str(), "closedfilled" | "filled") {
         return None;
     }

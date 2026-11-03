@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 
 mod version;
 pub use version::Version;
@@ -22,8 +23,11 @@ pub enum DxfError {
     Eof,
     /// More group codes than [`MAX_TAGS`]: `tags` is the count found (or the count read when the
     /// limit was reached), `limit` the maximum.
-    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads")]
+    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)")]
     TooLarge { tags: usize, limit: usize },
+    /// The memory for `tags` group codes couldn't be had: an error, not the process ending.
+    #[error("not enough memory to read this drawing's {tags} DXF group codes")]
+    OutOfMemory { tags: usize },
 }
 
 pub type Result<T> = std::result::Result<T, DxfError>;
@@ -162,16 +166,32 @@ fn typed(code: i32, text: &str) -> Value {
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
-/// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
-/// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
-pub const MAX_TAGS: usize = 50_000_000;
+/// Most group codes read from one file by default. A `Tag` takes 40 bytes plus its text, so this
+/// bounds the tag list to about 4 GB plus text. 50 million rejected large DWGs that converted fine
+/// (a 172 MB drawing has 56 million, issue #1948). The file-size limits bound memory too: 512 MB
+/// for a DXF opened directly, 1 GB for a DWG's DXF rendition. Set `CADCRAFT_MAX_DXF_TAGS` to
+/// raise or lower it.
+pub const MAX_TAGS: usize = 100_000_000;
+
+/// Environment variable overriding [`MAX_TAGS`] (a positive integer).
+pub const MAX_TAGS_ENV: &str = "CADCRAFT_MAX_DXF_TAGS";
+
+/// The group-code limit in effect: [`MAX_TAGS_ENV`] when set to a positive integer, else
+/// [`MAX_TAGS`].
+pub fn max_tags() -> usize {
+    max_tags_from(std::env::var(MAX_TAGS_ENV).ok().as_deref())
+}
+
+fn max_tags_from(v: Option<&str>) -> usize {
+    v.and_then(|s| s.trim().replace('_', "").parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(MAX_TAGS)
+}
 
 mod codepage;
 pub use codepage::decode_code_page;
 
 /// Parse a DXF file (ASCII or binary).
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
-    parse_with_limit(bytes, MAX_TAGS)
+    parse_with_limit(bytes, max_tags())
 }
 
 /// [`parse`] with an explicit group-code limit. For ASCII DXF the limit is checked up front from
@@ -181,12 +201,24 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
         return parse_binary_with_limit(body, max_tags);
     }
-    // Every group code takes two lines (code, value).
-    let tags = bytes.iter().filter(|&&b| b == b'\n').count().div_ceil(2);
+    // Count nonblank group-code/value pairs, stopping at EOF just as the parser does.
+    let mut lines = bytes.split(|&b| b == b'\n');
+    let mut tags = 0;
+    while let Some(code) = lines.next() {
+        let code = code.trim_ascii();
+        if code.is_empty() {
+            continue;
+        }
+        let Some(value) = lines.next() else { break };
+        tags += 1;
+        if code == b"0" && value.trim_ascii() == b"EOF" {
+            break;
+        }
+    }
     if tags > max_tags {
         return Err(DxfError::TooLarge { tags, limit: max_tags });
     }
-    parse_ascii_with_limit(&codepage::decode_ascii_file(bytes), max_tags)
+    parse_ascii_counted(&codepage::decode_ascii_file(bytes), max_tags, tags)
 }
 
 /// The four hex digits of a `\U+XXXX` escape starting at `chars[i]`, if there is one.
@@ -258,13 +290,18 @@ fn unescape_unicode(s: &str) -> String {
 }
 
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
-    parse_ascii_with_limit(text, MAX_TAGS)
+    parse_ascii_counted(text, max_tags(), 0)
 }
 
+/// [`parse_ascii`] of a file known to hold `expected` group codes. Their list is reserved first,
+/// with an allocation that can fail: where the system refuses that much memory, opening the file
+/// is an error instead of the end of the app. Growing the list instead could also briefly take
+/// half as much again.
 #[allow(clippy::while_let_loop)]
-fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
+fn parse_ascii_counted(text: &str, max_tags: usize, expected: usize) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
-    let mut lines = text.lines().enumerate();
+    tags.try_reserve_exact(expected.min(max_tags)).map_err(|_| DxfError::OutOfMemory { tags: expected })?;
+    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
         let ct = code_line.trim();
@@ -344,7 +381,7 @@ impl<'a> Cur<'a> {
 
 /// Binary DXF (R13+: 2-byte group codes).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
-    parse_binary_with_limit(b, MAX_TAGS)
+    parse_binary_with_limit(b, max_tags())
 }
 
 fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
@@ -409,18 +446,48 @@ pub fn write_ascii(tags: &[Tag]) -> String {
 /// characters as they are) or escaped as `\U+XXXX` (older versions, see [`write_ascii`]). Line
 /// breaks inside strings become spaces either way.
 pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
-    let mut out = String::with_capacity(tags.len() * 16);
+    let bytes = ascii(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) });
+    // Both forms are UTF-8 (the escaped one is ASCII).
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
+/// Write tags as pre-R2007 ASCII DXF with text in the code page `code_page` names (a
+/// `$DWGCODEPAGE` value such as `ANSI_1252`), as the DXF Reference describes for those versions:
+/// a character the code page has is written as its bytes, any other as a `\U+XXXX` escape. A
+/// code page CADCraft doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
+/// give [`write_ascii`]'s pure ASCII output. So does a file whose code page bytes happen to be
+/// valid UTF-8 (`СІ` in ANSI_1251 is D1 B2, U+0472), since readers, ours included, take an ASCII
+/// DXF that is valid UTF-8 as UTF-8.
+pub fn write_ascii_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
+    let bytes = ascii(tags, Strings::Escaped(codepage::encoder(code_page)));
+    if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
+        return ascii(tags, Strings::Escaped(None));
+    }
+    bytes
+}
+
+/// How a writer stores string values.
+#[derive(Clone, Copy)]
+enum Strings {
+    /// As they are (R2007+).
+    Utf8,
+    /// ASCII as it is, other characters in this code page when it has them, otherwise as
+    /// `\U+XXXX` escapes (before R2007).
+    Escaped(Option<codepage::Decoder>),
+}
+
+fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
+    let mut out = Vec::with_capacity(tags.len() * 16);
     for t in tags {
         let _ = write!(out, "{:>3}\r\n", t.code);
         match &t.value {
-            Value::Str(s) if utf8 => out.extend(s.chars().map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c })),
-            Value::Str(s) => escape_unicode(s, &mut out),
-            Value::Real(r) => out.push_str(&format_real(*r)),
-            Value::Int(i) => out.push_str(&i.to_string()),
-            Value::Bool(b) => out.push_str(&i64::from(*b).to_string()),
-            Value::Hex(h) => out.push_str(h),
+            Value::Str(s) => push_string(s, strings, &mut out),
+            Value::Real(r) => out.extend_from_slice(format_real(*r).as_bytes()),
+            Value::Int(i) => out.extend_from_slice(i.to_string().as_bytes()),
+            Value::Bool(b) => out.extend_from_slice(i64::from(*b).to_string().as_bytes()),
+            Value::Hex(h) => out.extend_from_slice(h.as_bytes()),
         }
-        out.push_str("\r\n");
+        out.extend_from_slice(b"\r\n");
     }
     out
 }
@@ -433,6 +500,16 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
 /// in [`write_ascii`]. A tag's value is converted to its code's kind, so a number written as text
 /// is stored as a number; a code outside the 16-bit range is skipped.
 pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
+    binary(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) })
+}
+
+/// Write tags as pre-R2007 binary DXF with text in the code page `code_page` names, as
+/// [`write_ascii_in`] does.
+pub fn write_binary_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
+    binary(tags, Strings::Escaped(codepage::encoder(code_page)))
+}
+
+fn binary(tags: &[Tag], strings: Strings) -> Vec<u8> {
     let mut out = Vec::with_capacity(BINARY_SENTINEL.len() + tags.len() * 12);
     out.extend_from_slice(BINARY_SENTINEL);
     for t in tags {
@@ -445,13 +522,9 @@ pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
                     Value::Str(s) => s.clone(),
                     v => v.as_str(),
                 };
-                let mut text = String::with_capacity(s.len());
-                if utf8 {
-                    text.extend(s.chars().map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c }));
-                } else {
-                    escape_unicode(&s, &mut text);
-                }
-                out.extend(text.bytes().filter(|&b| b != 0));
+                let mut text = Vec::with_capacity(s.len());
+                push_string(&s, strings, &mut text);
+                out.extend(text.into_iter().filter(|&b| b != 0));
                 out.push(0);
             }
             Kind::Real => {
@@ -505,15 +578,27 @@ pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.starts_with(BINARY_SENTINEL)
 }
 
-/// Escape a string for a pre-R2007 DXF, whose text is in the `$DWGCODEPAGE` code page: ASCII
-/// stays as it is and every other character becomes `\U+XXXX` (a surrogate pair of escapes
-/// above U+FFFF), so the bytes are valid in any code page. Line breaks become spaces.
-fn escape_unicode(s: &str, out: &mut String) {
-    for c in s.chars() {
-        match c {
-            '\r' | '\n' => out.push(' '),
-            c if c.is_ascii() => out.push(c),
-            c => {
+/// A string value as `strings` stores it. Line breaks become spaces. Before R2007 the text is
+/// in the `$DWGCODEPAGE` code page: ASCII stays as it is, a character the code page has becomes
+/// its bytes, and every other one `\U+XXXX` (a surrogate pair of escapes above U+FFFF). Without
+/// a code page the result is ASCII, so it is valid in any code page. In every form a backslash
+/// that would start a `\U+` or `\M+` sequence is written as `\U+005C`, so the reader gives back
+/// the literal text (#2050). So is a double-byte character whose trail byte is 0x5C (`\`) in that
+/// place, such as Shift-JIS `表` or Big5 `許`: CADCraft decodes the code page before it looks for
+/// escapes, but a reader that looks first would take that byte and the `U+` after it for one.
+fn push_string(s: &str, strings: Strings, out: &mut Vec<u8>) {
+    let chars: Vec<char> = s.chars().collect();
+    let escape_at = |j: usize| matches!(chars.get(j), Some('U' | 'M')) && chars.get(j + 1) == Some(&'+');
+    for (i, &c) in chars.iter().enumerate() {
+        match (c, strings) {
+            ('\r' | '\n', _) => out.push(b' '),
+            ('\\', _) if escape_at(i + 1) => {
+                out.extend_from_slice(b"\\U+005C");
+            }
+            (c, Strings::Utf8) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+            (c, _) if c.is_ascii() => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+            (c, Strings::Escaped(Some(d))) if code_page_bytes(c, d, escape_at(i + 1), out) => {}
+            (c, Strings::Escaped(_)) => {
                 let mut units = [0u16; 2];
                 for u in c.encode_utf16(&mut units) {
                     let _ = write!(out, "\\U+{u:04X}");
@@ -521,6 +606,20 @@ fn escape_unicode(s: &str, out: &mut String) {
             }
         }
     }
+}
+
+/// `c` in the code page `d`, if it has it, unless it is a double-byte character whose trail byte
+/// is 0x5C and an escape's `U+` or `M+` follows (`before_escape`): see [`push_string`].
+fn code_page_bytes(c: char, d: codepage::Decoder, before_escape: bool, out: &mut Vec<u8>) -> bool {
+    let start = out.len();
+    if !codepage::encode_char(c, d, out) {
+        return false;
+    }
+    if before_escape && out.len() - start > 1 && out.last() == Some(&b'\\') {
+        out.truncate(start);
+        return false;
+    }
+    true
 }
 
 /// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`.
@@ -568,6 +667,25 @@ pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literal_escape_text_roundtrips() {
+        for utf8 in [false, true] {
+            for text in ["\\U+00E9", "\\M+183A4F", "a\\nb \\P", "\\\\U+00E9", "\\U+005C"] {
+                let tags = vec![Tag::s(8, text)];
+                let back = parse_ascii(&write_ascii_as(&tags, utf8)).unwrap();
+                assert_eq!(back, tags, "utf8={utf8} {text}");
+                let back = parse_binary(&write_binary(&tags, utf8)).unwrap();
+                assert_eq!(back[1..], tags[..], "binary utf8={utf8} {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn blank_lines_do_not_consume_group_code_limit() {
+        let tags = parse_with_limit(b"0\nEOF\n\n\n", 1).expect("one group code should fit a limit of one");
+        assert_eq!(tags, vec![Tag::s(0, "EOF")]);
+    }
 
     #[test]
     fn ascii_roundtrip() {
@@ -681,5 +799,29 @@ mod tests {
         b.extend_from_slice(&0i16.to_le_bytes());
         b.extend_from_slice(b"EOF\0");
         assert_eq!(parse(&b).unwrap()[0].str(), "图号");
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn tag_limit_defaults_and_env_override() {
+        assert_eq!(max_tags_from(None), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("0")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("abc")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some(" 400_000_000 ")), 400_000_000);
+        // Issue #1948: the default must admit a DXF rendition well above 50 million group codes.
+        const { assert!(MAX_TAGS >= 100_000_000) };
+    }
+
+    #[test]
+    fn the_tag_list_is_reserved_once_and_a_refusal_is_an_error() {
+        let tags = parse_ascii_counted("0\nSECTION\n0\nENDSEC\n0\nEOF\n", MAX_TAGS, 3).unwrap();
+        assert_eq!((tags.len(), tags.capacity()), (3, 3));
+        let e = parse_ascii_counted("0\nEOF\n", usize::MAX, usize::MAX).unwrap_err();
+        assert!(matches!(e, DxfError::OutOfMemory { .. }), "{e}");
     }
 }

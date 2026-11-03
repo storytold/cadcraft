@@ -104,8 +104,8 @@ fn reference_count(d: &Drawing, key: &str) -> usize {
 fn describe(d: &Drawing, b: &Block, host: Option<&str>) -> Value {
     let refs = reference_count(d, &b.name);
     let status = if refs == 0 && b.xref_status == XrefStatus::Loaded { "Unreferenced" } else { b.xref_status.label() };
-    let dir = host.and_then(|h| std::path::Path::new(h).parent().map(std::path::Path::to_path_buf));
-    let found = b.xref_path.as_deref().and_then(|p| load::find(p, dir.as_deref())).map(|f| f.to_string_lossy().into_owned());
+    let found =
+        b.xref_path.as_deref().and_then(|p| load::find(p, host.map(std::path::Path::new), false).ok()).map(|f| f.to_string_lossy().into_owned());
     json!({
         "name": b.name,
         "path": b.xref_path,
@@ -146,7 +146,7 @@ fn attach(s: &mut Session, name: &str, path: &str, overlay: bool) -> Result<Stri
     b.xref_path = Some(path.to_string());
     b.xref_overlay = overlay;
     d.blocks.insert(name.to_string(), Arc::new(b));
-    let out = load::load(&mut d, name, host.as_deref());
+    let out = load::load(&mut d, name, host.as_deref(), true);
     match out.first() {
         Some(o) if o.status == XrefStatus::Loaded => {}
         Some(o) => return Err(bad("xattach", format!("{path} can't be attached: {}", o.detail))),
@@ -227,11 +227,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "reload" | "r" => {
             let names = named(s, "-xref", p)?;
-            let mut out = Vec::new();
-            for n in &names {
-                let d = s.doc_mut()?;
-                out.extend(load::load(d, n, host.as_deref()));
-            }
+            let out = load::load_each(s.doc_mut()?, &names, host.as_deref(), false);
             echo_all(s, &out);
             Ok(
                 json!({ "xrefs": out.iter().filter(|o| !o.name.is_empty()).map(|o| json!({"name": o.name, "status": o.status.label(), "detail": o.detail})).collect::<Vec<_>>() }),
@@ -271,14 +267,13 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         "path" | "p" => {
             let path = str_param(p, "path").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("-xref", "`path` is required"))?.to_string();
             let names = named(s, "-xref", p)?;
-            let mut out = Vec::new();
+            let d = s.doc_mut()?;
             for n in &names {
-                let d = s.doc_mut()?;
                 if let Some(b) = d.blocks.get_mut(n) {
                     Arc::make_mut(b).xref_path = Some(path.clone());
                 }
-                out.extend(load::load(d, n, host.as_deref()));
             }
+            let out = load::load_each(d, &names, host.as_deref(), true);
             echo_all(s, &out);
             Ok(json!({ "xrefs": names, "path": path }))
         }
@@ -367,8 +362,10 @@ fn run_xopen(s: &mut Session, p: &Value) -> Result<Value> {
     let b = d.block(&name).ok_or_else(|| bad("xopen", format!("no xref \"{name}\"")))?;
     let path = b.xref_path.clone().ok_or_else(|| bad("xopen", format!("\"{name}\" is not an xref")))?;
     let host = host(s);
-    let dir = host.as_deref().and_then(|h| std::path::Path::new(h).parent().map(std::path::Path::to_path_buf));
-    let file = load::find(&path, dir.as_deref()).ok_or_else(|| bad("xopen", format!("{path}: file not found")))?;
+    let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|m| match m {
+        load::Missing::NotFound => bad("xopen", format!("{path}: file not found")),
+        load::Missing::Refused(r) => bad("xopen", format!("{path}: not opened, {r}")),
+    })?;
     s.execute("open", &json!({ "path": file.to_string_lossy() }))
 }
 
