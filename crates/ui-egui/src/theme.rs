@@ -357,6 +357,10 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 .enumerate()
                 .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
         );
+        // ไทย: an installed Thai face, for builds without the embedded one.
+        if let Some(bytes) = thai_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES)) {
+            added.push(("system-thai".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
@@ -493,6 +497,9 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
     }
+    // ไทย: file, layer and text-style names can be Thai whatever the interface shows, and egui's
+    // faces carry no Thai glyphs; the face is small (about 200 KB), so every interface loads it.
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Thai")));
     out
 }
 
@@ -587,6 +594,30 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
     }
     #[cfg(target_arch = "wasm32")]
     None
+}
+
+/// An installed font with Thai glyphs (Leelawadee UI and Tahoma ship with Windows), for Thai names
+/// in any interface language. Checked once.
+#[cfg(not(target_arch = "wasm32"))]
+fn thai_font() -> Option<&'static std::path::Path> {
+    static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let candidates: &[&str] = if cfg!(target_os = "macos") {
+                &["/System/Library/Fonts/Supplemental/Ayuthaya.ttf", "/System/Library/Fonts/Supplemental/Thonburi.ttc"]
+            } else if cfg!(windows) {
+                &["C:\\Windows\\Fonts\\LeelawUI.ttf", "C:\\Windows\\Fonts\\leelawad.ttf", "C:\\Windows\\Fonts\\tahoma.ttf"]
+            } else {
+                &[
+                    "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+                    "/usr/share/fonts/noto/NotoSansThai-Regular.ttf",
+                    "/usr/share/fonts/truetype/tlwg/Garuda.ttf",
+                    "/usr/share/fonts/truetype/thai/Garuda.ttf",
+                ]
+            };
+            candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+        })
+        .as_deref()
 }
 
 /// An installed Japanese font, for Japanese names in a non-Chinese interface. Checked once.
@@ -850,6 +881,9 @@ mod tests {
         assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic"]);
         // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
         assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Arabic"]);
+        // Thai names show in every interface, so the Thai face loads whatever the language.
+        let thai = face("Noto Sans Thai", &["Thai"]);
+        assert_eq!(families(&super::embedded_ui_faces(&[&japanese, &thai], "en")), ["BIZ UDPGothic", "Noto Sans Thai"]);
         // Another weight is a style of a face, not an interface face of its own.
         let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
         assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
