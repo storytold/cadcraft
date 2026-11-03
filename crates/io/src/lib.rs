@@ -17,6 +17,8 @@ mod iges;
 mod mesh;
 pub mod pdf;
 pub mod plotter;
+/// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
+pub mod roundtrip;
 mod step;
 pub mod svg;
 mod svg_read;
@@ -74,14 +76,19 @@ fn ext(name: impl AsRef<Path>) -> String {
 /// Read a drawing; the format comes from the content (DXF ASCII/binary, DWG) or the name
 /// (SVG and gzip-compressed SVGZ).
 pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
-    let name = name.as_ref();
+    read_source(bytes, name.as_ref()).map(|(d, _)| d)
+}
+
+/// [`read`], also returning the DXF rendition a DWG was read through (`None` for other files),
+/// which the round-trip harness counts.
+pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if cadcraft_dwg::is_dwg(bytes) {
         let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes;
-        return Ok(d);
+        return Ok((d, Some(dxf)));
     }
-    match (Format::from_path(name), ext(name).as_str()) {
+    let d = match (Format::from_path(name), ext(name).as_str()) {
         (_, "obj") => mesh::read_obj(bytes),
         (_, "stl") => mesh::read_stl(bytes),
         (_, "gltf" | "glb") => gltf::read(bytes),
@@ -92,7 +99,8 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
         (Some(Format::Dxf), _) => dxf_read::read(bytes),
         (_, e) if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),
         (_, e) => Err(IoError::Unsupported(e.to_string())),
-    }
+    }?;
+    Ok((d, None))
 }
 
 /// Write a drawing in the format chosen by the name's extension. Images (PNG, SVG, PDF) show
@@ -122,13 +130,27 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
         // The DWG bridge reads our R2000 DXF and writes the DWG at the version asked for. Without
         // one, at least 2004: R2000 DWG has no true colours, transparency, table styles or
         // gradients, so a drawing from an R2000 DXF doesn't lose them by default.
-        Some(Format::Dwg) if !opts.binary => {
-            let version = opts.version.unwrap_or_else(|| version.max(Version::R2004));
-            cadcraft_dwg::encode_as(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
-        }
+        Some(Format::Dwg) if !opts.binary => write_dwg(d, opts.version.unwrap_or_else(|| version.max(Version::R2004))).map(|(dwg, _)| dwg),
         _ if opts.binary => Err(IoError::Format(format!("binary output is for DXF files, not `{}`", ext(name)))),
         _ => write_framed(d, name, None),
     }
+}
+
+/// [`write_with`], also returning what the file leaves out of the drawing: for a DWG, how many
+/// records of each DXF type the DWG writer can't write (other programs' custom entities and
+/// objects); for other formats, nothing.
+pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
+    let name = name.as_ref();
+    if matches!(Format::from_path(name), Some(Format::Dwg)) && !opts.binary {
+        return write_dwg(d, opts.version.unwrap_or_else(|| save_version(d).max(Version::R2004)));
+    }
+    write_with(d, name, opts).map(|b| (b, cadcraft_dwg::Unwritten::new()))
+}
+
+/// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
+/// there is one.
+fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
+    cadcraft_dwg::encode_noted(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
