@@ -105,9 +105,18 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
                 (a.radius, a.start, a.end) = (r.radius, r.start, r.end);
             }
         }
-        // Control points inside the area move (AutoCAD); a spline built from fit points moves
-        // whole by its first grip, as before.
+        // Control points inside the area move (AutoCAD).
         EntityKind::Spline(sp) if sp.fit.is_empty() => sp.control.iter_mut().filter(|p| inside(**p)).for_each(|p| *p += d),
+        // A spline built from fit points: the fit points inside the area move and it is fitted
+        // through them again, its fit data kept (AutoCAD 2024). All of them inside, it moves.
+        EntityKind::Spline(sp) => {
+            if sp.fit.iter().all(|p| inside(*p)) {
+                sp.transform(&Mat3::translate(d));
+            } else if sp.fit.iter().any(|p| inside(*p)) {
+                let fit: Vec<Vec2> = sp.fit.iter().map(|p| if inside(*p) { *p + d } else { *p }).collect();
+                *sp = sp.refit(&fit, sp.closed);
+            }
+        }
         EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(mv),
         EntityKind::Dimension(dm) => {
             for p in [&mut dm.p13, &mut dm.p14, &mut dm.defpt, &mut dm.text_mid] {

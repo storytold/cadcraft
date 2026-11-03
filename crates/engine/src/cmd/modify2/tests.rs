@@ -898,6 +898,30 @@ fn stretch_arcs_bulges_and_splines_match_autocad() {
             (k, _) => panic!("{window:?}: {k:?}"),
         }
     }
+    // A spline built from fit points: the fit points inside move and it is fitted through them
+    // again, keeping its fit data; all of them inside, it moves whole (AutoCAD 2024, `entget`
+    // after STRETCH of a spline stored with these fit points only).
+    let fit = [[200.0, 0.0], [210.0, 10.0], [220.0, 0.0], [230.0, 10.0]];
+    let fit_cases: [([[f64; 2]; 2], [f64; 2], [[f64; 2]; 4]); 3] = [
+        ([[225.0, 5.0], [235.0, 15.0]], [5.0, 0.0], [[200.0, 0.0], [210.0, 10.0], [220.0, 0.0], [235.0, 10.0]]),
+        ([[205.0, 5.0], [215.0, 15.0]], [0.0, 5.0], [[200.0, 0.0], [210.0, 15.0], [220.0, 0.0], [230.0, 10.0]]),
+        ([[195.0, -5.0], [235.0, 15.0]], [5.0, 5.0], [[205.0, 5.0], [215.0, 15.0], [225.0, 5.0], [235.0, 15.0]]),
+    ];
+    for (window, delta, want) in fit_cases {
+        let mut s = Session::new();
+        let hd = h(&s.execute("spline", &json!({ "fit": fit })).unwrap());
+        s.execute("stretch", &json!({ "window": window, "delta": delta })).unwrap();
+        let EntityKind::Spline(sp) = kind(&s, &hd) else { panic!("not a spline") };
+        let got: Vec<[f64; 2]> = sp.fit.iter().map(|p| [p.x, p.y]).collect();
+        assert!(got.len() == 4 && got.iter().zip(want).all(|(g, w)| same(g[0], w[0]) && same(g[1], w[1])), "{window:?}: {got:?}");
+        // The curve still runs through them.
+        let (lo, hi) = sp.domain();
+        for w in want {
+            let q = cadcraft_geom::Vec2::new(w[0], w[1]);
+            let near = (0..=4000).map(|i| sp.eval(lo + (hi - lo) * f64::from(i) / 4000.0).dist(q)).fold(f64::INFINITY, f64::min);
+            assert!(near < 1e-2, "{window:?}: {w:?} is {near} off the curve");
+        }
+    }
     // A stretch that brings an arc segment's ends together leaves no arc to keep: the bulge goes.
     let mut s = Session::new();
     let p = pline(&mut s, json!([{"p": [0, 0], "bulge": 0.5}, [10, 0], [20, 0]]), false);
