@@ -109,7 +109,7 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame
     }
 }
 
-/// Move an OLE2FRAME by `m`, a translation: its two corners are mapped through `m` (a DWG save
+/// Move an OLE2FRAME by `m`, a translation or a uniform positive scale: its two corners are mapped through `m` (a DWG save
 /// writes the frame's position from these groups), and so are the corners at the start of its OLE
 /// data (310 groups), which a reader of the saved file may trust instead. Other transforms do not keep a frame axis
 /// aligned, so callers refuse them (see [`ole_frame_accepts`]). A frame with no usable corners is
@@ -129,10 +129,12 @@ pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) 
     ole_data_transform(tags, m, frame);
 }
 
-/// Whether `m` can move an OLE2FRAME: only a translation (move, copy, stretch of the whole frame).
+/// Whether `m` can move an OLE2FRAME: a translation (move, copy, stretch of the whole frame) or a
+/// uniform scale with a positive factor, which keep the frame axis aligned and its upper-left corner
+/// upper-left.
 pub fn ole_frame_accepts(m: &cadcraft_geom::Mat3) -> bool {
     const T: f64 = 1e-12;
-    (m.a - 1.0).abs() < T && m.b.abs() < T && m.c.abs() < T && (m.d - 1.0).abs() < T
+    m.b.abs() < T && m.c.abs() < T && m.a > 0.0 && (m.a - m.d).abs() <= T * m.a.abs().max(1.0)
 }
 
 /// Bounds of a single-line TEXT / ATTDEF / ATTRIB of `len` characters, following its justification
@@ -676,5 +678,21 @@ mod tests {
             assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
             assert!(extents.width() > drawn.width());
         }
+    }
+
+    /// A translation, and a uniform positive scale about any point, keep a frame axis aligned and
+    /// upper-left; a rotation, a mirror, a non-uniform or non-positive scale do not.
+    #[test]
+    fn ole_frame_accepts_translations_and_uniform_positive_scales_only() {
+        use cadcraft_geom::Mat3;
+        let p = Vec2::new(3.0, -4.0);
+        assert!(ole_frame_accepts(&Mat3::translate(p)));
+        assert!(ole_frame_accepts(&Mat3::scale_about(p, 2.5)));
+        assert!(ole_frame_accepts(&Mat3::scale_about(p, 1e-3)));
+        assert!(!ole_frame_accepts(&Mat3::scale(2.0, 3.0)));
+        assert!(!ole_frame_accepts(&Mat3::scale_about(p, -1.0)));
+        assert!(!ole_frame_accepts(&Mat3::scale_about(p, 0.0)));
+        assert!(!ole_frame_accepts(&Mat3::rotate_about(p, 0.5)));
+        assert!(!ole_frame_accepts(&Mat3::mirror(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0))));
     }
 }

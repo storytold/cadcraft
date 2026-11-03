@@ -41,14 +41,12 @@ fn move_and_copy_carry_an_ole_frame() {
 }
 
 #[test]
-fn rotate_scale_and_mirror_refuse_an_ole_frame() {
+fn rotate_and_mirror_refuse_an_ole_frame() {
     let (mut s, h) = session();
     let before = corners(&s);
-    for (cmd, p) in [
-        ("rotate", json!({ "handles": [h], "base": [0, 0], "angle": 30 })),
-        ("scale", json!({ "handles": [h], "base": [0, 0], "factor": 2 })),
-        ("mirror", json!({ "handles": [h], "p1": [0, 0], "p2": [1, 0] })),
-    ] {
+    for (cmd, p) in
+        [("rotate", json!({ "handles": [h], "base": [0, 0], "angle": 30 })), ("mirror", json!({ "handles": [h], "p1": [0, 0], "p2": [1, 0] }))]
+    {
         let e = s.execute(cmd, &p).expect_err(cmd);
         assert!(e.to_string().contains("OLE object"), "{cmd}: {e}");
     }
@@ -179,4 +177,46 @@ fn a_locked_ole_frame_does_not_block_an_in_place_rotation() {
     let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(&ln).unwrap()).unwrap();
     let cadcraft_engine::doc::EntityKind::Line(l) = &e.kind else { panic!("line") };
     assert!((l.b.y - 10.0).abs() < 1e-9 && l.b.x.abs() < 1e-9, "{l:?}");
+}
+
+/// The four corners (x, y) in the OLE data header, read back from the 310 groups.
+fn data_corners(s: &Session) -> Vec<(f64, f64)> {
+    let hex: String = data_tags(s).concat();
+    let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+    let f = |o: usize| f64::from_le_bytes(bytes[o..o + 8].try_into().unwrap());
+    (0..4).map(|c| (f(2 + c * 24), f(10 + c * 24))).collect()
+}
+
+fn line_in(s: &mut Session) -> String {
+    let ln = s.execute("line", &json!({ "points": [[1, 2], [4, 6]] })).unwrap();
+    ln["handle"].as_str().or_else(|| ln["handles"][0].as_str()).unwrap().to_string()
+}
+
+fn line_ends(s: &Session, h: &str) -> ((f64, f64), (f64, f64)) {
+    let e = s.doc().unwrap().entity(cadcraft_engine::doc::Handle::parse_hex(h).unwrap()).unwrap();
+    let EntityKind::Line(l) = &e.kind else { panic!("line") };
+    ((l.a.x, l.a.y), (l.b.x, l.b.y))
+}
+
+/// SCALE with a uniform positive factor carries an OLE frame with the rest of the selection: the
+/// corner groups and the corners in the OLE data are both mapped (review on #2587).
+#[test]
+fn scale_carries_an_ole_frame_with_the_rest_of_the_selection() {
+    let (mut s, h) = data_session(&[10, 100, 40], None);
+    let ln = line_in(&mut s);
+    s.execute("scale", &json!({ "handles": [ln.clone(), h], "base": [0, 0], "factor": 2 })).unwrap();
+    assert_eq!(line_ends(&s, &ln), ((2.0, 4.0), (8.0, 12.0)));
+    let want: Vec<(i32, String)> = [(10, "60"), (20, "-38"), (11, "70"), (21, "-44")].iter().map(|(c, v)| (*c, v.to_string())).collect();
+    let tags: Vec<(i32, String)> = corners(&s).into_iter().filter(|(c, _)| *c != 310).collect();
+    assert_eq!(tags, want);
+    assert_eq!(data_corners(&s), vec![(60.0, -38.0), (70.0, -38.0), (70.0, -44.0), (60.0, -44.0)]);
+}
+
+/// MOCORO with a scale step carries the frame too, like SCALE.
+#[test]
+fn mocoro_scales_an_ole_frame() {
+    let (mut s, h) = data_session(&[10, 100, 40], None);
+    s.execute("mocoro", &json!({ "handles": [h], "base": [0, 0], "ops": [{ "scale": 3 }] })).unwrap();
+    assert_eq!(data_corners(&s)[0], (90.0, -57.0));
+    assert_eq!(corners(&s)[0].1, "90");
 }

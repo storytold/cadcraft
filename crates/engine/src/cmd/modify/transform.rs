@@ -21,7 +21,7 @@ pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64,
     })
 }
 
-/// An OLE2FRAME only translates (its corners stay axis aligned): refuse any other `m` before anything
+/// An OLE2FRAME only translates or scales uniformly (its corners stay axis aligned): refuse any other `m` before anything
 /// changes, instead of reporting success and leaving the frame where it was.
 pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<()> {
     if cadcraft_doc::ole_frame_accepts(m) {
@@ -37,7 +37,7 @@ pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool
     };
     if hs.iter().any(ole) {
         return Err(crate::EngineError::Other(
-            "An OLE object can only be moved or copied; rotating, scaling and mirroring it are not supported.".into(),
+            "An OLE object can only be moved, copied or scaled uniformly; rotating and mirroring it are not supported.".into(),
         ));
     }
     Ok(())

@@ -108,7 +108,7 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Every option is checked before the drawing changes.
     let ops = list.iter().enumerate().map(|(i, v)| parse_op(i, v)).collect::<Result<Vec<_>>>()?;
-    // An OLE frame only translates: a rotate or scale step that would refuse it must do so before an
+    // An OLE frame only translates or scales uniformly: a rotate step (or any step) that would refuse it must do so before an
     // earlier move or copy changes the drawing (a refused command is not rolled back).
     for op in &ops {
         match *op {
