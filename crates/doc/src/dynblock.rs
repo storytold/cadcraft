@@ -323,8 +323,9 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// The objects `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph lists, when the dictionary has one.
-fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<Vec<&'a ForeignObject>> {
+/// `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph object, when the dictionary has one. Only the
+/// dictionary's own tags are read, so asking whether a block is dynamic never walks the graph.
+fn evaluation_graph<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<&'a ForeignObject> {
     let dict = objects.get(&xdict)?;
     let mut graph = None;
     let mut tags = dict.tags.iter();
@@ -334,7 +335,12 @@ fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle
             break;
         }
     }
-    let graph = objects.get(&graph?).filter(|o| o.kind.eq_ignore_ascii_case("ACAD_EVALUATION_GRAPH"))?;
+    objects.get(&graph?).copied().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_EVALUATION_GRAPH"))
+}
+
+/// The objects `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph lists, when the dictionary has one.
+fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<Vec<&'a ForeignObject>> {
+    let graph = evaluation_graph(objects, xdict)?;
     let members = section(&sections(&graph.tags), "AcDbEvalGraph").iter().filter(|t| t.code == 360).filter_map(|t| Handle::parse_hex(&t.value));
     // Deduplicate member handles before resolving them: a graph can list the same member many
     // times, and parsing each occurrence into its own owned parameter multiplies a single large
@@ -371,7 +377,7 @@ pub fn dynamic_block(d: &Drawing, name: &str) -> Option<DynamicBlock> {
 /// Whether block `name` is a dynamic block (has an evaluation graph), without reading its
 /// parameters and actions; `objects` is the drawing's [`ObjectIndex`].
 pub fn is_dynamic_block_in(d: &Drawing, objects: &ObjectIndex<'_>, name: &str) -> bool {
-    block_xdict(d, name).and_then(|x| graph_members(&objects.0, x)).is_some()
+    block_xdict(d, name).and_then(|x| evaluation_graph(&objects.0, x)).is_some()
 }
 
 /// [`dynamic_block`] with the drawing's [`ObjectIndex`] already built.
