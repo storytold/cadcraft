@@ -214,9 +214,16 @@ impl Prompt {
             return None;
         }
         let tl = t.to_ascii_lowercase();
-        // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys.
+        // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys, unless
+        // the prompt offers that spelling itself (a Greek keyword in a LISP program's list).
         if let Some(latin) = crate::keyboard::latin_keys(t) {
-            return self.match_latin_keyword(&latin).or_else(|| self.match_latin_keyword(&tl));
+            return self
+                .keywords
+                .iter()
+                .find(|k| k.eq_ignore_ascii_case(t))
+                .cloned()
+                .or_else(|| self.match_latin_keyword(&latin))
+                .or_else(|| self.match_latin_keyword(&tl));
         }
         self.match_latin_keyword(&tl)
     }
@@ -380,6 +387,18 @@ mod tests {
         assert_eq!(parse_point("1", last), None);
         assert_eq!(parse_point("a,b", last), None);
         assert_eq!(parse_point("1,2,3,4", last), None);
+    }
+
+    #[test]
+    fn a_greek_keyword_is_matched_as_spelled_before_its_latin_reading() {
+        // ΘΝΔΟ is the keys U-N-D-O, so it answers Undo, unless the prompt offers the Greek word itself
+        // (a LISP program's keyword list).
+        let both = Prompt::new("", Accept::TEXT).kw(&["Undo", "ΘΝΔΟ"]);
+        assert_eq!(both.match_keyword("ΘΝΔΟ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("Undo").as_deref(), Some("Undo"));
+        let latin = Prompt::new("", Accept::TEXT).kw(&["Undo"]);
+        assert_eq!(latin.match_keyword("ΘΝΔΟ").as_deref(), Some("Undo"));
+        assert_eq!(latin.match_keyword("Θ").as_deref(), Some("Undo"), "a Greek-layout shortcut still works");
     }
 
     #[test]

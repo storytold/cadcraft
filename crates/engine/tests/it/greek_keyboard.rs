@@ -50,4 +50,20 @@ fn greek_layout_keywords_match_prompt_options() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let circles = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
     assert_eq!(circles, 2, "the circle and its mirror image");
+
+    // Υ (the Y key) answers Yes, which erases the source: unmatched Greek text would count as No, so
+    // only a recognised keyword gives this result.
+    let mut yes = Session::new();
+    yes.execute("circle", &json!({ "center": [0, 0], "radius": 5 })).unwrap();
+    yes.script(
+        "ΜΙΡΡΟΡ ALL
+
+0,0 10,0
+Υ
+",
+    )
+    .unwrap();
+    assert!(yes.running.is_none(), "{}", yes.prompt_text());
+    let circles = yes.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+    assert_eq!(circles, 1, "Υ answered Yes and the source was erased");
 }
