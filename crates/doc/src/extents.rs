@@ -132,7 +132,7 @@ fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blo
         match d.anno_draw(e) {
             crate::AnnoDraw::Plain => {}
             crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
-            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, blocks, off_counts),
+            crate::AnnoDraw::Scaled { factor, by } => return bounds_in(d, &crate::anno_placed(e, factor, by), 0, &mut HashMap::new(), off_counts),
         }
     }
     bounds_in(d, e, depth, blocks, off_counts)
