@@ -2,6 +2,11 @@
 //! a path from, so the picker is a hidden `<input type="file">`; the chosen file (or one dropped on
 //! the page) is read in the background and handed to the app on its next frame, which opens it
 //! with OPEN `{data, name}` ([`CadApp::open_bytes`]).
+//!
+//! SHX fonts (text fonts, big fonts, shape files) chosen or dropped with a drawing are the web
+//! build's font folder: they are registered with the font table
+//! ([`cadcraft_fonts::shx::register`]) under their file name, so the styles and linetypes that
+//! name them draw with them, and the drawings are regenerated.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,8 +17,11 @@ use web_sys::js_sys;
 
 /// The hidden file input (one at a time; a cancelled pick leaves it until the next one).
 const INPUT_ID: &str = "cadcraft_open_input";
-/// What the picker offers: the formats OPEN reads.
-const ACCEPT: &str = ".dxf,.dwg";
+/// What the picker offers: the formats OPEN reads, and the SHX fonts drawings name.
+const ACCEPT: &str = ".dxf,.dwg,.shx";
+
+/// Most files taken from one pick.
+const MAX_PICKED: u32 = 64;
 
 /// A file read in the browser (name, contents), or why it couldn't be read.
 type Upload = Result<(String, Vec<u8>), String>;
@@ -51,13 +59,19 @@ impl Inbox {
             .map_err(|_| "could not create a file input".to_string())?;
         input.set_type("file");
         input.set_accept(ACCEPT);
+        // A drawing and the fonts it uses can be chosen together.
+        input.set_multiple(true);
         input.set_id(INPUT_ID);
         input.set_attribute("style", "display:none").map_err(js_error)?;
         let (inbox, chosen) = (self.clone(), input.clone());
-        // Called once, when a file was chosen (browsers don't fire `change` on cancel).
+        // Called once, when files were chosen (browsers don't fire `change` on cancel).
         let on_change = wasm_bindgen::closure::Closure::once_into_js(move || {
-            if let Some(file) = chosen.files().and_then(|f| f.get(0)) {
-                inbox.read(file);
+            if let Some(files) = chosen.files() {
+                for i in 0..files.length().min(MAX_PICKED) {
+                    if let Some(file) = files.get(i) {
+                        inbox.read(file);
+                    }
+                }
             }
             chosen.remove();
         });
@@ -118,15 +132,32 @@ impl Inbox {
         self.ctx.request_repaint();
     }
 
-    /// Open what arrived since the last frame (or report why it couldn't be read).
+    /// Open what arrived since the last frame (or report why it couldn't be read). Fonts are
+    /// registered first, so drawings opened with them draw with them.
     pub fn drain(&self, app: &mut CadApp) {
-        for upload in self.files.take() {
+        let (fonts, files): (Vec<Upload>, Vec<Upload>) = self.files.take().into_iter().partition(|u| u.as_ref().is_ok_and(|(n, _)| is_shx(n)));
+        let mut registered = false;
+        for (name, bytes) in fonts.into_iter().flatten() {
+            match cadcraft_fonts::shx::register(&name, &bytes) {
+                Ok(()) => registered = true,
+                Err(e) => app.open_failed(format!("{name}: {e}")),
+            }
+        }
+        if registered {
+            let _ = app.run("regenall", serde_json::json!({}));
+        }
+        for upload in files {
             match upload {
                 Ok((name, bytes)) => app.open_bytes(&name, &bytes),
                 Err(e) => app.open_failed(e),
             }
         }
     }
+}
+
+/// Whether `name` is an SHX font or shape file.
+fn is_shx(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".shx")
 }
 
 fn js_error(e: wasm_bindgen::JsValue) -> String {
