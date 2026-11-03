@@ -2238,6 +2238,57 @@ fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
     assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
 }
 
+/// A 2D POLYLINE (heavy polyline) in a tilted plane is drawn as seen from above, like a
+/// LWPOLYLINE: before, its OCS points were taken for world coordinates. With extrusion
+/// (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and y = (0, √3/2, 1/2), and the elevation of 2
+/// moves the plane by twice the normal, (0, 1, -√3): the square (1,0)..(3,2) lies over
+/// (-3,1)..(-1,1+√3), its corners at a mean height of 1/2 - √3.
+#[test]
+fn tilted_2d_polyline_is_drawn_as_seen_from_above() {
+    let square = |n: &str| {
+        format!(
+            "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n2\n70\n1\n{n}\
+             0\nVERTEX\n8\n0\n10\n1\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n2\n\
+             0\nVERTEX\n8\n0\n10\n1\n20\n2\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let d = read(square("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let r3 = 3f64.sqrt();
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 1.0), (b.max.x, -1.0), (b.max.y, 1.0 + r3)] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("not a polyline") };
+    assert!((p.elevation - (0.5 - r3)).abs() < 1e-9, "the mean height of its corners: {}", p.elevation);
+    // In plan and in the mirrored plane the polyline stays as it was: mirrored only in x.
+    let plain = read(square("").as_bytes(), "p.dxf").unwrap();
+    let b = plain.extents(&Space::Model);
+    assert!((b.min.x - 1.0).abs() < 1e-9 && (b.max.y - 2.0).abs() < 1e-9, "extents {b:?}");
+    let mirrored = read(square("210\n0\n220\n0\n230\n-1\n").as_bytes(), "p.dxf").unwrap();
+    let b = mirrored.extents(&Space::Model);
+    assert!((b.min.x + 3.0).abs() < 1e-9 && (b.max.x + 1.0).abs() < 1e-9, "extents {b:?}");
+    assert_eq!(mirrored.model.iter().next().unwrap().common.extrusion, Vec3::new(0.0, 0.0, -1.0));
+}
+
+/// A tilted 2D POLYLINE with an arc keeps its shape as seen from above: the half circle from
+/// (0,0) to (2,0) is flattened into its half ellipse, in plan x from -2 to 0 and reaching √3/2.
+#[test]
+fn tilted_2d_polyline_arc_is_flattened() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                0\nVERTEX\n8\n0\n10\n0\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n2\n20\n0\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let b = d.extents(&Space::Model);
+    // Bulge 1 turns counter-clockwise from (0,0) to (2,0), so the arc runs below its chord, down
+    // to OCS y -1: plan y -√3/2.
+    for (got, want) in [(b.min.x, -2.0), (b.max.x, 0.0), (b.min.y, -(3f64.sqrt()) / 2.0), (b.max.y, 0.0)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
+}
+
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
 fn hatch_edge_extents(edges: &str) -> Bounds2 {
     let n = edges.matches("72\n").count();

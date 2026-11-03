@@ -539,7 +539,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
             break;
         }
     }
-    let c = common(t);
+    let mut c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
     let k = if flags & (16 | 64) != 0 {
         // Polyface (64) and polygon (16) meshes become 3D faces; the first takes the
@@ -552,13 +552,25 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
     } else if flags & 8 != 0 {
         EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
     } else {
-        // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
-        let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
+        // A 2D polyline's vertices are in its OCS, at the elevation of the POLYLINE's own point:
+        // in a tilted plane drawn as seen from above like LWPOLYLINE, else mirrored like it.
+        let closed = flags & 1 != 0;
+        let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
+        let mut elevation = t.p(10).z;
+        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+            (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            c.extrusion = Vec3::Z;
+        } else if c.extrusion.z < 0.0 {
+            for v in &mut vertices {
+                v.p.x = -v.p.x;
+                v.bulge = -v.bulge;
+            }
+        }
         EntityKind::LwPolyline(LwPolyline {
-            vertices: pts.iter().map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 }).collect(),
-            closed: flags & 1 != 0,
+            vertices,
+            closed,
             const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
-            elevation: t.p(10).z,
+            elevation,
             plinegen: flags & 128 != 0,
         })
     };
