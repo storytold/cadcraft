@@ -13,7 +13,7 @@ fn keys(v: &Value) -> Vec<String> {
 }
 
 fn want(extra: &[&str]) -> Vec<String> {
-    let mut k: Vec<String> = STATE_KEYS.iter().chain(extra).map(|s| s.to_string()).collect();
+    let mut k: Vec<String> = STATE_KEYS.iter().chain(extra).map(ToString::to_string).collect();
     k.sort();
     k
 }

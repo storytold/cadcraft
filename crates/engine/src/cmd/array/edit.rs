@@ -16,7 +16,8 @@ use serde_json::{Value, json};
 
 use super::super::helpers::v3;
 use super::super::machines::{SelOutcome, SelectPhase, number};
-use super::super::*;
+use super::super::{CommandSpec, bad, bool_or, point_param, targets};
+
 use super::{KEYWORDS, angle, check_size, count, fmt, nesting, other, yes, yes_no};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 

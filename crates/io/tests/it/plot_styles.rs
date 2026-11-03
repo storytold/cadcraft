@@ -15,14 +15,14 @@ fn layout_with_red_line() -> Drawing {
     d
 }
 
-/// The uncompressed PDF of Layout1 with extra plot options.
+/// The page content of Layout1's PDF with extra plot options.
 fn pdf_text(d: &Drawing, extra: serde_json::Value) -> String {
     let mut opts = json!({"compress": false});
     if let (Some(o), Some(e)) = (opts.as_object_mut(), extra.as_object()) {
         o.extend(e.clone());
     }
     let bytes = cadcraft_io::plot(d, &Space::Paper("Layout1".into()), &opts).unwrap();
-    String::from_utf8_lossy(&bytes).into_owned()
+    crate::pdf_read::read(&bytes).content().to_string()
 }
 
 #[test]
@@ -84,6 +84,19 @@ fn named_plot_styles_round_trip_through_the_plot_style_dictionary() {
     // A drawing without named styles still writes the dictionary with Normal, and no tables.
     let plain = write_dxf(&Drawing::new_metric());
     assert!(plain.contains("ACAD_PLOTSTYLENAME") && !plain.contains("CADCRAFT_PLOTSTYLES"));
+}
+
+/// #2242: a ByBlock plot style is group 380 = 1 (AcDb::PlotStyleNameType); it was written like
+/// ByLayer (no group at all) and read back as ByLayer.
+#[test]
+fn by_block_plot_style_round_trips() {
+    let mut d = Drawing::new_metric();
+    let line = EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) });
+    let h = d.add(&Space::Model, Common { plot_style: "ByBlock".into(), ..Default::default() }, line).unwrap();
+    let text = write_dxf(&d);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.windows(2).any(|w| w[0].trim() == "380" && w[1].trim() == "1"), "group 380 = 1 written");
+    assert_eq!(read_dxf(text.as_bytes()).unwrap().entity(h).unwrap().common.plot_style, "ByBlock");
 }
 
 #[test]

@@ -14,9 +14,10 @@ fn plotted_mm(opts: Value) -> f64 {
         o.extend(e.clone());
     }
     let bytes = cadcraft_io::plot(&d, &Space::Paper("Layout1".into()), &o).unwrap();
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    let xs: Vec<f64> = text.lines().filter(|l| l.ends_with(" m") || l.ends_with(" l")).filter_map(|l| l.split(' ').next()?.parse().ok()).collect();
-    assert_eq!(xs.len(), 2, "{text}");
+    let doc = crate::pdf_read::read(&bytes);
+    let xs: Vec<f64> =
+        crate::pdf_read::drawn(doc.content()).iter().filter(|o| o.op == "m" || o.op == "l").filter_map(|o| o.nums.first().copied()).collect();
+    assert_eq!(xs.len(), 2, "{}", doc.content());
     (xs[1] - xs[0]).abs() * 25.4 / 72.0
 }
 

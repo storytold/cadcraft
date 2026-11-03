@@ -44,9 +44,9 @@ fn a_millimetre_layout_plots_in_millimetres_whatever_measurement_says() {
 
     // The frame lands 10 mm (28.35 pt) inside the page, not 10 inches.
     let bytes = pdf(&d, &Space::Paper("SHEET".into()), &PdfOptions { compress: false, ..PdfOptions::default() }).unwrap();
-    let text = String::from_utf8_lossy(&bytes);
+    let doc = crate::pdf_read::read(&bytes);
     let xs: Vec<f64> =
-        text.lines().filter(|l| l.ends_with(" m") || l.ends_with(" l")).filter_map(|l| l.split_whitespace().next()?.parse().ok()).collect();
+        crate::pdf_read::drawn(doc.content()).iter().filter(|o| o.op == "m" || o.op == "l").filter_map(|o| o.nums.first().copied()).collect();
     assert!(!xs.is_empty(), "no path in the PDF");
     let (lo, hi) = xs.iter().fold((f64::MAX, f64::MIN), |(a, b), x| (a.min(*x), b.max(*x)));
     assert!((lo - 28.35).abs() < 0.1 && (hi - 813.54).abs() < 0.1, "frame from {lo} to {hi} pt");

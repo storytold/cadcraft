@@ -1,8 +1,8 @@
 //! SVG → Drawing: the static W3C SVG subset that drawing tools emit.
 //!
 //! Reads shapes (`rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`), `path`
-//! outlines (`M L H V C S Q T A Z`, absolute and relative), `g` grouping with `transform`
-//! attributes, `viewBox` and unit-bearing `width`/`height`, and Inkscape layers
+//! outlines (`M L H V C S Q T A Z`, absolute and relative), `g` grouping, `transform` on groups
+//! and shapes, `viewBox` and unit-bearing `width`/`height`, and Inkscape layers
 //! (`inkscape:groupmode="layer"`). Geometry becomes centre-line entities in millimetres with
 //! the page's top-left corner at the origin and Y pointing up — where a laser or pen job
 //! wants it.
@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use cadcraft_color::Color;
-use cadcraft_doc::*;
+use cadcraft_doc::{Circle, Common, Drawing, Ellipse, EntityKind, Layer, Line, LwPolyline, Space};
 use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
@@ -262,6 +262,19 @@ impl Parser {
             }
             return Ok(());
         }
+        // A shape's own `transform` (SVG 1.1 §7.5) maps it after its groups', for this element only.
+        let local = attr(e, b"transform").as_deref().and_then(parse_transform);
+        if let Some(local) = local {
+            self.stack.push(self.cur().then_before(local));
+        }
+        let read = self.shape(name, e);
+        if local.is_some() {
+            self.stack.pop();
+        }
+        read
+    }
+
+    fn shape(&mut self, name: &[u8], e: &BytesStart) -> Result<()> {
         match name {
             b"use" => {
                 self.left_out(LeftOut::Use);
@@ -527,7 +540,7 @@ impl Parser {
                     } else if *rx > 0.0 && *ry > 0.0 {
                         self.flush_run(&mut run, false)?;
                         self.flush_ctrl(&mut ctrl)?;
-                        for p in flatten_arc(&m, cur_user, *end, *rx, *ry, *rot, *large, *sweep)? {
+                        for p in flatten_arc(&m, cur_user, *end, (*rx, *ry), *rot, *large, *sweep)? {
                             if run.is_empty() {
                                 run.push(PolyVertex::new(cur));
                             }
@@ -1004,7 +1017,7 @@ fn pick_sweep(ccw: f64, large: bool, sweep: bool) -> f64 {
 
 /// Flatten a general elliptical arc (any `rx`/`ry`/rotation) from `p0` to `p1` in user
 /// space, then map every sample through `m`.
-fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, rx: f64, ry: f64, rot_deg: f64, large: bool, sweep: bool) -> Result<Vec<Vec2>> {
+fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, (rx, ry): (f64, f64), rot_deg: f64, large: bool, sweep: bool) -> Result<Vec<Vec2>> {
     let (c, theta, delta) = elliptical_params(p0, p1, rx, ry, rot_deg.to_radians(), large, sweep)
         .ok_or_else(|| IoError::Format("SVG: elliptical arc cannot be converted".into()))?;
     let axes = Mat3::rotate(rot_deg.to_radians());

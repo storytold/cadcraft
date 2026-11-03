@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Bounds2, EPS, PI, TAU, Vec2, angle_in_sweep, arc_segments, ccw_sweep, norm_angle};
+use crate::{Bounds2, EPS, Mat3, PI, TAU, Vec2, angle_in_sweep, arc_segments, ccw_sweep, norm_angle};
 
 /// A straight segment.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -246,6 +246,23 @@ impl Ellipse {
     }
     pub fn sweep(&self) -> f64 {
         ccw_sweep(self.start, self.end)
+    }
+    /// The image under the affine transform `m`, exactly: the conjugate semi-diameters
+    /// `A·major`, `A·minor` give the new principal axes; parameters shift with them (and
+    /// reverse under a mirroring transform).
+    pub fn transformed(&self, m: &Mat3) -> Ellipse {
+        let center = m.apply(self.center);
+        let (am, an) = (m.apply_vec(self.major), m.apply_vec(self.minor()));
+        // |am·cos t + an·sin t| is largest at t0: the new major axis.
+        let t0 = 0.5 * (2.0 * am.dot(an)).atan2(am.dot(am) - an.dot(an));
+        let (s0, c0) = t0.sin_cos();
+        let (u, v) = (am * c0 + an * s0, an * c0 - am * s0);
+        let ratio = if u.len() > 0.0 { (v.len() / u.len()).min(1.0) } else { 1.0 };
+        if self.is_full() {
+            return Ellipse::full(center, u, ratio);
+        }
+        let (start, end) = if u.cross(v) >= 0.0 { (self.start - t0, self.end - t0) } else { (t0 - self.end, t0 - self.start) };
+        Ellipse { center, major: u, ratio, start: norm_angle(start), end: norm_angle(end) }
     }
     pub fn tessellate(&self, tol: f64, out: &mut Vec<Vec2>) {
         let r = self.major.len();
@@ -569,7 +586,9 @@ impl Polyline {
             let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else { continue };
             let (pa, pb) = (a.p - origin, b.p - origin);
             add(pa.cross(pb) / 2.0, (pa + pb) * (1.0 / 3.0));
-            if let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge) {
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
                 let t = arc.sweep();
                 let seg = arc.radius * arc.radius * (t - t.sin()) / 2.0;
                 if seg > 0.0 {

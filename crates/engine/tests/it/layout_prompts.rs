@@ -17,7 +17,7 @@ fn typed_layout_options_prompt_for_names() {
 
     s.cmdline("LAYOUT").unwrap();
     let p = s.current_prompt().expect("LAYOUT prompts").display();
-    assert_eq!(p, "Enter layout option or [Copy/Delete/New/Template/Rename/SAveas/Set/?] <set>:");
+    assert_eq!(p, "Enter layout option [Copy/Delete/New/Template/Rename/SAveas/Set/?] <set>:");
     s.cmdline("n").unwrap();
     assert_eq!(s.current_prompt().unwrap().display(), "Enter name of new layout <Layout3>:");
     s.cmdline("Sheet9").unwrap();
@@ -39,7 +39,7 @@ fn typed_layout_options_prompt_for_names() {
     s.script("LAYOUT\n\nModel\n").unwrap();
     assert_eq!(s.layout_space(), Space::Model);
 
-    // ? lists; Template and SAveas report and end without taking the next input.
+    // ? lists; Template reports and ends without taking the next input.
     let n = s.log.len();
     s.cmdline("LAYOUT ? Sheet*").unwrap();
     assert!(s.log[n..].iter().any(|l| l == "Layout: Sheet A (2)"), "{:?}", &s.log[n..]);

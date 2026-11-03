@@ -1,6 +1,6 @@
 //! CADCraft desktop app.
 //!
-//! Usage: `cadcraft [--control <port>] [--sample] [files…]`
+//! Usage: `cadcraft [--control <port>] [--sample] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
 //!
 //! `--control <port>` (or `CADCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"cmdline.input","params":{"text":"circle 0,0 5"}}` → `{"id":1,"ok":true,…}`.
@@ -10,14 +10,16 @@
 //! present mode (`CADCRAFT_VSYNC=0` selects that elsewhere); see `cadcraft_ui_egui::gpu::surface_config`.
 //!
 //! `log` records go to standard error and `<settings dir>/logs/cadcraft.log` (`RUST_LOG` sets the
-//! levels); see [`logging`] and [`config_dir`].
+//! levels); see [`logging`]. The `CADCRAFT_*` variables are read once, at startup; see [`env`].
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod control_server;
 mod desktop_theme;
+mod env;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
+mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -26,6 +28,7 @@ mod system_animations;
 mod workspace;
 
 use cadcraft_engine::Session;
+use cadcraft_ui_egui::switch::Switch;
 use cadcraft_ui_egui::{CadApp, Services, i18n};
 
 struct App {
@@ -39,11 +42,25 @@ struct App {
     workspace_error: Option<String>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
+    /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
+    #[cfg(target_os = "macos")]
+    menus_in_window: bool,
+    /// The `movable` flag last set on the main window.
+    #[cfg(target_os = "macos")]
+    movable: Option<bool>,
 }
 
 impl App {
-    fn persist_workspace(&mut self, final_attempt: bool) {
-        let result = if final_attempt { self.workspace.save_on_exit(&self.cad.ui) } else { self.workspace.save_if_changed(&self.cad.ui) };
+    /// `ctx` is `None` only for the final attempt at exit.
+    fn persist_workspace(&mut self, ctx: Option<&egui::Context>) {
+        let result = match ctx {
+            None => self.workspace.save_on_exit(&self.cad.ui),
+            Some(ctx) => self.workspace.save_if_changed(&self.cad.ui, std::time::Instant::now()).map(|wait| {
+                if let Some(wait) = wait {
+                    ctx.request_repaint_after(wait);
+                }
+            }),
+        };
         if let Err(error) = result {
             if self.workspace_error.as_ref() != Some(&error) {
                 eprintln!("CADCraft workspace: {error}");
@@ -65,40 +82,53 @@ fn follow_desktop(raw: &mut egui::RawInput, desktop: Option<egui::Theme>) {
 }
 
 impl eframe::App for App {
+    /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(target_os = "macos")]
-        {
-            if self.native_menu.is_none() && std::env::var_os("CADCRAFT_NO_NATIVE_MENU").is_none() {
-                self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad));
-            }
-            if let Some(m) = &mut self.native_menu {
-                m.poll(&mut self.cad, ctx);
-            }
-        }
         self.cad.system_animations = self.system_animations.current();
-        self.cad.logic(ctx);
-        self.spacemouse.poll(&mut self.cad, ctx);
-        self.persist_workspace(false);
+        // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
+        self.cad.guarded_logic(ctx);
+        // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
+        // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
+        // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
+        // pass and on every hidden tick, and non-zero on later passes of a multi-pass frame.
+        if ctx.current_pass_index() == 0 {
+            #[cfg(target_os = "macos")]
+            {
+                if self.native_menu.is_none() && !self.menus_in_window {
+                    self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad, ctx));
+                }
+                if let Some(m) = &mut self.native_menu {
+                    m.poll(&mut self.cad, ctx);
+                }
+            }
+            self.spacemouse.poll(&mut self.cad, ctx);
+            // After `cad.logic`, so a control command's workspace change is saved in the same frame.
+            self.persist_workspace(Some(ctx));
+        }
         if std::mem::take(&mut self.cad.quit_requested) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+    /// Apply the desktop-theme fallback, forward raw input to `CadApp`, and capture Tab at the command line.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         follow_desktop(raw, self.desktop_theme.current());
-        self.cad.raw_input_hook(raw);
+        self.cad.raw_input_hook(ctx, raw);
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.cad.ui(ui);
-        self.persist_workspace(false);
+        self.cad.guarded_ui(ui);
+        #[cfg(target_os = "macos")]
+        craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
     fn on_exit(&mut self) {
-        self.persist_workspace(true);
+        self.persist_workspace(None);
+        self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
     }
-    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    /// Preferences (the interface theme) survive restarts; eframe saves the window state itself
+    /// (`persist_window`); egui state is not kept.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.cad.profile_json());
         storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.cad.prefs_json());
@@ -165,31 +195,50 @@ fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
     filters
 }
 
-/// The per-user settings directory (it holds `logs/` and `autosave/`): `CADCRAFT_CONFIG_DIR` if set, else
-/// `$XDG_CONFIG_HOME/cadcraft` or `~/.config/cadcraft` on Linux and the BSDs,
-/// `~/Library/Application Support/CADCraft` on macOS, `%APPDATA%\CADCraft` on Windows.
-fn config_dir() -> Option<std::path::PathBuf> {
-    config_dir_from(|k| std::env::var_os(k))
+/// Whether eframe's storage file (`app.ron`, a map of keys to strings) holds a saved main window
+/// state. An unreadable or malformed file counts as none, as it does for eframe.
+fn saved_window(app_ron: &str) -> bool {
+    ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
 }
 
-/// [`config_dir`] with the environment passed in (`var` looks a variable up). An empty variable
-/// counts as unset, so a blank value never means the working directory.
-fn config_dir_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
-    let set = |k: &str| var(k).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
-    if let Some(dir) = set("CADCRAFT_CONFIG_DIR") {
-        return Some(dir);
-    }
-    if cfg!(target_os = "macos") {
-        set("HOME").map(|h| h.join("Library/Application Support/CADCraft"))
-    } else if cfg!(windows) {
-        set("APPDATA").map(|a| a.join("CADCraft"))
-    } else {
-        // The XDG spec ignores a relative XDG_CONFIG_HOME.
-        set("XDG_CONFIG_HOME").filter(|p| p.is_absolute()).or_else(|| set("HOME").map(|h| h.join(".config"))).map(|c| c.join("cadcraft"))
+/// The window state from the last session is saved and will be restored (#2595).
+fn restores_window() -> bool {
+    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+}
+
+/// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
+/// saved by the last session is restored instead of opening centred.
+fn window_options(restoring: bool) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("CADCraft")
+            .with_inner_size([1600.0, 1000.0])
+            .with_min_inner_size([900.0, 560.0])
+            .with_drag_and_drop(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+            .with_app_id(APP_ID),
+        // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
+        // restored window on the monitors that are connected now.
+        persist_window: true,
+        // The first launch opens centred on its screen, not cascaded from the top-left corner
+        // (#1129); later launches go back where the window was (eframe would centre over that).
+        // Wayland compositors place windows themselves.
+        centered: !restoring,
+        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
+        // system-font discovery as a hidden fallback.
+        system_font_fallback: false,
+        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
+        stencil_buffer: STENCIL_BITS,
+        ..Default::default()
     }
 }
 
 const APP_ID: &str = "ai.storyteller.cadcraft";
+
+/// The key eframe saves the main window state under in its storage.
+const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
@@ -204,85 +253,62 @@ fn app_icon() -> Option<egui::IconData> {
 }
 
 fn version_string() -> String {
-    let sha = option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev");
-    format!("cadcraft {} ({sha})", env!("CARGO_PKG_VERSION"))
+    format!("cadcraft {}", cadcraft_engine::build_version())
 }
 
-/// The control port from `--control <port>` or `CADCRAFT_CONTROL_PORT` (`source`); a value that is
-/// not a port is logged and ignored instead of silently starting no control channel.
-fn control_port_from(source: &str, value: Option<String>) -> Option<u16> {
-    let value = value?;
-    let port = value.trim().parse().ok();
-    if port.is_none() {
-        log::warn!("{source}: {value:?} is not a port number; the control channel is off");
-    }
-    port
-}
-
-/// `--control` followed by `value`: a bare `--control` (last argument) keeps the port already
-/// read from `CADCRAFT_CONTROL_PORT` (`current`) instead of turning the control channel off.
-fn control_flag(current: Option<u16>, value: Option<String>) -> Option<u16> {
-    if value.is_some() {
-        return control_port_from("--control", value);
-    }
-    match current {
-        Some(port) => log::warn!("--control: no port given; using CADCRAFT_CONTROL_PORT ({port})"),
-        None => log::warn!("--control: no port given; the control channel is off"),
-    }
-    current
-}
-
+/// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
+    // A copy of this program started to read or write a DWG file does only that.
+    if let Some(code) = cadcraft_io::dwg_worker::serve_if_asked() {
+        std::process::exit(code);
+    }
+    cadcraft_io::dwg_worker::use_own_worker();
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
-    // lossy, so a value that is not Unicode is reported like any other bad port instead of ignored
-    let mut control_port =
-        control_port_from("CADCRAFT_CONTROL_PORT", std::env::var_os("CADCRAFT_CONTROL_PORT").map(|p| p.to_string_lossy().into_owned()));
-    let mut files = Vec::new();
-    let mut sample = false;
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "--control" => control_port = control_flag(control_port, args.next()),
-            "--sample" => sample = true,
-            "--version" | "-V" => {
-                println!("{}", version_string());
-                return Ok(());
-            }
-            _ => files.push(a),
+    // The update helper relaunches this binary after a self-update; it runs and exits here.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(done) = craft_update::self_update::finish(&cadcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        if let Err(e) = done {
+            eprintln!("CADCraft update helper failed: {e}");
+            std::process::exit(1);
         }
+        return Ok(());
     }
+    // `--help` and `--version` print to standard output and exit 0. A usage error (an unknown or
+    // repeated flag, a missing or bad value, a bad CADCRAFT_CONTROL_PORT) names the argument on
+    // standard error and exits 2 before the window opens.
+    let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
+    let vars = env::Env::read();
+    let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
-        match config_dir().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
+        match vars.config_dir.as_ref().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
             Some(Ok(path)) => log::info!("{} ({} {}), log file {}", version_string(), std::env::consts::OS, std::env::consts::ARCH, path.display()),
             Some(Err(e)) => log::warn!("no log file: {e}"),
             None => {
                 logger.stderr_only();
-                log::warn!("no log file: no settings directory (set CADCRAFT_CONFIG_DIR)");
+                log::warn!("no log file: no settings directory (an empty CADCRAFT_CONFIG_DIR turns it off)");
             }
         }
     }
     install_io();
-    let surface = cadcraft_ui_egui::gpu::surface_config(std::env::var("CADCRAFT_VSYNC").ok().as_deref(), cfg!(all(unix, not(target_os = "macos"))));
+    cadcraft_engine::settings_dir::set(vars.config_dir.clone());
+    if let Some(dir) = &vars.config_dir {
+        cadcraft_ui_egui::fault::install_report_hook(dir.join(cadcraft_ui_egui::fault::REPORT_DIR));
+    }
+    if let Some(name) = &vars.font_alt {
+        cadcraft_engine::fonts::ttf::set_font_alt(name);
+    }
+    if let Some(list) = &vars.font_fallback {
+        cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
+    }
+    let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(APP_ID),
-        persist_window: false,
-        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
-        ..Default::default()
+        ..window_options(restores_window())
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -305,10 +331,20 @@ fn main() -> eframe::Result {
     // manager showed a "no" cursor. Run through XWayland when it's there; CADCRAFT_WAYLAND=1
     // keeps the native Wayland backend.
     #[cfg(all(unix, not(target_os = "macos")))]
-    if std::env::var_os("DISPLAY").is_some() && std::env::var_os("CADCRAFT_WAYLAND").is_none() {
+    if std::env::var_os("DISPLAY").is_some() && vars.wayland != Switch::On {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
+        }));
+    }
+    // macOS: Quit CADCraft (Cmd+Q), the Dock's Quit and logout end the app through AppKit's
+    // terminate, which would skip the unsaved-changes prompt (#2157). winit turns each into a
+    // close request for the window instead, so it asks first, as the close button does.
+    #[cfg(target_os = "macos")]
+    {
+        options.event_loop_builder = Some(Box::new(|b| {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            b.with_close_requested_on_terminate(true);
         }));
     }
     eframe::run_native(
@@ -316,15 +352,16 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
-            let (workspace, restored, workspace_error) = workspace::Workspace::load();
+            let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
             }
+            app.set_system_cursor_default(vars.system_cursor == Switch::On);
             if let Some(error) = &workspace_error {
                 eprintln!("CADCraft workspace: {error}");
                 app.set_status(error);
             }
-            app.system_languages = std::env::var("CADCRAFT_LOCALE").map(|s| vec![s]).unwrap_or_else(|_| sys_locale::get_locales().collect());
+            app.system_languages = vars.locale.map(|s| vec![s]).unwrap_or_else(|| sys_locale::get_locales().collect());
             // The user profile (Options): drafting settings, selection sizes, drawing-area colours.
             if let Some(profile) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::options::PROFILE_KEY)) {
                 app.load_profile(&profile);
@@ -336,8 +373,9 @@ fn main() -> eframe::Result {
                 cadcraft_ui_egui::autosave::load_prefs(&prefs);
             }
             // Autosave files (SAVEFILEPATH) default to `<settings dir>/autosave`.
-            if let Some(dir) = config_dir() {
+            if let Some(dir) = &vars.config_dir {
                 app.enable_autosave(&dir.join("autosave"));
+                app.enable_update_check();
                 // Startup LISP (acad.lsp, acaddoc.lsp) is read from `<settings>/support`; the
                 // folder is made so it is there to put them in.
                 let support = dir.join("support");
@@ -381,6 +419,10 @@ fn main() -> eframe::Result {
                 workspace_error,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
+                #[cfg(target_os = "macos")]
+                menus_in_window: vars.no_native_menu == Switch::On,
+                #[cfg(target_os = "macos")]
+                movable: None,
             }))
         }),
     )
@@ -388,13 +430,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_dir_from, control_flag, control_port_from, filters_for_save, follow_desktop};
-    use std::ffi::OsString;
-    use std::path::PathBuf;
-
-    fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
-        move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
-    }
+    use super::{filters_for_save, follow_desktop, saved_window, window_options};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -412,57 +448,30 @@ mod tests {
         }
     }
 
+    /// #1129: the first launch opens centred, not cascaded from the top-left corner.
     #[test]
-    fn control_port_values_that_are_not_ports_are_ignored() {
-        assert_eq!(control_port_from("--control", Some("7979".into())), Some(7979));
-        assert_eq!(control_port_from("--control", Some(" 7979 ".into())), Some(7979));
-        assert_eq!(control_port_from("--control", None), None);
-        for bad in ["", "abc", "-1", "65536", "99999999999999999999", "\u{0}"] {
-            assert_eq!(control_port_from("--control", Some(bad.into())), None, "{bad:?}");
-        }
+    fn the_first_launch_opens_centred() {
+        let o = window_options(false);
+        assert!(o.centered, "centred on launch");
+        assert!(o.persist_window, "the window state is saved for the next launch");
     }
 
+    /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
     #[test]
-    fn control_without_a_port_keeps_the_environment_port() {
-        // `CADCRAFT_CONTROL_PORT=47321 cadcraft --control` (#844)
-        assert_eq!(control_flag(Some(47321), None), Some(47321));
-        assert_eq!(control_flag(None, None), None);
-        // A port given on the command line still wins over the variable.
-        assert_eq!(control_flag(Some(47321), Some("7979".into())), Some(7979));
-        assert_eq!(control_flag(Some(47321), Some("abc".into())), None);
+    fn a_saved_window_reopens_where_it_was() {
+        let o = window_options(true);
+        assert!(!o.centered, "centring would move a restored window");
+        assert!(o.persist_window);
     }
 
+    /// Only a readable `app.ron` with a window entry counts as a saved window state.
     #[test]
-    fn the_override_variable_wins_and_empty_values_are_unset() {
-        let vars = [("CADCRAFT_CONFIG_DIR", "/tmp/cc"), ("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/x"), ("APPDATA", "C:\\a")];
-        assert_eq!(config_dir_from(env(&vars)), Some(PathBuf::from("/tmp/cc")));
-        let empty = [("CADCRAFT_CONFIG_DIR", ""), ("HOME", ""), ("XDG_CONFIG_HOME", ""), ("APPDATA", "")];
-        assert_eq!(config_dir_from(env(&empty)), None, "no usable variable means no directory, not the working directory");
-        assert_eq!(config_dir_from(env(&[])), None);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    #[test]
-    fn linux_and_bsd_follow_xdg_config_home() {
-        assert_eq!(config_dir_from(env(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/home/u")])), Some(PathBuf::from("/x/cadcraft")));
-        assert_eq!(config_dir_from(env(&[("HOME", "/home/u")])), Some(PathBuf::from("/home/u/.config/cadcraft")));
-        // The XDG spec says a relative XDG_CONFIG_HOME is ignored.
-        assert_eq!(config_dir_from(env(&[("XDG_CONFIG_HOME", "rel"), ("HOME", "/home/u")])), Some(PathBuf::from("/home/u/.config/cadcraft")));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_uses_application_support() {
-        assert_eq!(config_dir_from(env(&[("HOME", "/Users/u")])), Some(PathBuf::from("/Users/u/Library/Application Support/CADCraft")));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_uses_appdata() {
-        assert_eq!(
-            config_dir_from(env(&[("APPDATA", "C:\\Users\\u\\AppData\\Roaming")])),
-            Some(PathBuf::from("C:\\Users\\u\\AppData\\Roaming").join("CADCraft"))
-        );
+    fn a_saved_window_is_read_from_app_ron() {
+        assert!(saved_window(r#"{"cadcraft.prefs": "{}", "window": "(maximized: true)"}"#));
+        assert!(!saved_window(r#"{"cadcraft.prefs": "{\"window\":1}"}"#), "a value mentioning it is not the key");
+        assert!(!saved_window(""));
+        assert!(!saved_window("{\"window\": "), "truncated");
+        assert!(!saved_window("not ron at all"));
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;
