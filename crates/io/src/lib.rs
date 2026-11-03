@@ -14,10 +14,10 @@ mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
 pub mod plotter;
-/// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
-pub mod roundtrip;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;
+/// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
+pub mod roundtrip;
 pub mod svg;
 mod svg_read;
 
