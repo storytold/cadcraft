@@ -79,7 +79,11 @@ fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, Str
         if len > MAX_IMAGE_BYTES {
             return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
         }
-        std::fs::read(&file).map_err(|e| e.to_string())
+        // Read no more than the limit: the file can grow or change after the check above.
+        let limit = usize::try_from(MAX_IMAGE_BYTES).unwrap_or(usize::MAX);
+        crate::capped_read::read_capped(&file, limit).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData { format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20) } else { e.to_string() }
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {

@@ -255,20 +255,24 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
 /// Append image `img` (primitive `p`, corners `corners`) to `dst`, to be cut to `clip` when it
 /// is drawn: the picture is not cut here, the outline is added to those it carries.
 fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &[Vec2], clip: &Clip) {
-    let outline = match clip {
-        Clip::Rect(rect) => {
-            if !Bounds2::from_points(corners.iter().copied()).intersects(rect) {
-                return;
-            }
-            vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)]
-        }
-        Clip::Poly(c) => c.polygon().to_vec(),
+    let (outline, area) = match clip {
+        Clip::Rect(rect) => (vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)], *rect),
+        Clip::Poly(c) => (c.polygon().to_vec(), c.bounds()),
     };
+    let own = Bounds2::from_points(corners.iter().copied());
+    if !own.intersects(&area) {
+        return;
+    }
     let Ok(index) = u32::try_from(dst.images.len()) else { return };
     let mut img = img.clone();
     img.clips.push(outline);
     dst.images.push(img);
+    // The list's bounds take only the part inside the clip, as for the other primitives.
+    let before = dst.bounds;
     push_raw(dst, p, Kind::Image { index }, corners);
+    dst.bounds = before;
+    dst.bounds.add(own.min.max(area.min));
+    dst.bounds.add(own.max.min(area.max));
 }
 
 fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {

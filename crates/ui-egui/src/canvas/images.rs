@@ -158,6 +158,11 @@ fn axis_rect(outline: &[Vec2]) -> Option<Bounds2> {
 
 /// Draw the images of `list`.
 pub(super) fn draw(p: &egui::Painter, xf: &Xf, list: &DisplayList) {
+    // Pyramids whose pixels are gone (drawing closed, image undone) go, also when the list has
+    // no images left to draw.
+    if let Ok(mut pyramids) = textures(p.ctx()).0.lock() {
+        pyramids.retain(|_, pyramid| pyramid.pixels.strong_count() > 0);
+    }
     if list.images.is_empty() {
         return;
     }
@@ -172,6 +177,11 @@ pub(super) fn draw(p: &egui::Painter, xf: &Xf, list: &DisplayList) {
     }
 }
 
+/// The image tiles uploaded so far, kept between frames.
+fn textures(ctx: &egui::Context) -> Textures {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Textures>(egui::Id::unique("cadcraft-raster-textures")).clone())
+}
+
 /// Draw one image as textured meshes, one per tile on screen: its rectangle, or the outline it is
 /// clipped to.
 fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, alpha: u8) {
@@ -184,10 +194,8 @@ fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, alpha: u8) {
     // Where in the raster the triangles are.
     let Some(tris) = triangles(img, cut.outline).iter().map(|q| img.pixel_of(*q)).collect::<Option<Vec<Vec2>>>() else { return };
     let color = Color32::from_white_alpha((img.opacity(alpha) * 255.0) as u8);
-    let textures = ctx.data_mut(|d| d.get_temp_mut_or_default::<Textures>(egui::Id::unique("cadcraft-raster-textures")).clone());
+    let textures = textures(ctx);
     let Ok(mut pyramids) = textures.0.lock() else { return };
-    // Pyramids whose pixels are gone (drawing closed, image undone) go too.
-    pyramids.retain(|_, pyramid| pyramid.pixels.strong_count() > 0);
     let key = Arc::as_ptr(raster) as usize;
     let pyramid = match pyramids.entry(key) {
         Entry::Occupied(e) => e.into_mut(),
@@ -484,15 +492,17 @@ mod tests {
         assert!(frame(&l) >= 1, "the first frame also uploads the font atlas");
         assert_eq!(frame(&l), 0, "already uploaded");
         // The pixels gone (drawing closed, image undone): the pyramid goes on the next draw.
-        let count = |ctx: &egui::Context| {
-            let t = ctx.data_mut(|d| d.get_temp_mut_or_default::<Textures>(egui::Id::unique("cadcraft-raster-textures")).clone());
-            t.0.lock().unwrap().len()
-        };
+        let count = |ctx: &egui::Context| textures(ctx).0.lock().unwrap().len();
         assert_eq!(count(&ctx), 1);
         drop(l);
         drop(r);
-        frame(&list(|_| {}));
+        let next = list(|_| {});
+        frame(&next);
         assert_eq!(count(&ctx), 1, "only the new image's");
+        // A list with no images still lets go of the pictures that are gone.
+        drop(next);
+        frame(&DisplayList::default());
+        assert_eq!(count(&ctx), 0);
     }
 
     /// A known limit, kept visible here: on screen images are painted first, so they lie under

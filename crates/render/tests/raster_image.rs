@@ -269,6 +269,9 @@ fn a_layout_viewport_cuts_the_image_to_its_outline() {
     assert_eq!(img.clips[1], [Vec2::new(15.0, 10.0), Vec2::new(105.0, 10.0), Vec2::new(105.0, 110.0), Vec2::new(15.0, 110.0)]);
     let p = list.prims.iter().find(|p| matches!(p.kind, Kind::Image { index: 0 })).unwrap();
     assert_eq!(list.points(p).len(), 4);
+    // The image (10..110 across) is wider than the viewport (15..105): only what shows counts
+    // towards the sheet's bounds, which a plot fits to.
+    assert!(list.bounds.min.x >= 15.0 - 1e-9 && list.bounds.max.x <= 105.0 + 1e-9, "{:?}", list.bounds);
 
     // Drawn: inside the viewport and the image's top row there is the picture; outside the
     // viewport, or in the clipped-away bottom row, there is none.
