@@ -77,7 +77,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
     // Stroke a polyline with the entity's linetype.
-    let stroke = |b: &mut Builder, pts: &[Vec2]| match &lt {
+    let stroke = |b: &mut Builder, pts: &[Vec2]| match lt.as_ref().filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {
@@ -140,7 +140,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 // the list serves a whole band of zooms. Plots and exports draw the band alone, and
                 // a transparent band gets none (its alpha would add up along the centre).
                 let hairline = !b.plotting && b.opts.min_dash > 0.0 && b.transparency == 0;
-                match &lt {
+                match lt.as_ref().filter(|_| b.opts.linetypes) {
                     // Dashed: each dash a filled piece of the band; dots a line across it.
                     Some(lt) => {
                         let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
@@ -173,7 +173,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         }
         EntityKind::LwPolyline(p) => {
             let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            if p.plinegen || lt.is_none() {
+            if !b.opts.linetypes || p.plinegen || lt.is_none() {
                 stroke(b, &pl.tessellate(tol));
             } else {
                 for s in pl.segments() {
@@ -319,7 +319,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
+        // the insertion point, so the block draws translated by it (#2634).
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -339,6 +342,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();
@@ -361,7 +368,7 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
 
 /// Draw a polyline with a linetype (None: continuous).
 pub(crate) fn stroke_with(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64, pts: &[Vec2]) {
-    match lt {
+    match lt.filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {
