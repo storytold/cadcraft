@@ -25,6 +25,18 @@ fn greek_layout_commands_start_like_the_latin_ones() {
 }
 
 #[test]
+fn a_greek_lisp_command_runs_as_itself_not_as_the_latin_keys_command() {
+    let mut s = Session::new();
+    // ΛΙΝΕ types LINE, but the routine defines a command of that Greek name: it is the command typed.
+    s.cmdline("(defun c:ΛΙΝΕ () (command \"_.CIRCLE\" '(0 0) 5) (princ))").unwrap();
+    s.cmdline("ΛΙΝΕ").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let doc = s.doc().unwrap();
+    let circles = doc.model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+    assert_eq!((circles, lines(&s)), (1, 0), "the routine drew the circle, LINE was not started");
+}
+
+#[test]
 fn greek_layout_selection_words_select_like_the_latin_ones() {
     let mut s = Session::new();
     s.execute("circle", &json!({ "center": [0, 0], "radius": 5 })).unwrap();
