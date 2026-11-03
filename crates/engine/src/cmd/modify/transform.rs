@@ -37,7 +37,7 @@ pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool
     };
     if hs.iter().any(ole) {
         return Err(crate::EngineError::Other(
-            "An OLE object can only be moved, copied or scaled uniformly; rotating and mirroring it are not supported.".into(),
+            "An OLE object can only be moved, copied or scaled uniformly; other transforms (rotation, mirroring, non-uniform scale, alignment) are not supported.".into(),
         ));
     }
     Ok(())

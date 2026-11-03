@@ -220,3 +220,19 @@ fn mocoro_scales_an_ole_frame() {
     assert_eq!(data_corners(&s)[0], (90.0, -57.0));
     assert_eq!(corners(&s)[0].1, "90");
 }
+
+/// ARRAYPATH with align rotates each copy, which an OLE frame refuses. The refusal comes before
+/// the first copy is added: an error does not roll the drawing back (review on #2587).
+#[test]
+fn arraypath_refuses_before_adding_any_copy() {
+    let (mut s, h) = session();
+    // Straight for 30 units, then a right-angle bend: the first copies only move, a later one turns.
+    let path = s.execute("pline", &json!({ "points": [[0, 0], [30, 0], [30, 30]] })).unwrap();
+    let path = path["handle"].as_str().or_else(|| path["handles"][0].as_str()).unwrap().to_string();
+    let count = s.doc().unwrap().model.len();
+    let before = corners(&s);
+    let e = s.execute("arraypath", &json!({ "handles": [h], "path": path, "count": 7, "align": true })).expect_err("align");
+    assert!(e.to_string().contains("OLE object"), "{e}");
+    assert_eq!(s.doc().unwrap().model.len(), count, "no copy was added");
+    assert_eq!(corners(&s), before);
+}
