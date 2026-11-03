@@ -234,8 +234,9 @@ mod budget_tests {
         };
         let comp = Comp { model, built: vec![endpoint], weights: vec![1.0; 2], held: Vec::new(), tol: 1e-9 };
         assert!(analyse(&comp).dof.is_none());
-        // Solving it is refused for the same reason, before any Jacobian is built.
-        assert!(matches!(comp.run(None), Err(SolveError::TooLarge)));
+        // Its residuals already hold (the other object is missing), so solving does not iterate
+        // and is not refused; an unsatisfied system of this size is (see below).
+        assert!(comp.run(None).is_ok_and(|o| o.converged));
     }
 
     /// Many Tangent constraints on one large fit spline rebuild it once while being interpreted,

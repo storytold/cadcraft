@@ -516,3 +516,62 @@ fn next_name_skips_names_in_use() {
     });
     assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d2");
 }
+
+/// A straight open fit spline through `n` points from `from` in steps of `step`.
+fn straight_fit_spline(d: &mut Drawing, n: usize, from: (f64, f64), step: (f64, f64)) -> Handle {
+    let pts: Vec<Vec2> = (0..n).map(|i| Vec2::new(from.0 + step.0 * i as f64, from.1 + step.1 * i as f64)).collect();
+    add_e(d, EntityKind::Spline(cadcraft_geom::Spline::fit_with(&pts, false, Default::default())))
+}
+
+fn push_con(d: &mut Drawing, kind: ConstraintKind, refs: &[GeomRef]) {
+    let id = d.constraints.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+    d.constraints.push(Constraint { id, kind, refs: refs.to_vec(), name: String::new(), expr: String::new() });
+}
+
+/// A component that already holds is not iterated, so its size does not keep the rest of the
+/// drawing from being solved: a Tangent on a 200-point fit spline that is already satisfied
+/// must not make re-solving an unrelated Horizontal fail as "too large".
+#[test]
+fn satisfied_large_spline_component_does_not_block_solve() {
+    let mut d = Drawing::default();
+    let sp = straight_fit_spline(&mut d, 200, (0.0, 0.0), (1.0, 0.0));
+    let touching = line(&mut d, (199.0, 0.0), (220.0, 0.0));
+    push_con(&mut d, ConstraintKind::Tangent, &[w(sp), w(touching)]);
+    let other = line(&mut d, (0.0, 50.0), (10.0, 51.0));
+    push_con(&mut d, ConstraintKind::Horizontal, &[w(other)]);
+    let r = solve(&mut d, &SolveOptions::default());
+    assert!(r.is_ok(), "{r:?}");
+    let (a, b) = ln(&d, other);
+    assert!((a.y - b.y).abs() < 1e-6);
+    assert_eq!(ln(&d, touching), (Vec2::new(199.0, 0.0), Vec2::new(220.0, 0.0)));
+}
+
+/// Fixed splines are not rebuilt while solving (their points never move, so the one rebuild is
+/// reused): two large fixed fit splines with a free line tangent to both still solve.
+#[test]
+fn fixed_large_splines_do_not_count_as_rebuilt_every_evaluation() {
+    let mut d = Drawing::default();
+    let a = straight_fit_spline(&mut d, 450, (0.0, 0.0), (1.0, 0.0));
+    let b = straight_fit_spline(&mut d, 450, (1449.0, 0.0), (-1.0, 0.0));
+    let l = line(&mut d, (449.0, 0.0), (1000.0, 0.5));
+    push_con(&mut d, ConstraintKind::Fix, &[w(a)]);
+    push_con(&mut d, ConstraintKind::Fix, &[w(b)]);
+    push_con(&mut d, ConstraintKind::Tangent, &[w(a), w(l)]);
+    push_con(&mut d, ConstraintKind::Tangent, &[w(b), w(l)]);
+    let r = solve(&mut d, &SolveOptions::default());
+    assert!(r.is_ok(), "{r:?}");
+    let (p, q) = ln(&d, l);
+    assert!(p.y.abs() < 1e-6 && q.y.abs() < 1e-6, "{p:?} {q:?}");
+}
+
+/// Adding a constraint still checks redundancy within the work budget when the system already
+/// holds: an already tangent line on a free 400-point fit spline is refused, not differentiated.
+#[test]
+fn add_on_satisfied_large_spline_keeps_redundancy_budget() {
+    let mut d = Drawing::default();
+    let sp = straight_fit_spline(&mut d, 400, (0.0, 0.0), (1.0, 0.0));
+    let l = line(&mut d, (399.0, 0.0), (420.0, 0.0));
+    let r = add(&mut d, con(ConstraintKind::Tangent, &[w(sp), w(l)]), &SolveOptions::default());
+    assert!(matches!(r, Err(SolveError::TooLarge)), "{r:?}");
+    assert!(d.constraints.is_empty());
+}

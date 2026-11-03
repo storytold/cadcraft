@@ -274,7 +274,8 @@ impl Comp {
     }
     /// Work of one solver iteration's residual evaluations over `free`: every residual twice per
     /// free parameter, plus a spline rebuild each time a spline's own defining points move (rebuilds
-    /// are shared by residuals at the same points, see [`Model`]).
+    /// are shared by residuals at the same points, see [`Model`]). A spline none of whose points
+    /// is free never moves, so its one rebuild is reused by every evaluation.
     pub(crate) fn eval_work(&self, free: &[usize], skip: Option<usize>) -> f64 {
         let rows = self.rows(skip) as f64;
         let evals = 2.0 * free.len() as f64 + TRIAL_EVALS;
@@ -291,10 +292,17 @@ impl Comp {
             .filter_map(|h| self.model.slot(*h))
             .map(|s| {
                 let own = free.iter().filter(|j| (s.off..s.off + s.len).contains(*j)).count() as f64;
-                (2.0 * own + TRIAL_EVALS + 1.0) * self.model.spline_reconstruct_cost(s.handle)
+                let rebuilds = if own == 0.0 { 1.0 } else { 2.0 * own + TRIAL_EVALS + 1.0 };
+                rebuilds * self.model.spline_reconstruct_cost(s.handle)
             })
             .sum();
         evals * rows + rebuilds
+    }
+    /// Do the residuals hold at `x`, as [`lm::solve`] decides before its first iteration?
+    fn holds(&self, x: &[f64], skip: Option<usize>) -> bool {
+        let mut out = Vec::new();
+        self.eval(x, &mut out, skip);
+        out.is_empty() || lm::max_abs(&out) <= self.tol
     }
     fn run(&self, skip: Option<usize>) -> Result<lm::Outcome, SolveError> {
         let free = self.free(skip);
@@ -303,8 +311,11 @@ impl Comp {
             return Err(SolveError::TooLarge);
         }
         // Numerical differentiation rebuilds a fit spline through a dense solve for every move of
-        // its own fit points: refuse before iterating when that alone is too much (CWE-407).
-        if self.eval_work(&free, skip) > MAX_EVAL_WORK {
+        // its own fit points: refuse before iterating when that alone is too much (CWE-407). A
+        // system that already holds is not iterated (`lm::solve` stops after one evaluation), so
+        // it is not refused: a large component left as it is must not stop the rest of the
+        // drawing from being solved.
+        if self.eval_work(&free, skip) > MAX_EVAL_WORK && !self.holds(&self.model.x0, skip) {
             return Err(SolveError::TooLarge);
         }
         let f = |x: &[f64], out: &mut Vec<f64>| self.eval(x, out, skip);
@@ -790,6 +801,11 @@ pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u3
         && nb.rows > 0
     {
         let free = comp.free(None);
+        // `run` lets a system that already holds through without its work budget; this Jacobian
+        // is built regardless, so it keeps that budget (CWE-407).
+        if comp.eval_work(&free, None) > MAX_EVAL_WORK {
+            return Err(SolveError::TooLarge);
+        }
         let mut ordered: Vec<&Built> = comp.built.iter().filter(|b| b.id != id).collect();
         ordered.push(nb);
         let f = |x: &[f64], out: &mut Vec<f64>| {
