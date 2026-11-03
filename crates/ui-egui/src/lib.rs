@@ -32,6 +32,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+pub mod fault;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
@@ -305,6 +306,10 @@ pub struct CadApp {
     pub gpu_faults: std::sync::Arc<gpu::GpuFaults>,
     /// The notice shown after one (see [`autosave::gpu_notice`]).
     pub gpu_notice: Option<autosave::GpuNotice>,
+    /// Panics caught around the frame ([`fault`]).
+    pub fault: fault::UiFault,
+    /// The notice shown while autosave fails (see [`autosave::failure_notice`]).
+    pub autosave_notice: Option<autosave::AutosaveNotice>,
     /// The Command Aliases dialog while open ([`aliasdlg`]).
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
@@ -364,6 +369,8 @@ impl CadApp {
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
             gpu_notice: None,
+            fault: fault::UiFault::default(),
+            autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
@@ -903,6 +910,7 @@ impl CadApp {
         save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
+        autosave::failure_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
     }
 
