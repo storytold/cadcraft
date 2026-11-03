@@ -30,6 +30,21 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
                 None => Ok(Value::Null),
             }
         }
+        "pdfimport" | "pdfi" => {
+            let Some(pick) = app.services.pick_open.as_ref() else {
+                return no_picker(app, "PDFIMPORT", r#"pdfimport {"path": "plan.pdf", "page": 1}"#);
+            };
+            match pick() {
+                Some(path) => {
+                    // Which page and what to bring in is asked before anything is imported.
+                    PDF_PENDING
+                        .with(|p| *p.borrow_mut() = Some(PdfImport { path, page: 1, text: true, fills: true, lineweights: true, error: None }));
+                    app.ui.dialog = Some("pdfimport".into());
+                    Ok(Value::Null)
+                }
+                None => Ok(Value::Null),
+            }
+        }
         "publish" => {
             let Some(pick) = app.services.pick_save.as_ref() else { return no_picker(app, "PUBLISH", "publish {}") };
             match pick(&format!("{stem}.pdf")) {
@@ -51,6 +66,68 @@ fn no_picker(app: &mut CadApp, name: &str, example: &str) -> Result<Value, Strin
     let msg = format!("{name}: there is no file dialog here; run it with parameters, e.g. {example}");
     app.session.echo(msg.clone());
     Err(msg)
+}
+
+/// A PDF chosen for PDFIMPORT and what to bring in from it.
+struct PdfImport {
+    path: String,
+    page: u32,
+    text: bool,
+    fills: bool,
+    lineweights: bool,
+    /// Why the last attempt failed (a page the file doesn't have, a password...).
+    error: Option<String>,
+}
+
+thread_local! {
+    static PDF_PENDING: std::cell::RefCell<Option<PdfImport>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The Import PDF window: the page and the kinds of content to import, then Import or Cancel.
+pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let Some(mut st) = PDF_PENDING.with(|p| p.borrow_mut().take()) else {
+        *open = false;
+        return;
+    };
+    let name = std::path::Path::new(&st.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (mut go, mut cancel) = (false, false);
+    egui::Window::new(crate::tl!("Import PDF")).id(egui::Id::unique("cc_pdf_import")).open(open).collapsible(false).resizable(false).show(
+        ctx,
+        |ui| {
+            ui.label(&name);
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Page"));
+                ui.add(egui::DragValue::new(&mut st.page).range(1..=100_000)).labelled_by(label.id);
+            });
+            ui.checkbox(&mut st.text, crate::tl!("Import text as TEXT"));
+            ui.checkbox(&mut st.fills, crate::tl!("Import filled shapes as solid hatches"));
+            ui.checkbox(&mut st.lineweights, crate::tl!("Use the PDF's line widths"));
+            if let Some(e) = &st.error {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                go = ui.button(crate::tl!("Import")).clicked();
+                cancel = ui.button(crate::tl!("Cancel")).clicked();
+            });
+        },
+    );
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        cancel = true;
+    }
+    if go {
+        let params = json!({ "path": st.path, "page": st.page, "text": st.text, "fills": st.fills, "lineweights": st.lineweights });
+        match app.run("pdfimport", params) {
+            Ok(_) => *open = false,
+            Err(e) => st.error = Some(e),
+        }
+    }
+    if cancel {
+        *open = false;
+    }
+    if *open {
+        PDF_PENDING.with(|p| *p.borrow_mut() = Some(st));
+    }
 }
 
 #[derive(Clone)]
@@ -206,5 +283,23 @@ mod tests {
 
         let e = app.run("share", json!({})).unwrap_err();
         assert!(e.contains("not available yet"), "{e}");
+    }
+
+    #[test]
+    fn import_pdf_asks_for_the_file_and_then_for_the_page() {
+        let services = Services { pick_open: Some(Box::new(|| Some("plan.pdf".into()))), ..Services::default() };
+        let mut picked = CadApp::new(Session::new(), services);
+        picked.start("pdfimport");
+        assert_eq!(picked.ui.dialog.as_deref(), Some("pdfimport"), "the page and options come before anything is imported");
+        assert!(picked.session.doc().is_ok_and(|d| d.layer("PDF_Geometry").is_none()));
+        let pending = super::PDF_PENDING.with(|p| p.borrow_mut().take());
+        let kept = pending.as_ref().map(|p| (p.path.as_str(), p.page, p.text, p.fills, p.lineweights));
+        assert_eq!(kept, Some(("plan.pdf", 1, true, true, true)), "the chosen file is kept for the window");
+
+        // A cancelled file dialog opens nothing.
+        let (mut cancelled, asked) = app();
+        cancelled.cmdline("pdfi");
+        assert_eq!(*asked.borrow(), ["open"]);
+        assert!(cancelled.ui.dialog.is_none());
     }
 }

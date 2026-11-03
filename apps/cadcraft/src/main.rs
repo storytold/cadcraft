@@ -150,6 +150,8 @@ pub fn install_io() {
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
+    // PDFIMPORT reads one page of a PDF as editable objects.
+    cadcraft_engine::cmd::exchange::set_pdf_import(|b, opts| cadcraft_io::pdf_read::read_json(b, opts).map_err(|e| e.to_string()));
     // AutoLISP's entget, entmake and entmod see entities as DXF groups.
     cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
         groups: cadcraft_io::entity_groups,
@@ -163,6 +165,7 @@ fn services() -> Services {
             rfd::FileDialog::new()
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
+                .add_filter(i18n::t("PDF files (PDF)"), &["pdf"])
                 .add_filter(i18n::t("All files"), &["*"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())

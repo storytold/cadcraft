@@ -36,6 +36,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["File", "Import..."])
             .alias(&["imp"])
             .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+        CommandSpec::new("pdfimport", "Import PDF...", run_pdfimport)
+            .menu(&["File", "Import PDF..."])
+            .alias(&["pdfi"])
+            .params("{path | data: base64, name?: \"x.pdf\", page?: 1.. (default 1), password?, at?: [x,y] (default 0,0), scale?: (default 1), text?: true, fills?: true, lineweights?: true} → {imported, handles, layers, pages, page}: lines and curves become polylines, filled shapes solid hatches and text TEXT, on the layers PDF_Geometry, PDF_Solid Fills and PDF_Text, scaled to the drawing's units (INSUNITS); raster images aren't imported"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -134,28 +138,114 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- IMPORT ----------
 
-fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
-    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
+/// A PDF page reader (installed by the app, which links the PDF library): the file's bytes and
+/// `{page?, password?, unit?, text?, fills?, lineweights?}` → the page's drawing and the file's page count.
+pub type PdfImportHook = fn(&[u8], &Value) -> std::result::Result<(Drawing, usize), String>;
+
+static PDF_IMPORT: std::sync::OnceLock<PdfImportHook> = std::sync::OnceLock::new();
+
+pub fn set_pdf_import(h: PdfImportHook) {
+    let _ = PDF_IMPORT.set(h);
+}
+
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-")
+}
+
+/// The file an import command reads: its bytes and name, from `path` or from base64 `data`.
+fn source_file(cmd: &str, p: &Value, default_name: &str) -> Result<(Vec<u8>, String)> {
+    if let Some(path) = str_param(p, "path") {
+        return Ok((read_file(path)?, path.to_string()));
+    }
+    let data = str_param(p, "data").ok_or_else(|| bad(cmd, "`path` or `data` (base64) is required"))?;
+    Ok((base64_decode(data).ok_or_else(|| bad(cmd, "invalid base64"))?, str_param(p, "name").unwrap_or(default_name).to_string()))
+}
+
+/// Where to put an import (`at`) and by what factor to scale it (`scale`).
+fn placement(cmd: &str, p: &Value) -> Result<(Vec2, f64)> {
     let at = match p.get("at") {
-        Some(v) => point_value(v).ok_or_else(|| bad("import", "`at` must be a point [x, y]"))?,
+        Some(v) => point_value(v).ok_or_else(|| bad(cmd, "`at` must be a point [x, y]"))?,
         None => Vec2::ZERO,
     };
     let scale = match p.get("scale") {
-        Some(v) => v
-            .as_f64()
-            .filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs()))
-            .ok_or_else(|| bad("import", "`scale` must be a non-zero number"))?,
+        Some(v) => {
+            v.as_f64().filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs())).ok_or_else(|| bad(cmd, "`scale` must be a non-zero number"))?
+        }
         None => 1.0,
     };
-    let (bytes, name) = if let Some(path) = str_param(p, "path") {
-        (read_file(path)?, path.to_string())
-    } else {
-        let data = str_param(p, "data").ok_or_else(|| bad("import", "`path` or `data` (base64) is required"))?;
-        (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
-    };
+    Ok((at, scale))
+}
+
+fn file_name(name: &str) -> String {
+    std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
+    let (at, scale) = placement("import", p)?;
+    let (bytes, name) = source_file("import", p, "import.dxf")?;
+    if is_pdf(&bytes) && PDF_IMPORT.get().is_some() {
+        return import_pdf(s, "import", p, &bytes, &name, at, scale);
+    }
+    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
-    let file = std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    import_drawing(s, &src, at, scale, &file)
+    import_drawing(s, &src, at, scale, &file_name(&name))
+}
+
+// ---------- PDFIMPORT ----------
+
+/// Drawing units in a millimetre, from `$INSUNITS` (unitless drawings are read as millimetres).
+fn units_per_mm(d: &Drawing) -> f64 {
+    match d.header.i64("INSUNITS", 4) {
+        1 => 1.0 / 25.4,
+        2 => 1.0 / 304.8,
+        3 => 1.0 / 1_609_344.0,
+        5 => 0.1,
+        6 => 0.001,
+        7 => 1e-6,
+        8 => 39.370_078_74,
+        9 => 39_370.078_74,
+        10 => 1.0 / 914.4,
+        14 => 0.01,
+        15 => 1e-4,
+        _ => 1.0,
+    }
+}
+
+fn run_pdfimport(s: &mut Session, p: &Value) -> Result<Value> {
+    if PDF_IMPORT.get().is_none() {
+        return Err(bad("pdfimport", "PDF import is not available in this build"));
+    }
+    let (at, scale) = placement("pdfimport", p)?;
+    let (bytes, name) = source_file("pdfimport", p, "import.pdf")?;
+    if !is_pdf(&bytes) {
+        return Err(bad("pdfimport", format!("{} is not a PDF file", file_name(&name))));
+    }
+    import_pdf(s, "pdfimport", p, &bytes, &name, at, scale)
+}
+
+fn import_pdf(s: &mut Session, cmd: &str, p: &Value, bytes: &[u8], name: &str, at: Vec2, scale: f64) -> Result<Value> {
+    let read = PDF_IMPORT.get().ok_or_else(|| bad(cmd, "PDF import is not available in this build"))?;
+    // PDF points in millimetres, in the units of the drawing the page is brought into.
+    let unit = 25.4 / 72.0 * units_per_mm(s.doc()?);
+    let mut opts = serde_json::Map::new();
+    opts.insert("unit".into(), json!(unit));
+    for key in ["page", "password", "text", "fills", "lineweights"] {
+        if let Some(v) = p.get(key) {
+            opts.insert(key.into(), v.clone());
+        }
+    }
+    let (src, pages) = read(bytes, &Value::Object(opts)).map_err(|e| bad(cmd, e))?;
+    let page = p.get("page").and_then(Value::as_u64).unwrap_or(1);
+    let mut r = import_drawing(s, &src, at, scale, &file_name(name))?;
+    if let Some(o) = r.as_object_mut() {
+        o.insert("pages".into(), json!(pages));
+        o.insert("page".into(), json!(page));
+        let n = o.get("imported").and_then(Value::as_u64).unwrap_or(0);
+        let notes = src.read_notes.join("; ");
+        let message = format!("{n} objects imported from page {page} of {pages} of {}", file_name(name));
+        o.insert("message".into(), json!(if notes.is_empty() { message } else { format!("{message}. {notes}") }));
+    }
+    Ok(r)
 }
 
 /// Copy `src`'s model space into the current space (scaled about the origin, then moved to
@@ -643,6 +733,61 @@ mod tests {
             col_spacing: 0.0,
             row_spacing: 0.0,
         })
+    }
+
+    /// A stand-in page reader: one line as long as the unit it was asked for, three pages.
+    fn fake_pdf_reader(_: &[u8], o: &Value) -> std::result::Result<(Drawing, usize), String> {
+        let unit = o["unit"].as_f64().ok_or("no unit")?;
+        if o.get("page").and_then(Value::as_u64) == Some(9) {
+            return Err("PDF: page 9 doesn't exist; the file has 3 pages".into());
+        }
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common { layer: "PDF_Geometry".into(), ..Common::default() }, line((0.0, 0.0), (unit, 0.0)))
+            .map_err(|e| e.to_string())?;
+        d.read_notes.push("PDF: CADCraft doesn't import these, so they were left out: 1 raster image".into());
+        Ok((d, 3))
+    }
+
+    #[test]
+    fn pdfimport_scales_to_the_drawing_units_and_reports_the_pages() {
+        set_pdf_import(fake_pdf_reader);
+        let data = base64_encode(b"%PDF-1.7 fake");
+        let mut s = session();
+        s.doc_mut().unwrap().header.set_i64("INSUNITS", 4);
+        let r = s.execute("pdfimport", &json!({ "data": data, "name": "plan.pdf", "page": 2 })).unwrap();
+        assert_eq!((r["imported"].clone(), r["pages"].clone(), r["page"].clone()), (json!(1), json!(3), json!(2)));
+        let msg = r["message"].as_str().unwrap();
+        assert!(msg.starts_with("1 objects imported from page 2 of 3 of plan.pdf") && msg.contains("1 raster image"), "{msg}");
+        let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };
+        assert!((l.b.x - 25.4 / 72.0).abs() < 1e-9, "millimetres: {l:?}");
+        assert!(s.doc().unwrap().layer("PDF_Geometry").is_some());
+
+        // In an inch drawing a point is 1/72 unit; IMPORT of a PDF takes the same road.
+        s.doc_mut().unwrap().header.set_i64("INSUNITS", 1);
+        let r = s.execute("import", &json!({ "data": data, "name": "plan.pdf", "at": [10, 0], "scale": 2 })).unwrap();
+        assert_eq!(r["pages"], 3);
+        let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };
+        assert!((l.b.x - (10.0 + 2.0 / 72.0)).abs() < 1e-9, "inches, scaled and moved: {l:?}");
+    }
+
+    #[test]
+    fn pdfimport_refuses_other_files_and_passes_the_readers_errors_on() {
+        set_pdf_import(fake_pdf_reader);
+        let mut s = session();
+        let before = s.doc().unwrap().model.len();
+        let e = s
+            .execute(
+                "pdfimport",
+                &json!({ "data": base64_encode(b"0
+SECTION"), "name": "a.dxf" }),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not a PDF"), "{e}");
+        let e = s.execute("pdfimport", &json!({ "data": base64_encode(b"%PDF-1.7"), "page": 9 })).unwrap_err().to_string();
+        assert!(e.contains("page 9 doesn't exist"), "{e}");
+        assert!(s.execute("pdfimport", &json!({})).is_err());
+        assert_eq!(s.doc().unwrap().model.len(), before, "nothing was imported");
     }
 
     #[test]

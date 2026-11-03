@@ -12,7 +12,7 @@ mod draw;
 mod draw2;
 mod draworder;
 mod edit;
-mod exchange;
+pub mod exchange;
 pub mod file;
 mod gripcmds;
 mod griphot;

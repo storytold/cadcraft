@@ -123,6 +123,8 @@ mod web {
         cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
             cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
         });
+        // PDFIMPORT reads one page of a PDF as editable objects.
+        cadcraft_engine::cmd::exchange::set_pdf_import(|b, opts| cadcraft_io::pdf_read::read_json(b, opts).map_err(|e| e.to_string()));
         // AutoLISP's entget, entmake and entmod see entities as DXF groups.
         cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
             groups: cadcraft_io::entity_groups,
