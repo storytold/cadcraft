@@ -82,6 +82,10 @@ const MAX_MANIFEST_BYTES: u64 = 1 << 20;
 /// Read the regular file `path` as text, at most [`MAX_MANIFEST_BYTES`].
 fn read_manifest(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read as _;
+    // stat never blocks, but opening a FIFO with no writer does, so refuse non-regular files first.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if !file.metadata().is_ok_and(|m| m.is_file()) {
         return Err(format!("{}: not a regular file", path.display()));

@@ -29,7 +29,11 @@ pub(super) fn default_path(s: &Session, layout: &str) -> String {
     // A layout name from a file may hold path separators or `..`; the suggestion is one file name
     // beside the drawing, so those become `_`.
     let name: String = layout.chars().map(|c| if matches!(c, '/' | '\\' | ':') || c.is_control() { '_' } else { c }).collect();
-    let file = format!("{name}.dwt");
+    // Windows reserves device names (`CON`, `NUL`, `COM1`...) with any extension, so prefix them.
+    let base = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4 && (base.starts_with("COM") || base.starts_with("LPT")) && base.ends_with(|c: char| ('1'..='9').contains(&c)));
+    let file = if reserved { format!("_{name}.dwt") } else { format!("{name}.dwt") };
     match s.state().ok().and_then(|st| st.path.clone()) {
         Some(p) => std::path::Path::new(&p).with_file_name(&file).to_string_lossy().into_owned(),
         None => file,
@@ -151,5 +155,17 @@ mod default_path_tests {
             assert!(p.ends_with(".dwt"));
         }
         assert_eq!(default_path(&s, "Layout1"), "Layout1.dwt");
+    }
+
+    /// Windows device names are prefixed so the suggestion is never a device.
+    #[test]
+    fn reserved_device_names_are_prefixed() {
+        let s = Session::empty();
+        for name in ["CON", "nul", "Com1", "LPT9", "aux.x"] {
+            assert_eq!(default_path(&s, name), format!("_{name}.dwt"));
+        }
+        for name in ["COM0", "CONSOLE", "COM10"] {
+            assert_eq!(default_path(&s, name), format!("{name}.dwt"));
+        }
     }
 }
