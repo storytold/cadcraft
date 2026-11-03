@@ -29,6 +29,19 @@ fn a_click_on_the_last_point_adds_no_fit_point() {
     s.cmdline("spline 0,0 5,0 5,0 10,5").unwrap();
     s.cmdline("").unwrap();
     assert_eq!(last_spline(&s).fit, vec![Vec2::ZERO, Vec2::new(5.0, 0.0), Vec2::new(10.0, 5.0)]);
+    // Nor does the preview add one with the cursor on the last point: it shows the curve a
+    // click there would leave, not a corner.
+    let mut s = Session::new();
+    s.cmdline("spline 0,0 5,0 10,5").unwrap();
+    let shown: Vec<Vec<Vec2>> = s
+        .preview(Vec2::new(10.0, 5.0))
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EntityKind::Spline(sp) => Some(sp.fit),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, vec![vec![Vec2::ZERO, Vec2::new(5.0, 0.0), Vec2::new(10.0, 5.0)]]);
 }
 
 #[test]

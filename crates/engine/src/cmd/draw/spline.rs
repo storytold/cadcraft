@@ -167,6 +167,8 @@ impl Interactive for SplineM {
             }
             Some(crate::cmd::spline_opts::SplineAsk::EndTangent) => opts.end_tangent = self.pts.last().map(|l| c - *l).filter(|d| d.len() > 1e-12),
             Some(_) => {}
+            // The cursor on the last point adds nothing, as a click there doesn't.
+            None if pts.last() == Some(&c) => {}
             None => pts.push(c),
         }
         if pts.len() < 2 {
