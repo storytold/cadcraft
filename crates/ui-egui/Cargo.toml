@@ -32,6 +32,8 @@ web-time = { workspace = true }
 craft-update = { workspace = true }
 
 [dev-dependencies]
+# Native provider regressions serialize real DXF without changing global engine format hooks.
+cadcraft-io = { workspace = true }
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in

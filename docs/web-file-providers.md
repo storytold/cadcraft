@@ -94,6 +94,30 @@ Events associated with an account include providerId, namespace and connectionId
 use the provider/account/resource identities, never display names, and the backend should use versioning
 or conditional writes if it allows concurrent clients.
 
+## Recoverable publication failures
+
+The byte publisher calls an explicit catch-enabled `Uint8Array.from` import. Recoverable JavaScript
+copy/allocation errors become returned errors, are logged, and do not bypass later events in the
+batch. This is not recovery from fatal memory exhaustion, WASM traps or process termination; DOM
+listener exceptions swallowed by the browser are not assumed to propagate from dispatchEvent.
+
+A failed `save` or `saveDialog` moves only its still-owned capture into a bounded failure inbox.
+It retains every captured document alias in finishing-saves ownership until the actual CAD
+application consumes the failed Action and queues its correlated `saveFailed` terminal. Retained
+bytes are discarded. No saved checkpoint, binding or durable acknowledgement is manufactured.
+Public action/result admission checks are unchanged. At most 16 previously admitted captures can
+await failure consumption separately, including when the ordinary queue is full. Repaint is requested through
+the installed editor context. Accepted synchronous results/choices remain authoritative.
+
+A failed `openRequested` retires only an unanswered read and retains its correlated `openFailed`
+terminal across event-queue capacity limits. An already queued open response survives a later
+dispatch error. Fresh choices/reads can retry after failure consumption; IDs are never reused.
+
+Busy/account ownership includes all seven completion event types while queued or in a taken
+publication batch. Batch protection is acquired atomically and released independently for nested
+publishers, so an early synchronous listener cannot unregister before a later terminal. Independent
+save/open admission rules are unchanged. The publisher still performs two bounded drains in order.
+
 ## Validation
 
 Regression fixtures cover the default-off gate, single-use/late replies, account reconnection, resource
@@ -102,6 +126,22 @@ conservative device results. The source includes the WASM adapter and native enc
 Run the ordinary repository checks and browser integration checks after publishing the complete suite's
 source, as required by this contribution's development order. This document does not claim those checks
 have been executed merely because fixtures are present.
+
+New source regressions cover full ordinary action queues, a bounded failure inbox, captured aliases,
+failed chooser/read publication, accepted reentrant callbacks, current/nested terminal ownership
+and recovery through a full event queue. The native application fixture uses the real DXF codec and
+CAD failure consumer without altering process-global format hooks, preserving another active drawing
+and later edits. The WASM fixture uses the exported window API, production publisher, actual CadApp
+logic and native DXF encoder/decoder. Rust closures produce real JS RangeErrors for byte and metadata
+dispatch failures; catch-enabled calls restore exact property descriptors before assertions. It
+observes continuation, correlated failure terminals, a nonempty DXF retry and opening that payload
+under a distinct resource, without marking later edits saved.
+
+These are authored fixtures, not execution receipts. Real browser/runner execution remains required;
+native tests or WASM compilation alone do not establish the window assertions. The fixture does not
+run a rendered WebRunner, prove backend durability or simulate true out-of-memory failure. The web
+test dependency is wasm32-only; the UI's existing workspace IO crate is a test-only dependency for
+real drawing-codec fixtures. Their actual lock graph must be generated and reviewed before checks.
 
 Contributor credit: @alejocapo04.
 

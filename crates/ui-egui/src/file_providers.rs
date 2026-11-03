@@ -26,6 +26,14 @@ pub struct Event {
     pub metadata: Value,
     pub bytes: Option<Vec<u8>>,
 }
+impl Event {
+    fn terminal(&self) -> bool {
+        matches!(
+            self.metadata.get("type").and_then(Value::as_str),
+            Some("saved" | "downloaded" | "saveCancelled" | "saveFailed" | "opened" | "openFailed" | "openCancelled")
+        )
+    }
+}
 #[derive(Clone, PartialEq, Eq)]
 struct Identity {
     provider_id: String,
@@ -74,9 +82,12 @@ struct State {
     opens: HashMap<String, String>,
     queued_opens: HashSet<String>,
     actions: Vec<Action>,
+    // Only captures already admitted in dialogs/pending enter this inbox: at most 16, no bytes.
+    delivery_failures: Vec<Action>,
     events: Vec<Event>,
     // At most MAX_PENDING saves plus MAX_PENDING reads; never stores transfer bytes.
     finished: VecDeque<Terminal>,
+    publishing_terminals: usize,
     documents: Value,
 }
 impl State {
@@ -86,7 +97,10 @@ impl State {
             || !self.finishing_saves.is_empty()
             || !self.opens.is_empty()
             || !self.actions.is_empty()
+            || !self.delivery_failures.is_empty()
             || !self.finished.is_empty()
+            || self.events.iter().any(Event::terminal)
+            || self.publishing_terminals != 0
     }
     fn next(&mut self, kind: &str) -> Result<String, String> {
         if self.nonce.is_empty() {
@@ -106,7 +120,7 @@ impl State {
     fn retained_bytes(&self) -> usize {
         let captures = self.dialogs.values().chain(self.pending.values()).map(|p| p.bytes.as_ref().map_or(0, Vec::len));
         let events = self.events.iter().map(|e| e.bytes.as_ref().map_or(0, Vec::len));
-        let actions = self.actions.iter().map(|a| match a {
+        let actions = self.actions.iter().chain(&self.delivery_failures).map(|a| match a {
             Action::Open { bytes, .. } => bytes.len(),
             _ => 0,
         });
@@ -132,9 +146,51 @@ impl State {
             }
         }
     }
+    fn take_events(&mut self) -> Vec<Event> {
+        let events = std::mem::take(&mut self.events);
+        self.flush_finished();
+        if events.is_empty() { std::mem::take(&mut self.events) } else { events }
+    }
+    fn fail_delivery(&mut self, metadata: &Value) {
+        let Some(request) = metadata.get("requestId").and_then(Value::as_str) else { return };
+        match metadata.get("type").and_then(Value::as_str) {
+            Some(kind @ ("save" | "saveDialog")) => {
+                let capture = if kind == "save" { self.pending.remove(request) } else { self.dialogs.remove(request) };
+                if let Some(mut capture) = capture {
+                    capture.bytes = None;
+                    self.finishing_saves.insert(request.into(), capture.snapshots.iter().map(|doc| doc.uid).collect());
+                    self.delivery_failures.push(Action::Save { request: request.into(), capture, status: "failed".into(), resource: String::new() });
+                }
+            }
+            Some("openRequested") if !self.queued_opens.contains(request) => {
+                if let Some(resource) = self.opens.get(request).cloned() {
+                    // The terminal can wait behind a full event queue. Reject late payloads
+                    // now, while retaining the read's account owner until it can be queued.
+                    self.queued_opens.insert(request.into());
+                    self.finished.push_back(Terminal {
+                        request: request.into(),
+                        metadata: json!({"type":"openFailed","requestId":request,"resourceId":resource,"error":"file-provider event delivery failed"}),
+                        owner: TerminalOwner::Open,
+                    });
+                    self.flush_finished();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 #[derive(Clone, Default)]
 pub struct Host(Arc<Mutex<State>>);
+struct PublishingBatch {
+    host: Host,
+    terminals: usize,
+}
+impl Drop for PublishingBatch {
+    fn drop(&mut self) {
+        let mut state = self.host.state();
+        state.publishing_terminals = state.publishing_terminals.saturating_sub(self.terminals);
+    }
+}
 impl Host {
     fn state(&self) -> MutexGuard<'_, State> {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -164,7 +220,7 @@ impl Host {
     pub fn disconnect(&self) -> Result<(), String> {
         let mut s = self.state();
         if s.busy() {
-            return Err("finish or cancel pending provider operations before unregistering".into());
+            return Err("finish or cancel pending operations and consume completion events before unregistering".into());
         }
         s.provider = None;
         s.enabled = false;
@@ -342,13 +398,39 @@ impl Host {
         Ok(())
     }
     pub(crate) fn take_actions(&self) -> Vec<Action> {
-        std::mem::take(&mut self.state().actions)
+        let mut state = self.state();
+        let mut actions = std::mem::take(&mut state.actions);
+        actions.append(&mut state.delivery_failures);
+        actions
     }
     pub fn take_events(&self) -> Vec<Event> {
-        let mut s = self.state();
-        let events = std::mem::take(&mut s.events);
-        s.flush_finished();
-        if events.is_empty() { std::mem::take(&mut s.events) } else { events }
+        self.state().take_events()
+    }
+    /// Failed publication consumes only a still-owned request, never an accepted callback.
+    /// Recovery actions retain captured aliases until the real application produces a terminal.
+    /// Returns whether the platform must request a repaint for failure consumption.
+    pub fn publish_events_with<E>(&self, mut dispatch: impl FnMut(&Value, Option<Vec<u8>>) -> Result<(), E>, mut on_error: impl FnMut(E)) -> bool {
+        let mut failed = false;
+        for _ in 0..2 {
+            let (events, _publishing) = {
+                let mut state = self.state();
+                let events = state.take_events();
+                let terminals = events.iter().filter(|event| event.terminal()).count();
+                state.publishing_terminals = state.publishing_terminals.saturating_add(terminals);
+                (events, PublishingBatch { host: self.clone(), terminals })
+            };
+            if events.is_empty() {
+                break;
+            }
+            for event in events {
+                if let Err(error) = dispatch(&event.metadata, event.bytes) {
+                    failed = true;
+                    self.state().fail_delivery(&event.metadata);
+                    on_error(error);
+                }
+            }
+        }
+        failed
     }
     pub fn snapshot(&self) -> Value {
         let s = self.state();
