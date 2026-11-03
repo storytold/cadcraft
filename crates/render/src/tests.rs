@@ -1148,3 +1148,28 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// A proxy draws its proxy graphics like block contents: layer 0 and ByBlock in the picture are
+/// the proxy's own, and the proxy's layer hides all of it.
+#[test]
+fn proxy_graphics_draw_like_block_contents() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Notes".into(), color: Color::Index(3), ..Default::default() });
+    let byblock = Common { color: Color::ByBlock, ..Default::default() };
+    let graphics = vec![
+        block_entity(7, byblock, EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })),
+        block_entity(
+            7,
+            Common { color: Color::Index(1), ..Default::default() },
+            EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 0.0, 0.0), radius: 5.0 }),
+        ),
+    ];
+    let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Default::default() }, proxy).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims.iter().map(|p| p.color).collect::<Vec<_>>(), [Rgb(0, 255, 0), Rgb(255, 0, 0)]);
+    let b = d.extents(&Space::Model);
+    assert!((b.min.x, b.max.x, b.max.y) == (0.0, 20.0, 5.0), "{b:?}");
+    d.layer_mut("Notes").unwrap().frozen = true;
+    assert!(build(&d, &Space::Model, &Options::default()).prims.is_empty());
+}

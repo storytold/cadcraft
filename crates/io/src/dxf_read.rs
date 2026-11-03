@@ -61,6 +61,9 @@ struct Rx {
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
     /// LAYER record handle (upper case) → layer name (VIEWPORT group 331/341 frozen layers).
     layers: HashMap<String, String>,
+    /// Layer, linetype and text style names in the order of the file's tables, which proxy
+    /// graphics refer to by index (the drawing's own tables are ordered differently).
+    proxy_tables: cadcraft_doc::ProxyTables,
 }
 
 /// Read a DXF file into a drawing.

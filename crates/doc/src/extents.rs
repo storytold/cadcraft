@@ -196,6 +196,16 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             }
             b
         }
+        // A proxy measures as its proxy graphics draw (layer 0 in them is the proxy's layer).
+        EntityKind::Unknown(u) if !u.graphics.is_empty() => {
+            if depth >= MAX_BLOCK_DEPTH {
+                return Bounds2::EMPTY;
+            }
+            u.graphics
+                .iter()
+                .filter(|g| in_block_visible(d, g, off_counts))
+                .fold(Bounds2::EMPTY, |b, g| b.union(&bounds_in(d, g, depth + 1, blocks, off_counts)))
+        }
         EntityKind::Dimension(dm) => {
             let pts: Vec<Vec2> = match dm.kind {
                 crate::DimKind::Linear { .. } | crate::DimKind::Aligned | crate::DimKind::ArcLength => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy()],

@@ -15,7 +15,7 @@ use cadcraft_ui_egui::{CadApp, Services, menus};
 const ORIGINAL: &[u8] = b"original";
 
 fn unknown(kind: &str) -> EntityKind {
-    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }] })
+    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }], graphics: Vec::new() })
 }
 
 /// A drawing with objects of `types`, which DWG can't keep, opened from a DWG file on disk.
