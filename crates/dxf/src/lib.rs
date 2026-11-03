@@ -23,8 +23,11 @@ pub enum DxfError {
     Eof,
     /// More group codes than [`MAX_TAGS`]: `tags` is the count found (or the count read when the
     /// limit was reached), `limit` the maximum.
-    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads")]
+    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)")]
     TooLarge { tags: usize, limit: usize },
+    /// The memory for `tags` group codes couldn't be had: an error, not the process ending.
+    #[error("not enough memory to read this drawing's {tags} DXF group codes")]
+    OutOfMemory { tags: usize },
 }
 
 pub type Result<T> = std::result::Result<T, DxfError>;
@@ -164,10 +167,11 @@ fn typed(code: i32, text: &str) -> Value {
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
 /// Most group codes read from one file by default. A `Tag` takes 40 bytes plus its text, so this
-/// bounds the tag list to roughly 6 GB plus text. It matches the 1 GB DXF rendition a DWG may
-/// convert to (a 1 GB DXF holds well over 50 million group codes, so a lower cap rejected large
-/// DWGs that converted fine, issue #1948). Set `CADCRAFT_MAX_DXF_TAGS` to raise or lower it.
-pub const MAX_TAGS: usize = 150_000_000;
+/// bounds the tag list to about 4 GB plus text. 50 million rejected large DWGs that converted fine
+/// (a 172 MB drawing has 56 million, issue #1948). The file-size limits bound memory too: 512 MB
+/// for a DXF opened directly, 1 GB for a DWG's DXF rendition. Set `CADCRAFT_MAX_DXF_TAGS` to
+/// raise or lower it.
+pub const MAX_TAGS: usize = 100_000_000;
 
 /// Environment variable overriding [`MAX_TAGS`] (a positive integer).
 pub const MAX_TAGS_ENV: &str = "CADCRAFT_MAX_DXF_TAGS";
@@ -214,7 +218,7 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if tags > max_tags {
         return Err(DxfError::TooLarge { tags, limit: max_tags });
     }
-    parse_ascii_with_limit(&codepage::decode_ascii_file(bytes), max_tags)
+    parse_ascii_counted(&codepage::decode_ascii_file(bytes), max_tags, tags)
 }
 
 /// The four hex digits of a `\U+XXXX` escape starting at `chars[i]`, if there is one.
@@ -286,12 +290,17 @@ fn unescape_unicode(s: &str) -> String {
 }
 
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
-    parse_ascii_with_limit(text, max_tags())
+    parse_ascii_counted(text, max_tags(), 0)
 }
 
+/// [`parse_ascii`] of a file known to hold `expected` group codes. Their list is reserved first,
+/// with an allocation that can fail: where the system refuses that much memory, opening the file
+/// is an error instead of the end of the app. Growing the list instead could also briefly take
+/// half as much again.
 #[allow(clippy::while_let_loop)]
-fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
+fn parse_ascii_counted(text: &str, max_tags: usize, expected: usize) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
+    tags.try_reserve_exact(expected.min(max_tags)).map_err(|_| DxfError::OutOfMemory { tags: expected })?;
     let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
@@ -806,5 +815,13 @@ mod limit_tests {
         assert_eq!(max_tags_from(Some(" 400_000_000 ")), 400_000_000);
         // Issue #1948: the default must admit a DXF rendition well above 50 million group codes.
         const { assert!(MAX_TAGS >= 100_000_000) };
+    }
+
+    #[test]
+    fn the_tag_list_is_reserved_once_and_a_refusal_is_an_error() {
+        let tags = parse_ascii_counted("0\nSECTION\n0\nENDSEC\n0\nEOF\n", MAX_TAGS, 3).unwrap();
+        assert_eq!((tags.len(), tags.capacity()), (3, 3));
+        let e = parse_ascii_counted("0\nEOF\n", usize::MAX, usize::MAX).unwrap_err();
+        assert!(matches!(e, DxfError::OutOfMemory { .. }), "{e}");
     }
 }
