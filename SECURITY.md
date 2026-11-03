@@ -26,7 +26,7 @@ These are known and being worked on, so they don't need a report:
 
 - Agents connected through MCP or the control channel can read and write any path the user can. There are no workspace roots yet.
 - A local process can make the control channel buffer up to 512 MiB before its token is checked. The total is capped, so this can slow the app but not exhaust memory without limit.
-- The DWG decoder runs inside the app, so a decoder abort ends every open drawing. Autosave limits what's lost.
+- The DWG worker process has no memory limit of its own yet, so a crafted file can use a lot of memory before it stops. It ends that one open or save, not the app.
 - The web build has no autosave yet.
 
 ## What stays on your machine

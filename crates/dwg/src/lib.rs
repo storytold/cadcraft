@@ -19,10 +19,8 @@
 //!   crashing.
 //!
 //! These bound the input- and output-size variants. A small file that declares a huge internal
-//! table or section can still make the dependency allocate before any size is known; fully fixing
-//! that requires an upstream fix in `acadrust` (validate declared sizes against a decoded-memory
-//! budget) or running the decode in a separate worker with an OS memory limit. The limits here
-//! keep the blast radius bounded in the meantime.
+//! table or section can still make the dependency allocate before any size is known, so the app
+//! runs both directions in a child process ([`worker`]): what that kills is the child.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -63,6 +61,11 @@ fn mb(n: u64) -> String {
     let m = n as f64 / f64::from(1u32 << 20);
     if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
 }
+
+#[cfg(not(no_dwg_bridge))]
+pub mod worker;
+#[cfg(not(no_dwg_bridge))]
+pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, serve_if_asked, use_own_worker, use_worker};
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -929,6 +932,24 @@ fn unsupported(version: &str) -> String {
 /// Which build has no DWG bridge, for the stubs' errors.
 #[cfg(no_dwg_bridge)]
 const NO_BRIDGE_BUILD: &str = if cfg!(target_arch = "wasm32") { "web" } else { "FreeBSD aarch64" };
+
+/// There's no worker without a bridge.
+#[cfg(no_dwg_bridge)]
+pub const WORKER_ARG: &str = "--dwg-worker";
+#[cfg(no_dwg_bridge)]
+pub fn serve_if_asked() -> Option<i32> {
+    None
+}
+#[cfg(no_dwg_bridge)]
+pub fn use_own_worker() {}
+#[cfg(no_dwg_bridge)]
+pub fn decode(bytes: &[u8], limits: Limits) -> Result<(Vec<u8>, Vec<String>), String> {
+    dwg_to_dxf_noted(bytes, limits)
+}
+#[cfg(no_dwg_bridge)]
+pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
+    dxf_to_dwg_as(dxf, version)
+}
 
 #[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {

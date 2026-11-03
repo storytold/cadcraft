@@ -258,6 +258,11 @@ fn version_string() -> String {
 
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
+    // A copy of this program started to read or write a DWG file does only that.
+    if let Some(code) = cadcraft_io::dwg_worker::serve_if_asked() {
+        std::process::exit(code);
+    }
+    cadcraft_io::dwg_worker::use_own_worker();
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
     // The update helper relaunches this binary after a self-update; it runs and exits here.
