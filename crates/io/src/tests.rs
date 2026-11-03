@@ -1086,6 +1086,31 @@ fn a_dwg_read_through_binary_dxf_keeps_header_variables() {
     assert_eq!(from_binary.header.i64("ANGDIR", -1), from_text.header.i64("ANGDIR", -1), "ANGDIR");
 }
 
+/// #2690 review: the header variables added to a binary DXF after its capped write never take
+/// it past the limit. Just above and just below the binary size, a read either fits the limit or
+/// fails with the size-limit message.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_dwg_read_through_binary_dxf_stays_within_the_limit() {
+    let dwg = ac1024_dwg(3000);
+    let text = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
+    let binary = (5..10)
+        .rev()
+        .find_map(|tenths| {
+            let limits = cadcraft_dwg::Limits { max_dxf_bytes: text.len() * tenths / 10, ..cadcraft_dwg::Limits::DEFAULT };
+            cadcraft_dwg::dwg_to_dxf_noted(&dwg, limits).ok().filter(|(_, notes)| notes.iter().any(|n| n.contains("binary DXF"))).map(|(b, _)| b)
+        })
+        .expect("some limit between half and all of the text DXF reads through binary DXF");
+    let size = binary.len();
+    for limit in (size.saturating_sub(400)..=size).step_by(8) {
+        let limits = cadcraft_dwg::Limits { max_dxf_bytes: limit, ..cadcraft_dwg::Limits::DEFAULT };
+        match cadcraft_dwg::dwg_to_dxf_noted(&dwg, limits) {
+            Ok((dxf, _)) => assert!(dxf.len() <= limit, "{} bytes under a {limit}-byte limit", dxf.len()),
+            Err(e) => assert!(e.contains("(the limit)"), "{e}"),
+        }
+    }
+}
+
 /// Issue #57: oversized input is rejected early, with a message naming the limit, never a panic.
 /// A conversion that runs away (a damaged or misread DWG can make the reader produce a drawing
 /// thousands of times larger than the file) stops at the DXF size limit instead of filling memory

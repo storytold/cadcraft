@@ -128,12 +128,17 @@ mod native {
                 .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
             if !out.exceeded {
                 written.map_err(|e| format!("DWG→DXF: {e}"))?;
-                notes.push(format!(
-                    "DWG: read through binary DXF ({}), its text form being larger than the {} limit",
-                    mb(out.buf.len() as u64),
-                    mb(limits.max_dxf_bytes as u64)
-                ));
-                return Ok((add_header_vars_binary(out.buf, &doc.header), notes));
+                // The header variables go in after the capped write: the result must still fit.
+                let binary = add_header_vars_binary(std::mem::take(&mut out.buf), &doc.header);
+                if binary.len() <= limits.max_dxf_bytes {
+                    notes.push(format!(
+                        "DWG: read through binary DXF ({}), its text form being larger than the {} limit",
+                        mb(binary.len() as u64),
+                        mb(limits.max_dxf_bytes as u64)
+                    ));
+                    return Ok((binary, notes));
+                }
+                out.exceeded = true;
             }
         }
         if out.exceeded {
