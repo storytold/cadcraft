@@ -296,10 +296,17 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
+    // 4x multisampling anti-aliases the drawing's lines (CADCRAFT_MSAA=1 turns it off).
+    let msaa: u16 = match std::env::var("CADCRAFT_MSAA").ok().and_then(|v| v.trim().parse::<u16>().ok()) {
+        Some(n) if matches!(n, 1 | 2 | 4 | 8) => n,
+        _ => 4,
+    };
+    cadcraft_ui_egui::gpu::set_msaa_samples(u32::from(msaa));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
+        multisampling: msaa,
         ..window_options(restores_window())
     };
     if let Some(icon) = app_icon() {
