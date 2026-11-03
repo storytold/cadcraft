@@ -217,10 +217,12 @@ impl Prompt {
         // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys, unless
         // the prompt offers that spelling itself (a Greek keyword in a LISP program's list).
         if let Some(latin) = crate::keyboard::latin_keys(t) {
+            // Greek letters have case too, which the ASCII-only folding above does not see.
+            let typed = t.to_lowercase();
             return self
                 .keywords
                 .iter()
-                .find(|k| k.eq_ignore_ascii_case(t))
+                .find(|k| k.to_lowercase() == typed)
                 .cloned()
                 .or_else(|| self.match_latin_keyword(&latin))
                 .or_else(|| self.match_latin_keyword(&tl));
@@ -395,6 +397,7 @@ mod tests {
         // (a LISP program's keyword list).
         let both = Prompt::new("", Accept::TEXT).kw(&["Undo", "ΘΝΔΟ"]);
         assert_eq!(both.match_keyword("ΘΝΔΟ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θνδο").as_deref(), Some("ΘΝΔΟ"), "Greek case is folded like Latin case");
         assert_eq!(both.match_keyword("Undo").as_deref(), Some("Undo"));
         let latin = Prompt::new("", Accept::TEXT).kw(&["Undo"]);
         assert_eq!(latin.match_keyword("ΘΝΔΟ").as_deref(), Some("Undo"));
