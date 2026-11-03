@@ -522,8 +522,9 @@ impl Polyline {
         let mut budget = MAX_TESSELLATED_POINTS;
         self.tessellate_within(tol, &mut budget)
     }
-    /// [`Polyline::tessellate`] spending at most `budget` sampled points (shared by the caller
-    /// across many polylines): once it is spent, the remaining arcs are drawn as chords, so the
+    /// [`Polyline::tessellate`] spending about `budget` sampled points (shared by the caller
+    /// across many polylines). The budget is checked before each segment, so the last segment
+    /// started may overshoot it by that one segment's samples. Once it is spent, the remaining arcs are drawn as chords, so the
     /// output stays proportional to the input vertices. Each arc can sample thousands of points,
     /// so a compact polyline could otherwise expand into gigabytes (CWE-400).
     pub fn tessellate_within(&self, tol: f64, budget: &mut usize) -> Vec<Vec2> {
