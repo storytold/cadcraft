@@ -95,6 +95,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Tools", "Parametric", "Parameters Manager"])
             .alias(&["par", "parametersclose"])
             .params("{} lists; {name, expr | value, description?} sets (new name = user parameter) and re-solves; {delete: name}; {name, rename: newName} renames it in every expression"),
+        CommandSpec::new("-parameters", "Parameters", run_parameters)
+            .alias(&["-par"])
+            .params("(as PARAMETERS)")
+            .interactive(|_| Ok(Box::<dash::DashParametersM>::default())),
         CommandSpec::new("constraintsettings", "Constraint Settings", run_constraintsettings)
             .menu(&["Tools", "Parametric", "Constraint Settings"])
             .alias(&["csettings"])
@@ -861,43 +865,68 @@ fn run_delconstraint(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_parameters(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(name) = str_param(p, "delete") {
-        let d = s.doc()?;
-        if d.constraints.iter().any(|c| c.name == name) {
-            return Err(EngineError::Other(format!("`{name}` belongs to a dimensional constraint; delete the constraint instead")));
-        }
-        if !d.parametric.parameters.iter().any(|q| q.name == name) {
-            return Err(EngineError::Other(format!("no parameter `{name}`")));
-        }
-        let mut d = d.clone();
-        d.parametric.parameters.retain(|q| q.name != name);
-        if let Some(row) = cs::parameter_table(&d).into_iter().find(|r| r.error.is_some()) {
-            return Err(EngineError::Other(format!("`{name}` is used by `{}`", row.name)));
-        }
-        *s.doc_mut()? = d;
+        delete_parameter(s, name)?;
     } else if let (Some(old), Some(to)) = (str_param(p, "name"), str_param(p, "rename")) {
-        let mut d = s.doc()?.clone();
-        cs::rename_parameter(&mut d, old.trim(), to.trim()).map_err(err)?;
-        *s.doc_mut()? = d;
+        rename_parameter(s, old, to)?;
     } else if let Some(name) = str_param(p, "name") {
         let expr = match (str_param(p, "expr"), p.get("value").and_then(Value::as_f64)) {
             (Some(e), _) => e.to_string(),
             (None, Some(v)) if v.is_finite() => cs::format_value(v),
             _ => return Err(bad("parameters", "`expr` or `value` is required")),
         };
-        let mut d = s.doc()?.clone();
-        cs::set_parameter(&mut d, name.trim(), &expr, &cs::SolveOptions::default()).map_err(err)?;
+        let name = name.trim();
+        set_parameter(s, name, &expr)?;
         if let Some(desc) = str_param(p, "description")
-            && let Some(q) = d.parametric.parameters.iter_mut().find(|q| q.name == name.trim())
+            && let Some(q) = s.doc_mut()?.parametric.parameters.iter_mut().find(|q| q.name == name)
         {
             q.description = desc.to_string();
         }
-        *s.doc_mut()? = d;
     }
     let rows = cs::parameter_table(s.doc()?);
-    let text: Vec<String> =
-        rows.iter().map(|r| format!("{} = {} ({})", r.name, r.expr, r.value.map(cs::format_value).unwrap_or_else(|| "error".into()))).collect();
+    let text: Vec<String> = rows.iter().map(parameter_line).collect();
     let message = if text.is_empty() { "No parameters.".to_string() } else { text.join("; ") };
     Ok(json!({ "parameters": rows, "message": message }))
+}
+
+/// A parameter as PARAMETERS and -PARAMETERS report it: `name = expression (value)`.
+fn parameter_line(r: &cs::ParamRow) -> String {
+    format!("{} = {} ({})", r.name, r.expr, r.value.map(cs::format_value).unwrap_or_else(|| "error".into()))
+}
+
+/// Set parameter `name` to `expr` and re-solve; a name not in use makes a user parameter. On
+/// error the drawing is unchanged.
+fn set_parameter(s: &mut Session, name: &str, expr: &str) -> Result<()> {
+    let mut d = s.doc()?.clone();
+    cs::set_parameter(&mut d, name, expr, &cs::SolveOptions::default()).map_err(err)?;
+    *s.doc_mut()? = d;
+    Ok(())
+}
+
+/// Rename parameter `old` to `new` in every expression that uses it.
+fn rename_parameter(s: &mut Session, old: &str, new: &str) -> Result<()> {
+    let mut d = s.doc()?.clone();
+    cs::rename_parameter(&mut d, old.trim(), new.trim()).map_err(err)?;
+    *s.doc_mut()? = d;
+    Ok(())
+}
+
+/// Delete user parameter `name`. A dimensional constraint's parameter goes only with its
+/// constraint, and a parameter another expression uses stays.
+fn delete_parameter(s: &mut Session, name: &str) -> Result<()> {
+    let d = s.doc()?;
+    if d.constraints.iter().any(|c| c.name == name) {
+        return Err(EngineError::Other(format!("`{name}` belongs to a dimensional constraint; delete the constraint instead")));
+    }
+    if !d.parametric.parameters.iter().any(|q| q.name == name) {
+        return Err(EngineError::Other(format!("no parameter `{name}`")));
+    }
+    let mut d = d.clone();
+    d.parametric.parameters.retain(|q| q.name != name);
+    if let Some(row) = cs::parameter_table(&d).into_iter().find(|r| r.error.is_some()) {
+        return Err(EngineError::Other(format!("`{name}` is used by `{}`", row.name)));
+    }
+    *s.doc_mut()? = d;
+    Ok(())
 }
 
 /// Show/hide constraint bars (`dims` = false) or dynamic dimensional constraints.
@@ -1198,6 +1227,8 @@ pub fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, ok: bool) {
         s.echo(m);
     }
 }
+
+mod dash;
 
 #[cfg(test)]
 mod tests;

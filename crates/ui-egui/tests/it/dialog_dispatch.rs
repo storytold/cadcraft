@@ -39,6 +39,21 @@ fn drafting_settings_menu_opens_the_dialog() {
     assert_eq!(app.session.settings.gridmajor, 10);
 }
 
+/// PARAMETERS typed opens the Parameters Manager; -PARAMETERS asks at the command line (#2579).
+#[test]
+fn dash_parameters_prompts_instead_of_opening_the_dialog() {
+    let (mut app, _) = app();
+    app.cmdline("PARAMETERS");
+    assert_eq!(app.ui.dialog.as_deref(), Some("parameters"));
+    app.ui.dialog = None;
+    for typed in ["-PARAMETERS", "-PAR"] {
+        app.cmdline(typed);
+        assert!(app.ui.dialog.is_none(), "{typed} opens no dialog");
+        assert!(app.session.prompt_text().contains("Enter a parameter option"), "{typed}: {}", app.session.prompt_text());
+        app.session.cancel();
+    }
+}
+
 #[test]
 fn properties_menu_shows_the_palette() {
     let (mut app, _) = app();
