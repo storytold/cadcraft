@@ -479,14 +479,39 @@ mod native {
             let (done, running) = std::mem::take(&mut self.running).into_iter().partition::<Vec<_>, _>(|(_, h)| h.is_finished());
             self.running = running;
             for (uid, h) in done {
-                self.busy.remove(&uid);
-                match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
-                    Ok(()) => {
-                        self.failed.remove(&uid);
-                    }
-                    Err(e) => self.unwritten(uid, e),
-                }
+                self.settle(uid, h);
             }
+        }
+
+        fn settle(&mut self, uid: u64, h: std::thread::JoinHandle<std::result::Result<(), String>>) {
+            self.busy.remove(&uid);
+            match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
+                Ok(()) => {
+                    self.failed.remove(&uid);
+                }
+                Err(e) => self.unwritten(uid, e),
+            }
+        }
+
+        /// Write every drawing with changes not yet autosaved and wait until it is done, because
+        /// the app has gone wrong and may not get another frame. Unlike [`Autosaver::save_now`]
+        /// this also runs when SAVETIME is 0: unsaved work comes before that preference. Returns
+        /// how many drawings were written.
+        pub fn emergency_save(&mut self, s: &Session) -> usize {
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            let now = self.start.elapsed().as_secs_f64();
+            let dir = savefilepath();
+            let jobs = self.plan_with(s, now, savetime().max(1), &dir, true);
+            let uids: Vec<u64> = jobs.iter().filter_map(|j| if let Job::Write { uid, .. } = j { Some(*uid) } else { None }).collect();
+            self.perform(jobs);
+            self.last_beat = None;
+            self.heartbeat(&dir, now);
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            uids.iter().filter(|uid| !self.failed.contains_key(uid)).count()
         }
 
         fn unwritten(&mut self, uid: u64, why: String) {

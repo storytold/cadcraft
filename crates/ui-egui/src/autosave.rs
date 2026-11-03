@@ -134,8 +134,9 @@ impl CadApp {
 
     /// The app closes normally: this app's autosave files are not needed any more.
     pub fn shutdown_autosave(&mut self) {
+        // After the interface gave up, the recovery copies are all that's left of the work.
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(s) = &mut self.autosave {
+        if let Some(s) = self.autosave.as_mut().filter(|_| !self.fault.broken) {
             s.shutdown();
         }
     }
@@ -143,7 +144,7 @@ impl CadApp {
 
 /// `secs` since 1970 as `YYYY-MM-DD HH:MM` (UTC). Past chrono's year 262143 range the proleptic
 /// Gregorian date is kept via the 400-year cycle rather than falling back to the epoch.
-fn utc(secs: u64) -> String {
+pub(crate) fn utc(secs: u64) -> String {
     let (h, m) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
     let (y, mo, d) = civil_from_days(secs / 86_400);
     // `{y:04}` rather than `%Y`, which writes a `+` before years past 9999.
