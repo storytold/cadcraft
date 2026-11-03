@@ -1148,3 +1148,103 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// A screen build for a window leaves out what lies away from it (on one thread and
+/// on all cores), keeps what crosses it, and a build with no window, or a plot, draws everything.
+#[test]
+fn a_screen_build_leaves_out_what_is_off_the_window() {
+    use cadcraft_geom::Bounds2;
+    let mut d = Drawing::new_imperial();
+    let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+    // 600 lines (enough for the parallel path) from x = 0 to x = 5990, one crossing the window's edge.
+    for i in 0..600 {
+        d.add(&Space::Model, Common::default(), line(f64::from(i) * 10.0)).unwrap();
+    }
+    let window = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(100.5, 5.0));
+    let screen = build(&d, &Space::Model, &Options { view: Some(window), ..Default::default() });
+    assert_eq!(screen.prims.len(), 11, "the lines at x = 0..100 (the one at 100 crosses the edge)");
+    assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), 600);
+    assert_eq!(build_plot(&d, &Space::Model, &Options { view: Some(window), ..Default::default() }).prims.len(), 600);
+    // One thread (few entities): the same rule.
+    let mut small = Drawing::new_imperial();
+    for x in [0.0, 50.0, 5000.0] {
+        small.add(&Space::Model, Common::default(), line(x)).unwrap();
+    }
+    assert_eq!(build(&small, &Space::Model, &Options { view: Some(window), ..Default::default() }).prims.len(), 2);
+}
+
+/// Bounds kept from the previous build are reused only for the same entities: a
+/// drawing changed between builds (an object added in the window, one moved into it) shows it.
+#[test]
+fn bounds_kept_between_builds_follow_edits() {
+    use cadcraft_geom::Bounds2;
+    let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+    let window = Some(Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(20.0, 5.0)));
+    let mut d = Drawing::new_imperial();
+    let far = d.add(&Space::Model, Common::default(), line(1000.0)).unwrap();
+    d.add(&Space::Model, Common::default(), line(0.0)).unwrap();
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 1);
+    let mut added = d.clone();
+    added.add(&Space::Model, Common::default(), line(10.0)).unwrap();
+    assert_eq!(build(&added, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 2);
+    // The far line moved into the window: a new entity value under the same handle.
+    let mut moved = added.clone();
+    assert!(moved.model.modify(far, |e| e.kind = line(5.0)));
+    assert_eq!(build(&moved, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 3);
+}
+
+/// A large block draws on screen only its entities near the build window (through
+/// the reference's transform), the whole block with no window or in a plot.
+#[test]
+fn a_large_block_draws_only_what_is_near_the_window() {
+    use cadcraft_geom::Bounds2;
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("SITE");
+    for i in 0..200u64 {
+        let x = i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(blk));
+    // Inserted at x = 1000, scaled 2: block line i lies at x = 1000 + 20 i.
+    let ins = cadcraft_doc::Insert {
+        block: "SITE".into(),
+        insert: Vec3::new(1000.0, 0.0, 0.0),
+        scale: Vec3::new(2.0, 2.0, 1.0),
+        rotation: 0.0,
+        attribs: vec![],
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    // World x 990..1105 holds block lines 0..=5 (the one at 1100 reaches 1102).
+    let window = Some(Bounds2::new(Vec2::new(990.0, -5.0), Vec2::new(1105.0, 5.0)));
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 6);
+    assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), 200);
+    assert_eq!(build_plot(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 200);
+}
+
+/// A block's grid finds exactly the entities near an area, also when the block is
+/// one long thin row (every entity as tall as the whole block) and for entities far longer than a
+/// cell, and keeps block order.
+#[test]
+fn a_block_index_finds_the_entities_near_an_area() {
+    use cadcraft_geom::Bounds2;
+    let d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("ROW");
+    for i in 0..5000u64 {
+        let x = i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 5.0, 0.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    // One line along the whole row.
+    let long = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(50_000.0, 0.0, 0.0) });
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(9999), long));
+    let blk = std::sync::Arc::new(blk);
+    let ix = block_index(&d, &blk);
+    let near = ix.near(&Bounds2::new(Vec2::new(49_985.0, -1.0), Vec2::new(49_996.0, 1.0)));
+    assert_eq!(near, vec![4998, 4999, 5000], "the last two short lines and the long one, in block order");
+    assert!(ix.near(&Bounds2::new(Vec2::new(0.0, 10_000.0), Vec2::new(10.0, 10_010.0))).is_empty(), "nothing far off the row");
+}

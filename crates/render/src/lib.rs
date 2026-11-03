@@ -314,9 +314,10 @@ mod props;
 mod text_entity;
 mod viewports;
 
+pub use blocks::{BlockIndex, block_index};
 pub use dim_draw::{dim_text, dimension_in};
 pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
-pub use pipeline::{Options, build, build_entities, build_plot};
+pub use pipeline::{KnownBounds, Options, build, build_entities, build_plot, known_bounds, known_bounds_of};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
