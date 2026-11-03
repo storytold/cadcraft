@@ -177,12 +177,6 @@ undo_edit        {}
 PRESSPULL, POLYSOLID, WEDGE, arbitrary sculpting and general ACIS interoperability are not
 implemented. These limits are independent of the new exact geometry and editing subset.
 
-## Development packages
-
-Set `CADCRAFT_DISABLE_UPDATES=1` when launching a custom development package to disable both
-startup and manual stock-release checks. This prevents a release update from replacing a custom
-binary that carries unmerged features. Normal release packages retain their existing update flow.
-
 ## Revision history
 
 | Date | Change | Summary |
