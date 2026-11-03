@@ -806,6 +806,10 @@ pub struct PageSetup {
     /// and no turn (#1463). `None` for page setups made in CADCraft.
     #[serde(skip)]
     pub file_paper: Option<(f64, f64, i64)>,
+    /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
+    /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_origin: Option<Vec2>,
 }
 
 impl Default for PageSetup {
@@ -828,6 +832,7 @@ impl Default for PageSetup {
             plot_transparency: false,
             paper_mm: false,
             file_paper: None,
+            image_origin: None,
         }
     }
 }
@@ -843,11 +848,15 @@ pub struct Layout {
     /// Saved paper-space view (centre, height).
     #[serde(default)]
     pub view: Option<(Vec2, f64)>,
+    /// The layout's limits (LAYOUT groups 10/11, lower left and upper right) as the file had
+    /// them; `None` for a layout CADCraft made, written as 0,0 to 12,9 (#2109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<(Vec2, Vec2)>,
 }
 
 impl Layout {
     pub fn new(name: &str, tab_order: u32) -> Self {
-        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None }
+        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None, limits: None }
     }
 }
 
