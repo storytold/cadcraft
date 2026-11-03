@@ -101,12 +101,24 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_context: None,
+    };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
+        if !paper && !plotting && opts.view.is_some() {
+            b.bounds_context = Some(bounds_context(d));
+        }
         let shown = on_screen(d, store, opts, paper || plotting);
         let shown_at = |i: usize| shown.as_ref().is_none_or(|s| s.get(i).copied().unwrap_or(true));
         #[cfg(not(target_arch = "wasm32"))]
@@ -185,8 +197,38 @@ pub(crate) fn bounds_context(d: &Drawing) -> u64 {
     d.current_anno_scale().factor().to_bits().hash(&mut h);
     d.anno_all_visible().hash(&mut h);
     d.header.f64("DIMSCALE", 1.0).to_bits().hash(&mut h);
+    // Dimensions and text are measured with their styles, so an edited style changes the bounds
+    // of entities that did not change themselves: hash every style's content, not their count.
     d.dim_styles.len().hash(&mut h);
+    d.text_styles.len().hash(&mut h);
+    {
+        use std::fmt::Write;
+        let mut w = HashWrite(&mut h);
+        for s in &d.dim_styles {
+            let _ = write!(w, "{s:?}");
+        }
+        for s in &d.text_styles {
+            let _ = write!(w, "{s:?}");
+        }
+    }
+    // The block definitions by address: a block's bounds include those of the blocks it
+    // references, so an edited nested block (a new allocation) must not reuse them. Whoever keeps
+    // bounds made in this state also holds these blocks, so no new block can take their addresses.
+    d.blocks.len().hash(&mut h);
+    for b in d.blocks.values() {
+        (std::sync::Arc::as_ptr(b) as usize).hash(&mut h);
+    }
     h.finish()
+}
+
+/// Feeds formatted text to a hasher without building a string.
+struct HashWrite<'a, H: std::hash::Hasher>(&'a mut H);
+
+impl<H: std::hash::Hasher> std::fmt::Write for HashWrite<'_, H> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
 }
 
 /// The bounds the last screen build measured for `e` (a model-space entity of this
@@ -258,7 +300,7 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     use rayon::prelude::*;
     let ents: Vec<&std::sync::Arc<Entity>> = store.iter().enumerate().filter(|(i, _)| shown(*i)).map(|(_, e)| e).collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
-    let (opts, plotting) = (b.opts, b.plotting);
+    let (opts, plotting, bounds_context) = (b.opts, b.plotting, b.bounds_context);
     // Left to the entities near the view, a site plan's heavy block references sit
     // side by side and a few 256-entity chunks would hold nearly all the work; chunks of about a
     // sixteenth of each core's share let the cores even it out between them.
@@ -266,8 +308,16 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     let parts: Vec<DisplayList> = ents
         .par_chunks(chunk)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+                bounds_context,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
@@ -319,7 +369,16 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_context: None,
+    };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }

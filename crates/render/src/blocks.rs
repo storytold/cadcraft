@@ -157,46 +157,57 @@ impl BlockIndex {
 }
 
 /// Block indexes kept between builds for the drawing state they were made in (see
-/// `pipeline::bounds_context`). Each entry holds its block, so a changed block's new allocation
-/// never takes an old address.
+/// `pipeline::bounds_context`, which covers the block definitions by address). The memo holds
+/// every block definition of that state and each indexed block, so a changed block's new
+/// allocation never takes an old address. Each block has one slot: threads that meet the same block together wait for one build
+/// instead of each building its index.
 struct BlockMemo {
     context: u64,
-    by_block: std::collections::HashMap<usize, (std::sync::Arc<cadcraft_doc::Block>, std::sync::Arc<BlockIndex>)>,
+    _blocks: Vec<std::sync::Arc<cadcraft_doc::Block>>,
+    by_block: std::collections::HashMap<usize, (std::sync::Arc<cadcraft_doc::Block>, IndexSlot)>,
 }
+
+type IndexSlot = std::sync::Arc<std::sync::OnceLock<std::sync::Arc<BlockIndex>>>;
 
 static BLOCK_BOUNDS: std::sync::Mutex<Option<BlockMemo>> = std::sync::Mutex::new(None);
 
 /// The [`BlockIndex`] of `blk`, made once per drawing state and kept: the renderer, picking and
 /// object snaps cull a large block with it.
 pub fn block_index(d: &cadcraft_doc::Drawing, blk: &std::sync::Arc<cadcraft_doc::Block>) -> std::sync::Arc<BlockIndex> {
-    let context = super::pipeline::bounds_context(d);
+    block_index_in(d, blk, super::pipeline::bounds_context(d))
+}
+
+/// [`block_index`] with the drawing state's `pipeline::bounds_context` already worked out (once
+/// per build rather than once per reference).
+pub(crate) fn block_index_in(d: &cadcraft_doc::Drawing, blk: &std::sync::Arc<cadcraft_doc::Block>, context: u64) -> std::sync::Arc<BlockIndex> {
     let key = std::sync::Arc::as_ptr(blk) as usize;
-    if let Ok(m) = BLOCK_BOUNDS.lock()
-        && let Some(m) = m.as_ref().filter(|m| m.context == context)
-        && let Some((_, ix)) = m.by_block.get(&key)
-    {
-        return std::sync::Arc::clone(ix);
+    let slot = BLOCK_BOUNDS.lock().ok().and_then(|mut m| {
+        if m.as_ref().is_none_or(|m| m.context != context) {
+            *m = Some(BlockMemo { context, _blocks: d.blocks.values().cloned().collect(), by_block: std::collections::HashMap::new() });
+        }
+        m.as_mut().map(|m| std::sync::Arc::clone(&m.by_block.entry(key).or_insert_with(|| (std::sync::Arc::clone(blk), IndexSlot::default())).1))
+    });
+    match slot {
+        Some(slot) => std::sync::Arc::clone(slot.get_or_init(|| build_block_index(d, blk))),
+        None => build_block_index(d, blk),
     }
+}
+
+fn build_block_index(d: &cadcraft_doc::Drawing, blk: &cadcraft_doc::Block) -> std::sync::Arc<BlockIndex> {
     let mut cache = cadcraft_doc::BlockBoundsCache::default();
     let entities: Vec<std::sync::Arc<Entity>> = blk.entities.iter().cloned().collect();
     let bounds: Vec<super::Bounds2> = entities
         .iter()
         .map(|be| {
-            let b = cadcraft_doc::entity_bounds_cached(d, be, 0, &mut cache);
+            // Depth 1, as the renderer draws them: entities inside a block are not scaled for
+            // the current annotation scale the way top-level annotative ones are.
+            let b = cadcraft_doc::entity_bounds_cached(d, be, 1, &mut cache);
             let size = b.width().max(b.height());
             if usable(&b) && size.is_finite() { b.expand(size * 0.1) } else { b }
         })
         .collect();
     let grid = Grid::build(&bounds);
-    let ix = std::sync::Arc::new(BlockIndex { entities, bounds, grid });
-    if let Ok(mut m) = BLOCK_BOUNDS.lock() {
-        let memo = m.get_or_insert_with(|| BlockMemo { context, by_block: std::collections::HashMap::new() });
-        if memo.context != context {
-            *memo = BlockMemo { context, by_block: std::collections::HashMap::new() };
-        }
-        memo.by_block.insert(key, (std::sync::Arc::clone(blk), std::sync::Arc::clone(&ix)));
-    }
-    ix
+    std::sync::Arc::new(BlockIndex { entities, bounds, grid })
 }
 
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
@@ -208,7 +219,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
         // out, so a site plan held in one block draws only the part in view, and they no longer
         // spend the block-expansion budget that would cut the visible part short.
         let window = b.opts.view.filter(|w| !b.plotting && blk.entities.len() >= CULL_MIN_ENTITIES && !w.is_empty());
-        let index = window.map(|_| block_index(ctx.d, blk));
+        let index = window.map(|_| block_index_in(ctx.d, blk, b.bounds_context.unwrap_or_else(|| super::pipeline::bounds_context(ctx.d))));
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
         'copies: for r in 0..rows {

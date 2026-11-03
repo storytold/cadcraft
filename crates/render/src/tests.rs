@@ -1248,3 +1248,63 @@ fn a_block_index_finds_the_entities_near_an_area() {
     assert_eq!(near, vec![4998, 4999, 5000], "the last two short lines and the long one, in block order");
     assert!(ix.near(&Bounds2::new(Vec2::new(0.0, 10_000.0), Vec2::new(10.0, 10_010.0))).is_empty(), "nothing far off the row");
 }
+
+/// A large block's index is not reused after a block it references changes: what the
+/// nested block gained away from its old extents is drawn in the window.
+#[test]
+fn a_large_block_shows_what_an_edited_nested_block_gained() {
+    use cadcraft_geom::Bounds2;
+    let line = |x: f64, y: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, y, 0.0), b: Vec3::new(x + 1.0, y + 1.0, 0.0) });
+    let insert = |name: &str, y: f64| {
+        EntityKind::Insert(cadcraft_doc::Insert {
+            block: name.into(),
+            insert: Vec3::new(0.0, y, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        })
+    };
+    let mut d = Drawing::new_imperial();
+    let mut sub = cadcraft_doc::Block::new("SUB");
+    sub.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line(0.0, 0.0)));
+    d.blocks.insert("SUB".into(), std::sync::Arc::new(sub));
+    // SITE: 100 lines along y = 0 and, at y = 100, a reference to SUB.
+    let mut site = cadcraft_doc::Block::new("SITE");
+    for i in 0..100u64 {
+        site.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 10), line(i as f64 * 10.0, 0.0)));
+    }
+    site.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), insert("SUB", 100.0)));
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(site));
+    d.add(&Space::Model, Common::default(), insert("SITE", 0.0)).unwrap();
+    let window = Some(Bounds2::new(Vec2::new(395.0, 95.0), Vec2::new(420.0, 110.0)));
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 0);
+    // SUB now holds a line at x = 400: inside the window, far from SUB's old extents.
+    let mut edited = d.clone();
+    let mut sub = cadcraft_doc::Block::new("SUB");
+    sub.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line(400.0, 0.0)));
+    edited.blocks.insert("SUB".into(), std::sync::Arc::new(sub));
+    assert_eq!(build(&edited, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 1);
+}
+
+/// Bounds kept between builds depend on the content of the dimension and text styles,
+/// not only on how many there are.
+#[test]
+fn bounds_kept_between_builds_follow_style_edits() {
+    let d = Drawing::new_imperial();
+    let before = crate::pipeline::bounds_context(&d);
+    let mut dims = d.clone();
+    if let Some(s) = dims.dim_styles.first_mut() {
+        s.text_height *= 2.0;
+    }
+    assert_ne!(crate::pipeline::bounds_context(&dims), before, "a dimension style edit");
+    let mut texts = d.clone();
+    if let Some(s) = texts.text_styles.first_mut() {
+        s.height += 1.0;
+    }
+    assert_ne!(crate::pipeline::bounds_context(&texts), before, "a text style edit");
+    assert_eq!(crate::pipeline::bounds_context(&d.clone()), before, "an unchanged copy");
+}

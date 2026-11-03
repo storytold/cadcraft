@@ -125,6 +125,8 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// `pipeline::bounds_context` of the drawing, worked out once for a windowed screen build.
+    bounds_context: Option<u64>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
