@@ -1,7 +1,7 @@
 //! Drawing → DXF (AC1015 / R2000 structure, readable by every DXF consumer since 2000). Later
-//! versions keep that structure (the groups they add are optional, DXF Reference) and differ in
-//! `$ACADVER`, from 2004 in the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller
-//! picks the text encoding) and MULTILEADER entities (older files get LEADER + MTEXT).
+//! versions keep that structure and differ in `$ACADVER`, from 2004 in CLASS instance counts and
+//! the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller picks the text encoding) and
+//! MULTILEADER entities (older files get LEADER + MTEXT).
 
 use std::collections::HashMap;
 
@@ -33,6 +33,7 @@ pub(crate) use blocks::is_generated_arrow;
 pub(crate) use blocks::table_block_entities;
 use ctx::Ctx;
 use entity::entity;
+pub(crate) use header::code_page;
 use sections::tags_for;
 
 struct W {
@@ -40,10 +41,10 @@ struct W {
     next: u64,
     /// Upper-case plot style name → its `ACDBPLACEHOLDER` handle (group 390 of layers and objects).
     pstyles: HashMap<String, String>,
-    /// Upper-case layer name → its LAYER table record handle (group 341 of viewports).
+    /// Upper-case layer name → its LAYER table record handle (group 331/341 of viewports).
     layers: HashMap<String, String>,
-    /// Persistent reactors of boundary objects: each source object of an associative hatch →
-    /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
+    /// Persistent reactors of source geometry: the associative hatches and DIMASSOC objects
+    /// that follow it (groups `{ACAD_REACTORS 330 …}`).
     reactors: HashMap<Handle, Vec<String>>,
 }
 
@@ -67,7 +68,11 @@ impl W {
         self.f(c + 10, p.y);
     }
     fn h(&mut self) -> String {
-        let h = format!("{:X}", self.next);
+        format!("{:X}", self.next_handle())
+    }
+    /// A new handle for a record the drawing doesn't hold (as [`W::h`]).
+    fn next_handle(&mut self) -> u64 {
+        let h = self.next;
         self.next = self.next.saturating_add(1);
         h
     }
@@ -111,13 +116,13 @@ pub fn write(d: &Drawing) -> String {
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`.
 pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
-    tags_for(d, version, version)
+    tags_for(d, version, version, version < Version::R2004)
 }
 
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
 /// version's (MULTILEADER from 2007).
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg);
+    let mut tags = tags_for(d, Version::R2000, dwg, false);
     bridge_markers(&mut tags);
     cadcraft_dxf::write_ascii(&tags)
 }
@@ -146,10 +151,13 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
         layers: HashMap::new(),
         reactors: HashMap::new(),
     };
-    let cx = Ctx { target: Version::R2018, ..Ctx::default() };
+    let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);
     let mut tags = w.t.into_iter();
     let kind = tags.next().filter(|t| t.code == 0).map(|t| t.value.as_str()).unwrap_or_default();
-    (kind, tags.take_while(|t| t.code != 0).filter(|t| t.code != 330).collect())
+    let mut tags: Vec<Tag> = tags.take_while(|t| t.code != 0).filter(|t| t.code != 330).collect();
+    // Strings as AutoLISP sees them: `10^2`, not the file's `10^ 2`.
+    crate::dxf_read::mtext_dxf::map_text_groups(&kind, &mut tags, crate::dxf_read::mtext_dxf::decode_line);
+    (kind, tags)
 }
