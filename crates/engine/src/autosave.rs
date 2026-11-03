@@ -34,6 +34,18 @@ pub const STALE_LOCK_SECS: u64 = 5 * 60;
 const HEARTBEAT_SECS: f64 = 60.0;
 
 static SAVETIME: AtomicU32 = AtomicU32::new(DEFAULT_SAVETIME);
+static ISAVEBAK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// ISAVEBAK: whether saving over a drawing keeps the previous file as `<name>.bak` (on by
+/// default, as in AutoCAD). A profile setting like SAVETIME.
+pub fn isavebak() -> bool {
+    ISAVEBAK.load(Ordering::Relaxed)
+}
+
+/// Turn ISAVEBAK on or off.
+pub fn set_isavebak(on: bool) {
+    ISAVEBAK.store(on, Ordering::Relaxed);
+}
 static SAVEFILEPATH: Mutex<String> = Mutex::new(String::new());
 
 /// SAVETIME: minutes between autosaves; 0 turns autosave off.
@@ -402,6 +414,13 @@ mod native {
             self.last_beat = None;
             self.heartbeat(&savefilepath(), now);
             writes
+        }
+
+        /// Whether a background write hasn't finished yet. Its file can exist before it finishes
+        /// (the folder is synced after the rename), and until [`Autosaver::reap`] takes it in, the
+        /// drawing is left out of planning.
+        pub fn writing(&self) -> bool {
+            self.running.iter().any(|(_, h)| !h.is_finished())
         }
 
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
