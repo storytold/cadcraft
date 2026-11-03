@@ -1,4 +1,4 @@
-//! A command or keyword typed with the Greek keyboard layout active (ΛΙΝΕ for LINE, ΥΝΔΟ for
+//! A command or keyword typed with the Greek keyboard layout active (ΛΙΝΕ for LINE, ΘΝΔΟ for
 //! Undo) works as its Latin name: the layout types each Greek letter on the Latin key it sounds
 //! like.
 
@@ -22,6 +22,22 @@ fn greek_layout_commands_start_like_the_latin_ones() {
     // here: it reports, it never fails as an unknown command).
     let err = s.start(";ΣΑΩΕ").map(|_| String::new()).unwrap_or_else(|e| e.to_string());
     assert!(!err.contains("unknown command"), "{err}");
+}
+
+#[test]
+fn greek_layout_selection_words_select_like_the_latin_ones() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({ "center": [0, 0], "radius": 5 })).unwrap();
+    s.execute("circle", &json!({ "center": [20, 0], "radius": 5 })).unwrap();
+    // ΑΛΛ is the keys A-L-L: ALL at the "Select objects" prompt.
+    s.script(
+        "ERASE ΑΛΛ
+
+",
+    )
+    .unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(s.doc().unwrap().model.is_empty(), "ΑΛΛ selected nothing");
 }
 
 #[test]

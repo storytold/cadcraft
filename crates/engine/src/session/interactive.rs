@@ -6,6 +6,16 @@ use super::{
 impl Session {
     // ---------------- interactive commands ----------------
 
+    /// Whether `name`, as typed, is a command, an alias or a LISP command: the lookups
+    /// [`Session::start`] dispatches by, so only ASCII is lower-cased and a Greek alias stays as stored.
+    fn names_a_command(&self, name: &str) -> bool {
+        let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
+        let dashed = name.trim_start_matches(['_', '.']);
+        find_command(&cmd::resolve_alias(dashed)).is_some()
+            || find_command(&cmd::resolve_alias(&lower)).is_some()
+            || self.lisp_command(&lower).is_some()
+    }
+
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;
@@ -16,11 +26,8 @@ impl Session {
             None => (false, name),
         };
         // A name typed with the Greek keyboard layout active (ΛΙΝΕ for LINE) is the Latin name's keys,
-        // unless it is a command or LISP function of its own.
-        let latin = crate::keyboard::latin_keys(name).filter(|_| {
-            let greek = name.trim_start_matches(['_', '.', '-']).to_lowercase();
-            find_command(&cmd::resolve_alias(&greek)).is_none() && self.lisp_command(&greek).is_none()
-        });
+        // unless it is a command, alias or LISP function of its own.
+        let latin = crate::keyboard::latin_keys(name).filter(|_| !self.names_a_command(name));
         let name = latin.as_deref().unwrap_or(name);
         let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
         // A command-line form with an id of its own (-ATTEDIT) is not the command it prefixes.
@@ -176,8 +183,12 @@ impl Session {
             return self.select_mode_input(input);
         }
         // `_L`, `_ALL`, `_W`: the English name of a selection keyword, as scripts write it.
+        // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is its Latin keys.
         let input = match input {
-            Input::Text(t) => Input::Text(t.trim().strip_prefix('_').map(str::to_string).unwrap_or(t)),
+            Input::Text(t) => {
+                let t = t.trim().strip_prefix('_').map(str::to_string).unwrap_or(t);
+                Input::Text(crate::keyboard::latin_keys(&t).unwrap_or(t))
+            }
             other => other,
         };
         if let Input::Text(t) | Input::Keyword(t) = &input

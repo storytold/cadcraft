@@ -123,8 +123,14 @@ fn suggestions(prefix: &str) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    // Typed with the Greek keyboard layout (ΛΙΝΕ), it completes as the Latin name (LINE).
-    let p = cadcraft_engine::keyboard::latin_keys(prefix).unwrap_or_else(|| prefix.to_string()).to_ascii_lowercase();
+    // Typed with the Greek keyboard layout (ΛΙΝ), it completes as the Latin name (LINE), unless the word
+    // as typed already names a command or alias: that is what Enter runs.
+    let typed = prefix.to_ascii_lowercase();
+    let p = if cadcraft_engine::cmd::find_command(&cadcraft_engine::cmd::resolve_alias(&typed)).is_some() {
+        typed
+    } else {
+        cadcraft_engine::keyboard::latin_keys(prefix).unwrap_or(typed)
+    };
 
     let mut out: Vec<Suggestion> = Vec::new();
     let mut seen_ids: HashSet<&'static str> = HashSet::new();
@@ -767,6 +773,17 @@ mod tests {
         assert_eq!(greek, latin);
         // A prefix that is not Greek-layout typing is matched as it is.
         assert!(suggestions("ЖЖЖ").is_empty());
+    }
+
+    #[test]
+    fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
+        // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
+        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE.
+        let mut session = Session::empty();
+        session.execute("aliasedit", &serde_json::json!({ "set": { "Ξ": "qsave" } })).unwrap();
+        let first = suggestions("Ξ").into_iter().next().map(|s| s.id);
+        session.execute("aliasedit", &serde_json::json!({ "remove": ["Ξ"] })).unwrap();
+        assert_eq!(first.as_deref(), Some("QSAVE"));
     }
 
     #[test]
