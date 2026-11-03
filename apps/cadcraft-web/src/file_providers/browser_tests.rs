@@ -63,7 +63,12 @@ impl Page {
         call(&self.api, method, arguments)
     }
     fn latest(&self, kind: &str) -> Result<JsValue, JsValue> {
-        self.events.borrow().iter().rev().find(|event| text(event, "type").is_ok_and(|name| name == kind)).cloned()
+        self.events
+            .borrow()
+            .iter()
+            .rev()
+            .find(|event| text(event, "type").is_ok_and(|name| name == kind))
+            .cloned()
             .ok_or_else(|| error(format!("missing real window event {kind}")))
     }
     fn tick(&self, app: &mut CadApp) {
@@ -71,7 +76,11 @@ impl Page {
     }
     fn choose(&self, app: &mut CadApp) -> Result<String, JsValue> {
         let value = app.run("qsave", json!({})).map_err(error)?;
-        value.get("requestId").and_then(serde_json::Value::as_str).map(str::to_string).ok_or_else(|| error("qsave did not create a real provider choice"))
+        value
+            .get("requestId")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| error("qsave did not create a real provider choice"))
     }
     fn captured_save(&self, app: &mut CadApp) -> Result<String, JsValue> {
         let request = self.choose(app)?;

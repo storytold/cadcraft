@@ -261,7 +261,6 @@ fn capture_target_must_belong_to_its_snapshot_aliases() {
     assert!(!h.pending_for(u64::MAX));
 }
 
-
 #[test]
 fn failed_save_delivery_has_a_bounded_inbox_and_keeps_all_captured_aliases() {
     let h = host();

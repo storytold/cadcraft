@@ -44,7 +44,6 @@ fn device_result_is_terminal_without_claiming_durable_storage() {
     assert!(app.file_providers.bound_document("drawing-1").is_none());
 }
 
-
 #[test]
 fn real_dxf_delivery_failure_preserves_the_owned_drawing_and_later_edits_through_retry() {
     let mut app = CadApp::new(Session::new(), crate::Services::default());
