@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::*;
 use cadcraft_geom::Vec3;
-use cadcraft_io::{read_dxf, write_dxf};
+use cadcraft_io::{SaveOptions, Version, read_dxf, write_dxf, write_with};
 
 fn attrib(tag: &str, modes: AttribModes) -> Attrib {
     let text = Text {
@@ -28,6 +28,10 @@ const LOCKED: AttribModes = AttribModes { verify: false, preset: false, lock_pos
 
 /// Block TAG with definitions A (every mode) and B (none), and a reference whose A is locked.
 fn drawing() -> Drawing {
+    drawing_c(false)
+}
+
+fn drawing_c(constant: bool) -> Drawing {
     let mut d = Drawing::new_metric();
     let mut b = Block::new("TAG");
     for a in [attrib("A", ALL), attrib("B", AttribModes::default())] {
@@ -40,7 +44,7 @@ fn drawing() -> Drawing {
         insert: Vec3::ZERO,
         scale: Vec3::new(1.0, 1.0, 1.0),
         rotation: 0.0,
-        attribs: vec![attrib("A", LOCKED), attrib("B", AttribModes::default())],
+        attribs: vec![Attrib { constant, ..attrib("A", LOCKED) }, attrib("B", AttribModes::default())],
         cols: 1,
         rows: 1,
         col_spacing: 0.0,
@@ -112,4 +116,28 @@ fn a_280_before_the_tag_is_the_version_not_lock_position() {
         })
         .collect();
     assert!(!modes(&read_dxf(text.as_bytes()).expect("read")).0[0].lock_position);
+}
+
+/// The Constant mode (flag 2) of an ATTRIB attached to an INSERT, not only of an ATTDEF (#2246).
+#[test]
+fn constant_attached_attrib_survives_dxf_and_dwg() {
+    let d = drawing_c(true);
+    let constants = |d: &Drawing| -> Vec<bool> {
+        d.model
+            .iter()
+            .find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.attribs.iter().map(|a| a.constant).collect()) } else { None })
+            .unwrap_or_default()
+    };
+    assert_eq!(constants(&d), [true, false]);
+    let dxf = cadcraft_io::write(&d, "x.dxf").expect("dxf");
+    assert_eq!(constants(&cadcraft_io::read(&dxf, "x.dxf").expect("read dxf")), [true, false], "dxf");
+    let dwg = cadcraft_io::write(&d, "x.dwg").expect("dwg");
+    assert_eq!(constants(&cadcraft_io::read(&dwg, "x.dwg").expect("read dwg")), [true, false], "dwg");
+    // Every save version, in both DXF encodings and in DWG.
+    for version in Version::ALL {
+        for (name, binary) in [("x.dxf", false), ("x.dxf", true), ("x.dwg", false)] {
+            let bytes = write_with(&d, name, &SaveOptions { version: Some(version), binary }).expect("write");
+            assert_eq!(constants(&cadcraft_io::read(&bytes, name).expect("read")), [true, false], "{version:?} {name} binary={binary}");
+        }
+    }
 }

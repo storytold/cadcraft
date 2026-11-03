@@ -69,6 +69,42 @@ pub fn decode_code_page(bytes: &[u8], code_page: &str) -> Option<String> {
     decoder(code_page).map(|d| decode(bytes, d).into_owned())
 }
 
+/// The code page a pre-2007 file's text is written in, or `None` for pure ASCII with escapes:
+/// when CADCraft doesn't know `code_page`, and for `ASCII` (the reader takes such files as
+/// Windows-1252, but a writer must keep them ASCII) and `UTF8`/`UNICODE`, which no pre-2007
+/// reader expects.
+pub(crate) fn encoder(code_page: &str) -> Option<Decoder> {
+    if code_page.trim().eq_ignore_ascii_case("ASCII") {
+        return None;
+    }
+    decoder(code_page).filter(|d| !matches!(d, Decoder::Utf8))
+}
+
+/// Append the bytes of the non-ASCII character `c` in the code page `d`, and return true, when
+/// the code page has it; otherwise append nothing and return false (the caller escapes it).
+pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
+    let mut buf = [0; 4];
+    match d {
+        // Not a pre-2007 code page ([`encoder`] never gives it): escaped.
+        Decoder::Utf8 => return false,
+        Decoder::Encoding(e) => {
+            let (bytes, _, unmappable) = e.encode(c.encode_utf8(&mut buf));
+            // A code page byte that is ASCII would read back as another character, and a NUL,
+            // CR or LF would break the group, so only all-high-bit sequences or proper double-byte
+            // characters are kept (their trail byte may be ASCII, as in Shift-JIS).
+            if unmappable || bytes.is_empty() || !bytes.first().is_some_and(|b| *b >= 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+                return false;
+            }
+            out.extend_from_slice(&bytes);
+        }
+        Decoder::Table(t) => {
+            let Some(i) = t.iter().position(|&x| x == c).and_then(|i| u8::try_from(i).ok()) else { return false };
+            out.push(0x80 | i);
+        }
+    }
+    true
+}
+
 /// Decode bytes with a decoder. UTF-8 that isn't valid falls back to Windows-1252.
 pub(crate) fn decode(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
     match d {

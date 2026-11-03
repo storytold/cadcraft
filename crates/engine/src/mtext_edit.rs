@@ -136,11 +136,9 @@ impl Formatted {
                     i += 2;
                     match code {
                         None => {}
-                        Some('P') => {
-                            if f.paras.len() < MAX_PARAS {
-                                f.push_char('\n', &cur);
-                                f.paras.push(props.clone());
-                            }
+                        Some('P') if f.paras.len() < MAX_PARAS => {
+                            f.push_char('\n', &cur);
+                            f.paras.push(props.clone());
                         }
                         Some(c @ ('\\' | '{' | '}')) => f.push_char(c, &cur),
                         Some('L') => cur.underline = true,

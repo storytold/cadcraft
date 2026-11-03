@@ -156,7 +156,7 @@ fn mesh_shared(g: &TextGlyph, key: Key, detail: Detail) -> Arc<Mesh> {
     let contours = ttf::glyph_contours(&g.face, g.gid);
     let points = contours.iter().map(Vec::len).try_fold(0usize, usize::checked_add);
     // Font data is untrusted; don't hand unbounded or invalid paths to the tessellator.
-    if !points.is_some_and(|n| n <= MAX_POINTS) || contours.iter().flatten().any(|p| !p.is_finite() || p.x.abs().max(p.y.abs()) > 1.0e6) {
+    if points.is_none_or(|n| n > MAX_POINTS) || contours.iter().flatten().any(|p| !p.is_finite() || p.x.abs().max(p.y.abs()) > 1.0e6) {
         return Arc::new(Mesh { contours: Arc::default(), triangles: Vec::new() });
     }
     let contours = match detail {
