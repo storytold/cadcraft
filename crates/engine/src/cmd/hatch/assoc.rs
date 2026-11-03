@@ -129,12 +129,17 @@ pub(crate) fn detach(h: &mut Hatch) {
 }
 
 /// Point the loops of a copied hatch at the copies of its objects, when every object of every
-/// loop was copied with it (`map`: original handle to copy). Returns whether it did; a hatch
-/// copied without all of its objects keeps its sources, and [`update`] ends its link.
+/// loop was copied with it (`map`: original handle to copy). A hatch copied with only some of its
+/// objects is detached. Returns whether `h` changed; a hatch copied without any of its objects
+/// keeps its sources, and [`update`] keeps its link only where those objects still enclose it.
 pub(crate) fn remap_sources(h: &mut Hatch, map: &HashMap<Handle, Handle>) -> bool {
     let srcs = || h.loops.iter().flat_map(|l| &l.sources);
-    if !h.associative || srcs().next().is_none() || !srcs().all(|s| map.contains_key(s)) {
+    if !h.associative || srcs().next().is_none() || !srcs().any(|s| map.contains_key(s)) {
         return false;
+    }
+    if !srcs().all(|s| map.contains_key(s)) {
+        detach(h);
+        return true;
     }
     for l in &mut h.loops {
         for s in &mut l.sources {

@@ -191,6 +191,33 @@ fn copying_the_hatch_with_part_of_its_boundary_ends_the_copys_link() {
 }
 
 #[test]
+fn mirroring_the_hatch_onto_itself_with_part_of_its_boundary_ends_the_copys_link() {
+    let mut s = Session::new();
+    let (ls, h) = square_of_lines(&mut s);
+    let sel = vec![ls[0].clone(), ls[1].clone(), ls[2].clone(), h.clone()];
+    let out = handles(&s.execute("mirror", &json!({ "handles": sel, "p1": [5, 0], "p2": [5, 10] })).unwrap());
+    let ch = hatch(&s, &out[3]);
+    assert!(!ch.associative, "a copy made with part of its boundary keeps no link, even where the original boundary still encloses it");
+    assert!(sorted_sources(&ch).is_empty());
+    assert!(hatch(&s, &h).associative);
+}
+
+#[test]
+fn copying_a_selection_that_names_an_object_twice_copies_it_once() {
+    let mut s = Session::new();
+    let (mut ls, h) = square_of_lines(&mut s);
+    ls.push(h);
+    let twice: Vec<String> = ls.iter().chain(ls.iter()).cloned().collect();
+    let out = handles(&s.execute("copy", &json!({ "handles": twice, "delta": [30, 0] })).unwrap());
+    assert_eq!(out.len(), 5, "one copy per object");
+    let ch = hatch(&s, &out[4]);
+    assert!(ch.associative);
+    let mut want = out[..4].to_vec();
+    want.sort();
+    assert_eq!(sorted_sources(&ch), want);
+}
+
+#[test]
 fn copying_the_hatch_with_its_boundary_twice_links_each_copy_to_its_own_lines() {
     let mut s = Session::new();
     let (mut ls, h) = square_of_lines(&mut s);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_doc::EntityKind;
 use cadcraft_geom::Vec3;
@@ -28,8 +28,8 @@ pub(crate) fn at_elevation(s: &Session, p: Vec2) -> Vec3 {
     Vec3::new(p.x, p.y, z.unwrap_or(0.0))
 }
 
-/// Apply `edit` to each of `hs` still in the drawing, or to a copy of each when `copy`; an object
-/// on a locked layer is left alone unless it is copied. The handles edited or made.
+/// Apply `edit` once to each of `hs` still in the drawing, or to one copy of each when `copy`; an
+/// object on a locked layer is left alone unless it is copied. The handles edited or made.
 fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut Entity)) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
     let mut out = Vec::new();
@@ -37,7 +37,11 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
     // its boundary follows the copied boundary.
     let mut copies: HashMap<Handle, Handle> = HashMap::new();
     let mut hatches = Vec::new();
+    let mut seen = HashSet::new();
     for h in hs {
+        if !seen.insert(*h) {
+            continue;
+        }
         let Some(sp) = d.space_of(*h) else { continue };
         if copy {
             let Some(e) = d.entity(*h).map(|e| (**e).clone()) else { continue };
