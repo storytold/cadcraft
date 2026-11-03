@@ -295,7 +295,7 @@
 	Enter a vertex editing option	შეიყვანეთ წვეროს რედაქტირების ვარიანტი
 	Enter an option	შეიყვანეთ ვარიანტი
 	Enter angle of xline	შეიყვანეთ დამხმარე ხაზის კუთხე
-	Enter angle of xline (0) or	შეიყვანეთ დამხმარე ხაზის კუთხე (0) ან
+	Enter angle of xline (0)	შეიყვანეთ დამხმარე ხაზის კუთხე (0)
 	Enter area of rectangle in current units	შეიყვანეთ მართკუთხედის ფართობი მიმდინარე ერთეულებში
 	Enter attribute prompt	შეიყვანეთ ატრიბუტის მოთხოვნა
 	Enter attribute tag name	შეიყვანეთ ატრიბუტის ტეგის სახელი
@@ -306,7 +306,7 @@
 	Enter default attribute value	შეიყვანეთ ატრიბუტის ნაგულისხმევი მნიშვნელობა
 	Enter degree of spline	შეიყვანეთ სპლაინის ხარისხი
 	Enter delta angle	შეიყვანეთ კუთხის ნამატი
-	Enter delta length or	შეიყვანეთ სიგრძის ნამატი ან
+	Enter delta length	შეიყვანეთ სიგრძის ნამატი
 	Enter dimension text	შეიყვანეთ ზომის ტექსტი
 	Enter dimension text (<> = measurement)	შეიყვანეთ ზომის ტექსტი (<> = გაზომილი მნიშვნელობა)
 	Enter dimension value or [name=expression]	შეიყვანეთ ზომის მნიშვნელობა ან [name=expression]
@@ -813,8 +813,8 @@
 	Select an arc or circle	მონიშნეთ რკალი ან წრე
 	Select an arc.	მონიშნეთ რკალი.
 	Select an object	მონიშნეთ ობიექტი
-	Select an object to change or	მონიშნეთ შესაცვლელი ობიექტი ან
-	Select an object to measure or	მონიშნეთ გასაზომი ობიექტი ან
+	Select an object to change	მონიშნეთ შესაცვლელი ობიექტი
+	Select an object to measure	მონიშნეთ გასაზომი ობიექტი
 	Select an object.	მონიშნეთ ობიექტი.
 	Select an open curve.	მონიშნეთ ღია მრუდი.
 	Select an open line, arc, polyline, ellipse arc or spline.	მონიშნეთ ღია ხაზი, რკალი, ტეხილი, ელიფსური რკალი ან სპლაინი.
@@ -828,9 +828,8 @@
 	Select first line	მონიშნეთ პირველი ხაზი
 	Select first line or arc	მონიშნეთ პირველი ხაზი ან რკალი
 	Select first object	მონიშნეთ პირველი ობიექტი
-	Select first object or	მონიშნეთ პირველი ობიექტი ან
 	Select first point	მონიშნეთ პირველი წერტილი
-	Select nested objects to copy or	მონიშნეთ ჩადგმული ობიექტები კოპირებისთვის ან
+	Select nested objects to copy	მონიშნეთ ჩადგმული ობიექტები კოპირებისთვის
 	Select object	მონიშნეთ ობიექტი
 	Select object to dimension	მონიშნეთ ობიექტი ზომის დასატანად
 	Select object to divide	მონიშნეთ დასაყოფი ობიექტი
@@ -851,7 +850,7 @@
 	Select one polyline (Multiple is available through the JSON form).	მონიშნეთ ერთი ტეხილი (Multiple ხელმისაწვდომია JSON ფორმით).
 	Select path curve	მონიშნეთ ტრაექტორიის მრუდი
 	Select point or object	მონიშნეთ წერტილი ან ობიექტი
-	Select polyline or	მონიშნეთ ტეხილი ან
+	Select polyline	მონიშნეთ ტეხილი
 	Select second line	მონიშნეთ მეორე ხაზი
 	Select second line or shift-select to apply corner	მონიშნეთ მეორე ხაზი, ან Shift-ით მონიშნეთ კუთხის შესაქმნელად
 	Select second object	მონიშნეთ მეორე ობიექტი
@@ -911,9 +910,8 @@
 	Specify axis endpoint of ellipse	მიუთითეთ ელიფსის ღერძის ბოლო წერტილი
 	Specify base diameter	მიუთითეთ ფუძის დიამეტრი
 	Specify base point	მიუთითეთ საბაზო წერტილი
-	Specify base point or	მიუთითეთ საბაზო წერტილი ან
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	მიუთითეთ საბაზო წერტილი ან წანაცვლება (რეალურ დროში პანორამისთვის გადაათრიეთ მაუსის შუა ღილაკით)
-	Specify base radius or	მიუთითეთ ფუძის რადიუსი ან
+	Specify base radius	მიუთითეთ ფუძის რადიუსი
 	Specify center of donut	მიუთითეთ რგოლის ცენტრი
 	Specify center of ellipse	მიუთითეთ ელიფსის ცენტრი
 	Specify center of polygon	მიუთითეთ მრავალკუთხედის ცენტრი
@@ -955,7 +953,7 @@
 	Specify first point on circle: _tan to	მიუთითეთ პირველი წერტილი წრეზე: _tan to
 	Specify first source point	მიუთითეთ პირველი საწყისი წერტილი
 	Specify height	მიუთითეთ სიმაღლე
-	Specify helix height or	მიუთითეთ სპირალის სიმაღლე ან
+	Specify helix height	მიუთითეთ სპირალის სიმაღლე
 	Specify included angle	მიუთითეთ შიგა კუთხე
 	Specify insertion base point	მიუთითეთ ჩასმის საბაზო წერტილი
 	Specify insertion point	მიუთითეთ ჩასმის წერტილი
@@ -1038,7 +1036,6 @@
 	Specify new width for all segments	მიუთითეთ ახალი სიგანე ყველა სეგმენტისთვის
 	Specify next point	მიუთითეთ შემდეგი წერტილი
 	Specify offset distance	მიუთითეთ წანაცვლების მანძილი
-	Specify offset distance or	მიუთითეთ წანაცვლების მანძილი ან
 	Specify opposite corner	მიუთითეთ მოპირდაპირე კუთხე
 	Specify other corner point	მიუთითეთ მეორე კუთხის წერტილი
 	Specify other endpoint of axis	მიუთითეთ ღერძის მეორე ბოლო წერტილი
@@ -1051,7 +1048,6 @@
 	Specify radius of circle	მიუთითეთ წრის რადიუსი
 	Specify rotation angle	მიუთითეთ შემობრუნების კუთხე
 	Specify rotation angle of text	მიუთითეთ ტექსტის შემობრუნების კუთხე
-	Specify rotation angle or	მიუთითეთ შემობრუნების კუთხე ან
 	Specify scale factor	მიუთითეთ მასშტაბის კოეფიციენტი
 	Specify second angle endpoint	მიუთითეთ კუთხის მეორე ბოლო წერტილი
 	Specify second break point	მიუთითეთ გაწყვეტის მეორე წერტილი
@@ -1084,9 +1080,9 @@
 	Specify third source point or <continue>	მიუთითეთ მესამე საწყისი წერტილი ან <გაგრძელება>
 	Specify through point	მიუთითეთ გავლის წერტილი
 	Specify top diameter	მიუთითეთ ზედა დიამეტრი
-	Specify top radius or	მიუთითეთ ზედა რადიუსი ან
+	Specify top radius	მიუთითეთ ზედა რადიუსი
 	Specify total angle	მიუთითეთ სრული კუთხე
-	Specify total length or	მიუთითეთ სრული სიგრძე ან
+	Specify total length	მიუთითეთ სრული სიგრძე
 	Specify width for rectangles	მიუთითეთ მართკუთხედების სიგანე
 	Sphere	სფერო
 	Spline	სპლაინი
@@ -1267,8 +1263,8 @@
 	Stretch Vertex	წვეროს გაწელვა
 	Edit Array	მასივის რედაქტირება
 	Save changes to {name}?	შევინახო ცვლილებები ნახაზში {name}?
-	Save changes to block "{name}"?	შევინახო ცვლილებები ბლოკში „{name}“?
 	Your changes will be lost if you don't save them.	თუ ცვლილებებს არ შეინახავთ, ისინი დაიკარგება.
+	Save changes to block "{name}"?	შევინახო ცვლილებები ბლოკში „{name}“?
 	Don't Save	არ შეინახო
 	Close Array Editing	მასივის რედაქტირების დახურვა
 	Multiline...	მულტიხაზი...
@@ -1297,6 +1293,8 @@
 	Automatic save every	ავტომატური შენახვა ყოველ
 	min	წთ
 	Automatic save file location	ავტომატური შენახვის ფაილის მდებარეობა
+	Backup copy	სარეზერვო ასლი
+	Create backup copy with each save	სარეზერვო ასლის შექმნა ყოველი შენახვისას
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	ჯერ ფაილის არმქონე ნახაზები ნაგულისხმევ ვერსიაში ინახება. 0 წუთი ავტომატურ შენახვას გამორთავს.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	დროზე დამოკიდებული მარჯვენა დაწკაპება: მოკლე დაწკაპება Enter-ია, დაჭერით გაიხსნება მენიუ
 	Turned off, a right-click while a command runs always opens the shortcut menu.	გამორთვისას ბრძანების შესრულების დროს მარჯვენა დაწკაპება ყოველთვის კონტექსტურ მენიუს ხსნის.
@@ -1458,3 +1456,19 @@ menu	View	ხედი
 	First corner	პირველი კუთხე
 	Opposite corner	საპირისპირო კუთხე
 	Window <	ფანჯარა <
+	Oops	წაშლილის აღდგენა
+	Change	შეცვლა
+	Change Properties	თვისებების შეცვლა
+	Units	ერთეულები
+	Find All	ყველას ძებნა
+	Find what:	რა მოიძებნოს:
+	Match case	რეგისტრის გათვალისწინება
+	Replace	ჩანაცვლება
+	Replace All	ყველას ჩანაცვლება
+	Replace with:	ჩანაცვლება:
+	Replacement text	ჩამნაცვლებელი ტექსტი
+	Results	შედეგები
+	Searches the current space.	ძიება მიმდინარე სივრცეში.
+	Text to find	მოსაძებნი ტექსტი
+	Whole words	მთლიანი სიტყვები
+	Nothing found	ვერაფერი მოიძებნა
