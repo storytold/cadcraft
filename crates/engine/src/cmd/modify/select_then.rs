@@ -94,6 +94,9 @@ impl SelectThen {
                 let what = match h.and_then(|h| d.entity(h)).map(|e| &e.kind) {
                     Some(EntityKind::Spline(_)) => "spline",
                     Some(EntityKind::Ellipse(_)) => "ellipse",
+                    Some(EntityKind::Line(_)) => "line",
+                    Some(EntityKind::Arc(_)) => "arc",
+                    Some(EntityKind::Circle(_)) => "circle",
                     _ => "polyline",
                 };
                 s.echo(format!("{n} objects joined into 1 {what}"))
