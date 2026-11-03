@@ -1450,3 +1450,15 @@ menu	Modify	Ändra
 	Could not check for updates.	Det gick inte att söka efter uppdateringar.
 	Check for Updates	Sök efter uppdateringar
 	Release updates are disabled for this development build.	Versionsuppdateringar är inaktiverade för det här utvecklingsbygget.
+	Find All	Find All
+	Find what:	Find what:
+	Match case	Match case
+	Replace	Replace
+	Replace All	Replace All
+	Replace with:	Replace with:
+	Replacement text	Replacement text
+	Results	Results
+	Searches the current space.	Searches the current space.
+	Text to find	Text to find
+	Whole words	Whole words
+	Nothing found	Nothing found

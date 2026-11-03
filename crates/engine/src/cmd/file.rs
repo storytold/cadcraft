@@ -440,7 +440,8 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if is_drawing_file(path) && crate::autosave::isavebak() {
+        // A file in a folder still to be made has nothing to back up.
+        if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
                 .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
         }
@@ -609,9 +610,7 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     let mut src = match std::fs::File::open(path) {
         Ok(f) if f.metadata()?.is_file() => f,
         Ok(_) => return Ok(()),
-        // No file there, or a file where a folder of the path should be: nothing to back up, and
-        // the write that follows names the folder it could not make (#2260).
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     };
     let (head, tail, len) = ends(&mut src)?;
