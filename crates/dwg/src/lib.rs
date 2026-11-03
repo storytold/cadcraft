@@ -119,6 +119,24 @@ mod native {
         }))
         .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
+            // A drawing whose ASCII DXF passes the limit (a site plan held in huge
+            // block definitions) is tried again as binary DXF, which holds the same data in far
+            // fewer bytes and which the DXF reader reads as well. Drawings under the limit never
+            // take this path, so they read exactly as before.
+            out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
+            let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new_binary(&doc).write_to_writer(&mut out)))
+                .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+            if !out.exceeded {
+                written.map_err(|e| format!("DWG→DXF: {e}"))?;
+                notes.push(format!(
+                    "DWG: read through binary DXF ({}), its text form being larger than the {} limit",
+                    mb(out.buf.len() as u64),
+                    mb(limits.max_dxf_bytes as u64)
+                ));
+                return Ok((out.buf, notes));
+            }
+        }
+        if out.exceeded {
             return Err(format!(
                 "DWG: converting this {} file produced more than {} of drawing data (the limit); \
                  the file is probably damaged, or uses objects the DWG reader misreads",

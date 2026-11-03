@@ -1016,6 +1016,31 @@ fn ac1024_dwg_with_many_entities_opens() {
     assert_eq!(d.entity_count(), n);
 }
 
+/// A DWG whose text DXF passes the limit (a site plan held in huge blocks: a 317 MB drawing
+/// whose DXF is 1.7 GB) opens through binary DXF, with every entity and a note.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_dwg_too_large_as_text_dxf_reads_through_binary_dxf() {
+    let dwg = ac1024_dwg(3000);
+    let text = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
+    // A limit the text form passes but the binary form fits: the text form is written before
+    // the header variables are added, so step down from below its final size.
+    let (binary, notes) = (5..10)
+        .rev()
+        .find_map(|tenths| {
+            let limits = cadcraft_dwg::Limits { max_dxf_bytes: text.len() * tenths / 10, ..cadcraft_dwg::Limits::DEFAULT };
+            cadcraft_dwg::dwg_to_dxf_noted(&dwg, limits).ok().filter(|(_, notes)| notes.iter().any(|n| n.contains("binary DXF")))
+        })
+        .expect("some limit between half and all of the text DXF reads through binary DXF");
+    assert!(binary.starts_with(b"AutoCAD Binary DXF\r\n\x1a\0"), "binary DXF");
+    assert!(binary.len() < text.len(), "{} < {}", binary.len(), text.len());
+    assert!(notes.iter().any(|n| n.contains("binary DXF")), "{notes:?}");
+    let from_text = read_dxf(&text).unwrap();
+    let from_binary = read_dxf(&binary).unwrap();
+    assert_eq!(from_binary.entity_count(), from_text.entity_count());
+    assert!(from_text.entity_count() == 3000);
+}
+
 /// Issue #57: oversized input is rejected early, with a message naming the limit, never a panic.
 /// A conversion that runs away (a damaged or misread DWG can make the reader produce a drawing
 /// thousands of times larger than the file) stops at the DXF size limit instead of filling memory
@@ -1027,10 +1052,12 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     let dwg = ac1024_dwg(3000);
     let full = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().len();
     assert!(full > 400_000, "{full}");
-    let limits = cadcraft_dwg::Limits { max_dxf_bytes: 300_000, ..cadcraft_dwg::Limits::DEFAULT };
+    // Past the limit as text, the DWG is read through binary DXF instead; only
+    // when that is too large as well does the read fail.
+    let limits = cadcraft_dwg::Limits { max_dxf_bytes: 2_000, ..cadcraft_dwg::Limits::DEFAULT };
     let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
     assert!(e.starts_with("DWG: converting this 0."), "{e}");
-    assert!(e.contains("MB file produced more than 0.3 MB of drawing data (the limit)"), "{e}");
+    assert!(e.contains("MB file produced more than 0.0 MB of drawing data (the limit)"), "{e}");
 
     let limits = cadcraft_dwg::Limits { max_dwg_bytes: 100_000, ..cadcraft_dwg::Limits::DEFAULT };
     let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
