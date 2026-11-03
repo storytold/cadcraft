@@ -1027,3 +1027,21 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	3D Mouse	3D-мышь
+	Buttons	Кнопки
+	Button {n}	Кнопка {n}
+	Calibrate	Калибровать
+	Enable 3D mouse navigation	Включить навигацию 3D-мышью
+	Move sideways to pan; push/pull or twist to zoom.	Сместите в сторону для панорамирования; нажмите, потяните или поверните для масштабирования.
+	Pan sensitivity	Чувствительность панорамирования
+	Parameters, set through the ui.spacemouse control method	Параметры задаются через метод управления ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Нажмите кнопку на устройстве, чтобы найти строку этой кнопки. Кнопка «Калибровать» всегда доступна здесь.
+	Reset all bindings	Сбросить все назначения
+	Reset	Сбросить
+	Restore this button's default	Восстановить назначение кнопки по умолчанию
+	Reverse left/right pan	Инвертировать панорамирование влево/вправо
+	Reverse up/down pan	Инвертировать панорамирование вверх/вниз
+	Reverse zoom direction	Инвертировать направление масштабирования
+	Search commands	Поиск команд
+	Zoom sensitivity	Чувствительность масштабирования

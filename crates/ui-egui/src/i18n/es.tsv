@@ -1267,3 +1267,14 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Botones
+	Button {n}	Botón {n}
+	Parameters, set through the ui.spacemouse control method	Parámetros, definidos mediante el método de control ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Pulsa un botón del dispositivo para encontrar su fila. Calibrar siempre está disponible aquí.
+	Reset all bindings	Restablecer todas las asignaciones
+	Reset	Restablecer
+	Restore this button's default	Restaurar la asignación predeterminada del botón
+	Reverse left/right pan	Invertir encuadre izquierda/derecha
+	Reverse up/down pan	Invertir encuadre arriba/abajo
+	Search commands	Buscar comandos

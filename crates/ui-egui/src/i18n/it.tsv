@@ -1376,3 +1376,14 @@ menu	Modify	Edita
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Pulsanti
+	Button {n}	Pulsante {n}
+	Parameters, set through the ui.spacemouse control method	Parametri, impostati tramite il metodo di controllo ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Premere un pulsante del dispositivo per trovare la sua riga. Il pulsante Calibra è sempre disponibile qui.
+	Reset all bindings	Ripristina tutte le assegnazioni
+	Reset	Ripristina
+	Restore this button's default	Ripristina l'assegnazione predefinita del pulsante
+	Reverse left/right pan	Inverti il pan sinistra/destra
+	Reverse up/down pan	Inverti il pan su/giù
+	Search commands	Cerca comandi

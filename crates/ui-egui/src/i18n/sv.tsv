@@ -1480,3 +1480,14 @@ menu	Modify	Ändra
 	The current file is kept as {name} until the next save.	Den aktuella filen sparas som {name} till nästa sparande.
 	This format can't keep these objects yet: {objects}.	Det här formatet kan ännu inte behålla följande objekt: {objects}.
 	{count} more types	{count} typer till
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Knappar
+	Button {n}	Knapp {n}
+	Parameters, set through the ui.spacemouse control method	Parametrar, anges via styrmetoden ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Tryck på en knapp på enheten för att hitta dess rad. Kalibrera finns alltid kvar här.
+	Reset all bindings	Återställ alla tilldelningar
+	Reset	Återställ
+	Restore this button's default	Återställ knappens standardtilldelning
+	Reverse left/right pan	Vänd panorering vänster/höger
+	Reverse up/down pan	Vänd panorering upp/ned
+	Search commands	Sök kommandon

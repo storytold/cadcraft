@@ -1466,3 +1466,14 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	按钮
+	Button {n}	按钮 {n}
+	Parameters, set through the ui.spacemouse control method	参数，通过 ui.spacemouse 控制方法设置
+	Press a device button to find its row. Calibrate always stays available here.	按下设备上的按钮即可找到对应行。此处始终可使用“校准”。
+	Reset all bindings	重置所有绑定
+	Reset	重置
+	Restore this button's default	恢复此按钮的默认设置
+	Reverse left/right pan	反转左右平移
+	Reverse up/down pan	反转上下平移
+	Search commands	搜索命令

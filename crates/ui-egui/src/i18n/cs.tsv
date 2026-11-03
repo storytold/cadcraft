@@ -1236,3 +1236,21 @@ menu	Modify	Modifikace
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	3D Mouse	3D myš
+	Buttons	Tlačítka
+	Button {n}	Tlačítko {n}
+	Calibrate	Kalibrovat
+	Enable 3D mouse navigation	Zapnout navigaci 3D myší
+	Move sideways to pan; push/pull or twist to zoom.	Posunem do stran posouváte pohled; zatlačením, zatažením nebo otočením měníte přiblížení.
+	Pan sensitivity	Citlivost posunu pohledu
+	Parameters, set through the ui.spacemouse control method	Parametry, nastavují se pomocí řídicí metody ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Stiskněte tlačítko na zařízení a najdete jeho řádek. Tlačítko Kalibrovat je tu vždy k dispozici.
+	Reset all bindings	Obnovit všechna přiřazení
+	Reset	Obnovit
+	Restore this button's default	Obnovit výchozí přiřazení tlačítka
+	Reverse left/right pan	Obrátit posun pohledu vlevo/vpravo
+	Reverse up/down pan	Obrátit posun pohledu nahoru/dolů
+	Reverse zoom direction	Obrátit směr přiblížení
+	Search commands	Hledat příkazy
+	Zoom sensitivity	Citlivost přiblížení

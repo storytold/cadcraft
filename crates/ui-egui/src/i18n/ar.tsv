@@ -1380,3 +1380,14 @@ menu	View	عرض
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	الأزرار
+	Button {n}	الزر {n}
+	Parameters, set through the ui.spacemouse control method	المعلمات، تُضبط عبر أسلوب التحكم ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	اضغط زراً في الجهاز للعثور على صفه. تبقى «معايرة» متاحة هنا دائماً.
+	Reset all bindings	إعادة تعيين كل الارتباطات
+	Reset	إعادة تعيين
+	Restore this button's default	استعادة الإعداد الافتراضي لهذا الزر
+	Reverse left/right pan	عكس الإزاحة لليسار/لليمين
+	Reverse up/down pan	عكس الإزاحة لأعلى/لأسفل
+	Search commands	البحث في الأوامر
