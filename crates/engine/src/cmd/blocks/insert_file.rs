@@ -114,7 +114,7 @@ pub(super) fn define_from(s: &mut Session, src: &Drawing, name: &str, only_neede
     let name = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
     let own_dim_styles = names_of(&d, Kind::Dimstyles);
     merge_tables(&mut d, src);
-    let mut renames = block_names(&d, src, &name);
+    let mut renames = crate::cmd::merge::block_renames(&d, src, Some(&name));
     if only_needed {
         // The other blocks of the file are not copied at all.
         let need = needed_blocks(src);
@@ -274,13 +274,7 @@ fn drop_unused_pass(d: &mut Drawing, before: &TableNames, keep: &str) -> bool {
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that
 /// exists keeps this drawing's definition).
 fn merge_tables(d: &mut Drawing, src: &Drawing) {
-    fn merge<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
-        for t in theirs {
-            if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
-            }
-        }
-    }
+    use crate::cmd::merge::merge_named as merge;
     merge(&mut d.layers, &src.layers, |l| &l.name);
     merge(&mut d.linetypes, &src.linetypes, |l| &l.name);
     merge(&mut d.text_styles, &src.text_styles, |t| &t.name);
@@ -288,35 +282,6 @@ fn merge_tables(d: &mut Drawing, src: &Drawing) {
     merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name);
     merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
     merge(&mut d.mline_styles, &src.mline_styles, |t| &t.name);
-}
-
-/// Which source blocks to copy, and under which name: new names keep theirs, generated
-/// (anonymous `*…`) blocks that collide get a fresh generated name, and a named block this drawing
-/// already has (or the block being defined) keeps this drawing's definition (not copied).
-fn block_names(d: &Drawing, src: &Drawing, defining: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let mut taken: BTreeSet<String> = d.blocks.keys().map(|k| k.to_ascii_uppercase()).collect();
-    taken.insert(defining.to_ascii_uppercase());
-    for (name, b) in &src.blocks {
-        let upper = name.to_ascii_uppercase();
-        if upper.starts_with("*MODEL_SPACE") || upper.starts_with("*PAPER_SPACE") {
-            continue;
-        }
-        let to = if !taken.contains(&upper) {
-            name.clone()
-        } else if b.anonymous || name.starts_with('*') {
-            let prefix: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
-            match (1..=1_000_000).map(|i| format!("{prefix}{i}")).find(|n| !taken.contains(&n.to_ascii_uppercase())) {
-                Some(n) => n,
-                None => continue,
-            }
-        } else {
-            continue;
-        };
-        taken.insert(to.to_ascii_uppercase());
-        out.insert(name.clone(), to);
-    }
-    out
 }
 
 /// The names the copied source blocks take, found as `Drawing::block` finds a block: a reference
