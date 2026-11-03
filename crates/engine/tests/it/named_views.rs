@@ -46,7 +46,7 @@ fn typed_save_restore_list_delete() {
     // Saving is an undo step; a view change is not.
     set_view(&mut s, 0.0, 0.0, 500.0);
     typed(&mut s, &["view", "r", "front"]);
-    assert_eq!(view(&s), View { center: Vec2::new(10.0, 20.0), height: 30.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(10.0, 20.0), height: 30.0, twist: 0.0 });
     // Zoom Previous goes back to the view before the restore.
     s.execute("zoom.previous", &json!({})).unwrap();
     assert_eq!(view(&s).height, 500.0);
@@ -112,7 +112,7 @@ fn paper_space_view_switches_to_its_layout() {
     s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
     s.execute("view", &json!({ "option": "restore", "name": "Sheet" })).unwrap();
     assert_eq!(s.layout_space(), Space::Paper(layout));
-    assert_eq!(view(&s), View { center: Vec2::new(5.0, 4.0), height: 6.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(5.0, 4.0), height: 6.0, twist: 0.0 });
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn zoom_realtime_drags_and_enter_ends() {
     assert_eq!(view(&s).height, 100.0);
     // The JSON form zooms by a factor about the centre.
     s.execute("zoom.realtime", &json!({ "factor": 4 })).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::ZERO, height: 25.0 });
+    assert_eq!(view(&s), View { center: Vec2::ZERO, height: 25.0, twist: 0.0 });
 }
 
 #[test]
@@ -158,10 +158,10 @@ fn zoom_dynamic_places_and_sizes_the_view_box() {
     assert!(close(v.height, 40.0), "{v:?}");
     // Zoom Previous skips the overview.
     s.execute("zoom.previous", &json!({})).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0, twist: 0.0 });
     // JSON: like Center.
     s.execute("zoom.dynamic", &json!({ "center": [1, 2], "height": 3 })).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0, twist: 0.0 });
 }
 
 #[test]

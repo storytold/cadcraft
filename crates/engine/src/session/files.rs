@@ -6,7 +6,7 @@ impl Session {
         self.untitled_counter += 1;
         let d = if metric { Drawing::new_metric() } else { Drawing::new_imperial() };
         let mut st = DocState::new(d, &format!("Drawing{}", self.untitled_counter), None);
-        st.set_view_quiet(if metric { View { center: Vec2::new(210.0, 148.5), height: 297.0 } } else { View::default() });
+        st.set_view_quiet(if metric { View { center: Vec2::new(210.0, 148.5), height: 297.0, twist: 0.0 } } else { View::default() });
         self.end_running();
         self.docs.push(st);
         self.active = self.docs.len() - 1;
@@ -18,11 +18,15 @@ impl Session {
     pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
         let mut st = DocState::new(d, title, path);
         let ext = st.doc.extents(&Space::Model);
-        if !ext.is_empty() {
-            st.set_view_quiet(View {
-                center: ext.center(),
-                height: (ext.height().max(ext.width() * self.viewport_px.1 / self.viewport_px.0.max(1.0)) * 1.1).max(1e-6),
-            });
+        // The current tile (the first), or the lone untiled view, keeps its saved twist.
+        let twist =
+            st.doc.vports.iter().find(|c| c.is_active()).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist).rem_euclid(std::f64::consts::TAU);
+        let twist = if twist.is_finite() { twist } else { 0.0 };
+        if ext.is_empty() {
+            st.set_view_quiet(View { twist, ..st.view() });
+        } else {
+            let (center, w, h) = View::twisted_box(ext, twist);
+            st.set_view_quiet(View { center, height: (h.max(w * self.viewport_px.1 / self.viewport_px.0.max(1.0)) * 1.1).max(1e-6), twist });
         }
         self.end_running();
         self.docs.push(st);
