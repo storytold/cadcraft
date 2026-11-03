@@ -117,6 +117,8 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
             _ => {}
         }
     }
+    // Each Copy clones every selected object: the copies together stay within MAXARRAY, as an array's do.
+    crate::cmd::array::check_size(s, ops.iter().filter(|o| matches!(o, Op::Copy(_))).count() as u64, objs.len())?;
     let mut copies = Vec::new();
     for op in ops {
         copies.extend(apply(s, &objs, &mut base, op)?);
