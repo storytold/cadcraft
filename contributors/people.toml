@@ -109,3 +109,8 @@ real_name = "Andrea Brandi"
 
 [people.qinshah]
 sync_github_name = true
+
+[people.whaslbeck]
+real_name = "Walter Haslbeck"
+display_name = "Walter Haslbeck"
+sync_github_name = false
