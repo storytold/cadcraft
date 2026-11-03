@@ -190,6 +190,11 @@ fn reload_unload_path_and_detach() {
     assert_eq!(objects(&s, "site"), 3, "reload reads the file again");
     assert!(s.doc().unwrap().layer("site|Walls").unwrap().frozen);
 
+    // `exact`: a name is literal, so `#` or `*` in it doesn't reach other xrefs.
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": "s#te", "exact": true })).is_err());
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": "*", "exact": true })).is_err());
+    s.execute("-xref", &json!({ "option": "reload", "names": "SITE", "exact": true })).unwrap();
+
     s.execute("-xref", &json!({ "option": "unload", "names": "site" })).unwrap();
     assert_eq!((status(&s, "site"), objects(&s, "site")), (Some(XrefStatus::Unloaded), 0));
     assert!(s.doc().unwrap().block("site|Tree").is_none());
