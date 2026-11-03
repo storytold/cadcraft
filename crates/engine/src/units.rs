@@ -277,7 +277,8 @@ impl AngleSettings {
     }
 
     /// A typed angle size in radians (included angles, sweeps, angles from an axis): a bare
-    /// number in AUNITS, or with an explicit unit: `30d`, `45d30'15"`, `0.5r`, `100g`.
+    /// number in AUNITS, or with an explicit unit: `30d`, `45d30'15"`, `0.5r`, `100g`; a
+    /// surveyor's bearing (`N45dE`, or `N`, `E`, `S`, `W`) is its angle counterclockwise from east.
     pub fn amount(&self, s: &str) -> Option<f64> {
         parse_units(s, self.aunits).map(|(a, _)| a)
     }
@@ -288,20 +289,19 @@ impl AngleSettings {
     }
 
     /// A typed direction in radians counterclockwise from +X: the amount measured from ANGBASE in
-    /// the ANGDIR sense. Surveyor's bearings (`N45dE`) are absolute. The overrides measure from
-    /// +X counterclockwise whatever ANGBASE and ANGDIR say: `<<a` in degrees, `<<<a` in AUNITS.
+    /// the ANGDIR sense, a surveyor's bearing too, as AutoCAD 2024 measures it (`N45dE` with
+    /// ANGBASE 90 and ANGDIR 1 is 45 degrees). The overrides measure from +X counterclockwise
+    /// whatever ANGBASE and ANGDIR say: `<<<a` in AUNITS or as a bearing, `<<a` in degrees only
+    /// (AutoCAD refuses `<<N45dE` and `<<N`).
     pub fn direction(&self, s: &str) -> Option<f64> {
         let t = s.trim();
         if let Some(r) = t.strip_prefix("<<<") {
             return parse_units(r, self.aunits).map(|(a, _)| a);
         }
         if let Some(r) = t.strip_prefix("<<") {
-            return parse_units(r, 0).map(|(a, _)| a);
+            return parse_units(r, 0).filter(|(_, bearing)| !bearing).map(|(a, _)| a);
         }
-        let (a, absolute) = parse_units(t, self.aunits)?;
-        if absolute {
-            return Some(a);
-        }
+        let (a, _) = parse_units(t, self.aunits)?;
         let v = self.angbase + if self.clockwise { -a } else { a };
         v.is_finite().then_some(v)
     }
@@ -328,7 +328,8 @@ pub fn parse_angle(s: &str) -> Option<f64> {
     AngleSettings::default().direction(s)
 }
 
-/// A typed angle in radians and whether it is absolute (a surveyor's bearing).
+/// A typed angle in radians and whether it is a surveyor's bearing (`N45dE`, or `N`, `E`, `S`,
+/// `W`), whose angle is its direction counterclockwise from east.
 fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
     let t = s.trim().to_ascii_lowercase();
     if t.is_empty() {
@@ -339,10 +340,7 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
         (num(r)?, false)
     } else if let Some(g) = t.strip_suffix('g') {
         ((num(g)? * 0.9).to_radians(), false)
-    } else if let Some(b) = bearing(&t) {
-        (b, true)
-    } else if let Some(b) = (aunits == 4).then(|| cardinal(&t)).flatten() {
-        // A due bearing as surveyor's units show it: one letter.
+    } else if let Some(b) = cardinal(&t).or_else(|| bearing(&t)) {
         (b, true)
     } else if let Some(v) = num(&t) {
         let a = match aunits {
@@ -357,7 +355,8 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
     v.0.is_finite().then_some(v)
 }
 
-/// A due bearing (`n`, `e`, `s`, `w`, lower case) as radians counterclockwise from +X.
+/// A compass point (`n`, `e`, `s`, `w`, lower case), a due bearing as surveyor's units show it,
+/// as radians counterclockwise from +X. AutoCAD 2024 takes one in any angle format.
 fn cardinal(t: &str) -> Option<f64> {
     match t {
         "e" => Some(0.0),
@@ -567,14 +566,19 @@ mod tests {
 
     #[test]
     fn surveyors_units_read_a_due_bearing_typed_as_one_letter() {
-        // What surveyor's units show for a due bearing can be typed back, e.g. `@10<E`.
-        let a = AngleSettings { aunits: 4, angbase: 1.0, clockwise: true };
-        for (t, want) in [("E", 0.0), ("n", PI / 2.0), ("W", PI), ("s", 1.5 * PI)] {
-            let got = a.direction(t).unwrap();
+        // What surveyor's units show for a due bearing can be typed back, e.g. `@10<E`. AutoCAD 2024
+        // reads the letter as an angle like any other, from ANGBASE in the ANGDIR sense: with
+        // ANGBASE 90 and ANGDIR 1, `@10<N` draws east.
+        let a = AngleSettings { aunits: 4, angbase: PI / 2.0, clockwise: true };
+        for (t, want) in [("E", PI / 2.0), ("n", 0.0), ("W", 1.5 * PI), ("s", PI)] {
+            let got = a.direction(t).unwrap().rem_euclid(2.0 * PI);
             assert!((got - want).abs() < 1e-12, "{t}: {got}");
         }
-        // Other angle units don't take a bare letter.
-        assert_eq!(AngleSettings { aunits: 0, angbase: 0.0, clockwise: false }.direction("E"), None);
+        // And in any angle format: `@10<E` draws east at AUNITS 0, `@10<S` south at AUNITS 1.
+        for (aunits, t, want) in [(0, "E", 0.0), (1, "S", 1.5 * PI)] {
+            let got = AngleSettings { aunits, ..AngleSettings::default() }.direction(t);
+            assert!(got.is_some_and(|a| (a - want).abs() < 1e-12), "AUNITS {aunits} {t}: {got:?}");
+        }
     }
 
     #[test]
@@ -644,6 +648,10 @@ mod tests {
         assert!((parse_angle("90").unwrap() - PI / 2.0).abs() < 1e-12);
         assert!((parse_angle("45d30'").unwrap().to_degrees() - 45.5).abs() < 1e-9);
         assert!((parse_angle("N45dE").unwrap().to_degrees() - 45.0).abs() < 1e-9);
+        // A compass point on its own, in either case.
+        for (t, deg) in [("N", 90.0), ("e", 0.0), ("W", 180.0), ("s", 270.0)] {
+            assert!((parse_angle(t).unwrap().to_degrees() - deg).abs() < 1e-9, "{t}");
+        }
         assert!((parse_angle("1.5r").unwrap() - 1.5).abs() < 1e-12);
         assert_eq!(format_angle(PI / 2.0, 0, 0), "90");
         assert_eq!(format_angle(PI / 4.0, 4, 0), "N 45d E");

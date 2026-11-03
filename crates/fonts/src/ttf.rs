@@ -5,6 +5,11 @@
 //! (`Noto Sans CJK TC`) among installed files with a similar name. TrueType collections
 //! (`.ttc` / `.otc`) are scanned too; a stem lookup takes their first face.
 //!
+//! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
+//! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
+//! partitions on Android and HarmonyOS, and the XDG directories elsewhere. Web builds have no
+//! system fonts.
+//!
 //! Two process-wide settings (like AutoCAD's profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
 //!   file we don't read, a missing TTF). Empty = the built-in stroke font.
@@ -78,6 +83,12 @@ impl Face {
     /// Whether the face maps `c` to a glyph.
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
+    }
+    /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
+    pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
+        let Some(f) = self.font() else { return vec![None; chars.len()] };
+        let map = f.charmap();
+        chars.iter().map(|c| map.map(*c).map(|g| g.to_u32())).collect()
     }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
@@ -163,14 +174,58 @@ const ARABIC_FALLBACK: &[&str] = &[
     "dejavusans",
 ];
 const HEBREW_FALLBACK: &[&str] = &["notosanshebrew", "notoserifhebrew", "arial", "tahoma", "segoeui", "dejavusans"];
+/// Fonts known to cover Thai, with the OpenType mark positioning its stacked vowels and tone
+/// marks need. First the Windows faces Thai drawings are laid out with (Cordia New, Angsana New,
+/// Browallia New: Thai SHX fonts such as `cordia2.shx` copy their design and widths, so text
+/// keeps its fit in title blocks and tables), then IBM Plex Sans Thai (installed, or embedded
+/// from craft-fonts, which makes it the web build's Thai font), then Noto and the fonts each OS
+/// ships (macOS Thonburi and Sukhumvit, Windows Leelawadee and Tahoma, the Linux TLWG fonts).
+/// Matched as parts of file names: `angsa` and `browa` find both today's Windows collections
+/// (`angsana.ttc`, `browalia.ttc`) and the older single faces (`angsa.ttf`, `browab.ttf`).
+const THAI_FALLBACK: &[&str] = &[
+    "cordia",
+    "angsa",
+    "browa",
+    "ibmplexsansthai",
+    "notosansthai",
+    "notoserifthai",
+    "thonburi",
+    "sukhumvit",
+    "leelawui",
+    "leelawadeeui",
+    "leelawad",
+    "tahoma",
+    "kinnari",
+    "norasi",
+    "garuda",
+    "loma",
+    "waree",
+    "sarabun",
+];
 /// Script-specific fallback files loaded per character, at most.
 const MAX_SCRIPT_FILES: usize = 4;
+
+/// The font file stems matching a script's fallback `names`, best first: regular weights before
+/// bold, light and the like, then in the order of `names`, then by name.
+fn script_candidates(stems: &[String], names: &[&str]) -> Vec<String> {
+    let mut v: Vec<(usize, usize, String)> = stems
+        .iter()
+        .filter_map(|s| {
+            let n = norm(s);
+            names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
+        })
+        .collect();
+    v.sort();
+    v.dedup_by(|a, b| a.2 == b.2);
+    v.into_iter().map(|(_, _, s)| s).collect()
+}
 
 /// Script-specific fallback font names for `c`, if any.
 fn script_fallback(c: char) -> &'static [&'static str] {
     match c {
         '\u{0600}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' => ARABIC_FALLBACK,
         '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => HEBREW_FALLBACK,
+        '\u{0E00}'..='\u{0E7F}' => THAI_FALLBACK,
         _ => &[],
     }
 }
@@ -228,16 +283,20 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
-/// Installed font files by lower-case stem, from the platform's font directories (on Linux and
-/// the BSDs, wherever fontconfig looks: [`dirs`]).
+/// The platform's system font directories, in search order.
 #[cfg(not(target_arch = "wasm32"))]
-fn scan() -> HashMap<String, PathBuf> {
+fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into));
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(PathBuf::from(h).join("Library/Fonts"));
         }
+    } else if cfg!(any(target_os = "android", target_env = "ohos")) {
+        // Android and HarmonyOS keep system fonts under /system/fonts; Android devices also use
+        // the product and vendor partitions for faces of their own. An app may read all of them,
+        // and directories a device lacks are skipped.
+        dirs.extend(["/system/fonts", "/product/fonts", "/system_ext/fonts", "/vendor/fonts"].map(Into::into));
     } else if cfg!(windows) {
         dirs.push("C:\\Windows\\Fonts".into());
         if let Some(l) = std::env::var_os("LOCALAPPDATA") {
@@ -246,19 +305,18 @@ fn scan() -> HashMap<String, PathBuf> {
     } else {
         // Where fontconfig looks: NixOS, Guix and Flatpak keep fonts outside /usr/share/fonts
         // (#674). Later directories take precedence (the stack pops them first), so the
-        // resolver's priority order is reversed; symlinked directories resolve so none is
-        // walked twice.
-        let mut found: Vec<PathBuf> = Vec::new();
-        for d in dirs::font_dirs(|k| std::env::var_os(k), dirs::read_config) {
-            if let Ok(c) = std::fs::canonicalize(&d)
-                && !found.contains(&c)
-            {
-                found.push(c);
-            }
-        }
-        dirs.extend(found.into_iter().rev());
+        // resolver's priority order is reversed; [`walk_font_dirs`] reads each resolved
+        // directory once and skips missing ones.
+        dirs.extend(dirs::font_dirs(|k| std::env::var_os(k), dirs::read_config).into_iter().rev());
     }
-    walk_font_dirs(dirs)
+    dirs
+}
+
+/// Installed font files by lower-case stem, from the platform's font directories (on Linux and
+/// the BSDs, wherever fontconfig looks: [`dirs`]).
+#[cfg(not(target_arch = "wasm32"))]
+fn scan() -> HashMap<String, PathBuf> {
+    walk_font_dirs(font_dirs())
 }
 
 /// Font files by lower-case stem under `dirs`, the last directory first. Each directory is read
@@ -393,18 +451,8 @@ impl Db {
         if names.is_empty() {
             return None;
         }
-        let mut stems: Vec<(usize, usize, String)> = self
-            .paths
-            .keys()
-            .chain(self.files.keys())
-            .filter_map(|s| {
-                let n = norm(s);
-                names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
-            })
-            .collect();
-        stems.sort();
-        stems.dedup_by(|a, b| a.2 == b.2);
-        for (_, _, stem) in stems.into_iter().take(MAX_SCRIPT_FILES) {
+        let stems: Vec<String> = self.paths.keys().chain(self.files.keys()).cloned().collect();
+        for stem in script_candidates(&stems, names).into_iter().take(MAX_SCRIPT_FILES) {
             let Some(bytes) = self.file(&stem) else { continue };
             let Some(face) = faces(&bytes).into_iter().find(|f| f.has_glyph(c)) else { continue };
             if let Some(i) = self.fallback.faces.iter().position(|f| f.same(&face)) {
@@ -895,9 +943,15 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
+    shape_dir(face, s, height, width_factor, oblique, None)
+}
+
+/// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
+pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique)
+    // As in [`crate::shape_stroke_dir`]: a line asked to run right to left takes the bidi path.
+    if (crate::complex::needed(s) || base_rtl == Some(true))
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique, base_rtl)
     {
         return Some(sh);
     }
@@ -934,8 +988,8 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 /// Width of one line set in a TrueType face.
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0)
+    if crate::complex::needed(s)
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0, None)
     {
         return Some(sh.width);
     }
@@ -963,6 +1017,40 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
 #[cfg(test)]
 mod family_tests {
     use super::*;
+
+    #[test]
+    fn thai_looks_in_thai_fonts_before_the_general_search() {
+        // Letters, vowels, tone marks and digits: the general search loads a bounded number of
+        // files with the CJK fonts first, none of which has Thai.
+        for c in ['\u{0E01}', '\u{0E33}', '\u{0E34}', '\u{0E4C}', '\u{0E50}'] {
+            assert!(script_fallback(c).contains(&"notosansthai"), "{c}");
+        }
+        assert!(script_fallback('a').is_empty() && script_fallback('\u{0E80}').is_empty());
+        // Windows, macOS and Linux each ship one of them under these file names.
+        let stems: Vec<String> = ["LeelawUI", "Thonburi", "Loma", "msyh"].map(norm).to_vec();
+        assert!(stems.iter().filter(|s| THAI_FALLBACK.iter().any(|p| s.contains(p))).count() == 3);
+        // The faces Thai drawings are laid out with come first, then IBM Plex Sans Thai (an
+        // installed file or the craft-fonts face, both under this stem), then the others; regular
+        // weights before bold.
+        let stems: Vec<String> =
+            ["notosansthai-regular", "ibmplexsansthai-bold", "ibmplexsansthai-regular", "msyh", "cordiab", "cordia", "ibmplexsansthailooped-regular"]
+                .map(String::from)
+                .to_vec();
+        assert_eq!(
+            script_candidates(&stems, THAI_FALLBACK),
+            ["cordia", "cordiab", "ibmplexsansthai-regular", "ibmplexsansthailooped-regular", "notosansthai-regular", "ibmplexsansthai-bold"]
+        );
+        // A text style naming the family looks in its regular file first, not the Latin Plex
+        // Sans or the looped or bold variants.
+        let stems: Vec<String> = ["ibmplexsans-regular", "ibmplexsansthai-bold", "ibmplexsansthailooped-regular", "ibmplexsansthai-regular", "arial"]
+            .map(String::from)
+            .to_vec();
+        let found = family_candidates(&stems, &norm("IBM Plex Sans Thai"), "ibm");
+        assert_eq!(found.first().map(String::as_str), Some("ibmplexsansthai-regular"), "{found:?}");
+        // Angsana New and Browallia New under today's Windows file names and the older ones.
+        let stems: Vec<String> = ["browa", "notosansthai-regular", "angsana", "browalia", "angsa", "arial"].map(String::from).to_vec();
+        assert_eq!(script_candidates(&stems, THAI_FALLBACK), ["angsa", "angsana", "browa", "browalia", "notosansthai-regular"]);
+    }
 
     #[test]
     fn a_family_is_looked_for_in_files_starting_with_its_first_word() {
@@ -1042,10 +1130,29 @@ mod geometry_budget_tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod scan_tests {
     use super::*;
 
+    /// Each platform searches its own system font directories. A branch that is missing or
+    /// misnamed leaves a device with no fonts at all, so the platform's main location is checked
+    /// here rather than discovered by a drawing full of missing-glyph boxes.
+    #[test]
+    fn the_platforms_system_font_directory_is_searched() {
+        let dirs = font_dirs();
+        #[cfg(target_os = "macos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/System/Library/Fonts")), "{dirs:?}");
+        #[cfg(target_os = "android")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(target_env = "ohos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(windows)]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_symlink_back_up_the_tree_does_not_hide_the_other_font_directories() {
         let root = std::env::temp_dir().join(format!("cadcraft-font-walk-{}", std::process::id()));

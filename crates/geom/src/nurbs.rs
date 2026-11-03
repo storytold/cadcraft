@@ -131,6 +131,12 @@ impl Spline {
     /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
     /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
     fn derivative_unchecked(&self, t: f64) -> Vec2 {
+        let d = self.velocity(t);
+        if d.is_finite() { d } else { Vec2::ZERO }
+    }
+
+    /// [`Spline::derivative_unchecked`] before a value past f64's range is read as zero.
+    fn velocity(&self, t: f64) -> Vec2 {
         let p = self.degree;
         let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
@@ -158,8 +164,7 @@ impl Spline {
         if w.abs() < 1e-300 {
             return Vec2::ZERO;
         }
-        let d = (da - a / w * dw) / w;
-        if d.is_finite() { d } else { Vec2::ZERO }
+        (da - a / w * dw) / w
     }
 
     /// Unit tangent at `t` in the direction of increasing parameter; a central difference stands
@@ -477,22 +482,18 @@ impl Spline {
         out
     }
 
-    /// Arc length of one integration panel. The spline is validated once by the public callers
-    /// ([`Spline::length_between`]/[`Spline::length`]) before any panel is measured, so the speed
-    /// closure uses the unchecked derivative to avoid re-scanning the knots per sample.
-    fn panel_length(&self, a: f64, b: f64) -> f64 {
-        let speed = |t: f64| self.derivative_unchecked(t).len();
+    /// Arc length of one integration panel, at the speed of `derivative`. The spline is validated
+    /// once by the callers ([`Spline::integrated_length`]/[`Spline::param_at_length`]) before any
+    /// panel is measured, so the derivative is an unchecked one, to avoid re-scanning the knots per
+    /// sample.
+    fn panel_length(&self, a: f64, b: f64, derivative: fn(&Spline, f64) -> Vec2) -> f64 {
+        let speed = |t: f64| derivative(self, t).len();
         adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
-        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
-            return 0.0;
-        }
-        let (lo, hi) = self.domain();
-        let (a, b) = (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi));
-        let l: f64 = self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y)).sum();
+        let l = self.integrated_length(a, b);
         if l.is_finite() { l } else { 0.0 }
     }
 
@@ -500,6 +501,25 @@ impl Spline {
     pub fn length(&self) -> f64 {
         let (lo, hi) = self.domain();
         self.length_between(lo, hi)
+    }
+
+    /// Arc length of the whole spline, or `None` when it is past f64's range, where
+    /// [`Spline::length`] reads 0. An invalid spline's is 0.
+    pub fn checked_length(&self) -> Option<f64> {
+        let (lo, hi) = self.domain();
+        let l = self.integrated_length(lo, hi);
+        l.is_finite().then_some(l)
+    }
+
+    /// Arc length between `a` and `b`, infinite or NaN when it overflows (the length, or the speed
+    /// along the way); 0 for an invalid spline or a non-finite parameter.
+    fn integrated_length(&self, a: f64, b: f64) -> f64 {
+        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
+            return 0.0;
+        }
+        let (lo, hi) = self.domain();
+        let (a, b) = (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi));
+        self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y, Spline::velocity)).sum()
     }
 
     /// The parameter `len` along the curve from parameter `from` (forward for positive `len`,
@@ -521,7 +541,7 @@ impl Spline {
         }
         let mut acc = 0.0;
         for (x0, x1) in ivs {
-            let l = self.panel_length(x0, x1);
+            let l = self.panel_length(x0, x1, Spline::derivative_unchecked);
             if acc + l >= target && l > 0.0 {
                 // Bisect inside this interval, measuring from its near end.
                 let rest = target - acc;
@@ -529,7 +549,7 @@ impl Spline {
                 let (mut s0, mut s1) = (near, far);
                 for _ in 0..60 {
                     let m = (s0 + s1) / 2.0;
-                    let lm = self.panel_length(near.min(m), near.max(m));
+                    let lm = self.panel_length(near.min(m), near.max(m), Spline::derivative_unchecked);
                     if lm < rest {
                         s0 = m;
                     } else {
@@ -733,6 +753,24 @@ mod tests {
         let t = q.param_at_length(hi, -std::f64::consts::PI / 2.0);
         assert!(q.eval(t).near(Vec2::new(-2f64.sqrt(), 2f64.sqrt()), 1e-6));
         assert_eq!(q.param_at_length(lo, 1e9), hi);
+    }
+
+    #[test]
+    fn checked_length_tells_an_overflow_from_a_zero_length() {
+        let l = Spline::from_line(Vec2::ZERO, Vec2::new(3.0, 4.0), 3);
+        assert_eq!(l.checked_length(), Some(l.length()));
+        let dot = Spline::from_line(Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0), 1);
+        assert_eq!((dot.length(), dot.checked_length()), (0.0, Some(0.0)));
+        // Finite ends 2e308 apart: over a knot span of 4 the speed is in f64's range and the length
+        // past it; over a span of 1 the speed is past it too. `length` reads both as 0.
+        let ends = vec![Vec2::new(-1e308, 0.0), Vec2::new(1e308, 0.0)];
+        for span in [4.0, 1.0] {
+            let huge = Spline { degree: 1, knots: vec![0.0, 0.0, span, span], control: ends.clone(), ..Spline::default() };
+            assert_eq!((huge.length(), huge.checked_length()), (0.0, None), "{span}");
+        }
+        let mut invalid = l.clone();
+        invalid.knots.reverse();
+        assert_eq!(invalid.checked_length(), Some(0.0));
     }
 
     #[test]
