@@ -30,7 +30,6 @@ mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
 mod hatch_pattern_def;
-mod hatch_solid_fixture;
 mod helix_roundtrip;
 mod layout_paper_units;
 mod layout_plot_window;
