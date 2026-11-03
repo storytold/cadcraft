@@ -198,18 +198,23 @@ impl Spline {
     }
 
     /// Apply an affine map to the control and fit points and turn the end tangents with it. A
-    /// tangent keeps its length, as in AutoCAD, where SCALE 2 leaves 12 = (0, 3) as it is.
+    /// tangent keeps its length, as in AutoCAD, where SCALE 2 leaves 12 = (0, 3) as it is. A map
+    /// that flattens a tangent's direction (to under EPS of the map's largest axis scale) drops it.
     pub fn transform(&mut self, m: &Mat3) {
         for c in self.control.iter_mut().chain(self.fit.iter_mut()) {
             *c = m.apply(*c);
         }
+        // The map's largest axis scale: a direction it shrinks to under EPS of that is flattened.
+        // Not `scale_factor`, which is 0 for a singular map and would keep rounding noise.
+        let scale = Vec2::new(m.a, m.b).len().max(Vec2::new(m.c, m.d).len());
         let turn = |t: Option<Vec2>| {
             t.and_then(|v| {
                 let w = m.apply_vec(v);
                 let (lv, lw) = (v.len(), w.len());
                 // Scaled by lengths, not through `normalized`, which zeroes a short tangent. A map
-                // that flattens the tangent's direction drops it.
-                (lw.is_finite() && lw > crate::EPS * lv).then(|| w / lw * lv)
+                // that flattens the tangent's direction drops it; an invertible uniform scale,
+                // however small, does not.
+                (lw.is_finite() && lw > crate::EPS * scale * lv).then(|| w / lw * lv)
             })
         };
         self.fit_opts.start_tangent = turn(self.fit_opts.start_tangent);
@@ -1159,6 +1164,31 @@ mod tests {
         // A map that flattens its direction drops it.
         f.transform(&Mat3::scale(0.0, 1.0));
         assert_eq!(f.fit_opts.start_tangent, None);
+    }
+
+    #[test]
+    fn a_small_uniform_scale_keeps_the_tangent_and_a_singular_map_drops_it() {
+        let fit = pts();
+        let t = Some(Vec2::new(100.0, 0.0));
+        let mut s = Spline::fit_with_end_derivatives(&fit, false, FitOptions { start_tangent: t, ..FitOptions::default() });
+        // Invertible, however small: the tangent stays, with its length.
+        s.transform(&Mat3::scale(1e-10, 1e-10));
+        assert!(s.fit_opts.start_tangent.is_some_and(|v| v.near(Vec2::new(100.0, 0.0), 1e-9)), "{:?}", s.fit_opts.start_tangent);
+        // A singular map that flattens the direction to rounding noise (0.1 + 0.2 - 0.3) drops it.
+        let flat = Some(Vec2::new(0.1 + 0.2, -0.3));
+        let mut s = Spline::fit_with_end_derivatives(&fit, false, FitOptions { start_tangent: flat, ..FitOptions::default() });
+        s.transform(&Mat3 { a: 1.0, b: 1.0, c: 1.0, d: 1.0, e: 0.0, f: 0.0 });
+        assert_eq!(s.fit_opts.start_tangent, None);
+        // So does one that squashes it to under 1e-9 of its largest axis scale, along either axis.
+        for (t, m) in [(Vec2::new(0.0, 3.0), Mat3::scale(1.0, 1e-12)), (Vec2::new(3.0, 0.0), Mat3::scale(1e-12, 1.0))] {
+            let mut s = Spline::fit_with_end_derivatives(&fit, false, FitOptions { start_tangent: Some(t), ..FitOptions::default() });
+            s.transform(&m);
+            assert_eq!(s.fit_opts.start_tangent, None, "{t:?}");
+        }
+        // A turned length that overflows gives no tangent rather than NaN.
+        let mut s = Spline::fit_with_end_derivatives(&fit, false, FitOptions { start_tangent: Some(Vec2::new(1e10, 0.0)), ..FitOptions::default() });
+        s.transform(&Mat3::scale(1e300, 1e300));
+        assert_eq!(s.fit_opts.start_tangent, None);
     }
 }
 
