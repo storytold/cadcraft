@@ -221,6 +221,39 @@ fn mirroring_the_hatch_with_its_boundary_keeps_the_copy_associative() {
     assert!(hatch(&s, &h).associative);
 }
 
+/// ROTATE and SCALE with the copy option copy a hatch together with its boundary; the copy names
+/// the copied lines and the original keeps its own.
+fn assert_copy_follows_copied_lines(s: &Session, out: &[String], original: &str) {
+    assert_eq!(out.len(), 5);
+    let ch = hatch(s, &out[4]);
+    assert!(ch.associative, "the copy follows its own boundary");
+    let mut want = out[..4].to_vec();
+    want.sort();
+    assert_eq!(sorted_sources(&ch), want, "the copy's loop names the copied lines");
+    assert!(hatch(s, original).associative);
+}
+
+#[test]
+fn rotating_a_copy_of_the_hatch_with_its_boundary_keeps_the_copy_associative() {
+    let mut s = Session::new();
+    let (mut ls, h) = square_of_lines(&mut s);
+    ls.push(h.clone());
+    let out = handles(&s.execute("rotate", &json!({ "handles": ls, "base": [20, 0], "angle": 90, "copy": true })).unwrap());
+    assert_copy_follows_copied_lines(&s, &out, &h);
+    assert!(close(area(&hatch(&s, &out[4])), 100.0));
+}
+
+#[test]
+fn scaling_a_copy_of_the_hatch_with_its_boundary_keeps_the_copy_associative() {
+    let mut s = Session::new();
+    let (mut ls, h) = square_of_lines(&mut s);
+    ls.push(h.clone());
+    let out = handles(&s.execute("scale", &json!({ "handles": ls, "base": [30, 0], "factor": 2, "copy": true })).unwrap());
+    assert_copy_follows_copied_lines(&s, &out, &h);
+    assert!(close(area(&hatch(&s, &out[4])), 400.0));
+    assert!(close(area(&hatch(&s, &h)), 100.0));
+}
+
 #[test]
 fn non_associative_hatch_keeps_no_sources() {
     let mut s = Session::new();
