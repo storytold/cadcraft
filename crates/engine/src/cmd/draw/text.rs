@@ -25,6 +25,26 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
     })
 }
 
+/// Aligned and fit text span the baseline between their two points (and take its angle).
+pub(crate) fn spans_baseline(h: HAlign) -> bool {
+    matches!(h, HAlign::Aligned | HAlign::Fit)
+}
+
+/// The width of `s` in text style `style`'s font (the stroke font without a style).
+pub(crate) fn styled_width(style: Option<&cadcraft_doc::TextStyle>, s: &str, height: f64, width_factor: f64) -> f64 {
+    let font = cadcraft_fonts::TextFont::resolve(style.map_or("", |st| st.font.as_str()));
+    cadcraft_fonts::text_width(&font, s, height, width_factor)
+}
+
+/// The second baseline point that keeps aligned or fit text `s`, started at `at` along
+/// `rotation`, at its own size: its width away. Never `at` itself, which would lose the text's
+/// direction (an empty text gets one height).
+pub(crate) fn baseline_end(style: Option<&cadcraft_doc::TextStyle>, s: &str, height: f64, width_factor: f64, at: Vec2, rotation: f64) -> Vec2 {
+    let w = styled_width(style, s, height, width_factor);
+    let w = if w.is_finite() && w > 1e-9 { w } else { height.max(1e-6) };
+    at + Vec2::from_angle(rotation) * w
+}
+
 pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
     let (h, v) = j;
@@ -92,6 +112,8 @@ pub(super) struct TextM {
     rotation: Option<f64>,
     justify: (HAlign, VAlign),
     asking_justify: bool,
+    /// The Style option: asking for a style name.
+    asking_style: bool,
     line: usize,
     /// Run by a LISP routine (`command`): one line of text ends the command, as AutoLISP's
     /// `command` runs TEXT; typed and in scripts each line asks for the next.
@@ -106,9 +128,45 @@ impl TextM {
             rotation: None,
             justify: (HAlign::Left, VAlign::Baseline),
             asking_justify: false,
+            asking_style: false,
             line: 0,
             single_line: s.lisp_running(),
         }
+    }
+
+    /// The status line TEXT shows before the start point, and again after the Style option.
+    fn show_status(&self, s: &mut Session) -> Result<Step> {
+        let d = s.doc()?;
+        let style = d.header.str("TEXTSTYLE", "Standard");
+        let anno = if d.text_style(&style).is_some_and(|st| st.annotative) { "Yes" } else { "No" };
+        let msg = format!(
+            "Current text style:  \"{style}\"  Text height:  {:.4}  Annotative:  {anno}  Justify:  {}",
+            d.header.f64("TEXTSIZE", 0.2),
+            justify_code(self.justify)
+        );
+        s.echo(msg);
+        Ok(Step::Continue)
+    }
+}
+
+/// Justification → the name TEXT's and ATTDEF's status line gives it.
+pub(crate) fn justify_code(j: (HAlign, VAlign)) -> &'static str {
+    match j {
+        (HAlign::Left, VAlign::Baseline) => "Left",
+        (HAlign::Center, VAlign::Baseline) => "Center",
+        (HAlign::Right, VAlign::Baseline) => "Right",
+        (HAlign::Aligned, _) => "Align",
+        (HAlign::Middle, _) => "Middle",
+        (HAlign::Fit, _) => "Fit",
+        (HAlign::Left, VAlign::Top) => "TL",
+        (HAlign::Center, VAlign::Top) => "TC",
+        (HAlign::Right, VAlign::Top) => "TR",
+        (HAlign::Left, VAlign::Middle) => "ML",
+        (HAlign::Center, VAlign::Middle) => "MC",
+        (HAlign::Right, VAlign::Middle) => "MR",
+        (HAlign::Left, VAlign::Bottom) => "BL",
+        (HAlign::Center, VAlign::Bottom) => "BC",
+        (HAlign::Right, VAlign::Bottom) => "BR",
     }
 }
 
@@ -122,6 +180,10 @@ impl Interactive for TextM {
             return Prompt::new("Enter an option", Accept::TEXT)
                 .kw(&["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]);
         }
+        if self.asking_style {
+            let current = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+            return Prompt::new("Enter style name or [?]", Accept::TEXT).kw(&["?"]).default(current);
+        }
         match (self.at, self.height, self.rotation) {
             (None, _, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
             (Some(a), None, _) => Prompt::new("Specify height", Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a),
@@ -130,15 +192,33 @@ impl Interactive for TextM {
         }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        let d = s.doc()?;
-        let style = d.header.str("TEXTSTYLE", "Standard");
-        let anno = if d.text_style(&style).is_some_and(|st| st.annotative) { "Yes" } else { "No" };
-        let msg =
-            format!("Current text style:  \"{style}\"  Text height:  {:.4}  Annotative:  {anno}  Justify:  Left", d.header.f64("TEXTSIZE", 0.2));
-        s.echo(msg);
-        Ok(Step::Continue)
+        self.show_status(s)
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.asking_style {
+            self.asking_style = false;
+            match &i {
+                Input::Keyword(k) | Input::Text(k) if k.trim() == "?" => {
+                    let names: Vec<String> = s.doc()?.text_styles.iter().map(|st| st.name.clone()).collect();
+                    s.echo(format!("Text styles: {}", names.join(", ")));
+                    self.asking_style = true;
+                    return Ok(Step::Continue);
+                }
+                // The named style becomes current, as AutoCAD's Style option makes it.
+                Input::Keyword(n) | Input::Text(n) if !n.trim().is_empty() => match s.doc()?.text_style(n.trim()) {
+                    Some(st) => {
+                        let name = st.name.clone();
+                        s.doc_mut()?.header.set_str("TEXTSTYLE", &name);
+                    }
+                    None => {
+                        self.asking_style = true;
+                        return Err(crate::EngineError::Other(format!("Cannot find text style \"{}\".", n.trim())));
+                    }
+                },
+                _ => {}
+            }
+            return self.show_status(s);
+        }
         if self.asking_justify {
             let code = match &i {
                 Input::Keyword(k) | Input::Text(k) => k.clone(),
@@ -146,11 +226,12 @@ impl Interactive for TextM {
             };
             self.justify = justify(&code).unwrap_or(self.justify);
             self.asking_justify = false;
-            return Ok(Step::Continue);
+            return self.show_status(s);
         }
         let th = s.doc()?.header.f64("TEXTSIZE", 0.2);
         match (self.at, self.height, self.rotation, i) {
             (None, _, _, Input::Keyword(k)) if k == "Justify" => self.asking_justify = true,
+            (None, _, _, Input::Keyword(k)) if k == "Style" => self.asking_style = true,
             (None, _, _, Input::Point(p)) => self.at = Some(p),
             (Some(_), None, _, Input::Enter) => self.height = Some(th),
             (Some(a), None, _, Input::Point(p)) => self.height = Some(a.dist(p).max(1e-9)),
