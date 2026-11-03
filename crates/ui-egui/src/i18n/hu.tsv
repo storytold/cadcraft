@@ -1358,3 +1358,10 @@ menu	View	Nézet
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	AutoSnap settings	AutoSnap-beállítások
+	Marker	Jelölő
+	Magnet	Mágnes
+	Display AutoSnap tooltip	AutoSnap-elemleírás megjelenítése
+	Display AutoSnap aperture box	AutoSnap befogási keret megjelenítése
+	Display AutoTrack tooltip	AutoTrack-elemleírás megjelenítése
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	A mágnes a szálkeresztet az illesztési pontra rögzíti; a befogási keret mutatja, milyen közel kell a kurzornak kerülnie, hogy találjon egyet.

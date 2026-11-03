@@ -1267,3 +1267,10 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	AutoSnap settings	Ajustes de AutoSnap
+	Marker	Marcador
+	Magnet	Imán
+	Display AutoSnap tooltip	Mostrar la información de AutoSnap
+	Display AutoSnap aperture box	Mostrar el cuadro de apertura de AutoSnap
+	Display AutoTrack tooltip	Mostrar la información de AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	El imán fija la cruz en el punto de referencia; el cuadro de apertura muestra a qué distancia debe acercarse el cursor para encontrarlo.

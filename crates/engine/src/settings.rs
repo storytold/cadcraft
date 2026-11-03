@@ -130,6 +130,40 @@ pub struct Settings {
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
     /// (default: 1).
     pub attreq: bool,
+    /// AUTOSNAP bit 1: the AutoSnap marker is drawn at the snap point.
+    pub autosnap_marker: bool,
+    /// AUTOSNAP bit 2: the AutoSnap tooltip names the snap ("Endpoint").
+    pub autosnap_tooltip: bool,
+    /// AUTOSNAP bit 4: the magnet locks the crosshair onto the snap point.
+    pub autosnap_magnet: bool,
+    /// AUTOSNAP bit 32: the AutoTrack tooltips (polar, object snap tracking, ortho).
+    pub autotrack_tooltip: bool,
+    /// APBOX: the aperture box is drawn around the crosshair while object snaps run at a point
+    /// prompt.
+    pub apbox: bool,
+}
+
+impl Settings {
+    /// AUTOSNAP: 1 marker, 2 tooltip, 4 magnet, 8 polar tracking (F10), 16 object snap tracking
+    /// (F11), 32 AutoTrack tooltips.
+    pub fn autosnap(&self) -> u32 {
+        u32::from(self.autosnap_marker)
+            | u32::from(self.autosnap_tooltip) << 1
+            | u32::from(self.autosnap_magnet) << 2
+            | u32::from(self.polarmode) << 3
+            | u32::from(self.otrack) << 4
+            | u32::from(self.autotrack_tooltip) << 5
+    }
+
+    /// Set every AUTOSNAP bit from `bits` (0–63).
+    pub fn set_autosnap(&mut self, bits: u32) {
+        self.autosnap_marker = bits & 1 != 0;
+        self.autosnap_tooltip = bits & 2 != 0;
+        self.autosnap_magnet = bits & 4 != 0;
+        self.polarmode = bits & 8 != 0;
+        self.otrack = bits & 16 != 0;
+        self.autotrack_tooltip = bits & 32 != 0;
+    }
 }
 
 impl Default for Settings {
@@ -195,6 +229,11 @@ impl Default for Settings {
             polardist: 0.0,
             auditctl: false,
             attreq: true,
+            autosnap_marker: true,
+            autosnap_tooltip: true,
+            autosnap_magnet: true,
+            autotrack_tooltip: true,
+            apbox: false,
         }
     }
 }

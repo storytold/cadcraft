@@ -1460,3 +1460,10 @@ menu	Modify	Ändra
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	AutoSnap settings	AutoSnap-inställningar
+	Marker	Markör
+	Magnet	Magnet
+	Display AutoSnap tooltip	Visa AutoSnap-verktygstips
+	Display AutoSnap aperture box	Visa AutoSnap-sökruta
+	Display AutoTrack tooltip	Visa AutoTrack-verktygstips
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Magneten låser hårkorset vid snappunkten; sökrutan visar hur nära markören måste komma för att hitta en.

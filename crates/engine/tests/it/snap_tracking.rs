@@ -343,10 +343,12 @@ fn sysvars_polarmode_polaraddang_autosnap() {
     assert_eq!(get(&s, "POLARMODE"), json!(6));
     setvar(&mut s, "POLARADDANG", json!("15;22.5"));
     assert_eq!(get(&s, "POLARADDANG"), json!("15;22.5"));
-    assert_eq!(get(&s, "AUTOSNAP"), json!(61));
+    // All six bits on by default, as AutoCAD reports (63); before AUTOSNAP stored only bits 8
+    // and 16 and reported 61, without the tooltip bit.
+    assert_eq!(get(&s, "AUTOSNAP"), json!(63));
     s.execute("otrack", &json!({})).unwrap();
     assert!(!s.settings.otrack, "F11 toggles tracking");
-    assert_eq!(get(&s, "AUTOSNAP"), json!(45));
+    assert_eq!(get(&s, "AUTOSNAP"), json!(47));
     setvar(&mut s, "AUTOSNAP", json!(63));
     assert!(s.settings.otrack && s.settings.polarmode);
     for (n, bad) in [

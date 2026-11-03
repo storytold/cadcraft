@@ -1380,3 +1380,10 @@ menu	View	عرض
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	AutoSnap settings	إعدادات AutoSnap
+	Marker	العلامة
+	Magnet	المغناطيس
+	Display AutoSnap tooltip	إظهار تلميح AutoSnap
+	Display AutoSnap aperture box	إظهار مربع فتحة AutoSnap
+	Display AutoTrack tooltip	إظهار تلميح AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	يثبّت المغناطيس الشعيرات المتصالبة على نقطة الالتقاط؛ ويبيّن مربع الفتحة مدى قرب المؤشر اللازم للعثور عليها.

@@ -1347,3 +1347,10 @@ menu	View	Προβολή
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	AutoSnap settings	Ρυθμίσεις AutoSnap
+	Marker	Σήμανση
+	Magnet	Μαγνήτης
+	Display AutoSnap tooltip	Εμφάνιση επεξήγησης AutoSnap
+	Display AutoSnap aperture box	Εμφάνιση πλαισίου αναζήτησης AutoSnap
+	Display AutoTrack tooltip	Εμφάνιση επεξήγησης AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Ο μαγνήτης κλειδώνει το σταυρόνημα στο σημείο έλξης· το πλαίσιο αναζήτησης δείχνει πόσο κοντά πρέπει να βρεθεί ο δείκτης για να εντοπίσει ένα.
