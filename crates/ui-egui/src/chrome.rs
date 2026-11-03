@@ -327,6 +327,33 @@ fn draw_status_toggles(
     }
 }
 
+/// The status bar's Layout Mode toggle, its right edge at `right`: it shows the model area of every
+/// layout in the Model tab and edits them. Returns the right edge left for the controls before it.
+fn layout_mode_button(app: &mut CadApp, ui: &mut egui::Ui, p: &egui::Painter, t: &Tokens, right: f32, cy: f32) -> f32 {
+    let label = crate::i18n::t("Layout Mode");
+    let width = label.chars().count() as f32 * 6.6 + 16.0;
+    let br = Rect::from_min_size(pos2(right - width, cy - 9.0), vec2(width, 18.0));
+    let resp = ui.interact(br, ui.scope_id().with("layout_mode_button"), Sense::click());
+    let on = app.canvas.layout.on;
+    p.rect_filled(
+        br,
+        3.0,
+        if on {
+            t.toggle_on
+        } else if resp.hovered() {
+            t.control_hover
+        } else {
+            t.toggle_on.gamma_multiply(0.25)
+        },
+    );
+    p.text(br.center(), egui::Align2::CENTER_CENTER, label, crate::theme::small(), t.text);
+    icons::describe_control(ui, &resp, "Layout Mode", Some(on), false);
+    if resp.on_hover_text(crate::tl!("Show, move, resize and add the model area of every layout")).clicked() {
+        let _ = app.run("ui.toggle.layoutmode", json!({}));
+    }
+    br.left() - 10.0
+}
+
 /// Status bar: layout tabs follow the left-hand layout actions, independent of palette docking.
 /// Coordinates and drafting toggles remain on the right.
 pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
@@ -358,6 +385,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             x += 22.0;
         }
+
         x += 8.0;
         // Right side: toggles, right-aligned.
         let s = app.session.settings.clone();
@@ -411,6 +439,8 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             // Scale and lock of the active or selected viewport.
             coord_right = crate::vpscale::status(app, ui, coord_right + 4.0, r.center().y) - 10.0;
         }
+        // The Layout Mode toggle, right-aligned before the annotation scale, and left of the sheet toggle in a layout.
+        coord_right = layout_mode_button(app, ui, &p, &t, coord_right, r.center().y);
         // Layout tabs: Model, "+", then the layouts that fit before the right-hand controls (the
         // current one always); the layout list reaches the rest.
         let mut tabs: Vec<String> = vec!["Model".into()];
