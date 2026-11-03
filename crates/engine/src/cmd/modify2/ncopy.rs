@@ -87,8 +87,8 @@ impl Interactive for NcopyM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match (self.selecting_done, self.base) {
-            (false, _) => Prompt::new("Select nested objects to copy or", Accept::POINT).kw(&["Settings"]),
-            (true, None) => Prompt::new("Specify base point or", Accept::POINT).kw(&["Displacement", "Multiple"]).default("Displacement"),
+            (false, _) => Prompt::new("Select nested objects to copy", Accept::POINT).kw(&["Settings"]),
+            (true, None) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement", "Multiple"]).default("Displacement"),
             (true, Some(b)) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base(b),
         }
     }

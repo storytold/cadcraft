@@ -22,6 +22,7 @@ pub(super) fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2,
         overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 
@@ -114,7 +115,7 @@ pub(super) fn hex_param(p: &Value, key: &str) -> Option<Handle> {
 
 pub(super) fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-    crate::select::pick(s.doc().ok()?, &s.space(), p, ap)
+    s.pick_object(&s.space(), p, ap).ok().flatten()
 }
 
 /// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.

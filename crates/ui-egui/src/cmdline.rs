@@ -380,13 +380,11 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         app.cmd.buffer.pop();
                     }
                 }
-                Key::ArrowUp if !modifiers.any() => {
-                    if !app.cmd.history.is_empty() {
-                        let n = app.cmd.history.len();
-                        let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
-                        app.cmd.history_pos = Some(pos);
-                        app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
-                    }
+                Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
+                    let n = app.cmd.history.len();
+                    let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
+                    app.cmd.history_pos = Some(pos);
+                    app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
                 }
                 Key::ArrowDown if !modifiers.any() => {
                     if !options_key(app, 1)
@@ -446,7 +444,9 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
-    app.cmdline(&text);
+    // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
+    let completion = if app.session.prompting() { None } else { suggestions(text.trim()).into_iter().next() };
+    app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -495,7 +495,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                // As the engine's prompt text says it; only " or [" has words to translate.
+                let lead = match pr.keyword_lead() {
+                    " or [" => crate::tl!(" or ["),
+                    lead => lead,
+                };
+                let g = p.layout_no_wrap(lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -926,5 +931,40 @@ mod autocomplete_tests {
         app.cmd.buffer = "rec".to_string();
         tab(&mut app);
         assert_eq!(app.cmd.buffer, "RECTANG");
+    }
+
+    fn app() -> CadApp {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        app
+    }
+
+    #[test]
+    fn enter_on_a_partial_name_runs_the_highlighted_suggestion() {
+        let mut app = app();
+        app.cmd.buffer = "RECT".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("rectang"));
+        assert!(!app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+
+    #[test]
+    fn enter_keeps_exact_names_and_reports_names_nothing_matches() {
+        let mut app = app();
+        // An exact alias is not replaced by a longer suggestion.
+        app.cmd.buffer = "l".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+        app.session.cancel();
+        // A system variable name still acts as SETVAR.
+        app.cmd.buffer = "orthomode".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("setvar"));
+        app.session.cancel();
+        // No suggestion: still an unknown command.
+        app.cmd.buffer = "zzqx".to_string();
+        submit(&mut app);
+        assert!(app.session.running.is_none());
+        assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
     }
 }

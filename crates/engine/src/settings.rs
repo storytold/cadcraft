@@ -131,6 +131,9 @@ pub struct Settings {
     pub ucs_angle: f64,
     /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
     pub auditctl: bool,
+    /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
+    /// (default: 1).
+    pub attreq: bool,
 }
 
 impl Default for Settings {
@@ -196,6 +199,7 @@ impl Default for Settings {
             polardist: 0.0,
             ucs_angle: 0.0,
             auditctl: false,
+            attreq: true,
         }
     }
 }

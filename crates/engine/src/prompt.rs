@@ -26,6 +26,41 @@ impl Accept {
     pub const SELECT: Accept = Accept { point: true, number: false, text: false, select: true, enter: true };
 }
 
+/// Prompts that ask for one of their keywords, which AutoCAD 2024 writes without "or" before them:
+/// "Enter an option [?/Make/Set/…]:", "Enter layout option [Copy/Delete/…/?] <set>:", "New color
+/// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
+/// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
+/// AutoCAD's command line over measured runs, where no prompt was written both ways.
+const NO_OR: [&str; 27] = [
+    "Bring to front",
+    "Calculate rectangle dimensions based on",
+    "Choose mode for selected object conversion",
+    "Create annotative block",
+    "Enter a configuration option",
+    "Enter a plotting preference",
+    "Enter an annotation option",
+    "Enter an option",
+    "Enter an option to change",
+    "Enter attribute visibility setting",
+    "Enter justification",
+    "Enter layout option",
+    "Enter leader format option",
+    "Enter line spacing type",
+    "Enter object ordering option",
+    "Enter polyline linetype generation option",
+    "Enter property to change",
+    "Enter the type of array",
+    "Enter type of unused objects to purge",
+    "Enter viewport arrangement",
+    "Explode block",
+    "New color",
+    "Orient relative to sheet in paper space viewports",
+    "Select a content type",
+    "Select a leader type",
+    "Use landing",
+    "Viewport View Locking",
+];
+
 /// A prompt shown on the command line.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,15 +183,7 @@ impl Prompt {
         }
         let mut s = self.message.clone();
         if !self.keywords.is_empty() {
-            // A question offers its answers ("Fix any errors detected? [Yes/No]"); anything else
-            // offers options besides what it asks for ("Specify next point or [Undo]").
-            s.push_str(if self.message.is_empty() {
-                "["
-            } else if self.message.ends_with('?') {
-                " ["
-            } else {
-                " or ["
-            });
+            s.push_str(self.keyword_lead());
             s.push_str(&self.keywords.join("/"));
             s.push(']');
         }
@@ -165,6 +192,20 @@ impl Prompt {
         }
         s.push(':');
         s
+    }
+    /// What goes between the message and its keywords. A question offers its answers ("Fix any
+    /// errors detected? [Yes/No]"), and so does a prompt for an option ([`NO_OR`]): " [". Anything
+    /// else offers options besides what it asks for ("Specify next point or [Undo]"): " or [". With
+    /// no message, "[". The command line in the window draws the keywords itself and takes this
+    /// too.
+    pub fn keyword_lead(&self) -> &'static str {
+        if self.message.is_empty() {
+            "["
+        } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
+            " ["
+        } else {
+            " or ["
+        }
     }
     /// Match typed text against keywords: full word or the capitalised shortcut, case-insensitive.
     pub fn match_keyword(&self, text: &str) -> Option<String> {
@@ -180,10 +221,13 @@ impl Prompt {
             (k, k.to_ascii_lowercase(), shortcut)
         });
         // A whole keyword or its capital-letter shortcut wins over a prefix of another keyword
-        // (`M` is Multiple, not a prefix of mEthod).
+        // (`M` is Multiple, not a prefix of mEthod). A prefix reaches past the keyword's last
+        // capital, as in AutoCAD: `L` is none of LAyer, LType, ltScale or LWeight (AutoCAD 2024's
+        // CHPROP: "Ambiguous response, please clarify..."), `LTS` is ltScale.
+        let past_capitals = |k: &str| k.char_indices().rfind(|(_, c)| c.is_ascii_uppercase() || c.is_ascii_digit()).map_or(1, |(i, _)| i + 1);
         keys.clone()
             .find(|(_, kl, sc)| tl == *kl || tl == *sc)
-            .or_else(|| keys.clone().find(|(_, kl, sc)| tl.len() >= sc.len() && kl.starts_with(&tl)))
+            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(&tl)))
             .map(|(k, _, _)| k.clone())
     }
 }
@@ -355,11 +399,45 @@ mod tests {
         assert_eq!(p.display(), "Specify next point or [Undo/Close]:");
         let q = Prompt::new("Erase polyline?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         assert_eq!(q.display(), "Erase polyline? [Yes/No] <No>:");
+        // A prompt for an option has no "or", as AutoCAD writes it.
+        let o = Prompt::new("Enter an option", Accept::TEXT).kw(&["Close", "Join"]);
+        assert_eq!(o.display(), "Enter an option [Close/Join]:");
+        let c = Prompt::new("New color", Accept::TEXT).kw(&["Truecolor", "COlorbook"]).default("BYLAYER");
+        assert_eq!(c.display(), "New color [Truecolor/COlorbook] <BYLAYER>:");
+        let b = Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]);
+        assert_eq!(b.display(), "Enter block name or [?]:");
         assert_eq!(p.match_keyword("u").as_deref(), Some("Undo"));
         assert_eq!(p.match_keyword("CL").as_deref(), Some("Close"));
         assert_eq!(p.match_keyword("x"), None);
         let q = Prompt::new("", Accept::POINT).kw(&["3P", "2P", "Ttr"]);
         assert_eq!(q.match_keyword("3p").as_deref(), Some("3P"));
         assert_eq!(q.match_keyword("t").as_deref(), Some("Ttr"));
+        // A prefix reaches past the last capital (AutoCAD 2024's CHPROP: `L` is ambiguous).
+        let c =
+            Prompt::new("Enter property to change", Accept::TEXT).kw(&["Color", "LAyer", "LType", "ltScale", "LWeight", "Thickness", "TRansparency"]);
+        assert_eq!(c.match_keyword("l"), None);
+        assert_eq!(c.match_keyword("la").as_deref(), Some("LAyer"));
+        assert_eq!(c.match_keyword("lts").as_deref(), Some("ltScale"));
+        assert_eq!(c.match_keyword("s").as_deref(), Some("ltScale"));
+        assert_eq!(c.match_keyword("tr").as_deref(), Some("TRansparency"));
+        // Even when no other keyword starts with it: AutoCAD 2024 answers QDIM's `DA` with "Point or
+        // option keyword required." and PEDIT's vertex `E` with "Invalid option keyword.".
+        let q = Prompt::new("", Accept::POINT).kw(&[
+            "Continuous",
+            "Staggered",
+            "Baseline",
+            "Ordinate",
+            "Radius",
+            "Diameter",
+            "datumPoint",
+            "Edit",
+            "seTtings",
+        ]);
+        assert_eq!(q.match_keyword("da"), None);
+        assert_eq!(q.match_keyword("datump").as_deref(), Some("datumPoint"));
+        assert_eq!(q.match_keyword("p").as_deref(), Some("datumPoint"));
+        let v = Prompt::new("", Accept::TEXT).kw(&["Next", "Previous", "Break", "Insert", "Move", "Regen", "Straighten", "Tangent", "Width", "eXit"]);
+        assert_eq!(v.match_keyword("e"), None);
+        assert_eq!(v.match_keyword("ex").as_deref(), Some("eXit"));
     }
 }
