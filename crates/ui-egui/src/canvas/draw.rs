@@ -79,10 +79,31 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
+    draw_prims(p, xf, list, 0..list.prims.len(), bg, lwdisplay);
+}
+
+/// [`draw_list`] with PDF underlay pages (`pages`, from [`super::underlay::shapes`] for `list`)
+/// drawn at their places among the objects.
+pub(super) fn draw_list_with_pages(p: &egui::Painter, xf: &Xf, list: &DisplayList, pages: Vec<(usize, Shape)>, bg: Rgb, lwdisplay: bool) {
+    let mut pages: Vec<(usize, Shape)> = pages.into_iter().map(|(j, s)| (list.underlays.get(j).map_or(0, |u| u.at as usize), s)).collect();
+    pages.sort_by_key(|(i, _)| *i);
+    let mut from = 0;
+    for (i, page) in pages {
+        let i = i.min(list.prims.len()).max(from);
+        draw_prims(p, xf, list, from..i, bg, lwdisplay);
+        p.add(page);
+        from = i;
+    }
+    draw_prims(p, xf, list, from..list.prims.len(), bg, lwdisplay);
+}
+
+/// Draw primitives `range` of `list`.
+fn draw_prims(p: &egui::Painter, xf: &Xf, list: &DisplayList, range: std::ops::Range<usize>, bg: Rgb, lwdisplay: bool) {
     let vis = xf.world_bounds();
-    let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
+    let prims = list.prims.get(range).unwrap_or_default();
+    let mut shapes: Vec<Shape> = Vec::with_capacity(prims.len());
     let px = 1.0 / xf.scale;
-    for prim in &list.prims {
+    for prim in prims {
         let col = prim_color32(prim, bg);
         let pts = list.points(prim);
         match prim.kind {
@@ -191,6 +212,7 @@ pub(super) fn draw_highlight_gpu(
             xform: crate::gpu::IDENTITY_XFORM,
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
+            groups: crate::gpu::ALL_GROUPS,
         },
     ));
 }
@@ -257,6 +279,7 @@ pub(super) fn draw_drag_gpu(
             xform: [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32],
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
+            groups: crate::gpu::ALL_GROUPS,
         },
     ));
 }
@@ -271,7 +294,7 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
 
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
-pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
+pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, pages: Vec<(usize, Shape)>, bg: Rgb, lwdisplay: bool) {
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
     let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
@@ -287,20 +310,24 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_ms = crate::now_ms() - t0;
     }
     let center = xf.rect.center();
-    p.add(egui_wgpu::Callback::new_paint_callback(
-        xf.rect,
-        crate::gpu::CanvasCallback {
-            key,
-            slot: c.mesh_slot.clone(),
-            offset: [(c.mesh_origin.x - xf.center.x) as f32, (c.mesh_origin.y - xf.center.y) as f32],
-            scale: xf.scale as f32,
-            center: [center.x, center.y],
-            layer: crate::gpu::LAYER_DRAWING,
-            xform: crate::gpu::IDENTITY_XFORM,
-            dash: 0.0,
-            stencil: crate::gpu::Stencil::Off,
-        },
-    ));
+    let draw = |groups: std::ops::Range<usize>| {
+        p.add(egui_wgpu::Callback::new_paint_callback(
+            xf.rect,
+            crate::gpu::CanvasCallback {
+                key,
+                slot: c.mesh_slot.clone(),
+                offset: [(c.mesh_origin.x - xf.center.x) as f32, (c.mesh_origin.y - xf.center.y) as f32],
+                scale: xf.scale as f32,
+                center: [center.x, center.y],
+                layer: crate::gpu::LAYER_DRAWING,
+                xform: crate::gpu::IDENTITY_XFORM,
+                dash: 0.0,
+                stencil: crate::gpu::Stencil::Off,
+                groups,
+            },
+        ));
+    };
+    draw_groups_with_pages(p, list, pages, draw);
     let mut shapes = Vec::new();
     for prim in c.infinite.iter().filter_map(|i| list.prims.get(*i)) {
         let pts = list.points(prim);
@@ -311,6 +338,26 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         }
     }
     p.extend(shapes);
+}
+
+/// Draw `list`'s GPU mesh by draw-order groups (`draw` adds the paint callback for a range of
+/// them), with PDF underlay pages (`pages`, from [`super::underlay::shapes`]) between the groups
+/// their underlays break the mesh at.
+pub(super) fn draw_groups_with_pages(p: &egui::Painter, list: &DisplayList, pages: Vec<(usize, Shape)>, draw: impl Fn(std::ops::Range<usize>)) {
+    let mut from = 0;
+    if !pages.is_empty() {
+        let groups = crate::gpu::underlay_groups(list);
+        let mut pages: Vec<(usize, Shape)> = pages.into_iter().map(|(j, s)| (groups.get(j).copied().unwrap_or(0), s)).collect();
+        pages.sort_by_key(|(g, _)| *g);
+        for (g, page) in pages {
+            if g > from {
+                draw(from..g);
+                from = g;
+            }
+            p.add(page);
+        }
+    }
+    draw(from..usize::MAX);
 }
 
 /// How a highlight is drawn: lines `width` points wide, and either solid with fills filled or
