@@ -168,3 +168,20 @@ fn a_repeated_vertex_counts_as_a_segment() {
     let got = extended(&vs, &edges, [10.0, 1.0]);
     assert!(same(&got, &flat(&[(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 15.0)])), "{got:?}");
 }
+
+#[test]
+fn a_pick_a_hair_outside_an_arc_end_counts_as_that_end() {
+    // A single semicircle from (1, 0) to (-1, 0). Picked 1e-13 outside its sweep at the first
+    // vertex, the pick is on the arc's start, not round the circle at its end: the first end runs
+    // on to x = 0, three quarters of the way round.
+    let b = 1.0 + 2f64.sqrt();
+    let got = extended(&[(1.0, 0.0, 1.0), (-1.0, 0.0, 0.0)], &at(&[0.0], -2.0, -0.5), [1.0, -1e-13]);
+    assert!(same(&got, &[(0.0, -1.0, b), (-1.0, 0.0, 0.0)]), "{got:?}");
+    // A hair past its end is the last end.
+    let got = extended(&[(1.0, 0.0, 1.0), (-1.0, 0.0, 0.0)], &at(&[0.0], -2.0, -0.5), [-1.0, -1e-13]);
+    assert!(same(&got, &[(1.0, 0.0, b), (0.0, -1.0, 0.0)]), "{got:?}");
+    // Turning clockwise, the arc's start angle is the polyline's last vertex: a hair outside it is
+    // the last end.
+    let got = extended(&[(1.0, 0.0, -1.0), (-1.0, 0.0, 0.0)], &at(&[0.0], 0.5, 2.0), [-1.0, 1e-13]);
+    assert!(same(&got, &[(1.0, 0.0, -b), (0.0, 1.0, 0.0)]), "{got:?}");
+}

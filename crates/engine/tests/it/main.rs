@@ -158,6 +158,7 @@ mod text_left_justify;
 mod tolerance;
 mod transparent;
 mod trim_closed_polyline;
+mod trim_cut_where_an_arc_span_starts;
 mod trim_extend_options;
 mod undo_count;
 mod undo_layout_tab;

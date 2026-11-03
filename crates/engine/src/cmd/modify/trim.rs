@@ -272,16 +272,7 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2) -> R
     Ok(out.into_iter().filter(|k| matches!(k, EntityKind::LwPolyline(l) if l.vertices.len() >= 2)).collect())
 }
 
-pub(super) fn param_on(s: &Segment, p: Vec2) -> f64 {
-    match s {
-        Segment::Line(l) => l.param_of(p).clamp(0.0, 1.0),
-        Segment::Arc { arc, ccw } => {
-            let t = norm_angle(arc.center.angle_to(p) - arc.start) / arc.sweep().max(1e-15);
-            let t = t.clamp(0.0, 1.0);
-            if *ccw { t } else { 1.0 - t }
-        }
-    }
-}
+pub(super) use crate::cmd::curves::seg_param as param_on;
 
 /// A polyline arc segment on `ga`'s circle that ends at `end` after turning through `sweep`
 /// (signed, positive counterclockwise), run on round the circle to the nearest boundary edge: the
@@ -348,20 +339,8 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             // extends the end on that side of the polyline's middle parameter, the last from the
             // middle on, not the end nearer the pick. A repeated vertex counts as a segment, so
             // these come from the vertices, not `Polyline::segments`, which skips it.
-            let at = vs
-                .windows(2)
-                .enumerate()
-                .filter_map(|(i, w)| {
-                    let (a, b) = (w.first()?, w.get(1)?);
-                    let seg = match cadcraft_geom::bulge_to_arc(a.p, b.p, a.bulge) {
-                        Some((arc, ccw)) => Segment::Arc { arc, ccw },
-                        None => Segment::Line(Line::new(a.p, b.p)),
-                    };
-                    let c = seg.closest(pick);
-                    Some((c.dist(pick), i as f64 + param_on(&seg, c)))
-                })
-                .min_by(|x, y| x.0.total_cmp(&y.0))
-                .map_or(0.0, |(_, t)| t);
+            let spans: Vec<_> = vs.windows(2).filter_map(|w| Some((w.first()?.p, w.get(1)?.p, w.first()?.bulge))).collect();
+            let at = crate::cmd::curves::vertex_param_of(&spans, pick);
             let from_end = 2.0 * at >= (n - 1) as f64;
             let (i_end, i_prev) = if from_end { (n - 1, n - 2) } else { (0, 1) };
             let end = vs.get(i_end).map(|v| v.p).unwrap_or_default();
