@@ -138,7 +138,14 @@ pub fn table_geometry(d: &Drawing, t: &Table) -> TableGeom {
     let cols = t.col_widths.len().min(10_000);
     let total: usize = parts.iter().map(|p| p.rows.len().min(10_000).saturating_mul(cols)).fold(0, usize::saturating_add);
     if total > MAX_LAYOUT_CELLS {
-        return outline(t);
+        // One outline per part, at the part's origin and as tall as its displayed rows.
+        let w = edges(&t.col_widths, cols).last().copied().unwrap_or(0.0);
+        let mut g = TableGeom::default();
+        for p in parts {
+            let h: f64 = p.rows.iter().take(10_000).map(|r| t.row_heights.get(*r).copied().filter(|v| v.is_finite()).unwrap_or(0.0)).sum();
+            outline_box(&mut g, p.origin, w, h);
+        }
+        return g;
     }
     let mut g = TableGeom::default();
     for p in parts {
@@ -202,16 +209,20 @@ fn outline(t: &Table) -> TableGeom {
     let rows = t.row_heights.len().min(10_000);
     let cols = t.col_widths.len().min(10_000);
     let (w, h) = (edges(&t.col_widths, cols).last().copied().unwrap_or(0.0), edges(&t.row_heights, rows).last().copied().unwrap_or(0.0));
-    let o = t.insert.xy();
-    let p = |x: f64, y: f64| o + Vec2::new(x, -y);
     let mut g = TableGeom::default();
+    outline_box(&mut g, t.insert.xy(), w, h);
+    g
+}
+
+/// The four sides of a `w` by `h` box hanging down from `o`.
+fn outline_box(g: &mut TableGeom, o: Vec2, w: f64, h: f64) {
+    let p = |x: f64, y: f64| o + Vec2::new(x, -y);
     let corners = [p(0.0, 0.0), p(w, 0.0), p(w, h), p(0.0, h), p(0.0, 0.0)];
     for s in corners.windows(2) {
         if let [a, b] = s {
             g.lines.push(TableLine { a: *a, b: *b, color: Color::ByBlock, lineweight: Lineweight::ByBlock });
         }
     }
-    g
 }
 
 /// Lay out one part.

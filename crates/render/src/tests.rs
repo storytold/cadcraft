@@ -1164,5 +1164,9 @@ fn broken_table_cells_count_across_its_parts() {
     };
     assert!(t.parts().len() > 500 && 1000 * 600 <= crate::MAX_LAYOUT_CELLS);
     let g = crate::table_geometry(&d, &t);
-    assert_eq!((g.lines.len(), g.texts.len(), g.fills.len()), (4, 0, 0));
+    let parts = t.parts();
+    assert_eq!((g.lines.len(), g.texts.len(), g.fills.len()), (4 * parts.len(), 0, 0));
+    // Each part's box starts at its own origin.
+    let top = |i: usize| g.lines[4 * i].a;
+    assert!((0..parts.len()).all(|i| top(i) == parts[i].origin));
 }

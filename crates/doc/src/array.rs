@@ -207,7 +207,17 @@ impl ArrayParams {
     /// [`block_for`](Self::block_for) for many items: the replacements are indexed once (the last
     /// entry for a place wins, as there), so each lookup is O(1) instead of a scan of `replaced`.
     pub fn block_lookup<'a>(&'a self) -> impl Fn(u32, u32, u32) -> &'a str + 'a {
-        let index: std::collections::HashMap<(u32, u32, u32), &str> = self.replaced.iter().map(|r| ((r.i, r.j, r.level), r.block.as_str())).collect();
+        // Only places `items()` generates are indexed, so stray out-of-range records cost nothing.
+        let (cols, rows) = match &self.kind {
+            ArrayKind::Rect(r) => (r.cols, r.rows),
+            ArrayKind::Polar(p) => (p.items, p.rows),
+        };
+        let index: std::collections::HashMap<(u32, u32, u32), &str> = self
+            .replaced
+            .iter()
+            .filter(|r| r.i < cols && r.j < rows && r.level < self.levels)
+            .map(|r| ((r.i, r.j, r.level), r.block.as_str()))
+            .collect();
         move |i, j, level| index.get(&(i, j, level)).copied().unwrap_or(self.source.as_str())
     }
 
