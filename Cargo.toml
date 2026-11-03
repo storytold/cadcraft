@@ -63,6 +63,8 @@ quick-xml = "0.42"
 craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["serde"] }
 craft-window = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
 egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
+# Resizable table columns (About ▸ Contributors / Models); no image loaders.
+egui_extras = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 eframe = { version = "0.37", default-features = false }
 egui-wgpu = "0.37"
