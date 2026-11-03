@@ -317,30 +317,35 @@ struct Style {
     fields: Vec<Field>,
 }
 
-fn text_style_is_used(d: &cadcraft_doc::Drawing, name: &str) -> bool {
+fn used_text_styles(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     use cadcraft_doc::EntityKind;
-    if d.dim_styles.iter().any(|s| s.text_style.eq_ignore_ascii_case(name))
-        || d.mleader_styles.iter().any(|s| s.text_style.eq_ignore_ascii_case(name))
-    {
-        return true;
+    let mut used = std::collections::HashSet::new();
+    let mut mark = |name: &str| {
+        let lower = name.to_ascii_lowercase();
+        if !lower.is_empty() {
+            used.insert(lower);
+        }
+    };
+    for s in &d.dim_styles {
+        mark(&s.text_style);
+    }
+    for s in &d.mleader_styles {
+        mark(&s.text_style);
     }
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
-            let used = match &e.kind {
-                EntityKind::Text(t) => t.style.eq_ignore_ascii_case(name),
-                EntityKind::MText(t) => t.style.eq_ignore_ascii_case(name),
-                EntityKind::AttDef(a) => a.text.style.eq_ignore_ascii_case(name),
-                EntityKind::Insert(i) => i.attribs.iter().any(|a| a.text.style.eq_ignore_ascii_case(name)),
-                EntityKind::MLeader(m) => m.text.iter().any(|t| t.style.eq_ignore_ascii_case(name)),
-                _ => false,
-            };
-            if used {
-                return true;
+            match &e.kind {
+                EntityKind::Text(t) => mark(&t.style),
+                EntityKind::MText(t) => mark(&t.style),
+                EntityKind::AttDef(a) => mark(&a.text.style),
+                EntityKind::Insert(i) => i.attribs.iter().for_each(|a| mark(&a.text.style)),
+                EntityKind::MLeader(m) => m.text.iter().for_each(|t| mark(&t.style)),
+                _ => {}
             }
         }
     }
-    false
+    used
 }
 
 fn draw_text_style_preview(p: &egui::Painter, rect: egui::Rect, style: &cadcraft_doc::TextStyle, t: &Tokens) {
@@ -410,6 +415,7 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         all_styles.push(cadcraft_doc::TextStyle::default());
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
+    let used_styles = used_text_styles(d);
     let sel_key = "style_sel";
     let new_key = "style_new";
     let filter_key = "style_filter_in_use";
@@ -464,7 +470,7 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
                                 if only_in_use
                                     && !s.name.eq_ignore_ascii_case(&current)
                                     && !s.name.eq_ignore_ascii_case(&sel)
-                                    && !text_style_is_used(d, &s.name)
+                                    && !used_styles.contains(&s.name.to_ascii_lowercase())
                                 {
                                     continue;
                                 }
@@ -659,7 +665,7 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
                 ui.add_space(6.0);
                 let can_delete = !selected.name.eq_ignore_ascii_case("Standard")
                     && !selected.name.eq_ignore_ascii_case(&current)
-                    && !text_style_is_used(d, &selected.name);
+                    && !used_styles.contains(&selected.name.to_ascii_lowercase());
                 if ui.add_enabled(can_delete, egui::Button::new("Delete").min_size(vec2(90.0, 0.0))).clicked() {
                     action = Some(("style.delete", json!({ "name": selected.name })));
                     sel = current.clone();
