@@ -38,6 +38,8 @@ pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
+/// The PDF Underlay dialog.
+mod pdfattach_dlg;
 pub mod spacemouse;
 pub mod switch;
 // The External References palette.
@@ -225,6 +227,8 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Choose a PDF file (PDFATTACH).
+    pub pick_pdf: Option<Box<dyn Fn() -> Option<String>>>,
 }
 
 pub struct CadApp {
