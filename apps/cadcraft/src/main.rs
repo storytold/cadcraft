@@ -24,6 +24,7 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod spacemouse;
+mod start_failure;
 mod system_animations;
 mod workspace;
 
@@ -356,7 +357,7 @@ fn main() -> eframe::Result {
             b.with_close_requested_on_terminate(true);
         }));
     }
-    eframe::run_native(
+    let result = eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
@@ -434,7 +435,12 @@ fn main() -> eframe::Result {
                 movable: None,
             }))
         }),
-    )
+    );
+    // Say why instead of exiting silently (`start_failure`).
+    if let Err(e) = &result {
+        start_failure::report(e);
+    }
+    result
 }
 
 #[cfg(test)]
