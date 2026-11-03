@@ -86,10 +86,10 @@ fn sfnt_with_names(family: &str, subfamily: &str) -> Vec<u8> {
 
 #[test]
 fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
-    if cadcraft_fonts::ttf::find("Arial").is_none() {
-        cadcraft_fonts::ttf::register("arial.ttf", sfnt_with_names("Arial", "Regular"));
-        cadcraft_fonts::ttf::register("arialbd.ttf", sfnt_with_names("Arial", "Bold"));
-    }
+    let test_family = "00 CADCraft Test";
+    cadcraft_fonts::ttf::register("ccpickertest-r.ttf", sfnt_with_names(test_family, "Regular"));
+    cadcraft_fonts::ttf::register("ccpickertest-b.ttf", sfnt_with_names(test_family, "Bold"));
+
     let mut app = CadApp::new(Session::new(), Services::default());
     app.ui.dialog = Some("textstyle".into());
     let mut h = Harness::builder().with_size(egui::vec2(800.0, 600.0)).build_ui_state(
@@ -111,7 +111,7 @@ fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
         std::fs::create_dir_all(&dir).unwrap();
         h.render().unwrap().save(dir.join("text-style-font-open.png")).unwrap();
     }
-    h.get_by_label("Arial").click();
+    h.get_by_label(test_family).click();
     h.run_steps(2);
     if let Some(dir) = std::env::var_os("CADCRAFT_STYLE_SHOTS") {
         let dir = std::path::PathBuf::from(dir);
@@ -119,22 +119,20 @@ fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
     }
 
     let d = h.state().session.doc().unwrap();
-    assert_eq!(d.text_style("Standard").unwrap().font, "Arial");
+    assert_eq!(d.text_style("Standard").unwrap().font, test_family);
     let combo = h.get_by_role_and_label(Role::ComboBox, "Font Name:");
-    assert_eq!(combo.accesskit_node().value().as_deref(), Some("Arial"));
+    assert_eq!(combo.accesskit_node().value().as_deref(), Some(test_family));
 
     // Selecting a Font Style updates the style's font face.
-    if cadcraft_fonts::ttf::describe_font("Arial").is_some_and(|(_, _, styles)| styles.iter().any(|s| s == "Bold")) {
-        let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
-        assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Regular"));
-        style_combo.click();
-        h.run_steps(2);
-        h.get_by_label("Bold").click();
-        h.run_steps(2);
-        assert_eq!(h.state().session.doc().unwrap().text_style("Standard").unwrap().font, "Arial Bold");
-        let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
-        assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Bold"));
-    }
+    let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
+    assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Regular"));
+    style_combo.click();
+    h.run_steps(2);
+    h.get_by_label("Bold").click();
+    h.run_steps(2);
+    assert_eq!(h.state().session.doc().unwrap().text_style("Standard").unwrap().font, format!("{test_family} Bold"));
+    let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
+    assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Bold"));
 
     // Effects and Size checkboxes update the TextStyle.
     h.get_by_role_and_label(Role::CheckBox, "Annotative").click();
