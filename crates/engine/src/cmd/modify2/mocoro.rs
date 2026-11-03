@@ -108,6 +108,8 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Every option is checked before the drawing changes.
     let ops = list.iter().enumerate().map(|(i, v)| parse_op(i, v)).collect::<Result<Vec<_>>>()?;
+    // Each Copy clones every selected object: the copies together stay within MAXARRAY, as an array's do.
+    crate::cmd::array::check_size(s, ops.iter().filter(|o| matches!(o, Op::Copy(_))).count() as u64, objs.len())?;
     let mut copies = Vec::new();
     for op in ops {
         copies.extend(apply(s, &objs, &mut base, op)?);
