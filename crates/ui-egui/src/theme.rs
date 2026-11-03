@@ -321,7 +321,8 @@ pub fn mono() -> FontId {
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
     crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
-    let mut added: Vec<(String, std::sync::Arc<egui::FontData>)> = Vec::new();
+    // Faces for scripts the Latin faces lack (CJK, Arabic, Hangul), added after them below.
+    let mut added: Vec<(String, egui::FontData)> = Vec::new();
     #[cfg(not(target_arch = "wasm32"))]
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
@@ -355,22 +356,18 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 .into_iter()
                 .filter_map(|p| read_capped(p, MAX_UI_FONT_BYTES))
                 .enumerate()
-                .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
+                .map(|(i, bytes)| (format!("system-cjk-{i}"), egui::FontData::from_owned(bytes))),
         );
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
             && let Some(bytes) = arabic_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
         {
-            added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+            added.push(("system-arabic".into(), egui::FontData::from_owned(bytes)));
         }
     }
     let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
-    added.extend(
-        embedded_ui_faces(&embedded, language)
-            .into_iter()
-            .map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))),
-    );
+    added.extend(embedded_ui_faces(&embedded, language).into_iter().map(|f| (format!("craft-{}", f.stem()), egui::FontData::from_static(f.bytes))));
     // Korean: Noto Sans CJK and most CJK fonts above already cover Hangul; else a Hangul font.
     if language == "ko"
         && !cjk_covers_hangul()
@@ -378,10 +375,15 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     {
         let mut data = egui::FontData::from_owned(face.bytes.as_ref().clone());
         data.index = face.index;
-        added.push(("korean-ui".into(), std::sync::Arc::new(data)));
+        added.push(("korean-ui".into(), data));
     }
-    for (name, data) in added {
-        fonts.font_data.insert(name.clone(), data);
+    for (name, mut data) in added {
+        // egui centres a fallback face in the row, as suits emoji and icons. These faces carry
+        // letters that run on in a line with Latin ones (a Japanese file name, an Arabic layer
+        // name), so they share the Latin face's baseline instead; centred, they sat higher or
+        // lower than the Latin letters beside them (#1535, #2578).
+        data.tweak.set_baseline_fallback(true);
+        fonts.font_data.insert(name.clone(), std::sync::Arc::new(data));
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             if let Some(f) = fonts.families.get_mut(&family) {
                 f.push(name.clone());
@@ -868,5 +870,22 @@ mod tests {
         assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
         assert!(super::can_show("en") && super::can_show("uk"));
+    }
+
+    /// A Japanese file name in an English interface sits on the Latin text's baseline (#1535,
+    /// #2578): the CJK font after the Latin one shares its baseline instead of being centred in
+    /// the row as an emoji font is. Without an installed or embedded CJK font there is nothing to
+    /// compare, as `一` then comes from the Latin font itself.
+    #[test]
+    fn cjk_letters_share_the_latin_baseline() {
+        let ctx = egui::Context::default();
+        super::install_fonts(&ctx, "en");
+        // Fonts set with `set_fonts` take effect at the next pass.
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let galley = ctx.fonts_mut(|f| f.layout_no_wrap("一般図-05.dwg".into(), super::body(), egui::Color32::WHITE));
+        let glyphs = &galley.rows[0].row.glyphs;
+        let baseline = |c: char| glyphs.iter().find(|g| g.chr == c).map(|g| g.pos.y).unwrap();
+        assert_eq!(baseline('一'), baseline('0'), "Japanese and Latin letters on one baseline");
+        assert_eq!(baseline('図'), baseline('d'));
     }
 }
