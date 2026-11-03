@@ -314,7 +314,17 @@ pub(super) fn apply_sortents(
     paper_for: &HashMap<String, String>,
     first_layout: &str,
 ) {
-    for (owner, map) in tables {
+    // Each sort rebuilds its whole space, so a space named by many tables is sorted once, by the
+    // last of them (which decided its order anyway); repeated tables made import quadratic.
+    let target = |owner: &String| {
+        let up = brs.get(owner)?.to_ascii_uppercase();
+        Some(if up.starts_with("*PAPER_SPACE") { paper_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string()) + "\0paper" } else { up })
+    };
+    let last: HashMap<String, usize> = tables.iter().enumerate().filter_map(|(i, (owner, _))| Some((target(owner)?, i))).collect();
+    for (i, (owner, map)) in tables.iter().enumerate() {
+        if target(owner).and_then(|t| last.get(&t)) != Some(&i) {
+            continue;
+        }
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
         // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).
