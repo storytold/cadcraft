@@ -379,8 +379,11 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    // One object index for the whole listing: rebuilding it per block multiplies the block count
+    // by the drawing's kept object count (CWE-407).
+    let objects = cadcraft_doc::dynblock::ObjectIndex::new(d);
     let block = |b: &Block| {
-        let dynamic = cadcraft_doc::dynblock::dynamic_block(d, &b.name).is_some();
+        let dynamic = cadcraft_doc::dynblock::is_dynamic_block_in(d, &objects, &b.name);
         json!({"name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y], "description": b.description, "dynamic": dynamic})
     };
     Ok(json!({ "blocks": d.blocks.values().filter(|b| !b.anonymous).map(|b| block(b)).collect::<Vec<_>>() }))
