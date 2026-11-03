@@ -773,9 +773,13 @@ fn exact(shown: String, v: f64) -> String {
     format!("{shown}{EXACT_SEP}{:.11e}", v + 0.0)
 }
 
-/// What a row shows of a value that [`exact`] tagged (a plain string is shown as it is).
+/// What a row shows of a value that [`exact`] tagged (a plain string is shown as it is, also one
+/// that holds the separator: only a tail that reads as the tagged number is taken off).
 fn shown_part(s: &str) -> String {
-    s.split(EXACT_SEP).next().unwrap_or_default().to_string()
+    match s.rsplit_once(EXACT_SEP) {
+        Some((shown, tag)) if tag.parse::<f64>().is_ok() => shown.to_string(),
+        _ => s.to_string(),
+    }
 }
 
 /// Properties palette: the selection's common properties, or the current defaults when nothing is selected; formats lengths per drawing units and dispatches setter commands.
@@ -1489,6 +1493,14 @@ mod tests {
     use cadcraft_engine::Session;
     use egui::{Color32, Shape};
     use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn shown_part_takes_off_only_the_number_tag() {
+        assert_eq!(shown_part(&exact("5.00".into(), 5.0)), "5.00");
+        assert_eq!(shown_part("plain"), "plain");
+        assert_eq!(shown_part("a\u{1f}b"), "a\u{1f}b");
+        assert_eq!(shown_part(&format!("a{EXACT_SEP}b")), "a\u{1f}b");
+    }
 
     fn contains_swatch(shape: &Shape, color: Color32) -> bool {
         match shape {
