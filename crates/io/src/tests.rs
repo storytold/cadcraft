@@ -1041,6 +1041,53 @@ fn a_dwg_too_large_as_text_dxf_reads_through_binary_dxf() {
     assert!(from_text.entity_count() == 3000);
 }
 
+/// #2690 review: the binary-DXF path keeps what the text path adds after writing: the header
+/// variables acadrust leaves unwritten ($FILLETRAD, $CHAMFERA…) and MTEXT contents holding a
+/// caret, a tab or a line feed. Both paths read back to the same values.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_dwg_read_through_binary_dxf_keeps_header_variables_and_mtext() {
+    let mut d = many_entities(3000);
+    for (name, v) in [("FILLETRAD", 2.5), ("CHAMFERA", 1.25), ("CHAMFERB", 0.75), ("ELEVATION", 3.0), ("THICKNESS", 0.5)] {
+        d.header.set_f64(name, v);
+    }
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::MText(MText {
+            insert: Vec3::new(5.0, 5.0, 0.0),
+            height: 2.5,
+            width: 30.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "caret ^ space\\Ptab\tend".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        }),
+    )
+    .unwrap();
+    let dxf = write_dxf(&d).replacen("AC1015", "AC1024", 1);
+    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let text = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
+    let binary = (5..10)
+        .rev()
+        .find_map(|tenths| {
+            let limits = cadcraft_dwg::Limits { max_dxf_bytes: text.len() * tenths / 10, ..cadcraft_dwg::Limits::DEFAULT };
+            cadcraft_dwg::dwg_to_dxf_noted(&dwg, limits).ok().filter(|(_, notes)| notes.iter().any(|n| n.contains("binary DXF"))).map(|(b, _)| b)
+        })
+        .expect("some limit between half and all of the text DXF reads through binary DXF");
+    let (from_text, from_binary) = (read_dxf(&text).unwrap(), read_dxf(&binary).unwrap());
+    for name in ["FILLETRAD", "CHAMFERA", "CHAMFERB", "ELEVATION", "THICKNESS", "ANGBASE"] {
+        assert_eq!(from_binary.header.f64(name, -1.0), from_text.header.f64(name, -1.0), "{name}");
+    }
+    assert_eq!(from_text.header.f64("FILLETRAD", 0.0), 2.5, "the text path keeps $FILLETRAD");
+    assert_eq!(from_binary.header.i64("ANGDIR", -1), from_text.header.i64("ANGDIR", -1), "ANGDIR");
+    let mtext = |d: &Drawing| first(d, |k| if let EntityKind::MText(t) = k { Some(t.contents.clone()) } else { None });
+    assert_eq!(mtext(&from_binary), mtext(&from_text));
+}
+
 /// Issue #57: oversized input is rejected early, with a message naming the limit, never a panic.
 /// A conversion that runs away (a damaged or misread DWG can make the reader produce a drawing
 /// thousands of times larger than the file) stops at the DXF size limit instead of filling memory
