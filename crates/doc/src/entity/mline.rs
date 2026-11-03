@@ -489,6 +489,18 @@ mod tests {
     }
 
     #[test]
+    fn coincident_vertices_at_a_corner_take_the_corner_miter() {
+        // Every vertex of a run on one point mitres between the segment before the run and the one after.
+        let style = MLineStyle::default();
+        let corner = MLine::new(&style, &[Vec2::ZERO, Vec2::Y, Vec2::new(-1.0, 1.0)], false, MLineJust::Zero, 1.0);
+        let pts = [Vec2::ZERO, Vec2::Y, Vec2::Y, Vec2::Y, Vec2::new(-1.0, 1.0)];
+        let run = MLine::new(&style, &pts, false, MLineJust::Zero, 1.0);
+        let (expected, got) = (corner.miters(), run.miters());
+        assert_eq!(got.get(1..4), Some(&[expected[1]; 3][..]));
+        assert_eq!((got.first(), got.last()), (expected.first(), expected.last()));
+    }
+
+    #[test]
     fn a_long_run_of_coincident_vertices_takes_linear_time() {
         // 200 000 vertices on one point but the last: the miters must not search the run once per
         // vertex (quadratic, minutes) to find the one usable direction.
