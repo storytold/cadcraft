@@ -54,7 +54,11 @@ fn record_handle(d: &Drawing, name: &str) -> Option<Handle> {
 
 /// The object entry `key` of dictionary `dict` refers to.
 fn entry(d: &Drawing, dict: Handle, key: &str) -> Option<Handle> {
-    let o = d.foreign.objects.iter().find(|o| o.handle == dict)?;
+    dictionary_entry(d.foreign.objects.iter().find(|o| o.handle == dict)?, key)
+}
+
+/// The object entry `key` (any case) of dictionary object `o` names.
+fn dictionary_entry(o: &ForeignObject, key: &str) -> Option<Handle> {
     let mut tags = o.tags.iter();
     while let Some(t) = tags.next() {
         if t.code == 3 && t.value.eq_ignore_ascii_case(key) {
@@ -66,7 +70,11 @@ fn entry(d: &Drawing, dict: Handle, key: &str) -> Option<Handle> {
 
 /// Every entry of dictionary `dict`: (key, object).
 fn entries(d: &Drawing, dict: Handle) -> Vec<(String, Handle)> {
-    let Some(o) = d.foreign.objects.iter().find(|o| o.handle == dict) else { return Vec::new() };
+    d.foreign.objects.iter().find(|o| o.handle == dict).map(dictionary_entries).unwrap_or_default()
+}
+
+/// Every entry of dictionary object `o`: (key, object).
+fn dictionary_entries(o: &ForeignObject) -> Vec<(String, Handle)> {
     let mut out = Vec::new();
     let mut key: Option<&str> = None;
     for t in &o.tags {
@@ -1448,19 +1456,33 @@ fn refill_hatches(b: &mut Block) {
 
 /// The value records of the references to the dynamic block whose record is `def_record` (from
 /// any one of them, by graph id): AutoCAD's layout of each record, class ids included.
+///
+/// Each record is copied once at most: a key naming a record an earlier key already took is
+/// skipped. Records are copied per key (and copied again per key when a new reference's data is
+/// made), so a file listing one large record under many keys would otherwise multiply its size by
+/// the key count (CWE-400); AutoCAD gives every key its own record.
 fn templates(d: &Drawing, def_record: Handle) -> HashMap<String, Vec<RawTag>> {
     let objects: HashMap<Handle, &ForeignObject> = d.foreign.objects.iter().map(|o| (o.handle, o)).collect();
+    // Dictionary entries looked up through the index, not by scanning every object per
+    // dictionary (which is quadratic in the object count).
+    let entry = |dict: Handle, key: &str| objects.get(&dict).and_then(|o| dictionary_entry(o, key));
     let mut out: HashMap<String, Vec<RawTag>> = HashMap::new();
+    let mut taken: HashSet<Handle> = HashSet::new();
     for rep in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("DICTIONARY")) {
         // A representation dictionary whose data names this dynamic block.
-        let Some(rd) = entry(d, rep.handle, "AcDbRepData").and_then(|h| objects.get(&h)) else { continue };
+        let Some(rd) = dictionary_entry(rep, "AcDbRepData").and_then(|h| objects.get(&h)) else { continue };
         if !rd.tags.iter().any(|t| t.code == 340 && Handle::parse_hex(&t.value) == Some(def_record)) {
             continue;
         }
-        let Some(values) = entry(d, rep.handle, "AppDataCache").and_then(|c| entry(d, c, "ACAD_ENHANCEDBLOCKDATA")) else { continue };
-        for (k, h) in entries(d, values) {
+        let Some(values) = dictionary_entry(rep, "AppDataCache").and_then(|c| entry(c, "ACAD_ENHANCEDBLOCKDATA")) else { continue };
+        let Some(values) = objects.get(&values) else { continue };
+        for (k, h) in dictionary_entries(values) {
+            if out.contains_key(&k) || taken.contains(&h) {
+                continue;
+            }
             if let Some(x) = objects.get(&h).filter(|x| x.kind.eq_ignore_ascii_case("XRECORD")) {
-                out.entry(k).or_insert_with(|| x.tags.clone());
+                taken.insert(h);
+                out.insert(k, x.tags.clone());
             }
         }
     }
@@ -1963,5 +1985,24 @@ mod tests {
             assert_eq!(codes, [10, 20, 30, 10, 20, 30, 70]);
             assert_eq!(tags.last().map(|t| t.value.as_str()), Some("1"));
         }
+    }
+
+    #[test]
+    fn a_value_record_listed_under_many_keys_is_copied_once() {
+        // One large XRECORD named by many keys of a reference's value dictionary: the templates
+        // keep one copy, not one per key.
+        let mut d = Drawing::new_imperial();
+        let (def_record, rep, rd, cache, values, record) = (Handle(0x10), Handle(0x20), Handle(0x21), Handle(0x22), Handle(0x23), Handle(0x24));
+        let keys: Vec<String> = (0..1000).map(|i| i.to_string()).collect();
+        let entries: Vec<(&str, Handle)> = keys.iter().map(|k| (k.as_str(), record)).collect();
+        let f = std::sync::Arc::make_mut(&mut d.foreign);
+        f.objects.push(dictionary(rep, Handle(1), &[("AcDbRepData", rd), ("AppDataCache", cache)]));
+        f.objects.push(ForeignObject { handle: rd, kind: "ACDB_BLOCKREPRESENTATION_DATA".into(), tags: vec![tag(340, def_record.hex())] });
+        f.objects.push(dictionary(cache, rep, &[("ACAD_ENHANCEDBLOCKDATA", values)]));
+        f.objects.push(dictionary(values, cache, &entries));
+        f.objects.push(ForeignObject { handle: record, kind: "XRECORD".into(), tags: (0..1000).map(|_| tag(1, "x")).collect() });
+        let t = templates(&d, def_record);
+        assert_eq!(t.len(), 1, "one record, one template");
+        assert_eq!(t.get("0").map(Vec::len), Some(1000));
     }
 }

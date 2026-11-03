@@ -197,6 +197,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 text_rotation: t.fd(53, 0.0).to_radians(),
                 user_text_pos: t.i(70).unwrap_or(0) & 128 != 0,
                 block: t.s(2).filter(|s| !s.is_empty()),
+                insertion_point: t.p(12),
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),

@@ -855,22 +855,13 @@ fn prim_near(p: &Prim, probe: &Bounds2, aperture: f64) -> bool {
     b.expand(aperture).intersects(probe)
 }
 
-/// The rotation-and-uniform-scale factor of `m`'s linear part (mirroring allowed), or `None`
-/// when it distorts shapes (non-uniform scale or shear).
-fn similarity_scale(m: &Mat3) -> Option<f64> {
-    let (u, v) = (Vec2::new(m.a, m.b), Vec2::new(m.c, m.d));
-    let (lu, lv) = (u.len(), v.len());
-    let tol = 1e-9 * lu.max(lv);
-    ((lu - lv).abs() <= tol && u.dot(v).abs() <= tol * lu.max(lv) && lu > 0.0).then_some(lu)
-}
-
 /// `p` placed by the affine transform `m`, exactly: circles and arcs under a non-uniform scale
 /// become ellipses and elliptical arcs.
 fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
     let mirror = m.is_mirroring();
     match p {
         Prim::Seg(Segment::Line(l)) => Prim::Seg(Segment::Line(cadcraft_geom::Line::new(m.apply(l.a), m.apply(l.b)))),
-        Prim::Seg(Segment::Arc { arc, ccw }) => match similarity_scale(m) {
+        Prim::Seg(Segment::Arc { arc, ccw }) => match m.similarity_scale() {
             Some(s) => {
                 let c = m.apply(arc.center);
                 let (a0, a1) = (c.angle_to(m.apply(arc.start_point())), c.angle_to(m.apply(arc.end_point())));
@@ -879,14 +870,14 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
             }
             None => {
                 let e = Ellipse { center: arc.center, major: Vec2::X * arc.radius, ratio: 1.0, start: arc.start, end: arc.end };
-                Prim::Ellipse(xform_ellipse(&e, m))
+                Prim::Ellipse(e.transformed(m))
             }
         },
-        Prim::Circle(c) => match similarity_scale(m) {
+        Prim::Circle(c) => match m.similarity_scale() {
             Some(s) => Prim::Circle(Circle::new(m.apply(c.center), c.radius * s)),
-            None => Prim::Ellipse(xform_ellipse(&Ellipse::full(c.center, Vec2::X * c.radius, 1.0), m)),
+            None => Prim::Ellipse(Ellipse::full(c.center, Vec2::X * c.radius, 1.0).transformed(m)),
         },
-        Prim::Ellipse(e) => Prim::Ellipse(xform_ellipse(e, m)),
+        Prim::Ellipse(e) => Prim::Ellipse(e.transformed(m)),
         Prim::Spline(s) => {
             let mut s = s.clone();
             s.control.iter_mut().chain(s.fit.iter_mut()).for_each(|q| *q = m.apply(*q));
@@ -896,24 +887,6 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
         Prim::Infinite { base, dir, ray } => Prim::Infinite { base: m.apply(*base), dir: m.apply_vec(*dir).normalized(), ray: *ray },
         Prim::Fill(f) => Prim::Fill(f.iter().map(|q| m.apply(*q)).collect()),
     }
-}
-
-/// The image of an ellipse (or elliptical arc) under an affine transform: the conjugate
-/// semi-diameters `A·major`, `A·minor` give the new principal axes; parameters shift with them
-/// (and reverse under a mirroring transform).
-fn xform_ellipse(e: &Ellipse, m: &Mat3) -> Ellipse {
-    let center = m.apply(e.center);
-    let (am, an) = (m.apply_vec(e.major), m.apply_vec(e.minor()));
-    // |am·cos t + an·sin t| is largest at t0: the new major axis.
-    let t0 = 0.5 * (2.0 * am.dot(an)).atan2(am.dot(am) - an.dot(an));
-    let (s0, c0) = t0.sin_cos();
-    let (u, v) = (am * c0 + an * s0, an * c0 - am * s0);
-    let ratio = if u.len() > 0.0 { (v.len() / u.len()).min(1.0) } else { 1.0 };
-    if e.is_full() {
-        return Ellipse::full(center, u, ratio);
-    }
-    let (start, end) = if u.cross(v) >= 0.0 { (e.start - t0, e.end - t0) } else { (t0 - e.end, t0 - e.start) };
-    Ellipse { center, major: u, ratio, start: cadcraft_geom::norm_angle(start), end: cadcraft_geom::norm_angle(end) }
 }
 
 /// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.

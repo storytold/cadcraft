@@ -391,8 +391,9 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// The objects `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph lists, when the dictionary has one.
-fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<Vec<&'a ForeignObject>> {
+/// `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph object, when the dictionary has one. Only the
+/// dictionary's own tags are read, so asking whether a block is dynamic never walks the graph.
+fn evaluation_graph<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<&'a ForeignObject> {
     let dict = objects.get(&xdict)?;
     let mut graph = None;
     let mut tags = dict.tags.iter();
@@ -402,7 +403,12 @@ fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle
             break;
         }
     }
-    let graph = objects.get(&graph?).filter(|o| o.kind.eq_ignore_ascii_case("ACAD_EVALUATION_GRAPH"))?;
+    objects.get(&graph?).copied().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_EVALUATION_GRAPH"))
+}
+
+/// The objects `xdict`'s `ACAD_ENHANCEDBLOCK` evaluation graph lists, when the dictionary has one.
+fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle) -> Option<Vec<&'a ForeignObject>> {
+    let graph = evaluation_graph(objects, xdict)?;
     let members = section(&sections(&graph.tags), "AcDbEvalGraph").iter().filter(|t| t.code == 360).filter_map(|t| Handle::parse_hex(&t.value));
     // Deduplicate member handles before resolving them: a graph can list the same member many
     // times, and parsing each occurrence into its own owned parameter multiplies a single large
@@ -411,13 +417,42 @@ fn graph_members<'a>(objects: &HashMap<Handle, &'a ForeignObject>, xdict: Handle
     Some(members.take(MAX_NODES).filter(|h| seen.insert(*h)).filter_map(|h| objects.get(&h).copied()).collect())
 }
 
+/// The kept foreign objects of a drawing by handle. Building it walks every object, so a caller
+/// that asks about many blocks (listing them) builds it once and passes it to
+/// [`dynamic_block_in`] and [`is_dynamic_block_in`] instead of rebuilding it per block, which
+/// multiplies the block count by the object count (CWE-407).
+pub struct ObjectIndex<'a>(HashMap<Handle, &'a ForeignObject>);
+
+impl<'a> ObjectIndex<'a> {
+    pub fn new(d: &'a Drawing) -> Self {
+        ObjectIndex(d.foreign.objects.iter().map(|o| (o.handle, o)).collect())
+    }
+}
+
+/// The extension dictionary of block `name`'s record, if it has one.
+fn block_xdict(d: &Drawing, name: &str) -> Option<Handle> {
+    d.foreign.records.get(&("BLOCK_RECORD".to_string(), name.trim().to_ascii_uppercase()))?.xdict
+}
+
 /// The dynamic block data of block `name` (any case; `*Model_Space` for a drawing that is a
 /// block's own drawing), or `None` when it has none.
 pub fn dynamic_block(d: &Drawing, name: &str) -> Option<DynamicBlock> {
-    let xdict = d.foreign.records.get(&("BLOCK_RECORD".to_string(), name.trim().to_ascii_uppercase()))?.xdict?;
-    let objects: HashMap<Handle, &ForeignObject> = d.foreign.objects.iter().map(|o| (o.handle, o)).collect();
+    // A block without an extension dictionary is never dynamic: answer before indexing objects.
+    block_xdict(d, name)?;
+    dynamic_block_in(d, &ObjectIndex::new(d), name)
+}
+
+/// Whether block `name` is a dynamic block (has an evaluation graph), without reading its
+/// parameters and actions; `objects` is the drawing's [`ObjectIndex`].
+pub fn is_dynamic_block_in(d: &Drawing, objects: &ObjectIndex<'_>, name: &str) -> bool {
+    block_xdict(d, name).and_then(|x| evaluation_graph(&objects.0, x)).is_some()
+}
+
+/// [`dynamic_block`] with the drawing's [`ObjectIndex`] already built.
+pub fn dynamic_block_in(d: &Drawing, objects: &ObjectIndex<'_>, name: &str) -> Option<DynamicBlock> {
+    let xdict = block_xdict(d, name)?;
     let mut out = DynamicBlock { base: d.block(name.trim()).map(|b| b.base).unwrap_or_default(), ..Default::default() };
-    for o in graph_members(&objects, xdict)? {
+    for o in graph_members(&objects.0, xdict)? {
         let secs = sections(&o.tags);
         let node = Cursor::new(section(&secs, "AcDbEvalExpr")).int(90);
         let element = Cursor::new(section(&secs, "AcDbBlockElement")).string(300);

@@ -55,6 +55,13 @@ pub enum IoError {
 
 pub type Result<T> = std::result::Result<T, IoError>;
 
+/// How a program runs the DWG reader and writer in a child process (`cadcraft_dwg::worker`).
+pub mod dwg_worker {
+    pub use cadcraft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
+    #[cfg(all(not(target_arch = "wasm32"), not(all(target_os = "freebsd", target_arch = "aarch64"))))]
+    pub use cadcraft_dwg::{crash_worker_for_test, use_worker};
+}
+
 fn ext(name: impl AsRef<Path>) -> String {
     name.as_ref().extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
 }
@@ -64,7 +71,7 @@ fn ext(name: impl AsRef<Path>) -> String {
 pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
     let name = name.as_ref();
     if cadcraft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = cadcraft_dwg::dwg_to_dxf_noted(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
+        let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes;
         return Ok(d);
@@ -106,7 +113,7 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
         // gradients, so a drawing from an R2000 DXF doesn't lose them by default.
         Some(Format::Dwg) if !opts.binary => {
             let version = opts.version.unwrap_or_else(|| version.max(Version::R2004));
-            cadcraft_dwg::dxf_to_dwg_as(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
+            cadcraft_dwg::encode_as(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
         }
         _ if opts.binary => Err(IoError::Format(format!("binary output is for DXF files, not `{}`", ext(name)))),
         _ => write_framed(d, name, None),
