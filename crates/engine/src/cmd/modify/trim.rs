@@ -344,7 +344,25 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
         EntityKind::LwPolyline(p) if !p.closed && p.vertices.len() >= 2 => {
             let mut vs = p.vertices.clone();
             let n = vs.len();
-            let from_end = vs.last().is_some_and(|l| pick.dist(l.p) < vs.first().map(|f| pick.dist(f.p)).unwrap_or(f64::INFINITY));
+            // The pick's parameter: the segment it is nearest, plus how far along it. AutoCAD 2024
+            // extends the end on that side of the polyline's middle parameter, the last from the
+            // middle on, not the end nearer the pick. A repeated vertex counts as a segment, so
+            // these come from the vertices, not `Polyline::segments`, which skips it.
+            let at = vs
+                .windows(2)
+                .enumerate()
+                .filter_map(|(i, w)| {
+                    let (a, b) = (w.first()?, w.get(1)?);
+                    let seg = match cadcraft_geom::bulge_to_arc(a.p, b.p, a.bulge) {
+                        Some((arc, ccw)) => Segment::Arc { arc, ccw },
+                        None => Segment::Line(Line::new(a.p, b.p)),
+                    };
+                    let c = seg.closest(pick);
+                    Some((c.dist(pick), i as f64 + param_on(&seg, c)))
+                })
+                .min_by(|x, y| x.0.total_cmp(&y.0))
+                .map_or(0.0, |(_, t)| t);
+            let from_end = 2.0 * at >= (n - 1) as f64;
             let (i_end, i_prev) = if from_end { (n - 1, n - 2) } else { (0, 1) };
             let end = vs.get(i_end).map(|v| v.p).unwrap_or_default();
             let prev = vs.get(i_prev).map(|v| v.p).unwrap_or_default();

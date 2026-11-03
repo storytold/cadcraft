@@ -48,6 +48,7 @@ mod dynamic_block_data;
 mod dynamic_grips;
 mod explode_stretched;
 mod extend_polyline_arc_end;
+mod extend_polyline_end_choice;
 mod fillet_chamfer;
 mod fix_holds_grips;
 mod followups_626;
