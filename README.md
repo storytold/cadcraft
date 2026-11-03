@@ -308,6 +308,11 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 > Get-FileHash .\cadcraft-<ver>-windows-x64.msi        # Windows PowerShell
 > ```
 
+The desktop app checks for a newer release at startup and from **Help ▸ Check for Updates…**. A
+custom build that carries unreleased changes can be started with `CADCRAFT_DISABLE_UPDATES=1` (or
+`true`): neither check runs, so a release update never replaces it, and Check for Updates says
+that updates are turned off for this build. Any other value, or none, keeps the usual update flow.
+
 ### Windows
 
 | Build | Installer | Portable |
