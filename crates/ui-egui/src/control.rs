@@ -498,13 +498,16 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             };
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
-                if let Err(e) = cadcraft_engine::consent::check_write(path) {
+                let file = std::path::Path::new(&path);
+                let folder = cadcraft_engine::atomic_write::missing_folder(file);
+                if let Err(e) = cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png) {
                     return err(e);
                 }
-                if let Err(e) = std::fs::write(path, &png) {
-                    return err(e);
+                let mut reply = render_reply(&png, w, h, Some(path), list.truncated);
+                if let Some(folder) = folder {
+                    reply["createdFolder"] = json!(folder.display().to_string());
                 }
-                return ok(render_reply(&png, w, h, Some(path), list.truncated));
+                return ok(reply);
             }
             ok(render_reply(&png, w, h, None, list.truncated))
         }

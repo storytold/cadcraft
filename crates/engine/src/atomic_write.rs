@@ -42,6 +42,27 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomic_with(path, permissions, |file| file.write_all(bytes))
 }
 
+/// The topmost folder missing above `path`: what [`write_atomic_making_folders`] will create.
+/// `None` when the file's folder exists, or when `path` itself exists (a dangling symlink's target
+/// folder is not ours to make).
+pub fn missing_folder(path: &Path) -> Option<PathBuf> {
+    if std::fs::symlink_metadata(path).is_ok() {
+        return None;
+    }
+    path.ancestors().skip(1).filter(|a| !a.as_os_str().is_empty()).take_while(|a| std::fs::symlink_metadata(a).is_err()).last().map(Path::to_path_buf)
+}
+
+/// [`write_atomic`] to a path the user named, first creating the folders missing above it: a
+/// mistyped folder costs less than a drawing that could not be written. The caller reports
+/// [`missing_folder`], asked before this call, so the new folder is never a surprise.
+pub fn write_atomic_making_folders(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(folder) = missing_folder(path) {
+        let dir = path.parent().unwrap_or(&folder);
+        std::fs::create_dir_all(dir).map_err(|e| io::Error::new(e.kind(), format!("the folder {} could not be created: {e}", dir.display())))?;
+    }
+    write_atomic(path, bytes)
+}
+
 /// [`write_atomic`] filling the temporary file through `fill` (streamed rather than one buffer),
 /// with `permissions` given to it from its creation (`None`: the usual creation mode). A symlink
 /// at `path` is replaced by the new file, never written through.
@@ -161,6 +182,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn creates_missing_parent_directories() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-mkdir-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        let dest = dir.join("new_folder").join("deeper").join("out.bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(missing_folder(&dest), Some(dir.join("new_folder")));
+        assert!(write_atomic(&dest, b"created").is_err(), "the plain writer never makes folders");
+        write_atomic_making_folders(&dest, b"created").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"created");
+        assert_eq!(missing_folder(&dest), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_made_is_named_in_the_error() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-nomk-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("a_file");
+        std::fs::write(&blocker, b"x").unwrap();
+        let e = write_atomic_making_folders(&blocker.join("sub").join("out.bin"), b"new").unwrap_err();
+        assert!(e.to_string().contains("could not be created"), "{e}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn replaces_contents_atomically() {
         let dir = std::env::temp_dir().join(format!("cadcraft-aw-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir_all(&dir).unwrap();
@@ -260,6 +305,8 @@ mod tests {
         let link = dir.join("link.dxf");
         symlink("missing/real.dxf", &link).unwrap();
         assert!(write_atomic(&link, b"new").is_err());
+        assert!(write_atomic_making_folders(&link, b"new").is_err());
+        assert!(!dir.join("missing").exists(), "a link's unavailable target folder must not be created");
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         std::fs::remove_dir_all(dir).unwrap();
     }

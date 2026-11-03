@@ -175,6 +175,24 @@ fn render_window(p: &Value) -> Option<cadcraft_engine::geom::Bounds2> {
     (b.width() > 0.0 && b.height() > 0.0).then_some(b)
 }
 
+/// Writes a `ui.render` PNG to `path`, making a missing folder, which `reply` then names.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_render(path: &str, png: &[u8], reply: &mut Value) -> Result<(), String> {
+    let file = std::path::Path::new(path);
+    let folder = cadcraft_engine::atomic_write::missing_folder(file);
+    cadcraft_engine::atomic_write::write_atomic_making_folders(file, png).map_err(|e| format!("{path}: {e}"))?;
+    if let Some(folder) = folder {
+        reply["createdFolder"] = json!(folder.display().to_string());
+    }
+    Ok(())
+}
+
+/// On the web there are no files to write: the render comes back as `pngBase64` only.
+#[cfg(target_arch = "wasm32")]
+fn write_render(path: &str, _png: &[u8], _reply: &mut Value) -> Result<(), String> {
+    Err(format!("{path}: files can't be written here: leave out `path` to get `pngBase64`"))
+}
+
 /// The error for an app that doesn't answer: what to do about it.
 fn not_open(addr: &str, e: std::io::Error) -> std::io::Error {
     std::io::Error::new(
@@ -430,11 +448,12 @@ impl Backend for Headless {
                 let (w, h) = (view.width, view.height);
                 let png =
                     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
+                let mut r =
+                    json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
-                    cadcraft_engine::consent::check_write(&path).map_err(|e| e.to_string())?;
-                    std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
+                    write_render(&path, &png, &mut r)?;
                 }
-                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated}))
+                Ok(r)
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;
