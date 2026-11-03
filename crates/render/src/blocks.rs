@@ -58,12 +58,15 @@ pub struct BlockIndex {
 
 /// Whether `e`'s measured bounds can fall far short of what is drawn, so a screen build must not
 /// leave it out by them: MTEXT (its box counts `\P` paragraphs, not the lines wrapped at the
-/// column width or `\H` height changes), XLINE and RAY (infinite), and references to blocks
+/// column width or `\H` height changes), XLINE and RAY (infinite), points drawn as a sized figure
+/// (`PDMODE`), and references to blocks
 /// holding any of these. `blocks` remembers the answer per block name; recursion is bounded by
 /// `MAX_BLOCK_DEPTH`, past which a reference counts as estimated.
 pub(crate) fn estimated(d: &cadcraft_doc::Drawing, e: &Entity, blocks: &mut std::collections::HashMap<String, bool>, depth: usize) -> bool {
     match &e.kind {
         EntityKind::MText(_) | EntityKind::XLine(_) | EntityKind::Ray(_) => true,
+        // A point measures as its position, but a sized figure (PDMODE) reaches around it.
+        EntityKind::Point(_) => super::point::sized(d.header.i64("PDMODE", 0)),
         EntityKind::Insert(ins) => block_estimated(d, &ins.block, blocks, depth),
         _ => false,
     }

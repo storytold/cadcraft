@@ -1364,3 +1364,21 @@ fn a_screen_build_keeps_what_its_estimated_bounds_would_leave_out() {
     let lines_left_out = build(&b, &Space::Model, &Options::default()).prims.len() - drawn;
     assert_eq!(lines_left_out, 100, "only the far lines are left out; the note and the XLINE are drawn");
 }
+
+/// #2692 review: a point measures as its position, but a sized figure (PDMODE 3, a cross of
+/// PDSIZE 10) reaches around it, so a point just outside the window whose cross reaches into it
+/// is still drawn; as a plain dot (PDMODE 0) it is left out.
+#[test]
+fn a_screen_build_keeps_a_point_whose_figure_reaches_the_window() {
+    use cadcraft_geom::Bounds2;
+    let window = Some(Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(100.0, 5.0)));
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("PDMODE", 3);
+    d.header.set_f64("PDSIZE", 10.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(103.0, 0.0, 0.0), angle: 0.0 })).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the cross draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole);
+    d.header.set_i64("PDMODE", 0);
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 0, "a dot outside is left out");
+}

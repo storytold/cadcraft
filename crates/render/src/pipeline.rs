@@ -202,6 +202,9 @@ pub(crate) fn bounds_context(d: &Drawing) -> u64 {
     d.current_anno_scale().factor().to_bits().hash(&mut h);
     d.anno_all_visible().hash(&mut h);
     d.header.f64("DIMSCALE", 1.0).to_bits().hash(&mut h);
+    // Whether points draw as a sized figure decides whether they may be left out.
+    d.header.i64("PDMODE", 0).hash(&mut h);
+    d.header.f64("PDSIZE", 0.0).to_bits().hash(&mut h);
     // Dimensions and text are measured with their styles, so an edited style changes the bounds
     // of entities that did not change themselves: hash every style's content, not their count.
     d.dim_styles.len().hash(&mut h);
