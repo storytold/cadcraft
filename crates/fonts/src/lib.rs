@@ -816,15 +816,68 @@ mod ttf_tests {
         assert!((maxy - 1.0).abs() < 0.1, "cap height ~ text height, got {maxy}");
     }
 
+    /// Build a minimal valid sfnt font whose `name` table holds `family` (name ID 1) and
+    /// `subfamily` (name ID 2).
+    fn sfnt_with_names(family: &str, subfamily: &str) -> Vec<u8> {
+        let fam = family.as_bytes();
+        let sub = subfamily.as_bytes();
+        let mut name_tbl = Vec::new();
+        name_tbl.extend_from_slice(&0u16.to_be_bytes()); // format 0
+        name_tbl.extend_from_slice(&2u16.to_be_bytes()); // count = 2
+        name_tbl.extend_from_slice(&30u16.to_be_bytes()); // string_offset = 6 + 2 * 12
+        for (name_id, len, off) in [(1u16, fam.len() as u16, 0u16), (2u16, sub.len() as u16, fam.len() as u16)] {
+            name_tbl.extend_from_slice(&1u16.to_be_bytes()); // platform 1 (Macintosh)
+            name_tbl.extend_from_slice(&0u16.to_be_bytes()); // encoding 0 (Roman)
+            name_tbl.extend_from_slice(&0u16.to_be_bytes()); // language 0 (English)
+            name_tbl.extend_from_slice(&name_id.to_be_bytes());
+            name_tbl.extend_from_slice(&len.to_be_bytes());
+            name_tbl.extend_from_slice(&off.to_be_bytes());
+        }
+        name_tbl.extend_from_slice(fam);
+        name_tbl.extend_from_slice(sub);
+
+        let mut sfnt = vec![0, 1, 0, 0, 0, 1, 0, 16, 0, 0, 0, 0]; // 1 table
+        sfnt.extend_from_slice(b"name");
+        sfnt.extend_from_slice(&0u32.to_be_bytes()); // checksum
+        sfnt.extend_from_slice(&28u32.to_be_bytes()); // offset = 12 + 16
+        sfnt.extend_from_slice(&(name_tbl.len() as u32).to_be_bytes());
+        sfnt.extend_from_slice(&name_tbl);
+        sfnt
+    }
+
     #[test]
-    fn available_fonts_lists_builtin_stroke_font_first_and_common_families() {
-        crate::ttf::register("cadcraft-custom-picker-font.ttf", Vec::new());
+    fn available_fonts_lists_family_names_from_name_tables_and_only_installed_common_families() {
+        let reg = sfnt_with_names("CADCraft Agency Test", "Regular");
+        let bold = sfnt_with_names("CADCraft Agency Test", "Bold");
+        crate::ttf::register("ccagencyr.ttf", reg.clone());
+        crate::ttf::register("ccagencyb.ttf", bold.clone());
+
         let fonts = crate::ttf::available_fonts();
         assert_eq!(fonts.first().map(String::as_str), Some(crate::BUILTIN_FONT));
-        for fam in ["Arial", "Times New Roman", "Courier New", "Verdana", "Georgia", "Calibri", "cadcraft-custom-picker-font"] {
-            assert!(fonts.iter().any(|f| f.eq_ignore_ascii_case(fam)), "missing {fam} in {fonts:?}");
+        assert!(fonts.iter().any(|f| f == "CADCraft Agency Test"), "family name from name table: {fonts:?}");
+        assert!(!fonts.iter().any(|f| f.eq_ignore_ascii_case("ccagencyr") || f.eq_ignore_ascii_case("ccagencyb")), "raw file stems excluded");
+        assert_eq!(fonts.iter().filter(|f| f.eq_ignore_ascii_case("CADCraft Agency Test")).count(), 1, "grouped into one family entry");
+
+        // Common families are only offered when installed/resolvable via ttf::find.
+        for common in ["Arial", "Calibri", "Courier New", "Georgia", "Times New Roman", "Verdana"] {
+            assert_eq!(
+                fonts.iter().any(|f| f.eq_ignore_ascii_case(common)),
+                crate::ttf::find(common).is_some(),
+                "common family {common} presence must match ttf::find"
+            );
         }
-        assert_eq!(fonts.iter().filter(|f| f.eq_ignore_ascii_case("Arial")).count(), 1, "deduplicated case-insensitively");
+
+        let (fam, style, styles) = crate::ttf::describe_font("CADCraft Agency Test").unwrap();
+        assert_eq!(
+            (fam.as_str(), style.as_str(), styles.as_slice()),
+            ("CADCraft Agency Test", "Regular", &["Regular".to_string(), "Bold".to_string()][..])
+        );
+        let (fam_b, style_b, _) = crate::ttf::describe_font("ccagencyb.ttf").unwrap();
+        assert_eq!((fam_b.as_str(), style_b.as_str()), ("CADCraft Agency Test", "Bold"));
+        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Regular"), "CADCraft Agency Test");
+        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Bold"), "CADCraft Agency Test Bold");
+        assert_eq!(crate::ttf::find("CADCraft Agency Test").unwrap().bytes.as_slice(), reg.as_slice());
+        assert_eq!(crate::ttf::find("CADCraft Agency Test Bold").unwrap().bytes.as_slice(), bold.as_slice());
     }
 
     #[test]
