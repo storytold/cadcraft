@@ -64,20 +64,21 @@ impl Src {
 
 /// Shape one line containing right-to-left text in `primary` (None: the stroke font), with the
 /// same conventions as the left-to-right paths: baseline at y = 0, x from 0, text height = cap
-/// height, `%%` codes decoded. `None` when the line is too long (the caller then lays it out one
-/// glyph per character) or shaping failed.
-pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
+/// height, `%%` codes decoded. `base_rtl` is the line's direction (`None`: that of its first
+/// strong character). `None` when the line is too long (the caller then lays it out one glyph
+/// per character) or shaping failed.
+pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     let chars = crate::decode_controls(s);
     if chars.is_empty() || chars.len() > MAX_CHARS {
         return None;
     }
     // A last-resort guard around the bidi and shaping libraries: a panic in them must not take
     // the drawing down with it (the line then falls back to one glyph per character).
-    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique))).ok()
+    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique, base_rtl))).ok()
 }
 
 /// Lay out decoded directional runs, keeping advances and decoration spans for empty glyphs.
-fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64) -> Shaped {
+fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
@@ -90,7 +91,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let mut x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
     let mut stroke_last = false;
-    for (run, rtl) in bidi::visual_runs(&cs, None) {
+    for (run, rtl) in bidi::visual_runs(&cs, base_rtl) {
         let mut pieces = itemize(&cs, run, primary);
         if rtl {
             pieces.reverse();
@@ -325,13 +326,13 @@ mod tests {
     #[test]
     fn empty_complex_glyph_keeps_advance_without_geometry() {
         let face = empty_glyph_face();
-        let shaped = shape(Some(&face), " ", 1.0, 1.0, 0.0).expect("shapes empty glyph");
+        let shaped = shape(Some(&face), " ", 1.0, 1.0, 0.0, None).expect("shapes empty glyph");
         assert!(shaped.width > 0.0, "the font's advance is retained");
         assert!(shaped.is_empty());
         assert!(shaped.glyphs.is_empty());
         assert!(shaped.text.is_empty());
 
-        let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0).expect("shapes decorated empty glyph");
+        let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0, None).expect("shapes decorated empty glyph");
         assert_eq!(underlined.width, shaped.width);
         assert!(underlined.glyphs.is_empty());
         assert!(underlined.text.is_empty());
@@ -344,7 +345,7 @@ mod tests {
         // missing-glyph boxes, the digits stay stroke glyphs, in the middle of the line (between
         // the two words), and the measured width matches the shaped one.
         let s = "قیمت 25 تومان";
-        let sh = shape(None, s, 1.0, 1.0, 0.0).unwrap_or_default();
+        let sh = shape(None, s, 1.0, 1.0, 0.0, None).unwrap_or_default();
         assert!(sh.width > 0.0);
         assert!((crate::line_width(s, 1.0, 1.0) - sh.width).abs() < 1e-9);
         let digits: Vec<f64> = sh.strokes.iter().filter(|st| !(st.len() == 5 && st.first() == st.last())).flatten().map(|p| p.x).collect();
@@ -535,7 +536,7 @@ mod tests {
         let marks = format!("ก{}", "\u{0E48}".repeat(MAX_CHARS - 1));
         assert!(crate::shape_stroke(&marks, 1.0, 1.0, 0.0).width > 0.0);
         let long = "ก".repeat(MAX_CHARS + 1);
-        assert!(shape(None, &long, 1.0, 1.0, 0.0).is_none());
+        assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
     }
 
@@ -546,7 +547,7 @@ mod tests {
             let _ = crate::line_width(s, 0.0, 0.0);
         }
         let long = "\u{05D0}b ".repeat(MAX_CHARS);
-        assert!(shape(None, &long, 1.0, 1.0, 0.0).is_none());
+        assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
     }
 }
