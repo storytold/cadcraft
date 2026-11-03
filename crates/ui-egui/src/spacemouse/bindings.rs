@@ -1,7 +1,7 @@
 //! 3D mouse button bindings: the model, its validation and the pure "which bindings fire" step.
 //!
 //! A binding maps a device button (numbered from 1, as the Buttons section of the 3D Mouse
-//! dialog shows them) to a command id and optional JSON parameters, run through `app.run`. The
+//! dialog shows them) to a command id and optional JSON parameters, run by [`run_binding`]. The
 //! wire form, used by the saved preferences and the `ui.spacemouse` control method, is
 //!
 //! ```json
@@ -16,6 +16,8 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+use crate::CadApp;
 
 /// Most buttons a device report can carry (see `motion::decode` in the desktop app).
 pub const MAX_BUTTONS: u8 = 32;
@@ -35,7 +37,8 @@ pub const CALIBRATE: &str = "ui.spacemouse.calibrate";
 pub struct Binding {
     /// A command id from the engine registry or `UI_COMMANDS`.
     pub command: String,
-    /// A JSON object passed as the command's parameters; absent runs it with `{}`.
+    /// A JSON object passed as the command's parameters. Absent (or `{}`) starts the command as a
+    /// menu or toolbar click would, see [`run_binding`].
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub params: Value,
 }
@@ -49,9 +52,10 @@ impl Binding {
         Self { command: command.into(), params }
     }
 
-    /// The parameters to run with: the object, or `{}` when there are none.
-    pub fn run_params(&self) -> Value {
-        if self.params.is_null() { Value::Object(serde_json::Map::new()) } else { self.params.clone() }
+    /// Whether the binding carries parameters. An empty object counts as none: handing `{}` to a
+    /// command that checks for no parameters (Close, Save) would skip what it asks the user.
+    pub fn has_params(&self) -> bool {
+        self.params.as_object().is_some_and(|params| !params.is_empty())
     }
 }
 
@@ -170,6 +174,22 @@ pub fn fired(buttons: &Buttons, pressed: u32, allowed: bool) -> Vec<&Binding> {
         .collect()
 }
 
+/// Runs a bound command the way the user would have run it. Without parameters that is a menu or
+/// toolbar click ([`CadApp::start`]): Close and Save ask about unsaved changes first, and
+/// interactive commands (LINE, CIRCLE, MOVE) begin their prompts. With parameters it is a
+/// programmatic call ([`CadApp::run`]) that runs exactly those parameters.
+///
+/// Errors of a programmatic call are returned for the status line; a started command reports its
+/// errors the way a menu click does (in the command history).
+pub fn run_binding(app: &mut CadApp, binding: &Binding) -> Result<(), String> {
+    if binding.has_params() {
+        app.run(&binding.command, binding.params.clone()).map(|_| ())
+    } else {
+        app.start(&binding.command);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -186,7 +206,7 @@ mod tests {
         assert_eq!(validate_buttons(&mut checked), Ok(()));
         assert_eq!(checked, defaults, "defaults survive validation unchanged");
         // The old behaviour: button 1 zooms to the extents, button 2 recalibrates.
-        let first: Vec<_> = fired(&defaults, 0b01, true).iter().map(|b| (b.command.as_str(), b.run_params())).collect();
+        let first: Vec<_> = fired(&defaults, 0b01, true).iter().map(|b| (b.command.as_str(), b.params.clone())).collect();
         assert_eq!(first, [("zoom", json!({"mode": "extents"}))]);
         let second: Vec<_> = fired(&defaults, 0b10, true).iter().map(|b| b.command.as_str()).collect();
         assert_eq!(second, [CALIBRATE]);

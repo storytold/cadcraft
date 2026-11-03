@@ -100,7 +100,7 @@ impl SpaceMouse {
         // Pressed edges run their bindings (recalibrating even when navigation is not allowed).
         let fired: Vec<_> = bindings::fired(&app.spacemouse.settings.buttons, pressed, allowed).into_iter().cloned().collect();
         for binding in fired {
-            if let Err(error) = app.run(&binding.command, binding.run_params()) {
+            if let Err(error) = bindings::run_binding(app, &binding) {
                 app.set_status(error);
             }
         }

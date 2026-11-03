@@ -1,7 +1,7 @@
 use cadcraft_engine::Session;
 use serde_json::{Value, json};
 
-use super::bindings::{Binding, CALIBRATE, MAX_BUTTONS, default_buttons, fired};
+use super::bindings::{Binding, CALIBRATE, MAX_BUTTONS, default_buttons, fired, run_binding};
 use super::{Settings, Status};
 use crate::{CadApp, Services};
 
@@ -20,13 +20,14 @@ fn defaults_reproduce_the_old_hard_coded_buttons() {
     assert!(!settings.invert_pan_x && !settings.invert_pan_y);
     // Button 1 zoomed to the extents, button 2 recalibrated, and nothing else did anything.
     let mut app = app();
-    let pressed = |mask| fired(&app.spacemouse.settings.buttons, mask, true).iter().map(|b| (b.command.clone(), b.run_params())).collect::<Vec<_>>();
+    let pressed =
+        |mask| fired(&app.spacemouse.settings.buttons, mask, true).iter().map(|b| (b.command.clone(), b.params.clone())).collect::<Vec<_>>();
     assert_eq!(pressed(1), [("zoom".to_string(), json!({"mode": "extents"}))]);
-    assert_eq!(pressed(2), [(CALIBRATE.to_string(), json!({}))]);
+    assert_eq!(pressed(2), [(CALIBRATE.to_string(), Value::Null)]);
     assert!(pressed(!3).is_empty());
     // The zoom binding runs, and so does the same call the old code made.
     let zoom = app.spacemouse.settings.buttons[&1].clone();
-    assert!(app.run(&zoom.command, zoom.run_params()).is_ok());
+    assert!(app.run(&zoom.command, zoom.params.clone()).is_ok());
 }
 
 #[test]
@@ -225,4 +226,66 @@ fn opening_the_dialog_and_the_navigate_command_still_work() {
     assert_eq!(app.ui.dialog.as_deref(), Some("spacemouse"));
     assert!(app.run("ui.spacemouse.navigate", json!({"pan": [0.1, 0.0], "zoom": 1.1})).is_ok());
     assert!(app.run("ui.spacemouse.navigate", json!({"pan": [9.0, 0.0], "zoom": 1.1})).is_err());
+}
+
+/// One drawing with unsaved changes.
+fn dirty_app() -> CadApp {
+    let mut app = CadApp::new(Session::empty(), Services::default());
+    app.session.new_drawing(false);
+    app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).expect("draws");
+    assert!(app.session.docs[0].is_dirty());
+    app
+}
+
+#[test]
+fn a_bound_close_asks_about_unsaved_changes_instead_of_discarding_them() {
+    for command in ["close", "closeall"] {
+        let mut app = dirty_app();
+        run_binding(&mut app, &Binding::new(command)).expect("starts");
+        assert!(app.close_prompt().is_some(), "{command} asks Save / Don't Save / Cancel first");
+        assert_eq!(app.session.docs.len(), 1, "{command} keeps the drawing until the user answers");
+        assert!(app.session.docs[0].is_dirty());
+        app.answer_close(crate::closing::Choice::Cancel);
+        assert!(app.closing.is_none());
+        assert_eq!(app.session.docs.len(), 1, "Cancel keeps it");
+        assert!(app.session.docs[0].is_dirty(), "the edits survive");
+    }
+}
+
+#[test]
+fn an_empty_params_object_is_no_way_around_the_prompts() {
+    let mut app = dirty_app();
+    let binding = Binding::with_params("close", json!({}));
+    assert!(!binding.has_params());
+    run_binding(&mut app, &binding).expect("starts");
+    assert!(app.close_prompt().is_some());
+    assert_eq!(app.session.docs.len(), 1);
+}
+
+#[test]
+fn a_binding_without_params_starts_interactive_commands_like_a_toolbar_click() {
+    let mut app = app();
+    run_binding(&mut app, &Binding::new("line")).expect("starts");
+    assert!(app.session.prompting(), "LINE waits for its first point instead of failing with 'points is required'");
+}
+
+#[test]
+fn a_binding_with_params_is_a_programmatic_call() {
+    let mut app = app();
+    assert!(Binding::with_params("circle", json!({"radius": 2})).has_params());
+    run_binding(&mut app, &Binding::with_params("circle", json!({"center": [0, 0], "radius": 2}))).expect("runs");
+    assert!(!app.session.prompting());
+    // A programmatic call reports its error for the status line.
+    assert!(run_binding(&mut app, &Binding::with_params("circle", json!({"radius": "wide"}))).is_err());
+}
+
+#[test]
+fn the_default_buttons_still_do_what_they_did() {
+    let mut app = app();
+    app.spacemouse.status = Status::Connected;
+    let defaults = app.spacemouse.settings.buttons.clone();
+    run_binding(&mut app, &defaults[&1]).expect("zoom extents");
+    assert!(!app.spacemouse.calibrate_requested);
+    run_binding(&mut app, &defaults[&2]).expect("calibrate");
+    assert!(app.spacemouse.calibrate_requested, "button 2 still recalibrates");
 }

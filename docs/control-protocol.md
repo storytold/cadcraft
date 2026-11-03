@@ -223,9 +223,11 @@ all. The defaults are button 1 = `zoom` with `{"mode": "extents"}` and button 2 
 
 A binding is `{command, params?}`. `command` is the id of an engine command (see `engine.commands`)
 or a UI command, case-insensitive; `params` is an optional JSON object of at most 4096 bytes and 8
-levels, passed to the command as `engine.execute` would (`{}` when omitted). A press runs the
-command like any other call, so commands that need parameters or a drawing report their error on
-the status line. A binding cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
+levels. Without `params` (or with `{}`) a press starts the command as a menu or toolbar click would:
+Close, Close All and Save ask about unsaved changes first, and interactive commands such as `line`
+begin their prompts. With `params` a press is a programmatic call that runs the command with exactly
+those parameters, as `engine.execute` would, and reports its error on the status line. A binding
+cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
 `ui.spacemouse.navigate`), `ui.quit`, `ui.noop` or the recent-file commands (`ui.recent.*`, including
 `ui.recent.clear`). Presses run only while `enabled` is on and the app
 could navigate (window focused, no dialog or popup open, a drawing shown, not on the start tab). The
