@@ -178,10 +178,11 @@ pub fn compare(prop: &Value, op: Op, value: &Value) -> bool {
             // Colours: `red` = `1` = `Red`; `bylayer` = `ByLayer`. No colour spelling is long, so a
             // long text (a layer name from a file) isn't parsed, copied and split per entity.
             const MAX_COLOR_TEXT: usize = 64;
-            if ptxt.len() > MAX_COLOR_TEXT || vtxt.len() > MAX_COLOR_TEXT {
+            let (pc, vc) = (ptxt.trim(), vtxt.trim());
+            if pc.len() > MAX_COLOR_TEXT || vc.len() > MAX_COLOR_TEXT {
                 return false;
             }
-            match (Color::parse(&ptxt), Color::parse(vtxt.trim())) {
+            match (Color::parse(pc), Color::parse(vc)) {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             }
@@ -417,5 +418,14 @@ mod long_text_tests {
         assert!(compare(&long, Op::Eq, &long));
         assert!(!compare(&long, Op::Eq, &Value::String("red".into())));
         assert!(compare(&Value::String("red".into()), Op::Eq, &Value::String("1".into())));
+    }
+
+    /// Padding is trimmed before the length limit, so a padded colour still matches.
+    #[test]
+    fn padded_colours_still_match() {
+        let padded = |c: &str| Value::String(format!("{}{c}{}", " ".repeat(100), " ".repeat(100)));
+        assert!(compare(&padded("red"), Op::Eq, &Value::String("1".into())));
+        assert!(compare(&Value::String("red".into()), Op::Eq, &padded("1")));
+        assert!(!compare(&padded("red"), Op::Ne, &padded("1")));
     }
 }
