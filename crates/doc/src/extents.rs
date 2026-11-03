@@ -11,28 +11,40 @@ pub const MAX_BLOCK_DEPTH: usize = 16;
 
 /// Positions in `tags` of the groups outside application-defined `102 {` .. `102 }` groups, whose
 /// codes are the application's own and not the entity's.
-fn outside_app(tags: &[crate::RawTag]) -> Vec<usize> {
+fn outside_app(tags: &[crate::RawTag]) -> impl Iterator<Item = usize> + '_ {
     let mut in_app = false;
-    let mut out = Vec::new();
-    for (i, t) in tags.iter().enumerate() {
+    tags.iter().enumerate().filter_map(move |(i, t)| {
         if t.code == 102 {
             in_app = t.value.starts_with('{');
-        } else if !in_app {
-            out.push(i);
+            None
+        } else {
+            (!in_app).then_some(i)
         }
-    }
-    out
+    })
 }
 
-/// The positions of the frame's corner groups 10, 20, 11, 21 (in that order) and their values.
+/// The positions of the frame's corner groups 10, 20, 11, 21 (in that order) and their values:
+/// the first of each outside application groups, found in one pass that stops at the last.
 fn ole_corner_groups(tags: &[crate::RawTag]) -> Option<[(usize, f64); 4]> {
-    let own = outside_app(tags);
-    let find = |code: i32| {
-        let i = own.iter().copied().find(|&i| tags.get(i).is_some_and(|t| t.code == code))?;
-        let v = tags.get(i)?.value.trim().parse::<f64>().ok().filter(|v| v.is_finite())?;
-        Some((i, v))
-    };
-    Some([find(10)?, find(20)?, find(11)?, find(21)?])
+    let mut found: [Option<(usize, f64)>; 4] = [None; 4];
+    for i in outside_app(tags) {
+        let Some(t) = tags.get(i) else { continue };
+        let slot = match t.code {
+            10 => 0,
+            20 => 1,
+            11 => 2,
+            21 => 3,
+            _ => continue,
+        };
+        if let Some(f) = found.get_mut(slot).filter(|f| f.is_none()) {
+            *f = Some((i, t.value.trim().parse::<f64>().ok().filter(|v| v.is_finite())?));
+            if found.iter().all(Option::is_some) {
+                break;
+            }
+        }
+    }
+    let [Some(a), Some(b), Some(c), Some(d)] = found else { return None };
+    Some([a, b, c, d])
 }
 
 /// The closed outline of an OLE2FRAME from its upper-left (groups 10, 20) and lower-right
@@ -50,26 +62,34 @@ const OLE_HEADER: usize = 2;
 const OLE_CORNERS: usize = 12;
 
 /// Replace the four corners at the start of the OLE data (the 310 groups' hex, in order) by `new`
-/// (upper left, upper right, lower right, lower left), keeping z and every tag's length. Data that
-/// is not valid hex, too short, or whose corners are not the old `frame`'s is left alone.
+/// (upper left, upper right, lower right, lower left), keeping z and every group's length and
+/// letter case. Only the groups that cover the header are decoded and rewritten; the rest of the
+/// payload is not touched. Data that is not valid hex, too short, or whose corners are not the old
+/// `frame`'s is left alone.
 fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4]) {
-    let idx: Vec<usize> = outside_app(tags).into_iter().filter(|&i| tags.get(i).is_some_and(|t| t.code == 310)).collect();
-    let mut bytes: Vec<u8> = Vec::new();
-    let mut lens: Vec<usize> = Vec::new();
-    for &i in &idx {
+    const END: usize = OLE_HEADER + OLE_CORNERS * 8;
+    let mut bytes: Vec<u8> = Vec::with_capacity(END);
+    // The groups read, and how many leading bytes of each belong to the header.
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for i in outside_app(tags).filter(|&i| tags.get(i).is_some_and(|t| t.code == 310)) {
+        if bytes.len() >= END {
+            break;
+        }
         let Some(t) = tags.get(i) else { return };
         let s = t.value.trim();
         if s.len() % 2 != 0 || !s.is_ascii() {
             return;
         }
-        for k in (0..s.len()).step_by(2) {
-            let Some(b) = s.get(k..k + 2).and_then(|h| u8::from_str_radix(h, 16).ok()) else { return };
+        let take = (s.len() / 2).min(END - bytes.len());
+        for k in 0..take {
+            // `from_str_radix` also takes a sign, so each digit is checked first.
+            let Some(h) = s.get(2 * k..2 * k + 2).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit())) else { return };
+            let Ok(b) = u8::from_str_radix(h, 16) else { return };
             bytes.push(b);
         }
-        lens.push(s.len() / 2);
+        spans.push((i, take));
     }
-    let end = OLE_HEADER + OLE_CORNERS * 8;
-    if bytes.len() < end {
+    if bytes.len() < END {
         return;
     }
     // Only data whose corners are this frame's corners (UL, UR, LR, LL) has the layout above; any
@@ -85,26 +105,23 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
             return;
         }
     }
-    let mut out = bytes.clone();
-    for c in 0..4 {
+    for (c, p) in new.iter().enumerate() {
         let at = OLE_HEADER + c * 24;
-        let rd = |o: usize| out.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes).filter(|v| v.is_finite());
-        if rd(at).is_none() || rd(at + 8).is_none() {
-            return;
-        }
-        let Some(p) = new.get(c).copied() else { return };
-        if let Some(s) = out.get_mut(at..at + 8) {
+        if let Some(s) = bytes.get_mut(at..at + 8) {
             s.copy_from_slice(&p.x.to_le_bytes());
         }
-        if let Some(s) = out.get_mut(at + 8..at + 16) {
+        if let Some(s) = bytes.get_mut(at + 8..at + 16) {
             s.copy_from_slice(&p.y.to_le_bytes());
         }
     }
     let mut pos = 0;
-    for (&i, &n) in idx.iter().zip(&lens) {
-        let (Some(t), Some(chunk)) = (tags.get_mut(i), out.get(pos..pos + n)) else { return };
+    for (i, n) in spans {
+        let (Some(t), Some(chunk)) = (tags.get_mut(i), bytes.get(pos..pos + n)) else { return };
         let lower = t.value.bytes().any(|b| b.is_ascii_lowercase());
-        t.value = chunk.iter().map(|b| if lower { format!("{b:02x}") } else { format!("{b:02X}") }).collect();
+        let hex: String = chunk.iter().map(|b| if lower { format!("{b:02x}") } else { format!("{b:02X}") }).collect();
+        // Leave any padding around the digits, and the digits after the header, as they were.
+        let start = t.value.len() - t.value.trim_start().len();
+        t.value.replace_range(start..start + 2 * n, &hex);
         pos += n;
     }
 }
@@ -410,7 +427,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
         }
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         // An OLE object's content is not drawn, but its frame is, so the frame counts (#2422).
-        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points),
+        EntityKind::Unknown(u) if u.is_ole_frame() => ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points),
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {
@@ -793,5 +810,47 @@ mod tests {
             assert_eq!((g(10), g(20), g(11), g(21)), (minx, maxy, maxx, miny));
             assert_eq!(header_corners(&tags), vec![(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)]);
         }
+    }
+    /// `from_str_radix` accepts a leading sign, so "+A" must not count as a hex byte (review on
+    /// #2587): data with one is not valid and MOVE leaves its bytes alone.
+    #[test]
+    fn a_plus_sign_in_ole_data_is_not_hex() {
+        let mut tags = small_frame();
+        let hex = tags.last().map(|t| t.value.clone()).unwrap_or_default();
+        // The marker's first byte is 01: "+1" would decode to the same byte.
+        let signed = format!("+1{}", hex.get(2..).unwrap_or_default());
+        if let Some(t) = tags.last_mut() {
+            t.value = signed.clone();
+        }
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(10.0, 5.0)));
+        assert_eq!(tags.first().map(|t| t.value.as_str()), Some("40"), "the frame tags still move");
+        assert_eq!(tags.last().map(|t| t.value.as_str()), Some(signed.as_str()));
+    }
+
+    /// A payload of 1,000 groups of 127 bytes: only the group(s) holding the 98-byte header are
+    /// rewritten. Later groups stay as they were, even ones that are not valid hex or have padding
+    /// (the old code re-encoded the whole payload and gave up on any bad group).
+    #[test]
+    fn a_large_ole_payload_only_rewrites_its_leading_groups() {
+        let mut tags = small_frame();
+        let first = tags.pop().map(|t| t.value).unwrap_or_default();
+        let mut head = first.clone();
+        // Fill the first group up to 127 bytes.
+        head.push_str(&"ab".repeat(127 - first.len() / 2));
+        tags.push(crate::RawTag { code: 310, value: head });
+        for g in 1..1000 {
+            let value = match g {
+                2 => format!("  {}  ", "Ab".repeat(127)),
+                500 => "ZZ".repeat(127),
+                _ => "ab".repeat(127),
+            };
+            tags.push(crate::RawTag { code: 310, value });
+        }
+        let rest: Vec<String> = tags.iter().skip(5).map(|t| t.value.clone()).collect();
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(10.0, 5.0)));
+        assert_eq!(header_corners(&tags[..5]), vec![(40.0, -14.0), (45.0, -14.0), (45.0, -17.0), (40.0, -17.0)]);
+        let after: Vec<String> = tags.iter().skip(5).map(|t| t.value.clone()).collect();
+        assert_eq!(after, rest, "every group after the first is string-identical");
+        assert_eq!(tags.get(4).map(|t| t.value.len()), Some(254), "the first group keeps its length");
     }
 }

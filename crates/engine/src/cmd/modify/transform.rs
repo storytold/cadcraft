@@ -32,7 +32,7 @@ pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool
         d.entity(*h).is_some_and(|e| {
             // An in-place edit skips an object on a locked layer (see edit_entities), so it cannot be refused.
             let locked = !copy && d.layer(&e.common.layer).is_some_and(|l| l.locked);
-            !locked && matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME"))
+            !locked && matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.is_ole_frame())
         })
     };
     if hs.iter().any(ole) {

@@ -235,7 +235,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         // An OLE object's content is not drawn; its frame, from its two corner points, is.
-        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => {
+        EntityKind::Unknown(u) if u.is_ole_frame() => {
             if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
                 b.polyline(ctx, rgb, lw, &q);
             }
