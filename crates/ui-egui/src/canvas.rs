@@ -722,14 +722,6 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
     pressed_primary
 }
 
-/// Draw the drawing area and handle its input (zoom and pan, picking, the crosshair) for this
-/// frame.
-///
-/// It also owns the cursor-visibility contract: the OS cursor is hidden only while the pointer is
-/// over the drawing area *and* the canvas is the topmost layer under it, so the drawn crosshair
-/// replaces the pointer over the drawing alone. A menu bar, an open menu (including its frame, not
-/// just its items), a tooltip or a floating palette above the canvas keeps the normal OS cursor
-/// visible (#1701), and so do the menus painted on the canvas itself (see [`over_canvas_menu`]).
 /// Whether a quick right-click cancels the running command instead of acting as Enter: it asks for
 /// the insertion point of an INSERT the Blocks palette started. AutoCAD's Enter asks the point again,
 /// and Escape (or this) is how a placement ends, so the palette's own placements get a way out
@@ -739,6 +731,14 @@ pub(crate) fn right_click_cancels_placing(app: &CadApp) -> bool {
         && app.session.current_prompt().is_some_and(|p| p.message == "Specify insertion point")
 }
 
+/// Draw the drawing area and handle its input (zoom and pan, picking, the crosshair) for this
+/// frame.
+///
+/// It also owns the cursor-visibility contract: the OS cursor is hidden only while the pointer is
+/// over the drawing area *and* the canvas is the topmost layer under it, so the drawn crosshair
+/// replaces the pointer over the drawing alone. A menu bar, an open menu (including its frame, not
+/// just its items), a tooltip or a floating palette above the canvas keeps the normal OS cursor
+/// visible (#1701), and so do the menus painted on the canvas itself (see [`over_canvas_menu`]).
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let full = ui.available_rect_before_wrap();
