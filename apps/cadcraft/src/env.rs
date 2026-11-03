@@ -33,8 +33,10 @@ pub(crate) const VARS: &[(&str, &str)] = &[
 /// `CADCRAFT_CONFIG_DIR`.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Env {
+    /// Portable eframe storage, kept with the other settings instead of the user profile.
+    pub(crate) portable_dir: Option<PathBuf>,
     /// The settings folder (logs, autosave, workspace, plotters): `CADCRAFT_CONFIG_DIR`; else, when
-    /// that is unset, the platform's (`cadcraft_engine::settings_dir::platform`). `None`: no
+    /// that is unset, the portable directory or the platform's (`cadcraft_engine::settings_dir::platform`). `None`: no
     /// folder, because the variable is empty or blank (the way to run without one) or the
     /// platform has none.
     pub(crate) config_dir: Option<PathBuf>,
@@ -58,7 +60,26 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn read() -> Env {
-        Env::from_vars(|k| std::env::var_os(k))
+        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from));
+        Self::from_vars_and_exe(|k| std::env::var_os(k), exe_dir.as_deref())
+    }
+
+    fn from_vars_and_exe(var: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&std::path::Path>) -> Env {
+        let mut vars = Env::from_vars(&var);
+        // An explicit override (including blank, which disables settings) takes precedence.
+        if var(CONFIG_DIR).is_none()
+            && let Some(exe) = exe_dir
+        {
+            match crate::portable::directory_in(exe) {
+                Ok(Some(data)) => {
+                    vars.config_dir = Some(data.clone());
+                    vars.portable_dir = Some(data);
+                }
+                Ok(None) => {}
+                Err(error) => log::warn!("portable settings cannot be written ({error}); using the user profile"),
+            }
+        }
+        vars
     }
 
     /// [`Env::read`] with `var` looking a variable up.
@@ -66,6 +87,7 @@ impl Env {
         let text = |k: &str| var(k).and_then(|v| v.into_string().ok()).filter(|v| !v.trim().is_empty());
         let switch = |k: &str| Switch::parse(k, var(k).map(|v| v.to_string_lossy().into_owned()).as_deref());
         Env {
+            portable_dir: None,
             config_dir: match var(CONFIG_DIR) {
                 Some(dir) if dir.to_str().is_some_and(|d| d.trim().is_empty()) => None,
                 Some(dir) => Some(PathBuf::from(dir)),
@@ -95,6 +117,31 @@ pub(crate) fn help() -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn portable_settings_and_eframe_storage_use_the_same_directory() {
+        let exe = std::env::temp_dir().join(format!("cadcraft-env-portable-{}", std::process::id()));
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join("portable.txt"), "").unwrap();
+        let vars = Env::from_vars_and_exe(env(&[("APPDATA", "/profile")]), Some(&exe));
+        assert_eq!(vars.config_dir, Some(exe.join("CADCraftData")));
+        assert_eq!(vars.portable_dir, vars.config_dir);
+        std::fs::remove_dir_all(exe).unwrap();
+    }
+
+    #[test]
+    fn explicit_override_skips_portable_probe() {
+        let exe = std::env::temp_dir().join(format!("cadcraft-env-override-{}", std::process::id()));
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join("portable.txt"), "").unwrap();
+        for value in ["/custom", "", "  "] {
+            let vars = Env::from_vars_and_exe(env(&[(CONFIG_DIR, value)]), Some(&exe));
+            assert_eq!(vars.config_dir, (!value.trim().is_empty()).then(|| PathBuf::from(value)));
+            assert_eq!(vars.portable_dir, None);
+            assert!(!exe.join("CADCraftData").exists());
+        }
+        std::fs::remove_dir_all(exe).unwrap();
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
@@ -139,6 +186,7 @@ mod tests {
         assert_eq!(
             read,
             Env {
+                portable_dir: None,
                 config_dir: Some(PathBuf::from("/private/cc")),
                 locale: Some("cs-CZ".into()),
                 vsync: Switch::On,

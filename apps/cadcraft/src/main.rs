@@ -23,6 +23,7 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod portable;
 mod spacemouse;
 mod system_animations;
 mod workspace;
@@ -202,8 +203,12 @@ fn saved_window(app_ron: &str) -> bool {
 }
 
 /// The window state from the last session is saved and will be restored (#2595).
-fn restores_window() -> bool {
-    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+fn restores_window(portable: Option<&std::path::Path>) -> bool {
+    portable
+        .map(std::path::PathBuf::from)
+        .or_else(|| eframe::storage_dir(APP_ID))
+        .and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok())
+        .is_some_and(|ron| saved_window(&ron))
 }
 
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
@@ -308,7 +313,8 @@ fn main() -> eframe::Result {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options(restores_window())
+        persistence_path: vars.portable_dir.clone(),
+        ..window_options(restores_window(vars.portable_dir.as_deref()))
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);

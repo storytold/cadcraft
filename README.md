@@ -184,6 +184,19 @@ in the text style or set `FONTFALLBACK` (`CADCRAFT_FONTFALLBACK="Vazirmatn"`). F
 inside a word (an MTEXT colour change in the middle of a Persian word) break the joining at that
 point.
 
+### Portable Windows ZIP
+
+The Windows portable ZIP includes `portable.txt` beside `cadcraft.exe`. With that
+marker present, settings, logs, autosaves, workspace data, plotter files, and
+eframe preferences/window state stay in `CADCraftData` beside the executable.
+Keep that directory when replacing the binaries. The MSI does not include the
+marker and continues to use the normal user profile.
+
+`CADCRAFT_CONFIG_DIR` takes precedence over the marker, including an empty or
+blank value that disables the settings folder. If `CADCraftData` cannot be
+created or written, CADCraft warns and uses the normal profile. Existing profile
+settings are not automatically copied into the portable directory.
+
 ### Logs
 
 The desktop app writes its `log` records to standard error and to `logs/cadcraft.log` in the
