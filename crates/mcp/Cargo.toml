@@ -17,3 +17,7 @@ serde_json = { workspace = true }
 log = { workspace = true }
 # Secure randomness for the per-session control token (MIT OR Apache-2.0).
 getrandom = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+# O_NOFOLLOW when reading the token file (MIT OR Apache-2.0).
+libc = "0.2"
