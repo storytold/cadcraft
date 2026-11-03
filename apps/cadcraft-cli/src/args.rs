@@ -81,6 +81,7 @@ pub(crate) enum Command {
     Mcp(McpArgs),
     Perf(PerfArgs),
     Sample(SampleArgs),
+    Roundtrip(RoundtripArgs),
 }
 
 /// Print a drawing's summary as JSON
@@ -305,6 +306,40 @@ fn perf_target(p: PathBuf) -> PerfTarget {
     match p.to_str().and_then(|t| t.parse::<usize>().ok()) {
         Some(n) => PerfTarget::Count(n.clamp(1, MAX_PERF_COUNT)),
         None => PerfTarget::File(p),
+    }
+}
+
+/// Open each DXF/DWG, save it as DXF and DWG, reopen and compare; writes report.md and report.json
+///
+/// FOLDER defaults to $CADCRAFT_CORPUS_DIR. With CADCRAFT_CORPUS_STRICT=1 it fails when a file
+/// doesn't open, save or reopen, or loses records on save.
+#[derive(Args)]
+pub(crate) struct RoundtripArgs {
+    /// A drawing, or a folder of them
+    #[arg(value_name = "FILE|FOLDER")]
+    pub(crate) path: Option<PathBuf>,
+    /// Where the report goes (default: `report` beside the files)
+    #[arg(long, value_name = "DIR")]
+    pub(crate) out: Option<PathBuf>,
+    /// Keep the saved files, in `saved` under the report folder
+    #[arg(long)]
+    pub(crate) keep_saved: bool,
+    /// Save only in each file's own format
+    #[arg(long)]
+    pub(crate) same_format: bool,
+    /// Don't count what each file holds (faster; no "read lost" column)
+    #[arg(long)]
+    pub(crate) no_census: bool,
+    /// How far numbers may move and still count as equal
+    #[arg(long, value_name = "T", default_value_t = cadcraft_io::roundtrip::Options::default().abs_tol, value_parser = tolerance)]
+    pub(crate) tolerance: f64,
+}
+
+/// `--tolerance`: a finite number, 0 or more.
+fn tolerance(v: &str) -> Result<f64, String> {
+    match v.parse::<f64>() {
+        Ok(t) if t.is_finite() && t >= 0.0 => Ok(t),
+        _ => Err(format!("must be a number >= 0, got `{v}`")),
     }
 }
 

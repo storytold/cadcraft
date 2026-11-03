@@ -23,8 +23,10 @@ commands:
   test            cargo nextest run (cargo test without nextest) plus the doctests
   i18n            print the strings each interface language shows in English (never fails)
   ci              fmt --check, clippy -D warnings, test, i18n, assets, layers, wasm (stops at first failure)
-  corpus [--download]
-                  show where test corpora live; --download fetches PngSuite into corpus/pngsuite
+  corpus [DIR] [--out DIR] [--keep-saved] [--same-format]
+                  open -> save -> reopen every DXF/DWG of a real-file corpus (DIR, default
+                  $CADCRAFT_CORPUS_DIR or ../cadcraft-corpus) and write report.md + report.json
+                  (default DIR/report); runs `cadcraft-cli roundtrip` in release mode
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the AutoCAD menu-breadth checklist in docs/parity-checklist.md
   ico <out.ico> <in.png>...
@@ -41,7 +43,7 @@ fn main() -> ExitCode {
         Some("test") => cmd_test(),
         Some("i18n") => cmd_i18n(),
         Some("ci") => cmd_ci(),
-        Some("corpus") => cmd_corpus(rest.contains(&"--download")),
+        Some("corpus") => cmd_corpus(&rest),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
         Some("ico") => ico::run(&rest),
@@ -226,7 +228,43 @@ fn cmd_ci() -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_corpus(_download: bool) -> Result<(), String> {
-    println!("Test corpora live in storytold/cadcraft-corpus (planned); never commit large binaries here.");
-    Ok(())
+/// `corpus [DIR] [options]`: the round-trip report over a real-file corpus (gaps FF1, FF5). The
+/// corpus lives outside this repo (storytold/cadcraft-corpus); its files are never committed here.
+fn cmd_corpus(args: &[&str]) -> Result<(), String> {
+    // `cadcraft-cli` runs from the repository root: relative paths are made absolute against the
+    // folder `cargo xtask` was run from first, so they mean what the user typed.
+    let here = std::env::current_dir().map_err(|e| format!("current folder: {e}"))?;
+    let mut pass: Vec<String> = Vec::new();
+    let mut dir: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match *a {
+            "--out" => {
+                let v = it.next().ok_or_else(|| format!("{a} needs a value"))?;
+                pass.extend([a.to_string(), here.join(v).display().to_string()]);
+            }
+            "--tolerance" => {
+                let v = it.next().ok_or_else(|| format!("{a} needs a value"))?;
+                pass.extend([a.to_string(), v.to_string()]);
+            }
+            s if s.starts_with("--") => pass.push(s.to_string()),
+            s if dir.is_none() => dir = Some(s.to_string()),
+            _ => return Err("corpus takes one DIR".into()),
+        }
+    }
+    let dir = dir
+        .or_else(|| std::env::var("CADCRAFT_CORPUS_DIR").ok())
+        .unwrap_or_else(|| root().parent().map(|p| p.join("cadcraft-corpus").display().to_string()).unwrap_or_else(|| "../cadcraft-corpus".into()));
+    let dir = here.join(&dir);
+    if !dir.is_dir() {
+        return Err(format!(
+            "no corpus at `{}`: clone storytold/cadcraft-corpus next to this repo, set CADCRAFT_CORPUS_DIR or pass DIR \
+             (never commit corpus files to this repo)",
+            dir.display()
+        ));
+    }
+    let dir = dir.display().to_string();
+    let mut c = cargo();
+    c.args(["run", "--release", "-q", "-p", "cadcraft-cli", "--", "roundtrip", &dir]).args(&pass);
+    run(c, &format!("cadcraft-cli roundtrip {dir} {}", pass.join(" ")))
 }
