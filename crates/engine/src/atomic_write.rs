@@ -99,7 +99,8 @@ pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: im
 fn keep_group(file: &File, path: &Path, permissions: Permissions) -> Permissions {
     use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
     let Ok(old) = std::fs::symlink_metadata(path) else { return permissions };
-    if !old.is_file() || fchown(file, None, Some(old.gid())).is_ok() {
+    // A file already in the old group needs no change (and a restrictive syscall policy may refuse a no-op fchown).
+    if !old.is_file() || file.metadata().is_ok_and(|m| m.gid() == old.gid()) || fchown(file, None, Some(old.gid())).is_ok() {
         return permissions;
     }
     Permissions::from_mode(permissions.mode() & !0o070)
