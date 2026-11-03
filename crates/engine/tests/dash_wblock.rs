@@ -85,6 +85,12 @@ fn without_consent_nothing_is_written_or_erased() {
     consent::with(Consent::NONE, || s.cmdline(&script)).ok();
     assert!(!std::path::Path::new(&path).exists());
     assert!(alive(&s, a) && alive(&s, b), "{:?}", s.log);
+    // Nor is a missing folder made for it.
+    let folder = std::path::Path::new(&path).with_file_name("new");
+    let nested = folder.join("WB.dwg").to_string_lossy().into_owned();
+    let e = consent::with(Consent::NONE, || s.execute("wblock", &json!({ "path": nested, "handles": [a.hex()] }))).unwrap_err();
+    assert!(e.to_string().contains("not allowed"), "{e}");
+    assert!(!folder.exists());
 }
 
 #[test]

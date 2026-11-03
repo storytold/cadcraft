@@ -83,6 +83,20 @@ fn tableexport_refuses_without_consent() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A save to a folder that doesn't exist makes the folder first: without consent it makes neither.
+#[test]
+fn a_refused_save_makes_no_folder() {
+    let dir = scratch("folder");
+    let folder = dir.join("new");
+    let path = folder.join("a.dxf");
+    let e = consent::with(Consent::NONE, || crate::atomic_write::write_atomic_making_folders(&path, b"0\nEOF")).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(!folder.exists());
+    consent::with(WRITES, || crate::atomic_write::write_atomic_making_folders(&path, b"0\nEOF")).unwrap();
+    assert!(path.exists());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// CLOSE and CLOSEALL lose what wasn't saved: they need their own consent, also from a script.
 #[test]
 fn close_and_closeall_refuse_without_consent() {

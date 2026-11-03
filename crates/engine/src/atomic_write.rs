@@ -56,6 +56,8 @@ pub fn missing_folder(path: &Path) -> Option<PathBuf> {
 /// mistyped folder costs less than a drawing that could not be written. The caller reports
 /// [`missing_folder`], asked before this call, so the new folder is never a surprise.
 pub fn write_atomic_making_folders(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // Asked before the folders too: a refused write leaves no new folder behind.
+    crate::consent::check_write(path)?;
     if let Some(folder) = missing_folder(path) {
         let dir = path.parent().unwrap_or(&folder);
         std::fs::create_dir_all(dir).map_err(|e| io::Error::new(e.kind(), format!("the folder {} could not be created: {e}", dir.display())))?;
