@@ -463,6 +463,13 @@ fn report_renders_as_markdown_and_json() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn a_folder_it_cannot_read_is_reported_not_skipped() {
+    let w = corpus::walk(std::path::Path::new("no/such/corpus/folder"), &[]);
+    assert!(w.files.is_empty());
+    assert_eq!(w.unreadable.len(), 1, "{:?}", w.unreadable);
+}
+
+#[test]
 fn corpus_files_walks_folders_and_skips_the_report() {
     use corpus::corpus_files;
     let dir = std::env::temp_dir().join(format!("cadcraft-corpus-walk-{}", std::process::id()));

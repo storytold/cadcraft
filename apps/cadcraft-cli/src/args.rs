@@ -336,10 +336,10 @@ pub(crate) struct RoundtripArgs {
 }
 
 /// `--tolerance`: a finite number, 0 or more.
-fn tolerance(v: &str) -> Result<f64, String> {
+fn tolerance(v: &str) -> Result<f64, ValueError> {
     match v.parse::<f64>() {
         Ok(t) if t.is_finite() && t >= 0.0 => Ok(t),
-        _ => Err(format!("must be a number >= 0, got `{v}`")),
+        _ => Err(ValueError::Tolerance(v.to_string())),
     }
 }
 
@@ -395,6 +395,8 @@ pub(crate) enum ValueError {
     CmdId,
     #[error(transparent)]
     CmdJson(#[from] serde_json::Error),
+    #[error("expected a number of 0 or more, got `{0}`")]
+    Tolerance(String),
 }
 
 /// Why `parse` refuses flags clap accepted: clap prints it as a usage error (exit 2).

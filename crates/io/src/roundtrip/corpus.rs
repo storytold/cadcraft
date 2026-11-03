@@ -347,27 +347,71 @@ pub fn is_drawing_file(path: &Path) -> bool {
 /// Every DXF and DWG file under `dir`, sorted, leaving out hidden folders and the folders in
 /// `skip` (the report folder). Symbolic links are not followed.
 pub fn corpus_files(dir: &Path, skip: &[PathBuf]) -> Vec<PathBuf> {
+    walk(dir, skip).files
+}
+
+/// What [`walk`] found, and what it couldn't look at, so a report never passes for a whole one.
+#[derive(Debug, Default)]
+pub struct Walk {
+    pub files: Vec<PathBuf>,
+    /// Folders and entries that couldn't be read, with why.
+    pub unreadable: Vec<String>,
+    /// Files past [`MAX_FILES`] or folders past the depth limit were left out.
+    pub truncated: bool,
+}
+
+/// [`corpus_files`], also saying what it had to leave out.
+pub fn walk(dir: &Path, skip: &[PathBuf]) -> Walk {
     let skip: Vec<PathBuf> = skip.iter().map(|p| p.canonicalize().unwrap_or_else(|_| p.clone())).collect();
-    let mut out = Vec::new();
+    let mut w = Walk::default();
     let mut stack = vec![(dir.to_path_buf(), 0usize)];
     while let Some((d, depth)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
-        for entry in entries.flatten() {
+        let entries = match std::fs::read_dir(&d) {
+            Ok(entries) => entries,
+            Err(e) => {
+                w.unreadable.push(format!("{}: {e}", d.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    w.unreadable.push(format!("{}: {e}", d.display()));
+                    continue;
+                }
+            };
             let path = entry.path();
-            let Ok(ft) = entry.file_type() else { continue };
+            let ft = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(e) => {
+                    w.unreadable.push(format!("{}: {e}", path.display()));
+                    continue;
+                }
+            };
             if ft.is_dir() {
                 let hidden = entry.file_name().to_string_lossy().starts_with('.');
                 let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
-                if !hidden && depth < MAX_DEPTH && !skip.contains(&canon) {
-                    stack.push((path, depth + 1));
+                if hidden || skip.contains(&canon) {
+                    continue;
                 }
-            } else if ft.is_file() && is_drawing_file(&path) && out.len() < MAX_FILES {
-                out.push(path);
+                if depth < MAX_DEPTH {
+                    stack.push((path, depth + 1));
+                } else {
+                    w.truncated = true;
+                }
+            } else if ft.is_file() && is_drawing_file(&path) {
+                if w.files.len() < MAX_FILES {
+                    w.files.push(path);
+                } else {
+                    w.truncated = true;
+                }
             }
         }
     }
-    out.sort();
-    out
+    w.files.sort();
+    w.unreadable.sort();
+    w
 }
 
 /// `path` relative to `root`, with forward slashes.

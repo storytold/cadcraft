@@ -19,13 +19,28 @@ pub(crate) enum RoundtripError {
     Strict(Vec<String>),
 }
 
+/// What the walk couldn't look at, so the report isn't taken for the whole corpus: said on
+/// stderr, and failures of a strict run.
+fn left_out(w: &cadcraft_io::roundtrip::corpus::Walk) -> Vec<String> {
+    let mut out: Vec<String> = w.unreadable.iter().map(|u| format!("not read: {u}")).collect();
+    if w.truncated {
+        out.push("left out: files or folders past the harness limits".to_string());
+    }
+    out
+}
+
 pub(crate) fn roundtrip(a: &RoundtripArgs, io: &mut Streams) -> Result {
     use cadcraft_io::roundtrip::corpus;
     let path = a.path.clone().or_else(|| std::env::var_os("CADCRAFT_CORPUS_DIR").map(Into::into)).ok_or(RoundtripError::NoPath)?;
+    let mut missed = Vec::new();
     let (root, files, out) = if path.is_dir() {
         let out = a.out.clone().unwrap_or_else(|| path.join("report"));
-        let files = corpus::corpus_files(&path, std::slice::from_ref(&out));
-        (path, files, out)
+        let walk = corpus::walk(&path, std::slice::from_ref(&out));
+        missed = left_out(&walk);
+        for m in &missed {
+            io.errln(format_args!("roundtrip: {m}"));
+        }
+        (path, walk.files, out)
     } else if path.is_file() {
         let root = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
         let out = a.out.clone().unwrap_or_else(|| root.join("report"));
@@ -34,7 +49,8 @@ pub(crate) fn roundtrip(a: &RoundtripArgs, io: &mut Streams) -> Result {
         return Err(RoundtripError::Missing(path).into());
     };
     if files.is_empty() {
-        return Err(RoundtripError::Empty(root).into());
+        // A folder it couldn't read isn't an empty one.
+        return Err(if missed.is_empty() { RoundtripError::Empty(root) } else { RoundtripError::Strict(missed) }.into());
     }
     let mut opts = corpus::CorpusOptions { cross_format: !a.same_format, census: !a.no_census, ..Default::default() };
     opts.compare.abs_tol = a.tolerance;
@@ -66,7 +82,8 @@ pub(crate) fn roundtrip(a: &RoundtripArgs, io: &mut Streams) -> Result {
     // CADCRAFT_CORPUS_STRICT=1: a file that doesn't open, save or reopen, or records a writer
     // leaves out, fail the run (the report is written first).
     if std::env::var("CADCRAFT_CORPUS_STRICT").is_ok_and(|v| v == "1") {
-        let failed = report.strict_failures();
+        let mut failed = report.strict_failures();
+        failed.extend(missed);
         if !failed.is_empty() {
             return Err(CliError::from(RoundtripError::Strict(failed)));
         }
