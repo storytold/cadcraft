@@ -4,7 +4,7 @@
 //! on screen afterwards. Calls with parameters never open it.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cadcraft_engine::cmd::underlay::{AttachPreset, pdf, read_pdf, start_attach, stored_path, underlay_file};
 use cadcraft_geom::Vec2;
@@ -16,13 +16,23 @@ use crate::CadApp;
 const THUMB_PX: u32 = 160;
 const MAX_THUMBS: u32 = 60;
 
+/// What the worker has read of the file so far: its page count (`None` until read) and the
+/// thumbnails drawn since the dialog last took them (width, height, RGBA on white; `None` for a
+/// page that couldn't be drawn).
+#[derive(Default)]
+struct Loaded {
+    pages: Option<Result<usize, String>>,
+    thumbs: Vec<(u32, Option<(u32, u32, Vec<u8>)>)>,
+}
+
 /// The dialog's state between frames (egui temporary data).
 #[derive(Clone)]
 struct State {
     path: String,
-    /// The file's bytes, read once for the page count and every thumbnail (empty if unreadable).
-    bytes: Arc<Vec<u8>>,
-    pages: Result<usize, String>,
+    /// Filled by the worker reading the file (up to 512 MB) and drawing its thumbnails, so the
+    /// dialog shows at once; it stops once the dialog lets go of it.
+    loaded: Arc<Mutex<Loaded>>,
+    pages: Option<Result<usize, String>>,
     selected: BTreeSet<u32>,
     thumbs: BTreeMap<u32, Option<TextureHandle>>,
     path_type: &'static str,
@@ -35,20 +45,24 @@ struct State {
 }
 
 impl State {
-    fn new(path: String) -> State {
-        let read = pdf().ok_or_else(|| "PDF underlays are not available in this build".to_string()).and_then(|hooks| {
-            let bytes = read_pdf(&path).map_err(|e| e.to_string())?;
-            let pages = (hooks.page)(&bytes, 1).map(|(n, ..)| n).map_err(|e| format!("{path}: {e}"))?;
-            Ok((bytes, pages))
-        });
-        let (bytes, pages) = match read {
-            Ok((bytes, n)) => (bytes, Ok(n)),
-            Err(e) => (Vec::new(), Err(e)),
+    fn new(path: String, ctx: &egui::Context) -> State {
+        let loaded = Arc::new(Mutex::new(Loaded::default()));
+        let job = {
+            let (path, loaded, ctx) = (path.clone(), Arc::downgrade(&loaded), ctx.clone());
+            move || read(&path, &loaded, &ctx)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::thread::Builder::new().name("cadcraft-pdfattach".into()).spawn(job).is_err()
+            && let Ok(mut l) = loaded.lock()
+        {
+            l.pages = Some(Err("the file could not be read".into()));
+        }
+        #[cfg(target_arch = "wasm32")]
+        job();
         State {
             path,
-            bytes: Arc::new(bytes),
-            pages,
+            loaded,
+            pages: None,
             selected: BTreeSet::from([1]),
             thumbs: BTreeMap::new(),
             path_type: "full",
@@ -60,6 +74,69 @@ impl State {
             rotation: 0.0,
         }
     }
+
+    /// Take what the worker read since the last frame: the page count and thumbnails as textures.
+    fn take_loaded(&mut self, ctx: &egui::Context) {
+        let Ok(mut l) = self.loaded.lock() else { return };
+        if self.pages.is_none() {
+            self.pages = l.pages.clone();
+        }
+        for (p, px) in std::mem::take(&mut l.thumbs) {
+            let tex = px.and_then(|(w, h, rgba)| {
+                let size = [w as usize, h as usize];
+                (size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) == Some(rgba.len())).then(|| {
+                    ctx.load_texture(format!("pdf-thumb {p}"), egui::ColorImage::from_rgba_unmultiplied(size, &rgba), TextureOptions::LINEAR)
+                })
+            });
+            self.thumbs.insert(p, tex);
+        }
+    }
+}
+
+/// Read the PDF at `path` on a worker: its page count, then the thumbnails of its first
+/// [`MAX_THUMBS`] pages one by one, each handed to the dialog as soon as it is drawn. Stops once
+/// the dialog has let go of `loaded` (closed, or another file chosen).
+fn read(path: &str, loaded: &std::sync::Weak<Mutex<Loaded>>, ctx: &egui::Context) {
+    let hand = |f: &mut dyn FnMut(&mut Loaded)| {
+        let Some(l) = loaded.upgrade() else { return false };
+        if let Ok(mut l) = l.lock() {
+            f(&mut l);
+        }
+        ctx.request_repaint();
+        true
+    };
+    let read = pdf().ok_or_else(|| "PDF underlays are not available in this build".to_string()).and_then(|hooks| {
+        let bytes = read_pdf(path).map_err(|e| e.to_string())?;
+        let pages = (hooks.page)(&bytes, 1).map(|(n, ..)| n).map_err(|e| format!("{path}: {e}"))?;
+        Ok((hooks, bytes, pages))
+    });
+    let (hooks, bytes, n) = match read {
+        Ok(r) => r,
+        Err(e) => {
+            hand(&mut |l| l.pages = Some(Err(e.clone())));
+            return;
+        }
+    };
+    if !hand(&mut |l| l.pages = Some(Ok(n))) {
+        return;
+    }
+    for p in 1..=(n as u32).min(MAX_THUMBS) {
+        let px = (hooks.render)(&bytes, p, THUMB_PX).ok().map(|(w, h, mut rgba)| {
+            // On white: the page's paper is transparent.
+            for [r, g, b, a] in rgba.as_chunks_mut::<4>().0 {
+                let k = f32::from(*a) / 255.0;
+                for c in [r, g, b] {
+                    *c = (f32::from(*c) * k + 255.0 * (1.0 - k)).round() as u8;
+                }
+                *a = 255;
+            }
+            (w, h, rgba)
+        });
+        let mut px = Some(px);
+        if !hand(&mut |l| l.thumbs.push((p, px.take().flatten()))) {
+            return;
+        }
+    }
 }
 
 fn id() -> egui::Id {
@@ -69,30 +146,9 @@ fn id() -> egui::Id {
 /// The dialog, opened as `pdfattach:<path>` on the PDF the user chose.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, chosen: &str, open: &mut bool) {
     // The state kept from the last frame, if it is this file's (a new PDFATTACH starts afresh).
-    let mut st = ctx.data(|d| d.get_temp::<State>(id())).filter(|s| s.path == chosen).unwrap_or_else(|| State::new(chosen.to_string()));
+    let mut st = ctx.data(|d| d.get_temp::<State>(id())).filter(|s| s.path == chosen).unwrap_or_else(|| State::new(chosen.to_string(), ctx));
     let document = app.session.state().ok().and_then(|s| s.path.clone());
-    // One thumbnail drawn per frame, so the dialog shows at once and fills in.
-    if let Ok(n) = st.pages {
-        let missing = (1..=(n as u32).min(MAX_THUMBS)).find(|p| !st.thumbs.contains_key(p));
-        if let Some(p) = missing {
-            let tex = pdf().and_then(|hooks| (hooks.render)(&st.bytes, p, THUMB_PX).ok()).and_then(|(w, h, mut rgba)| {
-                // On white: the page's paper is transparent.
-                for [r, g, b, a] in rgba.as_chunks_mut::<4>().0 {
-                    let k = f32::from(*a) / 255.0;
-                    for c in [r, g, b] {
-                        *c = (f32::from(*c) * k + 255.0 * (1.0 - k)).round() as u8;
-                    }
-                    *a = 255;
-                }
-                let size = [w as usize, h as usize];
-                (size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) == Some(rgba.len())).then(|| {
-                    ctx.load_texture(format!("pdf-thumb {p}"), egui::ColorImage::from_rgba_unmultiplied(size, &rgba), TextureOptions::LINEAR)
-                })
-            });
-            st.thumbs.insert(p, tex);
-            ctx.request_repaint();
-        }
-    }
+    st.take_loaded(ctx);
     let (mut ok, mut cancel, mut browse) = (false, false, false);
     egui::Window::new(crate::tl!("Attach PDF Underlay")).id(id()).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -102,10 +158,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, chosen: &str, open: &mut bo
             browse = ui.button(crate::tl!("Browse...")).clicked();
         });
         match &st.pages {
-            Err(e) => {
+            None => {
+                ui.spinner();
+            }
+            Some(Err(e)) => {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
-            Ok(n) => {
+            Some(Ok(n)) => {
                 ui.label(crate::tf!("Pages to attach ({count} in the file)", count = n));
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
@@ -192,7 +251,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, chosen: &str, open: &mut bo
         });
         ui.separator();
         ui.horizontal(|ui| {
-            let can = st.pages.is_ok() && !st.selected.is_empty();
+            let can = matches!(st.pages, Some(Ok(_))) && !st.selected.is_empty();
             ok = ui.add_enabled(can, egui::Button::new(crate::tl!("OK"))).clicked();
             cancel = ui.button(crate::tl!("Cancel")).clicked();
         });
@@ -206,7 +265,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, chosen: &str, open: &mut bo
     {
         // The dialog now shows that file (its state is kept under the new file's name).
         app.ui.dialog = Some(format!("pdfattach:{path}"));
-        st = State::new(path);
+        st = State::new(path, ctx);
     }
     if ok {
         let preset = AttachPreset {
@@ -242,6 +301,26 @@ mod tests {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| dialog(app, ui.ctx(), chosen, &mut open));
         output.textures_delta.clear();
         ctx.data(|d| d.get_temp::<State>(id())).map(|s| s.path)
+    }
+
+    #[test]
+    fn the_pdf_is_read_on_a_worker_and_the_dialog_does_not_wait_for_it() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let ctx = egui::Context::default();
+        // Opening the dialog reads nothing: the worker does.
+        assert!(State::new("/nowhere/plan.pdf".into(), &ctx).pages.is_none());
+        let pages = |ctx: &egui::Context| ctx.data(|d| d.get_temp::<State>(id())).and_then(|s| s.pages);
+        // A later frame shows what the worker read (here an error: no such file).
+        let mut got = None;
+        for _ in 0..200 {
+            frame(&mut app, &ctx, "/nowhere/plan.pdf", true);
+            got = pages(&ctx);
+            if got.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(matches!(got, Some(Err(_))), "{got:?}");
     }
 
     #[test]
