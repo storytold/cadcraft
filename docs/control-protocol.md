@@ -226,14 +226,15 @@ or a UI command, case-insensitive; `params` is an optional JSON object of at mos
 levels. Without `params` (or with `{}`) a press starts the command as a menu or toolbar click would:
 Close, Close All and Save ask about unsaved changes first, and interactive commands such as `line`
 begin their prompts. With `params` a press is a programmatic call that runs the command with exactly
-those parameters, as `engine.execute` would, and reports its error on the status line. A binding
-cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
+those parameters, as `engine.execute` would. Either way an error appears on the status line. A
+binding cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
 `ui.spacemouse.navigate`), `ui.quit`, `ui.noop` or the recent-file commands (`ui.recent.*`, including
 `ui.recent.clear`). Presses run only while `enabled` is on and the app
 could navigate (window focused, no dialog or popup open, a drawing shown, not on the start tab). The
 exception is a button bound to `ui.spacemouse.calibrate`, which skips that whole check: it also works
-while a dialog is open, the window is unfocused, the start tab is showing or `enabled` is off. The
-Calibrate button of the dialog and the `ui.spacemouse.calibrate` command do not depend on the table,
+while a dialog is open, the window is unfocused, the start tab is showing or `enabled` is off. When
+several buttons are pressed together, a press does nothing once an earlier one has opened an
+unsaved-changes prompt or a dialog, calibrate excepted. The Calibrate button of the dialog and the `ui.spacemouse.calibrate` command do not depend on the table,
 so clearing every binding never removes recalibration.
 
 Settings other than the defaults are saved with the interface preferences.

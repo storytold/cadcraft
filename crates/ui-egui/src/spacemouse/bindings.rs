@@ -175,18 +175,24 @@ pub fn fired(buttons: &Buttons, pressed: u32, allowed: bool) -> Vec<&Binding> {
 }
 
 /// Runs a bound command the way the user would have run it. Without parameters that is a menu or
-/// toolbar click ([`CadApp::start`]): Close and Save ask about unsaved changes first, and
-/// interactive commands (LINE, CIRCLE, MOVE) begin their prompts. With parameters it is a
-/// programmatic call ([`CadApp::run`]) that runs exactly those parameters.
+/// toolbar click: Close and Save ask about unsaved changes first, and interactive commands (LINE,
+/// CIRCLE, MOVE) begin their prompts. With parameters it is a programmatic call ([`CadApp::run`])
+/// that runs exactly those parameters. Either way an error is returned for the status line. (This
+/// is [`CadApp::start`] with its errors kept, which `start` leaves to the command history or drops.)
 ///
-/// Errors of a programmatic call are returned for the status line; a started command reports its
-/// errors the way a menu click does (in the command history).
+/// [`fired`] picked this press before any binding of the same poll ran, so an earlier one may have
+/// opened an unsaved-changes prompt or a dialog since. A press then does nothing, calibrate
+/// excepted: a programmatic `close` must not discard the drawing the prompt is asking about.
 pub fn run_binding(app: &mut CadApp, binding: &Binding) -> Result<(), String> {
+    if binding.command != CALIBRATE && (app.closing.is_some() || app.ui.dialog.is_some()) {
+        return Ok(());
+    }
     if binding.has_params() {
-        app.run(&binding.command, binding.params.clone()).map(|_| ())
-    } else {
-        app.start(&binding.command);
-        Ok(())
+        return app.run(&binding.command, binding.params.clone()).map(|_| ());
+    }
+    match crate::menus::run_ui_command(app, &binding.command, &Value::Null) {
+        Some(result) => result.map(|_| ()),
+        None => app.session.start(&binding.command).map_err(|error| error.to_string()),
     }
 }
 

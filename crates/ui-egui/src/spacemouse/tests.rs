@@ -289,3 +289,38 @@ fn the_default_buttons_still_do_what_they_did() {
     run_binding(&mut app, &defaults[&2]).expect("calibrate");
     assert!(app.spacemouse.calibrate_requested, "button 2 still recalibrates");
 }
+
+#[test]
+fn a_second_press_of_the_same_poll_cannot_act_behind_a_prompt() {
+    // Two buttons were pressed together: a plain `close` opens the unsaved-changes prompt, and a
+    // `close` with explicit params would discard the drawing the prompt is asking about.
+    let mut app = dirty_app();
+    run_binding(&mut app, &Binding::new("close")).expect("starts");
+    assert!(app.close_prompt().is_some());
+    run_binding(&mut app, &Binding::with_params("close", json!({"index": 0}))).expect("ignored");
+    assert_eq!(app.session.docs.len(), 1, "the drawing is still there");
+    assert!(app.session.docs[0].is_dirty());
+    assert!(app.close_prompt().is_some(), "the prompt is still waiting for an answer");
+    // Calibrate stays available, as everywhere else.
+    app.spacemouse.status = Status::Connected;
+    run_binding(&mut app, &Binding::new(CALIBRATE)).expect("calibrate");
+    assert!(app.spacemouse.calibrate_requested);
+}
+
+#[test]
+fn a_press_does_nothing_while_a_dialog_is_open() {
+    let mut app = dirty_app();
+    app.run("ui.spacemouse", Value::Null).expect("opens the dialog");
+    assert!(app.ui.dialog.is_some());
+    run_binding(&mut app, &Binding::with_params("close", json!({"index": 0}))).expect("ignored");
+    assert_eq!(app.session.docs.len(), 1);
+}
+
+#[test]
+fn errors_of_a_started_command_reach_the_status_line() {
+    let mut app = app();
+    // A UI command that refuses: no device is connected yet.
+    assert!(run_binding(&mut app, &Binding::new(CALIBRATE)).is_err());
+    // A command nothing knows.
+    assert!(run_binding(&mut app, &Binding::new("no-such-command")).is_err());
+}
