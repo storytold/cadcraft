@@ -357,6 +357,9 @@ impl EntityKind {
                 // MTEXT has no backwards or upside-down flags: mirrored, it reads forward like
                 // a TEXT (#1169).
                 t.rotation = readable_rotation(t.rotation, rot, mirror);
+                if mirror {
+                    keep_mirrored_mtext_box(t, m);
+                }
             }
             EntityKind::Insert(i) => {
                 t3(&mut i.insert);
@@ -655,6 +658,31 @@ fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
 /// upside down about a vertical mirror line. TEXT, MTEXT and TOLERANCE all follow this rule.
 fn readable_rotation(rotation: f64, rot: f64, mirror: bool) -> f64 {
     cadcraft_geom::norm_angle(if mirror { rotation } else { rotation + rot })
+}
+
+/// After `m` mirrored `t` and [`readable_rotation`] kept it reading forward: when the mirror line
+/// crosses the text's direction at right angles (a vertical line for horizontal text), move the
+/// insertion point across the defined width, so the copy fills the box its mirror image would.
+/// A left-attached copy then ends where the mirror image ends instead of running back over the
+/// mirror line; the attachment stays. Mirroring twice gives the insertion point back.
+///
+/// A line along the text or at any other angle keeps the mirrored insertion point, and so does an
+/// MTEXT without a defined width: only the font can measure that width, and `doc` has none.
+fn keep_mirrored_mtext_box(t: &mut MText, m: &Mat3) {
+    if !(t.width.is_finite() && t.width > 0.0) {
+        return;
+    }
+    let dir = Vec2::from_angle(t.rotation);
+    if m.apply_vec(dir).normalized().dot(dir) > -1.0 + 1e-9 {
+        return;
+    }
+    let width = t.columns.as_ref().map_or(t.width, |c| c.total_width(t.width));
+    // Attachment 1-9 runs left, centre, right along each row: the copy's insertion point moves by
+    // a whole width for a left or right attachment and stays for a centred one.
+    let column = f64::from((t.attach.clamp(1, 9) - 1) % 3);
+    let shift = dir * (width * (column - 1.0));
+    t.insert.x += shift.x;
+    t.insert.y += shift.y;
 }
 
 #[cfg(test)]
