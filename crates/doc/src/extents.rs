@@ -75,7 +75,7 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame
     // other header is not ours to rewrite.
     let [x1, y1, x2, y2] = frame;
     let want = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)];
-    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    let near = |a: f64, b: f64| (a - b).abs() <= (1e-9 * a.abs().max(b.abs()).max(1.0)).min(CORNER_EPS);
     for (c, (wx, wy)) in want.iter().enumerate() {
         let at = OLE_HEADER + c * 24;
         let rd = |o: usize| bytes.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes);
@@ -108,6 +108,12 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame
         pos += n;
     }
 }
+
+/// Ceiling for the tolerance when matching the corners in the OLE data to the frame's. The header
+/// holds the same f64 the frame groups print, so they agree to a few ulps; a fixed ceiling keeps
+/// distinct geometry from matching at large coordinates, where a relative tolerance would grow to
+/// whole units.
+const CORNER_EPS: f64 = 1e-6;
 
 /// Move an OLE2FRAME by `m`, a translation or a uniform positive scale: its two corners are mapped through `m` (a DWG save
 /// writes the frame's position from these groups), and so are the corners at the start of its OLE
@@ -678,6 +684,51 @@ mod tests {
             assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
             assert!(extents.width() > drawn.width());
         }
+    }
+    /// An OLE2FRAME at large coordinates, with its OLE data header holding the frame's corners
+    /// shifted by `dx` in x.
+    fn big_frame(dx: f64) -> Vec<crate::RawTag> {
+        let (x1, y1, x2, y2) = (1e9, 1e9, 1e9 + 10.0, 1e9 + 5.0);
+        let mut blob = vec![1u8, 0];
+        for (x, y) in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)] {
+            for v in [x + dx, y, 7.0] {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let tag = |code: i32, value: String| crate::RawTag { code, value };
+        vec![
+            tag(10, x1.to_string()),
+            tag(20, y1.to_string()),
+            tag(11, x2.to_string()),
+            tag(21, y2.to_string()),
+            tag(310, blob.iter().map(|b| format!("{b:02X}")).collect()),
+        ]
+    }
+
+    /// The x of the first corner in the OLE data of a [`big_frame`].
+    fn data_x(tags: &[crate::RawTag]) -> f64 {
+        let hex = tags.last().map(|t| t.value.as_str()).unwrap_or_default();
+        let bytes: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+        bytes.get(2..10).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes).unwrap_or(f64::NAN)
+    }
+
+    /// The match between the frame and the corners in its OLE data does not loosen with the
+    /// coordinate: half a unit off at 1e9 is not the frame, so the bytes stay as they are (review
+    /// on #2587).
+    #[test]
+    fn a_half_unit_offset_at_large_coordinates_is_not_the_frame() {
+        let mut tags = big_frame(0.5);
+        let before = tags.last().cloned();
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(1.0, 1.0)));
+        assert_eq!(tags.first().map(|t| t.value.as_str()), Some("1000000001"), "the frame tags move");
+        assert_eq!(tags.last().map(|t| &t.value), before.as_ref().map(|t| &t.value), "the 310 bytes stay identical");
+    }
+
+    #[test]
+    fn exact_corners_at_large_coordinates_still_move() {
+        let mut tags = big_frame(0.0);
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(1.0, 1.0)));
+        assert_eq!(data_x(&tags), 1e9 + 1.0);
     }
 
     /// A translation, and a uniform positive scale about any point, keep a frame axis aligned and
