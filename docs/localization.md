@@ -132,6 +132,12 @@ the meaning of each English string, with Georgian technical-drawing vocabulary (
 მომრგვალება, ფასკა, წანაცვლება, ობიექტზე მიბმა, ხედვის არე); terminology and doubtful strings
 were decided by a native Georgian speaker (@devius). No other product's localization was consulted.
 
+egui's bundled faces have no Georgian letters, so Georgian is drawn with the craft-fonts Noto Sans
+Georgian (`Geor`) face, which loads in every interface language when a build embeds it; the picker
+then shows **ქართული**. A build without that face keeps the saved `ka` choice but shows the interface
+in English, names the language **Georgian** in the picker, and the language command reports that a
+Georgian font is needed.
+
 ## Adding translations
 
 The implementation follows the display-time catalog pattern used by
