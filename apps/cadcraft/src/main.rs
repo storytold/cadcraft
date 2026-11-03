@@ -86,7 +86,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
-        self.cad.logic(ctx);
+        self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -116,7 +116,7 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.cad.ui(ui);
+        self.cad.guarded_ui(ui);
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
@@ -289,6 +289,9 @@ fn main() -> eframe::Result {
     }
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
+    if let Some(dir) = &vars.config_dir {
+        cadcraft_ui_egui::fault::install_report_hook(dir.join(cadcraft_ui_egui::fault::REPORT_DIR));
+    }
     if let Some(name) = &vars.font_alt {
         cadcraft_engine::fonts::ttf::set_font_alt(name);
     }

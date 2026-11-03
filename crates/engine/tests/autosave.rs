@@ -304,6 +304,26 @@ fn a_crashed_app_is_offered_at_once_and_a_running_one_never() {
 }
 
 #[test]
+fn an_emergency_save_finishes_before_it_returns_even_with_savetime_off() {
+    hooks();
+    let _turn = folder_turn();
+    let dir = temp_dir("emergency");
+    autosave::set_savefilepath(&dir.to_string_lossy());
+    let before = autosave::savetime();
+    autosave::set_savetime(0);
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("43-e");
+    assert_eq!(a.save_now(&s), 0, "an ordinary save honours SAVETIME 0");
+    assert_eq!(a.emergency_save(&s), 1);
+    autosave::set_savetime(before);
+    let file = a.files().pop().unwrap();
+    assert!(std::fs::read(&file).unwrap().ends_with(b"EOF\n"), "the file is whole on return");
+    assert_eq!(a.emergency_save(&s), 0, "nothing changed since");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_normal_exit_removes_the_lock_file() {
     hooks();
     let _turn = folder_turn();
