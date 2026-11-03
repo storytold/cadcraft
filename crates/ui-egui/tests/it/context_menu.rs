@@ -157,15 +157,12 @@ fn snap_menu_types_point_modifiers_and_snap_overrides() {
     assert!(app.session.prompt_text().ends_with("Specify temporary OTRACK point:"), "{}", app.session.prompt_text());
 }
 
-/// The text painted in one frame.
-fn painted(app: &mut CadApp, ctx: &egui::Context, mut events: Vec<egui::Event>, modifiers: egui::Modifiers) -> String {
-    fn collect(shape: &egui::Shape, text: &mut String) {
+/// The texts painted in one frame and where each was painted, so a test can click one.
+fn painted_texts(app: &mut CadApp, ctx: &egui::Context, mut events: Vec<egui::Event>, modifiers: egui::Modifiers) -> Vec<(String, egui::Rect)> {
+    fn collect(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
         match shape {
-            egui::Shape::Text(s) => {
-                text.push_str(s.galley.text());
-                text.push('\n');
-            }
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, text)),
+            egui::Shape::Text(s) => out.push((s.galley.text().to_string(), s.visual_bounding_rect())),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
             _ => {}
         }
     }
@@ -174,11 +171,16 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, mut events: Vec<egui::Event>, 
         egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), events, ..Default::default() };
     let mut output = ctx.run_ui(input, |ui| app.ui(ui));
     output.textures_delta.clear();
-    let mut text = String::new();
+    let mut texts = Vec::new();
     for s in &output.shapes {
-        collect(&s.shape, &mut text);
+        collect(&s.shape, &mut texts);
     }
-    text
+    texts
+}
+
+/// The text painted in one frame, one painted text per line.
+fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> String {
+    painted_texts(app, ctx, events, modifiers).into_iter().map(|(text, _)| text + "\n").collect()
 }
 
 /// Shift+right-click on the canvas during a command opens the snap menu instead of acting as Enter.
@@ -204,37 +206,52 @@ fn shift_right_click_opens_the_snap_menu() {
 }
 
 /// MBUTTONPAN 0 (#2720): a middle click opens the snap menu, and dragging with the middle button
-/// no longer pans. With MBUTTONPAN 1 (the default) the same drag pans and no menu opens.
+/// no longer pans. Choosing an item from that menu sets the snap override for the next point.
+/// With MBUTTONPAN 1 (the default) the same drag pans and no menu opens.
 #[test]
 fn middle_button_pans_or_opens_the_snap_menu_by_mbuttonpan() {
-    let middle = |at, pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed, modifiers: egui::Modifiers::NONE };
+    let none = egui::Modifiers::NONE;
+    let button = |button, at, pressed| egui::Event::PointerButton { pos: at, button, pressed, modifiers: none };
+    let middle = |at, pressed| button(egui::PointerButton::Middle, at, pressed);
     let (at, to) = (egui::pos2(800.0, 500.0), egui::pos2(900.0, 560.0));
-    // A middle drag from `at` to `to`: what it painted and where the view's centre ended up.
+    // A middle drag from `at` to `to` during LINE. Returns the app and its context, so the menu
+    // can be clicked, the texts painted after the drag, and whether the view's centre moved.
     let drag = |mbuttonpan: &str| {
         let mut app = CadApp::new(Session::new(), Services::default());
         let ctx = egui::Context::default();
         app.logic(&ctx);
-        painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
+        painted(&mut app, &ctx, Vec::new(), none);
         app.cmdline(&format!("MBUTTONPAN {mbuttonpan}"));
         app.cmdline("LINE 0,0");
         let before = app.session.state().unwrap().view().center;
-        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], egui::Modifiers::NONE);
-        painted(&mut app, &ctx, vec![middle(at, true)], egui::Modifiers::NONE);
-        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(to)], egui::Modifiers::NONE);
-        painted(&mut app, &ctx, vec![middle(to, false)], egui::Modifiers::NONE);
-        let text = painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
+        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], none);
+        painted(&mut app, &ctx, vec![middle(at, true)], none);
+        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(to)], none);
+        painted(&mut app, &ctx, vec![middle(to, false)], none);
+        let texts = painted_texts(&mut app, &ctx, Vec::new(), none);
         let moved = app.session.state().unwrap().view().center.dist(before) > 1e-9;
-        (text, moved, app.session.prompt_text())
+        (app, ctx, texts, moved)
     };
+    let has = |texts: &[(String, egui::Rect)], label: &str| texts.iter().any(|(text, _)| text == label);
 
-    let (text, moved, prompt) = drag("0");
+    let (mut app, ctx, texts, moved) = drag("0");
     for l in ["From", "Mid Between 2 Points", "Endpoint", "Osnap Settings..."] {
-        assert!(text.contains(l), "{l} missing from the painted menu:\n{text}");
+        assert!(has(&texts, l), "{l} missing from the painted menu:\n{texts:?}");
     }
     assert!(!moved, "MBUTTONPAN 0: the middle button doesn't pan");
-    assert!(prompt.contains("Specify next point"), "the command keeps its prompt: {prompt}");
+    assert!(app.session.prompt_text().contains("Specify next point"), "the command keeps its prompt: {}", app.session.prompt_text());
 
-    let (text, moved, _) = drag("1");
-    assert!(!text.contains("Mid Between 2 Points"), "MBUTTONPAN 1 opens no menu:\n{text}");
+    // Clicking Endpoint in the menu sets the override; the click doesn't reach LINE as a point.
+    let endpoint = texts.iter().find(|(text, _)| text == "Endpoint").map(|(_, rect)| rect.center()).unwrap();
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(endpoint)], none);
+    painted(&mut app, &ctx, vec![button(egui::PointerButton::Primary, endpoint, true)], none);
+    painted(&mut app, &ctx, vec![button(egui::PointerButton::Primary, endpoint, false)], none);
+    let after = painted_texts(&mut app, &ctx, Vec::new(), none);
+    assert_eq!(app.session.snap_override(), Some(cadcraft_engine::snap::mode::END));
+    assert!(app.session.prompt_text().ends_with("Endpoint of:"), "{}", app.session.prompt_text());
+    assert!(!has(&after, "Mid Between 2 Points"), "choosing an item closes the menu:\n{after:?}");
+
+    let (_, _, texts, moved) = drag("1");
+    assert!(!has(&texts, "Mid Between 2 Points"), "MBUTTONPAN 1 opens no menu:\n{texts:?}");
     assert!(moved, "MBUTTONPAN 1: the middle button pans");
 }
