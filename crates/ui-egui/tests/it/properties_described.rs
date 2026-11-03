@@ -107,11 +107,11 @@ fn a_rotation_is_typed_as_the_drawing_measures_directions() {
         app.run("setvar", json!({ "name": "ANGBASE", "value": 90 })).unwrap();
         app.run("text", json!({ "at": [0, 0], "text": "Note", "height": 1 })).unwrap();
     });
-    // A bearing is absolute: north 45° east is 45° from +X.
+    // A bearing is measured from ANGBASE like any angle (AutoCAD 2024): 45 from north is 135° from +X.
     type_into(&mut h, "270", "N45dE");
-    assert!((rotation(h.state()) - 45.0).abs() < 1e-9, "{}", rotation(h.state()));
+    assert!((rotation(h.state()) - 135.0).abs() < 1e-9, "{}", rotation(h.state()));
     // `<<` measures from +X counterclockwise, whatever ANGBASE says.
-    type_into(&mut h, "315", "<<10");
+    type_into(&mut h, "45", "<<10");
     assert!((rotation(h.state()) - 10.0).abs() < 1e-9, "{}", rotation(h.state()));
 }
 
