@@ -343,10 +343,10 @@ fn table_with_an_empty_dimension_allocates_nothing() {
     for (rows, cols) in [(10_000, 0), (0, 10_000)] {
         let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
         let d = read(t.as_bytes(), "t.dxf").unwrap();
-        for e in d.model.iter() {
-            if let EntityKind::Table(t) = &e.kind {
-                assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
-            }
+        let tables: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t) } else { None }).collect();
+        assert_eq!(tables.len(), 1, "the table is read");
+        for t in tables {
+            assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
         }
     }
 }
