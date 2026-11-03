@@ -1,6 +1,7 @@
 use super::common::{T, common, ocs};
 use super::hatch::hatch;
 use super::mtext_dxf;
+use super::tables::view;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
@@ -247,7 +248,8 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             center: t.p(10),
             width: t.fd(40, 1.0),
             height: t.fd(41, 1.0),
-            // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+            // 12/22 is in display coordinates, whose origin is the view target 17/27/37. A layout
+            // viewport is drawn in plan, centred on their sum; its 3D view is kept for saving.
             view_center: t.view_center(12, 17),
             view_height: t.fd(45, 1.0),
             id: t.i(69).unwrap_or(0) as u32,
@@ -257,6 +259,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
             clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
             on: t.i(90).unwrap_or(0) & 131072 == 0,
+            view3d: view(&t).1,
         }),
         "WIPEOUT" => {
             let o = t.p(10);

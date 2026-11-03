@@ -135,9 +135,9 @@ fn mview_restore_puts_a_saved_configuration_on_a_layout() {
 fn mview_restore_ignores_unusable_tiles_from_files() {
     let (mut s, _) = two_tiles();
     let bad = [
-        VportTile { min: v(f64::NAN, 0.0), max: v(1.0, 1.0), center: v(0.0, 0.0), height: 1.0, aspect: 1.0 },
-        VportTile { min: v(0.5, 0.5), max: v(0.5, 0.9), center: v(0.0, 0.0), height: 1.0, aspect: 1.0 },
-        VportTile { min: v(-3.0, -3.0), max: v(9.0, 9.0), center: v(f64::INFINITY, 0.0), height: -1.0, aspect: f64::NAN },
+        VportTile { min: v(f64::NAN, 0.0), max: v(1.0, 1.0), center: v(0.0, 0.0), height: 1.0, aspect: 1.0, view3d: None },
+        VportTile { min: v(0.5, 0.5), max: v(0.5, 0.9), center: v(0.0, 0.0), height: 1.0, aspect: 1.0, view3d: None },
+        VportTile { min: v(-3.0, -3.0), max: v(9.0, 9.0), center: v(f64::INFINITY, 0.0), height: -1.0, aspect: f64::NAN, view3d: None },
     ];
     if let Some(c) = s.doc_mut().unwrap().vports.iter_mut().find(|c| c.name == "Two") {
         c.tiles = bad.to_vec();

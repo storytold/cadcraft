@@ -475,7 +475,12 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Ok(st) = app.session.state() else { return err("no drawing") };
             // `window`: just that area, at the size given or matching its shape.
             let window = render_window(p);
-            let opts = cadcraft_render::Options { view: window, transparency: app.session.settings.transparency_display, ..Default::default() };
+            let opts = cadcraft_render::Options {
+                view: window,
+                transparency: app.session.settings.transparency_display,
+                projection: st.projection(),
+                ..Default::default()
+            };
             let list = cadcraft_render::build(&st.doc, &st.space, &opts);
             let v = st.view();
             let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);

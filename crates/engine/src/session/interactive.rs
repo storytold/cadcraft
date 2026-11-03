@@ -199,7 +199,7 @@ impl Session {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
-                    let crossing = p.x < pw.corner.x;
+                    let crossing = self.crossing(pw.corner, p)?;
                     let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }

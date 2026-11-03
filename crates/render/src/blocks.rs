@@ -1,4 +1,5 @@
 use super::draw::entity;
+use super::project;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
@@ -37,6 +38,7 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         block_pstyle: ctx.block_pstyle,
         // The reference's own, set by the caller (`Builder::transparency` while it draws).
         block_transparency: ctx.block_transparency,
+        view: ctx.view,
     }
 }
 
@@ -54,7 +56,8 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 }
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
-                let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
+                let view = ctx.view.map(|v| v.mul(&project::insert_transform(&m, ins, blk.base)));
+                let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, view, ..sub_ctx(ctx, e, m) };
                 for be in blk.entities.iter() {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {

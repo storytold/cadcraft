@@ -25,6 +25,33 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// A 3D view of model space as the file has it (kept through a save, drawn in plan); `None`:
+    /// plan view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view3d: Option<ViewDir>,
+}
+
+/// A 3D view of model space as DXF stores it (VIEWPORT and VPORT groups 16/26/36 direction from
+/// the target towards the viewer, 17/27/37 target).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ViewDir {
+    pub dir: Vec3,
+    #[serde(default)]
+    pub target: Vec3,
+}
+
+impl ViewDir {
+    /// WCS → its view coordinates.
+    pub fn matrix(&self) -> cadcraft_geom::Mat4 {
+        cadcraft_geom::Mat4::view(self.dir, self.target, 0.0)
+    }
+    /// The unit viewing direction of a 3D view: `None` for a plan view or a direction that isn't a
+    /// finite, non-zero vector (a hostile file).
+    pub fn dir(&self) -> Option<Vec3> {
+        let len = self.dir.len();
+        let usable = len.is_finite() && len > 1e-12 && self.target.is_finite();
+        (usable && !cadcraft_geom::Mat4::view(self.dir, Vec3::ZERO, 0.0).is_plan()).then(|| self.dir * (1.0 / len))
+    }
 }
 
 impl Default for Viewport {
@@ -41,6 +68,7 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            view3d: None,
         }
     }
 }

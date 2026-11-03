@@ -228,7 +228,9 @@ How image exports (PNG 2400×1600, SVG, PDF) are framed: `convert` fits the mode
 `run --export` shows the current view when the script or commands changed it (`zoom`, `pan`,
 `view.set`, …) and otherwise fits the extents too. `--window x0,y0,x1,y1` shows exactly that
 rectangle, centred and scaled without distortion; `--view extents` or `--view current` forces
-either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
+either framing. The current view of a 3D model space (`vpoint`, `3dorbit`, …) is drawn as the
+screen shows it, in its visual style; the other framings draw the plan. To frame a selection set,
+`zoom {"mode":"object"}` after selecting.
 
 When reading a file leaves something out (records a DXF reader can't place, object records of a
 damaged DWG), `info` reports it (`skipped`, `readNotes`), `convert` warns on stderr and `run`

@@ -268,7 +268,7 @@ impl DocState {
     }
 
     /// Start editing in the Block Editor `be` (the drawing is already the editor's): a fresh
-    /// undo history, nothing selected, nothing for OOPS, model space.
+    /// undo history, nothing selected, nothing for OOPS, model space in plan view.
     fn enter_block_editor(&mut self, be: BlockEdit) {
         self.undo.clear();
         self.redo.clear();
@@ -281,6 +281,7 @@ impl DocState {
         self.tiles = Default::default();
         self.views.clear();
         self.view_history.clear();
+        self.view_dir = cadcraft_geom::Vec3::Z;
         self.block_edit = Some(be);
         self.revision += 1;
     }
@@ -348,6 +349,7 @@ impl DocState {
         self.tiles = host.tiles;
         self.views = host.views;
         self.view_history = host.view_history;
+        self.view_dir = host.view_dir;
         self.revision += 1;
         Ok(())
     }

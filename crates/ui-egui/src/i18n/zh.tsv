@@ -1117,6 +1117,20 @@
 	Polar angle measurement	极轴角测量
 	Relative to last segment	相对于上一线段
 	Show command prompting near the crosshairs	在光标附近显示命令提示
+	2D Wireframe	二维线框
+	3D Views	三维视图
+	Plan View	平面视图
+	Viewpoint	视点
+	Constrained Orbit	受约束的动态观察
+	Top	俯视
+	Bottom	仰视
+	Front	前视
+	Back	后视
+	SW Isometric	西南等轴测
+	SE Isometric	东南等轴测
+	NE Isometric	东北等轴测
+	NW Isometric	西北等轴测
+	World UCS	世界 UCS
 	Open Recent	打开最近的图形
 	Sheet Books to PDF...	图纸册转 PDF...
 	Drawing Recovery Manager...	图形恢复管理器...

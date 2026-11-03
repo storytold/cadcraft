@@ -1,4 +1,5 @@
 use super::{Bounds2, Result, Session, Space, Vec2, View};
+use crate::render;
 
 impl Session {
     // ---------------- views ----------------
@@ -16,11 +17,40 @@ impl Session {
         Ok(Bounds2::new(lo, hi))
     }
 
-    pub fn zoom_extents(&mut self) -> Result<()> {
+    /// [`Session::zoom_limits`] as the view shows them: in a 3D view, the limits (a rectangle on
+    /// the XY plane) in view coordinates.
+    pub fn view_limits(&self) -> Result<Bounds2> {
+        let lim = self.zoom_limits()?;
+        Ok(match self.state()?.projection() {
+            Some(m) => {
+                let p = m.plane(0.0);
+                let corners = [lim.min, Vec2::new(lim.max.x, lim.min.y), lim.max, Vec2::new(lim.min.x, lim.max.y)];
+                Bounds2::from_points(corners.map(|c| p.apply(c)))
+            }
+            None => lim,
+        })
+    }
+
+    /// The current space's extents as the view shows them: the drawing's extents in plan view,
+    /// the bounds of what is drawn in a 3D view (in view coordinates).
+    pub fn view_extents(&self) -> Result<Bounds2> {
         let space = self.space();
-        let ext = self.doc()?.extents(&space);
+        let d = self.doc()?;
+        let ext = d.extents(&space);
+        match self.state()?.projection() {
+            Some(projection) if !ext.is_empty() => {
+                let tolerance = (ext.width().max(ext.height()) / 1000.0).max(1e-9);
+                let opts = render::Options { projection: Some(projection), tolerance, ..render::Options::default() };
+                Ok(render::build(d, &space, &opts).bounds)
+            }
+            _ => Ok(ext),
+        }
+    }
+
+    pub fn zoom_extents(&mut self) -> Result<()> {
+        let ext = self.view_extents()?;
         let (w, h) = self.viewport_px;
-        let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
+        let ext = if ext.is_empty() { self.view_limits()? } else { ext };
         let st = self.state_mut()?;
         let aspect = st.zoom_aspect(w / h.max(1.0));
         let height = ext.height().max(ext.width() / aspect.max(1e-6)).max(1e-6) * 1.05;
@@ -28,7 +58,8 @@ impl Session {
         Ok(())
     }
 
-    /// Zoom by `factor` (> 1 zooms in) keeping `about` fixed on screen.
+    /// Zoom by `factor` (> 1 zooms in) keeping `about` (in view coordinates, where the view's centre
+    /// is) fixed on screen.
     pub fn zoom_about(&mut self, factor: f64, about: Vec2) -> Result<()> {
         if !(factor.is_finite() && factor > 0.0) {
             return Ok(());

@@ -11,6 +11,7 @@ mod lwdefault;
 mod plot_line_styles;
 mod plot_styles;
 mod point_style;
+mod projection;
 mod psltscale;
 mod raster_points;
 mod render_props;

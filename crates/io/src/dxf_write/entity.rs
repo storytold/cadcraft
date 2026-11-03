@@ -684,7 +684,12 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // A 3D view: direction and target, with the view centre relative to the target.
+        w.p2(12, v.view_center - v.view3d.map_or(Vec2::ZERO, |v3| v3.target.xy()));
+        if let Some(v3) = &v.view3d {
+            w.p(16, v3.dir);
+            w.p(17, v3.target);
+        }
         w.f(45, v.view_height);
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.

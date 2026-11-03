@@ -1,7 +1,7 @@
 use super::args::{CmdStep, Drawing, RunArgs, Step};
 use super::error::Result;
 use super::open;
-use super::output::{Streams, export, export_framed, export_window, model_views};
+use super::output::{Streams, export, export_frame, export_framed, model_views};
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::Handle;
 use serde_json::Value;
@@ -216,8 +216,8 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
         export(&s, p, io)?;
     }
     if let Some(p) = export_to {
-        let window = if cadcraft_io::is_image(p) { export_window(&s, framing, Some(&before))? } else { None };
-        export_framed(&s, p, window, io)?;
+        let (window, view) = if cadcraft_io::is_image(p) { export_frame(&s, framing, Some(&before))? } else { (None, None) };
+        export_framed(&s, p, window, view, io)?;
     }
     Ok(())
 }

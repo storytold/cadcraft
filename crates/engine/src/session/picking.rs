@@ -16,6 +16,13 @@ impl Session {
         true
     }
 
+    /// Whether a selection window from `corner` to `p` (points on the WCS XY plane) is a crossing
+    /// window: dragged to the left on screen (towards smaller view x, which is WCS x in plan).
+    pub fn crossing(&self, corner: Vec2, p: Vec2) -> Result<bool> {
+        let st = self.state()?;
+        Ok(st.to_view(p).x < st.to_view(corner).x)
+    }
+
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///
     /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
@@ -24,7 +31,7 @@ impl Session {
         let space = self.space();
         let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
-            let crossing = p.x < pw.corner.x;
+            let crossing = self.crossing(pw.corner, p)?;
             let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };

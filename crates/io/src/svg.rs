@@ -16,12 +16,20 @@ pub fn export(d: &Drawing, space: &Space) -> String {
 /// or the extents with a 2% margin when `window` is `None`. Objects are drawn with their
 /// transparency, as on screen.
 pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> String {
-    export_window_with(d, space, window, true)
+    export_window_with(d, space, window, true, None)
 }
 
-/// [`export_window`], drawing transparency only when `transparency` is on (plots).
-pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> String {
-    let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
+/// [`export_window`], drawing transparency only when `transparency` is on (plots), and model space
+/// in the 3D view `projection` ([`crate::write_framed`]).
+pub fn export_window_with(
+    d: &Drawing,
+    space: &Space,
+    window: Option<Bounds2>,
+    transparency: bool,
+    projection: Option<cadcraft_geom::Mat4>,
+) -> String {
+    let opts = cadcraft_render::Options { transparency, projection, ..cadcraft_render::Options::default() };
+    let list = cadcraft_render::build(d, space, &opts);
     export_list(&list, window)
 }
 
