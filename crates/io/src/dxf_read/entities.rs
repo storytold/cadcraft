@@ -99,12 +99,18 @@ fn spline(t: &T) -> Spline {
     let knots = t.all_f(40);
     let control = t.pts(10);
     let weights = t.all_f(41);
-    let fit = t.pts(11);
-    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
+    let mut fit = t.pts(11);
+    let closed = t.i(70).unwrap_or(0) & 1 != 0;
+    // AutoCAD ends a closed spline's fit points with the first again, and gives it its tangent
+    // where it closes as both end tangents; here the point is implied and the tangent is the
+    // curve's.
+    if closed && fit.len() > 3 && fit.first().zip(fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
+        fit.pop();
+    }
+    let tangent = |c: i32| t.f(c).filter(|_| !closed).map(|_| t.p(c).xy());
     let fit_opts =
         cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
             .sanitized();
-    let closed = t.i(70).unwrap_or(0) & 1 != 0;
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
         sp = Spline::fit_with(&fit, sp.closed, fit_opts);

@@ -654,10 +654,11 @@ mod tests {
     #[test]
     fn periodic_spline_clamps_to_the_same_curve() {
         let fit = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0), Vec2::new(5.0, 4.0), Vec2::new(1.0, 5.0)];
-        let p = Spline::from_fit(&fit, true);
-        assert!(p.is_periodic());
+        // Uniform parameters: the control points wrap round (a chord-length fit is clamped).
+        let p = Spline::fit_with(&fit, true, crate::FitOptions { knots: crate::KnotParam::Uniform, ..Default::default() });
+        assert!(p.wraps() && p.is_periodic());
         let c = p.clamped().unwrap();
-        assert!(!c.is_periodic());
+        assert!(!c.wraps() && c.is_periodic(), "the same smooth closed curve");
         let ((plo, phi), (clo, chi)) = (p.domain(), c.domain());
         for i in 0..=20 {
             let f = i as f64 / 20.0;

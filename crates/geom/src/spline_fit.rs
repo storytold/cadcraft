@@ -103,10 +103,11 @@ const MAX_INTERP_POINTS: usize = 4_096;
 
 impl Spline {
     /// Build a spline through (or, with a tolerance, near) `fit`, open or closed. Closed curves
-    /// are periodic and ignore end tangents; a tolerance approximates them with fewer periodic
-    /// control points. A fit point given twice in a row is a kink (SPLINEDIT Fit data Kink): the
-    /// curve passes through it with a corner (a knot of full multiplicity) and the pieces on
-    /// either side are fitted on their own.
+    /// are smooth where they close and ignore end tangents: with chord-length knots they are
+    /// clamped as AutoCAD 2024 builds them, otherwise their knots are periodic; a tolerance
+    /// approximates them with fewer periodic control points. A fit point given twice in a row is
+    /// a kink (SPLINEDIT Fit data Kink): the curve passes through it with a corner (a knot of full
+    /// multiplicity) and the pieces on either side are fitted on their own.
     pub fn fit_with(fit: &[Vec2], closed: bool, opts: FitOptions) -> Spline {
         let opts = opts.sanitized();
         let kinked = if fit.len() <= MAX_KINK_POINTS { kinked_fit(fit, closed, opts) } else { None };
@@ -331,6 +332,45 @@ fn chord_interpolate(fit: &[Vec2], d0: Option<Vec2>, d1: Option<Vec2>) -> Option
         return None;
     }
     Some(Spline { degree: p, knots, control, fit: fit.to_vec(), ..Spline::default() })
+}
+
+/// The unit tangent AutoCAD 2024 gives a closed fit-point spline where it closes: the derivative
+/// at the first point of the cubic through the first four points of the loop (the fit points and
+/// back to the first), with square-root-of-chord parameters. `None` with fewer than four, or two
+/// together.
+fn closing_tangent(ring: &[Vec2]) -> Option<Vec2> {
+    let q: [Vec2; 4] = [*ring.first()?, *ring.get(1)?, *ring.get(2)?, *ring.get(3)?];
+    let mut t = [0.0; 4];
+    for i in 1..4 {
+        let step = q[i - 1].dist(q[i]).sqrt();
+        if !(step > 0.0 && step.is_finite()) {
+            return None;
+        }
+        t[i] = t[i - 1] + step;
+    }
+    // Derivatives of the Lagrange basis polynomials at t[0].
+    let mut d = q[0] * (1..4).map(|j| 1.0 / (t[0] - t[j])).sum::<f64>();
+    for i in 1..4 {
+        let c = (1..4).filter(|j| *j != i).fold(1.0 / (t[i] - t[0]), |c, j| c * (t[0] - t[j]) / (t[i] - t[j]));
+        d += q[i] * c;
+    }
+    (d.len() > 0.0 && d.is_finite()).then(|| d.normalized())
+}
+
+/// AutoCAD 2024's closed fit-point spline with chord-length parameters: the open cubic through
+/// the fit points and back to the first ([`chord_interpolate`]), clamped, with the same unit
+/// first derivative at both ends ([`closing_tangent`]). `pts` is without its closing point.
+fn chord_closed(pts: &[Vec2]) -> Option<Spline> {
+    if pts.len() < 3 {
+        return None;
+    }
+    let mut ring = pts.to_vec();
+    ring.push(*pts.first()?);
+    let d = closing_tangent(&ring)?;
+    let mut s = chord_interpolate(&ring, Some(d), Some(d))?;
+    s.fit = pts.to_vec();
+    s.closed = true;
+    Some(s)
 }
 
 /// Global interpolation: one control point per fit point plus one per end-derivative
@@ -713,6 +753,12 @@ fn closed_fit(fit: &[Vec2], kind: KnotParam, tol: f64) -> Spline {
     if n < p || n > MAX_INTERP_POINTS {
         return fallback(&pts);
     }
+    if kind == KnotParam::Chord
+        && tol <= 0.0
+        && let Some(s) = chord_closed(&pts)
+    {
+        return s;
+    }
     // Parameters t_0 = 0 .. t_n = 1 (t_n is the return to the first point).
     let t = params(&pts, kind, true);
     if tol > 0.0
@@ -786,6 +832,8 @@ mod tests {
         for k in KnotParam::ALL {
             let s = Spline::fit_with(&fit, true, FitOptions { knots: k, ..FitOptions::default() });
             assert!(s.is_valid() && s.is_periodic() && passes_through(&s, &fit, 1e-3), "closed {k:?}");
+            // Chord-length knots are clamped, as AutoCAD 2024 builds them; the others wrap round.
+            assert_eq!(s.wraps(), k != KnotParam::Chord, "closed {k:?}");
             assert_eq!(s.infer_knot_param(), k);
         }
     }
@@ -890,6 +938,97 @@ mod tests {
             "{:?}",
             s.knots
         );
+    }
+
+    #[test]
+    fn closed_chord_fits_match_autocad_2024() {
+        // The control points and knots AutoCAD 2024 builds for SPLINE through these points and
+        // Close (accoreconsole, `entget`, the default tangent): the open chord-length cubic through
+        // the points and back to the first, clamped, with the same unit tangent at both ends. That
+        // tangent comes from the first four points of the loop only: the last two cases share it.
+        let a4 = [Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(6.0, 3.0), Vec2::new(1.0, 4.0)];
+        let b3 = [Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(2.0, 3.0)];
+        let c5 = [a4[0], a4[1], a4[2], a4[3], Vec2::new(-2.0, 2.0)];
+        let c5b = [a4[0], a4[1], a4[2], a4[3], Vec2::new(-1.0, 1.0)];
+        let cases: [(&[Vec2], &[(f64, f64)], (f64, f64)); 4] = [
+            (
+                &a4,
+                &[
+                    (0.0, 0.0),
+                    (0.9768273968569969, -0.9075163990404586),
+                    (4.110440110427768, -0.7122257786209955),
+                    (7.696509078097733, 3.854015801004462),
+                    (0.3665121443407813, 5.739691001923484),
+                    (-1.006890633809635, 0.9354464925559993),
+                    (0.0, 0.0),
+                ],
+                (0.7326205476427477, -0.6806372992803439),
+            ),
+            (
+                &b3,
+                &[
+                    (0.0, 0.0),
+                    (1.175326912235153, -0.6295906822321484),
+                    (5.619959780685314, -1.4331768242180658),
+                    (2.310179647706573, 5.2420172430121),
+                    (-1.059425361874152, 0.567505371835594),
+                    (0.0, 0.0),
+                ],
+                (0.8814951841763651, -0.4721930116741209),
+            ),
+            (
+                &c5,
+                &[
+                    (0.0, 0.0),
+                    (0.9768273968569857, -0.9075163990405031),
+                    (4.161096925358192, -0.7652522140755877),
+                    (7.509998209072992, 4.049251260863201),
+                    (1.553476197327273, 4.730697783233012),
+                    (-3.373822964706317, 2.2285807243904117),
+                    (-0.6907212763663778, 0.6417109997994999),
+                    (0.0, 0.0),
+                ],
+                (0.7326205476427394, -0.6806372992803528),
+            ),
+            (
+                &c5b,
+                &[
+                    (0.0, 0.0),
+                    (0.9768273968569822, -0.9075163990405031),
+                    (4.136366708588512, -0.7312571003463972),
+                    (7.601051194287697, 3.9240863010656994),
+                    (1.118388923026953, 5.328785600648075),
+                    (-1.947013227175678, 1.4046091221343886),
+                    (-0.3453606381831876, 0.3208554998997215),
+                    (0.0, 0.0),
+                ],
+                (0.7326205476427366, -0.6806372992803559),
+            ),
+        ];
+        for (fit, want, tangent) in cases {
+            let s = Spline::fit_with(fit, true, FitOptions::default());
+            assert!(s.is_valid() && s.closed && s.degree == 3, "{s:?}");
+            assert_eq!(s.control.len(), want.len());
+            assert!(s.control.iter().zip(want).all(|(c, (x, y))| c.near(Vec2::new(*x, *y), 1e-9)), "{:?}", s.control);
+            // Knots: zeros, the running chord length round the loop at the fit points after the
+            // first, and its total four times.
+            let mut run = vec![0.0];
+            for (a, b) in fit.iter().zip(fit.iter().skip(1).chain([&fit[0]])) {
+                run.push(run.last().unwrap() + a.dist(*b));
+            }
+            let total = *run.last().unwrap();
+            let want_knots: Vec<f64> = [0.0; 3].into_iter().chain(run[..fit.len()].iter().copied()).chain([total; 4]).collect();
+            assert_eq!(s.knots.len(), want_knots.len());
+            assert!(s.knots.iter().zip(&want_knots).all(|(k, w)| (k - w).abs() < 1e-12), "{:?}", s.knots);
+            // The tangent where it closes is the first derivative at both ends, so the curve is
+            // periodic (smooth where it closes) with clamped knots.
+            let (lo, hi) = s.domain();
+            let d = Vec2::new(tangent.0, tangent.1);
+            assert!(s.derivative(lo).near(d, 1e-9) && s.derivative(hi).near(d, 1e-9), "{:?} {:?}", s.derivative(lo), s.derivative(hi));
+            assert!(s.is_periodic() && !s.wraps());
+            assert_eq!(s.fit, fit, "the first fit point is not repeated");
+            assert_eq!(s.infer_knot_param(), KnotParam::Chord);
+        }
     }
 
     #[test]

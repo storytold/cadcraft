@@ -43,10 +43,10 @@ impl Spline {
         Spline::fit_with(fit, false, FitOptions::default())
     }
 
-    /// Smooth closed (periodic) cubic interpolation through fit points. Chord-length parameters
-    /// include the closing chord; the knot vector is the periodic (unclamped) extension and the
-    /// first `degree` control points repeat at the end, so the curve has continuous tangent and
-    /// curvature at the seam. A repeated closing fit point is dropped.
+    /// Smooth closed cubic interpolation through fit points, as AutoCAD 2024 builds it: through
+    /// the fit points and back to the first, with chord-length parameters, clamped, and with the
+    /// same first derivative at both ends (see `Spline::fit_with`). A repeated closing fit point
+    /// is dropped.
     pub fn from_fit_points_closed(fit: &[Vec2]) -> Spline {
         Spline::fit_with(fit, true, FitOptions::default())
     }
@@ -56,9 +56,29 @@ impl Spline {
         Spline::fit_with(fit, closed, FitOptions::default())
     }
 
-    /// Closed with an unclamped (periodic) knot vector, as DXF flags it (group 70 bit 2).
+    /// Closed and smooth where it closes: AutoCAD's "periodic" (DXF group 70 bit 2), which
+    /// AutoCAD 2024 sets from the curve itself. Either the control points wrap round
+    /// ([`Spline::wraps`]), or the knots are clamped and the curve has the same first derivative
+    /// at both ends, as in AutoCAD's closed fit-point spline. The same direction with another
+    /// length is not enough: AutoCAD clears the bit then too.
     pub fn is_periodic(&self) -> bool {
+        self.wraps() || (self.closed && self.is_valid() && self.closes_smoothly())
+    }
+
+    /// Closed with an unclamped knot vector: the first `degree` control points repeat at the end,
+    /// so the control points wrap round the seam (the knot shape; see [`Spline::is_periodic`]
+    /// for the curve's).
+    pub fn wraps(&self) -> bool {
         self.closed && self.knots.first() != self.knots.get(self.degree)
+    }
+
+    /// The ends meet with the same first derivative (to 1e-9 of its length). The spline must be
+    /// valid.
+    fn closes_smoothly(&self) -> bool {
+        let (lo, hi) = self.domain();
+        let (d0, d1) = (self.derivative(lo), self.derivative(hi));
+        let speed = d0.len().max(d1.len());
+        speed > 0.0 && d0.near(d1, 1e-9 * speed) && self.eval(lo).near(self.eval(hi), 1e-9 * speed * (hi - lo))
     }
 
     pub fn is_valid(&self) -> bool {

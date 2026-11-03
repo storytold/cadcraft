@@ -235,11 +235,11 @@ fn tolerance(sp: &Spline, tol: f64) -> Result<Spline> {
 
 // ---------------- control points ----------------
 
-/// The number of distinct control points: a periodic spline repeats its first `degree` at the
-/// end, and a clamped closed one repeats its first at the end.
+/// The number of distinct control points: control points that wrap round repeat their first
+/// `degree` at the end, and a clamped closed spline repeats its first at the end.
 fn distinct(sp: &Spline) -> usize {
     let n = sp.control.len();
-    if sp.is_periodic() {
+    if sp.wraps() {
         n.saturating_sub(sp.degree)
     } else if sp.closed && n > 2 && sp.control.first().zip(sp.control.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
         n - 1
@@ -311,7 +311,7 @@ fn delete_control(sp: &Spline, j: usize) -> Result<Spline> {
     }
     let mut s = without_fit(sp.clone());
     let w = |s: &Spline, i: usize| s.weights.get(i).copied().unwrap_or(1.0);
-    if sp.is_periodic() {
+    if sp.wraps() {
         if u <= p + 1 {
             return Err(other(format!("A closed spline of degree {p} needs more than {} control points.", p + 1)));
         }
@@ -379,9 +379,9 @@ fn join(s: &mut Session, h: Handle, sp: &Spline, others: &[Handle]) -> Result<Ve
 }
 
 /// A control point added by inserting a knot where the curve passes nearest `at`; the curve
-/// keeps its shape. A periodic spline is clamped at its seam first.
+/// keeps its shape. Control points that wrap round are clamped at the seam first.
 fn add_control(sp: &Spline, at: Vec2) -> Result<Spline> {
-    let base = if sp.is_periodic() { sp.clamped().ok_or_else(|| other("Cannot add a control point to this spline."))? } else { sp.clone() };
+    let base = if sp.wraps() { sp.clamped().ok_or_else(|| other("Cannot add a control point to this spline."))? } else { sp.clone() };
     let t = curves::spline_param_of(&base, at);
     let mut out = base.insert_knot(t).ok_or_else(|| other("Cannot add a control point to this spline."))?;
     out.closed = sp.closed;
