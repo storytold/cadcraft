@@ -1,7 +1,9 @@
 //! Properties: per-object property edits, current properties, CHPROP, MATCHPROP, linetypes, units,
 //! RENAME.
 
+mod change;
 mod chprop;
+mod dash_units;
 mod matchprop;
 mod rename;
 
@@ -23,6 +25,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
             .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
+        CommandSpec::new("change", "Change", change::run_change)
+            .alias(&["-ch"])
+            .params("{handles?, point?: [x, y], elevation?} → {changed, ignored, differingZ, detachedHatches, locked}: the point moves the nearer end of each line to it (level or plumb with the other end under ORTHOMODE) and, when it is the one object, passes a circle through it or places a text, attribute definition or block reference at it (`ignored` otherwise); `elevation` sets the z of objects whose points share one (`differingZ` otherwise); objects on locked layers are left out (the command line asks Specify change point or [Properties], then about each circle, text, attribute definition and block reference in turn)")
+            .interactive(|_| Ok(Box::new(change::ChangeM::new()))),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -38,6 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("lweight", "Lineweight...", run_lweight).menu(&["Format", "Lineweight..."]).alias(&["lw", "lineweight"]).params("{lineweight: mm | ByLayer}"),
         CommandSpec::new("ltscale", "Linetype Scale", run_ltscale).alias(&["lts"]).params("{scale}").interactive(|_| Ok(Box::new(LtscaleM))),
         CommandSpec::new("units", "Units...", run_units).menu(&["Format", "Units..."]).alias(&["un"]).params("{lunits?: 1..5, luprec?: 0..8, aunits?: 0..4, auprec?: 0..8, insunits?}"),
+        CommandSpec::new("-units", "Units", run_units).alias(&["-un"]).params("(as UNITS)").interactive(|_| Ok(Box::new(dash_units::DashUnits::default()))),
         CommandSpec::new("thickness", "Thickness", run_thickness)
             .menu(&["Format", "Thickness"])
             .params("{thickness} (THICKNESS: the 3D thickness given to new lines, arcs, circles, points and polylines; may be negative) → {thickness}")
@@ -758,10 +765,13 @@ fn run_style_current(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Text style names used by entities (in model, paper spaces and blocks) and dimension styles.
+/// Text style names used by entities (in model, paper spaces and blocks), dimension,
+/// multileader and table styles (their cell styles), and the text of complex linetypes.
 pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let mut out: Vec<String> = d.dim_styles.iter().map(|s| s.text_style.clone()).collect();
     out.extend(d.mleader_styles.iter().map(|s| s.text_style.clone()));
+    out.extend(d.table_styles.iter().flat_map(|s| s.cell_styles.iter().map(|c| c.text_style.clone())));
+    out.extend(d.linetypes.iter().flat_map(|lt| lt.pattern.iter().filter_map(|el| el.style.clone())));
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
@@ -1181,6 +1191,11 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
             run_dimstyle_rename(s, &json!({ "from": from, "to": to }))?;
         }
         "linetype" | "ltype" => {
+            // Stored trimmed, as -RENAME types it: lookups compare names untrimmed.
+            let to = to.trim().to_string();
+            if !rename::valid_name(&to) {
+                return Err(bad("rename", format!("`{to}` is not a valid linetype name")));
+            }
             let d = s.doc_mut()?;
             if ["ByBlock", "ByLayer", "Continuous"].iter().any(|n| from.eq_ignore_ascii_case(n)) {
                 return Err(bad("rename", format!("the {from} linetype cannot be renamed")));
@@ -1244,6 +1259,19 @@ mod tests {
         assert_eq!(col(&s), Color::ByLayer);
         s.execute("properties.set", &json!({ "handles": [h], "color": 0 })).unwrap();
         assert_eq!(col(&s), Color::ByBlock);
+    }
+
+    #[test]
+    fn rename_linetype_rejects_invalid_names() {
+        let mut s = Session::new();
+        s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+        for to in ["", "  ", "A;B", "A|B", "*X"] {
+            let r = s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": to }));
+            assert!(r.is_err(), "renamed DASHED to {to:?}: {r:?}");
+            assert!(s.doc().unwrap().linetype("DASHED").is_some());
+        }
+        s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": " DASH2 " })).unwrap();
+        assert!(s.doc().unwrap().linetype("DASH2").is_some());
     }
 
     #[test]

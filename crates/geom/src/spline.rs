@@ -205,10 +205,69 @@ impl Spline {
         out
     }
 
+    /// Points along the curve for measuring it (AREA). Each knot span has a segment, so a narrow
+    /// span, which one grid over the whole domain can step over entirely, is measured too. The
+    /// count [`Spline::tessellate`] takes at `tol` is then shared out among the spans that bend
+    /// ([`Spline::span_bend`]), by the cube root of their bend: a span's chord error falls with
+    /// the square of its segments, so that share keeps the total error least. A straight span
+    /// keeps its one segment, which measures it exactly. The points number one per span plus
+    /// that count, past `MAX_SAMPLES` when the spans are that many, as [`Spline::length`]
+    /// integrates every span. An invalid spline gives its control points, as `tessellate` does.
+    pub fn tessellate_spans(&self, tol: f64) -> Vec<Vec2> {
+        if !self.is_valid() {
+            return self.control.clone();
+        }
+        let (lo, hi) = self.domain();
+        let n = self.sample_count(tol);
+        let spans: Vec<(f64, f64, f64)> = self.indexed_knot_spans().map(|(j, a, b)| (a, b, self.span_bend(j).cbrt())).collect();
+        if spans.is_empty() {
+            return self.samples(n).collect();
+        }
+        let total: f64 = spans.iter().map(|s| s.2).sum();
+        let shared = total.is_finite() && total > 0.0;
+        let mut out = Vec::with_capacity(spans.len() + n + 1);
+        let (mut acc, mut used) = (0.0, 0);
+        for (a, b, share) in spans {
+            // Rounded on the running total, so the extra samples add up to `n` however thinly the
+            // shares are spread; the fraction first, at most 1, so a huge bend can't overflow.
+            acc += share;
+            let upto = if shared { (n as f64 * (acc / total).min(1.0)) as usize } else { 0 };
+            let seg = 1 + upto.saturating_sub(used);
+            used = used.max(upto);
+            out.extend((0..seg).map(|i| self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi)));
+        }
+        out.push(self.eval_valid(hi, lo, hi));
+        out
+    }
+
+    /// How far knot span `j` (as [`Spline::indexed_knot_spans`] numbers it) can stray from its
+    /// chord, as an area: twice the largest triangle its first control point, the one farthest
+    /// from it and another make. That is between a quarter of the area of their convex hull and
+    /// twice it. With positive weights the span and its chord lie in that hull, so the area
+    /// between them is no more; it is zero when the points are collinear, and then the span is
+    /// straight. A weight that isn't positive lets the span leave the hull, so the square of the
+    /// points' polygon length counts instead.
+    fn span_bend(&self, j: usize) -> f64 {
+        let Some(pts) = self.control.get(j..=j + self.degree) else { return 0.0 };
+        let Some(&a) = pts.first() else { return 0.0 };
+        if !self.weights.get(j..=j + self.degree).is_none_or(|w| w.iter().all(|w| *w > 0.0)) {
+            let len: f64 = pts.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(p, q)| p.dist(*q))).sum();
+            return len * len;
+        }
+        let far = pts.iter().copied().max_by(|p, q| a.dist(*p).total_cmp(&a.dist(*q))).unwrap_or(a);
+        pts.iter().map(|p| (*p - a).cross(far - a).abs()).fold(0.0, f64::max)
+    }
+
     /// The non-empty knot spans the curve is defined over, in parameter order.
     fn knot_spans(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.indexed_knot_spans().map(|(_, a, b)| (a, b))
+    }
+
+    /// The non-empty knot spans with the index of the first of the `degree + 1` control points
+    /// that shape each.
+    fn indexed_knot_spans(&self) -> impl Iterator<Item = (usize, f64, f64)> + '_ {
         let knots = self.knots.get(self.degree..=self.control.len()).unwrap_or(&[]);
-        knots.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(a, b)| (*a, *b)).filter(|(a, b)| b > a))
+        knots.windows(2).enumerate().filter_map(|(j, w)| w.first().zip(w.get(1)).map(|(a, b)| (j, *a, *b)).filter(|(_, a, b)| b > a))
     }
 }
 
