@@ -86,6 +86,19 @@ fn named_plot_styles_round_trip_through_the_plot_style_dictionary() {
     assert!(plain.contains("ACAD_PLOTSTYLENAME") && !plain.contains("CADCRAFT_PLOTSTYLES"));
 }
 
+/// #2242: a ByBlock plot style is group 380 = 1 (AcDb::PlotStyleNameType); it was written like
+/// ByLayer (no group at all) and read back as ByLayer.
+#[test]
+fn by_block_plot_style_round_trips() {
+    let mut d = Drawing::new_metric();
+    let line = EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) });
+    let h = d.add(&Space::Model, Common { plot_style: "ByBlock".into(), ..Default::default() }, line).unwrap();
+    let text = write_dxf(&d);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.windows(2).any(|w| w[0].trim() == "380" && w[1].trim() == "1"), "group 380 = 1 written");
+    assert_eq!(read_dxf(text.as_bytes()).unwrap().entity(h).unwrap().common.plot_style, "ByBlock");
+}
+
 #[test]
 fn pdf_applies_a_named_table_from_the_drawing() {
     use cadcraft_doc::{PlotStyle, PlotStyleTable};
