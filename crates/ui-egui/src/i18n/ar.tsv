@@ -1380,3 +1380,7 @@ menu	View	عرض
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Minimize	تصغير
+	Maximize	تكبير
+	Use system title bar	استخدام شريط عنوان النظام
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	يعرض شريط عنوان بسيطاً لأزرار النافذة فوق شريط CADCraft نفسه. لا يرسم GNOME أشرطة العناوين للتطبيقات، لذا لا يتبع هذا الشريط سمته.
