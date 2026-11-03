@@ -162,7 +162,7 @@ impl Session {
 
 /// An object's DXF group 10 point: the first point of its entity list, or its first grip where
 /// entity lists are not built in.
-fn group_10(d: &Drawing, e: &Entity) -> Option<Vec2> {
+pub(crate) fn group_10(d: &Drawing, e: &Entity) -> Option<Vec2> {
     let Some(codec) = cmd::file::entity_codec() else { return e.kind.grips().first().copied() };
     let (_, tags) = (codec.groups)(d, e);
     let i = tags.iter().position(|t| t.code == 10)?;

@@ -136,9 +136,10 @@ fn the_definition_takes_the_styles_width_factor_and_oblique() {
     assert_eq!((a.text.width_factor, a.text.oblique), (1.0, 0.0));
 }
 
-/// `-ATTDEF` typed at the command line: tag, prompt and default, then the start-point prompt.
+/// `-ATTDEF` typed at the command line: accept modes, tag, prompt and default, then the point prompt.
 fn typed_to_start_point(s: &mut Session) {
     s.cmdline("-attdef").unwrap();
+    s.cmdline("").unwrap();
     for line in ["TAG", "Prompt", "Default"] {
         s.cmdline(line).unwrap();
     }
@@ -163,8 +164,10 @@ fn typed_justify_then_a_point_justifies_the_definition() {
     s.cmdline("J").unwrap();
     assert!(s.prompt_text().contains("Enter an option"), "{}", s.prompt_text());
     s.cmdline("MC").unwrap();
-    assert!(s.prompt_text().contains("Specify start point of text"), "{}", s.prompt_text());
+    assert!(s.prompt_text().contains("Specify middle point of text"), "{}", s.prompt_text());
     s.cmdline("10,10").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let a = last_attdef(&s);
     assert_eq!((a.text.halign, a.text.valign), (HAlign::Center, VAlign::Middle));
@@ -178,12 +181,14 @@ fn typed_justify_refuses_align_fit_and_unknown_codes_and_asks_again() {
     s.cmdline("J").unwrap();
     for bad in ["A", "Fit", "XX"] {
         s.cmdline(bad).unwrap();
-        assert!(s.log.iter().any(|l| l.contains("justification") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
+        assert!(s.log.iter().any(|l| l.contains("Invalid option") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
         s.log.clear();
         assert!(s.prompt_text().contains("Enter an option"), "{bad}: {}", s.prompt_text());
     }
     s.cmdline("TR").unwrap();
     s.cmdline("0,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     let a = last_attdef(&s);
     assert_eq!((a.text.halign, a.text.valign), (HAlign::Right, VAlign::Top));
 }
@@ -197,6 +202,8 @@ fn typed_style_then_a_point_takes_the_styles_values() {
     assert!(s.prompt_text().contains("Enter style name"), "{}", s.prompt_text());
     s.cmdline("slant").unwrap();
     s.cmdline("0,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     let a = last_attdef(&s);
     assert_eq!(a.text.style, "SLANT");
     assert!((a.text.width_factor - 0.7).abs() < 1e-12 && (a.text.oblique - 15f64.to_radians()).abs() < 1e-12);
@@ -208,10 +215,12 @@ fn typed_style_that_does_not_exist_asks_again() {
     typed_to_start_point(&mut s);
     s.cmdline("S").unwrap();
     s.cmdline("NOPE").unwrap();
-    assert!(s.log.iter().any(|l| l.contains("no text style \"NOPE\"")), "{:?}", s.log);
+    assert!(s.log.iter().any(|l| l.contains("Cannot find text style \"NOPE\"")), "{:?}", s.log);
     assert!(s.prompt_text().contains("Enter style name"), "{}", s.prompt_text());
     s.cmdline("ROMANS").unwrap();
     s.cmdline("0,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("").unwrap();
     assert_eq!(last_attdef(&s).text.style, "ROMANS");
 }
 

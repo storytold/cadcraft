@@ -26,7 +26,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -982,8 +982,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
                 xf_paper.to_screen(Vec2::new(sh.printable.min.x, sh.printable.max.y)),
                 xf_paper.to_screen(Vec2::new(sh.printable.max.x, sh.printable.min.y)),
             );
-            let pts = [pa.left_top(), pa.right_top(), pa.right_bottom(), pa.left_bottom(), pa.left_top()];
-            painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
+            painter.extend(dashed_rect(painter.clip_rect(), pa, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
             (Rgb(t.paper.r(), t.paper.g(), t.paper.b()), Some(paper))
         }
         None => {
@@ -1112,8 +1111,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
         if crossing {
-            let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-            painter.extend(Shape::dashed_line(&pts, st, 5.0, 3.0));
+            painter.extend(dashed_rect(painter.clip_rect(), r, st, 5.0, 3.0));
         } else {
             painter.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
         }
