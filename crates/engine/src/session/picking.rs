@@ -9,7 +9,7 @@ impl Session {
     /// command running, or a command asking for objects. Returns whether a window was opened.
     pub fn begin_window(&mut self, corner: Vec2) -> bool {
         let during_command = self.running.is_some();
-        if !self.settings.pickdrag || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
+        if self.settings.pickdrag == 0 || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
             return false;
         }
         self.pending_window = Some(PendingWindow { corner, during_command });
@@ -57,6 +57,24 @@ impl Session {
             sel.extend(hs);
         }
         self.set_selection(sel);
+    }
+
+    /// The window or polygon the pick just handed to the running command was made with, taken
+    /// so it is read once: STRETCH moves the vertices inside it (#1116). `None` for a single
+    /// pick, a fence, All, Last or Previous.
+    pub fn take_pick_area(&mut self) -> Option<select::PickArea> {
+        self.pick_area.take()
+    }
+
+    /// The selection window waiting for its opposite corner: the one a click on empty space
+    /// opened (with or without a command), or one a command opened itself and asks for the corner
+    /// of ([`crate::Prompt::window`]: TRIM's Crossing, a typed `W` or `C`). The UI draws them all
+    /// alike and lets a drag close them (PICKDRAG).
+    pub fn selection_window(&self) -> Option<crate::SelectWindow> {
+        match self.pending_window {
+            Some(pw) => Some(crate::SelectWindow { corner: pw.corner, crossing: None }),
+            None => self.current_prompt().and_then(|p| p.window),
+        }
     }
 
     /// Whether a click at `p` selects objects by picking: no command running, or a command at

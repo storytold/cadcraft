@@ -63,7 +63,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("options", "Options...", run_options)
             .menu(&["Tools", "Options..."])
             .alias(&["op", "preferences"])
-            .params("{reset?: bool, OSMODE?, PICKBOX?, APERTURE?, GRIPSIZE?, CURSORSIZE?, PICKFIRST?, PICKADD?, PICKDRAG?: 0 (two clicks) | 2 (clicks or drag), …: any profile variable}")
+            .params("{reset?: bool, OSMODE?, PICKBOX?, APERTURE?, GRIPSIZE?, CURSORSIZE?, PICKFIRST?, PICKADD?, PICKDRAG?: 0 (two clicks) | 1 (drag) | 2 (clicks or drag), …: any profile variable}")
             .enabled(always)
             .noundo(),
     ]
