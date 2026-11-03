@@ -4,9 +4,12 @@
 //! autosave is written as DXF to `<SAVEFILEPATH>/<drawing>_<instance>_<uid>.sv$`. The file goes
 //! away when the drawing is saved or closed and when the app exits normally, so a file left behind
 //! means the app (or the machine) went down; the next start offers it for recovery. A running app
-//! keeps a lock file (`<instance>.lock`) fresh, so another copy running at the same time doesn't
-//! offer its files. SAVEFILEPATH may be a folder other programs use too, so only names built from
-//! an instance id ([`is_instance_id`]) are ever read as ours or deleted.
+//! holds an operating-system lock on its lock file (`<instance>.lock`) and keeps the file fresh, so
+//! another copy running at the same time doesn't offer its files. The system drops the lock the
+//! moment a process ends, however it ended, so a relaunch after a crash can offer recovery at once.
+//! Where locks aren't available, and for lock files of older versions, a file not refreshed for
+//! [`STALE_LOCK_SECS`] counts as stopped. SAVEFILEPATH may be a folder other programs use too, so
+//! only names built from an instance id ([`is_instance_id`]) are ever read as ours or deleted.
 //!
 //! [`Autosaver::plan`] decides what to write and delete (no I/O, so it is testable); on the desktop
 //! [`Autosaver::tick`] carries it out, writing on a background thread. SAVETIME and SAVEFILEPATH
@@ -29,6 +32,10 @@ pub const DEFAULT_SAVETIME: u32 = 10;
 pub const MAX_SAVETIME: u32 = 600;
 /// A lock file not refreshed for this long belongs to an app that is no longer running.
 pub const STALE_LOCK_SECS: u64 = 5 * 60;
+/// How a lock file ends when its app holds the system lock on it, so a free lock proves the app
+/// stopped. Older versions write only the process id and never hold one.
+#[cfg(not(target_arch = "wasm32"))]
+const LOCK_HELD: &str = " held";
 /// How often a running app refreshes its lock file.
 #[cfg(not(target_arch = "wasm32"))]
 const HEARTBEAT_SECS: f64 = 60.0;
@@ -159,6 +166,9 @@ pub struct Autosaver {
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_beat: Option<f64>,
+    /// The lock file this app holds the system lock on, open for as long as the lock is wanted.
+    #[cfg(not(target_arch = "wasm32"))]
+    lock: Option<(std::path::PathBuf, std::fs::File)>,
 }
 
 impl Autosaver {
@@ -174,6 +184,8 @@ impl Autosaver {
             start: std::time::Instant::now(),
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            lock: None,
         }
     }
 
@@ -289,12 +301,14 @@ pub use native::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use std::fs::{File, OpenOptions, TryLockError};
+    use std::io::{Read, Write};
     use std::path::Path;
     use std::time::{Duration, SystemTime};
 
     use super::{
-        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name, parse_lock_name,
-        savefilepath, savetime,
+        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, LOCK_HELD, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name,
+        parse_lock_name, savefilepath, savetime,
     };
 
     /// A new instance id: the process id and the start time.
@@ -319,6 +333,28 @@ mod native {
         Some(SystemTime::now().duration_since(m).unwrap_or_default())
     }
 
+    /// Whether the app instance named by a lock file in `dir` may still be running: its system
+    /// lock answers at once, and the file's age decides when it can't (no lock support, a lock
+    /// file from an older version).
+    fn owner_alive(dir: &Path, instance: &str) -> bool {
+        let by_age = || instance_alive(lock_age(dir, instance));
+        let path = lock_path(dir, instance);
+        // Only a plain file is opened: opening a FIFO planted in a shared folder would block.
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            return by_age();
+        }
+        let Ok(file) = File::open(&path) else { return by_age() };
+        match file.try_lock() {
+            Err(TryLockError::WouldBlock) => true,
+            Err(TryLockError::Error(_)) => by_age(),
+            Ok(()) => {
+                let mut text = String::new();
+                let held = file.take(64).read_to_string(&mut text).is_ok() && text.ends_with(LOCK_HELD);
+                !held && by_age()
+            }
+        }
+    }
+
     /// The autosave files in `dir` left behind by apps that are no longer running (never those of
     /// `own`, this app's instance), oldest first.
     pub fn recoverable(dir: &Path, own: &str) -> Vec<Recoverable> {
@@ -328,7 +364,7 @@ mod native {
         for e in entries.flatten().take(10_000) {
             let name = e.file_name().to_string_lossy().to_string();
             let Some((title, instance, _)) = parse_file_name(&name) else { continue };
-            if instance == own || *alive.entry(instance.to_string()).or_insert_with(|| instance_alive(lock_age(dir, instance))) {
+            if instance == own || *alive.entry(instance.to_string()).or_insert_with(|| owner_alive(dir, instance)) {
                 continue;
             }
             let Ok(meta) = e.metadata() else { continue };
@@ -370,7 +406,7 @@ mod native {
         for n in &names {
             let Some(instance) = parse_lock_name(n) else { continue };
             let has_files = names.iter().any(|f| parse_file_name(f).is_some_and(|(_, i, _)| i == instance));
-            if !has_files && !instance_alive(lock_age(dir, instance)) {
+            if !has_files && !owner_alive(dir, instance) {
                 let _ = std::fs::remove_file(dir.join(n));
             }
         }
@@ -503,10 +539,29 @@ mod native {
             }
             self.last_beat = Some(now);
             let dir = Path::new(dir);
-            let r = create_folder(dir).and_then(|()| std::fs::write(lock_path(dir, &self.instance), std::process::id().to_string()));
-            if let Err(e) = r {
+            if let Err(e) = create_folder(dir).and_then(|()| self.refresh_lock(&lock_path(dir, &self.instance))) {
                 log::warn!("autosave: lock file in {}: {e}", dir.display());
             }
+        }
+
+        /// Refresh the lock file at `path`, taking the system lock on it first if this app doesn't
+        /// hold it there yet. Without one the file still works by its age.
+        fn refresh_lock(&mut self, path: &Path) -> std::io::Result<()> {
+            if let Some((held, file)) = &self.lock
+                && held == path
+            {
+                return file.set_modified(SystemTime::now());
+            }
+            self.lock = None;
+            let id = std::process::id();
+            let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
+            if file.try_lock().is_err() {
+                return std::fs::write(path, id.to_string());
+            }
+            file.set_len(0)?;
+            file.write_all(format!("{id}{LOCK_HELD}").as_bytes())?;
+            self.lock = Some((path.to_path_buf(), file));
+            Ok(())
         }
 
         /// The app is closing normally: finish writes in progress, then delete this app's autosave
@@ -520,6 +575,7 @@ mod native {
                 discard(&path);
             }
             self.docs.clear();
+            self.lock = None;
             let dir = savefilepath();
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
