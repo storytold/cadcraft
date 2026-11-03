@@ -64,3 +64,71 @@ fn fit_data_is_written_with_the_documented_groups() {
     // derivative, as AutoCAD 2024 builds it.
     assert!(r.is_valid() && r.fit_opts.start_tangent == Some(Vec2::Y) && r.control.len() == 5);
 }
+
+/// A SPLINE stored with fit points and end tangents only.
+fn fit_only_dxf(fit: &[(f64, f64)], start: Option<(f64, f64)>, end: Option<(f64, f64)>) -> String {
+    let mut s =
+        format!("0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nSPLINE\r\n8\r\n0\r\n100\r\nAcDbSpline\r\n70\r\n8\r\n71\r\n3\r\n74\r\n{}\r\n", fit.len());
+    for (code, t) in [(12, start), (13, end)] {
+        if let Some((x, y)) = t {
+            s += &format!("{code}\r\n{x:?}\r\n{}\r\n{y:?}\r\n{}\r\n0.0\r\n", code + 10, code + 20);
+        }
+    }
+    for (x, y) in fit {
+        s += &format!("11\r\n{x:?}\r\n21\r\n{y:?}\r\n31\r\n0.0\r\n");
+    }
+    s + "0\r\nENDSEC\r\n0\r\nEOF\r\n"
+}
+
+#[test]
+fn a_fit_only_spline_takes_its_end_tangents_with_their_length() {
+    // AutoCAD 2024 (accoreconsole, entget of the spline it builds): each stored tangent is the end
+    // derivative as it stands, so 12 = (0, 3) is not 12 = (0, 1), and 13 = (1, -1) is not a unit.
+    let fit = [(0.0, 0.0), (4.0, 0.0), (8.0, 2.0), (12.0, 1.0), (15.0, 4.0)];
+    let total = 16.83788226773652;
+    let knots = [0.0, 0.0, 0.0, 0.0, 4.0, 8.47213595499958, 12.59524158061724, total, total, total, total];
+    let cases = [
+        (
+            Some((0.0, 3.0)),
+            None,
+            [
+                (0.0, 0.0),
+                (0.0, 4.0),
+                (5.032653247327764, -2.9587578599554),
+                (7.49793879823205, 3.8423576404002),
+                (12.40378970003823, -0.4300472739512),
+                (14.12639202373297, 2.5093177413937),
+                (15.0, 4.0),
+            ],
+        ),
+        (
+            Some((0.0, 2.0)),
+            Some((1.0, -1.0)),
+            [
+                (0.0, 0.0),
+                (0.0, 2.6666666666666),
+                (5.051273572432346, -2.3615552390813),
+                (7.426977592306234, 4.0442234834397),
+                (12.64672696003663, -1.6844325426585),
+                (13.5857864376269, 5.4142135623731),
+                (15.0, 4.0),
+            ],
+        ),
+    ];
+    let v = |t: Option<(f64, f64)>| t.map(|(x, y)| Vec2::new(x, y));
+    for (start, end, control) in cases {
+        let back = cadcraft_io::read(fit_only_dxf(&fit, start, end).as_bytes(), "c.dxf").unwrap();
+        let Some(EntityKind::Spline(r)) = back.model.iter().map(|e| e.kind.clone()).next() else { panic!("no spline") };
+        assert_eq!(r.knots.len(), knots.len());
+        assert!(r.knots.iter().zip(knots).all(|(a, b)| (a - b).abs() < 1e-9), "{:?}", r.knots);
+        assert_eq!(r.control.len(), control.len());
+        for (c, (x, y)) in r.control.iter().zip(control) {
+            assert!(c.near(Vec2::new(x, y), 1e-9), "{start:?} {end:?}: {c:?} vs ({x}, {y})");
+        }
+        // The tangents are kept as stored, and written back so.
+        assert_eq!((r.fit_opts.start_tangent, r.fit_opts.end_tangent), (v(start), v(end)));
+        let again = roundtrip(&r);
+        assert_eq!((again.fit_opts.start_tangent, again.fit_opts.end_tangent), (v(start), v(end)));
+        assert!(again.control.iter().zip(&r.control).all(|(a, b)| a.near(*b, 1e-12)));
+    }
+}

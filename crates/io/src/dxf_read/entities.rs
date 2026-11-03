@@ -108,12 +108,14 @@ fn spline(t: &T) -> Spline {
         fit.pop();
     }
     let tangent = |c: i32| t.f(c).filter(|_| !closed).map(|_| t.p(c).xy());
+    // An open spline's 12/13 tangent counts with its length in AutoCAD, which writes it back as it
+    // read it.
     let fit_opts =
         cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
-            .sanitized();
+            .sanitized_keeping_length();
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
-        sp = Spline::fit_with(&fit, sp.closed, fit_opts);
+        sp = Spline::fit_with_end_derivatives(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {
         sp = Spline::from_control(sp.control.clone(), degree);
     } else if fit.len() >= 3 {
