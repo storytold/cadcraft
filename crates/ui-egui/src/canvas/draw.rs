@@ -385,7 +385,7 @@ pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, pri
                     line(&outline, &mut shapes);
                 }
             }
-            Kind::Image { .. } => line(pts.iter().chain(pts.first()).map(|q| xf.to_screen(*q)).collect(), &mut shapes),
+            Kind::Image { .. } => line(&pts.iter().chain(pts.first()).copied().collect::<Vec<_>>(), &mut shapes),
         }
     }
     if !fill.is_empty() {
