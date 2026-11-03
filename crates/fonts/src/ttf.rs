@@ -127,9 +127,11 @@ const MAX_CACHED_CHARS: usize = 50_000;
 pub(crate) const MAX_SHAPED_POINTS: usize = 8_000_000;
 
 /// Fonts known to cover many scripts (CJK first), tried first for missing glyphs. Matched as
-/// substrings of the normalised file stem. Unifont (every BMP character, as bitmap-like
-/// outlines) comes last: a last resort before the alphabetical rest, which the bounded search
-/// never gets through, and the only CJK-capable font of NixOS's default font set.
+/// substrings of the normalised file stem. The last two are the wide nets: GNU FreeSerif (most
+/// non-CJK scripts, with real OpenType shaping; in the default font set of NixOS and many
+/// distributions), then Unifont (every BMP character, as bitmap-like outlines; the only
+/// CJK-capable font of NixOS's default set) for what FreeSerif lacks. Both come before the
+/// alphabetical rest, which the bounded search never gets through.
 const PREFERRED_FALLBACK: &[&str] = &[
     "notosanscjk",
     "sourcehansans",
@@ -153,6 +155,7 @@ const PREFERRED_FALLBACK: &[&str] = &[
     "dejavusans",
     "segoeui",
     "arial",
+    "freeserif",
     "unifont",
 ];
 /// Fonts known to cover a right-to-left script, tried before the general search for its
