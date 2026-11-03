@@ -104,9 +104,8 @@ Hangul can't be shown. This change does not fix platform IME issues or localize 
 The bundled egui fonts have no Georgian letters. Georgian is drawn with the Noto Sans Georgian face
 (`Geor`) of the craft-fonts build input, which release builds embed (`craft-fonts-ref` in the
 workflows, and `web-craft-fonts` for the web build, whose embedded faces include it). The face loads
-in every interface language, so the picker shows **ქართული**. A build without craft-fonts keeps the
-saved `ka` choice but shows the interface in English, names the language **Georgian** in the picker,
-and the language command reports that a Georgian font is needed.
+in every interface language, so Georgian text (file, layout and layer names, labels) draws. A build
+without craft-fonts has no Georgian face.
 
 ## Greek (`el`) interface
 
