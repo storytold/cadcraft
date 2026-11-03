@@ -214,6 +214,15 @@ impl Prompt {
             return None;
         }
         let tl = t.to_ascii_lowercase();
+        // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys.
+        if let Some(latin) = crate::keyboard::latin_keys(t) {
+            return self.match_latin_keyword(&latin).or_else(|| self.match_latin_keyword(&tl));
+        }
+        self.match_latin_keyword(&tl)
+    }
+
+    /// [`Prompt::match_keyword`] for text already read as Latin letters, in lower case.
+    fn match_latin_keyword(&self, tl: &str) -> Option<String> {
         let keys = self.keywords.iter().map(|k| {
             let shortcut: String = k.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect::<String>().to_ascii_lowercase();
             let shortcut =
@@ -226,8 +235,8 @@ impl Prompt {
         // CHPROP: "Ambiguous response, please clarify..."), `LTS` is ltScale.
         let past_capitals = |k: &str| k.char_indices().rfind(|(_, c)| c.is_ascii_uppercase() || c.is_ascii_digit()).map_or(1, |(i, _)| i + 1);
         keys.clone()
-            .find(|(_, kl, sc)| tl == *kl || tl == *sc)
-            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(&tl)))
+            .find(|(_, kl, sc)| tl == kl.as_str() || tl == sc.as_str())
+            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(tl)))
             .map(|(k, _, _)| k.clone())
     }
 }

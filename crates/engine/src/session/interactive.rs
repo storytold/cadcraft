@@ -15,6 +15,13 @@ impl Session {
             Some(n) => (true, n),
             None => (false, name),
         };
+        // A name typed with the Greek keyboard layout active (ΛΙΝΕ for LINE) is the Latin name's keys,
+        // unless it is a command or LISP function of its own.
+        let latin = crate::keyboard::latin_keys(name).filter(|_| {
+            let greek = name.trim_start_matches(['_', '.', '-']).to_lowercase();
+            find_command(&cmd::resolve_alias(&greek)).is_none() && self.lisp_command(&greek).is_none()
+        });
+        let name = latin.as_deref().unwrap_or(name);
         let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
         // A command-line form with an id of its own (-ATTEDIT) is not the command it prefixes.
         let dashed = cmd::resolve_alias(&name.trim_start_matches(['_', '.']).to_ascii_lowercase());

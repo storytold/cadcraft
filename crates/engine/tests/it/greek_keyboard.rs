@@ -1,0 +1,37 @@
+//! A command or keyword typed with the Greek keyboard layout active (ΛΙΝΕ for LINE, ΥΝΔΟ for
+//! Undo) works as its Latin name: the layout types each Greek letter on the Latin key it sounds
+//! like.
+
+use cadcraft_engine::Session;
+use cadcraft_engine::doc::EntityKind;
+use serde_json::json;
+
+fn lines(s: &Session) -> usize {
+    s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count()
+}
+
+#[test]
+fn greek_layout_commands_start_like_the_latin_ones() {
+    let mut s = Session::new();
+    s.script("ΛΙΝΕ 0,0 10,0\n\n").unwrap();
+    assert_eq!(lines(&s), 1, "{}", s.prompt_text());
+    // Accents the layout's dead key adds are ignored; lower case works too.
+    s.script("λίνε 0,5 10,5\n\n").unwrap();
+    assert_eq!(lines(&s), 2);
+    // The Q key types a semicolon: QSAVE is ";ΣΑΩΕ", which only starts the command (no file needed
+    // here: it reports, it never fails as an unknown command).
+    let err = s.start(";ΣΑΩΕ").map(|_| String::new()).unwrap_or_else(|e| e.to_string());
+    assert!(!err.contains("unknown command"), "{err}");
+}
+
+#[test]
+fn greek_layout_keywords_match_prompt_options() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({ "center": [0, 0], "radius": 5 })).unwrap();
+    s.script("ΜΙΡΡΟΡ ALL\n\n0,0 10,0\n").unwrap();
+    // ... the last prompt asks whether to delete the sources: N (Greek layout: Ν) keeps them.
+    s.script("Ν\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let circles = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+    assert_eq!(circles, 2, "the circle and its mirror image");
+}

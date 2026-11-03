@@ -123,7 +123,8 @@ fn suggestions(prefix: &str) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    let p = prefix.to_ascii_lowercase();
+    // Typed with the Greek keyboard layout (ΛΙΝΕ), it completes as the Latin name (LINE).
+    let p = cadcraft_engine::keyboard::latin_keys(prefix).unwrap_or_else(|| prefix.to_string()).to_ascii_lowercase();
 
     let mut out: Vec<Suggestion> = Vec::new();
     let mut seen_ids: HashSet<&'static str> = HashSet::new();
@@ -755,6 +756,17 @@ mod tests {
 
     fn press(app: &mut CadApp, ctx: &egui::Context, at: Pos2, pressed: bool) {
         frame(app, ctx, vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }]);
+    }
+
+    #[test]
+    fn autocomplete_reads_a_greek_layout_prefix_as_its_latin_keys() {
+        // ΛΙΝ is the keys L-I-N on the Greek layout: it completes like the Latin prefix does.
+        let latin: Vec<String> = suggestions("lin").into_iter().map(|s| s.id).collect();
+        assert!(latin.iter().any(|id| id == "LINE"), "{latin:?}");
+        let greek: Vec<String> = suggestions("ΛΙΝ").into_iter().map(|s| s.id).collect();
+        assert_eq!(greek, latin);
+        // A prefix that is not Greek-layout typing is matched as it is.
+        assert!(suggestions("ЖЖЖ").is_empty());
     }
 
     #[test]
