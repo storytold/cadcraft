@@ -359,9 +359,12 @@ fn run_minsert(s: &mut Session, p: &Value) -> Result<Value> {
                 .ok_or_else(|| bad("minsert", format!("`{key}` must be an integer between 1 and {}", Grid::MAX))),
         }
     };
+    // A distance given must be a number: `"15"` is refused, not taken as 0.
     let spacing = |key: &str| -> Result<f64> {
-        let v = f64_or(p, key, 0.0);
-        if v.is_finite() { Ok(v) } else { Err(bad("minsert", format!("`{key}` must be a finite number"))) }
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("minsert", format!("`{key}` must be a number"))),
+        }
     };
     let grid = Grid::new(count("rows")?, count("columns")?, spacing("rowSpacing")?, spacing("columnSpacing")?);
     insert_json(s, p, "minsert", grid)

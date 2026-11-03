@@ -205,6 +205,9 @@ fn the_json_form_makes_the_same_grid() {
         json!({"name": "B", "at": [0, 0], "rows": 0}),
         json!({"name": "B", "at": [0, 0], "columns": 32768}),
         json!({"name": "B", "at": [0, 0], "rows": 2.5}),
+        // A distance that is not a number is refused, not taken as 0.
+        json!({"name": "B", "at": [0, 0], "rows": 2, "rowSpacing": "15"}),
+        json!({"name": "B", "at": [0, 0], "columns": 2, "columnSpacing": true}),
     ] {
         assert!(s.execute("minsert", &bad).is_err(), "{bad}");
     }
