@@ -85,6 +85,20 @@ fn window_option_and_json_forms() {
 }
 
 #[test]
+fn a_window_saved_in_a_twisted_view_restores_whole() {
+    let mut s = session();
+    s.execute("view.set", &json!({ "center": [0, 0], "height": 10, "twist": 45 })).unwrap();
+    s.execute("view", &json!({ "option": "window", "name": "Turned", "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    let v = s.doc().unwrap().views.first().cloned().unwrap();
+    // A 10 x 10 world square seen at 45° is 10√2 across on screen.
+    assert!(close(v.width, 200f64.sqrt()) && close(v.height, 200f64.sqrt()), "{} x {}", v.width, v.height);
+    // Corners near the number limit overflow when turned: an error, and the saved view stays.
+    let huge = json!({ "option": "window", "name": "Turned", "p1": [1.4e308, 1.4e308], "p2": [1.5e308, 1.5e308] });
+    assert!(s.execute("view", &huge).is_err());
+    assert!(close(s.doc().unwrap().views.first().unwrap().width, 200f64.sqrt()));
+}
+
+#[test]
 fn layer_snapshot_restores_layers_and_the_setting_turns_it_off() {
     let mut s = session();
     s.doc_mut().unwrap().layers.push(cadcraft_engine::doc::Layer { name: "Walls".into(), ..Default::default() });

@@ -121,6 +121,10 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
             }
             // In a twisted view the window's box on screen is larger than its world box.
             let (center, width, height) = crate::View::twisted_box(b, twist);
+            // Turning corners near the number limit can overflow: save no view that can't be restored.
+            if !(center.is_finite() && width.is_finite() && height.is_finite() && width > 1e-12 && height > 1e-12) {
+                return Err(EngineError::Other("The window is too large for a twisted view.".into()));
+            }
             (center, height, width)
         }
         None => {
