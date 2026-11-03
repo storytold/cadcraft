@@ -16,7 +16,8 @@ pub mod patterns;
 /// The QuickCalc palette.
 pub mod quickcalc;
 
-type Tool = (Icon, &'static str, &'static str);
+/// A tool button: (icon, command id, label).
+pub type Tool = (Icon, &'static str, &'static str);
 
 /// Tool Sets groups: (name, large tools, small tools).
 pub const DRAFTING: &[(&str, &[Tool], &[Tool])] = &[
@@ -135,7 +136,7 @@ pub const DRAFTING: &[(&str, &[Tool], &[Tool])] = &[
     ),
 ];
 
-fn command_known(id: &str) -> bool {
+pub(crate) fn command_known(id: &str) -> bool {
     cadcraft_engine::find_command(id).is_some() || crate::menus::is_ui_command(id)
 }
 
@@ -290,6 +291,19 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Layers palette's tool row; the Ribbon's Layers panel shows the same tools.
+pub const LAYER_TOOLS: &[Tool] = &[
+    (Icon::LayerProps, "ui.dialog.layers", "Layer Properties"),
+    (Icon::MakeCurrent, "laymcur", "Make Object's Layer Current"),
+    (Icon::LayerMatch, "laymch", "Match Layer"),
+    (Icon::LayerPrev, "layerp", "Previous Layer"),
+    (Icon::LayerIso, "layiso", "Isolate"),
+    (Icon::LayerOff, "layoff", "Turn Off Layer"),
+    (Icon::LayerFreeze, "layfrz", "Freeze Layer"),
+    (Icon::LayerLock, "laylck", "Lock Layer"),
+    (Icon::Unlock, "layulk", "Unlock Layer"),
+];
+
 pub const MODELING: &[(&str, &[Tool], &[Tool])] = &[
     (
         "Primitives",
@@ -381,18 +395,8 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
-        for (icon, c, tip) in [
-            (Icon::LayerProps, "ui.dialog.layers", "Layer Properties"),
-            (Icon::MakeCurrent, "laymcur", "Make Object's Layer Current"),
-            (Icon::LayerMatch, "laymch", "Match Layer"),
-            (Icon::LayerPrev, "layerp", "Previous Layer"),
-            (Icon::LayerIso, "layiso", "Isolate"),
-            (Icon::LayerOff, "layoff", "Turn Off Layer"),
-            (Icon::LayerFreeze, "layfrz", "Freeze Layer"),
-            (Icon::LayerLock, "laylck", "Lock Layer"),
-            (Icon::Unlock, "layulk", "Unlock Layer"),
-        ] {
-            if icons::button(ui, icon, 26.0, tip, false).clicked() {
+        for (icon, c, tip) in LAYER_TOOLS {
+            if icons::button(ui, *icon, 26.0, tip, false).clicked() {
                 cmd = Some(c);
             }
         }

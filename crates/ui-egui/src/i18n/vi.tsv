@@ -4,6 +4,7 @@
 # AutoCAD command names, command-line keywords and system variables stay in English.
 # UTF-8: context<TAB>English source<TAB>Vietnamese translation.
 # @plural = one form for every integer count (Vietnamese doesn't inflect a noun for number).
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Thanh lệnh có thẻ bên dưới thanh menu, với các bảng Vẽ, Sửa, Chú thích, Lớp, Khối và Thuộc tính của thẻ Trang chủ.
 	Apply	Áp dụng
 	Attach DWG...	Đính kèm DWG...
 	Bind	Gắn kết
@@ -21,6 +22,7 @@
 	References: {n}	Tham chiếu: {n}
 	Reload	Tải lại
 	Reload All	Tải lại tất cả
+	Ribbon	Dải lệnh
 	Saved Path	Đường dẫn đã lưu
 	Unload	Bỏ nạp
 	Unloaded	Đã bỏ nạp

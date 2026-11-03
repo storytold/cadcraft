@@ -3,6 +3,7 @@
 # Written from CADCraft English strings; no proprietary translations copied.
 # UTF-8: context<TAB>English source<TAB>Korean translation.
 # @plural uses a single Korean form with {n}.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	메뉴 막대 아래의 탭식 명령 막대로, 홈 탭의 그리기, 수정, 주석, 도면층, 블록, 특성 패널을 담습니다.
 	Apply	적용
 	Attach DWG...	DWG 부착...
 	Bind	결합
@@ -20,6 +21,7 @@
 	References: {n}	참조: {n}개
 	Reload	다시 로드
 	Reload All	모두 다시 로드
+	Ribbon	리본
 	Saved Path	저장된 경로
 	Unload	언로드
 	Unloaded	언로드됨
