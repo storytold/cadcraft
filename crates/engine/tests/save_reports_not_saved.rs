@@ -256,5 +256,4 @@ fn retained_proxy_is_not_reported_as_lost_in_modern_dwg() {
     assert_eq!(not_saved_as(&drawing, Version::R2010).get("ACAD_PROXY_ENTITY"), Some(&1));
     std::sync::Arc::make_mut(&mut drawing.foreign).classes.clear();
     assert_eq!(not_saved_as(&drawing, Version::R2018).get("ACAD_PROXY_ENTITY"), Some(&1));
-
 }
