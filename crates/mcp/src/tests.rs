@@ -302,6 +302,27 @@ fn agent_views_and_exports_a_3d_mesh() {
     let _ = std::fs::remove_file(path);
 }
 
+/// A 3D render to a folder that doesn't exist writes the PNG and names the folder it made, as
+/// the plan render does (#2260).
+#[test]
+fn a_3d_render_into_a_missing_folder_creates_it_and_says_so() {
+    use crate::Backend;
+    let mut b = Headless::default();
+    b.call("engine.execute", json!({"command": "box", "params": {"p1": [0, 0, 0], "p2": [4, 4, 4]}})).unwrap();
+    b.call("engine.execute", json!({"command": "view3d", "params": {"preset": "swiso"}})).unwrap();
+    let dir = std::env::temp_dir().join(format!("cadcraft-mcp-3d-folder-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let top = dir.join("new");
+    let path = top.join("deeper").join("iso.png");
+    let r = b.call("ui.render", json!({"path": path.to_string_lossy(), "width": 120, "height": 80})).unwrap();
+    assert!(path.is_file(), "the 3D render wrote no file");
+    assert_eq!(r["createdFolder"], json!(top.display().to_string()));
+    let again = b.call("ui.render", json!({"path": path.to_string_lossy(), "width": 120, "height": 80})).unwrap();
+    assert!(again.get("createdFolder").is_none(), "{again}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn agent_modifies_solids_through_discoverable_tools() {
     let mut s = Server::new(Box::new(Headless::default()));

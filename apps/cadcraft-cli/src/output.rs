@@ -122,10 +122,21 @@ pub(crate) fn export_window(s: &Session, framing: Framing, before: Option<&[(u64
 /// Write `bytes` to `out` through the engine's atomic writer (an exclusively created sibling file
 /// renamed over `out`), so a failed or interrupted write leaves the previous file untouched. An
 /// existing `out` is resolved first: the rename would otherwise replace a symlink with a file and
-/// leave the file it points to (`--in-place` through a link) unchanged.
-pub(crate) fn write_atomic(out: &Path, bytes: &[u8]) -> Result<(), OutputError> {
+/// leave the file it points to (`--in-place` through a link) unchanged. Folders missing above `out`
+/// are created, and the topmost one returned for the caller to report.
+pub(crate) fn write_atomic(out: &Path, bytes: &[u8]) -> Result<Option<std::path::PathBuf>, OutputError> {
     let target = std::fs::canonicalize(out).unwrap_or_else(|_| out.to_path_buf());
-    cadcraft_engine::atomic_write::write_atomic(&target, bytes).map_err(|source| OutputError::Write { path: out.to_path_buf(), source })
+    let folder = cadcraft_engine::atomic_write::missing_folder(&target);
+    cadcraft_engine::atomic_write::write_atomic_making_folders(&target, bytes)
+        .map_err(|source| OutputError::Write { path: out.to_path_buf(), source })?;
+    Ok(folder)
+}
+
+/// Say that `out` went into a folder that didn't exist, so a mistyped path is noticed.
+pub(crate) fn report_new_folder(folder: Option<std::path::PathBuf>, io: &mut Streams) {
+    if let Some(folder) = folder {
+        io.errln(format_args!("created the folder {}, which did not exist", folder.display()));
+    }
 }
 
 pub(crate) fn export(s: &Session, out: &Path, io: &mut Streams) -> Result {
@@ -138,7 +149,8 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
         Some(bytes) => bytes,
         None => cadcraft_io::write_framed(d, out, window)?,
     };
-    write_atomic(out, &bytes)?;
+    let folder = write_atomic(out, &bytes)?;
+    report_new_folder(folder, io);
     io.errln(format_args!("wrote {} ({} bytes)", out.display(), bytes.len()));
     if cadcraft_engine::cmd::file::drops_unknown(out) {
         let lost = cadcraft_engine::cmd::file::not_saved(d);

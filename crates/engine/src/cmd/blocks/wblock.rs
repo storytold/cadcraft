@@ -8,7 +8,7 @@ use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::super::curves::KW;
-use super::super::file::{drops_unknown, not_saved, not_saved_message, report_not_saved};
+use super::super::file::{drops_unknown, new_folder, not_saved, not_saved_message, report_new_folder, report_not_saved};
 use super::super::machines::{SelOutcome, SelectPhase};
 use super::super::modify::erase_kept;
 use super::super::{CommandSpec, bad, point_param, str_param, targets};
@@ -43,11 +43,13 @@ enum Source<'a> {
 fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
+    let folder = new_folder(&path);
     let (entities, bytes, lost) = match str_param(p, "name") {
         Some(name) => write(s, "wblock", &path, Source::Block(name, base))?,
         None => write(s, "wblock", &path, Source::Objects(&targets(s, p)?, base.unwrap_or(Vec2::ZERO)))?,
     };
     let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
+    report_new_folder(s, &mut r, folder);
     report_not_saved(s, &mut r, &lost);
     Ok(r)
 }
@@ -58,6 +60,7 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let path = str_param(p, "path").ok_or_else(|| bad("-wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
+    let folder = new_folder(&path);
     let (entities, bytes, lost) = match str_param(p, "name") {
         Some(name) => write(s, "-wblock", &path, Source::Block(name, base))?,
         None => {
@@ -72,6 +75,7 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
+    report_new_folder(s, &mut r, folder);
     report_not_saved(s, &mut r, &lost);
     Ok(r)
 }
@@ -101,7 +105,7 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     let bytes = (hooks.write)(&d, path).map_err(|e| bad(cmd, e))?;
     // Through a temporary file, as SAVE writes, so a failed write keeps the file it replaces.
     #[cfg(not(target_arch = "wasm32"))]
-    crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
     let lost = if drops_unknown(path) { not_saved(&d) } else { BTreeMap::new() };
     Ok((d.model.len(), bytes.len(), lost))
 }
