@@ -98,6 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            insertion_point: Vec3::ZERO,
         }),
     )
     .unwrap();
@@ -558,6 +559,7 @@ fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -604,6 +606,12 @@ fn viewport_frozen_layers_roundtrip() {
     assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
 }
 
+/// `d` as an R2018 DXF (frozen viewport layers in group 331).
+fn dxf_2018(d: &Drawing) -> String {
+    let opts = SaveOptions { version: Some(Version::R2018), binary: false };
+    String::from_utf8(write_with(d, "t.dxf", &opts).unwrap()).unwrap()
+}
+
 /// A layout with viewport 2 frozen on `Walls` and `A B` (both real layers), and its written DXF as
 /// (code, value) pairs.
 fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
@@ -624,10 +632,14 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         on: true,
     });
     d.add(&paper, Common::default(), vp).unwrap();
-    let text = write_dxf(&d);
+    let text = dxf_2018(&d);
+    (d, pairs(&text))
+}
+
+/// The (code, value) pairs of DXF text.
+fn pairs(text: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();
-    let pairs = lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect();
-    (d, pairs)
+    lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect()
 }
 
 /// The pair range of the VIEWPORT record whose group 69 is `id`.
@@ -676,47 +688,60 @@ fn join(p: &[(String, String)]) -> String {
         .collect()
 }
 
-#[test]
-fn viewport_frozen_layers_written_as_341_handles() {
-    let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    let rec = &p[r];
-    let h341: Vec<&str> = rec.iter().filter(|(c, _)| c == "341").map(|(_, v)| v.as_str()).collect();
-    assert_eq!(h341, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
-    let last341 = rec.iter().rposition(|(c, _)| c == "341").unwrap();
-    let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
-    assert!(last341 < x, "341 must precede the xdata");
+/// The group 331 values of viewport 2's record.
+fn frozen_331(p: &[(String, String)]) -> Vec<String> {
+    p[vp_record(p, "2")].iter().filter(|(c, _)| c == "331").map(|(_, v)| v.trim().to_string()).collect()
 }
 
 #[test]
-fn viewport_frozen_layers_read_from_341_without_xdata() {
+fn viewport_frozen_layers_written_as_331_handles() {
+    // Real layers go out as handles only, before group 90.
     let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    // Strip the CADCraft xdata, and add a 341 to a handle that names no layer.
-    let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
-    let mut q: Vec<(String, String)> = p[..r.start].to_vec();
-    let mut head = p[r.start..x].to_vec();
-    head.push(("341".into(), "FFFFF".into()));
-    q.extend(head);
-    q.extend(p[r.end..].iter().cloned());
-    let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    let rec = &p[vp_record(&p, "2")];
+    assert!(!rec.iter().any(|(c, v)| c == "1000" && v == "VPFROZEN"), "no xdata for layers with a handle");
+    assert!(rec.iter().position(|(c, _)| c == "331") < rec.iter().position(|(c, _)| c == "90"));
+    // An R2000 DXF holds them in group 341, as the DXF 2000 Reference has them.
+    let (d, _) = frozen_vp_dxf();
+    let p = pairs(&write_dxf(&d));
+    let h341: Vec<String> = p[vp_record(&p, "2")].iter().filter(|(c, _)| c == "341").map(|(_, v)| v.clone()).collect();
+    assert_eq!(h341, [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    assert!(frozen_331(&p).is_empty());
 }
 
 #[test]
-fn viewport_frozen_xdata_wins_over_341() {
+fn viewport_frozen_layers_read_from_331_or_341_once_each() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 341 at layer 0: the xdata list must still be what is read.
-    let zero = layer_handle(&p, "0");
+    // 341 instead of 331, then Walls again in 331 and a handle that names no layer.
     let mut q = p.clone();
-    for t in &mut q[r] {
-        if t.0 == "341" {
-            t.1 = zero.clone();
+    for t in &mut q[r.clone()] {
+        if t.0 == "331" {
+            t.0 = "341".into();
         }
     }
+    q.splice(r.end..r.end, [("331".into(), "FFFFF".into()), ("331".into(), layer_handle(&p, "Walls"))]);
+    // A 331 inside another application's `102 {…}` group isn't a frozen layer.
+    let app = [("102".into(), "{ACAD_OTHER".into()), ("331".into(), layer_handle(&p, "0")), ("102".into(), "}".into())];
+    q.splice(r.start + 2..r.start + 2, app);
     let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(viewport_frozen(&back, 2), ["Walls", "A B"]);
+}
+
+#[test]
+fn viewport_freeze_edited_in_autocad_is_read_as_edited() {
+    // Every layer thawed in AutoCAD (no 331 left) stays thawed; a layer it froze instead is read.
+    let (_, p) = frozen_vp_dxf();
+    let r = vp_record(&p, "2");
+    let thawed: Vec<(String, String)> = p.iter().enumerate().filter(|(i, (c, _))| !(r.contains(i) && c == "331")).map(|(_, t)| t.clone()).collect();
+    assert!(viewport_frozen(&read_dxf(join(&thawed).as_bytes()).unwrap(), 2).is_empty());
+    let mut zero = p.clone();
+    for t in &mut zero[r] {
+        if t.0 == "331" {
+            t.1 = layer_handle(&p, "0");
+        }
+    }
+    assert_eq!(viewport_frozen(&read_dxf(join(&zero).as_bytes()).unwrap(), 2), ["0"]);
 }
 
 #[test]
@@ -725,7 +750,9 @@ fn viewport_frozen_layers_survive_dwg() {
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
-    // Survives via the CADCraft xdata: the DWG converter does not yet carry group 341 itself.
+    // The DWG holds them in group 331, what AutoCAD reads.
+    let p = pairs(&String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
 }
 
 #[test]
@@ -2272,6 +2299,48 @@ fn svg_group_transforms_apply() {
     let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
     assert!((l.a - Vec3::new(5.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
     assert!((l.b - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
+}
+
+/// The geometry of everything read, for comparing two readings of one drawing.
+fn geometry(d: &Drawing) -> String {
+    format!("{:?}", d.model.iter().map(|e| &e.kind).collect::<Vec<_>>())
+}
+
+/// `transform` on a shape element (SVG 1.1 §7.5, every graphics element takes one) maps it as
+/// the same transform on a group around it would: for every shape kind, composed after the
+/// parent group's, and not passed on to the next sibling.
+#[test]
+fn svg_element_transforms_apply_like_a_group_around_the_element() {
+    let read_svg = |body: &str| read(format!("{SVG_PAGE}{body}</svg>").as_bytes(), "t.svg").unwrap();
+    let shapes = [
+        r#"<rect x="1" y="1" width="4" height="3"/>"#,
+        r#"<circle cx="5" cy="5" r="2"/>"#,
+        r#"<ellipse cx="5" cy="5" rx="3" ry="1"/>"#,
+        r#"<line x1="0" y1="0" x2="4" y2="2"/>"#,
+        r#"<polyline points="0,0 2,0 2,2"/>"#,
+        r#"<polygon points="0,0 2,0 1,1"/>"#,
+        r#"<path d="M1 1 L4 1 A2 2 0 0 1 6 3 C7 3 8 4 8 5"/>"#,
+    ];
+    for t in ["translate(5,2)", "rotate(30 5 5)", "scale(2,1)", "skewX(20)", "matrix(1 0.2 0 1 3 -1)"] {
+        for shape in shapes {
+            let on_element = shape.replacen("/>", &format!(r#" transform="{t}"/>"#), 1);
+            let in_group = format!(r#"<g transform="{t}">{shape}</g>"#);
+            assert_eq!(geometry(&read_svg(&on_element)), geometry(&read_svg(&in_group)), "{t} on {shape}");
+        }
+    }
+    // A rotated circle stays a circle; a skewed one is an ellipse.
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="rotate(30)"/>"#)), ["Circle"]);
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="skewX(20)"/>"#)), ["Ellipse"]);
+    // Inside a group: the group's transform, then the element's.
+    let nested = read_svg(r#"<g transform="scale(2)"><line x1="0" y1="0" x2="1" y2="0" transform="translate(1,0)"/></g>"#);
+    let both = read_svg(r#"<g transform="scale(2)"><g transform="translate(1,0)"><line x1="0" y1="0" x2="1" y2="0"/></g></g>"#);
+    assert_eq!(geometry(&nested), geometry(&both));
+    // Written with an end tag too, and the next sibling keeps its own place.
+    let d = read_svg(r#"<line x1="0" y1="0" x2="1" y2="0" transform="translate(5,0)"></line><line x1="0" y1="0" x2="1" y2="0"/>"#);
+    let lines: Vec<Line> = d.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).collect();
+    assert_eq!(lines.len(), 2);
+    assert!((lines[0].a - Vec3::new(5.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[0]);
+    assert!((lines[1].a - Vec3::new(0.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[1]);
 }
 
 #[test]

@@ -799,6 +799,10 @@ pub struct PageSetup {
     /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
     /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
     pub paper_mm: bool,
+    /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
+    /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_origin: Option<Vec2>,
 }
 
 impl Default for PageSetup {
@@ -820,6 +824,7 @@ impl Default for PageSetup {
             show_plot_styles: false,
             plot_transparency: false,
             paper_mm: false,
+            image_origin: None,
         }
     }
 }
@@ -843,6 +848,10 @@ pub struct Layout {
     /// is renamed and with it when it is deleted. Never written to a file.
     #[serde(skip)]
     pub ucs_previous: Vec<Ucs>,
+    /// The layout's limits (LAYOUT groups 10/11, lower left and upper right) as the file had
+    /// them; `None` for a layout CADCraft made, written as 0,0 to 12,9 (#2109).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<(Vec2, Vec2)>,
 }
 
 impl Layout {
@@ -855,6 +864,7 @@ impl Layout {
             view: None,
             ucs: None,
             ucs_previous: Vec::new(),
+            limits: None,
         }
     }
 }
