@@ -144,6 +144,7 @@ pub fn reset(s: &mut Session) {
     st.cursorsize = d.cursorsize;
     st.pickfirst = d.pickfirst;
     st.pickadd = d.pickadd;
+    st.copymode = d.copymode;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
 }

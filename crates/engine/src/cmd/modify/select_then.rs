@@ -135,8 +135,9 @@ impl SelectThen {
                     0 | 1 => "The selection is too large to array (MAXARRAY limits the size of the array).".to_string(),
                     _ => format!("Requires an integer between 2 and {max} (MAXARRAY limits the size of the array)."),
                 };
-                let n = number(&t).filter(|v| v.fract() == 0.0 && (2.0..=f64::from(max)).contains(v)).ok_or(EngineError::Other(msg))?;
-                self.copy_array = CopyArray::Items { n: n as u16, fit: false };
+                // Digits only: AutoCAD 2024 refuses 4.0, 1e1, 8/2, 1' and 3" here (measured).
+                let n = t.trim().parse::<u16>().ok().filter(|v| (2..=max).contains(v)).ok_or(EngineError::Other(msg))?;
+                self.copy_array = CopyArray::Items { n, fit: false };
                 return Ok(Step::Continue);
             }
             (CopyArray::Items { n, fit }, Input::Keyword(kw)) if kw == if fit { "Array" } else { "Fit" } => {
@@ -692,13 +693,12 @@ impl Interactive for DisplaceM {
         }
         if self.ask_mode {
             match &i {
-                Input::Keyword(k) if k == "Single" || k == "Multiple" => {
-                    s.settings.copymode = k == "Single";
-                    self.inner.copy_single = s.settings.copymode;
-                }
+                Input::Keyword(k) if k == "Single" || k == "Multiple" => s.settings.copymode = k == "Single",
                 Input::Enter => {}
                 _ => return Ok(Step::Continue),
             }
+            // The mode shown is the mode this COPY runs in, Enter keeping it.
+            self.inner.copy_single = s.settings.copymode;
             self.ask_mode = false;
             return Ok(Step::Continue);
         }

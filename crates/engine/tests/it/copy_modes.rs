@@ -65,6 +65,15 @@ fn the_base_point_prompt_offers_mode_and_multiple() {
     assert!(s.current_prompt().is_none());
     assert_eq!(starts(&s), [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]);
     assert_eq!(copymode(&mut s), json!(1));
+    // Multiple, then mOde with Enter: the mode shown (Single, COPYMODE 1) is the mode COPY runs in.
+    let mut s = with_line(1);
+    copy(&mut s, &["M", "O"]);
+    assert_eq!(s.current_prompt().unwrap().display(), "Enter a copy mode option [Single/Multiple] <Single>:");
+    for t in ["", "0,0", "5,0"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.current_prompt().is_none(), "one copy");
+    assert_eq!(starts(&s), [(0.0, 0.0), (5.0, 0.0)]);
     // mOde sets COPYMODE.
     let mut s = with_line(0);
     copy(&mut s, &["O"]);
@@ -157,7 +166,7 @@ fn array_takes_2_to_32767_items() {
     let mut s = with_line(1);
     copy(&mut s, &["0,0", "A"]);
     assert_eq!(s.current_prompt().unwrap().display(), "Enter number of items to array:");
-    for bad in ["1", "0", "2.5", "32768", "-3"] {
+    for bad in ["1", "0", "2.5", "32768", "-3", "1'", "8/2", "x", "4.0", "1e1", "3\""] {
         s.cmdline(bad).unwrap();
         assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 2 and 32767."), "{bad}");
         assert_eq!(s.current_prompt().unwrap().display(), "Enter number of items to array:", "{bad}");
@@ -192,6 +201,23 @@ fn maxarray_caps_the_items_times_the_objects() {
     }
     copy(&mut s, &["0,0", "A", "2"]);
     assert_eq!(s.log.last().map(String::as_str), Some("The selection is too large to array (MAXARRAY limits the size of the array)."));
+}
+
+#[test]
+fn copymode_is_a_profile_variable() {
+    // OPTIONS reports it, a saved profile brings it back, reset puts it back to 0, and typing its
+    // name asks for it as for any variable.
+    let mut s = with_line(1);
+    assert_eq!(s.execute("options", &json!({})).unwrap()["COPYMODE"], json!(1));
+    let saved = cadcraft_engine::cmd::options::profile(&s);
+    let mut t = Session::new();
+    cadcraft_engine::cmd::options::restore(&mut t, &saved);
+    assert_eq!(copymode(&mut t), json!(1));
+    s.execute("options", &json!({ "reset": true })).unwrap();
+    assert_eq!(copymode(&mut s), json!(0));
+    s.cmdline("COPYMODE").unwrap();
+    s.cmdline("1").unwrap();
+    assert_eq!(copymode(&mut s), json!(1));
 }
 
 #[test]
