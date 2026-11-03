@@ -246,6 +246,12 @@ impl SelectThen {
         s.set_selection(Vec::new());
         Ok(Step::Done)
     }
+
+    /// The second point of MIRROR's line: the cursor while it is picked, then the picked point,
+    /// so the mirrored copy stays on screen at "Erase source objects?" (#2667).
+    fn mirror_end(&self, cursor: Vec2) -> Option<Vec2> {
+        if self.ask_erase { self.pts.get(1).copied() } else { Some(cursor) }
+    }
 }
 
 /// Objects whose text MIRROR keeps readable instead of mirroring it with the geometry.
@@ -473,7 +479,10 @@ impl Interactive for SelectThen {
                 None if self.ref_len.is_some() => return Vec::new(),
                 None => return self.ref_from.map(|a| vec![line(a, c)]).unwrap_or_default(),
             },
-            Op::Mirror if !self.ask_erase => Mat3::mirror(base, c),
+            Op::Mirror => match self.mirror_end(c) {
+                Some(end) => Mat3::mirror(base, end),
+                None => return Vec::new(),
+            },
             _ => return Vec::new(),
         };
         let Ok(d) = s.doc() else { return Vec::new() };
@@ -488,7 +497,9 @@ impl Interactive for SelectThen {
                 k
             })
             .collect();
-        out.push(line(base, c));
+        if !self.ask_erase {
+            out.push(line(base, c));
+        }
         out
     }
     fn drag(&self, s: &Session, c: Vec2) -> Option<crate::prompt::Drag> {
@@ -501,10 +512,11 @@ impl Interactive for SelectThen {
             Op::Rotate => Mat3::rotate_about(base, base.angle_to(c)),
             Op::Scale if !self.reference => Mat3::scale_about(base, base.dist(c).max(1e-9)),
             Op::Scale => Mat3::scale_about(base, self.ref_len.and_then(|r| positive_length(Some(base.dist(c) / r)))?),
-            Op::Mirror if !self.ask_erase => Mat3::mirror(base, c),
+            Op::Mirror => Mat3::mirror(base, self.mirror_end(c)?),
             _ => return None,
         };
-        let mut extra = vec![line(base, c)];
+        // The rubber band follows the cursor only while a point is being picked.
+        let mut extra = if self.ask_erase { Vec::new() } else { vec![line(base, c)] };
         if self.op != Op::Mirror {
             return Some(crate::prompt::Drag { handles: self.objs.clone(), matrix, extra, clipboard: false });
         }
