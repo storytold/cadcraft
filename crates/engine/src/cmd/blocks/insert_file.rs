@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use super::super::file::MAX_DRAWING_BYTES;
 use super::super::file::io;
 use super::super::modify::explode_kind;
-use super::purge::{Kind, candidates, is_arrow_override, override_arrows, scan_reads_everything};
+use super::purge::{Kind, candidates, is_arrow_override, override_arrows, override_name, scan_reads_everything};
 use super::{referenced_block, references_block, valid_block_name};
 use crate::cmd::{bad, str_param};
 use crate::{EngineError, Result, Session};
@@ -380,8 +380,11 @@ fn adopt(d: &mut Drawing, src: &Drawing, e: &Entity, renames: &Renames) -> Entit
                 dm.block = Some(n.clone());
             }
             for (key, value) in dm.overrides.iter_mut() {
+                // Only a block that was renamed changes the value: a number naming a block that
+                // kept its name stays as it was given.
                 if is_arrow_override(key)
-                    && let Some(n) = value.as_str().and_then(|b| renames.get(b.trim()))
+                    && let Some(b) = override_name(value)
+                    && let Some(n) = renames.get(&b).filter(|n| **n != b)
                 {
                     *value = json!(n);
                 }
@@ -580,6 +583,28 @@ mod tests {
             serde_json::from_value(json!({ "leaders": [], "landing": [0, 0, 0], "dogleg": 0.0, "text": null })).unwrap();
         m.block = Some(content);
         assert_eq!(colliding_block_after_import(Entity::new(Handle(0x501), EntityKind::MLeader(m))), "from the file");
+    }
+
+    /// An arrowhead override given as a number names its block: the block comes along, and the
+    /// override is left as given when the block keeps its name.
+    #[test]
+    fn a_numeric_arrowhead_override_brings_its_block() {
+        let mut s = Session::new();
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        let mut dim = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        if let EntityKind::Dimension(dm) = &mut dim.kind {
+            dm.overrides.insert("DIMBLK1".into(), json!(45));
+        }
+        let mut src = Drawing::new_metric();
+        src.blocks.insert("45".into(), Arc::new(Block::new("45")));
+        src.model.push(dim);
+        let mut t = Session::new();
+        define_from(&mut t, &src, "Part", true).unwrap();
+        let d = t.doc().unwrap();
+        assert!(d.block("45").is_some());
+        let e = d.block("Part").unwrap().entities.iter().next().unwrap().clone();
+        let EntityKind::Dimension(dm) = &e.kind else { panic!("not a dimension") };
+        assert_eq!(dm.overrides["DIMBLK1"], json!(45));
     }
 
     /// Arrowheads are references too: a dimension style that came along and a dimension's override

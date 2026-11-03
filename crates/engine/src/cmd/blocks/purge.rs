@@ -135,9 +135,19 @@ pub(in crate::cmd) fn is_arrow_override(key: &str) -> bool {
     cadcraft_doc::DimStyle::field_name(key).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock")
 }
 
+/// The name a dimension override gives a style, linetype or arrowhead block. A number names one
+/// too: DIMOVERRIDE keeps it as given, and the dimension is drawn with it as text.
+pub(in crate::cmd) fn override_name(v: &Value) -> Option<String> {
+    match v {
+        Value::String(n) => Some(n.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
 /// The arrowhead block names a dimension's overrides set.
 pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iterator<Item = String> + '_ {
-    dm.overrides.iter().filter(|(k, _)| is_arrow_override(k)).filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())).filter(|n| !n.is_empty())
+    dm.overrides.iter().filter(|(k, _)| is_arrow_override(k)).filter_map(|(_, v)| override_name(v)).filter(|n| !n.is_empty())
 }
 
 /// Upper-case names of blocks reachable from model space, the layouts and dimensions, and the
@@ -199,7 +209,7 @@ fn linetypes_inside(e: &cadcraft_doc::Entity) -> Vec<String> {
             dm.overrides
                 .iter()
                 .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| matches!(f, "dimLinetype" | "extLinetype1" | "extLinetype2")))
-                .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())),
+                .filter_map(|(_, v)| override_name(v)),
         ),
         EntityKind::MLine(m) => out.extend(m.def.elements.iter().map(|e| e.linetype.clone())),
         _ => {}

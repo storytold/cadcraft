@@ -785,7 +785,7 @@ pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
                     dm.overrides
                         .iter()
                         .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
-                        .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())),
+                        .filter_map(|(_, v)| super::blocks::purge::override_name(v)),
                 ),
                 _ => {}
             }
