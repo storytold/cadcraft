@@ -464,19 +464,32 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
     let mut starts: Vec<(usize, usize)> = start.into_iter().collect();
     starts.sort_unstable();
     let mut out = Vec::new();
+    // Each containment test scans a whole polygon, accepted or not: they share one allowance of
+    // polygon edges, and the search ends when it is spent.
+    let mut edges_left: usize = 100_000_000;
     for (c, u) in starts {
         if out.len() >= MAX_ISLANDS {
             break;
         }
         let Some(&pu) = core.pts.get(u) else { continue };
-        if !ob.contains(pu) || !point_in_polygon(&outer_pts, pu) {
+        if !ob.contains(pu) {
+            continue;
+        }
+        let Some(left) = edges_left.checked_sub(outer_pts.len()) else { break };
+        edges_left = left;
+        if !point_in_polygon(&outer_pts, pu) {
             continue;
         }
         let steps = edges.get(&c).copied().unwrap_or(0).saturating_add(4);
         let Some(lp) = outside(&core, u, steps) else { continue };
         let area = shoelace(&lp);
         let ib = Bounds2::from_points(lp.iter().copied());
-        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) || point_in_polygon(&lp, p) {
+        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) {
+            continue;
+        }
+        let Some(left) = edges_left.checked_sub(lp.len()) else { break };
+        edges_left = left;
+        if point_in_polygon(&lp, p) {
             continue;
         }
         let mut src = sources.remove(&c).unwrap_or_default();
@@ -497,6 +510,8 @@ fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, bu
         if j == i {
             continue;
         }
+        // A curve with no segment costs a visit too, so many of them can't multiply the searches.
+        *budget = budget.checked_sub(1).ok_or(())?;
         for (k, w) in other.windows(2).enumerate() {
             if *budget == 0 {
                 return Err(());
