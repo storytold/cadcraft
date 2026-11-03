@@ -10,7 +10,7 @@
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::color::Color;
-use cadcraft_engine::doc::{EntityKind, Handle};
+use cadcraft_engine::doc::{EntityKind, Handle, Space};
 use serde_json::{Value, json};
 
 fn handle(v: &Value) -> Handle {
@@ -388,8 +388,122 @@ fn join_names_what_the_objects_became() {
     assert!(s.log.iter().any(|l| l == "2 objects joined into 1 arc"), "{:?}", s.log);
     let c = arc(&mut s, [0.0, 0.0], 5.0, 250.0, 0.0);
     s.execute("select", &json!({ "handles": [a.hex(), c.hex()] })).unwrap();
-    s.script("JOIN\n").unwrap();
+    // Yes, the default, to "Convert to circle?".
+    s.script("JOIN\n\n").unwrap();
     assert!(s.log.iter().any(|l| l == "2 objects joined into 1 circle"), "{:?}", s.log);
+}
+
+#[test]
+fn arcs_that_come_round_ask_before_making_a_circle() {
+    // AutoCAD 2024 with 7°-100° and an arc from -353° (stored 5e-16 rad before 7°) to 50°: "Combined
+    // arc segments form a circle.  Convert to circle? [Yes/No] <Yes>:". Yes makes the circle, No
+    // leaves both arcs as they are.
+    let pair = |s: &mut Session| [arc(s, [0.0, 0.0], 10.0, 7.0, 100.0), arc(s, [0.0, 0.0], 10.0, -353.0, 50.0)];
+    let mut s = Session::new();
+    let [a, b] = pair(&mut s);
+    let before = objects(&s);
+    s.execute("select", &json!({ "handles": [a.hex(), b.hex()] })).unwrap();
+    s.script("JOIN\n").unwrap();
+    assert_eq!(s.current_prompt().unwrap().display(), "Combined arc segments form a circle.  Convert to circle? [Yes/No] <Yes>:");
+    s.cmdline("N").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(objects(&s), before);
+    s.execute("select", &json!({ "handles": [a.hex(), b.hex()] })).unwrap();
+    s.script("JOIN\n\n").unwrap();
+    assert!(matches!(&objects(&s)[..], [(_, EntityKind::Circle(c))] if c.radius == 10.0), "{:?}", objects(&s));
+    // The JSON form takes the default, Yes.
+    let mut s = Session::new();
+    let [a, b] = pair(&mut s);
+    join(&mut s, &[a, b]);
+    assert!(matches!(&objects(&s)[..], [(_, EntityKind::Circle(_))]), "{:?}", objects(&s));
+    // There is no tolerance at the source's start: an arc from exactly 7°, or from 5e-7 rad after
+    // the source's start, lies inside it and the source stays; from 5e-7 or 2e-6 rad before it,
+    // the arcs come round (all measured).
+    for (start, circle) in [(7.0, false), (7.0 + 5e-7f64.to_degrees(), false), (7.0 - 5e-7f64.to_degrees(), true), (7.0 - 2e-6f64.to_degrees(), true)]
+    {
+        let mut s = Session::new();
+        let a = arc(&mut s, [0.0, 0.0], 10.0, 7.0, 100.0);
+        let b = arc(&mut s, [0.0, 0.0], 10.0, start, 50.0);
+        let source = objects(&s)[0].1.clone();
+        join(&mut s, &[a, b]);
+        let after = objects(&s);
+        if circle {
+            assert!(matches!(&after[..], [(_, EntityKind::Circle(_))]), "{start}: {after:?}");
+        } else {
+            assert_eq!(after, [(a, source)], "{start}");
+        }
+    }
+}
+
+#[test]
+fn join_asks_about_a_circle_only_when_it_would_make_one() {
+    // Arcs that come round, picked with a line, a spline or on a locked layer: JOIN goes another
+    // way or refuses, and doesn't ask.
+    let half_circles = |s: &mut Session| [arc(s, [0.0, 0.0], 5.0, 0.0, 180.0), arc(s, [0.0, 0.0], 5.0, 180.0, 0.0)];
+    for spline in [false, true] {
+        let mut s = Session::new();
+        let [a, b] = half_circles(&mut s);
+        let other = if spline {
+            handle(&s.execute("spline", &json!({ "control": [[50, 0], [53, 3], [56, -3], [59, 0]] })).unwrap())
+        } else {
+            line(&mut s, [5.0, 0.0], [15.0, 0.0])
+        };
+        s.execute("select", &json!({ "handles": [a.hex(), b.hex(), other.hex()] })).unwrap();
+        s.script("JOIN\n").unwrap();
+        assert!(s.running.is_none(), "spline {spline}: {}", s.prompt_text());
+        // Not joined onto the arcs' circle: the other object isn't taken with them.
+        let objs = objects(&s);
+        assert!(objs.iter().any(|(h, _)| *h == other) && !objs.iter().any(|(_, k)| matches!(k, EntityKind::Circle(_))), "spline {spline}: {objs:?}");
+    }
+    // Arcs that come round exactly, or to 9.9e-7 rad short of the source's start, ask too; 1.01e-6
+    // short, they make an arc without asking (measured: CIRCLE and ARC).
+    for (short, asks) in [(0.0, true), (9.9e-7f64, true), (1.01e-6, false)] {
+        let mut s = Session::new();
+        let a = arc(&mut s, [0.0, 0.0], 5.0, 0.0, 180.0);
+        let b = arc(&mut s, [0.0, 0.0], 5.0, 180.0, 360.0 - short.to_degrees());
+        s.execute("select", &json!({ "handles": [a.hex(), b.hex()] })).unwrap();
+        s.script("JOIN\n").unwrap();
+        assert_eq!(s.prompt_text().contains("Convert to circle?"), asks, "{short}: {}", s.prompt_text());
+        if !asks {
+            assert!(s.running.is_none() && matches!(&objects(&s)[..], [(h, EntityKind::Arc(_))] if *h == a), "{:?}", objects(&s));
+        }
+    }
+    // Arcs picked at "Select arcs to join to source" ask too, and No changes nothing.
+    let mut s = Session::new();
+    arc(&mut s, [0.0, 0.0], 5.0, 0.0, 180.0);
+    arc(&mut s, [0.0, 0.0], 5.0, 180.0, 0.0);
+    let before = objects(&s);
+    s.script("JOIN 0,5\n\n").unwrap();
+    assert_eq!(s.current_prompt().unwrap().display(), "Select arcs to join to source or [cLose]:");
+    s.cmdline("0,-5").unwrap();
+    s.cmdline("").unwrap();
+    assert_eq!(s.current_prompt().unwrap().display(), "Combined arc segments form a circle.  Convert to circle? [Yes/No] <Yes>:");
+    s.cmdline("N").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(objects(&s), before);
+    let mut s = Session::new();
+    let [a, b] = half_circles(&mut s);
+    s.execute("layer.set", &json!({ "name": "0", "locked": true })).unwrap();
+    s.execute("select", &json!({ "handles": [a.hex(), b.hex()] })).unwrap();
+    s.script("JOIN\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(s.log.iter().any(|l| l == "An object is on a locked layer."), "{:?}", s.log);
+}
+
+#[test]
+fn what_join_makes_stays_in_the_source_space() {
+    // Arcs and lines in a layout joined while model space is current: the circle and the new
+    // polyline go in the layout.
+    let mut s = Session::new();
+    s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    let arcs = [arc(&mut s, [0.0, 0.0], 5.0, 0.0, 180.0), arc(&mut s, [0.0, 0.0], 5.0, 180.0, 0.0)];
+    let lines = [line(&mut s, [20.0, 0.0], [30.0, 0.0]), line(&mut s, [30.0, 0.0], [30.0, 10.0])];
+    s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
+    for hs in [arcs, lines] {
+        let made = join(&mut s, &hs);
+        assert_eq!(s.doc().unwrap().space_of(made), Some(Space::Paper("Layout1".into())), "{hs:?}");
+    }
+    assert!(objects(&s).is_empty());
 }
 
 #[test]
@@ -457,5 +571,398 @@ fn lines_and_arcs_less_than_a_millionth_off_join_and_further_off_do_not() {
     raise(&mut s, b, 5.0);
     let before = objects(&s);
     assert!(s.execute("join", &json!({ "handles": [a.hex(), b.hex()] })).is_err());
+    assert_eq!(objects(&s), before);
+}
+
+#[test]
+fn a_polyline_met_at_an_inner_vertex_stays_whole() {
+    // AutoCAD 2024: a polyline (0,0)-(10,0) takes the line (10,0)-(10,5); the polyline
+    // (0,5)-(10,5)-(20,5), which the line meets at its middle vertex, is left as it was.
+    let mut s = Session::new();
+    let p = pline(&mut s, &[(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]);
+    let l = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    let q_vs = [(0.0, 5.0, 0.0, 0.0, 0.0), (10.0, 5.0, 0.0, 0.0, 0.0), (20.0, 5.0, 0.0, 0.0, 0.0)];
+    let q = pline(&mut s, &q_vs);
+    assert_eq!(join(&mut s, &[p, l, q]), p);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![p, q], "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), [(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (10.0, 5.0, 0.0, 0.0, 0.0)]);
+    assert_eq!(vertices(&objs[1].1), q_vs);
+    // The same through a new polyline: two lines at a corner, and that polyline at the far end.
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    let q = pline(&mut s, &q_vs);
+    let r = join(&mut s, &[a, b, q]);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![q, r], "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), q_vs);
+    assert_eq!(vertices(&objs[1].1), [(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (10.0, 5.0, 0.0, 0.0, 0.0)]);
+    // Nothing else to join (AutoCAD 2024: "0 segments added to polyline", or nothing joined to
+    // a line): refused, the drawing as it was.
+    for (first, other) in [
+        (
+            vec![(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)],
+            vec![(10.0, -5.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (10.0, 5.0, 0.0, 0.0, 0.0)],
+        ),
+        (
+            vec![(-10.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)],
+            vec![(10.0, -5.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (10.0, 5.0, 0.0, 0.0, 0.0)],
+        ),
+    ] {
+        let mut s = Session::new();
+        let p = pline(&mut s, &first);
+        let q = pline(&mut s, &other);
+        let before = objects(&s);
+        assert!(s.execute("join", &json!({ "handles": [p.hex(), q.hex()] })).is_err(), "{first:?}");
+        assert_eq!(objects(&s), before);
+    }
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let q = pline(&mut s, &[(20.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (10.0, -10.0, 0.0, 0.0, 0.0)]);
+    let before = objects(&s);
+    assert!(s.execute("join", &json!({ "handles": [a.hex(), q.hex()] })).is_err());
+    assert_eq!(objects(&s), before);
+}
+
+#[test]
+fn objects_join_whole_by_their_ends_whatever_the_order() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // AutoCAD 2024: the polyline (30,0)-(20,0) takes (0,0)-(10,0)-(20,0) whole, picked before or
+    // after the line (10,0)-(10,5), which meets only its middle vertex and is left as it was.
+    for order in [[0, 1, 2], [0, 2, 1]] {
+        let mut s = Session::new();
+        let p0 = pline(&mut s, &v(&[(30.0, 0.0), (20.0, 0.0)]));
+        let m = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+        let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]));
+        let picked = order.map(|i| [p0, m, p][i]);
+        assert_eq!(join(&mut s, &picked), p0, "{order:?}");
+        let objs = objects(&s);
+        assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![p0, m], "{order:?}");
+        assert_eq!(vertices(&objs[0].1), v(&[(30.0, 0.0), (20.0, 0.0), (10.0, 0.0), (0.0, 0.0)]), "{order:?}");
+    }
+    // AutoCAD 2024: (10,0)-(10,5), then the line (10,5)-(20,0), then (0,0)-(10,0)-(20,0) whole
+    // from its end: (10,0) (10,5) (20,0) (10,0) (0,0), not split at its middle vertex.
+    let mut s = Session::new();
+    let src = pline(&mut s, &v(&[(10.0, 0.0), (10.0, 5.0)]));
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]));
+    let m = line(&mut s, [10.0, 5.0], [20.0, 0.0]);
+    assert_eq!(join(&mut s, &[src, p, m]), src);
+    let objs = objects(&s);
+    assert_eq!(objs.len(), 1, "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), v(&[(10.0, 0.0), (10.0, 5.0), (20.0, 0.0), (10.0, 0.0), (0.0, 0.0)]));
+}
+
+#[test]
+fn one_object_alone_joins_nothing_even_when_its_ends_meet() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // AutoCAD 2024 ("0 segments added to polyline"): a polyline that the other meets only at its
+    // middle vertex. And a circle, which JOIN can't take, beside a polyline: nothing to join it to.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]));
+    let q = pline(&mut s, &v(&[(10.0, 0.0), (10.0, 5.0), (10.0, 10.0)]));
+    let c = handle(&s.execute("circle", &json!({ "center": [50, 50], "radius": 5 })).unwrap());
+    // A polyline whose last vertex is its first stays open, alone or beside a line it doesn't
+    // reach (AutoCAD 2024: unchanged, 70 = 0, all four vertices).
+    let r = pline(&mut s, &v(&[(100.0, 0.0), (110.0, 0.0), (110.0, 10.0), (100.0, 0.0)]));
+    let l = line(&mut s, [150.0, 50.0], [160.0, 50.0]);
+    let before = objects(&s);
+    for hs in [&[p, q][..], &[c, p], &[r], &[r, l]] {
+        let hex: Vec<String> = hs.iter().map(|h| h.hex()).collect();
+        assert!(s.execute("join", &json!({ "handles": hex })).is_err(), "{hs:?}");
+        assert_eq!(objects(&s), before, "{hs:?}");
+    }
+}
+
+#[test]
+fn a_polyline_whose_ends_meet_takes_more_where_they_meet() {
+    // AutoCAD 2024 with the source (0,0) (10,0) (10,10) (0,0), open, and an object from or to
+    // (0,0): it keeps its handle and stays open. A line or an arc goes in turned round, its end
+    // at the source's end if it can, else its start at the source's start; a polyline goes before
+    // the source, turned round if it starts at (0,0).
+    let src = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)];
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    let tail = [(-5.0, -5.0), (-5.0, 0.0)];
+    type Make = fn(&mut Session) -> Handle;
+    let cases: [(Make, Vec<(f64, f64, f64, f64, f64)>); 5] = [
+        (|s| line(s, [0.0, 0.0], [-5.0, 0.0]), v(&[(-5.0, 0.0), (0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)])),
+        (|s| line(s, [-5.0, 0.0], [0.0, 0.0]), v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0), (-5.0, 0.0)])),
+        (
+            |s| pline(s, &[(0.0, 0.0, 0.0, 0.0, 0.0), (-5.0, 0.0, 0.0, 0.0, 0.0), (-5.0, -5.0, 0.0, 0.0, 0.0)]),
+            v(&[tail[0], tail[1], src[0], src[1], src[2], src[3]]),
+        ),
+        (
+            |s| pline(s, &[(-5.0, -5.0, 0.0, 0.0, 0.0), (-5.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0)]),
+            v(&[tail[0], tail[1], src[0], src[1], src[2], src[3]]),
+        ),
+        (|s| arc(s, [0.0, -5.0], 5.0, 90.0, 180.0), {
+            let mut w = v(&[(-5.0, -5.0), src[0], src[1], src[2], src[3]]);
+            w[0].4 = -((std::f64::consts::PI / 8.0).tan() * 1e12).round() / 1e12;
+            w
+        }),
+    ];
+    for (i, (make, want)) in cases.into_iter().enumerate() {
+        let mut s = Session::new();
+        let p = pline(&mut s, &v(&src));
+        let o = make(&mut s);
+        assert_eq!(join(&mut s, &[p, o]), p, "case {i}");
+        let objs = objects(&s);
+        assert_eq!(objs.len(), 1, "case {i}: {objs:?}");
+        let EntityKind::LwPolyline(pl) = &objs[0].1 else { panic!("not a polyline") };
+        assert!(!pl.closed, "case {i}");
+        // An arc's end point is worked out from its centre, so to 1e-9.
+        let got = vertices(&objs[0].1);
+        let same = |a: &(f64, f64, f64, f64, f64), b: &(f64, f64, f64, f64, f64)| {
+            [a.0 - b.0, a.1 - b.1, a.2 - b.2, a.3 - b.3, a.4 - b.4].iter().all(|d| d.abs() < 1e-9)
+        };
+        assert!(got.len() == want.len() && got.iter().zip(&want).all(|(a, b)| same(a, b)), "case {i}: {got:?}");
+    }
+    // A join that closes it there closes it, and nothing more joins (AutoCAD 2024): a line of no
+    // length at (0,0) gives a closed polyline of its four vertices, the line from (0,0) picked
+    // after it staying; a polyline (0,0) (-5,0) (-5,-5) (0,0) goes before it turned round.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&src));
+    let zero = line(&mut s, [0.0, 0.0], [1.0, 0.0]);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(zero, |e| {
+            if let EntityKind::Line(l) = &mut e.kind {
+                l.b = l.a;
+            }
+        })
+        .unwrap();
+    let l = line(&mut s, [0.0, 0.0], [-5.0, 0.0]);
+    assert_eq!(join(&mut s, &[p, zero, l]), p);
+    let objs = objects(&s);
+    assert!(matches!(&objs[..], [(a, EntityKind::LwPolyline(pl)), (b, EntityKind::Line(_))] if *a == p && *b == l && pl.closed), "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), v(&src));
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&src));
+    let q = pline(&mut s, &v(&[(0.0, 0.0), (-5.0, 0.0), (-5.0, -5.0), (0.0, 0.0)]));
+    assert_eq!(join(&mut s, &[p, q]), p);
+    let objs = objects(&s);
+    assert!(matches!(&objs[..], [(a, EntityKind::LwPolyline(pl))] if *a == p && pl.closed), "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), v(&[(0.0, 0.0), (-5.0, -5.0), (-5.0, 0.0), (0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]));
+}
+
+#[test]
+fn a_nearly_straight_arc_segment_keeps_the_chain_whole() {
+    // A bulge of 3e-10 over 100: as an arc its radius is about 4e10, and its ends worked out again
+    // from the centre are off by more than the tolerance. The vertices themselves still meet.
+    let mut s = Session::new();
+    let p = pline(&mut s, &[(0.0, 0.0, 0.0, 0.0, 3e-10), (100.0, 0.0, 0.0, 0.0, 0.0), (100.0, 10.0, 0.0, 0.0, 0.0)]);
+    let l = line(&mut s, [100.0, 10.0], [110.0, 10.0]);
+    assert_eq!(join(&mut s, &[p, l]), p);
+    let objs = objects(&s);
+    assert_eq!(objs.len(), 1, "{objs:?}");
+    let EntityKind::LwPolyline(pl) = &objs[0].1 else { panic!("not a polyline") };
+    let pts: Vec<(f64, f64)> = pl.vertices.iter().map(|v| (v.p.x, v.p.y)).collect();
+    assert_eq!(pts, [(0.0, 0.0), (100.0, 0.0), (100.0, 10.0), (110.0, 10.0)]);
+    assert_eq!(pl.vertices[0].bulge, 3e-10);
+}
+
+#[test]
+fn a_new_polyline_takes_the_first_joined_objects_properties() {
+    // A circle picked first isn't part of the polyline: the polyline is on the first line's layer
+    // (AutoCAD 2024 passes over a circle picked as the source; the new polyline's layer itself is
+    // not measured).
+    let mut s = Session::new();
+    let c = handle(&s.execute("circle", &json!({ "center": [50, 50], "radius": 5 })).unwrap());
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    for (h, layer) in [(c, "C"), (a, "A"), (b, "B")] {
+        s.doc_mut().unwrap().modify_entity(h, |e| e.common.layer = layer.into()).unwrap();
+    }
+    let r = join(&mut s, &[c, a, b]);
+    let d = s.doc().unwrap();
+    assert_eq!(d.entity(r).unwrap().common.layer, "A");
+    assert!(d.entity(c).is_some(), "the circle stays");
+}
+
+#[test]
+fn the_source_is_the_first_object_join_can_take() {
+    // AutoCAD 2024: a circle picked first, then the polyline (0,0)-(10,0) of width 2, then the line
+    // (10,0)-(10,5): the polyline takes the line, keeping its handle and its width.
+    let mut s = Session::new();
+    let c = handle(&s.execute("circle", &json!({ "center": [50, 50], "radius": 5 })).unwrap());
+    let p = handle(&s.execute("pline", &json!({ "vertices": [[0, 0], [10, 0]], "width": 2.0 })).unwrap());
+    let l = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    assert_eq!(join(&mut s, &[c, p, l]), p);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![c, p], "{objs:?}");
+    let EntityKind::LwPolyline(pl) = &objs[1].1 else { panic!("not a polyline") };
+    assert_eq!((pl.const_width, pl.vertices.len()), (2.0, 3));
+}
+
+#[test]
+fn a_closed_chain_takes_nothing_more() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // AutoCAD 2024: (0,0)-(10,0)-(10,10), the line back to (0,0), then a line on from (0,0): the
+    // triangle closes and the last line stays as it was.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]));
+    let back = line(&mut s, [10.0, 10.0], [0.0, 0.0]);
+    let tail = line(&mut s, [0.0, 0.0], [-5.0, 0.0]);
+    assert_eq!(join(&mut s, &[p, back, tail]), p);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![p, tail], "{objs:?}");
+    let EntityKind::LwPolyline(pl) = &objs[0].1 else { panic!("not a polyline") };
+    assert!(pl.closed, "{pl:?}");
+    assert_eq!(vertices(&objs[0].1), v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]));
+    // The line on picked before the line back: it joins first, and the chain no longer closes.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]));
+    let tail = line(&mut s, [0.0, 0.0], [-5.0, 0.0]);
+    let back = line(&mut s, [10.0, 10.0], [0.0, 0.0]);
+    assert_eq!(join(&mut s, &[p, tail, back]), p);
+    let objs = objects(&s);
+    assert_eq!(objs.len(), 1, "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), v(&[(-5.0, 0.0), (0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)]));
+}
+
+#[test]
+fn objects_meeting_the_chain_at_its_start_turned_round() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // AutoCAD 2024: (0,0)-(10,0) and the polyline (0,0)-(-10,0)-(-10,10), turned round in front.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0)]));
+    let q = pline(&mut s, &v(&[(0.0, 0.0), (-10.0, 0.0), (-10.0, 10.0)]));
+    assert_eq!(join(&mut s, &[p, q]), p);
+    assert_eq!(vertices(&objects(&s)[0].1), v(&[(-10.0, 10.0), (-10.0, 0.0), (0.0, 0.0), (10.0, 0.0)]));
+    // AutoCAD 2024: a polyline meeting both of the source's ends closes it from its start, in
+    // front of the source turned round: widths swapped, bulge negated.
+    let mut s = Session::new();
+    let p = pline(&mut s, &[(0.0, 0.0, 1.0, 1.0, 0.0), (20.0, 0.0, 1.0, 1.0, 0.0), (20.0, 20.0, 1.0, 1.0, 0.0)]);
+    let q = pline(&mut s, &[(0.0, 0.0, 4.0, 5.0, 0.0), (0.0, 20.0, 6.0, 7.0, 0.3), (20.0, 20.0, 8.0, 9.0, 0.0)]);
+    assert_eq!(join(&mut s, &[p, q]), p);
+    let objs = objects(&s);
+    let EntityKind::LwPolyline(pl) = &objs[0].1 else { panic!("not a polyline") };
+    assert!(pl.closed && objs.len() == 1, "{objs:?}");
+    let want = [(20.0, 20.0, 7.0, 6.0, -0.3), (0.0, 20.0, 5.0, 4.0, 0.0), (0.0, 0.0, 1.0, 1.0, 0.0), (20.0, 0.0, 1.0, 1.0, 0.0)];
+    assert_eq!(vertices(&objs[0].1), want);
+}
+
+#[test]
+fn lines_of_no_length_and_repeated_vertices() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // A line from (x,y) to (x,y).
+    let dot = |s: &mut Session, x: f64, y: f64| {
+        let h = line(s, [x, y], [x + 1.0, y]);
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Line(l) = &mut e.kind {
+                    l.b = l.a;
+                }
+            })
+            .unwrap();
+        h
+    };
+    // AutoCAD 2024: two of them alone stay as they are.
+    let mut s = Session::new();
+    let (a, b) = (dot(&mut s, 5.0, 5.0), dot(&mut s, 5.0, 5.0));
+    let before = objects(&s);
+    assert!(s.execute("join", &json!({ "handles": [a.hex(), b.hex()] })).is_err());
+    assert_eq!(objects(&s), before);
+    // AutoCAD 2024: a line takes one at its end and stays as it was.
+    let mut s = Session::new();
+    let l = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let z = dot(&mut s, 10.0, 0.0);
+    assert_eq!(join(&mut s, &[l, z]), l);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && matches!(&objs[0].1, EntityKind::Line(k) if (k.b.x, k.b.y) == (10.0, 0.0)), "{objs:?}");
+    // AutoCAD 2024: a polyline takes it as a repeated vertex, and keeps another polyline's.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0)]));
+    let z = dot(&mut s, 10.0, 0.0);
+    let m = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    assert_eq!(join(&mut s, &[p, z, m]), p);
+    assert_eq!(vertices(&objects(&s)[0].1), v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 5.0)]));
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (10.0, 0.0)]));
+    let q = pline(&mut s, &v(&[(10.0, 0.0), (10.0, 0.0), (10.0, 5.0)]));
+    assert_eq!(join(&mut s, &[p, q]), p);
+    assert_eq!(vertices(&objects(&s)[0].1), v(&[(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 5.0)]));
+    // An arc of no radius (AutoCAD can't draw one) joins nothing.
+    let mut s = Session::new();
+    let l = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let g = arc(&mut s, [10.0, 0.0], 1.0, 0.0, 90.0);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(g, |e| {
+            if let EntityKind::Arc(k) = &mut e.kind {
+                k.radius = 0.0;
+            }
+        })
+        .unwrap();
+    let before = objects(&s);
+    assert!(s.execute("join", &json!({ "handles": [l.hex(), g.hex()] })).is_err());
+    assert_eq!(objects(&s), before);
+}
+
+#[test]
+fn another_polyline_keeps_its_widths_in_a_new_polyline() {
+    // A line picked first makes a new polyline; the polyline after it keeps its segment's widths
+    // (no data lost; AutoCAD's own JOIN takes no polyline onto a line source, not measured).
+    let mut s = Session::new();
+    let l = line(&mut s, [-10.0, 0.0], [0.0, 0.0]);
+    let q = pline(&mut s, &[(0.0, 0.0, 2.0, 3.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]);
+    let r = join(&mut s, &[l, q]);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && objs[0].0 == r, "{objs:?}");
+    assert_eq!(vertices(&objs[0].1), [(-10.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 2.0, 3.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]);
+}
+
+#[test]
+fn a_circle_picked_first_is_passed_over_by_lines_and_arcs_too() {
+    // AutoCAD 2024 passes over a circle picked as the source: the first line takes the next.
+    let mut s = Session::new();
+    let c = handle(&s.execute("circle", &json!({ "center": [50, 50], "radius": 5 })).unwrap());
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    assert_eq!(join(&mut s, &[c, a, b]), a);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![c, a], "{objs:?}");
+    assert!(matches!(&objs[1].1, EntityKind::Line(l) if (l.b.x, l.b.y) == (20.0, 0.0)), "{objs:?}");
+    // And the first arc takes the next on its circle.
+    let mut s = Session::new();
+    let c = handle(&s.execute("circle", &json!({ "center": [50, 50], "radius": 5 })).unwrap());
+    let g = arc(&mut s, [0.0, 0.0], 5.0, 0.0, 100.0);
+    let h = arc(&mut s, [0.0, 0.0], 5.0, 130.0, 250.0);
+    assert_eq!(join(&mut s, &[c, g, h]), g);
+    let objs = objects(&s);
+    assert_eq!(objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![c, g], "{objs:?}");
+    assert!(matches!(&objs[1].1, EntityKind::Arc(k) if same_angle(k.end, 250f64.to_radians())), "{objs:?}");
+}
+
+#[test]
+fn an_arc_closing_a_polyline_and_a_source_of_no_length() {
+    let v = |pts: &[(f64, f64)]| pts.iter().map(|&(x, y)| (x, y, 0.0, 0.0, 0.0)).collect::<Vec<_>>();
+    // AutoCAD 2024: (0,0)-(20,0)-(20,20) and the half circle from (20,20) round to (0,0) close
+    // into (0,0) (20,0) (20,20) with a bulge of 1.
+    let mut s = Session::new();
+    let p = pline(&mut s, &v(&[(0.0, 0.0), (20.0, 0.0), (20.0, 20.0)]));
+    let g = arc(&mut s, [10.0, 10.0], 200f64.sqrt(), 45.0, 225.0);
+    assert_eq!(join(&mut s, &[p, g]), p);
+    let objs = objects(&s);
+    let EntityKind::LwPolyline(pl) = &objs[0].1 else { panic!("not a polyline") };
+    assert!(objs.len() == 1 && pl.closed, "{objs:?}");
+    let got = vertices(&objs[0].1);
+    assert!(got.len() == 3 && got[..2] == v(&[(0.0, 0.0), (20.0, 0.0)])[..] && near(got[2].0, 20.0) && near(got[2].1, 20.0), "{got:?}");
+    assert!(near(got[2].4, 1.0), "{got:?}");
+    // AutoCAD 2024: a line of no length picked as the source takes nothing; both stay.
+    let mut s = Session::new();
+    let z = line(&mut s, [5.0, 5.0], [6.0, 5.0]);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(z, |e| {
+            if let EntityKind::Line(l) = &mut e.kind {
+                l.b = l.a;
+            }
+        })
+        .unwrap();
+    let l = line(&mut s, [5.0, 5.0], [10.0, 5.0]);
+    let before = objects(&s);
+    assert!(s.execute("join", &json!({ "handles": [z.hex(), l.hex()] })).is_err());
     assert_eq!(objects(&s), before);
 }

@@ -143,89 +143,73 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     if hs.iter().any(|h| crate::cmd::curves::is_locked(s, *h)) {
         return Err(EngineError::Other("An object is on a locked layer.".into()));
     }
-    // A handle named twice is one object.
-    let mut seen = std::collections::HashSet::new();
-    let hs: Vec<Handle> = hs.iter().copied().filter(|h| seen.insert(*h)).collect();
+    let hs = joinable_picks(s.doc()?, hs);
     let hs = &hs[..];
     if let Some(h) = join_on_source(s, hs)? {
         return Ok(Some(h));
     }
     let d = s.doc()?;
-    let mut segs: Vec<Segment> = Vec::new();
-    // What each segment in `segs` came from, so only entities that end up in the chain are removed.
-    let mut pieces: Vec<Piece> = Vec::new();
-    let mut common = None;
+    // Each object JOIN can take, as the pieces it is made of: a line or an arc is one piece, an
+    // open polyline its segments in order, each keeping its vertices, bulge and widths exactly.
+    let mut units: Vec<Vec<Piece>> = Vec::new();
     for h in hs {
         let Some(e) = d.entity(*h) else { continue };
-        common.get_or_insert_with(|| e.common.clone());
         let piece = |ends: (Vec2, Vec2), bulge: f64, widths: Option<(f64, f64)>| Piece { owner: *h, ends, bulge, widths };
-        match &e.kind {
-            EntityKind::Line(l) => {
-                segs.push(Segment::Line(Line::new(l.a.xy(), l.b.xy())));
-                pieces.push(piece((l.a.xy(), l.b.xy()), 0.0, None));
-            }
+        let unit: Vec<Piece> = match &e.kind {
+            // A line of no length joins as AutoCAD 2024 joins it, a repeated vertex.
+            EntityKind::Line(l) => vec![piece((l.a.xy(), l.b.xy()), 0.0, None)],
             EntityKind::Arc(a) => {
                 let arc = Arc::new(a.center.xy(), a.radius, a.start, a.end);
-                pieces.push(piece((arc.start_point(), arc.end_point()), cadcraft_geom::arc_to_bulge(arc.sweep()), None));
-                segs.push(Segment::Arc { arc, ccw: true });
+                vec![piece((arc.start_point(), arc.end_point()), cadcraft_geom::arc_to_bulge(arc.sweep()), None)]
             }
-            EntityKind::LwPolyline(p) if !p.closed => {
-                // Segment by segment, so each keeps its vertices, bulge and widths exactly.
-                for w in p.vertices.windows(2) {
+            // Repeated vertices included: AutoCAD 2024 keeps them.
+            EntityKind::LwPolyline(p) if !p.closed => p
+                .vertices
+                .windows(2)
+                .map(|w| {
                     let widths = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (w[0].start_width, w[0].end_width) };
-                    for sg in (Polyline { vertices: w.to_vec(), closed: false }).segments() {
-                        segs.push(sg);
-                        pieces.push(piece((w[0].p, w[1].p), w[0].bulge, Some(widths)));
-                    }
-                }
-            }
-            _ => {}
+                    piece((w[0].p, w[1].p), w[0].bulge, Some(widths))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if !unit.is_empty() {
+            units.push(unit);
         }
     }
-    if segs.len() < 2 {
+    if units.iter().map(Vec::len).sum::<usize>() < 2 {
         return Err(EngineError::Other("Select at least two objects to join.".into()));
     }
-    // Chain greedily from the first segment.
-    let mut chain = vec![segs.remove(0)];
-    let mut links = vec![pieces.remove(0)];
+    // A new polyline takes the source's properties.
+    let first = units.first().and_then(|u| u.first()).map(|p| p.owner);
+    let common = first.and_then(|h| d.entity(h)).map(|e| e.common.clone());
     let tol = 1e-6;
-    loop {
-        let start = chain.first().map(Segment::start).unwrap_or_default();
-        let end = chain.last().map(Segment::end).unwrap_or_default();
-        let Some(i) =
-            segs.iter().position(|s| s.start().near(end, tol) || s.end().near(end, tol) || s.start().near(start, tol) || s.end().near(start, tol))
-        else {
-            break;
-        };
-        let (s0, p0) = (segs.remove(i), pieces.remove(i));
-        if s0.start().near(end, tol) {
-            chain.push(s0);
-            links.push(p0);
-        } else if s0.end().near(end, tol) {
-            chain.push(s0.reversed());
-            links.push(p0.flipped());
-        } else if s0.end().near(start, tol) {
-            chain.insert(0, s0);
-            links.insert(0, p0);
-        } else {
-            chain.insert(0, s0.reversed());
-            links.insert(0, p0.flipped());
-        }
-    }
-    if chain.len() < 2 {
+    let links = chain_units(units, tol);
+    // One object alone joins nothing, even a polyline whose ends meet: AutoCAD 2024 leaves it open
+    // ("0 segments added to polyline").
+    let closed = links.first().zip(links.last()).is_some_and(|(a, b)| a.ends.0.near(b.ends.1, tol));
+    let one_object = links.first().is_some_and(|f| links.iter().all(|l| l.owner == f.owner));
+    if links.len() < 2 || one_object {
         return Err(EngineError::Other("Objects are not connected.".into()));
     }
     let used = |h: &Handle| links.iter().any(|l| l.owner == *h);
-    let closed = chain.first().zip(chain.last()).is_some_and(|(a, b)| a.start().near(b.end(), tol));
-    let mut vs: Vec<PolyVertex> = links.iter().map(|l| PolyVertex { p: l.ends.0, bulge: l.bulge, ..Default::default() }).collect();
+    // A polyline's own segments keep their widths.
+    let mut vs: Vec<PolyVertex> = links
+        .iter()
+        .map(|l| {
+            let (start_width, end_width) = l.widths.unwrap_or_default();
+            PolyVertex { p: l.ends.0, bulge: l.bulge, start_width, end_width }
+        })
+        .collect();
     if !closed && let Some(l) = links.last() {
         vs.push(PolyVertex::new(l.ends.1));
     }
-    let space = s.space();
+    // A new polyline goes in the source's space, whichever space is current.
+    let space = first.and_then(|h| d.space_of(h)).unwrap_or_else(|| s.space());
     let doc = s.doc_mut()?;
     // A polyline source takes the other pieces and keeps its handle (AutoCAD 2024: "1 segments
     // added to polyline").
-    if let Some(src) = hs.first().copied()
+    if let Some(src) = first
         && let Some(EntityKind::LwPolyline(sp)) = doc.entity(src).map(|e| &e.kind)
         && let Some(onto) = onto_polyline(sp, src, &links, closed)
     {
@@ -245,6 +229,113 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     }
     s.set_selection(Vec::new());
     Ok(Some(nh))
+}
+
+/// The picks JOIN can take, each once, in the order picked: lines, arcs and open polylines. The
+/// first of them is the source (AutoCAD 2024 passes over a circle picked first and leaves it).
+fn joinable_picks(d: &cadcraft_doc::Drawing, hs: &[Handle]) -> Vec<Handle> {
+    let mut seen = std::collections::HashSet::new();
+    let joinable = |h: &Handle| {
+        d.entity(*h).is_some_and(|e| match &e.kind {
+            EntityKind::Line(_) => true,
+            EntityKind::Arc(a) => a.radius > cadcraft_geom::EPS,
+            EntityKind::LwPolyline(p) => !p.closed,
+            _ => false,
+        })
+    };
+    hs.iter().copied().filter(|h| joinable(h) && seen.insert(*h)).collect()
+}
+
+/// Whether JOIN would make the picked arcs a circle. AutoCAD 2024 asks first ("Combined arc
+/// segments form a circle.  Convert to circle? [Yes/No] <Yes>:"), and No leaves every arc as it
+/// is (measured).
+pub(crate) fn join_makes_circle(s: &Session, hs: &[Handle]) -> bool {
+    let Ok(d) = s.doc() else { return false };
+    // Elliptical arcs and splines join another way, and a locked object stops the join.
+    let other_way = |h: &Handle| d.entity(*h).is_some_and(|e| matches!(e.kind, EntityKind::Ellipse(_) | EntityKind::Spline(_)));
+    if hs.iter().any(|h| other_way(h) || crate::cmd::curves::is_locked(s, *h)) {
+        return false;
+    }
+    let picks = joinable_picks(d, hs);
+    let arcs: Vec<&cadcraft_doc::Arc> = picks
+        .iter()
+        .filter_map(|h| match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Arc(a)) => Some(a),
+            _ => None,
+        })
+        .collect();
+    let tol = 1e-6;
+    match &arcs[..] {
+        [g, rest @ ..] if !rest.is_empty() && arcs.len() == picks.len() => arc_reach(g, rest, tol).is_some_and(|far| far > cadcraft_geom::TAU - tol),
+        _ => false,
+    }
+}
+
+/// How far round the source arc `g`'s circle, counterclockwise from its start, it and the
+/// `others` reach; `None` when one of them isn't on that circle (less than `tol` off its centre
+/// and radius). An arc that starts even a hair before the source's start reaches on round past
+/// it: AutoCAD 2024 makes a circle of 7°-100° and an arc stored from 7° less 5e-16 rad, and
+/// leaves 7°-100° with one from exactly 7° or 5e-7 rad after it.
+fn arc_reach(g: &cadcraft_doc::Arc, others: &[&cadcraft_doc::Arc], tol: f64) -> Option<f64> {
+    let same_circle =
+        |o: &cadcraft_doc::Arc| o.center.xy().dist(g.center.xy()) < tol && (o.radius - g.radius).abs() < tol && (o.center.z - g.center.z).abs() < tol;
+    let reach = |o: &cadcraft_doc::Arc| norm_angle(o.start - g.start) + cadcraft_geom::ccw_sweep(o.start, o.end);
+    others.iter().all(|o| same_circle(o)).then(|| others.iter().map(|o| reach(o)).fold(reach(g), f64::max))
+}
+
+/// The chain JOIN builds from the first object: each next object with an end on one of the
+/// chain's ends joins whole, turned round where needed, as AutoCAD 2024 joins them, until a join
+/// closes the chain; one that the chain meets only at an inner vertex of a polyline stays out.
+/// Ends are compared at the objects' own end points, not ones worked out again from arcs.
+fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
+    let ends = |u: &[Piece]| u.first().zip(u.last()).map(|(a, b)| (a.ends.0, b.ends.1));
+    if units.is_empty() {
+        return Vec::new();
+    }
+    // A source that already ends where it starts still takes more, unless it has no length at all
+    // (AutoCAD 2024, measured with a polyline that ends where it starts and with a line of no
+    // length).
+    let mut chain: std::collections::VecDeque<Piece> = units.remove(0).into();
+    if chain.iter().all(|p| p.ends.0.near(p.ends.1, tol)) {
+        return chain.into();
+    }
+    while let (Some(start), Some(end)) = (chain.front().map(|p| p.ends.0), chain.back().map(|p| p.ends.1)) {
+        let meets = |u: &Vec<Piece>| ends(u).is_some_and(|(a, b)| a.near(end, tol) || b.near(end, tol) || a.near(start, tol) || b.near(start, tol));
+        let Some(i) = units.iter().position(meets) else { break };
+        let unit = units.remove(i);
+        let Some((a, b)) = ends(&unit) else { break };
+        // Where an object that meets the chain at more than one place goes, as AutoCAD 2024 puts
+        // it (measured): a polyline by its first vertex if it can, and before the chain rather
+        // than after it; a line or an arc turned round if it can, its end on the chain's end
+        // before its start on the chain's start.
+        let polyline = unit.first().is_some_and(|p| p.widths.is_some());
+        let (before, turned) = if polyline {
+            if a.near(start, tol) {
+                (true, true)
+            } else if a.near(end, tol) {
+                (false, false)
+            } else {
+                (b.near(start, tol), !b.near(start, tol))
+            }
+        } else if b.near(end, tol) {
+            (false, true)
+        } else if a.near(start, tol) {
+            (true, true)
+        } else {
+            (!a.near(end, tol), false)
+        };
+        match (before, turned) {
+            (false, false) => chain.extend(unit),
+            (false, true) => chain.extend(unit.into_iter().rev().map(Piece::flipped)),
+            (true, false) => unit.into_iter().rev().for_each(|p| chain.push_front(p)),
+            (true, true) => unit.into_iter().for_each(|p| chain.push_front(p.flipped())),
+        }
+        // A chain that a join closes takes nothing more.
+        if chain.front().zip(chain.back()).is_some_and(|(f, l)| f.ends.0.near(l.ends.1, tol)) {
+            break;
+        }
+    }
+    chain.into()
 }
 
 /// A segment in the chain JOIN builds: the object it came from, its end points as the object has
@@ -367,22 +458,15 @@ fn join_on_source(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
                     _ => None,
                 })
                 .collect();
-            let same_circle = |o: &cadcraft_doc::Arc| {
-                o.center.xy().dist(g.center.xy()) < tol && (o.radius - g.radius).abs() < tol && (o.center.z - g.center.z).abs() < tol
-            };
-            if arcs.len() != rest.len() || !arcs.iter().all(|o| same_circle(o)) {
-                return Ok(None);
-            }
-            // How far round from the source's start each arc reaches.
-            let reach = |o: &cadcraft_doc::Arc| norm_angle(o.start - g.start) + cadcraft_geom::ccw_sweep(o.start, o.end);
-            let far = arcs.iter().map(|o| reach(o)).fold(reach(g), f64::max);
+            let Some(far) = arc_reach(g, &arcs, tol).filter(|_| arcs.len() == rest.len()) else { return Ok(None) };
             if far > cadcraft_geom::TAU - tol {
                 let circle = Entity {
                     handle: Handle(0),
                     common: src.common.clone(),
                     kind: EntityKind::Circle(cadcraft_doc::Circle { center: g.center, radius: g.radius }),
                 };
-                let space = s.space();
+                // In the source's space, whichever space is current.
+                let space = d.space_of(src.handle).unwrap_or_else(|| s.space());
                 let doc = s.doc_mut()?;
                 for h in hs {
                     doc.remove_entity(*h);
@@ -394,7 +478,7 @@ fn join_on_source(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
                 s.set_selection(Vec::new());
                 return Ok(Some(nh));
             }
-            let end = if far > reach(g) { norm_angle(g.start + far) } else { g.end };
+            let end = if far > cadcraft_geom::ccw_sweep(g.start, g.end) { norm_angle(g.start + far) } else { g.end };
             EntityKind::Arc(cadcraft_doc::Arc { end, ..g.clone() })
         }
         _ => return Ok(None),

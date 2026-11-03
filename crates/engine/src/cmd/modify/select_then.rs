@@ -1,4 +1,4 @@
-use super::break_join::join;
+use super::break_join::{join, join_makes_circle};
 use super::explode::explode;
 use super::transform::{at_elevation, erase, scale_entities, transform_entities};
 use super::{
@@ -39,6 +39,8 @@ pub(super) struct SelectThen {
     ask_erase: bool,
     /// JOIN of a single arc or elliptical arc: the prompt asks for arcs to join to it, or cLose.
     join_source: Option<Handle>,
+    /// JOIN of arcs that make a circle: asking whether to.
+    ask_circle: bool,
 }
 
 impl SelectThen {
@@ -56,6 +58,7 @@ impl SelectThen {
             copy_mode: false,
             ask_erase: false,
             join_source: None,
+            ask_circle: false,
         }
     }
     fn apply(&mut self, s: &mut Session) -> Result<Step> {
@@ -83,8 +86,17 @@ impl SelectThen {
         }
     }
 
-    /// JOIN the selected objects and report what they became.
+    /// JOIN the selected objects and report what they became. Arcs that make a circle ask first,
+    /// as AutoCAD 2024 does.
     fn join_now(&mut self, s: &mut Session) -> Result<Step> {
+        if join_makes_circle(s, &self.objs) {
+            self.ask_circle = true;
+            return Ok(Step::Continue);
+        }
+        self.join_apply(s)
+    }
+
+    fn join_apply(&mut self, s: &mut Session) -> Result<Step> {
         match join(s, &self.objs) {
             Ok(h) => {
                 // Objects outside the joined chain are kept, so count only the ones JOIN consumed
@@ -309,6 +321,9 @@ impl Interactive for SelectThen {
         if self.ask_erase {
             return Prompt::new("Erase source objects?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         }
+        if self.ask_circle {
+            return Prompt::new("Combined arc segments form a circle.  Convert to circle?", crate::cmd::curves::KW).kw(&["Yes", "No"]).default("Yes");
+        }
         if let Some(src) = self.join_source {
             let ellipse = s.doc().is_ok_and(|d| matches!(d.entity(src).map(|e| &e.kind), Some(EntityKind::Ellipse(_))));
             let msg = if ellipse { "Select elliptical arcs to join to source" } else { "Select arcs to join to source" };
@@ -360,6 +375,14 @@ impl Interactive for SelectThen {
                     return self.apply(s);
                 }
             }
+        }
+        // No leaves every arc as it is (AutoCAD 2024, measured).
+        if self.ask_circle {
+            return match &i {
+                Input::Keyword(k) if k == "No" => Ok(Step::Done),
+                Input::Keyword(_) | Input::Enter => self.join_apply(s),
+                _ => Err(EngineError::Other("Invalid option keyword.".into())),
+            };
         }
         if let Some(src) = self.join_source {
             return self.join_source_input(s, src, i);
