@@ -1,6 +1,8 @@
 //! The DWG reader and writer run in a child process, so a decoder that dies ends one open or save,
 //! not the app. The worker setting is process-wide, so everything runs in one test.
 
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+
 use cadcraft_io::dwg_worker;
 
 #[test]

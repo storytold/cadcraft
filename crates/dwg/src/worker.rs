@@ -159,7 +159,7 @@ fn call(header: &[u8], payload: &[u8], reply_limit: u64, doing: &str) -> Option<
     let stopped = || format!("the DWG worker stopped while {doing}; nothing else is affected");
     Some(match (received, status) {
         (Err(RecvTimeoutError::Timeout), _) => Err(format!("{doing} took too long, so the DWG worker was stopped; nothing else is affected")),
-        (Ok(Ok(reply)), Ok(status)) if status.success() => parse_reply(&reply).ok_or_else(stopped),
+        (Ok(Ok(reply)), Ok(status)) if status.success() => parse_reply(reply).ok_or_else(stopped),
         _ => Err(stopped()),
     })
 }
@@ -181,8 +181,11 @@ fn take_u64(b: &mut &[u8]) -> Option<u64> {
 }
 
 /// A reply: 0, the note count, each note with its length, then the bytes with their length; or 1
-/// and a message. `None` when it isn't one, whole.
-fn parse_reply(mut b: &[u8]) -> Option<Reply> {
+/// and a message. `None` when it isn't one, whole. Takes the reply, because the bytes can be most
+/// of the memory the app may use: they are kept, not copied.
+fn parse_reply(mut reply: Vec<u8>) -> Option<Reply> {
+    let total = reply.len();
+    let mut b = &reply[..];
     match *take(&mut b, 1)?.first()? {
         0 => {
             let count = take_u32(&mut b)?;
@@ -192,7 +195,11 @@ fn parse_reply(mut b: &[u8]) -> Option<Reply> {
                 notes.push(String::from_utf8_lossy(take(&mut b, n)?).into_owned());
             }
             let n = usize::try_from(take_u64(&mut b)?).ok()?;
-            (b.len() == n).then(|| Ok((b.to_vec(), notes)))
+            if b.len() != n {
+                return None;
+            }
+            reply.drain(..total - n);
+            Some(Ok((reply, notes)))
         }
         1 => Some(Err(String::from_utf8_lossy(b).into_owned())),
         _ => None,
@@ -263,21 +270,21 @@ mod tests {
     #[test]
     fn replies_round_trip() {
         let ok: Reply = Ok((b"bytes".to_vec(), vec!["one".into(), "two é".into()]));
-        assert_eq!(parse_reply(&wire(ok.clone())), Some(ok));
+        assert_eq!(parse_reply(wire(ok.clone())), Some(ok));
         let failed: Reply = Err("DWG: no".into());
-        assert_eq!(parse_reply(&wire(failed.clone())), Some(failed));
+        assert_eq!(parse_reply(wire(failed.clone())), Some(failed));
     }
 
     #[test]
     fn a_reply_cut_short_or_made_up_is_refused() {
         let whole = wire(Ok((b"bytes".to_vec(), vec!["note".into()])));
         for n in 0..whole.len() {
-            assert_eq!(parse_reply(&whole[..n]), None, "cut at {n}");
+            assert_eq!(parse_reply(whole[..n].to_vec()), None, "cut at {n}");
         }
-        assert_eq!(parse_reply(&[7, 0, 0]), None);
+        assert_eq!(parse_reply(vec![7, 0, 0]), None);
         // A note count far beyond what follows ends at the first missing note.
-        assert_eq!(parse_reply(&[0, 0xff, 0xff, 0xff, 0xff]), None);
-        assert_eq!(parse_reply(&[0, 1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]), None);
+        assert_eq!(parse_reply(vec![0, 0xff, 0xff, 0xff, 0xff]), None);
+        assert_eq!(parse_reply(vec![0, 1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]), None);
     }
 
     #[test]
@@ -299,6 +306,6 @@ mod tests {
         request.extend(b"AC1032 not really a drawing");
         let mut out = Vec::new();
         assert_eq!(serve(&request[..], &mut out), 0);
-        assert!(matches!(parse_reply(&out), Some(Err(_))), "{out:?}");
+        assert!(matches!(parse_reply(out.clone()), Some(Err(_))), "{out:?}");
     }
 }
