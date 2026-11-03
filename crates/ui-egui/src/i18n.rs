@@ -53,7 +53,7 @@ pub enum Preference {
     Vietnamese,
 }
 impl Preference {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Auto,
         Self::English,
         Self::Greek,
