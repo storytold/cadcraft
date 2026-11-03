@@ -67,6 +67,9 @@ const SESSION_VARS: &[&str] = &[
     "ZOOMFACTOR",
     "MEASUREINIT",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "FONTALT",
     "FONTFALLBACK",
     "SAVETIME",
@@ -145,6 +148,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
+        "AREA" => json!(s.area),
+        "PERIMETER" => json!(s.perimeter),
+        "DISTANCE" => json!(s.distance),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
@@ -249,6 +255,9 @@ const READ_ONLY: &[&str] = &[
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "VIEWCTR",
     "VIEWSIZE",
     "EXTMIN",
@@ -464,11 +473,6 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
 
 pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
-    for n in SESSION_VARS {
-        if let Some(v) = get(s, n) {
-            m.insert((*n).to_string(), v);
-        }
-    }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
             if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
@@ -476,6 +480,13 @@ pub fn list(s: &Session) -> Value {
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
             }
+        }
+    }
+    // The session's values last: a drawing's header can carry the same names (ORTHOMODE,
+    // LWDISPLAY, an AREA), and `get` reads the session's.
+    for n in SESSION_VARS {
+        if let Some(v) = get(s, n) {
+            m.insert((*n).to_string(), v);
         }
     }
     table::list(s, &mut m);
