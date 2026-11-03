@@ -151,6 +151,8 @@ pub fn turn_lightness(rgba: &mut [u8]) {
 }
 /// The largest fade an underlay takes.
 pub const UNDERLAY_MAX_FADE: u8 = 80;
+/// The largest PDF file read for an underlay, to show or plot it.
+pub const UNDERLAY_MAX_PDF_BYTES: u64 = 512 * 1024 * 1024;
 fn underlay_fade() -> u8 {
     0
 }

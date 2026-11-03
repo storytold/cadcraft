@@ -16,8 +16,6 @@ use crate::pdf_read::{MAX_SIDE, PdfFile};
 pub const DPI: f64 = 200.0;
 /// The longest side, in pixels, a page is plotted at.
 const MAX_PLOT_SIDE: u32 = 6000;
-/// The largest PDF file read for a plot.
-const MAX_PDF_BYTES: u64 = 512 * 1024 * 1024;
 /// Most underlays drawn on one sheet.
 const MAX_UNDERLAYS: usize = 32;
 
@@ -99,23 +97,31 @@ pub(crate) fn plotted_bounds(list: &DisplayList) -> Bounds2 {
     })
 }
 
-/// The bytes of the PDF `stored` in the drawing saved at `document`.
+/// The bytes of the PDF `stored` in the drawing saved at `document`, found as the engine finds
+/// it to show it (`cadcraft_engine::cmd::underlay::underlay_file`, a layer above this one); none
+/// when larger than [`cadcraft_doc::UNDERLAY_MAX_PDF_BYTES`], as there.
 fn read(stored: &str, document: Option<&str>) -> Option<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
-        let host = document.map(std::path::Path::new);
+        let max = cadcraft_doc::UNDERLAY_MAX_PDF_BYTES;
+        let host = document.filter(|d| !d.is_empty()).map(|d| std::path::absolute(d).unwrap_or_else(|_| std::path::PathBuf::from(d)));
+        let host = host.as_deref();
         let found = craft_docpath::resolve_absolute(stored.trim(), host).ok().filter(|p| p.is_file()).or_else(|| {
             let name = stored.trim().rsplit(['/', '\\']).next().filter(|n| !n.is_empty())?;
             Some(host?.parent()?.join(name)).filter(|p| p.is_file())
         })?;
+        let file = std::fs::File::open(found).ok()?;
+        if file.metadata().ok()?.len() > max {
+            return None;
+        }
         let mut bytes = Vec::new();
-        std::fs::File::open(found).ok()?.take(MAX_PDF_BYTES).read_to_end(&mut bytes).ok()?;
-        Some(bytes)
+        file.take(max.saturating_add(1)).read_to_end(&mut bytes).ok()?;
+        (bytes.len() as u64 <= max).then_some(bytes)
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (stored, document, MAX_PDF_BYTES);
+        let _ = (stored, document);
         None
     }
 }
@@ -161,6 +167,20 @@ mod tests {
         }
         let r = crate::pdf_read::PdfFile::open(&out).unwrap().render(1, 600).unwrap();
         r.rgba.as_chunks::<4>().0.iter().filter(|c| c[0] < 100 && c[3] > 128).count()
+    }
+
+    #[test]
+    fn a_pdf_larger_than_the_cap_is_left_out_not_cut_short() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-plot-huge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Huge.pdf");
+        std::fs::write(&path, b"%PDF-1.7\n").unwrap();
+        let stored = path.to_string_lossy().to_string();
+        assert!(read(&stored, None).is_some());
+        // A sparse file just over the cap: its length is enough, nothing of it is read.
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(cadcraft_doc::UNDERLAY_MAX_PDF_BYTES + 1).unwrap();
+        assert!(read(&stored, None).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

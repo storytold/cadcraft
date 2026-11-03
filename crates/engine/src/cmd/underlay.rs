@@ -163,7 +163,7 @@ pub fn pdf() -> Option<&'static PdfHooks> {
 }
 
 /// The largest PDF file PDFATTACH reads.
-const MAX_PDF_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_PDF_BYTES: u64 = cadcraft_doc::UNDERLAY_MAX_PDF_BYTES;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
