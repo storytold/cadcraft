@@ -281,7 +281,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // Layer states.
                 ui.label(crate::tl!("Layer State"));
                 let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
-                egui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
                         if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
                             st.state_sel = Some(s.clone());
@@ -377,7 +377,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                 }
                                 ui.end_row();
                                 for l in &shown {
-                                    row(ui, l, &cur, &used, vp.as_ref(), &linetypes, &library, &mut st, &mut actions);
+                                    row(
+                                        ui,
+                                        LayerRow {
+                                            layer: l,
+                                            current: &cur,
+                                            used: &used,
+                                            viewport: vp.as_ref(),
+                                            linetypes: &linetypes,
+                                            library: &library,
+                                            state: &mut st,
+                                            actions: &mut actions,
+                                        },
+                                    );
                                     ui.end_row();
                                 }
                             },
@@ -405,91 +417,22 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// One Layer Properties Manager row: status/name, on/freeze/lock/plot, colour, linetype, lineweight, transparency, viewport overrides, new-viewport freeze and description.
-/// Edits update `st` and push commands into `actions`.
-#[allow(clippy::too_many_arguments)]
-fn row(
-    ui: &mut egui::Ui,
-    l: &Layer,
-    cur: &str,
-    used: &std::collections::HashSet<String>,
-    vp: Option<&(Handle, cadcraft_doc::Viewport)>,
-    linetypes: &[cadcraft_doc::Linetype],
-    library: &[String],
-    st: &mut LpmState,
-    actions: &mut Vec<(&'static str, Value)>,
-) {
+/// One Layer Properties Manager row.
+struct LayerRow<'a> {
+    layer: &'a Layer,
+    current: &'a str,
+    used: &'a std::collections::HashSet<String>,
+    viewport: Option<&'a (Handle, cadcraft_doc::Viewport)>,
+    linetypes: &'a [cadcraft_doc::Linetype],
+    library: &'a [String],
+    state: &'a mut LpmState,
+    actions: &'a mut Vec<(&'static str, Value)>,
+}
+
+fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
+    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, state: st, actions } = args;
     let t = Tokens::get();
-    let name = l.name.clone();
-    let current = name.eq_ignore_ascii_case(cur);
-    let is_used = used.contains(&name.to_ascii_lowercase());
-    let selected = st.selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&name));
-    // Status.
-    let (sr, sresp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
-    if selected {
-        ui.painter().rect_filled(sr, 2.0, t.accent.gamma_multiply(0.35));
-    }
-    status_icon(ui.painter(), sr.shrink(2.0), current, is_used);
-    let tip = if current {
-        "Current layer"
-    } else if is_used {
-        "Layer contains objects (double-click to make current)"
-    } else {
-        "Layer is empty (double-click to make current)"
-    };
-    if sresp.on_hover_text(crate::i18n::t(tip)).double_clicked() {
-        actions.push(("layer.current", json!({ "name": name })));
-    }
-    // Name (double-click or F2-style rename).
-    match st.renaming.clone() {
-        Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
-            let r = ui
-                .add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::unique(("lpm_rename", &name))))
-                .accessible_name(crate::tl!("Name"));
-            if !r.has_focus() && !r.lost_focus() {
-                r.request_focus();
-            }
-            if r.lost_focus() {
-                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if !cancel && buf.trim() != name && !buf.trim().is_empty() {
-                    actions.push(("layer.set", json!({ "name": name, "newName": buf.trim() })));
-                    st.selected = Some(buf.trim().to_string());
-                }
-                st.renaming = None;
-            } else {
-                st.renaming = Some((n, buf));
-            }
-        }
-        _ => {
-            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
-            if selected {
-                ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
-            } else if r.hovered() {
-                ui.painter().rect_filled(nr, 2.0, t.control_hover.gamma_multiply(0.5));
-            }
-            ui.painter().text(pos2(nr.left() + 4.0, nr.center().y), egui::Align2::LEFT_CENTER, &name, crate::theme::body(), t.text);
-            if r.clicked() {
-                st.selected = Some(name.clone());
-            }
-            if r.double_clicked() && name != "0" && !name.eq_ignore_ascii_case("Defpoints") {
-                st.renaming = Some((name.clone(), name.clone()));
-            }
-            r.context_menu(|ui| {
-                if ui.button(crate::tl!("Set Current")).clicked() {
-                    actions.push(("layer.current", json!({ "name": name })));
-                    ui.close();
-                }
-                if ui.button(crate::tl!("Rename Layer")).clicked() {
-                    st.renaming = Some((name.clone(), name.clone()));
-                    ui.close();
-                }
-                if ui.button(crate::tl!("Delete Layer")).clicked() {
-                    actions.push(("layer.delete", json!({ "name": name })));
-                    ui.close();
-                }
-            });
-        }
-    }
+    let name = layer_identity(ui, l, cur, used, st, actions);
     // On / Freeze / Lock / Plot.
     if icons::button(ui, if l.on { Icon::Bulb } else { Icon::BulbOff }, 20.0, "On/Off", false).clicked() {
         actions.push(("layer.set", json!({ "name": name, "on": !l.on })));
@@ -684,7 +627,88 @@ fn row(
     }
 }
 
-/// Lower-case names of layers with objects on them.
+fn layer_identity(
+    ui: &mut egui::Ui,
+    l: &Layer,
+    cur: &str,
+    used: &std::collections::HashSet<String>,
+    st: &mut LpmState,
+    actions: &mut Vec<(&'static str, Value)>,
+) -> String {
+    let t = Tokens::get();
+    let name = l.name.clone();
+    let current = name.eq_ignore_ascii_case(cur);
+    let is_used = used.contains(&name.to_ascii_lowercase());
+    let selected = st.selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&name));
+    // Status.
+    let (sr, sresp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
+    if selected {
+        ui.painter().rect_filled(sr, 2.0, t.accent.gamma_multiply(0.35));
+    }
+    status_icon(ui.painter(), sr.shrink(2.0), current, is_used);
+    let tip = if current {
+        "Current layer"
+    } else if is_used {
+        "Layer contains objects (double-click to make current)"
+    } else {
+        "Layer is empty (double-click to make current)"
+    };
+    if sresp.on_hover_text(crate::i18n::t(tip)).double_clicked() {
+        actions.push(("layer.current", json!({ "name": name })));
+    }
+    // Name (double-click or F2-style rename).
+    match st.renaming.clone() {
+        Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::unique(("lpm_rename", &name))))
+                .accessible_name(crate::tl!("Name"));
+            if !r.has_focus() && !r.lost_focus() {
+                r.request_focus();
+            }
+            if r.lost_focus() {
+                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if !cancel && buf.trim() != name && !buf.trim().is_empty() {
+                    actions.push(("layer.set", json!({ "name": name, "newName": buf.trim() })));
+                    st.selected = Some(buf.trim().to_string());
+                }
+                st.renaming = None;
+            } else {
+                st.renaming = Some((n, buf));
+            }
+        }
+        _ => {
+            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
+            if selected {
+                ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
+            } else if r.hovered() {
+                ui.painter().rect_filled(nr, 2.0, t.control_hover.gamma_multiply(0.5));
+            }
+            ui.painter().text(pos2(nr.left() + 4.0, nr.center().y), egui::Align2::LEFT_CENTER, &name, crate::theme::body(), t.text);
+            if r.clicked() {
+                st.selected = Some(name.clone());
+            }
+            if r.double_clicked() && name != "0" && !name.eq_ignore_ascii_case("Defpoints") {
+                st.renaming = Some((name.clone(), name.clone()));
+            }
+            r.context_menu(|ui| {
+                if ui.button(crate::tl!("Set Current")).clicked() {
+                    actions.push(("layer.current", json!({ "name": name })));
+                    ui.close();
+                }
+                if ui.button(crate::tl!("Rename Layer")).clicked() {
+                    st.renaming = Some((name.clone(), name.clone()));
+                    ui.close();
+                }
+                if ui.button(crate::tl!("Delete Layer")).clicked() {
+                    actions.push(("layer.delete", json!({ "name": name })));
+                    ui.close();
+                }
+            });
+        }
+    }
+    name
+}
+
 fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     let ents = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));

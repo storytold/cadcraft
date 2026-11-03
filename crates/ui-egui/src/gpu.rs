@@ -23,6 +23,8 @@ use cadcraft_render::{DisplayList, Kind};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 
+use crate::switch::Switch;
+
 /// Line/triangle vertex: position (2 × f32, relative to the origin) + sRGB colour (4 × u8,
 /// premultiplied by its alpha: transparent objects blend with what is under them).
 const VERTEX_SIZE: usize = 12;
@@ -44,12 +46,8 @@ const POINT_SIZE: f32 = 1.5;
 /// then Mailbox, then falls back to FIFO, so it is valid on every surface; under a compositor the
 /// compositor still syncs to the display. `vsync` is the `CADCRAFT_VSYNC` override: `1`/`on`
 /// forces FIFO (tear-free without a compositor), `0`/`off` forces the low-latency mode.
-pub fn surface_config(vsync: Option<&str>, low_latency: bool) -> egui_wgpu::SurfaceConfig {
-    let no_vsync = match vsync.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-        Some("1" | "on" | "true" | "yes") => false,
-        Some("0" | "off" | "false" | "no") => true,
-        _ => low_latency,
-    };
+pub fn surface_config(vsync: Switch, low_latency: bool) -> egui_wgpu::SurfaceConfig {
+    let no_vsync = !vsync.or(!low_latency);
     egui_wgpu::SurfaceConfig {
         present_mode: if no_vsync { wgpu::PresentMode::AutoNoVsync } else { wgpu::PresentMode::AutoVsync },
         desired_maximum_frame_latency: Some(1),
@@ -801,17 +799,11 @@ mod tests {
     #[test]
     fn surface_config_prefers_low_latency_where_asked_and_honours_override() {
         use wgpu::PresentMode::{AutoNoVsync, AutoVsync};
-        assert_eq!(surface_config(None, true).present_mode, AutoNoVsync);
-        assert_eq!(surface_config(None, false).present_mode, AutoVsync);
-        for on in ["1", "on", " TRUE ", "yes"] {
-            assert_eq!(surface_config(Some(on), true).present_mode, AutoVsync, "{on}");
-        }
-        for off in ["0", "Off", "false", "no"] {
-            assert_eq!(surface_config(Some(off), false).present_mode, AutoNoVsync, "{off}");
-        }
-        assert_eq!(surface_config(Some("maybe"), true).present_mode, AutoNoVsync);
-        assert_eq!(surface_config(Some(""), false).present_mode, AutoVsync);
-        assert_eq!(surface_config(None, true).desired_maximum_frame_latency, Some(1));
+        assert_eq!(surface_config(Switch::Default, true).present_mode, AutoNoVsync);
+        assert_eq!(surface_config(Switch::Default, false).present_mode, AutoVsync);
+        assert_eq!(surface_config(Switch::On, true).present_mode, AutoVsync);
+        assert_eq!(surface_config(Switch::Off, false).present_mode, AutoNoVsync);
+        assert_eq!(surface_config(Switch::Default, true).desired_maximum_frame_latency, Some(1));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

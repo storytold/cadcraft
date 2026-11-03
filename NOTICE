@@ -28,9 +28,9 @@ The PDF writer in the pinned craft-pdf 0.1.0 / Krilla 0.8.2 dependency embeds fo
 Profiles by Clinton Ingram, under CC0-1.0. They are unmodified dependency assets; no profile file
 is copied into this repository. Per-file sources and SHA-256 hashes are in ATTRIBUTION.md.
 Source: https://github.com/LaurenzV/krilla/tree/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc
-(pinned through https://github.com/storytold/craft-libs/tree/a0916808f7d78bed8c7b90cdf937176015454a7f/vendor/krilla/icc).
+(pinned through https://github.com/storytold/craft-libs/tree/9f89fe8f6d72ab4db4cc06f186381a6a254463ab/vendor/krilla/icc).
 CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/
-Pinned licence text: https://github.com/storytold/craft-libs/blob/a0916808f7d78bed8c7b90cdf937176015454a7f/vendor/krilla/icc/LICENSE
+Pinned licence text: https://github.com/storytold/craft-libs/blob/9f89fe8f6d72ab4db4cc06f186381a6a254463ab/vendor/krilla/icc/LICENSE
 
 The UI's egui-icons.ttf subset and emoji-icon-font.ttf fallback are provided by epaint_default_fonts
 and registered through egui's default font definitions. They derive from emoji-icon-font by

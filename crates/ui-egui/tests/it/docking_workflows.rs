@@ -1,7 +1,8 @@
 //! Panel moves use the real app shell, retain commands, and survive a complete UI-state reload.
 
 use cadcraft_engine::Session;
-use cadcraft_ui_egui::{CadApp, Services, UiState, docking::Panel};
+use cadcraft_ui_egui::{CadApp, Services, UiState, docking::Panel, menus};
+use craft_ui::docking::{Column, Divider, DockArea, Hit, Layout, Node, Side};
 use egui::{Event, Modifiers, PointerButton, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -40,6 +41,110 @@ fn drag(harness: &mut Harness<'_, CadApp>, from: egui::Pos2, to: egui::Pos2) {
     }
     harness.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
     harness.run_steps(4);
+}
+
+fn area() -> egui::Id {
+    egui::Id::unique("cadcraft-docking")
+}
+
+/// The rect the dock area drew last frame for `hit`.
+fn hit(h: &Harness<'_, CadApp>, hit: Hit<Panel>) -> egui::Rect {
+    let hits = DockArea::<Panel>::hit_rects(&h.ctx, area());
+    hits.iter().find(|(drawn, _)| *drawn == hit).map(|(_, rect)| *rect).unwrap_or_else(|| panic!("{hit:?} is not drawn: {hits:?}"))
+}
+
+/// The columns of the dock on `side`, from the window edge inwards.
+fn columns(layout: &Layout<Panel>, side: Side) -> Vec<Column<Panel>> {
+    let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => nodes.extend([&**first, &**second]),
+            Node::Dock { side: s, columns } if *s == side => return columns.clone(),
+            _ => {}
+        }
+    }
+    Vec::new()
+}
+
+/// The panels of each group of each column of the dock on `side`.
+fn dock_panels(layout: &Layout<Panel>, side: Side) -> Vec<Vec<Vec<Panel>>> {
+    columns(layout, side).iter().map(|column| column.groups.iter().map(|group| group.panels.clone()).collect()).collect()
+}
+
+/// The tab groups outside the docks: the frames of the split tree.
+fn frames(layout: &Layout<Panel>) -> Vec<Vec<Panel>> {
+    let mut out = Vec::new();
+    let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => nodes.extend([&**first, &**second]),
+            Node::Tabs { panels, .. } => out.push(panels.clone()),
+            Node::Stack { entries } => out.push(entries.iter().map(|entry| entry.panel).collect()),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn default_layout_is_tool_sets_left_and_the_palettes_right_in_dock_columns() {
+    use cadcraft_ui_egui::docking::{PALETTES_WIDTH, TOOL_SETS_WIDTH, default_workspace, validate};
+    let workspace = default_workspace();
+    validate(&workspace).unwrap();
+    assert!(workspace.hidden.is_empty() && workspace.layout.floating.is_empty());
+    assert_eq!(frames(&workspace.layout), [[Panel::Canvas]]);
+    let start = columns(&workspace.layout, Side::Start);
+    let end = columns(&workspace.layout, Side::End);
+    assert_eq!(dock_panels(&workspace.layout, Side::Start), [[[Panel::ToolSets]]]);
+    assert_eq!(dock_panels(&workspace.layout, Side::End), [vec![vec![Panel::Layers], vec![Panel::Properties]]]);
+    assert_eq!((start[0].width, end[0].width), (TOOL_SETS_WIDTH, PALETTES_WIDTH));
+    assert!(start.iter().chain(&end).all(|column| !column.iconic));
+    assert!(start.iter().chain(&end).flat_map(|column| &column.groups).all(|group| group.height.is_none() && !group.minimized));
+    assert!(!workspace.layout.contains(&Panel::QuickCalc) && !workspace.layout.contains(&Panel::ExternalRefs));
+
+    // Drawn: Tool Sets left of the drawing, Layers above Properties right of it, Layers at its
+    // own height and Properties taking the rest of the column.
+    let h = harness(None, 1280.0, 1.0);
+    let drawing = h.state().canvas.rect.expect("the drawing view is drawn");
+    let tools = hit(&h, Hit::Tab(Panel::ToolSets));
+    let layers = hit(&h, Hit::Tab(Panel::Layers));
+    let properties = hit(&h, Hit::Tab(Panel::Properties));
+    assert!(tools.right() <= drawing.left() + 1.0, "{tools:?} {drawing:?}");
+    assert!(layers.left() >= drawing.right() - 1.0 && properties.left() >= drawing.right() - 1.0, "{layers:?} {properties:?} {drawing:?}");
+    let seam = hit(&h, Hit::Divider(Divider::Group(Panel::Layers)));
+    assert!((seam.center().y - layers.bottom() - 280.0).abs() < 8.0, "{layers:?} {seam:?}");
+    assert!(properties.top() > seam.top());
+}
+
+#[test]
+fn palette_icons_are_painted_in_code_and_shown_in_an_iconic_column() {
+    use cadcraft_ui_egui::docking::Panels;
+    let mut app = CadApp::new(Session::default(), Services::default());
+    let ctx = egui::Context::default();
+    let mut paint = |panel: Panel| {
+        let mut painted = false;
+        let mut content = Panels { app: &mut app };
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.ctx().layer_painter(egui::LayerId::background());
+            let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(20.0, 20.0));
+            painted = craft_ui::docking::DockContent::paint_icon(&mut content, &painter, rect, &panel, egui::Color32::RED);
+        });
+        output.textures_delta.clear();
+        (painted, output.shapes.len())
+    };
+    for panel in [Panel::ToolSets, Panel::QuickCalc, Panel::Layers, Panel::Properties, Panel::ExternalRefs] {
+        let (painted, shapes) = paint(panel);
+        assert!(painted && shapes > 0, "{panel:?}: {painted} {shapes}");
+    }
+    assert_eq!(paint(Panel::Canvas), (false, 0));
+
+    let mut h = harness(None, 1280.0, 1.0);
+    h.state_mut().run("ui.dock", json!({"action":{"SetIconic":{"panel":"layers","iconic":true}}})).unwrap();
+    h.run_steps(4);
+    let drawing = h.state().canvas.rect.unwrap();
+    let layers = hit(&h, Hit::Icon(Panel::Layers));
+    let properties = hit(&h, Hit::Icon(Panel::Properties));
+    assert!(layers.left() >= drawing.right() - 1.0 && layers.top() < properties.top(), "{layers:?} {properties:?}");
 }
 
 #[test]
@@ -94,9 +199,11 @@ fn invalid_requests_leave_document_and_panel_layout_unchanged() {
         json!({"operation":"move", "panel":"layers", "target":"properties", "zone":"right", "before":null}),
         json!({"operation":"spin", "panel":"layers"}),
         json!({"action":{"Float":{"panel":"canvas","rect":[0,0,100,100]}}}),
+        json!({"action":{"MovePanel":{"panel":"canvas","to":{"NewDock":{"side":"Start"}}}}}),
+        json!({"action":{"Move":{"panel":"layers","anchor":"canvas","placement":{"Tab":{"before":null}}}}}),
         json!(null),
     ] {
-        assert!(harness.state_mut().run("ui.dock", params).is_err());
+        assert!(harness.state_mut().run("ui.dock", params.clone()).is_err(), "{params}");
         assert_eq!(serde_json::to_value(&harness.state().ui.docking).unwrap(), before);
         assert_eq!(harness.state().session.doc().unwrap(), &drawing);
     }
@@ -131,48 +238,39 @@ fn docking_renders_default_float_and_redocked_at_normal_and_narrow_sizes() {
 }
 
 #[test]
-fn automation_reaches_split_stack_resize_and_tab_reorder_through_the_same_handler() {
-    use craft_ui::{docking::Action, layout::SplitSize};
+fn automation_reaches_column_and_group_resizes_tab_reorder_and_minimize_through_the_same_handler() {
+    use craft_ui::docking::Action;
     let mut h = harness(None, 1280.0, 1.0);
-    h.state_mut()
-        .run(
-            "ui.dock",
-            json!({"action":serde_json::to_value(Action::<Panel>::ResizeSplit { path: vec![], size: SplitSize::FixedFirst(280.0) }).unwrap()}),
-        )
-        .unwrap();
-    h.state_mut().run("ui.dock", json!({"operation":"setStackOpen","panel":"layers","open":false})).unwrap();
-    h.state_mut().run("ui.dock", json!({"operation":"resizeStack","panel":"layers","height":160.0})).unwrap();
-    assert_eq!(h.state().ui.docking.layout.location(&Panel::Layers).unwrap().stack, Some((false, Some(160.0))));
+    let act = |h: &mut Harness<'_, CadApp>, action: Action<Panel>| {
+        h.state_mut().run("ui.dock", json!({"action": serde_json::to_value(action).unwrap()})).unwrap();
+    };
+    act(&mut h, Action::ResizeColumn { panel: Panel::ToolSets, width: 280.0 });
+    act(&mut h, Action::ResizeGroup { panel: Panel::Layers, height: Some(160.0) });
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(columns(layout, Side::Start)[0].width, 280.0);
+    assert_eq!(columns(layout, Side::End)[0].groups[0].height, Some(160.0));
     h.state_mut().run("ui.dock", json!({"operation":"move","panel":"layers","target":"properties","zone":"center","before":null})).unwrap();
+    assert_eq!(dock_panels(&h.state().ui.docking.layout, Side::End), [[[Panel::Properties, Panel::Layers]]]);
+    act(&mut h, Action::SetMinimized { panel: Panel::Layers, minimized: true });
     h.run_steps(4);
-    let panels = h.state().ui.docking.layout.panels();
-    assert!(panels.iter().position(|p| **p == Panel::Properties).unwrap() < panels.iter().position(|p| **p == Panel::Layers).unwrap());
-    assert_eq!(h.state().ui.docking.layout.location(&Panel::ToolSets).unwrap().size, Some(SplitSize::FixedFirst(280.0)));
+    assert!(columns(&h.state().ui.docking.layout, Side::End)[0].groups[0].minimized);
+    assert_eq!(columns(&h.state().ui.docking.layout, Side::Start)[0].width, 280.0);
 }
 
 #[test]
-fn stack_boundary_resizes_by_pointer_and_keyboard_without_changing_the_drawing() {
+fn group_divider_resizes_by_pointer_and_keyboard_without_changing_the_drawing() {
     let mut h = harness(None, 1280.0, 1.0);
     let drawing = h.state().session.doc().unwrap().clone();
-    let center = h
-        .get_all_by_role_and_label(egui::accesskit::Role::Splitter, "Resize panels")
-        .into_iter()
-        .find(|node| node.rect().width() > node.rect().height())
-        .unwrap()
-        .rect()
-        .center();
+    let layers_height = |h: &Harness<'_, CadApp>| columns(&h.state().ui.docking.layout, Side::End)[0].groups[0].height;
+    let center = hit(&h, Hit::Divider(Divider::Group(Panel::Layers))).center();
     drag(&mut h, center, center + vec2(0.0, -45.0));
-    let height = h.state().ui.docking.layout.location(&Panel::Layers).unwrap().stack.unwrap().1.unwrap();
-    h.get_all_by_role_and_label(egui::accesskit::Role::Splitter, "Resize panels")
-        .into_iter()
-        .find(|node| node.rect().width() > node.rect().height())
-        .unwrap()
-        .focus();
+    let height = layers_height(&h).expect("the drag sets the Layers group's height");
+    h.ctx.memory_mut(|memory| memory.request_focus(DockArea::<Panel>::hit_id(area(), &Hit::Divider(Divider::Group(Panel::Layers)))));
     h.run_steps(2);
     h.key_press(egui::Key::ArrowDown);
     h.run_steps(4);
-    let after = h.state().ui.docking.layout.location(&Panel::Layers).unwrap().stack.unwrap().1.unwrap();
-    assert!(after > height, "keyboard resize must reach the same panel command handler");
+    let after = layers_height(&h).unwrap();
+    assert!(after > height, "keyboard resize must reach the same panel command handler: {height} {after}");
     assert_eq!(h.state().session.doc().unwrap(), &drawing);
 }
 
@@ -217,6 +315,67 @@ fn palettes_off_and_on_reopen_a_floating_group_as_one_window() {
     let floating = &h.state().ui.docking.layout.floating;
     assert_eq!(floating.len(), 1, "{floating:?}");
     assert!(floating[0].contains(&Panel::Layers) && floating[0].contains(&Panel::Properties), "{floating:?}");
+}
+
+#[test]
+fn palettes_off_and_on_restore_the_right_dock_column() {
+    let mut h = harness(None, 1280.0, 1.0);
+    let before = h.state().ui.docking.layout.clone();
+    h.state_mut().run("ui.toggle.palettes", json!({"on": false})).unwrap();
+    h.run_steps(3);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Layers) && !h.state().ui.docking.layout.contains(&Panel::Properties));
+    h.state_mut().run("ui.toggle.palettes", json!({"on": true})).unwrap();
+    h.run_steps(3);
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::End), dock_panels(&before, Side::End));
+    assert_eq!(columns(layout, Side::End)[0].width, columns(&before, Side::End)[0].width);
+}
+
+#[test]
+fn window_menu_reopens_closed_and_new_palettes_in_their_dock_groups() {
+    use cadcraft_ui_egui::docking::{PALETTES_WIDTH, TOOL_SETS_WIDTH};
+    let mut h = harness(None, 1280.0, 1.0);
+    // A closed palette comes back where it was.
+    h.state_mut().run("ui.dock", json!({"operation":"close","panel":"layers"})).unwrap();
+    h.run_steps(3);
+    menus::activate(h.state_mut(), "ui.panel.layers");
+    h.run_steps(3);
+    assert_eq!(dock_panels(&h.state().ui.docking.layout, Side::End), [vec![vec![Panel::Layers], vec![Panel::Properties]]]);
+    // Tool Sets turned off and on in the Window menu comes back in the left dock at its width.
+    menus::activate(h.state_mut(), "ui.toggle.toolsets");
+    h.run_steps(3);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::ToolSets));
+    menus::activate(h.state_mut(), "ui.toggle.toolsets");
+    h.run_steps(3);
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::Start), [[[Panel::ToolSets]]]);
+    assert_eq!(columns(layout, Side::Start)[0].width, TOOL_SETS_WIDTH);
+    // After Reset nothing has a recorded place: External References opens below Properties.
+    h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+    h.state_mut().run("xref", serde_json::Value::Null).unwrap();
+    h.run_steps(3);
+    assert_eq!(dock_panels(&h.state().ui.docking.layout, Side::End), [vec![vec![Panel::Layers], vec![Panel::Properties], vec![Panel::ExternalRefs]]]);
+    // Tool Sets with no recorded place and no left dock makes one at its width.
+    let mut workspace = cadcraft_ui_egui::docking::default_workspace();
+    workspace.apply(craft_ui::docking::Action::Close { panel: Panel::ToolSets }, cadcraft_ui_egui::docking::permissions).unwrap();
+    workspace.hidden.clear();
+    h.state_mut().ui.docking = workspace;
+    h.state_mut().ui.show_toolsets = false;
+    menus::activate(h.state_mut(), "ui.toggle.toolsets");
+    h.run_steps(3);
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::Start), [[[Panel::ToolSets]]]);
+    assert_eq!(columns(layout, Side::Start)[0].width, TOOL_SETS_WIDTH);
+    // With the palettes off, External References makes a new right dock at the palettes' width.
+    h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+    h.state_mut().run("ui.toggle.palettes", json!({"on": false})).unwrap();
+    h.run_steps(3);
+    h.state_mut().run("xref", serde_json::Value::Null).unwrap();
+    h.run_steps(3);
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::End), [[[Panel::ExternalRefs]]]);
+    assert_eq!(columns(layout, Side::End)[0].width, PALETTES_WIDTH);
+    assert_eq!(frames(layout), [[Panel::Canvas]]);
 }
 
 #[test]
@@ -276,15 +435,8 @@ fn properties_typed_in_rendered_command_line_reopens_and_selects_actual_workspac
     let drawing = h.state().session.doc().unwrap().clone();
     let tools = h.state().ui.docking.layout.location(&Panel::ToolSets).unwrap();
     type_command(&mut h, "PROPERTIES");
-    assert!(h.state().ui.docking.layout.contains(&Panel::Properties));
-    assert!(h.state().ui.docking.layout.contains(&Panel::Layers));
-    let restored_tools = h.state().ui.docking.layout.location(&Panel::ToolSets).unwrap();
-    assert_eq!(restored_tools.anchor, tools.anchor);
-    assert_eq!(restored_tools.placement, tools.placement);
-    assert_eq!(restored_tools.size, tools.size);
-    assert_eq!(restored_tools.floating, tools.floating);
-    assert_eq!(restored_tools.stack, tools.stack);
-    assert!(restored_tools.sibling.contains(&Panel::Properties));
+    assert_eq!(dock_panels(&h.state().ui.docking.layout, Side::End), [vec![vec![Panel::Layers], vec![Panel::Properties]]]);
+    assert_eq!(h.state().ui.docking.layout.location(&Panel::ToolSets).unwrap(), tools);
 
     h.state_mut().run("ui.dock", json!({"operation":"float","panel":"layers","rect":[400,250,300,350]})).unwrap();
     h.state_mut().run("ui.dock", json!({"operation":"move","panel":"properties","target":"layers","zone":"center"})).unwrap();
@@ -310,34 +462,27 @@ fn reset_typed_in_canvas_preserves_authoritative_workspace_replacement() {
 }
 
 #[test]
-fn canvas_reset_during_splitter_drag_discards_old_resize_and_ends_gesture() {
+fn canvas_reset_during_column_drag_discards_old_resize_and_ends_gesture() {
     use craft_ui::docking::Action;
-    use craft_ui::layout::SplitSize;
     let mut h = harness(None, 1280.0, 1.0);
-    // Give the old root divider a size different from Reset's 220px ToolSets pane.
+    // Give the Tool Sets column a width different from Reset's.
     h.state_mut()
-        .run(
-            "ui.dock",
-            json!({"action":Action::<Panel>::ResizeSplit {
-                path: Vec::new(), size: SplitSize::FixedFirst(280.0),
-            }}),
-        )
+        .run("ui.dock", json!({"action": serde_json::to_value(Action::ResizeColumn { panel: Panel::ToolSets, width: 280.0 }).unwrap()}))
         .unwrap();
     h.run_steps(3);
     let drawing = h.state().session.doc().unwrap().clone();
-    let splitter = egui::Id::unique("cadcraft-docking").with(("split", Vec::<bool>::new()));
-    let from = h.ctx.read_response(splitter).expect("rendered root divider").rect.center();
+    let divider = Hit::Divider(Divider::Column(Panel::ToolSets));
+    let handle = DockArea::<Panel>::hit_id(area(), &divider);
+    let from = hit(&h, divider).center();
     h.event(Event::PointerMoved(from));
     h.run_steps(1);
     h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
     h.run_steps(1);
-    // Canvas is visited before the ancestor ResizeHandle. The command runs before
-    // that ancestor queues this frame's ResizeSplit against the old immutable tree.
-    assert_eq!(h.ctx.dragged_id(), Some(splitter), "actual divider owns the pointer");
+    assert_eq!(h.ctx.dragged_id(), Some(handle), "the column's divider owns the pointer");
     assert!(h.ctx.input(|input| input.pointer.primary_down()));
-    // A ResizeHandle takes keyboard focus on press. Release only that keyboard focus
-    // so the real Canvas command line can submit while the pointer remains captured.
-    h.ctx.memory_mut(|memory| memory.surrender_focus(splitter));
+    // A divider takes keyboard focus on press. Release only that keyboard focus so the real
+    // Canvas command line can submit while the pointer remains captured.
+    h.ctx.memory_mut(|memory| memory.surrender_focus(handle));
     assert!(!h.ctx.egui_wants_keyboard_input());
     let to = from + vec2(36.0, 0.0);
     h.event(Event::PointerMoved(to));
@@ -346,10 +491,10 @@ fn canvas_reset_during_splitter_drag_discards_old_resize_and_ends_gesture() {
     h.run_steps(1);
     let expected = cadcraft_ui_egui::docking::default_workspace();
     assert!(h.state().cmd.buffer.is_empty(), "Canvas submitted the actual reset command");
-    assert_eq!(h.state().ui.docking.layout, expected.layout, "old-frame resize must not modify Reset's tree");
+    assert_eq!(h.state().ui.docking.layout, expected.layout, "old-frame resize must not modify Reset's layout");
     assert_eq!(h.state().ui.docking.hidden, expected.hidden);
-    // Keep the physical button down: replacement must terminate the old divider gesture,
-    // rather than letting its stable root ID continue resizing the new workspace.
+    // Keep the physical button down: replacement must end the old divider gesture rather than
+    // letting it go on resizing the new workspace.
     let later = to + vec2(24.0, 0.0);
     h.event(Event::PointerMoved(later));
     h.run_steps(2);
@@ -386,35 +531,65 @@ fn collapsed_tool_sets_leave_a_visible_control_that_expands_them() {
 }
 
 #[test]
-fn group_drag_bar_moves_the_whole_group_beside_the_drawing() {
-    use craft_ui::docking::{DockArea, Hit, Node};
+fn palettes_dock_only_in_the_left_and_right_columns() {
+    let mut h = harness(None, 1280.0, 1.0);
+    let document = h.state().session.doc().unwrap().clone();
+    let drawing = h.state().canvas.rect.expect("the drawing view is drawn");
+    // Neither the drawing nor the bottom edge takes a drop: the palette floats there.
+    for to in [drawing.center(), egui::pos2(drawing.center().x, drawing.bottom() - 4.0)] {
+        h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+        h.run_steps(3);
+        let from = hit(&h, Hit::Tab(Panel::Layers)).center();
+        drag(&mut h, from, to);
+        let layout = &h.state().ui.docking.layout;
+        assert_eq!(frames(layout), [[Panel::Canvas]], "{to:?}: {:?}", layout.root);
+        assert_eq!(dock_panels(layout, Side::End), [[[Panel::Properties]]], "{to:?}");
+        assert!(layout.floating.iter().any(|window| window.contains(&Panel::Layers)), "{to:?}: {layout:?}");
+    }
+    // The left window edge, where Tool Sets docks, takes the palette as a new outer column.
+    h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+    h.run_steps(3);
+    let column = hit(&h, Hit::ColumnBar(Panel::ToolSets));
+    let from = hit(&h, Hit::Tab(Panel::Layers)).center();
+    drag(&mut h, from, egui::pos2(column.left() + 3.0, drawing.center().y));
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::Start), [[[Panel::Layers]], [[Panel::ToolSets]]], "{:?}", layout.root);
+    assert_eq!(frames(layout), [[Panel::Canvas]]);
+    // Without a left dock, the left window edge makes one.
+    h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+    h.state_mut().run("ui.toggle.toolsets", json!({"on": false})).unwrap();
+    h.run_steps(4);
+    assert!(columns(&h.state().ui.docking.layout, Side::Start).iter().all(|column| column.groups.is_empty()));
+    let drawing = h.state().canvas.rect.unwrap();
+    let from = hit(&h, Hit::Tab(Panel::Layers)).center();
+    drag(&mut h, from, egui::pos2(drawing.left() + 3.0, drawing.center().y));
+    let layout = &h.state().ui.docking.layout;
+    assert_eq!(dock_panels(layout, Side::Start), [[[Panel::Layers]]], "{:?}", layout.root);
+    assert_eq!(frames(layout), [[Panel::Canvas]]);
+    assert_eq!(h.state().session.doc().unwrap(), &document);
+}
+
+#[test]
+fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     let mut h = harness(None, 1280.0, 1.0);
     h.state_mut().run("ui.dock", json!({"operation":"move", "panel":"layers", "target":"toolSets", "zone":"center", "before":null})).unwrap();
     h.run_steps(4);
-    let bar = |h: &Harness<'_, CadApp>| {
-        DockArea::<Panel>::hit_rects(&h.ctx, egui::Id::unique("cadcraft-docking"))
-            .into_iter()
-            .find(|(hit, _)| matches!(hit, Hit::DragBar(panel) if *panel == Panel::ToolSets || *panel == Panel::Layers))
-            .map(|(_, rect)| rect)
-    };
-    let from = bar(&h).expect("the Tool Sets group draws a drag bar").center();
-    let drawing = h.state().canvas.rect.expect("the drawing view is drawn");
-    let to = egui::pos2(drawing.right() - 10.0, drawing.center().y);
+    let bar = DockArea::<Panel>::hit_rects(&h.ctx, area())
+        .into_iter()
+        .find(|(hit, _)| matches!(hit, Hit::DragBar(panel) if *panel == Panel::ToolSets || *panel == Panel::Layers))
+        .map(|(_, rect)| rect)
+        .expect("the Tool Sets group draws a drag bar");
+    // Into the middle of the Properties group, as tabs.
+    let properties = hit(&h, Hit::Tab(Panel::Properties));
+    let column = hit(&h, Hit::ColumnBar(Panel::Properties));
+    let to = egui::pos2(column.center().x, properties.bottom() + 120.0);
     let document = h.state().session.doc().unwrap().clone();
-    drag(&mut h, from, to);
+    drag(&mut h, bar.center(), to);
     let layout = &h.state().ui.docking.layout;
-    assert!(layout.floating.is_empty(), "a drop beside the drawing docks the group");
-    // The drawing's frame splits: the drawing on the left, the whole group on the right.
-    let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
-    let mut beside = false;
-    while let Some(node) = nodes.pop() {
-        if let Node::Split { first, second, .. } = node {
-            beside |= matches!((&**first, &**second), (Node::Tabs { panels: left, .. }, Node::Tabs { panels: right, .. })
-                if left == &[Panel::Canvas] && right == &[Panel::ToolSets, Panel::Layers]);
-            nodes.push(first);
-            nodes.push(second);
-        }
-    }
-    assert!(beside, "the group moves as one to the drawing's right: {:?}", layout.root);
+    assert!(layout.floating.is_empty(), "{layout:?}");
+    let end = dock_panels(layout, Side::End);
+    assert_eq!(end.len(), 1, "{end:?}");
+    assert!(end[0].iter().any(|group| group.contains(&Panel::ToolSets) && group.contains(&Panel::Layers)), "{end:?}");
+    assert_eq!(frames(layout), [[Panel::Canvas]]);
     assert_eq!(h.state().session.doc().unwrap(), &document);
 }

@@ -235,6 +235,46 @@ pub struct Op {
     pub names: Vec<String>,
 }
 
+/// The index just past the string literal opening at `b[i]`, honouring escapes and nesting.
+fn skip_string(b: &[char], mut i: usize) -> usize {
+    let mut depth = 0;
+    while i < b.len() {
+        match b[i] {
+            '\\' => i += 1,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    i + 1
+}
+
+/// The index just past the inline dictionary opening at `b[i]` (`<<`).
+fn skip_dict(b: &[char], mut i: usize) -> usize {
+    let mut depth = 0;
+    while i < b.len() {
+        if b[i] == '<' && b.get(i + 1) == Some(&'<') {
+            depth += 1;
+            i += 1;
+        } else if b[i] == '>' && b.get(i + 1) == Some(&'>') {
+            depth -= 1;
+            i += 1;
+            if depth == 0 {
+                i += 1;
+                break;
+            }
+        }
+        i += 1;
+    }
+    i
+}
+
 /// The operators of content text in order, each with its numeric operands (other operands
 /// are skipped).
 pub fn ops(content: &str) -> Vec<Op> {
@@ -253,39 +293,10 @@ pub fn ops(content: &str) -> Vec<Op> {
                 i += 1;
             }
         } else if c == '(' {
-            let mut depth = 0;
-            while i < b.len() {
-                match b[i] {
-                    '\\' => i += 1,
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            i += 1;
+            i = skip_string(&b, i);
         } else if c == '<' && b.get(i + 1) == Some(&'<') {
             // An inline dictionary (marked-content properties): skip to its end.
-            let mut depth = 0;
-            while i < b.len() {
-                if b[i] == '<' && b.get(i + 1) == Some(&'<') {
-                    depth += 1;
-                    i += 1;
-                } else if b[i] == '>' && b.get(i + 1) == Some(&'>') {
-                    depth -= 1;
-                    i += 1;
-                    if depth == 0 {
-                        i += 1;
-                        break;
-                    }
-                }
-                i += 1;
-            }
+            i = skip_dict(&b, i);
         } else if c == '<' {
             while i < b.len() && b[i] != '>' {
                 i += 1;
