@@ -34,7 +34,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("-xref", "External References", run_dash_xref)
             .alias(&["-xr"])
-            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
+            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), exact?: bool (names are literal xref names, no wildcards or commas), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
             .interactive(|_| Ok(Box::new(XrefM::new("-XREF", XStage::Option)))),
         CommandSpec::new("xbind", "Bind...", run_xbind)
             .menu(&["Modify", "Object", "External Reference", "Bind..."])
@@ -192,6 +192,19 @@ fn run_xattach(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The xrefs a JSON call names (`names`, default all); an error when none match.
 fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
+    if p.get("exact").and_then(Value::as_bool) == Some(true) {
+        let lits: Vec<&str> = match p.get("names") {
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
+            Some(Value::String(t)) => vec![t.as_str()],
+            _ => Vec::new(),
+        };
+        let d = s.doc()?;
+        let names: Vec<String> = xrefs(d).filter(|b| lits.iter().any(|l| l.eq_ignore_ascii_case(&b.name))).map(|b| b.name.clone()).collect();
+        if names.is_empty() {
+            return Err(bad(cmd, format!("no xref named \"{}\"", lits.join(","))));
+        }
+        return Ok(names);
+    }
     let pattern = match p.get("names") {
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","),
         Some(Value::String(t)) => t.clone(),

@@ -26,7 +26,10 @@ const MAX_PURGE_PASSES: usize = 64;
 
 /// The file a SAveas typed at the command line suggests: `<layout>.dwt` beside the drawing.
 pub(super) fn default_path(s: &Session, layout: &str) -> String {
-    let file = format!("{layout}.dwt");
+    // A layout name from a file may hold path separators or `..`; the suggestion is one file name
+    // beside the drawing, so those become `_`.
+    let name: String = layout.chars().map(|c| if matches!(c, '/' | '\\' | ':') || c.is_control() { '_' } else { c }).collect();
+    let file = format!("{name}.dwt");
     match s.state().ok().and_then(|st| st.path.clone()) {
         Some(p) => std::path::Path::new(&p).with_file_name(&file).to_string_lossy().into_owned(),
         None => file,
@@ -131,5 +134,22 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(target_arch = "wasm32")]
     {
         super::super::exchange::deliver_file("layout.saveas", path, bytes, super::super::file::deliver())
+    }
+}
+
+#[cfg(test)]
+mod default_path_tests {
+    use super::*;
+
+    /// A layout name with separators suggests a file beside the drawing, not a path elsewhere.
+    #[test]
+    fn layout_name_is_one_file_name() {
+        let s = Session::empty();
+        for name in ["../../etc/x", "a/b", "a\\b", "C:x"] {
+            let p = default_path(&s, name);
+            assert!(!p.contains('/') && !p.contains('\\') && !p.contains(':'), "{p}");
+            assert!(p.ends_with(".dwt"));
+        }
+        assert_eq!(default_path(&s, "Layout1"), "Layout1.dwt");
     }
 }
