@@ -339,7 +339,8 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).and_then(|(_, _, t)| head(t).handle);
     let root_entries = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, _, t)| entries(t)).unwrap_or_default();
-    let root_key = |h: &str| root_entries.iter().find(|(_, eh)| eh == h).map(|(k, _)| k.clone());
+    let root_keys = root_key_index(&root_entries);
+    let root_key = |h: &str| root_keys.get(h).map(|k| (*k).to_string());
     // An extension dictionary of an entity or record (not of another object).
     let is_xdict = |k: usize| {
         let Some((_, _, t)) = objects.get(k) else { return false };
@@ -482,6 +483,16 @@ fn extension_dictionaries(
     dictionaries
 }
 
+/// The root dictionary's key for each entry handle (the first key when several name one handle),
+/// built once: a lookup per object scanning the entries made a large dictionary quadratic.
+fn root_key_index(root_entries: &[(String, String)]) -> HashMap<&str, &str> {
+    let mut index = HashMap::with_capacity(root_entries.len());
+    for (key, handle) in root_entries {
+        index.entry(handle.as_str()).or_insert(key.as_str());
+    }
+    index
+}
+
 /// Determine which objects belong to unmodelled dictionary entries or owners.
 fn retained_objects(
     objects: &[(String, usize, &[Tag])],
@@ -492,7 +503,8 @@ fn retained_objects(
     root_entries: &[(String, String)],
     xdict_of: &HashMap<String, String>,
 ) -> HashMap<usize, bool> {
-    let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
+    let root_keys = root_key_index(root_entries);
+    let root_key = |handle: &str| root_keys.get(handle).copied();
     let is_xdict = |index: usize| {
         let Some((_, _, tags)) = objects.get(index) else { return false };
         let header = head(tags);
