@@ -989,9 +989,11 @@ const WORDS: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa la
 
 #[test]
 fn mtext_bounds_take_every_wrapped_line() {
-    // At every attachment the measured box holds the laid-out block and every stroke drawn.
+    // At every attachment the measured box holds the laid-out block and every stroke drawn. Every
+    // word fits the column: the wrap width bounds an MTEXT's box (#2465), so a word wider than the
+    // column reaches past it.
     let d = Drawing::new_imperial();
-    for contents in [WORDS, r"one two\Pthree {\H2x;four five} six seven\P\Peight", r"{\H0.5;small words} wrap to the column width here"] {
+    for contents in [WORDS, r"one two\Pthree {\H1.5x;four five} six seven\P\Peight", r"{\H0.5;small words} wrap to the column width here"] {
         for attach in 1..=9 {
             let t = wrapped_mtext(contents, Vec2::new(3.0, -2.0), attach);
             let laid = layout_mtext_entity(&d, &t);
