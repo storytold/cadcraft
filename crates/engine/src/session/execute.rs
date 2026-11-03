@@ -66,16 +66,24 @@ impl Session {
             (r, _) => r,
         };
         let grouped = self.lisp_groups_undo();
+        let mut in_routine = None;
         if spec.undoable
             && let Some((doc, sel, uid)) = before
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            // Inside a LISP routine the routine's single undo step records it.
-            if !grouped {
-                st.push_undo(Snapshot { label: spec.label.to_string(), doc, selection: sel });
+            let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel };
+            // Inside a LISP routine the routine's single undo step records it, and the routine
+            // keeps it for U inside it.
+            if grouped {
+                in_routine = Some(snap);
+            } else {
+                st.push_undo(snap);
             }
             st.revision += 1;
+        }
+        if let Some(snap) = in_routine {
+            self.lisp_record_step(snap);
         }
         result
     }
@@ -89,27 +97,32 @@ impl Session {
 
     // ---------------- undo ----------------
 
+    /// Take the last step back. Inside a LISP routine, the routine's last command first; past
+    /// those, the drawing's step before the routine, which then starts from there.
     pub fn undo(&mut self) -> Result<Option<String>> {
+        if let Some(label) = self.lisp_take_back(false) {
+            return Ok(Some(label));
+        }
         let st = self.state_mut()?;
         let Some(snap) = st.undo.pop() else { return Ok(None) };
-        let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
-        st.doc = snap.doc;
-        st.follow_layout(&cur.doc);
-        st.selection = Vec::new();
+        let cur = st.swap_in(snap);
+        let label = cur.label.clone();
         st.redo.push(cur);
-        st.revision += 1;
-        Ok(Some(snap.label))
+        self.lisp_rebase();
+        Ok(Some(label))
     }
 
+    /// Bring back what the last undo took back; inside a LISP routine, what U inside it took first.
     pub fn redo(&mut self) -> Result<Option<String>> {
+        if let Some(label) = self.lisp_take_back(true) {
+            return Ok(Some(label));
+        }
         let st = self.state_mut()?;
         let Some(snap) = st.redo.pop() else { return Ok(None) };
-        let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
-        st.doc = snap.doc;
-        st.follow_layout(&cur.doc);
-        st.selection = Vec::new();
+        let cur = st.swap_in(snap);
+        let label = cur.label.clone();
         st.undo.push(cur);
-        st.revision += 1;
-        Ok(Some(snap.label))
+        self.lisp_rebase();
+        Ok(Some(label))
     }
 }

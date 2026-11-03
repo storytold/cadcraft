@@ -4,6 +4,7 @@ use super::{
     BlockProps, Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2,
     Vec3, VportConfig, VportTile, records,
 };
+use cadcraft_fonts::windows::windows_font;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -66,9 +67,9 @@ fn annotative(tags: &[Tag]) -> bool {
 }
 
 /// A text style's font: CADCraft's own font name from `CADCRAFT` xdata (`1000 FONT`, name)
-/// while the font file is still the `txt` written for other readers; the TrueType family of the
-/// style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD stores TrueType
-/// styles); otherwise the file.
+/// while the font file is still the `txt` or Windows font written for other readers; the TrueType
+/// family of the style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD
+/// stores TrueType styles); otherwise the file.
 fn style_font(tags: &[Tag], file: String) -> String {
     if file.trim().is_empty()
         && let Some(face) =
@@ -82,8 +83,9 @@ fn style_font(tags: &[Tag], file: String) -> String {
         _ => None,
     });
     let stem = file.trim().to_ascii_lowercase();
+    let base = stem.rsplit(['/', '\\']).next().unwrap_or_default();
     match own {
-        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx") => name,
+        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx" || windows_font(&name) == Some(base)) => name,
         _ => file,
     }
 }
@@ -215,7 +217,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let center = t.p(10).xy();
+                // The view centre 10/20 is in display coordinates, whose origin is the target 12/22/32.
+                let center = t.view_center(10, 12);
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
@@ -320,7 +323,8 @@ const MAX_VPORT_TILES: usize = 64;
 /// are fractions of the drawing area; unusable tiles are skipped.
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    // The view centre 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17));
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
