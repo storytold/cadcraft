@@ -71,6 +71,8 @@ pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: im
     let (mut file, tmp) = create_temp(&dir, permissions.as_ref())?;
     let write = (|| {
         if let Some(permissions) = permissions {
+            #[cfg(unix)]
+            let permissions = keep_group(&file, path, permissions);
             file.set_permissions(permissions)?;
         }
         fill(&mut file)?;
@@ -88,6 +90,19 @@ pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: im
     }
     sync_dir(&dir);
     Ok(())
+}
+
+/// `permissions` for the new file when `path` already exists: the group bits mean "this group" only
+/// if the file is still in the old file's group, so the group is restored first. When it can't be
+/// (the user is not a member of it), the group bits are dropped rather than handed to another group.
+#[cfg(unix)]
+fn keep_group(file: &File, path: &Path, permissions: Permissions) -> Permissions {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    let Ok(old) = std::fs::symlink_metadata(path) else { return permissions };
+    if !old.is_file() || fchown(file, None, Some(old.gid())).is_ok() {
+        return permissions;
+    }
+    Permissions::from_mode(permissions.mode() & !0o070)
 }
 
 /// Flush `dir` so a rename just made in it survives a crash or power loss (POSIX records a
@@ -228,6 +243,33 @@ mod tests {
         write_atomic(&dir.join("a.bin"), b"x").unwrap();
         assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"x");
         sync_dir(&dir.join("missing"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The replacement keeps the old file's group (when the user is in another group, as `id -G`
+    /// says) together with its mode, so the group bits never name a different group.
+    #[cfg(unix)]
+    #[test]
+    fn keeps_the_group_and_mode_of_the_file_it_replaces() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-grp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("out.bin");
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::set_permissions(&dest, Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&dest).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&dest, None, Some(gid)).unwrap();
+        }
+        let want = std::fs::metadata(&dest).unwrap();
+        write_atomic(&dest, b"new").unwrap();
+        let got = std::fs::metadata(&dest).unwrap();
+        assert_eq!((got.gid(), got.mode() & 0o777), (want.gid(), 0o640));
         std::fs::remove_dir_all(&dir).ok();
     }
 
