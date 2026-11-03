@@ -41,7 +41,7 @@ pub use dof::{DofReport, DofStatus, ObjectDof, dof};
 pub use expr::{Env, ExprError};
 pub use model::{ref_points, rigid_points, supported};
 
-use model::Model;
+use model::{Model, Prep};
 use residual::{Built, Form};
 
 /// Most constraints one drawing may hold.
@@ -50,6 +50,11 @@ pub const MAX_CONSTRAINTS: usize = 5000;
 const MAX_CONFLICT_PROBES: usize = 48;
 /// Solver iterations.
 const MAX_ITER: usize = 200;
+/// Largest residual-evaluation work (including spline rebuilds) one numerical Jacobian may take,
+/// shared by solving, redundancy checks and DOF analysis.
+pub(crate) const MAX_EVAL_WORK: f64 = 2e9;
+/// Residual evaluations a solver iteration makes besides its Jacobian (damped trial steps).
+const TRIAL_EVALS: f64 = 14.0;
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum SolveError {
@@ -251,10 +256,39 @@ impl Comp {
     pub(crate) fn rows(&self, skip: Option<usize>) -> usize {
         self.built.iter().enumerate().filter(|(i, _)| Some(*i) != skip).map(|(_, b)| b.rows).sum()
     }
+    /// Work of one solver iteration's residual evaluations over `free`: every residual twice per
+    /// free parameter, plus a spline rebuild each time a spline's own defining points move (rebuilds
+    /// are shared by residuals at the same points, see [`Model`]).
+    pub(crate) fn eval_work(&self, free: &[usize], skip: Option<usize>) -> f64 {
+        let rows = self.rows(skip) as f64;
+        let evals = 2.0 * free.len() as f64 + TRIAL_EVALS;
+        let mut splines: Vec<Handle> = Vec::new();
+        for (i, b) in self.built.iter().enumerate() {
+            if Some(i) != skip && b.spline_reconstruct_cost(&self.model) > 0.0 {
+                splines.extend(b.refs.iter().map(|r| r.handle).filter(|h| self.model.spline_reconstruct_cost(*h) > 0.0));
+            }
+        }
+        splines.sort_unstable();
+        splines.dedup();
+        let rebuilds: f64 = splines
+            .iter()
+            .filter_map(|h| self.model.slot(*h))
+            .map(|s| {
+                let own = free.iter().filter(|j| (s.off..s.off + s.len).contains(*j)).count() as f64;
+                (2.0 * own + TRIAL_EVALS + 1.0) * self.model.spline_reconstruct_cost(s.handle)
+            })
+            .sum();
+        evals * rows + rebuilds
+    }
     fn run(&self, skip: Option<usize>) -> Result<lm::Outcome, SolveError> {
         let free = self.free(skip);
         let rows = self.rows(skip);
         if rows > lm::MAX_ROWS || (rows as f64) * (rows as f64) * (free.len() as f64) > 4e8 {
+            return Err(SolveError::TooLarge);
+        }
+        // Numerical differentiation rebuilds a fit spline through a dense solve for every move of
+        // its own fit points: refuse before iterating when that alone is too much (CWE-407).
+        if self.eval_work(&free, skip) > MAX_EVAL_WORK {
             return Err(SolveError::TooLarge);
         }
         let f = |x: &[f64], out: &mut Vec<f64>| self.eval(x, out, skip);
@@ -410,24 +444,24 @@ fn slot_scales(model: &Model, s: &model::Slot) -> Vec<(usize, f64)> {
 
 /// Build the component systems. Constraints that cannot be interpreted are returned as skipped.
 pub(crate) fn build(d: &Drawing, cons: &[&Constraint], opts: &SolveOptions) -> Result<(Vec<Comp>, Vec<(u32, String)>), SolveError> {
-    let mut members_left = model::MAX_RIGID_WORK;
-    build_budgeted(d, cons, opts, &mut members_left)
+    build_with(d, cons, opts, &mut Prep::new(model::MAX_RIGID_WORK))
 }
 
-/// Build constraint components with one caller-owned rigid-member sampling budget shared by every model.
+/// Build constraint components sharing one caller-owned geometry preparation (block sampling and
+/// its member budget, spline rebuilds) between every model.
 /// Return constraints that cannot be interpreted as skipped entries.
-pub(crate) fn build_budgeted(
+pub(crate) fn build_with(
     d: &Drawing,
     cons: &[&Constraint],
     opts: &SolveOptions,
-    members_left: &mut usize,
+    prep: &mut Prep,
 ) -> Result<(Vec<Comp>, Vec<(u32, String)>), SolveError> {
     let mut e = env(d);
     let mut skipped = Vec::new();
     let mut comps = Vec::new();
     for group in components(cons) {
         let handles: Vec<Handle> = group.iter().flat_map(|c| c.refs.iter().map(|r| r.handle)).collect();
-        let mut model = Model::build_budgeted(d, &handles, members_left);
+        let mut model = Model::build_with(d, &handles, prep);
         let mut built = Vec::new();
         for c in group {
             let target = if c.kind.is_dimensional() { constraint_value(&mut e, c)? } else { 0.0 };
@@ -640,6 +674,11 @@ pub fn all_satisfied(d: &Drawing) -> bool {
 
 /// Check that a constraint's references make sense for its type.
 pub fn validate(d: &Drawing, c: &Constraint) -> Result<(), String> {
+    validate_with(d, c, &mut Prep::new(model::MAX_RIGID_WORK))
+}
+
+/// [`validate`] sharing block samples and spline rebuilds with other checks of the same drawing.
+fn validate_with(d: &Drawing, c: &Constraint, prep: &mut Prep) -> Result<(), String> {
     let handles: Vec<Handle> = c.refs.iter().map(|r| r.handle).collect();
     for h in &handles {
         match d.entity(*h) {
@@ -648,7 +687,7 @@ pub fn validate(d: &Drawing, c: &Constraint) -> Result<(), String> {
             _ => {}
         }
     }
-    let mut model = Model::build(d, &handles);
+    let mut model = Model::build_with(d, &handles, prep);
     interpret(c, &mut model, 1.0).map(|_| ())
 }
 
@@ -665,7 +704,12 @@ pub fn measure(d: &Drawing, kind: ConstraintKind, refs: &[GeomRef]) -> Result<f6
 /// Returns the removed ids.
 pub fn purge_invalid(d: &mut Drawing) -> Vec<u32> {
     let mut gone = Vec::new();
-    let keep: Vec<bool> = d.constraints.iter().map(|c| validate(d, c).is_ok()).collect();
+    // One preparation for every check: each block is sampled and each spline rebuilt once,
+    // however many constraints refer to them (CWE-407). Its member budget is not shared, so
+    // a constraint is never dropped because earlier ones spent it: every block is still
+    // examined at most once, up to its own member limit.
+    let mut prep = Prep::new(usize::MAX);
+    let keep: Vec<bool> = d.constraints.iter().map(|c| validate_with(d, c, &mut prep).is_ok()).collect();
     let mut i = 0;
     d.constraints.retain(|c| {
         let k = keep.get(i).copied().unwrap_or(true);
@@ -752,6 +796,9 @@ pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u3
         && comp.built.get(pos).is_some_and(|b| b.form == Form::Lock)
     {
         let before = comp.free(Some(pos));
+        if comp.eval_work(&before, Some(pos)) > MAX_EVAL_WORK {
+            return Err(SolveError::TooLarge);
+        }
         let after = comp.free(None);
         let locked: Vec<usize> = before.iter().enumerate().filter(|(_, j)| !after.contains(j)).map(|(k, _)| k).collect();
         let rows_old = comp.rows(Some(pos));
