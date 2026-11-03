@@ -329,6 +329,18 @@ fn used_text_styles(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<Stri
     for s in &d.mleader_styles {
         mark(&s.text_style);
     }
+    for s in &d.table_styles {
+        for c in &s.cell_styles {
+            mark(&c.text_style);
+        }
+    }
+    for lt in &d.linetypes {
+        for el in &lt.pattern {
+            if let Some(style) = &el.style {
+                mark(style);
+            }
+        }
+    }
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
