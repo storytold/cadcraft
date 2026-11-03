@@ -571,8 +571,9 @@ impl CadApp {
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
         for (path, outcome) in self.opening.poll() {
-            // A recent file that is gone can never be opened again: drop it from the list.
-            if outcome.is_err() && !path.exists() {
+            // A recent file that is gone can never be opened again: drop it from the list. A path
+            // whose existence can't be checked (a folder that denies access) stays.
+            if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
                 let path = path.to_string_lossy();
                 self.ui.recent_files.retain(|p| *p != path);
             }
