@@ -136,17 +136,17 @@ impl Spline {
     /// First derivative without re-validating the spline. The caller must have confirmed
     /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
     /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
-    #[expect(
-        clippy::cast_precision_loss,
-        clippy::many_single_char_names,
-        reason = "The NURBS derivative keeps its standard equation notation, and MAX_DEGREE makes p exact as f64."
-    )]
     fn derivative_unchecked(&self, t: f64) -> Vec2 {
         let d = self.velocity(t);
         if d.is_finite() { d } else { Vec2::ZERO }
     }
 
     /// [`Spline::derivative_unchecked`] before a value past f64's range is read as zero.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::many_single_char_names,
+        reason = "The NURBS derivative keeps its standard equation notation, and MAX_DEGREE makes p exact as f64."
+    )]
     fn velocity(&self, t: f64) -> Vec2 {
         let p = self.degree;
         let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
