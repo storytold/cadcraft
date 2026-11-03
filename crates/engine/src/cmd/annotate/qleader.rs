@@ -66,15 +66,14 @@ impl Interactive for QLeaderM {
             Ask::Width => {
                 // A point gives the width as its distance from the leader's end; a negative
                 // width is none.
-                self.width = match i {
-                    Input::Point(p) => self.pts.last().map_or(0.0, |e| e.dist(p)),
-                    Input::Text(t) => crate::units::parse_distance(&t)
-                        .filter(|w| w.is_finite())
-                        .ok_or_else(|| crate::EngineError::Other("Requires numeric distance or two points.".into()))?
-                        .max(0.0),
-                    Input::Enter => 0.0,
+                let width = match i {
+                    Input::Point(p) => self.pts.last().map(|e| e.dist(p)),
+                    Input::Text(t) => crate::units::parse_distance(&t),
+                    Input::Enter => Some(0.0),
                     _ => return Ok(Step::Continue),
                 };
+                let finite = width.filter(|w| w.is_finite());
+                self.width = finite.ok_or_else(|| crate::EngineError::Other("Requires numeric distance or two points.".into()))?.max(0.0);
                 self.ask = Ask::FirstLine;
             }
             // Only typed text and Enter: a click in the drawing is no line of text, as at TEXT's.
@@ -99,7 +98,10 @@ impl Interactive for QLeaderM {
 /// QLEADER's JSON form: a leader through 2 or 3 `points`, with `text` (one line per line of it) as wide
 /// as `width`, placed as the command line places them. The handles of the leader and its text.
 pub(super) fn run_qleader(s: &mut Session, p: &Value) -> Result<Value> {
-    let pts = points_param(p, "points").ok_or_else(|| bad("qleader", "`points` is required"))?;
+    if p.get("points").is_none_or(Value::is_null) {
+        return Err(bad("qleader", "`points` is required"));
+    }
+    let pts = points_param(p, "points").ok_or_else(|| bad("qleader", "`points` must be a list of [x, y] points"))?;
     if !(2..=MAX_POINTS).contains(&pts.len()) {
         return Err(bad("qleader", "`points` takes 2 or 3 points"));
     }

@@ -141,6 +141,16 @@ fn qleader_prompts_and_its_width() {
     }
     assert!(s.running.is_none());
     assert_eq!(drawn(&s).1.map(|t| t.2), Some(0.0));
+    // A point so far off that its distance overflows is refused like bad text.
+    let mut s = session();
+    s.cmdline("QLEADER").unwrap();
+    for p in [Vec2::new(0.0, 0.0), Vec2::new(1e308, 0.0)] {
+        s.input(Input::Point(p)).unwrap();
+    }
+    s.cmdline("").unwrap();
+    let _ = s.input(Input::Point(Vec2::new(-1e308, 0.0)));
+    assert!(s.log.iter().any(|l| l.contains("Requires numeric distance or two points.")), "{:?}", s.log);
+    assert_eq!(s.current_prompt().unwrap().display(), "Specify text width <0>:");
     // A negative width is none. A width isn't remembered: AutoCAD 2024 offers 0 again after 20.
     for width in ["-5", "20"] {
         let mut s = session();
@@ -230,5 +240,14 @@ fn qleader_by_json() {
         let before = s.doc().unwrap().model.iter().count();
         assert!(s.execute("qleader", &bad).is_err(), "{bad}");
         assert_eq!(s.doc().unwrap().model.iter().count(), before, "{bad}");
+    }
+    // A point that can't be read is named as such, not as missing points.
+    for (bad, says) in [
+        (json!({}), "`points` is required"),
+        (json!({ "points": null }), "`points` is required"),
+        (json!({ "points": [[0, 0], ["x", 1]] }), "`points` must be a list of [x, y] points"),
+    ] {
+        let e = s.execute("qleader", &bad).unwrap_err().to_string();
+        assert!(e.contains(says), "{bad}: {e}");
     }
 }
