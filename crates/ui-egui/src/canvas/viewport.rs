@@ -128,6 +128,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             tolerance: 2f64.powi(band) * 0.5,
             min_dash: 2f64.powi(band) * 2.0,
             text: true,
+            linetypes: true,
             fill: true,
             lineweights: lwdisplay,
             view_height: st.paper_view().height,

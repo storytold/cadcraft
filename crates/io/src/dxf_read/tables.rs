@@ -5,6 +5,7 @@ use super::{
     VportConfig, VportTile, records,
 };
 use cadcraft_doc::ViewDir;
+use cadcraft_fonts::windows::windows_font;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -67,31 +68,27 @@ fn annotative(tags: &[Tag]) -> bool {
 }
 
 /// The view centre (12/22) and 3D view (16/26/36 direction, 17/27/37 target) of a VIEWPORT or
-/// VPORT record. The centre is relative to the target: a plan view gets it added
-/// (DWG files often keep the view in the target with the centre at 0,0), a 3D view keeps both.
+/// VPORT record, as [`view_at`] reads them.
 pub(super) fn view(t: &T) -> (Vec2, Option<ViewDir>) {
-    view_at(t, Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)), 16, 17)
+    view_at(t, 12, 16, 17)
 }
 
-/// A view centre relative to the target, with the direction in group `dir_code` and the target
-/// in `target_code` (VIEWPORT and VPORT: 16, 17; VIEW: 11, 12), as [`view`] reads them.
-fn view_at(t: &T, center: Vec2, dir_code: i32, target_code: i32) -> (Vec2, Option<ViewDir>) {
-    let dir = if t.f(dir_code).is_some() { t.p(dir_code) } else { Vec3::Z };
-    let v = ViewDir { dir, target: t.p(target_code) };
-    if !(dir.is_finite() && dir.len() > 1e-12 && v.target.is_finite()) {
-        return (center, None);
+/// A view's centre, direction and target from groups `center`, `dir` and `target` (VIEWPORT and
+/// VPORT: 12, 16, 17; VIEW: 10, 11, 12). The centre is relative to the target: a plan view gets
+/// the target added ([`T::view_center`]), a 3D view keeps both.
+fn view_at(t: &T, center: i32, dir: i32, target: i32) -> (Vec2, Option<ViewDir>) {
+    let d = if t.f(dir).is_some() { t.p(dir) } else { Vec3::Z };
+    let v = ViewDir { dir: d, target: t.p(target) };
+    if d.is_finite() && d.len() > 1e-12 && v.target.is_finite() && !v.matrix().is_plan() {
+        return (t.p(center).xy(), Some(v));
     }
-    if v.matrix().is_plan() {
-        let sum = center + v.target.xy();
-        return (if sum.is_finite() { sum } else { center }, None);
-    }
-    (center, Some(v))
+    (t.view_center(center, target), None)
 }
 
 /// A text style's font: CADCraft's own font name from `CADCRAFT` xdata (`1000 FONT`, name)
-/// while the font file is still the `txt` written for other readers; the TrueType family of the
-/// style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD stores TrueType
-/// styles); otherwise the file.
+/// while the font file is still the `txt` or Windows font written for other readers; the TrueType
+/// family of the style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD
+/// stores TrueType styles); otherwise the file.
 fn style_font(tags: &[Tag], file: String) -> String {
     if file.trim().is_empty()
         && let Some(face) =
@@ -105,8 +102,9 @@ fn style_font(tags: &[Tag], file: String) -> String {
         _ => None,
     });
     let stem = file.trim().to_ascii_lowercase();
+    let base = stem.rsplit(['/', '\\']).next().unwrap_or_default();
     match own {
-        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx") => name,
+        Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx" || windows_font(&name) == Some(base)) => name,
         _ => file,
     }
 }
@@ -119,10 +117,6 @@ fn named_view(t: &T, tg: &[Tag], d: &mut Drawing) {
     if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
         return;
     }
-    let center = t.p(10).xy();
-    if !(center.x.is_finite() && center.y.is_finite()) {
-        return;
-    }
     let x = crate::dxf_ext::xdata(tg, crate::dxf_ext::APP);
     let field =
         |key: &str| x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str);
@@ -130,7 +124,10 @@ fn named_view(t: &T, tg: &[Tag], d: &mut Drawing) {
     let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
     let twist = t.f(50).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
     // 11 direction, 12 target: a model space view seen in 3D.
-    let (center, view3d) = if layout.is_none() { view_at(t, center, 11, 12) } else { (center, None) };
+    let (center, view3d) = if layout.is_none() { view_at(t, 10, 11, 12) } else { (t.view_center(10, 12), None) };
+    if !(center.x.is_finite() && center.y.is_finite()) {
+        return;
+    }
     let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout, view3d };
     match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
         Some(x) => *x = v,
@@ -158,6 +155,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // appends in O(1) instead of scanning the growing layer list — otherwise many distinct layer
     // names make import quadratic (CWE-407).
     let mut layer_index: HashMap<String, usize> = d.layers.iter().enumerate().map(|(i, l)| (l.name.to_ascii_lowercase(), i)).collect();
+    // The same for linetypes (first definition wins) and text styles (last definition wins).
+    let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
+    let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
         let t = T(&tg);
         match kind.as_str() {
@@ -207,9 +207,10 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             }
             "LTYPE" => {
                 let name = t.s(2).unwrap_or_default();
-                if name.is_empty() || d.linetype(&name).is_some() || d.linetypes.len() >= MAX_OBJECTS {
+                if name.is_empty() || linetype_names.contains(&name.to_ascii_lowercase()) || d.linetypes.len() >= MAX_OBJECTS {
                     continue;
                 }
+                linetype_names.insert(name.to_ascii_lowercase());
                 let pattern = ltype_pattern(&tg, &ltype_styles);
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
@@ -232,9 +233,12 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     vertical: t.i(70).unwrap_or(0) & 4 != 0,
                     annotative: annotative(&tg),
                 };
-                match d.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
+                match style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.text_styles.get_mut(i)) {
                     Some(x) => *x = st,
-                    None => d.text_styles.push(st),
+                    None => {
+                        style_index.insert(name.to_ascii_lowercase(), d.text_styles.len());
+                        d.text_styles.push(st);
+                    }
                 }
             }
             // The first *ACTIVE viewport holds the current snap/grid settings.
