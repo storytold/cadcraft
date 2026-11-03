@@ -7,10 +7,17 @@ use cadcraft_engine::doc::{Common, Drawing, EntityKind, PdfUnderlay, Space};
 use cadcraft_geom::Vec3;
 use serde_json::json;
 
+/// Pages from [`MANY`] on asked of the fake reader: drawings citing that many pages.
+static MANY_ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const MANY: u32 = 100_000;
+
 /// A fake reader: every file starting with `%PDF` has 3 A4 landscape pages, drawn white.
 fn hooks() {
     set_pdf(PdfHooks {
         page: |bytes, page| {
+            if page >= MANY {
+                MANY_ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             if !bytes.starts_with(b"%PDF") {
                 return Err("not a readable PDF file".into());
             }
@@ -89,6 +96,47 @@ fn an_opened_underlay_gets_its_size_from_its_pdf_and_finds_it_beside_the_drawing
     assert!(s.log.iter().any(|l| l.contains("PDF underlay not shown")), "{:?}", s.log);
     // Opening a drawing names no command.
     assert!(!s.log.iter().any(|l| l.contains("pdfattach")), "{:?}", s.log);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A drawing with an underlay of each of `pages` (stored path, page), saved as `dxf`.
+fn save_underlays(dxf: &std::path::Path, pages: impl Iterator<Item = (String, u32)>) {
+    let mut d = Drawing::new_metric();
+    for (path, page) in pages {
+        let u = PdfUnderlay { scale: 25.4, path, page, ..PdfUnderlay::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    }
+    std::fs::write(dxf, cadcraft_io::write(&d, "Many.dxf").unwrap()).unwrap();
+}
+
+#[test]
+fn a_drawing_citing_thousands_of_pages_or_files_reads_and_reports_a_bounded_number() {
+    hooks();
+    real_io();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-many-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Many.pdf");
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    // 3000 pages of one PDF: the pages asked are capped, and the failures reported in a few lines.
+    let dxf = dir.join("Pages.dxf");
+    save_underlays(&dxf, (MANY..MANY + 3000).map(|p| (pdf.to_string_lossy().to_string(), p)));
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    let asked = MANY_ASKED.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(asked > 0 && asked <= 1024, "{asked} pages asked");
+    let reported = s.log.iter().filter(|l| l.contains("PDF underlay")).count();
+    assert!(reported <= 17, "{reported} lines: {:?}", &s.log[..20.min(s.log.len())]);
+    assert!(s.log.iter().any(|l| l.contains("more")), "the lines left out are counted");
+    // The canvas's reading off the UI thread is capped the same way.
+    let pages = (MANY..MANY + 3000).map(|p| ((pdf.to_string_lossy().to_string(), p), None)).collect();
+    assert_eq!(cadcraft_engine::cmd::underlay::page_sizes(None, pages).len(), 1024);
+    // 500 PDFs that aren't there: a few lines too.
+    let dxf = dir.join("Files.dxf");
+    save_underlays(&dxf, (0..500).map(|i| (dir.join(format!("Gone{i}.pdf")).to_string_lossy().to_string(), 1)));
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    let reported = s.log.iter().filter(|l| l.contains("PDF underlay")).count();
+    assert!(reported <= 17, "{reported} lines");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

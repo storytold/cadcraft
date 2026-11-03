@@ -59,8 +59,8 @@ encoding_rs = "0.8.35"
 # XML for the SVG reader (streaming parser, no entity expansion beyond the five predefined ones)
 quick-xml = "0.42"
 # PDF page rendering for PDF underlays: the craft apps' shared, patched Hayro reader, at
-# craft-pdf's revision (pure Rust; no embedded fonts: the 14 standard PDF fonts are not
-# bundled, a PDF that relies on them without embedding them shows no text).
+# craft-pdf's revision (pure Rust; no embedded fonts: the 14 standard PDF fonts a PDF names
+# without embedding are matched to installed fonts, and their text is not drawn without one).
 hayro = { version = "=0.7.1", default-features = false }
 
 # ui

@@ -46,11 +46,6 @@ type Pixels = Result<(u32, u32, Vec<u8>), String>;
 /// How a page's pixels are shown: lightness turned over, contrast (0..=100), monochrome.
 type Look = (bool, u8, bool);
 
-/// The part of a cache key telling apart the same page with different PDF layers hidden.
-fn layers_key(layers: &[(String, bool)]) -> String {
-    layers.iter().map(|(n, on)| format!("{}{n}\u{1f}", if *on { '+' } else { '-' })).collect()
-}
-
 /// Show `rgba` (a page's straight pixels) with `look`.
 fn shade((turned, contrast, monochrome): Look, rgba: &mut [u8]) {
     cadcraft_doc::PdfUnderlay { contrast, monochrome, ..cadcraft_doc::PdfUnderlay::default() }.tone(rgba);
@@ -137,7 +132,7 @@ impl Cache {
     ) -> Result<&TextureHandle, &str> {
         // A relative path means a different file in another drawing's folder; the PDF's layers
         // shown or hidden make another picture of the page.
-        let key = (format!("{}|{path}|{}", document.unwrap_or(""), layers_key(layers)), page, look);
+        let key = (format!("{}|{path}|{}", document.unwrap_or(""), cadcraft_doc::PdfUnderlay::key_of_layers(layers)), page, look);
         // A page that could not be read is read again after a while: the PDF may be back.
         if let Some((Page::Failed(_, at), _)) = self.pages.get(&key)
             && now - at >= PAGE_RETRY_S
@@ -314,8 +309,14 @@ pub(crate) fn shapes(
         let tint = Color32::WHITE.gamma_multiply(1.0 - it.fade);
         // Screen pixels per page width: away from the texture's own, draw the visible part at it.
         let density = it.axes.0.len() * xf.scale * ppp;
-        let key =
-            (it.handle, scope, it.index, format!("{}|{}|{}", document.as_deref().unwrap_or(""), it.path, layers_key(&it.layers)), it.page, it.look);
+        let key = (
+            it.handle,
+            scope,
+            it.index,
+            format!("{}|{}|{}", document.as_deref().unwrap_or(""), it.path, cadcraft_doc::PdfUnderlay::key_of_layers(&it.layers)),
+            it.page,
+            it.look,
+        );
         let mut sharp = None;
         if redrawn(density, base.1) {
             if let Some(region) = visible_region(it, &view, 0.25) {
@@ -402,14 +403,7 @@ impl Cache {
         let (tx, rx) = std::sync::mpsc::channel();
         let (document, pages, ctx) = (drawing.1.clone(), todo.pages, ctx.clone());
         let job = move || {
-            let read: Vec<((String, u32), SizeRead)> = pages
-                .into_iter()
-                .zip(since)
-                .map(|((stored, page), since)| {
-                    let r = cadcraft_engine::cmd::underlay::page_size(&stored, document.as_deref(), page, since);
-                    ((stored, page), r)
-                })
-                .collect();
+            let read = cadcraft_engine::cmd::underlay::page_sizes(document.as_deref(), pages.into_iter().zip(since).collect());
             let _ = tx.send(read);
             ctx.request_repaint();
         };

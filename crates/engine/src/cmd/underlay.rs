@@ -194,29 +194,75 @@ pub enum SizeRead {
     Unchanged,
 }
 
-/// Page `page`'s size of the PDF `stored` in the drawing saved at `document`. It reads files and
-/// nothing else, so it can run on a worker thread. `unreadable_since`: the modification time of
-/// the file when it was last found unreadable; while it has that time, it isn't read again.
+/// Page `page`'s size of the PDF `stored` in the drawing saved at `document`: [`page_sizes`] for
+/// one page.
 pub fn page_size(stored: &str, document: Option<&str>, page: u32, unreadable_since: Option<std::time::SystemTime>) -> SizeRead {
-    let Some(hooks) = pdf() else { return SizeRead::Missing };
-    let Ok(file) = underlay_file(stored, document) else { return SizeRead::Missing };
-    let meta = std::fs::metadata(&file).ok();
-    let modified = meta.as_ref().and_then(|m| m.modified().ok());
-    if unreadable_since.is_some() && modified == unreadable_since {
-        return SizeRead::Unchanged;
+    page_sizes(document, vec![((stored.to_string(), page), unreadable_since)]).pop().map_or(SizeRead::Missing, |(_, r)| r)
+}
+
+/// The most PDFs, and pages, sized in one go: a drawing can cite thousands, and each PDF is read
+/// whole. Those left out keep no size.
+const MAX_SIZED_FILES: usize = 64;
+const MAX_SIZED_PAGES: usize = 1024;
+
+/// `pages` (stored path, page) grouped by PDF, within [`MAX_SIZED_FILES`] and [`MAX_SIZED_PAGES`]:
+/// each PDF is read once for all its pages. Also how many pages were left out.
+fn by_file<T>(pages: impl IntoIterator<Item = ((String, u32), T)>) -> (Vec<(String, Vec<(u32, T)>)>, usize) {
+    let mut files: Vec<(String, Vec<(u32, T)>)> = Vec::new();
+    let (mut taken, mut left) = (0, 0);
+    for ((stored, page), t) in pages {
+        let at = files.iter().position(|(f, _)| *f == stored);
+        if taken >= MAX_SIZED_PAGES || (at.is_none() && files.len() >= MAX_SIZED_FILES) {
+            left += 1;
+            continue;
+        }
+        taken += 1;
+        match at.and_then(|i| files.get_mut(i)) {
+            Some((_, ps)) => ps.push((page, t)),
+            None => files.push((stored, vec![(page, t)])),
+        }
     }
-    // Too large to read is no reason to try again: it stays so until the file changes.
-    if meta.is_some_and(|m| m.len() > MAX_PDF_BYTES) {
-        return SizeRead::Unreadable(modified, format!("{stored}: the file is larger than {} MB", MAX_PDF_BYTES / (1024 * 1024)));
+    (files, left)
+}
+
+/// The sizes of `pages` (stored path and page, with the modification time its PDF had when it
+/// was last found unreadable: while it has that time, it isn't read again) of the drawing saved
+/// at `document`. It reads files and nothing else, so it can run on a worker thread. Each PDF is
+/// read once; past [`MAX_SIZED_FILES`] or [`MAX_SIZED_PAGES`], pages are left out of the answer.
+pub fn page_sizes(document: Option<&str>, pages: Vec<((String, u32), Option<std::time::SystemTime>)>) -> Vec<((String, u32), SizeRead)> {
+    let (files, _) = by_file(pages);
+    let mut read = Vec::new();
+    for (stored, pages) in files {
+        let answer = |r: &dyn Fn(u32) -> SizeRead| pages.iter().map(|(page, _)| ((stored.clone(), *page), r(*page))).collect::<Vec<_>>();
+        let (Some(hooks), Ok(file)) = (pdf(), underlay_file(&stored, document)) else {
+            read.extend(answer(&|_| SizeRead::Missing));
+            continue;
+        };
+        let meta = std::fs::metadata(&file).ok();
+        let modified = meta.as_ref().and_then(|m| m.modified().ok());
+        if pages.iter().all(|(_, since)| since.is_some() && *since == modified) {
+            read.extend(answer(&|_| SizeRead::Unchanged));
+            continue;
+        }
+        // Too large to read is no reason to try again: it stays so until the file changes.
+        if meta.is_some_and(|m| m.len() > MAX_PDF_BYTES) {
+            let why = format!("{stored}: the file is larger than {} MB", MAX_PDF_BYTES / (1024 * 1024));
+            read.extend(answer(&|_| SizeRead::Unreadable(modified, why.clone())));
+            continue;
+        }
+        let Ok(bytes) = read_pdf(&file.to_string_lossy()) else {
+            read.extend(answer(&|_| SizeRead::Missing));
+            continue;
+        };
+        read.extend(answer(&|page| match (hooks.page)(&bytes, page) {
+            Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
+                Some(size) => SizeRead::Found(size.native),
+                None => SizeRead::Unreadable(modified, format!("{stored}: page {page} has no usable size")),
+            },
+            Err(e) => SizeRead::Unreadable(modified, format!("{stored}: {e}")),
+        }));
     }
-    let Ok(bytes) = read_pdf(&file.to_string_lossy()) else { return SizeRead::Missing };
-    match (hooks.page)(&bytes, page) {
-        Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
-            Some(size) => SizeRead::Found(size.native),
-            None => SizeRead::Unreadable(modified, format!("{stored}: page {page} has no usable size")),
-        },
-        Err(e) => SizeRead::Unreadable(modified, format!("{stored}: {e}")),
-    }
+    read
 }
 
 /// Give the PDF underlays that have no page size theirs from `sizes` (by stored path and page),
@@ -269,49 +315,68 @@ fn set_sizes_in(st: &mut crate::DocState, sizes: &HashMap<(String, u32), Vec2>, 
 /// whether a size was set.
 pub fn retry_sizes(s: &mut Session) -> bool {
     let todo = unsized_pages(s);
-    let sizes: HashMap<(String, u32), Vec2> = todo
-        .pages
+    let sizes: HashMap<(String, u32), Vec2> = page_sizes(todo.document.as_deref(), todo.pages.into_iter().map(|p| (p, None)).collect())
         .into_iter()
-        .filter_map(|(stored, page)| match page_size(&stored, todo.document.as_deref(), page, None) {
-            SizeRead::Found(size) => Some(((stored, page), size)),
+        .filter_map(|(p, r)| match r {
+            SizeRead::Found(size) => Some((p, size)),
             _ => None,
         })
         .collect();
     set_sizes(s, todo.drawing, todo.document.as_deref(), &sizes)
 }
 
-/// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs; the PDFs
-/// that can't be read are reported when `report`. Returns whether a size was found.
+/// The most lines reporting the PDF underlays a drawing opened without (one per PDF or page).
+const MAX_NOTES: usize = 16;
+
+/// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs, each
+/// once (within [`MAX_SIZED_FILES`] and [`MAX_SIZED_PAGES`]); the PDFs that can't be read are
+/// reported when `report`, in at most [`MAX_NOTES`] lines and one counting the others. Returns
+/// whether a size was found.
 fn fill_sizes(s: &mut Session, i: usize, report: bool) -> bool {
     let Some(st) = s.docs.get_mut(i) else { return false };
     let todo = pages_without_size(&st.doc);
     if todo.is_empty() {
         return false;
     }
+    let (files, left) = by_file(todo.into_iter().map(|p| (p, ())));
     let mut sizes: HashMap<(String, u32), Vec2> = HashMap::new();
     let mut notes = Vec::new();
-    for (stored, page) in todo {
-        let size = underlay_file(&stored, st.path.as_deref()).and_then(|p| read_pdf(&p.to_string_lossy())).and_then(|b| {
-            pdf()
-                .ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build"))
-                .and_then(|h| (h.page)(&b, page).map_err(|e| bad("pdfattach", format!("{stored}: {e}"))))
-        });
-        match size {
-            Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
-                Some(size) => {
-                    sizes.insert((stored, page), size.native);
-                }
-                None => notes.push(format!("PDF underlay {stored}: page {page} has no usable size")),
-            },
+    for (stored, pages) in files {
+        let bytes = underlay_file(&stored, st.path.as_deref())
+            .and_then(|p| read_pdf(&p.to_string_lossy()))
+            .and_then(|b| pdf().map(|h| (h, b)).ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build")));
+        let (hooks, bytes) = match bytes {
+            Ok(read) => read,
             // The reason alone: the drawing is being opened, no command was typed.
-            Err(crate::EngineError::BadParams { msg, .. }) => notes.push(format!("PDF underlay not shown: {msg}")),
-            Err(e) => notes.push(format!("PDF underlay not shown: {e}")),
+            Err(crate::EngineError::BadParams { msg, .. }) => {
+                notes.push(format!("PDF underlay not shown: {msg}"));
+                continue;
+            }
+            Err(e) => {
+                notes.push(format!("PDF underlay not shown: {e}"));
+                continue;
+            }
+        };
+        for (page, ()) in pages {
+            match (hooks.page)(&bytes, page) {
+                Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
+                    Some(size) => {
+                        sizes.insert((stored.clone(), page), size.native);
+                    }
+                    None => notes.push(format!("PDF underlay {stored}: page {page} has no usable size")),
+                },
+                Err(e) => notes.push(format!("PDF underlay not shown: {stored}: {e}")),
+            }
         }
     }
     let found = set_sizes_in(st, &sizes, report);
     if report {
-        for n in notes {
+        let more = notes.len().saturating_sub(MAX_NOTES);
+        for n in notes.into_iter().take(MAX_NOTES) {
             s.echo(n);
+        }
+        if more + left > 0 {
+            s.echo(format!("PDF underlays not shown: {} more", more + left));
         }
     }
     found

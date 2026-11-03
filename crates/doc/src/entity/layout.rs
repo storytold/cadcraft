@@ -195,7 +195,11 @@ impl PdfUnderlay {
     /// A key telling apart the looks of the same page with different layers hidden (empty when
     /// none is set).
     pub fn layers_key(&self) -> String {
-        self.layers.iter().map(|l| format!("{}{}\u{1f}", if l.on { '+' } else { '-' }, l.name)).collect()
+        Self::key_of_layers(&self.layer_visibility())
+    }
+    /// [`PdfUnderlay::layers_key`] of the layers (name, shown) a page is read with.
+    pub fn key_of_layers(layers: &[(String, bool)]) -> String {
+        layers.iter().map(|(name, on)| format!("{}{name}\u{1f}", if *on { '+' } else { '-' })).collect()
     }
     /// Drawing point of page point `p` (in the page's own units, see [`PdfUnderlay::clip`]).
     pub fn to_drawing(&self, p: Vec2) -> Vec2 {
