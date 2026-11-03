@@ -11,19 +11,29 @@ const CALIBRATION_TIME: Duration = Duration::from_millis(400);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Report {
     /// Mask 1 = translation, 2 = rotation, 3 = a combined six-axis report.
-    Axes {
-        values: [i16; 6],
-        mask: u8,
-    },
-    Buttons(u8),
+    Axes { values: [i16; 6], mask: u8 },
+    /// The pressed buttons, bit 0 being button 1.
+    Buttons(u32),
 }
+
+/// Buttons a device can report: four payload bytes of the button report.
+const BUTTON_BYTES: usize = 4;
 
 /// hidapi includes the report ID. A legacy motion report has six payload bytes; combined
 /// report 1 has twelve. Windows may pad the short button report to the input-report size.
+/// The button report is a little-endian bit field of one byte (SpaceNavigator) or more (the
+/// SpaceMouse Pro has 15 buttons); the first four payload bytes are read, so at most 32 buttons.
 pub fn decode(bytes: &[u8]) -> Option<Report> {
     let (&id, payload) = bytes.split_first()?;
     if id == 3 {
-        return payload.first().copied().map(Report::Buttons);
+        if payload.is_empty() {
+            return None;
+        }
+        let mut mask = 0_u32;
+        for (shift, byte) in payload.iter().take(BUTTON_BYTES).enumerate() {
+            mask |= u32::from(*byte) << (8 * shift);
+        }
+        return Some(Report::Buttons(mask));
     }
     let (mask, offset, count) = match id {
         1 if payload.len() >= 12 => (3, 0, 6),
@@ -180,6 +190,23 @@ mod tests {
         bytes[0] = 2;
         assert_eq!(decode(&bytes), Some(Report::Axes { values: [0, 0, 0, 1, -2, 3], mask: 2 }));
         assert_eq!(decode(&[2, 1, 2, 3]), None, "too short for a rotation report");
+    }
+
+    #[test]
+    fn decode_buttons_reads_little_endian_bytes_up_to_32_buttons() {
+        assert_eq!(decode(&[3, 0]), Some(Report::Buttons(0)));
+        assert_eq!(decode(&[3, 0b11]), Some(Report::Buttons(0b11)), "SpaceNavigator: one byte");
+        // Padding after a one-byte report (Windows pads to the input-report size) changes nothing.
+        assert_eq!(decode(&[3, 1, 0, 0, 0, 0, 0]), Some(Report::Buttons(1)));
+        // Two bytes: button 9 is bit 0 of the second byte, button 15 (SpaceMouse Pro) bit 6.
+        assert_eq!(decode(&[3, 0, 1]), Some(Report::Buttons(1 << 8)));
+        assert_eq!(decode(&[3, 0x01, 0x40]), Some(Report::Buttons(1 | 1 << 14)));
+        // Four bytes reach button 32; a fifth byte (and anything after it) is ignored.
+        assert_eq!(decode(&[3, 0, 0, 0, 0x80]), Some(Report::Buttons(1 << 31)));
+        assert_eq!(decode(&[3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Some(Report::Buttons(u32::MAX)));
+        assert_eq!(decode(&[3, 0, 0, 0, 0, 0xff]), Some(Report::Buttons(0)));
+        // A maximum-length hostile report neither panics nor reads past four bytes.
+        assert_eq!(decode(&[3; 64]), Some(Report::Buttons(0x0303_0303)));
     }
 
     /// Sixteen complete reports at rest, spread over more than CALIBRATION_TIME, all stamped

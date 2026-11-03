@@ -1,4 +1,8 @@
 //! Host-independent 3D mouse preferences and navigation. Device I/O lives in the desktop app.
+//! [`bindings`] holds the button-to-command table and `buttons_ui` its section of the dialog.
+
+pub mod bindings;
+mod buttons_ui;
 
 use cadcraft_engine::View;
 use cadcraft_geom::Vec2;
@@ -6,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::CadApp;
+use bindings::Buttons;
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub enabled: bool,
@@ -16,11 +21,26 @@ pub struct Settings {
     /// Exponential zoom rate per second at full deflection.
     pub zoom_speed: f64,
     pub reverse_zoom: bool,
+    /// Flip the left/right (`x`) or up/down (`y`) direction of panning.
+    pub invert_pan_x: bool,
+    pub invert_pan_y: bool,
+    /// What each device button runs, by button number (from 1). An update replaces the whole
+    /// table; a button that is not listed does nothing. See [`bindings`].
+    #[serde(deserialize_with = "bindings::deserialize_buttons")]
+    pub buttons: Buttons,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { enabled: true, pan_speed: 0.8, zoom_speed: 1.6, reverse_zoom: false }
+        Self {
+            enabled: true,
+            pan_speed: 0.8,
+            zoom_speed: 1.6,
+            reverse_zoom: false,
+            invert_pan_x: false,
+            invert_pan_y: false,
+            buttons: bindings::default_buttons(),
+        }
     }
 }
 
@@ -59,11 +79,21 @@ pub struct State {
     pub detail: Option<String>,
     /// The native host consumes this request; no device I/O runs on the UI thread.
     pub calibrate_requested: bool,
+    /// Device buttons held down now (bit 0 is button 1), written by the native host. The dialog
+    /// highlights their rows so a user can tell which physical button is which.
+    pub held: u32,
+    /// The highest button number the device has reported this session (0 before any press).
+    pub highest_button: u8,
 }
 
 impl State {
+    /// Replaces the settings. Everything is checked first, so a refused update changes nothing.
     pub fn load_settings(&mut self, value: &Value) -> Result<(), String> {
-        let settings: Settings = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+        // serde would also read a JSON array as a struct, so `[]` would silently reset everything.
+        if !value.is_object() {
+            return Err("3D mouse settings must be a JSON object".into());
+        }
+        let mut settings: Settings = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
         if !settings.pan_speed.is_finite()
             || !(0.1..=3.0).contains(&settings.pan_speed)
             || !settings.zoom_speed.is_finite()
@@ -71,12 +101,42 @@ impl State {
         {
             return Err("3D mouse sensitivity must be between 0.1 and 3.0".into());
         }
+        bindings::validate_buttons(&mut settings.buttons)?;
         self.settings = settings;
         Ok(())
     }
 
+    /// Restores saved preferences. A binding this build cannot use (a command from another
+    /// version, a hand edit) is dropped on its own, so it does not cost the saved sensitivities.
+    pub fn load_prefs(&mut self, value: &Value) {
+        if self.load_settings(value).is_ok() {
+            return;
+        }
+        let Some(saved) = value.as_object() else { return };
+        let mut rest = saved.clone();
+        let buttons = rest.remove("buttons");
+        if self.load_settings(&Value::Object(rest)).is_err() {
+            return;
+        }
+        let Some(Value::Object(entries)) = buttons else { return };
+        let mut kept = Buttons::new();
+        for (key, entry) in entries {
+            let (Ok(index), Ok(mut binding)) = (key.parse::<u8>(), serde_json::from_value::<bindings::Binding>(entry)) else { continue };
+            if bindings::validate_binding(index, &mut binding).is_ok() {
+                kept.insert(index, binding);
+            }
+        }
+        self.settings.buttons = kept;
+    }
+
     fn summary(&self) -> Value {
-        json!({"settings": self.settings, "status": self.status, "device": self.device, "detail": self.detail})
+        json!({
+            "settings": self.settings,
+            "status": self.status,
+            "device": self.device,
+            "detail": self.detail,
+            "highestButton": self.highest_button,
+        })
     }
 }
 
@@ -132,7 +192,8 @@ fn navigate(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     Ok(json!({"center": [center.x, center.y], "height": height}))
 }
 
-/// 3D Mouse window showing connection status, detected device/detail and the navigation settings, with a Calibrate action.
+/// 3D Mouse window showing connection status, detected device/detail, the navigation settings and
+/// the button bindings, with a Calibrate action (which stays here even if the buttons are cleared).
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("3D Mouse")).id(egui::Id::unique("spacemouse")).open(open).resizable(false).show(ctx, |ui| {
         ui.label(crate::i18n::t(app.spacemouse.status.message()));
@@ -143,14 +204,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.label(detail);
         }
         ui.separator();
-        let mut settings = app.spacemouse.settings;
+        let mut settings = app.spacemouse.settings.clone();
         let mut changed = ui.checkbox(&mut settings.enabled, crate::tl!("Enable 3D mouse navigation")).changed();
         changed |= ui.add(egui::Slider::new(&mut settings.pan_speed, 0.1..=3.0).text(crate::tl!("Pan sensitivity"))).changed();
         changed |= ui.add(egui::Slider::new(&mut settings.zoom_speed, 0.1..=3.0).text(crate::tl!("Zoom sensitivity"))).changed();
         changed |= ui.checkbox(&mut settings.reverse_zoom, crate::tl!("Reverse zoom direction")).changed();
-        if changed {
-            let _ = app.run("ui.spacemouse", json!({"settings": settings}));
+        changed |= ui.checkbox(&mut settings.invert_pan_x, crate::tl!("Reverse left/right pan")).changed();
+        changed |= ui.checkbox(&mut settings.invert_pan_y, crate::tl!("Reverse up/down pan")).changed();
+        ui.separator();
+        changed |= buttons_ui::section(ui, &app.spacemouse, &mut settings);
+        if changed && let Err(error) = app.run("ui.spacemouse", json!({"settings": settings})) {
+            app.set_status(error);
         }
+        ui.separator();
         if ui
             .add_enabled(matches!(app.spacemouse.status, Status::Connected | Status::Calibrating), egui::Button::new(crate::tl!("Calibrate")))
             .clicked()
@@ -158,6 +224,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             let _ = app.run("ui.spacemouse.calibrate", Value::Null);
         }
         ui.label(crate::tl!("Move sideways to pan; push/pull or twist to zoom."));
-        ui.label(crate::tl!("Left device button: zoom extents. Right device button: calibrate."));
+        ui.label(crate::tl!("Press a device button to find its row. Calibrate always stays available here."));
     });
 }
+
+#[cfg(test)]
+mod tests;
