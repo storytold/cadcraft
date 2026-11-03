@@ -511,7 +511,9 @@ fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, bu
             continue;
         }
         // A curve with no segment costs a visit too, so many of them can't multiply the searches.
-        *budget = budget.checked_sub(1).ok_or(())?;
+        if other.len() < 2 {
+            *budget = budget.checked_sub(1).ok_or(())?;
+        }
         for (k, w) in other.windows(2).enumerate() {
             if *budget == 0 {
                 return Err(());
