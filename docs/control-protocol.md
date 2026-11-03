@@ -226,7 +226,8 @@ or a UI command, case-insensitive; `params` is an optional JSON object of at mos
 levels, passed to the command as `engine.execute` would (`{}` when omitted). A press runs the
 command like any other call, so commands that need parameters or a drawing report their error on
 the status line. A binding cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
-`ui.spacemouse.navigate`), `ui.quit` or `ui.noop`. Presses run only while `enabled` is on and the app
+`ui.spacemouse.navigate`), `ui.quit`, `ui.noop` or the recent-file commands (`ui.recent.*`, including
+`ui.recent.clear`). Presses run only while `enabled` is on and the app
 could navigate (window focused, no dialog or popup open, a drawing shown, not on the start tab). The
 exception is a button bound to `ui.spacemouse.calibrate`, which skips that whole check: it also works
 while a dialog is open, the window is unfocused, the start tab is showing or `enabled` is off. The
