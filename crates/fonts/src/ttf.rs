@@ -553,7 +553,7 @@ fn key(name: &str) -> String {
 /// Names that mean a stroke font: never looked up as TrueType.
 fn is_stroke_name(k: &str) -> bool {
     k.is_empty()
-        || k == ".shx"
+        || k.ends_with(".shx")
         || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
         || k == crate::BUILTIN_FONT.to_ascii_lowercase()
         || k == "txt"
@@ -1044,7 +1044,7 @@ mod family_tests {
 
     #[test]
     fn dotfile_shx_names_are_stroke_names() {
-        for name in [".shx", ".shx.ttf", ".SHX", ".SHX.TTF"] {
+        for name in [".shx", ".shx.ttf", ".SHX", ".SHX.TTF", "sub/.shx", "sub/.SHX"] {
             assert!(is_stroke_name(&key(name)), "{name}");
         }
     }
