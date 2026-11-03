@@ -89,8 +89,9 @@ impl FrameCap {
 }
 
 /// Samples per pixel of the window's render pass (eframe `NativeOptions::
-/// multisampling`). The app sets it before the window opens, so the canvas pipelines match the
-/// pass; 1 (no multisampling) unless set. With 4 the hairlines and edges are anti-aliased
+/// multisampling`). The native app sets it before the window opens (4, or `CADCRAFT_MSAA`), so
+/// the canvas pipelines match the pass; 1 (no multisampling) when [`set_msaa_samples`] is never
+/// called, as in the web app and the tests. With 4 the hairlines and edges are anti-aliased
 /// instead of drawn with stair-steps.
 static MSAA_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 

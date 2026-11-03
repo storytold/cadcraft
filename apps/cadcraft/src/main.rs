@@ -296,7 +296,8 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
-    // 4x multisampling anti-aliases the drawing's lines (CADCRAFT_MSAA=1 turns it off).
+    // 4x multisampling anti-aliases the drawing's lines by default; CADCRAFT_MSAA=1, 2, 4 or 8
+    // chooses the count (1 turns it off) and any other value keeps 4.
     let msaa: u16 = match std::env::var("CADCRAFT_MSAA").ok().and_then(|v| v.trim().parse::<u16>().ok()) {
         Some(n) if matches!(n, 1 | 2 | 4 | 8) => n,
         _ => 4,
