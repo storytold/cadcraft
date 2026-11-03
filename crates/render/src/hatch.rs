@@ -367,6 +367,7 @@ pub fn reads_solid(d: &Drawing, h: &Hatch, px: f64) -> bool {
 /// `px`: a pixel in the hatch's units for the level of detail (a dash or dot repeat under two
 /// pixels is one continuous run); 0 = full detail, as plots, exports and picks use. `view`: only
 /// the part of the hatch inside it is generated; `None` = all of it.
+#[cfg(test)]
 pub fn pattern_lines(d: &Drawing, h: &Hatch, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>) -> Vec<Vec<Vec2>> {
     pattern_lines_until(d, h, loops, px, view, None)
 }
@@ -381,6 +382,21 @@ pub(crate) fn pattern_lines_until(
     view: Option<&Bounds2>,
     cancel: Option<&AtomicBool>,
 ) -> Vec<Vec<Vec2>> {
+    pattern_lines_within(d, h, loops, px, view, cancel, MAX_RUNS, MAX_HATCH_WORK)
+}
+
+/// [`pattern_lines_until`] with the most runs and the dash-work allowance given.
+#[allow(clippy::too_many_arguments)]
+fn pattern_lines_within(
+    d: &Drawing,
+    h: &Hatch,
+    loops: &[Vec<Vec2>],
+    px: f64,
+    view: Option<&Bounds2>,
+    cancel: Option<&AtomicBool>,
+    max_runs: usize,
+    work_limit: u64,
+) -> Vec<Vec<Vec2>> {
     let lines = lines_of(d, h);
     let scale = scale_of(h);
     let px = if px.is_finite() && px > 0.0 { px } else { 0.0 };
@@ -388,7 +404,7 @@ pub(crate) fn pattern_lines_until(
     // Shared work budget across all families and spans, counting dash-processing steps even when
     // they emit no geometry: gap-only families produce no runs, so `out.len()` alone cannot bound
     // their cost (CWE-400).
-    let mut work: u64 = MAX_HATCH_WORK;
+    let mut work: u64 = work_limit;
     for fam in &lines {
         // A family with dashes but no positive (ink) element can never draw: skip it so its gaps
         // are not swept at all.
@@ -403,8 +419,8 @@ pub(crate) fn pattern_lines_until(
             continue;
         }
         let dashes: Vec<f64> = fam.dashes.iter().map(|d| d * scale).collect();
-        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
-        if out.len() >= MAX_RUNS || work == 0 || is_set(cancel) {
+        Family { max_runs, origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
+        if out.len() >= max_runs || work == 0 || is_set(cancel) {
             break;
         }
     }
@@ -415,6 +431,8 @@ pub(crate) fn pattern_lines_until(
 const SWATCH_REPEATS: f64 = 6.0;
 /// Most runs a swatch holds.
 const MAX_SWATCH_RUNS: usize = 4000;
+/// The dash-work allowance of a swatch (a hatch's is [`MAX_HATCH_WORK`]).
+const MAX_SWATCH_WORK: u64 = 2_000_000;
 
 /// A preview of a pattern for a pattern picker: the runs of its line families `lines` inside the
 /// `side` × `side` square with a corner at the origin, at a scale that shows a few repeats of the
@@ -441,14 +459,19 @@ pub fn pattern_swatch(lines: &[PatternLine], side: f64) -> Vec<Vec<Vec2>> {
         pattern_lines: lines.to_vec(),
     };
     let square = vec![Vec2::new(0.0, 0.0), Vec2::new(side, 0.0), Vec2::new(side, side), Vec2::new(0.0, side)];
-    let mut runs = pattern_lines(&Drawing::default(), &h, &[square], 0.0, None);
+    // The generator stops at the swatch's own limits, so a compact pattern is never made in full
+    // (about a million runs) to keep a few thousand.
+    let mut runs = pattern_lines_within(&Drawing::default(), &h, &[square], 0.0, None, None, MAX_SWATCH_RUNS, MAX_SWATCH_WORK);
     runs.truncate(MAX_SWATCH_RUNS);
+    runs.shrink_to_fit();
     runs
 }
 
 /// One pattern line family, scaled and placed: parallel lines `spacing` apart through `origin`
 /// at angle `ang`, each shifted along itself by `delta`'s along-line part from the last.
 struct Family<'a> {
+    /// Most runs the hatch may hold in all ([`MAX_RUNS`], less for a swatch).
+    max_runs: usize,
     origin: Vec2,
     ang: f64,
     delta: Vec2,
@@ -487,6 +510,12 @@ impl Family<'_> {
 
     /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
     fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+        // Transforming the boundary is charged before it is done, at the scanline rate (one unit per 8 vertices).
+        let verts: u64 = loops.iter().map(|l| l.len() as u64).sum();
+        if *work == 0 {
+            return;
+        }
+        *work = work.saturating_sub(verts / 8 + 1);
         let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
         let bb = Bounds2::from_points(local.iter().flatten().copied());
         if bb.is_empty() {
@@ -505,10 +534,15 @@ impl Family<'_> {
         // family draws anything at all).
         let draws = self.dashes.iter().any(|d| *d >= 0.0);
         let solid_line = self.dashes.is_empty() || pat_len < 1e-12 || (px > 0.0 && pat_len < 2.0 * px && draws);
+        // Each scanline visits every boundary edge and sorts the crossings: that costs the shared
+        // allowance one unit per 8 edges (a 5,000-edge boundary swept by 10,000 lines uses about
+        // 6 million of its 50 million), whether or not any dash is made.
+        let edges: u64 = local.iter().map(|l| l.len() as u64).sum();
         for k in k0..=k1 {
-            if out.len() >= MAX_RUNS || *work == 0 || is_set(cancel) {
+            if out.len() >= self.max_runs || *work == 0 || is_set(cancel) {
                 return;
             }
+            *work = work.saturating_sub(edges / 8 + 1);
             let y = k as f64 * self.spacing;
             let xs = crossings(&local, y);
             let offset = shift_per_line * k as f64;
@@ -539,7 +573,7 @@ impl Family<'_> {
             for d in self.dashes {
                 guard += 1;
                 *work = work.saturating_sub(1);
-                if guard > 100_000 || out.len() >= MAX_RUNS || *work == 0 {
+                if guard > 100_000 || out.len() >= self.max_runs || *work == 0 {
                     break 'outer;
                 }
                 let len = d.abs();
