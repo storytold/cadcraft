@@ -592,6 +592,24 @@ mod tests {
     }
 
     #[test]
+    fn a_block_of_rays_and_construction_lines_is_framed_on_their_base_points() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let r = app.session.execute("ray", &json!({"base": [10, 20], "through": [11, 20]})).unwrap();
+        let x = app.session.execute("xline", &json!({"base": [30, 40], "ver": true})).unwrap();
+        let hs = [r["handle"].as_str().unwrap().to_string(), x["handle"].as_str().unwrap().to_string()];
+        app.session.execute("block", &json!({"name": "Guides", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+
+        let list = super::block_preview(&mut app, "Guides").expect("a preview");
+        assert_eq!(list.prims.len(), 2);
+        let b = list.bounds;
+        assert!(!b.is_empty());
+        for q in [Vec2::new(10.0, 20.0), Vec2::new(30.0, 40.0)] {
+            assert!(b.contains(q), "{q:?} in {b:?}");
+        }
+        assert!(b.width() > 20.0 && b.height() > 20.0, "{b:?}");
+    }
+
+    #[test]
     fn a_block_row_spans_the_window_width() {
         let ctx = egui::Context::default();
         let mut widths = None;

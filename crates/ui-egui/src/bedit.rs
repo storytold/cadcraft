@@ -125,15 +125,30 @@ fn preview(app: &mut CadApp, name: &str) -> Option<Arc<DisplayList>> {
 
 /// The display list of block `name` in `d` for a preview `px` points across: a rough build for
 /// the extents, then one at about half a pixel's tolerance. [`CURRENT_DRAWING`] is model space.
+/// Rays and construction lines add nothing to a list's extents; with nothing else to frame, the
+/// preview frames their base points.
 pub(crate) fn build_preview(d: &Drawing, name: &str, px: f64) -> Option<DisplayList> {
     let entities = if name.eq_ignore_ascii_case(CURRENT_DRAWING) { &d.model } else { &d.block(name)?.entities };
-    let rough = cadcraft_render::build_entities(d, entities.iter().map(|e| e.as_ref()), &cadcraft_render::Options::default());
+    let mut rough = cadcraft_render::build_entities(d, entities.iter().map(|e| e.as_ref()), &cadcraft_render::Options::default());
     if rough.bounds.is_empty() {
+        rough.bounds = infinite_frame(&rough);
         return Some(rough);
     }
     let size = rough.bounds.width().max(rough.bounds.height());
     let opts = cadcraft_render::Options { tolerance: (size / (2.0 * px.max(1.0))).max(1e-9), ..Default::default() };
     Some(cadcraft_render::build_entities(d, entities.iter().map(|e| e.as_ref()), &opts))
+}
+
+/// A frame around the base points of `list`'s rays and construction lines, padded by half their
+/// spread (at least one drawing unit) so each line crosses the preview; empty when it has none.
+fn infinite_frame(list: &DisplayList) -> cadcraft_geom::Bounds2 {
+    let bases =
+        list.prims.iter().filter(|p| matches!(p.kind, cadcraft_render::Kind::Infinite { .. })).filter_map(|p| list.points(p).first().copied());
+    let b = cadcraft_geom::Bounds2::from_points(bases.filter(|q| q.x.is_finite() && q.y.is_finite()));
+    if b.is_empty() {
+        return b;
+    }
+    b.expand((b.width() + b.height()).max(2.0) / 2.0)
 }
 
 /// Draw `list` fitted into a box of `size`, or `note` when there is nothing to draw.
