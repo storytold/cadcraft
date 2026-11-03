@@ -4,7 +4,10 @@
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 mod motion;
 
-use cadcraft_ui_egui::{CadApp, spacemouse::Status};
+use cadcraft_ui_egui::{
+    CadApp,
+    spacemouse::{Status, bindings},
+};
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::time::Duration;
 use std::{
@@ -24,7 +27,10 @@ struct Shared {
     motion: motion::Motion,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     last_report: Option<Instant>,
-    buttons: u8,
+    /// Buttons that went down since the last poll (bit 0 is button 1).
+    pressed: u32,
+    /// Buttons down now.
+    held: u32,
     recalibrate: bool,
 }
 
@@ -73,7 +79,7 @@ impl SpaceMouse {
         if changed && !matches!(shared.status, Status::Unavailable | Status::Searching) {
             app.set_status(cadcraft_ui_egui::i18n::tr(app.language(), shared.status.message()));
         }
-        let buttons = std::mem::take(&mut shared.buttons);
+        let (pressed, held) = (std::mem::take(&mut shared.pressed), shared.held);
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         let motion = if shared.last_report.is_some_and(|at| now.saturating_duration_since(at) < Duration::from_millis(250)) {
             shared.motion
@@ -81,6 +87,9 @@ impl SpaceMouse {
             motion::Motion::default()
         };
         drop(shared);
+        app.spacemouse.held = held;
+        let highest = u8::try_from(u32::BITS - (held | pressed).leading_zeros()).unwrap_or(u8::MAX);
+        app.spacemouse.highest_button = app.spacemouse.highest_button.max(highest);
         let allowed = app.spacemouse.settings.enabled
             && ctx.input(|i| i.focused)
             && !app.ui.start_tab
@@ -88,23 +97,30 @@ impl SpaceMouse {
             && app.closing.is_none()
             && app.canvas.rect.is_some()
             && !egui::Popup::is_any_open(ctx);
-        if allowed && buttons & 1 != 0 {
-            let _ = app.run("zoom", serde_json::json!({"mode": "extents"}));
+        // Pressed edges run their bindings (recalibrating even when navigation is not allowed).
+        let fired: Vec<_> = bindings::fired(&app.spacemouse.settings.buttons, pressed, allowed).into_iter().cloned().collect();
+        for binding in fired {
+            if let Err(error) = bindings::run_binding(app, &binding) {
+                app.set_status(error);
+            }
         }
+        // A bound `ui.spacemouse.calibrate` raised the request after the check above.
+        self.forward_calibrate_request(app);
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             let moving = allowed && motion.active();
             if moving {
                 if self.moving {
-                    let settings = app.spacemouse.settings;
+                    let settings = &app.spacemouse.settings;
                     let rate = if settings.reverse_zoom { -settings.zoom_speed } else { settings.zoom_speed };
-                    if let Err(error) = app.run(
-                        "ui.spacemouse.navigate",
-                        serde_json::json!({
-                            "pan": motion.pan.map(|v| v * settings.pan_speed * elapsed),
-                            "zoom": (motion.zoom * rate * elapsed).exp()
-                        }),
-                    ) {
+                    let flip = |inverted: bool| if inverted { -1.0 } else { 1.0 };
+                    let pan = [
+                        motion.pan[0] * settings.pan_speed * elapsed * flip(settings.invert_pan_x),
+                        motion.pan[1] * settings.pan_speed * elapsed * flip(settings.invert_pan_y),
+                    ];
+                    if let Err(error) =
+                        app.run("ui.spacemouse.navigate", serde_json::json!({"pan": pan, "zoom": (motion.zoom * rate * elapsed).exp()}))
+                    {
                         app.set_status(error);
                     }
                 }
@@ -114,6 +130,17 @@ impl SpaceMouse {
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let _ = elapsed;
+    }
+}
+
+impl SpaceMouse {
+    /// Passes a pending Calibrate request (the dialog button or a bound button) to the device thread.
+    fn forward_calibrate_request(&self, app: &mut CadApp) {
+        if std::mem::take(&mut app.spacemouse.calibrate_requested)
+            && let Ok(mut shared) = self.shared.lock()
+        {
+            shared.recalibrate = true;
+        }
     }
 }
 
@@ -138,7 +165,14 @@ fn set_status(shared: &Mutex<Shared>, ctx: &egui::Context, status: Status, devic
     state.detail = detail;
     state.motion = motion::Motion::default();
     state.last_report = None;
-    state.buttons = 0;
+    // Recalibrating is often started by a button that is still down, and the device thread keeps its
+    // own mask without re-reporting a steady hold, so forgetting the buttons here would lose the held
+    // highlight and a press that lands before the next poll. Any other change means the device went
+    // away or restarted, so its buttons are forgotten.
+    if status != Status::Calibrating {
+        state.pressed = 0;
+        state.held = 0;
+    }
     drop(state);
     ctx.request_repaint();
 }
@@ -210,11 +244,12 @@ fn read_device(device: &hidapi::HidDevice, shared: &Mutex<Shared>, stop: &Atomic
         let mut wake = false;
         match report {
             Some(motion::Report::Buttons(next)) => {
-                let pressed = next & !buttons;
+                // Which button does what is the UI thread's business (`bindings::fired`); the
+                // device thread only reports edges and what is held.
+                state.pressed |= next & !buttons;
+                state.held = next;
+                wake = next != buttons;
                 buttons = next;
-                state.buttons |= pressed & 1;
-                state.recalibrate |= pressed & 2 != 0;
-                wake = pressed != 0;
             }
             Some(motion::Report::Axes { values, mask }) => {
                 let motion = filter.update(values, mask, now);
@@ -239,4 +274,33 @@ fn read_device(device: &hidapi::HidDevice, shared: &Mutex<Shared>, stop: &Atomic
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    fn connected_with_buttons(held: u32, pressed: u32) -> Mutex<Shared> {
+        Mutex::new(Shared { status: Status::Connected, device: Some("SpaceNavigator".into()), held, pressed, ..Shared::default() })
+    }
+
+    #[test]
+    fn recalibrating_keeps_the_held_and_pressed_buttons() {
+        // Button 2 (bound to calibrate) is held while button 1 was just pressed and not yet polled.
+        let shared = connected_with_buttons(0b10, 0b01);
+        set_status(&shared, &egui::Context::default(), Status::Calibrating, Some("SpaceNavigator".into()), None);
+        let state = shared.lock().expect("lock");
+        assert_eq!(state.status, Status::Calibrating);
+        assert_eq!((state.held, state.pressed), (0b10, 0b01), "buttons survive a recalibration");
+    }
+
+    #[test]
+    fn losing_or_failing_the_device_forgets_the_buttons() {
+        for status in [Status::Disconnected, Status::OpenFailed, Status::Error, Status::Searching] {
+            let shared = connected_with_buttons(0b10, 0b01);
+            set_status(&shared, &egui::Context::default(), status, None, None);
+            let state = shared.lock().expect("lock");
+            assert_eq!((state.held, state.pressed), (0, 0), "{status:?} clears the buttons");
+        }
+    }
 }

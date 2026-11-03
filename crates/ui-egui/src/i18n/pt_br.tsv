@@ -1462,3 +1462,14 @@ menu	Dimension	Cota
 menu	Draw	Desenho
 menu	Modify	Modificar
 menu	View	Exibir
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Botões
+	Button {n}	Botão {n}
+	Parameters, set through the ui.spacemouse control method	Parâmetros, definidos pelo método de controle ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Pressione um botão do dispositivo para encontrar sua linha. Calibrar fica sempre disponível aqui.
+	Reset all bindings	Redefinir todas as atribuições
+	Reset	Redefinir
+	Restore this button's default	Restaurar o padrão deste botão
+	Reverse left/right pan	Inverter pan esquerda/direita
+	Reverse up/down pan	Inverter pan para cima/baixo
+	Search commands	Pesquisar comandos

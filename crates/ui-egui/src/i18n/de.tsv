@@ -1053,3 +1053,14 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Tasten
+	Button {n}	Taste {n}
+	Parameters, set through the ui.spacemouse control method	Parameter, gesetzt über die Steuerungsmethode ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Drücken Sie eine Taste am Gerät, um ihre Zeile zu finden. Kalibrieren ist hier immer verfügbar.
+	Reset all bindings	Alle Tastenbelegungen zurücksetzen
+	Reset	Zurücksetzen
+	Restore this button's default	Standardbelegung dieser Taste wiederherstellen
+	Reverse left/right pan	Schwenken links/rechts umkehren
+	Reverse up/down pan	Schwenken oben/unten umkehren
+	Search commands	Befehle suchen

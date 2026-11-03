@@ -1358,3 +1358,14 @@ menu	View	Nézet
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Gombok
+	Button {n}	{n}. gomb
+	Parameters, set through the ui.spacemouse control method	Paraméterek, a ui.spacemouse vezérlési módszerrel állíthatók be
+	Press a device button to find its row. Calibrate always stays available here.	Nyomj meg egy gombot az eszközön, hogy megtaláld a sorát. A Kalibrálás itt mindig elérhető.
+	Reset all bindings	Összes hozzárendelés visszaállítása
+	Reset	Visszaállítás
+	Restore this button's default	A gomb alapértelmezésének visszaállítása
+	Reverse left/right pan	Bal/jobb mozgatás megfordítása
+	Reverse up/down pan	Fel/le mozgatás megfordítása
+	Search commands	Parancsok keresése

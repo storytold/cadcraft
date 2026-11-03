@@ -195,3 +195,46 @@ retained and the result's `shown` is `en`. `ui.set` also accepts
 `{"interfaceLanguage":"uk"}`; `ui.inspect` reports the saved choice in its UI state.
 Invalid choices leave the current language unchanged. Menus, command labels and prompt text
 returned by the control channel retain their English source text. See [localization.md](localization.md).
+
+## 3D mouse
+
+The 3D Mouse settings (Tools ▸ 3D Mouse…) are read and changed with the UI command `ui.spacemouse`,
+through `engine.execute`. Without parameters it opens the dialog; either way it replies with the
+settings, the device `status`, `device` and `detail`, and `highestButton` (the highest button number
+the device has reported this session, 0 before any press).
+
+```json
+{"id":1,"method":"engine.execute","params":{"command":"ui.spacemouse","params":{"settings":{
+  "enabled": true, "panSpeed": 0.8, "zoomSpeed": 1.6, "reverseZoom": false,
+  "invertPanX": false, "invertPanY": false,
+  "buttons": {
+    "1": {"command": "zoom", "params": {"mode": "extents"}},
+    "2": {"command": "ui.spacemouse.calibrate"},
+    "3": {"command": "undo"}
+  }}}}}
+```
+
+`settings` replaces all the settings: a field left out gets its default, and the update is refused
+as a whole (`ok: false`, nothing changes) if any part is invalid. Sensitivities are 0.1 to 3.0.
+`buttons` is the complete table of device buttons, numbered from 1 up to 32 as in the dialog's
+Buttons section. A button that is missing or `null` does nothing, and `"buttons": {}` clears them
+all. The defaults are button 1 = `zoom` with `{"mode": "extents"}` and button 2 =
+`ui.spacemouse.calibrate`, what the buttons did before they were configurable.
+
+A binding is `{command, params?}`. `command` is the id of an engine command (see `engine.commands`)
+or a UI command, case-insensitive; `params` is an optional JSON object of at most 4096 bytes and 8
+levels. Without `params` (or with `{}`) a press starts the command as a menu or toolbar click would:
+Close, Close All and Save ask about unsaved changes first, and interactive commands such as `line`
+begin their prompts. With `params` a press is a programmatic call that runs the command with exactly
+those parameters, as `engine.execute` would. Either way an error appears on the status line. A
+binding cannot run the 3D mouse settings or navigation (`ui.spacemouse`,
+`ui.spacemouse.navigate`), `ui.quit`, `ui.noop` or the recent-file commands (`ui.recent.*`, including
+`ui.recent.clear`). Presses run only while `enabled` is on and the app
+could navigate (window focused, no dialog or popup open, a drawing shown, not on the start tab). The
+exception is a button bound to `ui.spacemouse.calibrate`, which skips that whole check: it also works
+while a dialog is open, the window is unfocused, the start tab is showing or `enabled` is off. When
+several buttons are pressed together, a press does nothing once an earlier one has opened an
+unsaved-changes prompt or a dialog, calibrate excepted. The Calibrate button of the dialog and the `ui.spacemouse.calibrate` command do not depend on the table,
+so clearing every binding never removes recalibration.
+
+Settings other than the defaults are saved with the interface preferences.

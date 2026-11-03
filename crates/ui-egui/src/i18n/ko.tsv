@@ -1256,3 +1256,14 @@ menu	Modify	수정
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	버튼
+	Button {n}	버튼 {n}
+	Parameters, set through the ui.spacemouse control method	매개변수는 ui.spacemouse 제어 메서드를 통해 설정합니다
+	Press a device button to find its row. Calibrate always stays available here.	장치의 버튼을 누르면 해당 행을 찾을 수 있습니다. 보정은 항상 여기에서 사용할 수 있습니다.
+	Reset all bindings	모든 할당 초기화
+	Reset	초기화
+	Restore this button's default	이 버튼을 기본값으로 복원
+	Reverse left/right pan	좌우 초점 이동 반전
+	Reverse up/down pan	상하 초점 이동 반전
+	Search commands	명령 검색

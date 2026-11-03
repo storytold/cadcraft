@@ -1026,3 +1026,21 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	3D Mouse	Souris 3D
+	Buttons	Boutons
+	Button {n}	Bouton {n}
+	Calibrate	Calibrer
+	Enable 3D mouse navigation	Activer la navigation à la souris 3D
+	Move sideways to pan; push/pull or twist to zoom.	Déplacez latéralement pour faire un panoramique ; poussez, tirez ou tournez pour zoomer.
+	Pan sensitivity	Sensibilité du panoramique
+	Parameters, set through the ui.spacemouse control method	Paramètres, définis via la méthode de contrôle ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Appuyez sur un bouton de l'appareil pour trouver sa ligne. Calibrer reste toujours disponible ici.
+	Reset all bindings	Réinitialiser toutes les affectations
+	Reset	Réinitialiser
+	Restore this button's default	Restaurer l'affectation par défaut du bouton
+	Reverse left/right pan	Inverser le panoramique gauche/droite
+	Reverse up/down pan	Inverser le panoramique haut/bas
+	Reverse zoom direction	Inverser le sens du zoom
+	Search commands	Rechercher des commandes
+	Zoom sensitivity	Sensibilité du zoom

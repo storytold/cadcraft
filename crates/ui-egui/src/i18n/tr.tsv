@@ -1361,3 +1361,14 @@ menu	View	Görünüm
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Düğmeler
+	Button {n}	Düğme {n}
+	Parameters, set through the ui.spacemouse control method	Parametreler, ui.spacemouse denetim yöntemiyle ayarlanır
+	Press a device button to find its row. Calibrate always stays available here.	Satırını bulmak için aygıttaki bir düğmeye basın. Kalibre Et burada her zaman kullanılabilir.
+	Reset all bindings	Tüm atamaları sıfırla
+	Reset	Sıfırla
+	Restore this button's default	Bu düğmenin varsayılanını geri yükle
+	Reverse left/right pan	Sola/sağa kaydırmayı ters çevir
+	Reverse up/down pan	Yukarı/aşağı kaydırmayı ters çevir
+	Search commands	Komut ara

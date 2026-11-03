@@ -498,7 +498,7 @@ impl CadApp {
             self.quickcalc.load_prefs(calculator);
         }
         if let Some(prefs) = v.get("spacemouse") {
-            let _ = self.spacemouse.load_settings(prefs);
+            self.spacemouse.load_prefs(prefs);
         }
         if let Some(t) = v.get("theme").and_then(Value::as_str).and_then(theme::ThemePref::parse) {
             self.ui.theme = t;

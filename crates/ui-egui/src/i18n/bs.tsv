@@ -1456,3 +1456,14 @@ menu	Modify	Izmijeni
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+# 3D Mouse dialog: Buttons section, pan inversion and related labels.
+	Buttons	Dugmad
+	Button {n}	Dugme {n}
+	Parameters, set through the ui.spacemouse control method	Parametri, postavljaju se putem upravljačke metode ui.spacemouse
+	Press a device button to find its row. Calibrate always stays available here.	Pritisnite dugme na uređaju da pronađete njegov red. Dugme „Kalibriraj” je ovdje uvijek dostupno.
+	Reset all bindings	Vrati sve dodjele na zadano
+	Reset	Vrati zadano
+	Restore this button's default	Vrati zadanu dodjelu ovog dugmeta
+	Reverse left/right pan	Obrni pomicanje pogleda lijevo/desno
+	Reverse up/down pan	Obrni pomicanje pogleda gore/dolje
+	Search commands	Traži naredbe
