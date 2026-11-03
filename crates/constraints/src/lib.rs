@@ -30,7 +30,7 @@ mod lm;
 mod model;
 mod residual;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cadcraft_doc::{Constraint, ConstraintKind, Drawing, GeomRef, Handle};
 use cadcraft_geom::Vec2;
@@ -169,10 +169,26 @@ pub fn name_in_use(d: &Drawing, name: &str) -> bool {
     d.parametric.parameters.iter().any(|p| p.name == name) || d.constraints.iter().any(|c| c.name == name)
 }
 
+/// Highest numbered default name [`next_name`] tries.
+const MAX_NAME_SUFFIX: u32 = 100_000;
+
 /// Next free parameter name for a dimensional constraint kind (`d1`, `rad2`, `ang1`, …).
 pub fn next_name(d: &Drawing, kind: ConstraintKind) -> String {
     let prefix = kind.name_prefix();
-    (1..=100_000).map(|i| format!("{prefix}{i}")).find(|n| !name_in_use(d, n)).unwrap_or_else(|| format!("{prefix}_x"))
+    // Collect the suffixes in use in one pass, then take the first free one: checking every
+    // candidate against every name is quadratic in the number of names (CWE-407). Only a
+    // suffix spelled as `format!("{prefix}{i}")` spells it counts (`d07` does not take `d7`).
+    let taken: HashSet<u32> = d
+        .parametric
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .chain(d.constraints.iter().map(|c| c.name.as_str()))
+        .filter_map(|n| n.strip_prefix(prefix))
+        .filter(|s| !s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|s| s.parse::<u32>().ok())
+        .collect();
+    (1..=MAX_NAME_SUFFIX).find(|i| !taken.contains(i)).map_or_else(|| format!("{prefix}_x"), |i| format!("{prefix}{i}"))
 }
 
 /// Next free constraint id.
