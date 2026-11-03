@@ -166,9 +166,11 @@ pub struct Autosaver {
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_beat: Option<f64>,
-    /// The lock file this app holds the system lock on, open for as long as the lock is wanted.
+    /// This app's lock files: one per folder, because SAVEFILEPATH can change while files remain
+    /// in the old folder. Each with the file it holds open for the system lock, or `None` where
+    /// locks don't work and only the file's age counts.
     #[cfg(not(target_arch = "wasm32"))]
-    lock: Option<(std::path::PathBuf, std::fs::File)>,
+    locks: Vec<(std::path::PathBuf, Option<std::fs::File>)>,
 }
 
 impl Autosaver {
@@ -185,7 +187,7 @@ impl Autosaver {
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
             #[cfg(not(target_arch = "wasm32"))]
-            lock: None,
+            locks: Vec::new(),
         }
     }
 
@@ -203,9 +205,9 @@ impl Autosaver {
         self.docs.values().filter_map(|t| t.file.clone()).collect()
     }
 
-    /// Why a drawing currently has no up-to-date recovery copy, for the host to show the user.
-    pub fn failure(&self) -> Option<&str> {
-        self.failed.values().next().map(String::as_str)
+    /// The drawings with no up-to-date recovery copy and why, for the host to show the user.
+    pub fn failures(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.failed.iter().map(|(uid, why)| (*uid, why.as_str()))
     }
 
     /// What to do at `now` (seconds, any fixed origin) with SAVETIME `minutes` and autosave folder
@@ -471,6 +473,12 @@ mod native {
             self.running.iter().any(|(_, h)| !h.is_finished())
         }
 
+        /// Whether a write's result hasn't been taken in yet, finished or not: the host needs
+        /// another [`Autosaver::tick`] to learn whether it failed.
+        pub fn results_pending(&self) -> bool {
+            !self.running.is_empty()
+        }
+
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
         /// so it is tried again SAVETIME later even if it doesn't change, and [`Autosaver::failure`]
@@ -569,23 +577,32 @@ mod native {
             }
         }
 
-        /// Refresh the lock file at `path`, taking the system lock on it first if this app doesn't
-        /// hold it there yet. Without one the file still works by its age.
+        /// Refresh this app's lock files, and start one at `path` if there isn't one yet, taking
+        /// the system lock on it if it can. Without that lock the file still works by its age.
+        /// Only trouble at `path` is an error: an older folder may be gone by now.
         fn refresh_lock(&mut self, path: &Path) -> std::io::Result<()> {
-            if let Some((held, file)) = &self.lock
-                && held == path
-            {
-                return file.set_modified(SystemTime::now());
-            }
-            self.lock = None;
             let id = std::process::id();
+            let mut current = None;
+            for (held, file) in &self.locks {
+                let refreshed = match file {
+                    Some(file) => file.set_modified(SystemTime::now()),
+                    None => std::fs::write(held, id.to_string()),
+                };
+                if held == path {
+                    current = Some(refreshed);
+                }
+            }
+            if let Some(refreshed) = current {
+                return refreshed;
+            }
             let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
             if file.try_lock().is_err() {
+                self.locks.push((path.to_path_buf(), None));
                 return std::fs::write(path, id.to_string());
             }
             file.set_len(0)?;
             file.write_all(format!("{id}{LOCK_HELD}").as_bytes())?;
-            self.lock = Some((path.to_path_buf(), file));
+            self.locks.push((path.to_path_buf(), Some(file)));
             Ok(())
         }
 
@@ -600,7 +617,10 @@ mod native {
                 discard(&path);
             }
             self.docs.clear();
-            self.lock = None;
+            for (path, file) in self.locks.drain(..) {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
             let dir = savefilepath();
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));

@@ -35,6 +35,9 @@ pub fn load_prefs(json: &str) {
 /// What the autosave failure notice says (see [`failure_notice`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AutosaveNotice {
+    /// The drawings it has told the user about. Another drawing's failure is news, even after
+    /// the notice was dismissed.
+    pub reported: std::collections::BTreeSet<u64>,
     pub message: String,
     /// The user closed it. The failure stays recorded so the notice doesn't come back on every
     /// retry; it does for the next failure after a write has worked.
@@ -100,22 +103,38 @@ impl CadApp {
             _ctx.request_repaint_after(wait);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        self.note_autosave_failure(_ctx);
+        {
+            // A write that fails while the app is idle must still reach the notice.
+            if self.autosave.as_ref().is_some_and(cadcraft_engine::autosave::Autosaver::results_pending) {
+                _ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            self.note_autosave_failure(_ctx);
+        }
     }
 
     /// Keep [`Self::autosave_notice`] in step with autosave: a new failure is said once at the
     /// command line and shown until it is dismissed or a write works.
     #[cfg(not(target_arch = "wasm32"))]
     fn note_autosave_failure(&mut self, ctx: &egui::Context) {
-        let failure = self.autosave.as_ref().and_then(|s| s.failure()).map(str::to_string);
-        match (failure, &mut self.autosave_notice) {
-            (None, notice) => *notice = None,
-            (Some(message), Some(n)) => n.message = message,
-            (Some(message), notice) => {
+        let failures: Vec<(u64, String)> = self.autosave.iter().flat_map(|s| s.failures()).map(|(uid, why)| (uid, why.to_string())).collect();
+        if failures.is_empty() {
+            self.autosave_notice = None;
+            return;
+        }
+        let notice =
+            self.autosave_notice.get_or_insert_with(|| AutosaveNotice { reported: Default::default(), message: String::new(), dismissed: false });
+        notice.reported.retain(|uid| failures.iter().any(|(failed, _)| failed == uid));
+        for (uid, message) in &failures {
+            if notice.reported.insert(*uid) {
                 self.session.echo(format!("Autosave failed: {message}"));
-                *notice = Some(AutosaveNotice { message, dismissed: false });
+                notice.message.clone_from(message);
+                notice.dismissed = false;
                 ctx.request_repaint();
             }
+        }
+        // The drawing it names recovered while another still fails.
+        if let Some((_, message)) = failures.first().filter(|_| !failures.iter().any(|(_, m)| *m == notice.message)) {
+            notice.message.clone_from(message);
         }
     }
 
