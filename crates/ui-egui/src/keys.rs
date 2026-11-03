@@ -30,8 +30,17 @@ const FIXED: &[&str] = &["copyclip", "cutclip", "pasteclip", "copybase", "pasteb
 /// The dialog name in `UiState::dialog`.
 pub const DIALOG: &str = "shortcuts";
 
+/// Whether two shortcuts are one key press. Outside macOS Ctrl is the command key, and one Ctrl
+/// press runs a Ctrl and a Cmd shortcut alike, so they are compared as Cmd.
 fn same(a: &KeyboardShortcut, b: &KeyboardShortcut) -> bool {
-    a.logical_key == b.logical_key && a.modifiers == b.modifiers
+    let pressed = |m: Modifiers| {
+        if !cfg!(target_os = "macos") && (m.ctrl || m.command || m.mac_cmd) {
+            Modifiers { ctrl: false, command: true, mac_cmd: false, ..m }
+        } else {
+            m
+        }
+    };
+    a.logical_key == b.logical_key && pressed(a.modifiers) == pressed(b.modifiers)
 }
 
 /// A registry shortcut string ("Cmd+Shift+G", "Alt+4", "F3") as a shortcut; `None` when empty or
@@ -521,16 +530,20 @@ mod tests {
     fn control_and_command_control_shortcuts_keep_their_control() {
         let mut user = UserKeys::new();
         assert_eq!(assign(&mut user, "line", "Ctrl+K"), Ok(vec![]));
-        assert_eq!(assign(&mut user, "circle", "Cmd+Ctrl+K"), Ok(vec![]));
-        assert_eq!(user.get("line").map(String::as_str), Some("Ctrl+K"));
+        // Outside macOS both are one Ctrl press, so Circle takes it from Line.
+        let lost = if cfg!(target_os = "macos") { vec![] } else { vec!["line".to_string()] };
+        assert_eq!(assign(&mut user, "circle", "Cmd+Ctrl+K"), Ok(lost));
         assert_eq!(user.get("circle").map(String::as_str), Some("Cmd+Ctrl+K"));
         let eff = effective(&user);
         let of = |id: &str| eff.iter().find(|(_, i)| i == id).map(|(s, _)| s.modifiers);
-        assert_eq!(of("line"), Some(Modifiers::CTRL));
         assert_eq!(of("circle"), Some(Modifiers { ctrl: true, command: true, mac_cmd: true, ..Modifiers::NONE }));
-        // Command+Control+K is tried before Control+K, which it holds too.
-        let at = |id: &str| eff.iter().position(|(_, i)| i == id);
-        assert!(at("circle") < at("line"));
+        if cfg!(target_os = "macos") {
+            assert_eq!(user.get("line").map(String::as_str), Some("Ctrl+K"));
+            assert_eq!(of("line"), Some(Modifiers::CTRL));
+            // Command+Control+K is tried before Control+K, which it holds too.
+            let at = |id: &str| eff.iter().position(|(_, i)| i == id);
+            assert!(at("circle") < at("line"));
+        }
     }
 
     #[test]
@@ -547,6 +560,19 @@ mod tests {
         // A table entry that runs a command's UI form belongs to that command (Cmd+O, OPEN).
         assert_eq!(assign(&mut user, "line", "Cmd+O"), Ok(vec!["open".to_string()]));
         assert_eq!(assign(&mut user, "line", "Cmd+8"), Ok(vec!["ui.toggle.quickcalc".to_string()]));
+    }
+
+    /// On Windows and Linux one Ctrl press runs a Ctrl and a Cmd shortcut alike, so they are one
+    /// key: giving it takes it from the command that had it, and preferences keep it once.
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn ctrl_and_cmd_are_one_key_outside_macos() {
+        let mut user = UserKeys::new();
+        assert_eq!(assign(&mut user, "line", "Ctrl+P"), Ok(vec!["plot".to_string()]));
+        assert_eq!(runs(&user, "Cmd+P").as_deref(), Some("line"));
+        assert_eq!(assign(&mut user, "circle", "Cmd+P"), Ok(vec!["line".to_string()]));
+        let user = from_prefs(&json!({"circle": "Cmd+K", "line": "Ctrl+K"}));
+        assert_eq!(user.values().filter(|k| !k.is_empty()).count(), 1, "{user:?}");
     }
 
     #[test]
