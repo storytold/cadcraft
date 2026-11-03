@@ -3,7 +3,7 @@
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services, dialogs, menus, theme};
-use egui::accesskit::Role;
+use egui::accesskit::{Action, ActionRequest, Role};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
@@ -111,8 +111,11 @@ fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
         std::fs::create_dir_all(&dir).unwrap();
         h.render().unwrap().save(dir.join("text-style-font-open.png")).unwrap();
     }
-    h.get_by_label(test_family).click();
-    h.run_steps(2);
+    let (target_node, target_tree) = h.get_by_label(test_family).accesskit_node().locate();
+    for action in [Action::ScrollIntoView, Action::Click] {
+        h.event(egui::Event::AccessKitActionRequest(ActionRequest { action, target_node, target_tree, data: None }));
+        h.run_steps(2);
+    }
     if let Some(dir) = std::env::var_os("CADCRAFT_STYLE_SHOTS") {
         let dir = std::path::PathBuf::from(dir);
         h.render().unwrap().save(dir.join("text-style-font-picked.png")).unwrap();
