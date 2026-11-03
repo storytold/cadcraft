@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 
 mod version;
 pub use version::Version;
@@ -181,8 +182,20 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
         return parse_binary_with_limit(body, max_tags);
     }
-    // Every group code takes two lines (code, value).
-    let tags = bytes.iter().filter(|&&b| b == b'\n').count().div_ceil(2);
+    // Count nonblank group-code/value pairs, stopping at EOF just as the parser does.
+    let mut lines = bytes.split(|&b| b == b'\n');
+    let mut tags = 0;
+    while let Some(code) = lines.next() {
+        let code = code.trim_ascii();
+        if code.is_empty() {
+            continue;
+        }
+        let Some(value) = lines.next() else { break };
+        tags += 1;
+        if code == b"0" && value.trim_ascii() == b"EOF" {
+            break;
+        }
+    }
     if tags > max_tags {
         return Err(DxfError::TooLarge { tags, limit: max_tags });
     }
@@ -264,7 +277,7 @@ pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
 #[allow(clippy::while_let_loop)]
 fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
-    let mut lines = text.lines().enumerate();
+    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
         let ct = code_line.trim();
@@ -409,17 +422,48 @@ pub fn write_ascii(tags: &[Tag]) -> String {
 /// characters as they are) or escaped as `\U+XXXX` (older versions, see [`write_ascii`]). Line
 /// breaks inside strings become spaces either way.
 pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
-    let mut out = String::with_capacity(tags.len() * 16);
+    let bytes = ascii(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) });
+    // Both forms are UTF-8 (the escaped one is ASCII).
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
+/// Write tags as pre-R2007 ASCII DXF with text in the code page `code_page` names (a
+/// `$DWGCODEPAGE` value such as `ANSI_1252`), as the DXF Reference describes for those versions:
+/// a character the code page has is written as its bytes, any other as a `\U+XXXX` escape. A
+/// code page CADCraft doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
+/// give [`write_ascii`]'s pure ASCII output. So does a file whose code page bytes happen to be
+/// valid UTF-8 (`СІ` in ANSI_1251 is D1 B2, U+0472), since readers, ours included, take an ASCII
+/// DXF that is valid UTF-8 as UTF-8.
+pub fn write_ascii_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
+    let bytes = ascii(tags, Strings::Escaped(codepage::encoder(code_page)));
+    if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
+        return ascii(tags, Strings::Escaped(None));
+    }
+    bytes
+}
+
+/// How a writer stores string values.
+#[derive(Clone, Copy)]
+enum Strings {
+    /// As they are (R2007+).
+    Utf8,
+    /// ASCII as it is, other characters in this code page when it has them, otherwise as
+    /// `\U+XXXX` escapes (before R2007).
+    Escaped(Option<codepage::Decoder>),
+}
+
+fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
+    let mut out = Vec::with_capacity(tags.len() * 16);
     for t in tags {
         let _ = write!(out, "{:>3}\r\n", t.code);
         match &t.value {
-            Value::Str(s) => escape_unicode(s, utf8, &mut out),
-            Value::Real(r) => out.push_str(&format_real(*r)),
-            Value::Int(i) => out.push_str(&i.to_string()),
-            Value::Bool(b) => out.push_str(&i64::from(*b).to_string()),
-            Value::Hex(h) => out.push_str(h),
+            Value::Str(s) => push_string(s, strings, &mut out),
+            Value::Real(r) => out.extend_from_slice(format_real(*r).as_bytes()),
+            Value::Int(i) => out.extend_from_slice(i.to_string().as_bytes()),
+            Value::Bool(b) => out.extend_from_slice(i64::from(*b).to_string().as_bytes()),
+            Value::Hex(h) => out.extend_from_slice(h.as_bytes()),
         }
-        out.push_str("\r\n");
+        out.extend_from_slice(b"\r\n");
     }
     out
 }
@@ -432,6 +476,16 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
 /// in [`write_ascii`]. A tag's value is converted to its code's kind, so a number written as text
 /// is stored as a number; a code outside the 16-bit range is skipped.
 pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
+    binary(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) })
+}
+
+/// Write tags as pre-R2007 binary DXF with text in the code page `code_page` names, as
+/// [`write_ascii_in`] does.
+pub fn write_binary_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
+    binary(tags, Strings::Escaped(codepage::encoder(code_page)))
+}
+
+fn binary(tags: &[Tag], strings: Strings) -> Vec<u8> {
     let mut out = Vec::with_capacity(BINARY_SENTINEL.len() + tags.len() * 12);
     out.extend_from_slice(BINARY_SENTINEL);
     for t in tags {
@@ -444,9 +498,9 @@ pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
                     Value::Str(s) => s.clone(),
                     v => v.as_str(),
                 };
-                let mut text = String::with_capacity(s.len());
-                escape_unicode(&s, utf8, &mut text);
-                out.extend(text.bytes().filter(|&b| b != 0));
+                let mut text = Vec::with_capacity(s.len());
+                push_string(&s, strings, &mut text);
+                out.extend(text.into_iter().filter(|&b| b != 0));
                 out.push(0);
             }
             Kind::Real => {
@@ -500,19 +554,27 @@ pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.starts_with(BINARY_SENTINEL)
 }
 
-/// Escape a string for a pre-R2007 DXF, whose text is in the `$DWGCODEPAGE` code page: ASCII
-/// stays as it is and every other character becomes `\U+XXXX` (a surrogate pair of escapes
-/// above U+FFFF), so the bytes are valid in any code page; with `utf8` they stay as they are.
-/// A backslash that would start a `\U+` or `\M+` sequence is written as `\U+005C` so the reader
-/// gives back the literal text. Line breaks become spaces.
-fn escape_unicode(s: &str, utf8: bool, out: &mut String) {
+/// A string value as `strings` stores it. Line breaks become spaces. Before R2007 the text is
+/// in the `$DWGCODEPAGE` code page: ASCII stays as it is, a character the code page has becomes
+/// its bytes, and every other one `\U+XXXX` (a surrogate pair of escapes above U+FFFF). Without
+/// a code page the result is ASCII, so it is valid in any code page. In every form a backslash
+/// that would start a `\U+` or `\M+` sequence is written as `\U+005C`, so the reader gives back
+/// the literal text (#2050). So is a double-byte character whose trail byte is 0x5C (`\`) in that
+/// place, such as Shift-JIS `表` or Big5 `許`: CADCraft decodes the code page before it looks for
+/// escapes, but a reader that looks first would take that byte and the `U+` after it for one.
+fn push_string(s: &str, strings: Strings, out: &mut Vec<u8>) {
     let chars: Vec<char> = s.chars().collect();
+    let escape_at = |j: usize| matches!(chars.get(j), Some('U' | 'M')) && chars.get(j + 1) == Some(&'+');
     for (i, &c) in chars.iter().enumerate() {
-        match c {
-            '\r' | '\n' => out.push(' '),
-            '\\' if matches!(chars.get(i + 1), Some('U' | 'M')) && chars.get(i + 2) == Some(&'+') => out.push_str("\\U+005C"),
-            c if utf8 || c.is_ascii() => out.push(c),
-            c => {
+        match (c, strings) {
+            ('\r' | '\n', _) => out.push(b' '),
+            ('\\', _) if escape_at(i + 1) => {
+                out.extend_from_slice(b"\\U+005C");
+            }
+            (c, Strings::Utf8) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+            (c, _) if c.is_ascii() => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+            (c, Strings::Escaped(Some(d))) if code_page_bytes(c, d, escape_at(i + 1), out) => {}
+            (c, Strings::Escaped(_)) => {
                 let mut units = [0u16; 2];
                 for u in c.encode_utf16(&mut units) {
                     let _ = write!(out, "\\U+{u:04X}");
@@ -520,6 +582,20 @@ fn escape_unicode(s: &str, utf8: bool, out: &mut String) {
             }
         }
     }
+}
+
+/// `c` in the code page `d`, if it has it, unless it is a double-byte character whose trail byte
+/// is 0x5C and an escape's `U+` or `M+` follows (`before_escape`): see [`push_string`].
+fn code_page_bytes(c: char, d: codepage::Decoder, before_escape: bool, out: &mut Vec<u8>) -> bool {
+    let start = out.len();
+    if !codepage::encode_char(c, d, out) {
+        return false;
+    }
+    if before_escape && out.len() - start > 1 && out.last() == Some(&b'\\') {
+        out.truncate(start);
+        return false;
+    }
+    true
 }
 
 /// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`.
@@ -579,6 +655,12 @@ mod tests {
                 assert_eq!(back[1..], tags[..], "binary utf8={utf8} {text}");
             }
         }
+    }
+
+    #[test]
+    fn blank_lines_do_not_consume_group_code_limit() {
+        let tags = parse_with_limit(b"0\nEOF\n\n\n", 1).expect("one group code should fit a limit of one");
+        assert_eq!(tags, vec![Tag::s(0, "EOF")]);
     }
 
     #[test]

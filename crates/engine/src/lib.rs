@@ -92,6 +92,12 @@ pub struct Session {
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
+    /// AREA and PERIMETER: the last area AREA or MEASUREGEOM measured (in their Add and Subtract
+    /// modes the running total) and that area's perimeter. Not saved, as in AutoCAD.
+    pub area: f64,
+    pub perimeter: f64,
+    /// DISTANCE: the last distance DIST or MEASUREGEOM measured (with Multiple points, the total).
+    pub distance: f64,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -142,6 +148,10 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// The object named with a point for the input a prompt picking one object is taking
+    /// ([`Session::input_object`]): a pick at exactly that point picks that object
+    /// ([`Session::pick_object`]).
+    pick_hint: Option<(Handle, Vec2)>,
 }
 
 impl Default for Session {
@@ -169,6 +179,9 @@ impl Session {
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
+            area: 0.0,
+            perimeter: 0.0,
+            distance: 0.0,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),
@@ -192,6 +205,7 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            pick_hint: None,
         }
     }
 
@@ -324,3 +338,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/support/temp_dir.rs"]
+mod temp_dir;

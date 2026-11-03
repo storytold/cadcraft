@@ -33,12 +33,21 @@ pub(super) fn sheet_first(l: &Layout) -> Vec<&Entity> {
     all().filter(sheet).chain(all().filter(|e| !sheet(e))).collect()
 }
 
+/// Paper units per paper-space unit of layout `l`: its custom plot scale (groups 142/143), so
+/// the sheet is as large in paper space as it plots (a 420 mm sheet at 49.6 mm per unit is 8.47
+/// units wide, #2108). 1 when it is scaled to fit or the scale is unusable.
+fn sheet_scale(l: &Layout) -> f64 {
+    let s = l.page.scale;
+    if l.page.scale_to_fit || !(s.is_finite() && (1e-6..=1e6).contains(&s)) { 1.0 } else { s }
+}
+
 /// The paper-space viewport (id 1) of the layout whose first viewport is `e`, if it needs one
 /// ([`paper_views`]): the whole sheet, viewed 1:1. Marked with CADCraft xdata so that our reader
 /// leaves it implicit again.
 pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
-    let size = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    let paper = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    let size = paper / sheet_scale(l);
     let center = size * 0.5;
     let h = w.h();
     w.s(0, "VIEWPORT");

@@ -270,7 +270,7 @@ impl Interactive for DviewM {
         match self.stage {
             Stage::Select if self.sel.removing => self.sel.prompt(),
             Stage::Select => Prompt::new("Select objects or", Accept::SELECT).default("use DVIEWBLOCK"),
-            Stage::Option => Prompt::new("Enter option", Accept::TEXT).kw(OPTIONS).options_only(),
+            Stage::Option => Prompt::new("Enter option", Accept::TEXT).kw(OPTIONS),
             Stage::Twist => {
                 let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
                 let cur = s.state().map(|st| st.view().twist).unwrap_or(0.0);

@@ -40,6 +40,17 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
+/// A prompt with options is translated without its own "or": the command line adds the
+/// translated " or [" before the options ("Select polyline or [Multiple]").
+#[test]
+fn prompts_with_options_leave_or_to_the_command_line() {
+    assert_eq!(format!("{}{}", tr("de", "Select polyline"), tr("de", " or [")), "Wählen Sie eine Polylinie oder [");
+    assert_eq!(format!("{}{}", tr("ko", "Specify helix height"), tr("ko", " or [")), "나선 높이 지정 또는 [");
+    assert_eq!(format!("{}{}", tr("zh", "Enter delta length"), tr("zh", " or [")), "输入增量长度 或 [");
+    assert_eq!(format!("{}{}", tr("vi", "Select polyline"), tr("vi", " or [")), "Chọn polyline hoặc [");
+    assert_eq!(format!("{}{}", tr("vi", "Specify base radius"), tr("vi", " or [")), "Chỉ định bán kính đáy hoặc [");
+}
+
 /// What each language shows in English for now. Missing translations never fail a build:
 /// `cargo xtask i18n`, a step of `cargo xtask ci`, runs this to print the list.
 #[test]
@@ -63,6 +74,8 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     let catalog = catalog(language).unwrap();
     let mut sources = BTreeSet::new();
     sources.extend(crate::menus::MENUS.iter().copied());
+    // File ▸ Open Recent is built at run time, not from a command's menu path.
+    sources.extend([crate::menus::OPEN_RECENT, crate::menus::CLEAR_RECENT]);
     for c in cadcraft_engine::command_specs() {
         sources.insert(c.label);
         sources.extend(c.menu.iter().copied());
@@ -186,6 +199,8 @@ fn assert_additional_locale_aliases() {
         ("sv", &["sv", "sv-SE", "sv_SE.UTF-8", "SV-se", " sv-SE ", "sv-FI"]),
         ("hu", &["hu", "hu-HU", "hu_HU.UTF-8", "HU-hu", " hu-HU "]),
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
+        ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
+        ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
@@ -353,6 +368,35 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> String {
     text
 }
 
+/// The command line in the window draws a prompt's keywords itself; it puts the same words before
+/// them as the engine's prompt text: " [" after a prompt for an option ("Enter an option [?/Make/…")
+/// and after a question ("Fix any errors detected? [Yes/No]"), " or [" where the keywords are
+/// offered besides what is asked ("Specify next point or [Undo]"), " or [" translated.
+#[test]
+fn the_command_line_says_or_before_keywords_as_the_prompt_does() {
+    let ctx = egui::Context::default();
+    for lang in ["en", "de"] {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("ui.language", json!({ "lang": lang })).unwrap();
+        app.logic(&ctx);
+        app.session.cmdline("-layer").unwrap();
+        let text = render(&mut app, &ctx);
+        let option = format!("\n{}\n [\n", tr(lang, "Enter an option"));
+        assert!(text.contains(&option), "{lang}: {option:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("line").unwrap();
+        app.session.cmdline("0,0").unwrap();
+        let text = render(&mut app, &ctx);
+        let besides = format!("\n{}\n{}\n", tr(lang, "Specify next point"), tr(lang, " or ["));
+        assert!(text.contains(&besides), "{lang}: {besides:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("audit").unwrap();
+        let text = render(&mut app, &ctx);
+        let question = format!("\n{}\n [\n", tr(lang, "Fix any errors detected?"));
+        assert!(text.contains(&question), "{lang}: {question:?} in {text:?}");
+    }
+}
+
 #[test]
 fn live_switch_translates_the_shell_without_mutating_drawing_or_automation() {
     let mut app = CadApp::new(Session::new(), Services::default());
@@ -431,12 +475,13 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 }
 
 /// The letters of every catalog have glyphs in both UI families. Latin, Cyrillic and Greek come
-/// from egui's bundled fonts alone, as in the web build; the scripts they lack need a font that
-/// `install_fonts` finds, and are checked only where one is there.
+/// from egui's bundled fonts alone, as in the web build; the scripts they lack (and Vietnamese's
+/// tone-marked letters) need a font that `install_fonts` finds, and are checked only where one is
+/// there.
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -555,4 +600,39 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
         }
         assert!(view.has_glyph(&egui::FontId::monospace(12.0), '\u{21e7}'), "U+21E7 shift symbol missing in Monospace");
     });
+}
+
+/// #1129: in Chinese every menu, submenu, command, tool palette and object-snap label is
+/// translated, so no menu shows English entries.
+#[test]
+fn chinese_menus_and_commands_are_fully_translated() {
+    assert_eq!(missing_commands_menus_tools_and_snap_labels("zh"), Vec::<String>::new());
+}
+
+/// Bosnian counts: 1, 21 `one`; 2–4, 22–24 (not 12–14) `few`; everything else `other`.
+#[test]
+fn bosnian_counts_take_one_few_other() {
+    let forms: Vec<usize> = [0, 1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 111].into_iter().map(plural_uk).collect();
+    assert_eq!(forms, [2, 0, 1, 1, 2, 2, 2, 2, 0, 1, 2, 2]);
+    assert_eq!(Preference::parse("bs"), Some(Preference::Bosnian));
+    assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
+}
+
+/// Vietnamese has one form for every count, and shows only with an interface font that has its
+/// tone-marked letters; without one it stays English and says why.
+#[test]
+fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
+    assert_eq!(Preference::parse("vi"), Some(Preference::Vietnamese));
+    assert_eq!(Preference::Vietnamese.native_name(), "Tiếng Việt");
+    let vi = LANGUAGES.iter().find(|l| l.code == "vi").unwrap();
+    assert_eq!(vi.plural_forms, 1);
+    assert!([0, 1, 2, 5, 21, 111].into_iter().all(|n| (vi.plural)(n) == 0));
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.run("ui.language", json!({"lang": "vi"})).unwrap();
+    let shown = crate::theme::can_show("vi");
+    assert_eq!(r["shown"], if shown { "vi" } else { "en" });
+    if !shown {
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
+        assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
+    }
 }

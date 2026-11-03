@@ -208,6 +208,7 @@ fn derived_dimension_fields_are_not_differences() {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     let mut s = Session::new();
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Dimension(dim(30.0, 7.0))).unwrap();

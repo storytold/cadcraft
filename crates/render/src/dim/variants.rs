@@ -27,6 +27,7 @@ pub(super) fn draw_jogged_radius(config: &DimConfig<'_>, g: &mut DimGeometry, te
         if !r.is_finite() {
             break 'jogged;
         }
+        g.measurement = r;
         let (tw, _) = measure(&g.mtext);
         let u = (tip - center).normalized();
         let u = if u == Vec2::ZERO || !u.is_finite() { Vec2::X } else { u };
