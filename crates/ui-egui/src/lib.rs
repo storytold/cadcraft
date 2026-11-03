@@ -570,7 +570,12 @@ impl CadApp {
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (_, outcome) in self.opening.poll() {
+        for (path, outcome) in self.opening.poll() {
+            // A recent file that is gone can never be opened again: drop it from the list.
+            if outcome.is_err() && !path.exists() {
+                let path = path.to_string_lossy();
+                self.ui.recent_files.retain(|p| *p != path);
+            }
             let r = match outcome {
                 Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
