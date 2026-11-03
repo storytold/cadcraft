@@ -434,8 +434,14 @@ fn the_path_is_stored_full_relative_or_as_the_file_name() {
     let (doc, pdf) = ("/plans/site/Site.dxf", "/plans/site/pdf/Plan.pdf");
     assert_eq!(stored_path(pdf, Some(doc), "full").unwrap(), pdf);
     assert_eq!(stored_path(pdf, Some(doc), "none").unwrap(), "Plan.pdf");
-    assert_eq!(stored_path(pdf, Some(doc), "relative").unwrap(), "pdf/Plan.pdf");
-    assert_eq!(stored_path("/plans/other/Plan.pdf", Some(doc), "relative").unwrap(), "../other/Plan.pdf");
+    // A relative path is written with backslashes on every platform, so the same attach gives
+    // the same file wherever it is saved; it resolves on every platform.
+    assert_eq!(stored_path(pdf, Some(doc), "relative").unwrap(), r"pdf\Plan.pdf");
+    assert_eq!(stored_path("/plans/other/Plan.pdf", Some(doc), "relative").unwrap(), r"..\other\Plan.pdf");
+    let host = std::env::temp_dir().join("plans").join("site").join("Site.dxf");
+    let resolved = cadcraft_engine::doc_path::resolve(r"..\other\Plan.pdf", Some(&host)).unwrap();
+    assert!(resolved.ends_with(std::path::Path::new("other").join("Plan.pdf")), "{resolved:?}");
+    assert!(resolved.starts_with(std::env::temp_dir().join("plans")), "{resolved:?}");
     assert!(stored_path(pdf, None, "relative").is_err(), "an unsaved drawing has no folder");
     assert!(stored_path(pdf, Some(doc), "nope").is_err());
 }

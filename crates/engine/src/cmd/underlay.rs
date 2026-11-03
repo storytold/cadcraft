@@ -185,14 +185,11 @@ pub fn stored_path(chosen: &str, document: Option<&str>, kind: &str) -> std::res
             if common == 0 {
                 return Ok(chosen.to_string());
             }
-            let mut rel = std::path::PathBuf::new();
-            for _ in common..a.len() {
-                rel.push("..");
-            }
-            for c in b.iter().skip(common) {
-                rel.push(c.as_os_str());
-            }
-            Ok(rel.to_string_lossy().to_string())
+            // Joined with backslashes whatever the platform, as AutoCAD writes them, so the same
+            // attach stores the same path wherever the drawing is saved.
+            let ups = (common..a.len()).map(|_| std::borrow::Cow::Borrowed(".."));
+            let rel: Vec<_> = ups.chain(b.iter().skip(common).map(|c| c.as_os_str().to_string_lossy())).collect();
+            Ok(rel.join("\\"))
         }
         other => Err(format!("`pathType` must be full, relative or none, got {other}")),
     }
