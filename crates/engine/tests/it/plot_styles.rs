@@ -104,3 +104,30 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
     // Undo takes a table edit back.
     s.execute("undo", &json!({})).unwrap();
 }
+
+/// Issue #1928: saving a plot style table to a file goes through the atomic writer: a symlink
+/// planted at the old fixed temporary name is left alone, and the file keeps its permissions.
+#[cfg(unix)]
+#[test]
+fn plot_style_save_is_atomic_and_keeps_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("cadcraft-pstyle-atomic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("office.stb.json");
+    std::fs::write(&path, "old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let victim = dir.join("victim");
+    std::fs::write(&victim, "keep").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.join("office.stb.json.cadcraft-tmp")).unwrap();
+
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office.stb"})).unwrap();
+    let p = path.to_string_lossy().to_string();
+    s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb", "path": p})).unwrap();
+
+    assert_ne!(std::fs::read_to_string(&path).unwrap(), "old");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    let _ = std::fs::remove_dir_all(&dir);
+}
