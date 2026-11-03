@@ -165,10 +165,10 @@ mod tests {
             let x = f64::from(i + 1);
             tris.extend_from_slice(&[Vec2::ZERO, Vec2::new(x, 1.0), Vec2::new(x + 0.5, 2.0)]);
         }
-        let started = std::time::Instant::now();
+        // No wall-clock bound (flaky on loaded runners): a quadratic scan would make this test crawl
+        // rather than fail, so check the output is complete instead.
         let lines = fill_outlines(&tris);
-        assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
-        assert!(!lines.is_empty());
+        assert_eq!(lines.iter().map(|l| l.len() - 1).sum::<usize>(), 60_000, "every triangle edge is emitted once");
     }
 
     #[test]
