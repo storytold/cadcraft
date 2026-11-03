@@ -1308,3 +1308,59 @@ fn bounds_kept_between_builds_follow_style_edits() {
     assert_ne!(crate::pipeline::bounds_context(&texts), before, "a text style edit");
     assert_eq!(crate::pipeline::bounds_context(&d.clone()), before, "an unchanged copy");
 }
+
+/// #2692 review: an MTEXT's box counts its paragraphs, not the lines wrapped at its width, so a
+/// long wrapped note zoomed onto its lower half is still drawn, at top level and inside a large
+/// block; so is an XLINE inside a large block whose other entities are far from the window.
+#[test]
+fn a_screen_build_keeps_what_its_estimated_bounds_would_leave_out() {
+    use cadcraft_geom::Bounds2;
+    let note = || {
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::ZERO,
+            height: 2.5,
+            width: 100.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "word ".repeat(600),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        })
+    };
+    // Well below the first paragraph's box, inside the wrapped text.
+    let window = Some(Bounds2::new(Vec2::new(0.0, -150.0), Vec2::new(100.0, -120.0)));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), note()).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the note draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole, "top level");
+    // Inside a large block: 100 short lines far from the window, the note and an XLINE.
+    let mut blk = cadcraft_doc::Block::new("NOTES");
+    for i in 0..100u64 {
+        let x = 10_000.0 + i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), note()));
+    let xline = EntityKind::XLine(cadcraft_doc::RayLine { base: Vec3::new(10_000.0, -135.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(501), xline));
+    let mut b = Drawing::new_imperial();
+    b.blocks.insert("NOTES".into(), std::sync::Arc::new(blk));
+    let ins = cadcraft_doc::Insert {
+        block: "NOTES".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: vec![],
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    b.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let drawn = build(&b, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    let lines_left_out = build(&b, &Space::Model, &Options::default()).prims.len() - drawn;
+    assert_eq!(lines_left_out, 100, "only the far lines are left out; the note and the XLINE are drawn");
+}

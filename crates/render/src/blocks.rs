@@ -51,7 +51,36 @@ pub struct BlockIndex {
     pub entities: Vec<std::sync::Arc<Entity>>,
     /// Each entity's bounds, widened by a tenth of its size (approximate text boxes).
     pub bounds: Vec<super::Bounds2>,
+    /// Entities whose bounds can fall far short of what is drawn ([`estimated`]): never left out.
+    kept: Vec<u32>,
     grid: Grid,
+}
+
+/// Whether `e`'s measured bounds can fall far short of what is drawn, so a screen build must not
+/// leave it out by them: MTEXT (its box counts `\P` paragraphs, not the lines wrapped at the
+/// column width or `\H` height changes), XLINE and RAY (infinite), and references to blocks
+/// holding any of these. `blocks` remembers the answer per block name; recursion is bounded by
+/// `MAX_BLOCK_DEPTH`, past which a reference counts as estimated.
+pub(crate) fn estimated(d: &cadcraft_doc::Drawing, e: &Entity, blocks: &mut std::collections::HashMap<String, bool>, depth: usize) -> bool {
+    match &e.kind {
+        EntityKind::MText(_) | EntityKind::XLine(_) | EntityKind::Ray(_) => true,
+        EntityKind::Insert(ins) => block_estimated(d, &ins.block, blocks, depth),
+        _ => false,
+    }
+}
+
+fn block_estimated(d: &cadcraft_doc::Drawing, name: &str, blocks: &mut std::collections::HashMap<String, bool>, depth: usize) -> bool {
+    if depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
+        return true;
+    }
+    if let Some(v) = blocks.get(name) {
+        return *v;
+    }
+    // A cyclic reference meets this entry while it is being worked out.
+    blocks.insert(name.to_string(), false);
+    let v = d.block(name).is_some_and(|b| b.entities.iter().any(|be| estimated(d, be, blocks, depth + 1)));
+    blocks.insert(name.to_string(), v);
+    v
 }
 
 struct Grid {
@@ -133,11 +162,12 @@ fn usable(b: &super::Bounds2) -> bool {
 
 impl BlockIndex {
     /// Indices of the entities whose bounds meet `local` (block coordinates), in block order;
-    /// entities without usable bounds are always included.
+    /// entities without usable bounds, or with estimated ones ([`estimated`]), are always included.
     pub fn near(&self, local: &super::Bounds2) -> Vec<usize> {
         // Entities listed apart (long or without bounds): those whose bounds meet the area.
         let mut out: Vec<u32> =
             self.grid.always.iter().copied().filter(|&i| self.bounds.get(i as usize).is_none_or(|b| !usable(b) || b.intersects(local))).collect();
+        out.extend(self.kept.iter().copied());
         if usable(local)
             && local.intersects(&self.grid.area.expand(self.grid.area.width().max(self.grid.area.height()) * 0.01))
             && let Some((c0, r0, c1, r1)) = self.grid.span(local)
@@ -206,8 +236,10 @@ fn build_block_index(d: &cadcraft_doc::Drawing, blk: &cadcraft_doc::Block) -> st
             if usable(&b) && size.is_finite() { b.expand(size * 0.1) } else { b }
         })
         .collect();
+    let mut est = std::collections::HashMap::new();
+    let kept = (0u32..).zip(&entities).filter(|(_, be)| estimated(d, be, &mut est, 1)).map(|(i, _)| i).collect();
     let grid = Grid::build(&bounds);
-    std::sync::Arc::new(BlockIndex { entities, bounds, grid })
+    std::sync::Arc::new(BlockIndex { entities, bounds, kept, grid })
 }
 
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {

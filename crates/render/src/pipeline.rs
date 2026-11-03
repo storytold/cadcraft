@@ -157,7 +157,8 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
 /// build window (`opts.view`, the visible area with its pan margin) to be drawn; `None` draws
 /// everything (no window, a layout, a plot). The canvas rebuilds when the view leaves the window,
 /// so what is left out comes back as soon as it can be seen. Bounds are approximate (text boxes are
-/// estimated), so each is widened by a tenth of its size; an entity with no bounds is kept.
+/// estimated), so each is widened by a tenth of its size; an entity with no bounds is kept, and so
+/// is one whose bounds can fall far short of what is drawn (see [`super::blocks::estimated`]).
 /// On a 300 MB site plan the list no longer holds every primitive of the drawing at every zoom.
 fn on_screen(d: &Drawing, store: &cadcraft_doc::EntityStore, opts: &Options, everything: bool) -> Option<Vec<bool>> {
     let window = opts.view.filter(|w| !everything && !w.is_empty() && w.width().is_finite() && w.height().is_finite())?;
@@ -165,9 +166,9 @@ fn on_screen(d: &Drawing, store: &cadcraft_doc::EntityStore, opts: &Options, eve
     Some(
         bounds
             .iter()
-            .map(|b| {
+            .map(|(b, estimated)| {
                 let size = b.width().max(b.height());
-                b.is_empty() || !size.is_finite() || b.expand(size * 0.1).intersects(&window)
+                *estimated || b.is_empty() || !size.is_finite() || b.expand(size * 0.1).intersects(&window)
             })
             .collect(),
     )
@@ -182,7 +183,9 @@ struct BoundsMemo {
     /// compared by address), and a hash of layer visibility and annotation scale.
     blocks: Vec<std::sync::Arc<cadcraft_doc::Block>>,
     context: u64,
-    by_entity: std::collections::HashMap<usize, (std::sync::Arc<Entity>, Bounds2)>,
+    /// Each entity's bounds, and whether they are only an estimate that can fall short of what
+    /// is drawn (see [`super::blocks::estimated`]).
+    by_entity: std::collections::HashMap<usize, (std::sync::Arc<Entity>, Bounds2, bool)>,
 }
 
 /// Shared and never taken out: screen builds run in the background while the pointer picks, and
@@ -248,7 +251,7 @@ pub struct KnownBounds(std::sync::Arc<BoundsMemo>);
 impl KnownBounds {
     /// The bounds measured for `e`, if the last screen build measured them.
     pub fn get(&self, e: &Entity) -> Option<Bounds2> {
-        self.0.by_entity.get(&(e as *const Entity as usize)).map(|(_, b)| *b)
+        self.0.by_entity.get(&(e as *const Entity as usize)).map(|(_, b, _)| *b)
     }
 }
 
@@ -260,9 +263,10 @@ pub fn known_bounds_of(d: &Drawing) -> Option<KnownBounds> {
     (m.context == context && same_blocks).then_some(KnownBounds(m))
 }
 
-/// Bounds of model space's entities in store order, measuring only those not measured for the
-/// previous build of the same drawing state ([`BoundsMemo`]).
-fn model_bounds(d: &Drawing, store: &cadcraft_doc::EntityStore) -> Vec<Bounds2> {
+/// Bounds of model space's entities in store order, with whether each is only an estimate,
+/// measuring only those not measured for the previous build of the same drawing state
+/// ([`BoundsMemo`]).
+fn model_bounds(d: &Drawing, store: &cadcraft_doc::EntityStore) -> Vec<(Bounds2, bool)> {
     let context = bounds_context(d);
     let previous = BOUNDS_MEMO.lock().ok().and_then(|m| m.clone());
     let same_blocks =
@@ -270,16 +274,17 @@ fn model_bounds(d: &Drawing, store: &cadcraft_doc::EntityStore) -> Vec<Bounds2> 
     let empty = std::collections::HashMap::new();
     let old = previous.as_deref().filter(|m| m.context == context && same_blocks(m)).map_or(&empty, |m| &m.by_entity);
     let mut cache = cadcraft_doc::BlockBoundsCache::default();
+    let mut estimated = std::collections::HashMap::new();
     let mut by_entity = std::collections::HashMap::with_capacity(store.len());
     let mut out = Vec::with_capacity(store.len());
     for e in store.iter() {
         let key = std::sync::Arc::as_ptr(e) as usize;
-        let b = match old.get(&key) {
-            Some((_, b)) => *b,
-            None => cadcraft_doc::entity_bounds_cached(d, e, 0, &mut cache),
+        let (b, est) = match old.get(&key) {
+            Some((_, b, est)) => (*b, *est),
+            None => (cadcraft_doc::entity_bounds_cached(d, e, 0, &mut cache), super::blocks::estimated(d, e, &mut estimated, 0)),
         };
-        by_entity.insert(key, (std::sync::Arc::clone(e), b));
-        out.push(b);
+        by_entity.insert(key, (std::sync::Arc::clone(e), b, est));
+        out.push((b, est));
     }
     drop(previous);
     if let Ok(mut m) = BOUNDS_MEMO.lock() {
