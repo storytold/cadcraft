@@ -202,3 +202,39 @@ fn shift_right_click_opens_the_snap_menu() {
     }
     assert!(app.session.prompt_text().contains("Specify next point"), "no Enter: {}", app.session.prompt_text());
 }
+
+/// MBUTTONPAN 0 (#2720): a middle click opens the snap menu, and dragging with the middle button
+/// no longer pans. With MBUTTONPAN 1 (the default) the same drag pans and no menu opens.
+#[test]
+fn middle_button_pans_or_opens_the_snap_menu_by_mbuttonpan() {
+    let middle = |at, pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed, modifiers: egui::Modifiers::NONE };
+    let (at, to) = (egui::pos2(800.0, 500.0), egui::pos2(900.0, 560.0));
+    // A middle drag from `at` to `to`: what it painted and where the view's centre ended up.
+    let drag = |mbuttonpan: &str| {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let ctx = egui::Context::default();
+        app.logic(&ctx);
+        painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
+        app.cmdline(&format!("MBUTTONPAN {mbuttonpan}"));
+        app.cmdline("LINE 0,0");
+        let before = app.session.state().unwrap().view().center;
+        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], egui::Modifiers::NONE);
+        painted(&mut app, &ctx, vec![middle(at, true)], egui::Modifiers::NONE);
+        painted(&mut app, &ctx, vec![egui::Event::PointerMoved(to)], egui::Modifiers::NONE);
+        painted(&mut app, &ctx, vec![middle(to, false)], egui::Modifiers::NONE);
+        let text = painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
+        let moved = app.session.state().unwrap().view().center.dist(before) > 1e-9;
+        (text, moved, app.session.prompt_text())
+    };
+
+    let (text, moved, prompt) = drag("0");
+    for l in ["From", "Mid Between 2 Points", "Endpoint", "Osnap Settings..."] {
+        assert!(text.contains(l), "{l} missing from the painted menu:\n{text}");
+    }
+    assert!(!moved, "MBUTTONPAN 0: the middle button doesn't pan");
+    assert!(prompt.contains("Specify next point"), "the command keeps its prompt: {prompt}");
+
+    let (text, moved, _) = drag("1");
+    assert!(!text.contains("Mid Between 2 Points"), "MBUTTONPAN 1 opens no menu:\n{text}");
+    assert!(moved, "MBUTTONPAN 1: the middle button pans");
+}

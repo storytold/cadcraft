@@ -74,6 +74,9 @@ pub struct Settings {
     /// PICKDRAG: false = two-click windows (0), true = clicks or dragging (2).
     /// Drag-only mode (1) is not supported yet.
     pub pickdrag: bool,
+    /// MBUTTONPAN: the middle button pans the view and a double middle click zooms to the
+    /// extents (1); off (0), a middle click opens the object snap menu at the cursor instead.
+    pub mbuttonpan: bool,
     /// PICKSTYLE: bit 1 picks whole selectable groups ([`cmd::groups`]), bit 2 associative hatches
     /// with their boundaries (stored, not used yet).
     pub pickstyle: u8,
@@ -169,6 +172,7 @@ impl Default for Settings {
             filedia: true,
             pickadd: true,
             pickdrag: true,
+            mbuttonpan: true,
             pickstyle: 1,
             gripsize: 5.0,
             cursorsize: 5.0,
