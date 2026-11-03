@@ -245,7 +245,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
         "VIEWPORT" => EntityKind::Viewport({
             // View twist (group 51, degrees).
-            let twist = t.f(51).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
+            let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
             Viewport {
                 center: t.p(10),
                 width: t.fd(40, 1.0),

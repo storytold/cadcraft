@@ -224,7 +224,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let twist = t.f(50).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
+                let twist = t.f(50).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
                 // The view centre 10/20 is in display coordinates, whose origin is the target 12/22/32.
                 let center = t.view_center(10, 12, twist);
                 if !(center.x.is_finite() && center.y.is_finite()) {
@@ -326,7 +326,7 @@ const MAX_VPORT_TILES: usize = 64;
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
     // View twist (group 51, degrees).
-    let twist = t.f(51).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
+    let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
     // The view centre 12/22 is in display coordinates, whose origin is the view target 17/27/37.
     let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17, twist));
     let height = t.fd(40, 0.0);

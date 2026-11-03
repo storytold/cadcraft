@@ -136,7 +136,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.s(2, &v.name);
         w.i(70, i64::from(v.layout.is_some()));
         w.f(40, v.height);
-        let twist = if v.twist.is_finite() { v.twist } else { 0.0 };
+        let twist = cadcraft_geom::norm_angle(v.twist);
         w.p2(10, dxf_ext::model_center_to_dcs(v.center, twist));
         w.f(41, v.width);
         w.p(11, Vec3::Z);

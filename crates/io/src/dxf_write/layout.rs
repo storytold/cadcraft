@@ -95,7 +95,7 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.i(70, 0);
         w.p2(10, finite(t.min, Vec2::ZERO));
         w.p2(11, finite(t.max, Vec2::new(1.0, 1.0)));
-        let twist = if t.twist.is_finite() { t.twist } else { 0.0 };
+        let twist = cadcraft_geom::norm_angle(t.twist);
         w.p2(12, dxf_ext::model_center_to_dcs(finite(t.center, Vec2::ZERO), twist));
         // Snap grid origin and rotation (SNAPBASE, SNAPANG in degrees): R13+ files keep them here.
         w.p2(13, d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO));
