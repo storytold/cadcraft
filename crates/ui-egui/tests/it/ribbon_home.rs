@@ -7,6 +7,7 @@ use egui::accesskit::Role;
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
+use serde_json::json;
 
 fn harness(ribbon: bool) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
@@ -45,4 +46,29 @@ fn clicking_a_ribbon_button_starts_its_command() {
     harness.get_by_role_and_label(Role::Button, "Polyline").click();
     harness.run_steps(5);
     assert_eq!(harness.state().session.running.as_ref().map(|r| r.id.as_str()), Some("pline"));
+}
+
+#[test]
+fn the_options_checkbox_turns_the_ribbon_on_and_it_survives_a_restart() {
+    let mut harness = harness(false);
+    harness.state_mut().ui.dialog = Some("options".into());
+    harness.run_steps(5);
+    harness.get_by_role_and_label(Role::CheckBox, "Ribbon").click();
+    harness.run_steps(5);
+    assert!(harness.state().ui.show_ribbon, "the dialog's change reaches the interface state");
+    harness.get_by_role_and_label(Role::Tab, "Home");
+
+    let mut restarted = CadApp::new(Session::default(), Services::default());
+    restarted.load_profile(&harness.state().profile_json());
+    assert!(restarted.ui.show_ribbon);
+}
+
+#[test]
+fn the_options_json_form_validates_reports_and_resets_the_ribbon() {
+    let mut app = CadApp::new(Session::default(), Services::default());
+    assert!(app.run("options", json!({"showRibbon": "yes"})).is_err());
+    assert!(!app.ui.show_ribbon);
+    assert_eq!(app.run("options", json!({"showRibbon": true})).unwrap()["showRibbon"], json!(true));
+    assert!(app.ui.show_ribbon);
+    assert_eq!(app.run("options", json!({"reset": true})).unwrap()["showRibbon"], json!(false));
 }
