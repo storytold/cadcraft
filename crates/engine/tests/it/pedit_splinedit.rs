@@ -152,6 +152,19 @@ fn fit_spline(s: &mut Session) -> String {
 }
 
 #[test]
+fn close_gives_a_closed_fit_its_own_tangent() {
+    // SPLINEDIT Close refits the fit points closed: the open ends' tangents don't carry over, the
+    // closed curve takes its own where it closes, as SPLINE ... Close builds it.
+    let mut s = Session::new();
+    let fit = json!([[0, 0], [4, 0], [6, 3], [1, 4]]);
+    let sp = h(&s.execute("spline", &json!({ "fit": fit, "startTangent": [0, 1] })).unwrap());
+    s.execute("splinedit", &json!({ "handle": sp, "option": "close" })).unwrap();
+    let closed = spline(&s, &sp);
+    let own = h(&s.execute("spline", &json!({ "fit": fit, "closed": true })).unwrap());
+    assert_eq!(closed, spline(&s, &own));
+}
+
+#[test]
 fn fit_data_options_at_the_command_line() {
     let mut s = Session::new();
     let sp = fit_spline(&mut s);

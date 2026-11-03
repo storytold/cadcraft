@@ -101,18 +101,18 @@ fn spline(t: &T) -> Spline {
     let weights = t.all_f(41);
     let mut fit = t.pts(11);
     let closed = t.i(70).unwrap_or(0) & 1 != 0;
-    // AutoCAD ends a closed spline's fit points with the first again, and gives it its tangent
-    // where it closes as both end tangents; here the point is implied and the tangent is the
-    // curve's.
+    // AutoCAD ends a closed spline's fit points with the first again; here it is implied.
     if closed && fit.len() > 3 && fit.first().zip(fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
         fit.pop();
     }
-    let tangent = |c: i32| t.f(c).filter(|_| !closed).map(|_| t.p(c).xy());
-    // An open spline's 12/13 tangent counts with its length in AutoCAD, which writes it back as it
-    // read it.
-    let fit_opts =
-        cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
-            .sanitized_keeping_length();
+    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
+    // AutoCAD writes no fit tolerance as 1e-10; read as a tolerance, an approximation could meet it.
+    let tolerance = t.fd(44, 0.0);
+    let tolerance = if tolerance <= 1e-10 { 0.0 } else { tolerance };
+    // AutoCAD takes a 12/13 tangent with its length (for a closed spline, its tangent where it
+    // closes), keeps it through fit-point edits and writes it back as it read it.
+    let fit_opts = cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance }
+        .sanitized_keeping_length();
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
         sp = Spline::fit_with_end_derivatives(&fit, sp.closed, fit_opts);
@@ -122,7 +122,22 @@ fn spline(t: &T) -> Spline {
         // DXF keeps the knots, not how they were spaced: recover it for later refits.
         sp.fit_opts.knots = sp.infer_knot_param();
     }
+    // The writer gives every closed spline its curve's tangents where it closes, but only one
+    // built as AutoCAD's closed fit spline keeps them (as `Spline::fit_with` stores them); for the
+    // others a refit takes none, before a save or after it.
+    if sp.closed && !keeps_closing_tangent(&sp) {
+        sp.fit_opts.start_tangent = None;
+        sp.fit_opts.end_tangent = None;
+    }
     sp
+}
+
+/// A closed spline that keeps a tangent where it closes: AutoCAD's closed fit spline, with three
+/// fit points or more, no kink (a fit point twice in a row) and clamped knots (periodic knots,
+/// square-root, uniform or within a fit tolerance, wrap round).
+fn keeps_closing_tangent(sp: &Spline) -> bool {
+    let kinked = sp.fit.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.near(*b, 1e-12)));
+    sp.fit.len() >= 3 && !kinked && !sp.wraps()
 }
 
 pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {

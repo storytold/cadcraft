@@ -96,7 +96,9 @@ fn spline_close(sp: &Spline) -> Spline {
         return sp.clone();
     }
     let mut out = if sp.fit.len() >= 2 {
-        sp.refit(&sp.fit, true)
+        // The open ends' tangents don't carry over: the closed curve takes its own where it closes.
+        let opts = cadcraft_geom::FitOptions { start_tangent: None, end_tangent: None, ..sp.fit_opts };
+        Spline::fit_with_end_derivatives(&sp.fit, true, opts)
     } else {
         let mut c = sp.control.clone();
         c.extend(sp.control.first().copied());

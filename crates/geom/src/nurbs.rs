@@ -88,6 +88,21 @@ fn elevate_bezier(p: &[H]) -> Vec<H> {
         .collect()
 }
 
+/// A closed spline's fit points in the other direction, still from the seam: the first point
+/// (with its repeats, a kink) stays first and the rest turn round, as AutoCAD 2024's REVERSE
+/// leaves them; a repeated closing point stays last.
+fn reversed_loop(fit: &[Vec2]) -> Vec<Vec2> {
+    let Some(seam) = fit.first().copied() else { return Vec::new() };
+    let at_seam = |q: &&Vec2| q.near(seam, 1e-12);
+    let lead = fit.iter().take_while(at_seam).count();
+    let trail = fit.iter().skip(lead).rev().take_while(at_seam).count();
+    let middle = fit.get(lead..fit.len() - trail).unwrap_or(&[]);
+    let mut out = fit.get(..lead).unwrap_or(&[]).to_vec();
+    out.extend(middle.iter().rev());
+    out.extend(fit.get(fit.len() - trail..).unwrap_or(&[]));
+    out
+}
+
 impl Spline {
     fn weight(&self, i: usize) -> f64 {
         if self.weights.is_empty() { 1.0 } else { self.weights.get(i).copied().unwrap_or(1.0) }
@@ -295,7 +310,7 @@ impl Spline {
     }
 
     /// Reversed direction: control points, weights, fit points and knots (and the fit end
-    /// tangents swap ends and turn round).
+    /// tangents swap ends and turn round). A closed spline still starts at its first fit point.
     pub fn reversed(&self) -> Spline {
         let (lo, hi) = (self.knots.first().copied().unwrap_or(0.0), self.knots.last().copied().unwrap_or(1.0));
         Spline {
@@ -303,7 +318,7 @@ impl Spline {
             knots: self.knots.iter().rev().map(|k| lo + hi - k).collect(),
             control: self.control.iter().rev().copied().collect(),
             weights: self.weights.iter().rev().copied().collect(),
-            fit: self.fit.iter().rev().copied().collect(),
+            fit: if self.closed { reversed_loop(&self.fit) } else { self.fit.iter().rev().copied().collect() },
             closed: self.closed,
             fit_opts: crate::FitOptions {
                 start_tangent: self.fit_opts.end_tangent.map(|t| -t),
@@ -649,6 +664,17 @@ mod tests {
         let m = s.sub_between(0.2, 0.6).unwrap();
         assert!(m.eval(m.domain().0).near(s.eval(0.2), 1e-12) && m.eval(m.domain().1).near(s.eval(0.6), 1e-12));
         assert!(s.split_at(0.0).is_none() && s.split_at(f64::NAN).is_none());
+    }
+
+    #[test]
+    fn a_closed_fit_list_reverses_from_its_seam() {
+        let (a, b, c, d) = (Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(6.0, 3.0), Vec2::new(1.0, 4.0));
+        assert_eq!(reversed_loop(&[a, b, c, d]), [a, d, c, b]);
+        // A kink at the seam stays first, a repeated closing point last.
+        assert_eq!(reversed_loop(&[a, a, b, c, d]), [a, a, d, c, b]);
+        assert_eq!(reversed_loop(&[a, b, c, d, a]), [a, d, c, b, a]);
+        assert_eq!(reversed_loop(&[a, a]), [a, a]);
+        assert!(reversed_loop(&[]).is_empty());
     }
 
     #[test]

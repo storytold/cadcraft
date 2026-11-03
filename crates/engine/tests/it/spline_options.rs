@@ -183,3 +183,24 @@ fn json_form_takes_the_fit_options() {
     assert_eq!(sp.fit_opts.start_tangent, None);
     assert_eq!(sp.fit_opts.end_tangent, Some(-Vec2::Y));
 }
+
+#[test]
+fn reverse_keeps_a_closed_spline_seam() {
+    // As AutoCAD 2024's REVERSE (accoreconsole, `entget`): the curve and its fit points still start
+    // at (0,0), the other fit points turn round, and so does the tangent where it closes; a
+    // fit-point grip or SPLINEDIT edit then rebuilds the same reversed curve.
+    let mut s = Session::new();
+    s.cmdline("spline 0,0 4,0 6,3 1,4 c").unwrap();
+    let before = last_spline(&s);
+    let h = s.doc().unwrap().model.iter().last().map(|e| e.handle.hex()).unwrap();
+    s.execute("reverse", &json!({ "handle": h })).unwrap();
+    let sp = last_spline(&s);
+    let fit = [Vec2::ZERO, Vec2::new(1.0, 4.0), Vec2::new(6.0, 3.0), Vec2::new(4.0, 0.0)];
+    assert_eq!(sp.fit, fit);
+    assert_eq!(sp.fit_opts.start_tangent, before.fit_opts.start_tangent.map(|t| -t));
+    let (lo, hi) = sp.domain();
+    assert!(sp.eval(lo).near(Vec2::ZERO, 1e-12) && sp.eval(hi).near(Vec2::ZERO, 1e-12));
+    s.execute("splinedit", &json!({ "handle": h, "option": "move", "index": 2, "to": [6, 3] })).unwrap();
+    let again = last_spline(&s);
+    assert!(again.control.iter().zip(&sp.control).all(|(a, b)| a.near(*b, 1e-9)), "{:?} vs {:?}", again.control, sp.control);
+}
