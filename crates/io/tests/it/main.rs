@@ -47,9 +47,9 @@ mod mtext_columns_roundtrip;
 mod mtext_embedded_object;
 mod mtext_line_spacing;
 mod multiline_attributes;
-mod ole_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod ole2frame_roundtrip;
+mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
