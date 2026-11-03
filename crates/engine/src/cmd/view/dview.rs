@@ -13,7 +13,6 @@
 //! ZOOM (view history, not undo). A layout viewport's twist belongs to the viewport entity, so a
 //! DVIEW that changed it is one undo step.
 
-use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use cadcraft_doc::{Entity, EntityKind, Handle, Insert, Line, Space};
@@ -69,7 +68,7 @@ pub(super) fn target(s: &Session) -> Result<Target> {
 
 /// A twist kept as files hold it: [0, 2π).
 fn normal(twist: f64) -> f64 {
-    twist.rem_euclid(TAU)
+    cadcraft_geom::norm_angle(twist)
 }
 
 /// The active viewport's twist, if it is `h`.

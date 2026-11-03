@@ -119,7 +119,9 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
             if !(b.width() > 1e-12 && b.height() > 1e-12 && b.min.is_finite() && b.max.is_finite()) {
                 return Err(EngineError::Other("The window has no area.".into()));
             }
-            (b.center(), b.height(), b.width())
+            // In a twisted view the window's box on screen is larger than its world box.
+            let (center, width, height) = crate::View::twisted_box(b, twist);
+            (center, height, width)
         }
         None => {
             let f = frame;
@@ -184,7 +186,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             // In an unlocked MSPACE viewport the saved twist turns the viewport (an edit of the
             // viewport, recorded as the command's undo step).
             let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-9);
-            let twist = if v.twist.is_finite() { v.twist.rem_euclid(std::f64::consts::TAU) } else { 0.0 };
+            let twist = cadcraft_geom::norm_angle(v.twist);
             st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect), twist });
         }
     }

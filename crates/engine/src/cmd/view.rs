@@ -293,7 +293,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             dview::set_twist(s, t, twist)?;
             s.state()?.view().twist
         }
-        Some(dview::Target::Model) => twist.rem_euclid(std::f64::consts::TAU),
+        Some(dview::Target::Model) => cadcraft_geom::norm_angle(twist),
         None => 0.0,
     };
     if !s.state_mut()?.set_view(View { center: c, height: h, twist }) {

@@ -19,9 +19,7 @@ impl Session {
         let mut st = DocState::new(d, title, path);
         let ext = st.doc.extents(&Space::Model);
         // The current tile (the first), or the lone untiled view, keeps its saved twist.
-        let twist =
-            st.doc.vports.iter().find(|c| c.is_active()).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist).rem_euclid(std::f64::consts::TAU);
-        let twist = if twist.is_finite() { twist } else { 0.0 };
+        let twist = cadcraft_geom::norm_angle(st.doc.vports.iter().find(|c| c.is_active()).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist));
         if ext.is_empty() {
             st.set_view_quiet(View { twist, ..st.view() });
         } else {

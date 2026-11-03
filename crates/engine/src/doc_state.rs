@@ -203,7 +203,7 @@ impl DocState {
     }
     fn keep_untiled_twist(&mut self, v: View) {
         use cadcraft_doc::{VportConfig, VportTile};
-        let twist = if v.twist.is_finite() { v.twist.rem_euclid(std::f64::consts::TAU) } else { 0.0 };
+        let twist = cadcraft_geom::norm_angle(v.twist);
         let active = self.doc.vports.iter().find(|c| c.is_active());
         if active.is_some_and(|c| c.tiles.len() > 1) {
             return;

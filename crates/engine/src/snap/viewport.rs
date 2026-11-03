@@ -77,7 +77,9 @@ impl<'a> Projection<'a> {
                     if !(center.is_finite() && radius.is_finite() && radius > 0.0) {
                         return None;
                     }
-                    SnapCurve::Arc { center, radius, start, end }
+                    // The arc turns on the sheet with the viewport's twist.
+                    let twist = self.viewport.view_twist();
+                    SnapCurve::Arc { center, radius, start: start + twist, end: end + twist }
                 }
                 SnapCurve::Line { a, b } => {
                     let (a, b) = (self.to_paper(a), self.to_paper(b));

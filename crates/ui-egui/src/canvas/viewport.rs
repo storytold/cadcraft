@@ -35,6 +35,8 @@ pub(super) struct VpContent {
     pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool)>,
     /// The viewport's view (centre, height) the list was built for, and the paper area it covers.
     view: (Vec2, f64),
+    /// The view twist it was built for: [`vp_motion`] moves and scales a list, it can't turn it.
+    twist: f64,
     area: Bounds2,
     /// The view on the previous frame and when it last changed (ms).
     last_view: (Vec2, f64),
@@ -106,7 +108,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.last_view = view;
         c.moved_at = now;
     }
-    let rebuild = match vp_motion(&vp, c.view).filter(|_| c.key == Some(key)) {
+    let rebuild = match vp_motion(&vp, c.view).filter(|_| c.key == Some(key) && c.twist == vp.view_twist()) {
         Some((k, b)) => {
             // The viewport in the list's own coordinates.
             let visible = Bounds2::new((rect.min - b) / k, (rect.max - b) / k);
@@ -141,6 +143,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
         c.view = view;
+        c.twist = vp.view_twist();
         c.area = area;
         c.builds = c.builds.wrapping_add(1);
         app.canvas.build_ms = crate::now_ms() - t0;
