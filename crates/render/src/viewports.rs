@@ -174,6 +174,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // The contents are in paper units now: draw their pens before clipping.
     pen::apply(&mut sub.list, unit_mm);
     b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
+    b.list.truncated |= sub.list.truncated;
     append_clipped(&mut b.list, &sub.list, clip);
 }
 

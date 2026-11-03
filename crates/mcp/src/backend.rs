@@ -434,7 +434,7 @@ impl Backend for Headless {
                     cadcraft_engine::consent::check_write(&path).map_err(|e| e.to_string())?;
                     std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
                 }
-                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
+                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated}))
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;
