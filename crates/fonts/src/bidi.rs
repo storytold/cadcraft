@@ -69,7 +69,7 @@ pub fn visual_runs(chars: &[char], base: Option<bool>) -> Vec<(Range<usize>, boo
     runs.into_iter()
         .filter(|r| !r.is_empty())
         .map(|r| {
-            let rtl = levels.get(r.start).is_some_and(|l| l.is_rtl());
+            let rtl = levels.get(r.start).is_some_and(Level::is_rtl);
             (char_at(r.start)..char_at(r.end), rtl)
         })
         .collect()
