@@ -38,7 +38,7 @@ enum Stage {
 #[derive(Default)]
 pub(super) struct DashParametersM {
     stage: Stage,
-    /// The parameter being made, edited or renamed.
+    /// The parameter being made, edited or renamed; at the New name prompt, the name offered.
     name: String,
     /// New: the name is not in the drawing yet.
     new: bool,
@@ -60,9 +60,11 @@ fn typed(i: &Input) -> Option<&str> {
 }
 
 impl DashParametersM {
-    /// The current expression of the parameter being edited.
+    /// The current expression of the parameter being edited, looked up without evaluating any.
     fn current_expr(&self, s: &Session) -> Option<String> {
-        cs::parameter_table(s.doc().ok()?).into_iter().find(|r| r.name == self.name).map(|r| r.expr)
+        let d = s.doc().ok()?;
+        let dimensional = d.constraints.iter().find(|c| c.name == self.name).map(|c| &c.expr);
+        dimensional.or_else(|| d.parametric.parameters.iter().find(|p| p.name == self.name).map(|p| &p.expr)).cloned()
     }
 
     fn list(s: &mut Session, pattern: &str) -> Result<Step> {
@@ -89,10 +91,7 @@ impl Interactive for DashParametersM {
     fn prompt(&self, s: &Session) -> Prompt {
         match self.stage {
             Stage::Option => Prompt::new("Enter a parameter option", KW).kw(&["New", "Edit", "Rename", "Delete", "?"]),
-            Stage::NewName => {
-                let free = s.doc().map(free_user_name).unwrap_or_else(|_| "user1".into());
-                Prompt::new("Enter a name for the new parameter", Accept::TEXT).default(free)
-            }
+            Stage::NewName => Prompt::new("Enter a name for the new parameter", Accept::TEXT).default(self.name.clone()),
             Stage::Existing(Op::Edit) => Prompt::new("Enter the name of the parameter to edit", Accept::TEXT),
             Stage::Existing(Op::Rename) => Prompt::new("Enter the name of the parameter to rename", Accept::TEXT),
             Stage::Existing(Op::Delete) => Prompt::new("Enter the name of the parameter to delete", Accept::TEXT),
@@ -114,7 +113,10 @@ impl Interactive for DashParametersM {
                 self.stage = match &i {
                     Input::Enter => return Ok(Step::Done),
                     Input::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "new" => Stage::NewName,
+                        "new" => {
+                            self.name = free_user_name(s.doc()?);
+                            Stage::NewName
+                        }
                         "edit" => Stage::Existing(Op::Edit),
                         "rename" => Stage::Existing(Op::Rename),
                         "delete" => Stage::Existing(Op::Delete),
@@ -126,12 +128,11 @@ impl Interactive for DashParametersM {
                 Ok(Step::Continue)
             }
             Stage::NewName => {
-                let d = s.doc()?;
-                let name = typed(&i).map_or_else(|| free_user_name(d), str::to_string);
+                let name = typed(&i).map_or_else(|| self.name.clone(), str::to_string);
                 if !cs::expr::valid_name(&name) {
                     return Err(EngineError::Other(format!("`{name}` is not a valid parameter name: a letter or `_`, then letters, digits or `_`.")));
                 }
-                if cs::name_in_use(d, &name) {
+                if cs::name_in_use(s.doc()?, &name) {
                     return Err(EngineError::Other(format!("`{name}` is already in use.")));
                 }
                 (self.name, self.new, self.stage) = (name, true, Stage::Expression);
