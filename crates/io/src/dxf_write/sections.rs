@@ -557,7 +557,17 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, ucs: None, limits: None },
+        LayoutWriteData {
+            handle: model_layout,
+            name: "Model",
+            tab: 0,
+            block_record: ms_br,
+            flags: 1,
+            page: &model_page,
+            view: None,
+            ucs: None,
+            limits: None,
+        },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
