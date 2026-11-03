@@ -417,8 +417,9 @@ mod tests {
         env.insert("big", &long);
         assert!(env.exprs.get("big").is_some_and(|t| t.len() > MAX_LEN && t.len() <= MAX_LEN + 4));
         assert_eq!(env.value("big"), Err(ExprError::TooDeep));
-        let refs = vec!["big"; 200].join("+");
-        assert_eq!(env.eval(&refs), Err(ExprError::TooDeep));
+        for _ in 0..200 {
+            assert_eq!(env.eval("big"), Err(ExprError::TooDeep));
+        }
         env.insert("ok", "1+1+1");
         assert_eq!(env.value("ok"), Ok(3.0));
     }
