@@ -182,7 +182,7 @@ fn loaded_linetype(d: &cadcraft_doc::Drawing, cmd: &str, p: &Value) -> Result<Op
 }
 
 fn valid_name(n: &str) -> bool {
-    !n.trim().is_empty() && n.len() <= 255 && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
+    !n.trim().is_empty() && n.len() <= 255 && !n.chars().any(|c| c.is_control() || "<>/\\\":;?*|,=`".contains(c))
 }
 
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
