@@ -82,7 +82,7 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the export write (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -117,14 +117,19 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
-    match path {
+    let file = format!("export.{format}");
+    let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
+    let folder = path.and_then(super::file::new_folder);
+    let mut r = match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
-            Ok(json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") }))
+            json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") })
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() })),
-    }
+        None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
+    };
+    super::file::report_new_folder(s, &mut r, folder);
+    super::file::report_loss(s, &mut r, &file);
+    Ok(r)
 }
 
 // ---------- IMPORT ----------
