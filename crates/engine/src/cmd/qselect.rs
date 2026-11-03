@@ -175,7 +175,12 @@ pub fn compare(prop: &Value, op: Op, value: &Value) -> bool {
             if ptxt.eq_ignore_ascii_case(vtxt.trim()) {
                 return true;
             }
-            // Colours: `red` = `1` = `Red`; `bylayer` = `ByLayer`.
+            // Colours: `red` = `1` = `Red`; `bylayer` = `ByLayer`. No colour spelling is long, so a
+            // long text (a layer name from a file) isn't parsed, copied and split per entity.
+            const MAX_COLOR_TEXT: usize = 64;
+            if ptxt.len() > MAX_COLOR_TEXT || vtxt.len() > MAX_COLOR_TEXT {
+                return false;
+            }
             match (Color::parse(&ptxt), Color::parse(vtxt.trim())) {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
@@ -398,5 +403,19 @@ mod tests {
         assert!(!wildcard("a*d", "abc"));
         assert!(wildcard("*b*", "abc"));
         assert!(!wildcard(&"*a".repeat(500), &"b".repeat(4000)));
+    }
+}
+
+#[cfg(test)]
+mod long_text_tests {
+    use super::*;
+
+    /// A long string property is compared as text only, and a colour name still equals its index.
+    #[test]
+    fn long_values_skip_colour_parsing() {
+        let long = Value::String("x".repeat(100_000));
+        assert!(compare(&long, Op::Eq, &long));
+        assert!(!compare(&long, Op::Eq, &Value::String("red".into())));
+        assert!(compare(&Value::String("red".into()), Op::Eq, &Value::String("1".into())));
     }
 }
