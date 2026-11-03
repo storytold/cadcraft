@@ -49,9 +49,10 @@ const OLE_HEADER: usize = 2;
 /// lower right, lower left).
 const OLE_CORNERS: usize = 12;
 
-/// Move the four corners at the start of the OLE data (the 310 groups' hex, in order) by `m`,
-/// keeping z and every tag's length. Data that is not valid hex or is too short is left alone.
-fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame: [f64; 4]) {
+/// Replace the four corners at the start of the OLE data (the 310 groups' hex, in order) by `new`
+/// (upper left, upper right, lower right, lower left), keeping z and every tag's length. Data that
+/// is not valid hex, too short, or whose corners are not the old `frame`'s is left alone.
+fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4]) {
     let idx: Vec<usize> = outside_app(tags).into_iter().filter(|&i| tags.get(i).is_some_and(|t| t.code == 310)).collect();
     let mut bytes: Vec<u8> = Vec::new();
     let mut lens: Vec<usize> = Vec::new();
@@ -88,11 +89,10 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame
     for c in 0..4 {
         let at = OLE_HEADER + c * 24;
         let rd = |o: usize| out.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes).filter(|v| v.is_finite());
-        let (Some(x), Some(y)) = (rd(at), rd(at + 8)) else { return };
-        let p = m.apply(Vec2::new(x, y));
-        if !(p.x.is_finite() && p.y.is_finite()) {
+        if rd(at).is_none() || rd(at + 8).is_none() {
             return;
         }
+        let Some(p) = new.get(c).copied() else { return };
         if let Some(s) = out.get_mut(at..at + 8) {
             s.copy_from_slice(&p.x.to_le_bytes());
         }
@@ -115,10 +115,12 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame
 /// whole units.
 const CORNER_EPS: f64 = 1e-6;
 
-/// Move an OLE2FRAME by `m`, a translation or a uniform positive scale: its two corners are mapped through `m` (a DWG save
-/// writes the frame's position from these groups), and so are the corners at the start of its OLE
-/// data (310 groups), which a reader of the saved file may trust instead. Other transforms do not keep a frame axis
-/// aligned, so callers refuse them (see [`ole_frame_accepts`]). A frame with no usable corners is
+/// Transform an OLE2FRAME by `m`: its two corners are mapped through `m` (a DWG save writes the
+/// frame's position from these groups), and so are the corners at the start of its OLE data (310
+/// groups), which a reader of the saved file may trust instead. The frame stays axis aligned with
+/// its upper-left corner first: the result is the box of the two mapped corners. Commands refuse a
+/// rotation or mirror (see [`ole_frame_accepts`]), but internal callers such as EXPLODE, REFEDIT and
+/// paste still apply them, and must leave a consistent frame. A frame with no usable corners is
 /// left alone.
 pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
     let Some([(ix1, x1), (iy1, y1), (ix2, x2), (iy2, y2)]) = ole_corner_groups(tags) else { return };
@@ -127,12 +129,14 @@ pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) 
     if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
         return;
     }
-    for (i, v) in [(ix1, a.x), (iy1, a.y), (ix2, b.x), (iy2, b.y)] {
+    let (lo, hi) = (Vec2::new(a.x.min(b.x), a.y.min(b.y)), Vec2::new(a.x.max(b.x), a.y.max(b.y)));
+    let (ul, lr) = (Vec2::new(lo.x, hi.y), Vec2::new(hi.x, lo.y));
+    for (i, v) in [(ix1, ul.x), (iy1, ul.y), (ix2, lr.x), (iy2, lr.y)] {
         if let Some(t) = tags.get_mut(i) {
             t.value = v.to_string();
         }
     }
-    ole_data_transform(tags, m, frame);
+    ole_data_transform(tags, [ul, Vec2::new(lr.x, ul.y), lr, Vec2::new(ul.x, lr.y)], frame);
 }
 
 /// Whether `m` can move an OLE2FRAME: a translation (move, copy, stretch of the whole frame) or a
@@ -745,5 +749,49 @@ mod tests {
         assert!(!ole_frame_accepts(&Mat3::scale_about(p, 0.0)));
         assert!(!ole_frame_accepts(&Mat3::rotate_about(p, 0.5)));
         assert!(!ole_frame_accepts(&Mat3::mirror(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0))));
+    }
+    /// The corners (x, y) in the OLE data header of a frame built by [`big_frame`]-style tags.
+    fn header_corners(tags: &[crate::RawTag]) -> Vec<(f64, f64)> {
+        let hex: String = tags.iter().filter(|t| t.code == 310).map(|t| t.value.as_str()).collect();
+        let bytes: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+        let f = |o: usize| bytes.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes).unwrap_or(f64::NAN);
+        (0..4).map(|c| (f(2 + c * 24), f(10 + c * 24))).collect()
+    }
+
+    fn small_frame() -> Vec<crate::RawTag> {
+        let mut blob = vec![1u8, 0];
+        for (x, y) in [(30.0f64, -19.0f64), (35.0, -19.0), (35.0, -22.0), (30.0, -22.0)] {
+            for v in [x, y, 7.0] {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let tag = |code: i32, value: &str| crate::RawTag { code, value: value.into() };
+        vec![
+            tag(10, "30"),
+            tag(20, "-19"),
+            tag(11, "35"),
+            tag(21, "-22"),
+            crate::RawTag { code: 310, value: blob.iter().map(|b| format!("{b:02X}")).collect() },
+        ]
+    }
+
+    /// Internal callers (EXPLODE, REFEDIT, paste, array placement) transform a frame by any matrix.
+    /// It stays axis aligned: groups 10/20 are the upper-left of the box of the mapped corners,
+    /// 11/21 the lower-right, and the OLE data holds the same box (review on #2587).
+    #[test]
+    fn a_rotated_frame_stays_axis_aligned_and_consistent() {
+        use cadcraft_geom::Mat3;
+        let rotate = Mat3::rotate_about(Vec2::new(1.0, 2.0), 30f64.to_radians());
+        let mirror = Mat3::mirror(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0));
+        for m in [rotate, mirror] {
+            let mut tags = small_frame();
+            let mapped = [m.apply(Vec2::new(30.0, -19.0)), m.apply(Vec2::new(35.0, -22.0))];
+            let (minx, maxx) = (mapped[0].x.min(mapped[1].x), mapped[0].x.max(mapped[1].x));
+            let (miny, maxy) = (mapped[0].y.min(mapped[1].y), mapped[0].y.max(mapped[1].y));
+            ole_frame_transform(&mut tags, &m);
+            let g = |code: i32| tags.iter().find(|t| t.code == code).and_then(|t| t.value.parse::<f64>().ok()).unwrap_or(f64::NAN);
+            assert_eq!((g(10), g(20), g(11), g(21)), (minx, maxy, maxx, miny));
+            assert_eq!(header_corners(&tags), vec![(minx, maxy), (maxx, maxy), (maxx, miny), (minx, miny)]);
+        }
     }
 }
