@@ -1,6 +1,6 @@
 # The AI Assistant
 
-> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-11-03 · **Change:** trivial (a refused write makes no folder either, now that saves make a missing one; previously trivial: `ui.render` to a file checks the consent too; previously trivial: the engine's check moved into the writer underneath, so QSAVE's `.bak` and WBLOCK stay covered; previously minor: the engine refuses the file writes and closes a call wasn't allowed; CLOSE asks first; previously minor: commands given a file ask first; previously minor: every protected command of a script is asked; what the confirmations do and don't cover; the CLI's starting drawing; previously minor: what the agreement covers, confirmations reach command lines and scripts, how `ask` keeps its changes)
+> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-11-03 · **Change:** trivial (the report of a crash during a call is written all the same; previously trivial: a refused write makes no folder either, now that saves make a missing one; previously trivial: `ui.render` to a file checks the consent too; previously trivial: the engine's check moved into the writer underneath, so QSAVE's `.bak` and WBLOCK stay covered; previously minor: the engine refuses the file writes and closes a call wasn't allowed; CLOSE asks first; previously minor: commands given a file ask first; previously minor: every protected command of a script is asked; what the confirmations do and don't cover; the CLI's starting drawing; previously minor: what the agreement covers, confirmations reach command lines and scripts, how `ask` keeps its changes)
 
 **Window ▸ AI Assistant** opens a palette where you ask for a drawing change in your own words
 ("draw a 60 mm flange with four holes on a 45 mm circle") and the assistant carries it out with
@@ -39,7 +39,8 @@ on a drawing of its own (see [From a terminal](#from-a-terminal)). It is the in-
   WBLOCK and the layout saver; TABLEEXPORT, DATAEXTRACTION, the plot-style and plotter managers, a LISP `open`
   for writing, DRAWINGRECOVERY's discard, a render to a file), where it makes the missing folder a
   save or export asks for, and where it closes a drawing, it checks that consent and refuses the
-  rest, wherever the call came from. The palette carries the consent to the UI
+  rest, wherever the call came from. The app's own records are not the call's: the report of a
+  crash during a call, and its recovery copies, are written all the same. The palette carries the consent to the UI
   thread with the call, and `cadcraft-cli ask` runs the call inside it. A LISP routine a call
   leaves running goes on in later frames with no consent at all, and stops when the turn ends.
   The user's own commands, the control channel and other MCP clients run without a consent, as
@@ -113,6 +114,7 @@ Saving onto the `--open` file needs `--in-place`, as in `run`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | The report of a crash during a call is written all the same: the app's own file, not one the call asked for |
 | 2026-11-03 | trivial | A refused write makes no folder either: the check comes before the folders a save to a missing folder makes |
 | 2026-11-01 | trivial | `ui.render` to a file checks the consent too |
 | 2026-11-01 | trivial | The engine's check moved into the writer underneath the shared atomic writer, so QSAVE's `.bak` and WBLOCK stay covered |

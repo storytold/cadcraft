@@ -48,6 +48,20 @@ pub fn with<T>(consent: Consent, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// Run `f` outside any [`with`] scope, and restore it after, also when `f` panics. Only for the
+/// app's own records that no call asks for, such as the report of a panic that happens during one;
+/// never for a file a call names.
+pub fn outside<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Consent>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CURRENT.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(CURRENT.with(|c| c.replace(None)));
+    f()
+}
+
 /// What this thread may do: `None` outside any [`with`] scope (everything).
 pub fn current() -> Option<Consent> {
     CURRENT.with(Cell::get)
@@ -105,6 +119,17 @@ mod tests {
             with(Consent { write_files: true, close_drawings: true }, || assert!(check_close().is_err()));
             with(Consent::NONE, || assert!(check_write("a.dxf").unwrap_err().to_string().contains("a.dxf")));
             assert!(check_write("a.dxf").is_ok());
+        });
+        assert_eq!(current(), None);
+    }
+
+    #[test]
+    fn outside_lifts_the_scope_and_puts_it_back() {
+        with(Consent::NONE, || {
+            assert!(outside(|| check_write("crash.txt").is_ok() && check_close().is_ok()));
+            assert_eq!(current(), Some(Consent::NONE));
+            assert!(std::panic::catch_unwind(|| outside(|| panic!("boom"))).is_err());
+            assert_eq!(current(), Some(Consent::NONE));
         });
         assert_eq!(current(), None);
     }

@@ -212,7 +212,9 @@ mod report {
         let _ = writeln!(text, "Message: {}", info.payload_as_str().unwrap_or("(not text)"));
         let _ = writeln!(text, "\n{}", std::backtrace::Backtrace::force_capture());
         let path = dir.join(format!("crash-{:012x}-{}.txt", now.as_millis(), std::process::id()));
-        cadcraft_engine::atomic_write::write_atomic(&path, text.as_bytes())?;
+        // The hook runs before the panic unwinds, so still inside the AI Assistant's call when it
+        // panicked there: the report is the app's own file, not one the call asked for.
+        cadcraft_engine::consent::outside(|| cadcraft_engine::atomic_write::write_atomic(&path, text.as_bytes()))?;
         prune(dir);
         Ok(path)
     }

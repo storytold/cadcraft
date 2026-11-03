@@ -15,7 +15,9 @@ fn panic_in_a_nested_ui(app: &mut CadApp, ctx: &egui::Context, text: &'static st
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label("before");
-                    std::panic::panic_any(text);
+                    // As in an AI Assistant call allowed no writes: the report and the recovery
+                    // copy are the app's own, and are written all the same.
+                    cadcraft_engine::consent::with(cadcraft_engine::consent::Consent::NONE, || std::panic::panic_any(text));
                 });
             });
         });
