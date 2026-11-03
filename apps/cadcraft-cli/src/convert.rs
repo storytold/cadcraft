@@ -1,6 +1,6 @@
 use super::args::ConvertArgs;
 use super::error::Result;
-use super::output::{Streams, export_framed, export_window, skipped_message, undrawn_message};
+use super::output::{Streams, export_framed, export_window, read_note_messages, skipped_message, undrawn_message};
 use super::{open, unicode};
 use cadcraft_engine::Session;
 
@@ -9,7 +9,8 @@ pub(crate) fn convert(a: &ConvertArgs, io: &mut Streams) -> Result {
     let framing = a.framing.framing();
     let mut s = Session::empty();
     open(&mut s, &a.input)?;
-    if let Some(m) = skipped_message(s.doc()?, i) {
+    let d = s.doc()?;
+    for m in read_note_messages(d, i).into_iter().chain(skipped_message(d, i)) {
         io.errln(format_args!("{m}"));
     }
     if cadcraft_io::is_image(&a.output)
