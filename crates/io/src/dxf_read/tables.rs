@@ -110,6 +110,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // appends in O(1) instead of scanning the growing layer list — otherwise many distinct layer
     // names make import quadratic (CWE-407).
     let mut layer_index: HashMap<String, usize> = d.layers.iter().enumerate().map(|(i, l)| (l.name.to_ascii_lowercase(), i)).collect();
+    // The same for linetypes (first definition wins) and text styles (last definition wins).
+    let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
+    let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
         let t = T(&tg);
         match kind.as_str() {
@@ -159,9 +162,10 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             }
             "LTYPE" => {
                 let name = t.s(2).unwrap_or_default();
-                if name.is_empty() || d.linetype(&name).is_some() || d.linetypes.len() >= MAX_OBJECTS {
+                if name.is_empty() || linetype_names.contains(&name.to_ascii_lowercase()) || d.linetypes.len() >= MAX_OBJECTS {
                     continue;
                 }
+                linetype_names.insert(name.to_ascii_lowercase());
                 let pattern = ltype_pattern(&tg, &ltype_styles);
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
@@ -184,9 +188,12 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     vertical: t.i(70).unwrap_or(0) & 4 != 0,
                     annotative: annotative(&tg),
                 };
-                match d.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
+                match style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.text_styles.get_mut(i)) {
                     Some(x) => *x = st,
-                    None => d.text_styles.push(st),
+                    None => {
+                        style_index.insert(name.to_ascii_lowercase(), d.text_styles.len());
+                        d.text_styles.push(st);
+                    }
                 }
             }
             // The first *ACTIVE viewport holds the current snap/grid settings.

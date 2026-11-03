@@ -304,7 +304,9 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
     // Large declared sizes must be backed by cell records (no allocation from a bare count).
     let n_cells = tail.iter().filter(|x| x.code == 171).count();
     let declared = rows.saturating_mul(cols);
-    if declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
+    // A table with no rows or no columns has no cells: keep neither dimension, so its row heights
+    // and column widths (allocated per dimension, outside the cell budget) are not allocated.
+    if declared == 0 || declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
         rows = 0;
         cols = 0;
     }
