@@ -229,8 +229,8 @@ fn open_fit(fit: &[Vec2], opts: FitOptions) -> Spline {
     let n = fit.len();
     let tangents = opts.start_tangent.is_some() || opts.end_tangent.is_some();
     // Two points without tangents are a line, except that AutoCAD 2024's chord-length fit makes
-    // it a cubic ([`chord_interpolate`]: control points at the thirds).
-    let chord_fit = opts.knots == KnotParam::Chord && opts.tolerance <= 0.0;
+    // it a cubic ([`chord_interpolate`]: control points at the thirds), with a fit tolerance too.
+    let chord_fit = opts.knots == KnotParam::Chord;
     if n < 2 || (n == 2 && !tangents && !chord_fit) {
         let mut s = if n < 2 {
             Spline { degree: 1, knots: vec![0.0, 0.0, 1.0, 1.0], control: fit.to_vec(), ..Spline::default() }
@@ -259,6 +259,10 @@ fn open_fit(fit: &[Vec2], opts: FitOptions) -> Spline {
     if n > MAX_INTERP_POINTS {
         return through_control();
     }
+    // No approximation (none asked for, too few or too many points for one, or none within the
+    // tolerance): the curve passes through the points. With chord-length knots it is AutoCAD
+    // 2024's interpolation (measured without a tolerance, and for two points with one); the other
+    // parametrisations interpolate with normalised knots.
     let chord = if opts.knots == KnotParam::Chord { chord_interpolate(fit, opts.start_tangent, opts.end_tangent) } else { None };
     chord.or_else(|| interpolate(fit, &u, d0, d1)).unwrap_or_else(through_control)
 }
@@ -890,6 +894,23 @@ mod tests {
             "{:?}",
             s.knots
         );
+        // A fit tolerance makes no difference to two points: AutoCAD 2024 with Fit tolerance 1
+        // from (0,0) to (10,5) has the same cubic, control points at the thirds, knots 0 and √125.
+        let two = [Vec2::ZERO, Vec2::new(10.0, 5.0)];
+        let s = Spline::fit_with(&two, false, FitOptions { tolerance: 1.0, ..FitOptions::default() });
+        let want = [(0.0, 0.0), (10.0 / 3.0, 5.0 / 3.0), (20.0 / 3.0, 10.0 / 3.0), (10.0, 5.0)];
+        assert!(s.degree == 3 && s.control.len() == 4, "{s:?}");
+        assert!(s.control.iter().zip(want).all(|(c, (x, y))| c.near(Vec2::new(x, y), 1e-9)), "{:?}", s.control);
+        let length = 125f64.sqrt();
+        assert!(
+            s.knots.len() == 8 && s.knots[..4].iter().all(|k| *k == 0.0) && s.knots[4..].iter().all(|k| (k - length).abs() < 1e-9),
+            "{:?}",
+            s.knots
+        );
+        assert_eq!(s.fit_opts.tolerance, 1.0);
+        // The same curve as without a tolerance.
+        let exact = Spline::fit_with(&two, false, FitOptions::default());
+        assert_eq!((&s.control, &s.knots, s.degree), (&exact.control, &exact.knots, exact.degree));
     }
 
     #[test]
