@@ -173,6 +173,12 @@ fn array_takes_2_to_32767_items() {
     }
     s.cmdline("32767").unwrap();
     assert_eq!(s.current_prompt().unwrap().display(), "Specify second point or [Fit]:");
+    // A sign or a leading zero is still a whole number (AutoCAD 2024: three items each).
+    for three in ["+3", "03"] {
+        let mut s = with_line(1);
+        copy(&mut s, &["0,0", "A", three, "5,0"]);
+        assert_eq!(starts(&s), [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)], "{three}");
+    }
     // Enter at the number ends COPY with nothing copied.
     let mut s = with_line(1);
     copy(&mut s, &["0,0", "A", ""]);

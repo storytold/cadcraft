@@ -135,7 +135,8 @@ impl SelectThen {
                     0 | 1 => "The selection is too large to array (MAXARRAY limits the size of the array).".to_string(),
                     _ => format!("Requires an integer between 2 and {max} (MAXARRAY limits the size of the array)."),
                 };
-                // Digits only: AutoCAD 2024 refuses 4.0, 1e1, 8/2, 1' and 3" here (measured).
+                // A whole number as typed: AutoCAD 2024 takes +3 and 03 here, and refuses 4.0, 1e1,
+                // 8/2, 1' and 3" (measured).
                 let n = t.trim().parse::<u16>().ok().filter(|v| (2..=max).contains(v)).ok_or(EngineError::Other(msg))?;
                 self.copy_array = CopyArray::Items { n, fit: false };
                 return Ok(Step::Continue);
