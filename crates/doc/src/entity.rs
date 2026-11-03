@@ -354,7 +354,9 @@ impl EntityKind {
                 if let Some(c) = &mut t.columns {
                     c.scale(s);
                 }
-                t.rotation = cadcraft_geom::norm_angle(t.rotation + rot);
+                // MTEXT has no backwards or upside-down flags: mirrored, it reads forward like
+                // a TEXT (#1169).
+                t.rotation = readable_rotation(t.rotation, rot, mirror);
             }
             EntityKind::Insert(i) => {
                 t3(&mut i.insert);
@@ -466,8 +468,7 @@ impl EntityKind {
             EntityKind::Tolerance(t) => {
                 t3(&mut t.insert);
                 // Like text with MIRRTEXT = 0: a mirrored frame keeps reading left to right.
-                let a = if mirror { t.rotation() } else { t.rotation() + rot };
-                t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
+                t.dir = Vec2::from_angle(readable_rotation(t.rotation(), rot, mirror)).to3(0.0);
             }
             EntityKind::Unknown(_) => {}
         }
@@ -646,8 +647,14 @@ fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
         a.y = q.y;
     }
     t.height *= s;
-    // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right.
-    t.rotation = cadcraft_geom::norm_angle(t.rotation + if mirror { 0.0 } else { rot });
+    t.rotation = readable_rotation(t.rotation, rot, mirror);
+}
+
+/// The rotation of text after a transform that turns by `rot`. A mirroring transform leaves it as
+/// it is, so mirrored text keeps reading left to right (MIRRTEXT 0): adding `rot` would turn it
+/// upside down about a vertical mirror line. TEXT, MTEXT and TOLERANCE all follow this rule.
+fn readable_rotation(rotation: f64, rot: f64, mirror: bool) -> f64 {
+    cadcraft_geom::norm_angle(if mirror { rotation } else { rotation + rot })
 }
 
 #[cfg(test)]
