@@ -138,8 +138,10 @@ mod tests {
     /// Writing to a FIFO with no reader returns at once, and a regular file is still replaced.
     #[test]
     fn write_to_a_fifo_without_a_reader_does_not_block() {
-        let dir = std::env::temp_dir().join(format!("cadcraft-lispfifo-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        // A fresh directory: `create_dir` fails if the name exists, so no stale pipe or planted symlink is reused.
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("cadcraft-lispfifo-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
         let fifo = dir.join("pipe");
         assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
         let started = std::time::Instant::now();
