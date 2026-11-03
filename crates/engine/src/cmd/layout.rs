@@ -84,11 +84,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["File", "Print..."])
             .key("Cmd+P")
             .alias(&["print"])
-            .params("{path? (else returns base64 `data`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?: number | \"1:50\", center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?: bool, plotTransparency?: bool (default: the page setup's; PLOTTRANSPARENCYOVERRIDE 0/2 overrides it), plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
+            .params("{path? (else returns base64 `data`), layout?: current|\"Model\", device?: \"CADCraft PDF\"|\"CADCraft PNG\"|\"CADCraft SVG\" | a plotter from PLOTTERMANAGER | \"None\" (default: a layout's page setup device; Model, or \"None\": no device, PDF; a device sets the output format and the papers), paper?: the device's paper (default: a layout keeps its page setup's; Model takes the device's default), landscape?, fit?: bool, scale?: number | \"1:50\", center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?: bool, plotTransparency?: bool (default: the page setup's; PLOTTRANSPARENCYOVERRIDE 0/2 overrides it), plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
             .noundo(),
         CommandSpec::new("exportpdf", "Export to PDF...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "exportpdf")?, "exportpdf"))
             .menu(&["File", "Export to PDF..."])
-            .params("{path? (else returns base64 `data`), layout?, paper?, landscape?, fit?, scale?, center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?, plotTransparency?, plotArea?, window?} (as PLOT)")
+            .params("{path? (else returns base64 `data`), layout?, device? (its papers; the output stays PDF), paper?, landscape?, fit?, scale?, center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?, plotTransparency?, plotArea?, window?} (as PLOT)")
             .noundo(),
         CommandSpec::new("mspace", "Model Space (in viewport)", run_mspace)
             .alias(&["ms"])
@@ -313,7 +313,7 @@ fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
         let h = d.new_handle();
         store.push(Entity { handle: h, ..Entity::clone(e) });
     }
-    d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view });
+    d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view, limits: src.limits });
     Ok(json!({ "name": to }))
 }
 
@@ -840,8 +840,11 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 let path = _path;
                 // Exclusively create a fresh temporary file and rename it into place so a planted
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
-                crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages }))
+                let folder = super::file::new_folder(path);
+                crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+                let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages });
+                super::file::report_new_folder(s, &mut r, folder);
+                Ok(r)
             }
             #[cfg(target_arch = "wasm32")]
             {

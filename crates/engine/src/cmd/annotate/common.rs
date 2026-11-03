@@ -22,6 +22,7 @@ pub(super) fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2,
         overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 
@@ -137,7 +138,7 @@ pub(super) fn circle_at(s: &Session, p: Vec2) -> Option<(Vec2, f64)> {
         // its fill, a ray only ahead of its start), on the object placed by the reference. A curve
         // the reference scales unevenly is drawn as an ellipse, which placing the object doesn't
         // make, so it is measured on its exactly placed primitives instead.
-        let dist = match (k, crate::snap::similarity_scale(m)) {
+        let dist = match (k, m.similarity_scale()) {
             (EntityKind::Circle(_) | EntityKind::Arc(_) | EntityKind::Ellipse(_), None) => {
                 k.prims().iter().map(|pr| crate::cmd::curves::prim_distance(&crate::snap::xform_prim(pr, m), p)).fold(f64::INFINITY, f64::min)
             }
@@ -150,7 +151,7 @@ pub(super) fn circle_at(s: &Session, p: Vec2) -> Option<(Vec2, f64)> {
         if !dist.is_finite() || dist > ap {
             return;
         }
-        let circle = crate::snap::similarity_scale(m).and_then(|scale| match k {
+        let circle = m.similarity_scale().and_then(|scale| match k {
             EntityKind::Circle(c) => Some((m.apply(c.center.xy()), c.radius * scale)),
             EntityKind::Arc(a) => Some((m.apply(a.center.xy()), a.radius * scale)),
             _ => None,
