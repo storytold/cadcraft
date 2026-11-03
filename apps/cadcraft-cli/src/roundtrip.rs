@@ -35,7 +35,8 @@ pub(crate) fn roundtrip(a: &RoundtripArgs, io: &mut Streams) -> Result {
     let mut missed = Vec::new();
     let (root, files, out) = if path.is_dir() {
         let out = a.out.clone().unwrap_or_else(|| path.join("report"));
-        let walk = corpus::walk(&path, std::slice::from_ref(&out));
+        // The report folder, and the saved copies in it, are never read back as corpus files.
+        let walk = corpus::walk(&path, &[out.clone(), out.join("saved")]);
         missed = left_out(&walk);
         for m in &missed {
             io.errln(format_args!("roundtrip: {m}"));
