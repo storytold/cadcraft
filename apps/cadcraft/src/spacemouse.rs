@@ -165,8 +165,14 @@ fn set_status(shared: &Mutex<Shared>, ctx: &egui::Context, status: Status, devic
     state.detail = detail;
     state.motion = motion::Motion::default();
     state.last_report = None;
-    state.pressed = 0;
-    state.held = 0;
+    // Recalibrating is often started by a button that is still down, and the device thread keeps its
+    // own mask without re-reporting a steady hold, so forgetting the buttons here would lose the held
+    // highlight and a press that lands before the next poll. Any other change means the device went
+    // away or restarted, so its buttons are forgotten.
+    if status != Status::Calibrating {
+        state.pressed = 0;
+        state.held = 0;
+    }
     drop(state);
     ctx.request_repaint();
 }
@@ -268,4 +274,33 @@ fn read_device(device: &hidapi::HidDevice, shared: &Mutex<Shared>, stop: &Atomic
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    fn connected_with_buttons(held: u32, pressed: u32) -> Mutex<Shared> {
+        Mutex::new(Shared { status: Status::Connected, device: Some("SpaceNavigator".into()), held, pressed, ..Shared::default() })
+    }
+
+    #[test]
+    fn recalibrating_keeps_the_held_and_pressed_buttons() {
+        // Button 2 (bound to calibrate) is held while button 1 was just pressed and not yet polled.
+        let shared = connected_with_buttons(0b10, 0b01);
+        set_status(&shared, &egui::Context::default(), Status::Calibrating, Some("SpaceNavigator".into()), None);
+        let state = shared.lock().expect("lock");
+        assert_eq!(state.status, Status::Calibrating);
+        assert_eq!((state.held, state.pressed), (0b10, 0b01), "buttons survive a recalibration");
+    }
+
+    #[test]
+    fn losing_or_failing_the_device_forgets_the_buttons() {
+        for status in [Status::Disconnected, Status::OpenFailed, Status::Error, Status::Searching] {
+            let shared = connected_with_buttons(0b10, 0b01);
+            set_status(&shared, &egui::Context::default(), status, None, None);
+            let state = shared.lock().expect("lock");
+            assert_eq!((state.held, state.pressed), (0, 0), "{status:?} clears the buttons");
+        }
+    }
 }
