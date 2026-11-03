@@ -106,6 +106,7 @@ struct Decoder<'a> {
 }
 
 impl Decoder<'_> {
+    /// Decode one chunk of type `kind`: draw it, or change the pen for what follows.
     fn chunk(&mut self, kind: u32, data: &[u8]) {
         let mut b = Bytes { data, at: 0 };
         match kind {
@@ -251,6 +252,7 @@ impl Decoder<'_> {
         }
     }
 
+    /// Add an entity drawn with the current pen (up to [`MAX_ENTITIES`]).
     fn push(&mut self, kind: EntityKind) {
         if self.out.len() < MAX_ENTITIES {
             self.out.push(Entity { handle: self.handle, common: self.pen.clone(), kind });
@@ -275,6 +277,7 @@ impl Decoder<'_> {
         self.matrices.iter().map(|m| (m[0] * m[5] - m[1] * m[4]).abs().sqrt()).product()
     }
 
+    /// A full circle around `c`, through the pushed matrices.
     fn circle(&mut self, c: Vec3, r: f64) {
         let r = r * self.scale();
         if r.is_finite() && r > 0.0 {
@@ -283,6 +286,7 @@ impl Decoder<'_> {
         }
     }
 
+    /// An arc around `c` from the direction `start`, turned by `sweep` around `normal`.
     fn arc(&mut self, c: Vec3, r: f64, normal: Vec3, start: Vec3, sweep: f64) {
         if !(r.is_finite() && r > 0.0 && sweep.is_finite() && sweep != 0.0) || start.xy().len() < 1e-12 {
             return;
@@ -313,6 +317,8 @@ impl Decoder<'_> {
         self.push(EntityKind::Arc(Arc { center: c.to3(0.0), radius: r, start, end }));
     }
 
+    /// A polyline, or a closed polygon: filled (a solid hatch) when ATTRIBUTE_FILL asked for it,
+    /// which applies to this one polygon only.
     fn polyline(&mut self, pts: Vec<Vec2>, polygon: bool) {
         let fill = std::mem::take(&mut self.fill);
         if pts.iter().any(|p| !p.is_finite()) || pts.is_empty() {
@@ -344,6 +350,7 @@ impl Decoder<'_> {
         }
     }
 
+    /// A single-line text, its style the first one whose font file the chunk names.
     fn text(&mut self, t: TextChunk) {
         let TextChunk { p, dir, height, width, oblique, value, font } = t;
         let font = font.as_str();
@@ -410,6 +417,7 @@ fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f64)> {
     (center.is_finite() && r.is_finite() && r > 0.0).then_some((center, r))
 }
 
+/// The little-endian u32 at `at`, if `bytes` holds one there.
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
     bytes.get(at..at.checked_add(4)?).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes)
 }
@@ -421,24 +429,30 @@ struct Bytes<'a> {
 }
 
 impl Bytes<'_> {
+    /// The next `n` bytes, if there are that many.
     fn take(&mut self, n: usize) -> Option<&[u8]> {
         let s = self.data.get(self.at..self.at.checked_add(n)?)?;
         self.at += n;
         Some(s)
     }
+    /// Pass over `n` bytes (reads after the end then find nothing).
     fn skip(&mut self, n: usize) {
         self.at = self.at.saturating_add(n);
     }
+    /// A little-endian u32.
     fn u32(&mut self) -> Option<u32> {
         self.take(4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes)
     }
+    /// A little-endian double.
     fn f64(&mut self) -> Option<f64> {
         self.take(8).and_then(|b| b.try_into().ok()).map(f64::from_le_bytes)
     }
+    /// Three doubles, if all are finite.
     fn point(&mut self) -> Option<Vec3> {
         let p = Vec3::new(self.f64()?, self.f64()?, self.f64()?);
         (p.x.is_finite() && p.y.is_finite() && p.z.is_finite()).then_some(p)
     }
+    /// Move on to the next multiple of four bytes, where padded strings end.
     fn align(&mut self) {
         self.at = self.at.saturating_add((4 - self.at % 4) % 4);
     }
@@ -454,7 +468,8 @@ impl Bytes<'_> {
     /// A UTF-16 string ended by a zero code unit.
     fn unicode(&mut self) -> String {
         let rest = self.data.get(self.at..).unwrap_or_default();
-        let units: Vec<u16> = rest.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).take_while(|&u| u != 0).collect();
+        let (pairs, _) = rest.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|&p| u16::from_le_bytes(p)).take_while(|&u| u != 0).collect();
         self.at += units.len() * 2 + 2;
         self.align();
         String::from_utf16_lossy(&units)
@@ -466,6 +481,7 @@ mod tests {
     use super::*;
     use crate::RawTag;
 
+    /// A chunk of type `kind`, its data padded to four bytes.
     fn chunk(kind: u32, data: &[u8]) -> Vec<u8> {
         let mut d = data.to_vec();
         d.resize(d.len().div_ceil(4) * 4, 0);
@@ -474,6 +490,7 @@ mod tests {
         out.extend(d);
         out
     }
+    /// Proxy graphics: the header (total size, chunk count), then the chunks.
     fn graphics(chunks: &[Vec<u8>]) -> Vec<u8> {
         let body: Vec<u8> = chunks.concat();
         let mut out = ((8 + body.len()) as u32).to_le_bytes().to_vec();
@@ -481,9 +498,11 @@ mod tests {
         out.extend(body);
         out
     }
+    /// A point in the XY plane as three doubles.
     fn pt(x: f64, y: f64) -> Vec<u8> {
         [x, y, 0.0].iter().flat_map(|v| v.to_le_bytes()).collect()
     }
+    /// Two layers, two linetypes and two text styles.
     fn tables() -> ProxyTables {
         ProxyTables {
             layers: vec!["0".into(), "BALLOONS".into()],

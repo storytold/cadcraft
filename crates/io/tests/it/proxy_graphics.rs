@@ -5,6 +5,7 @@ use cadcraft_doc::color::Color;
 use cadcraft_doc::{EntityKind, Space};
 use cadcraft_io::{read_dxf, write_dxf};
 
+/// A proxy graphics chunk of type `kind`, its data padded to four bytes.
 fn chunk(kind: u32, data: &[u8]) -> Vec<u8> {
     let mut d = data.to_vec();
     d.resize(d.len().div_ceil(4) * 4, 0);
@@ -14,6 +15,7 @@ fn chunk(kind: u32, data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// A point in the XY plane as three doubles.
 fn pt(x: f64, y: f64) -> Vec<u8> {
     [x, y, 0.0].iter().flat_map(|v| v.to_le_bytes()).collect()
 }
