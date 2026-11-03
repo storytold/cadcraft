@@ -2896,3 +2896,19 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }
+
+/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
+/// wrote them for pattern fills only.
+#[test]
+fn solid_hatch_keeps_angle_scale_and_double_flag() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
+91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
+75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
+    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&out);
+    let h = dxf_records(&pairs, "HATCH")[0];
+    let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
+    assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
+    assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
+    assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+}
