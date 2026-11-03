@@ -26,9 +26,12 @@ fn drawing(background: MTextMask) -> Drawing {
 
 #[test]
 fn background_and_true_colour_masks_round_trip_in_dxf_and_dwg() {
-    for mask in
-        [MTextMask { scale: 2.25, ..MTextMask::default() }, MTextMask { use_background: false, color: Color::True(Rgb(12, 34, 56)), scale: 1.75 }]
-    {
+    for mask in [
+        MTextMask { scale: 1.0, ..MTextMask::default() },
+        MTextMask { scale: 2.25, ..MTextMask::default() },
+        MTextMask { scale: 10.0, ..MTextMask::default() },
+        MTextMask { use_background: false, color: Color::True(Rgb(12, 34, 56)), scale: 1.75 },
+    ] {
         let d = drawing(mask);
         for version in [Version::R2000, Version::R2004, Version::R2018] {
             for name in ["text.dxf", "text.dwg"] {
@@ -63,7 +66,7 @@ fn invalid_native_mask_values_are_bounded_and_native_off_overrides_legacy_data()
     let opts = SaveOptions { version: Some(Version::R2018), binary: false };
     let bytes = cadcraft_io::write_with(&source, "text.dxf", &opts).unwrap();
     let text = String::from_utf8(bytes).unwrap();
-    for scale in ["-1", "NaN", "1e100"] {
+    for scale in ["-1", "0.999", "NaN", "inf", "10.001", "1000000", "1e100"] {
         let edited = text.replacen(" 45\r\n1.5\r\n", &format!(" 45\r\n{scale}\r\n"), 1);
         assert_ne!(edited, text);
         let back = cadcraft_io::read_dxf(edited.as_bytes()).unwrap();
@@ -75,7 +78,8 @@ fn invalid_native_mask_values_are_bounded_and_native_off_overrides_legacy_data()
                 _ => None,
             })
             .unwrap();
-        assert!(mask.scale.is_finite() && mask.scale <= 1_000_000.);
+        assert!(mask.scale.is_finite() && (1.0..=10.0).contains(&mask.scale));
+        assert_eq!(mask.scale, 1.5, "{scale}: invalid scales fall back to the default");
     }
     // A later native editor turning the fill off takes precedence over old fallback xdata.
     let mut legacy = cadcraft_io::write_dxf(&source);

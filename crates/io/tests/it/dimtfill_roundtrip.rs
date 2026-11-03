@@ -203,6 +203,38 @@ fn dimension_block_holds_the_text_background() {
 }
 
 #[test]
+fn dimension_gap_ratios_survive_mask_normalization() {
+    for base in [
+        DimStyle::default(),
+        DimStyle::iso25(),
+        DimStyle { text_gap: 0.5, ..DimStyle::default() },
+        DimStyle { text_height: 1.0, text_gap: 9.0, ..DimStyle::default() },
+    ] {
+        for scale in [0.1, 1.0, 100.0] {
+            let mut d = Drawing::new_imperial();
+            let style = DimStyle { name: "Fill".into(), text_fill: 1, scale, ..base.clone() };
+            let expected = 1.0 + style.text_gap.abs() / style.text_height;
+            assert!((1.0..=10.0).contains(&expected));
+            d.dim_styles.push(style);
+            d.add(&Space::Model, Common::default(), EntityKind::Dimension(Dimension { style: "Fill".into(), ..linear() })).unwrap();
+            for version in [Version::R2000, Version::R2018] {
+                let back = cadcraft_io::read_dxf(dxf(&d, version).as_bytes()).unwrap();
+                let mask = back
+                    .blocks
+                    .values()
+                    .flat_map(|b| b.entities.iter())
+                    .find_map(|e| match &e.kind {
+                        EntityKind::MText(t) => t.background,
+                        _ => None,
+                    })
+                    .expect("saved dimension text mask");
+                assert!((mask.scale - expected).abs() < 1e-9, "{version:?}, scale {scale}: {} vs {expected}", mask.scale);
+            }
+        }
+    }
+}
+
+#[test]
 fn background_colour_mask_is_native_in_saved_dimension_blocks() {
     let mut d = Drawing::new_imperial();
     assert_eq!(d.header.i64("WIPEOUTFRAME", 1), 1);

@@ -105,8 +105,9 @@ impl Default for MTextMask {
 
 impl MTextMask {
     /// Reject non-finite or excessive expansion from files and control parameters.
+    /// Allow up to nine text heights of padding per side, including generous dimension gaps.
     pub fn normalized(self) -> Self {
-        let scale = if self.scale.is_finite() && (1.0..=1_000_000.0).contains(&self.scale) { self.scale } else { 1.5 };
+        let scale = if self.scale.is_finite() && (1.0..=10.0).contains(&self.scale) { self.scale } else { 1.5 };
         Self { scale, ..self }
     }
 }

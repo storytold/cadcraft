@@ -109,6 +109,42 @@ fn attributes_without_properties_stay_without() {
 }
 
 #[test]
+fn multiline_attribute_mask_uses_own_layer_then_definition_then_insert() {
+    for (tag, own_layer, expected) in [
+        ("DEFLAYER", Some("A"), Rgb(12, 34, 56)),
+        ("NODEF", Some("A"), Rgb(12, 34, 56)),
+        ("DEFLAYER", None, Rgb(78, 90, 12)),
+        ("NODEF", None, Rgb(34, 56, 78)),
+    ] {
+        let mut a = attrib(tag, 0.0, AttribProps { layer: own_layer.map(str::to_owned), ..Default::default() });
+        a.multiline = Some(MultilineAttrib {
+            read_as: tag.into(),
+            mtext: MText {
+                insert: Vec3::ZERO,
+                height: 1.0,
+                width: 0.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: tag.into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+                background: Some(MTextMask { use_background: false, color: Color::ByLayer, ..Default::default() }),
+            },
+        });
+        let (mut d, _) = drawing(vec![a]);
+        for (name, color) in [("A", Rgb(12, 34, 56)), ("TXT", Rgb(78, 90, 12)), ("INS", Rgb(34, 56, 78))] {
+            d.layers.iter_mut().find(|l| l.name == name).unwrap().color = Color::True(color);
+        }
+        let list = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+        let fills: Vec<_> = list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Tris).collect();
+        assert_eq!(fills.len(), 1, "{tag}, {own_layer:?}: one mask fill");
+        assert_eq!(fills[0].color, expected, "{tag}, {own_layer:?}");
+    }
+}
+
+#[test]
 fn hostile_attrib_groups_do_not_panic() {
     let dxf = "0\nSECTION\n2\nENTITIES\n0\nINSERT\n5\n20\n8\n0\n66\n1\n2\nNOPE\n10\n0\n20\n0\n30\n0\n\
 0\nATTRIB\n5\n21\n8\n\n6\n\n62\n99999\n420\n-5\n370\n-99999\n10\n0\n20\n0\n30\n0\n40\n1\n1\nv\n2\nT\n70\n0\n\
