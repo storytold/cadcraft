@@ -9,17 +9,18 @@ use cadcraft_ui_egui::{CadApp, Services};
 use egui::{Rect, Shape, vec2};
 use egui_kittest::Harness;
 
-/// Two drawing files on disk (the reader below accepts anything, so their contents don't matter).
-fn drawings(test: &str) -> (String, String) {
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
+/// Two drawing files on disk (the reader below accepts anything, so their contents don't matter),
+/// in a folder that is removed when the returned guard is dropped.
+fn drawings(test: &str) -> (TempDir, String, String) {
     set_io(IoHooks { read: |_, _| Ok(Drawing::new_metric()), write: |_, _| Ok(Vec::new()), plot: None });
-    let dir = std::env::temp_dir().join(format!("cadcraft-recent-{test}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = |name: &str| {
-        let p = dir.join(name);
-        std::fs::write(&p, b"0\nEOF\n").unwrap();
-        p.to_string_lossy().to_string()
-    };
-    (path("plan.dxf"), path("section.dwg"))
+    let dir = TempDir::new(&format!("recent-{test}"));
+    let (plan, section) = (dir.file("plan.dxf", b"0\nEOF\n"), dir.file("section.dwg", b"0\nEOF\n"));
+    (dir, plan, section)
 }
 
 /// Wait for the drawings being read in the background to be added (or reported).
@@ -49,19 +50,19 @@ fn open_recent(app: &CadApp) -> Vec<(String, String)> {
 
 #[test]
 fn opened_drawings_are_listed_newest_first_and_survive_a_restart() {
-    let (plan, section) = drawings("menu");
+    let (_dir, plan, section) = drawings("menu");
     let mut app = CadApp::new(Session::empty(), Services::default());
     assert!(app.ui.recent_files.is_empty());
 
-    app.open_path(&plan);
+    app.open_path(std::path::Path::new(&plan));
     settle(&mut app);
-    app.open_path(&section);
+    app.open_path(std::path::Path::new(&section));
     settle(&mut app);
-    app.open_path(&plan);
+    app.open_path(std::path::Path::new(&plan));
     settle(&mut app);
     assert_eq!(app.ui.recent_files, [plan.clone(), section.clone()], "newest first, each file once");
     // A file that could not be opened is not listed.
-    app.open_path("/nonexistent/missing.dxf");
+    app.open_path(std::path::Path::new("/nonexistent/missing.dxf"));
     settle(&mut app);
     assert_eq!(app.ui.recent_files, [plan.clone(), section.clone()]);
 
@@ -99,7 +100,7 @@ fn texts(shape: &Shape, out: &mut Vec<(String, Rect)>) {
 
 #[test]
 fn start_page_lists_recent_files_and_opens_one_on_click() {
-    let (plan, section) = drawings("start");
+    let (_dir, plan, section) = drawings("start");
     let mut app = CadApp::new(Session::empty(), Services::default());
     app.ui.recent_files = vec![section.clone(), plan.clone()];
     let mut h = Harness::builder().with_size(vec2(1200.0, 760.0)).build_ui_state(

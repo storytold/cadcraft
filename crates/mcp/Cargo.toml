@@ -12,6 +12,7 @@ workspace = true
 cadcraft-engine = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-io = { workspace = true }
+clap = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 # Secure randomness for the per-session control token (MIT OR Apache-2.0).

@@ -18,6 +18,7 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: cadcraft
 finish-args:
+  - --filesystem=xdg-data/ArtCraft/versions:ro
   # Display: Wayland first; X11 only when no Wayland compositor is running.
   - --socket=wayland
   - --socket=fallback-x11
@@ -25,15 +26,15 @@ finish-args:
   - --share=ipc
   # GPU access for the wgpu canvas (Vulkan, or GL as a fallback).
   - --device=dri
+  # Outbound network access (HTTPS).
+  - --share=network
   # Open/Save dialogs go through the file-chooser portal (rfd) and drag-and-drop through the
   # document portal, so picked files work anywhere without broad filesystem access. Documents
   # and Pictures are granted so drawings passed by path (the command line, Open Recent, xrefs
   # and images next to a DXF) work in the usual places.
   - --filesystem=xdg-documents
   - --filesystem=xdg-pictures
-  # Deliberately not granted: network (the optional --control server listens on 127.0.0.1 in
-  # the sandbox; `flatpak override --user --share=network ai.storyteller.cadcraft` exposes it to
-  # host agents) and home/host filesystem access.
+  # Deliberately not granted: home/host filesystem access.
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:
