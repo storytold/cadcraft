@@ -223,8 +223,33 @@ fn script_fallback(c: char) -> &'static [&'static str] {
 }
 
 const WEIGHT_WORDS: &[&str] = &["thin", "light", "medium", "semibold", "bold", "black", "heavy", "italic", "oblique", "mono", "condensed"];
-/// Common font families always offered at the top of font pickers after [`crate::BUILTIN_FONT`].
+/// Common font families offered at the top of font pickers (after [`crate::BUILTIN_FONT`]) when
+/// installed or registered.
 const COMMON_FAMILIES: &[&str] = &["Arial", "Calibri", "Courier New", "Georgia", "Times New Roman", "Verdana"];
+/// Maximum `name` table size read when scanning installed fonts for family names.
+const MAX_NAME_TABLE_BYTES: usize = 256 << 10;
+/// Maximum sfnt tables per face directory inspected during the family-name scan.
+const MAX_SFNT_TABLES: usize = 128;
+
+/// One style face of a discovered font family.
+#[derive(Clone, Debug)]
+struct FamilyStyle {
+    /// Subfamily/style name from the `name` table (`"Regular"`, `"Bold"`, `"Italic"`, etc.).
+    style: String,
+    /// Lower-case file stem in `Db::paths` or `Db::files`.
+    stem: String,
+    /// Face index inside the font file (`0` for a single-face sfnt, `0..N` for `.ttc`/`.otc`).
+    index: u32,
+}
+
+/// A font family discovered from the `name` tables of installed or registered fonts.
+#[derive(Clone, Debug)]
+struct FamilyEntry {
+    /// Family name from the `name` table (`"Arial"`, `"Agency FB"`, `"Times New Roman"`, etc.).
+    family: String,
+    /// Styles belonging to this family, ordered with Regular first.
+    styles: Vec<FamilyStyle>,
+}
 
 #[derive(Default)]
 struct Db {
@@ -235,6 +260,8 @@ struct Db {
     files: HashMap<String, Arc<Vec<u8>>>,
     /// Name lookups already answered, found or not.
     resolved: HashMap<String, Option<Face>>,
+    /// Discovered font families and their styles from each font's `name` table.
+    families: Option<Vec<FamilyEntry>>,
     /// Cached list of font names offered by font pickers (`BUILTIN_FONT` first, then sorted).
     names: Option<Vec<String>>,
     fallback: Fallback,
@@ -343,10 +370,12 @@ fn scan() -> HashMap<String, PathBuf> {
     HashMap::new()
 }
 
+/// Font files larger than this are never read or offered in font pickers.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_FILE_BYTES: u64 = 96 << 20;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
-    /// Font files larger than this are never read.
-    const MAX_FILE_BYTES: u64 = 96 << 20;
     if std::fs::metadata(path).ok()?.len() > MAX_FILE_BYTES {
         return None;
     }
@@ -356,6 +385,152 @@ fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
 #[cfg(target_arch = "wasm32")]
 fn read_file(_path: &std::path::Path) -> Option<Vec<u8>> {
     None
+}
+
+/// Read `(face_index, family_name, subfamily_name)` for each face of an sfnt font or TTC
+/// collection from a seekable reader, reading only the table directories and `name` tables.
+fn read_reader_names(r: &mut (impl std::io::Read + std::io::Seek)) -> Vec<(u32, String, String)> {
+    let mut hdr = [0u8; 12];
+    if r.seek(std::io::SeekFrom::Start(0)).is_err() || r.read_exact(&mut hdr).is_err() {
+        return Vec::new();
+    }
+    if &hdr[0..4] == b"ttcf" {
+        let count = u32::from_be_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]).min(MAX_FACES_PER_FILE);
+        let Ok(byte_len) = usize::try_from(count).map(|n| n.saturating_mul(4)) else {
+            return Vec::new();
+        };
+        let mut offs = vec![0u8; byte_len];
+        if r.read_exact(&mut offs).is_err() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (i, chunk) in offs.as_chunks::<4>().0.iter().enumerate() {
+            let off = u64::from(u32::from_be_bytes(*chunk));
+            let idx = u32::try_from(i).unwrap_or(0);
+            if let Some((fam, sub)) = read_sfnt_name(r, off) {
+                out.push((idx, fam, sub));
+            }
+        }
+        out
+    } else if let Some((fam, sub)) = read_sfnt_name(r, 0) {
+        vec![(0, fam, sub)]
+    } else {
+        Vec::new()
+    }
+}
+
+fn read_sfnt_name(r: &mut (impl std::io::Read + std::io::Seek), sfnt_offset: u64) -> Option<(String, String)> {
+    r.seek(std::io::SeekFrom::Start(sfnt_offset)).ok()?;
+    let mut hdr = [0u8; 12];
+    r.read_exact(&mut hdr).ok()?;
+    if !matches!(&hdr[0..4], b"\x00\x01\x00\x00" | b"OTTO" | b"true" | b"typ1") {
+        return None;
+    }
+    let num_tables = usize::from(u16::from_be_bytes([hdr[4], hdr[5]])).min(MAX_SFNT_TABLES);
+    let mut dir = vec![0u8; num_tables.saturating_mul(16)];
+    r.read_exact(&mut dir).ok()?;
+    let mut name_loc = None;
+    for rec in dir.as_chunks::<16>().0 {
+        if &rec[0..4] == b"name" {
+            let offset = u64::from(u32::from_be_bytes([rec[8], rec[9], rec[10], rec[11]]));
+            let length = usize::try_from(u32::from_be_bytes([rec[12], rec[13], rec[14], rec[15]])).ok()?;
+            name_loc = Some((offset, length));
+            break;
+        }
+    }
+    let (offset, length) = name_loc?;
+    if length == 0 || length > MAX_NAME_TABLE_BYTES {
+        return None;
+    }
+    r.seek(std::io::SeekFrom::Start(offset)).ok()?;
+    let mut buf = vec![0u8; length];
+    r.read_exact(&mut buf).ok()?;
+    parse_name_table(&buf)
+}
+
+fn pick_name_string(name: &skrifa::raw::tables::name::Name<'_>, id: skrifa::string::StringId) -> Option<String> {
+    let data = name.string_data();
+    let mut best: Option<(u8, String)> = None;
+    for rec in name.name_record() {
+        if rec.name_id() != id {
+            continue;
+        }
+        let rank = match (rec.platform_id(), rec.language_id()) {
+            (3, 0x0409) => 0,
+            (0, _) => 1,
+            (1, 0) => 2,
+            _ => 3,
+        };
+        if best.as_ref().is_some_and(|(b, _)| *b <= rank) {
+            continue;
+        }
+        let Ok(s) = rec.string(data) else { continue };
+        let text: String = s.chars().take(128).collect();
+        let trimmed = text.trim();
+        if usable_font_name(trimmed) {
+            best = Some((rank, trimmed.to_string()));
+            if rank == 0 {
+                break;
+            }
+        }
+    }
+    best.map(|(_, s)| s)
+}
+
+fn parse_name_table(buf: &[u8]) -> Option<(String, String)> {
+    use skrifa::raw::{FontData, FontRead, tables::name::Name};
+    use skrifa::string::StringId;
+    let name = Name::read(FontData::new(buf)).ok()?;
+    let family = pick_name_string(&name, StringId::FAMILY_NAME).or_else(|| pick_name_string(&name, StringId::TYPOGRAPHIC_FAMILY_NAME))?;
+    let style = pick_name_string(&name, StringId::SUBFAMILY_NAME)
+        .or_else(|| pick_name_string(&name, StringId::TYPOGRAPHIC_SUBFAMILY_NAME))
+        .unwrap_or_else(|| "Regular".to_string());
+    Some((family, style))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_path_names(path: &std::path::Path) -> Vec<(u32, String, String)> {
+    let Ok(file) = std::fs::File::open(path) else { return Vec::new() };
+    if file.metadata().ok().is_none_or(|m| m.len() > MAX_FILE_BYTES) {
+        return Vec::new();
+    }
+    let mut reader = std::io::BufReader::with_capacity(4096, file);
+    read_reader_names(&mut reader)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_path_names(_path: &std::path::Path) -> Vec<(u32, String, String)> {
+    Vec::new()
+}
+
+fn style_rank(style: &str) -> (u8, String) {
+    let lower = style.trim().to_ascii_lowercase();
+    let rank = match lower.as_str() {
+        "regular" | "roman" | "normal" | "book" | "plain" => 0,
+        "italic" | "oblique" => 1,
+        "bold" => 2,
+        "bold italic" | "bold oblique" => 3,
+        _ => 4,
+    };
+    (rank, lower)
+}
+
+fn insert_family_style(families: &mut Vec<FamilyEntry>, family: String, style: String, stem: String, index: u32) {
+    if !usable_font_name(&family) || !usable_font_name(&style) {
+        return;
+    }
+    if let Some(entry) = families.iter_mut().find(|e| e.family.eq_ignore_ascii_case(&family)) {
+        if let Some(existing) = entry.styles.iter_mut().find(|s| s.style.eq_ignore_ascii_case(&style)) {
+            if (stem.len(), &stem, index) < (existing.stem.len(), &existing.stem, existing.index) {
+                existing.stem = stem;
+                existing.index = index;
+            }
+        } else {
+            entry.styles.push(FamilyStyle { style, stem, index });
+        }
+    } else {
+        families.push(FamilyEntry { family, styles: vec![FamilyStyle { style, stem, index }] });
+    }
 }
 
 impl Db {
@@ -376,6 +551,79 @@ impl Db {
         Some(bytes)
     }
 
+    fn face_at(&mut self, stem: &str, index: u32) -> Option<Face> {
+        let bytes = self.file(stem)?;
+        Face::new(bytes, index)
+    }
+
+    fn ensure_families(&mut self) -> &[FamilyEntry] {
+        if self.families.is_none() {
+            let mut families: Vec<FamilyEntry> = Vec::new();
+            for f in crate::CRAFT_FONTS {
+                insert_family_style(&mut families, f.family.to_string(), f.style.to_string(), f.stem(), 0);
+            }
+            let mut file_stems: Vec<String> = self.files.keys().cloned().collect();
+            file_stems.sort();
+            for stem in file_stems {
+                if let Some(bytes) = self.files.get(&stem) {
+                    let mut cur = std::io::Cursor::new(bytes.as_slice());
+                    for (idx, fam, sub) in read_reader_names(&mut cur) {
+                        insert_family_style(&mut families, fam, sub, stem.clone(), idx);
+                    }
+                }
+            }
+            let mut path_stems: Vec<String> = self.paths.keys().cloned().collect();
+            path_stems.sort();
+            for stem in path_stems {
+                if self.files.contains_key(&stem) || crate::craft_fonts::is_embedded(&stem) {
+                    continue;
+                }
+                let entries = match self.paths.get(&stem) {
+                    Some(Source::File(path)) => read_path_names(path),
+                    Some(Source::Static(bytes)) => read_reader_names(&mut std::io::Cursor::new(*bytes)),
+                    None => Vec::new(),
+                };
+                for (idx, fam, sub) in entries {
+                    insert_family_style(&mut families, fam, sub, stem.clone(), idx);
+                }
+            }
+            for entry in &mut families {
+                entry.styles.sort_by(|a, b| style_rank(&a.style).cmp(&style_rank(&b.style)).then_with(|| a.stem.cmp(&b.stem)));
+            }
+            families.sort_by(|a, b| a.family.to_ascii_lowercase().cmp(&b.family.to_ascii_lowercase()).then_with(|| a.family.cmp(&b.family)));
+            self.families = Some(families);
+        }
+        self.families.as_deref().unwrap_or(&[])
+    }
+
+    fn by_family_table(&mut self, k: &str) -> Option<Face> {
+        let want = norm(k);
+        if want.is_empty() {
+            return None;
+        }
+        let mut target: Option<(String, u32)> = None;
+        for entry in self.ensure_families() {
+            let fam_norm = norm(&entry.family);
+            if (fam_norm == want || format!("{fam_norm}regular") == want)
+                && let Some(first) = entry.styles.first()
+            {
+                target = Some((first.stem.clone(), first.index));
+                break;
+            }
+            for st in &entry.styles {
+                if norm(&format!("{} {}", entry.family, st.style)) == want {
+                    target = Some((st.stem.clone(), st.index));
+                    break;
+                }
+            }
+            if target.is_some() {
+                break;
+            }
+        }
+        let (stem, index) = target?;
+        self.face_at(&stem, index)
+    }
+
     fn lookup(&mut self, k: &str) -> Option<Face> {
         let candidates = [k.to_string(), k.replace(' ', ""), format!("{k} regular"), format!("{}-regular", k.replace(' ', ""))];
         for c in &candidates {
@@ -387,20 +635,25 @@ impl Db {
     }
 
     /// A face whose family or full name is `k`, among files with a similar stem, then among the
-    /// files whose stem begins with the name's first word (`GOST.TTF` for "GOST type A").
+    /// files whose stem begins with the name's first word (`GOST.TTF` for "GOST type A"), or in
+    /// the scanned `name` table index (`AGENCYR.TTF` / `AGENCYB.TTF` for "Agency FB").
     fn by_family(&mut self, k: &str) -> Option<Face> {
-        let want = norm(k);
-        if want.len() < 5 {
-            return None;
+        if self.families.is_some()
+            && let Some(face) = self.by_family_table(k)
+        {
+            return Some(face);
         }
-        let stems: Vec<String> = self.paths.keys().chain(self.files.keys()).cloned().collect();
-        for stem in family_candidates(&stems, &want, &norm(k.split_whitespace().next().unwrap_or(""))) {
-            let Some(bytes) = self.file(&stem) else { continue };
-            if let Some(face) = faces(&bytes).into_iter().find(|f| f.names().iter().any(|n| *n == want || format!("{n}regular") == want)) {
-                return Some(face);
+        let want = norm(k);
+        if want.len() >= 5 {
+            let stems: Vec<String> = self.paths.keys().chain(self.files.keys()).cloned().collect();
+            for stem in family_candidates(&stems, &want, &norm(k.split_whitespace().next().unwrap_or(""))) {
+                let Some(bytes) = self.file(&stem) else { continue };
+                if let Some(face) = faces(&bytes).into_iter().find(|f| f.names().iter().any(|n| *n == want || format!("{n}regular") == want)) {
+                    return Some(face);
+                }
             }
         }
-        None
+        self.by_family_table(k)
     }
 
     /// Load the next fallback candidate file. False when none is left or a bound is reached.
@@ -533,6 +786,7 @@ pub fn register(name: &str, bytes: Vec<u8>) {
     let mut g = lock();
     g.files.insert(key(name), Arc::new(bytes));
     g.resolved.clear();
+    g.families = None;
     g.names = None;
     g.fallback = Fallback::default();
 }
@@ -546,6 +800,7 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     g.files.remove(&k);
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
+    g.families = None;
     g.names = None;
     g.fallback = Fallback::default();
 }
@@ -557,48 +812,70 @@ fn usable_font_name(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('.') && !s.eq_ignore_ascii_case(crate::BUILTIN_FONT) && s.chars().all(|c| c.is_ascii_graphic() || c == ' ')
 }
 
-/// Font names for a Text Style font picker: [`crate::BUILTIN_FONT`] (`"CADCraft Stroke"`) first,
-/// followed by common families, embedded [`crate::CRAFT_FONTS`] and discovered/registered system
-/// fonts sorted and deduplicated case-insensitively.
+/// Font family names for a Text Style font picker: [`crate::BUILTIN_FONT`] (`"CADCraft Stroke"`)
+/// first, followed by installed [`COMMON_FAMILIES`], embedded [`crate::CRAFT_FONTS`] families, and
+/// family names discovered from each font's `name` table, sorted and deduplicated case-insensitively.
 pub fn available_fonts() -> Vec<String> {
     let mut g = lock();
     if let Some(names) = &g.names {
         return names.clone();
     }
-    let mut out: Vec<String> = Vec::new();
+    let families: Vec<String> = g.ensure_families().iter().map(|e| e.family.clone()).collect();
+    let mut out: Vec<String> = Vec::with_capacity(families.len() + 1);
     out.push(crate::BUILTIN_FONT.to_string());
-    out.extend(COMMON_FAMILIES.iter().map(|s| (*s).to_string()));
+    for &common in COMMON_FAMILIES {
+        let found = families.iter().any(|f| f.eq_ignore_ascii_case(common)) || g.lookup(&key(common)).is_some();
+        if found && !out.iter().any(|existing| existing.eq_ignore_ascii_case(common)) {
+            out.push(common.to_string());
+        }
+    }
     for f in crate::CRAFT_FONTS {
-        let name = if f.style == "Regular" { f.family.to_string() } else { format!("{} {}", f.family, f.style) };
-        if usable_font_name(&name) && !out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            out.push(name);
+        if usable_font_name(f.family) && !out.iter().any(|existing| existing.eq_ignore_ascii_case(f.family)) {
+            out.push(f.family.to_string());
         }
     }
-    let mut rest: Vec<String> = Vec::new();
-    for (stem, src) in &g.paths {
-        let candidate = match src {
-            Source::File(path) => path.file_stem().and_then(|s| s.to_str()).unwrap_or(stem),
-            Source::Static(_) if !crate::craft_fonts::is_embedded(stem) => stem.as_str(),
-            Source::Static(_) => continue,
-        };
-        if usable_font_name(candidate) {
-            rest.push(candidate.trim().to_string());
-        }
-    }
-    for stem in g.files.keys() {
-        if usable_font_name(stem) {
-            rest.push(stem.trim().to_string());
-        }
-    }
-    rest.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()).then_with(|| a.cmp(b)));
-    rest.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    for name in rest {
-        if !out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            out.push(name);
+    for fam in families {
+        if !out.iter().any(|existing| existing.eq_ignore_ascii_case(&fam)) {
+            out.push(fam);
         }
     }
     g.names = Some(out.clone());
     out
+}
+
+/// Split a style font spec (`"Arial"`, `"Arial Bold"`, `"arialbd.ttf"`) into
+/// `(family_name, current_style, family_styles)` using the scanned `name` tables. Returns `None`
+/// for stroke/SHX fonts or unknown font names.
+pub fn describe_font(name: &str) -> Option<(String, String, Vec<String>)> {
+    let k = key(name);
+    if is_stroke_name(&k) {
+        return None;
+    }
+    let want = norm(&k);
+    let mut g = lock();
+    let entries = g.ensure_families();
+    for entry in entries {
+        let styles = || entry.styles.iter().map(|s| s.style.clone()).collect::<Vec<_>>();
+        let fam_norm = norm(&entry.family);
+        if fam_norm == want || format!("{fam_norm}regular") == want {
+            let cur = entry.styles.first().map_or_else(|| "Regular".to_string(), |s| s.style.clone());
+            return Some((entry.family.clone(), cur, styles()));
+        }
+        for st in &entry.styles {
+            if norm(&format!("{} {}", entry.family, st.style)) == want || st.stem.eq_ignore_ascii_case(&k) {
+                return Some((entry.family.clone(), st.style.clone(), styles()));
+            }
+        }
+    }
+    None
+}
+
+/// Combine a font family and subfamily style (`"Arial"` + `"Regular"` → `"Arial"`,
+/// `"Arial"` + `"Bold"` → `"Arial Bold"`).
+pub fn compose_font(family: &str, style: &str) -> String {
+    let fam = family.trim();
+    let st = style.trim();
+    if st.is_empty() || st.eq_ignore_ascii_case("Regular") { fam.to_string() } else { format!("{fam} {st}") }
 }
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
