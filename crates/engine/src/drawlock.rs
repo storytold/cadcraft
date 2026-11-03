@@ -19,6 +19,7 @@ pub const HEARTBEAT_SECS: u64 = 60;
 /// A lock not touched for this long is stale, in seconds.
 pub const STALE_SECS: u64 = 5 * 60;
 /// Largest lock file read (bytes): anything bigger isn't ours.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_LOCK_BYTES: u64 = 4096;
 
 /// Who holds a lock.
@@ -39,6 +40,7 @@ pub fn lock_path(drawing: &Path) -> PathBuf {
 }
 
 /// Whether drawings at `path` get a lock: drawing files only (not exports).
+#[cfg(not(target_arch = "wasm32"))]
 fn lockable(path: &str) -> bool {
     let ext = Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     matches!(ext.as_str(), "dwg" | "dxf" | "dwt")

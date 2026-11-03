@@ -189,6 +189,7 @@ impl Autosaver {
             last_beat: None,
             #[cfg(not(target_arch = "wasm32"))]
             locks: crate::drawlock::Locks::default(),
+            #[cfg(not(target_arch = "wasm32"))]
             lock: None,
         }
     }
