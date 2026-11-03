@@ -382,7 +382,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "recover" if no_path && app.services.pick_open.is_some() => {
             if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
                 let r = app.run("recover", json!({ "path": p }));
-                app.opened(r);
+                let _ = app.opened(r);
             }
             Ok(Value::Null)
         }

@@ -15,8 +15,30 @@ const INPUT_ID: &str = "cadcraft_open_input";
 /// What the picker offers: the formats OPEN reads.
 const ACCEPT: &str = ".dxf,.dwg";
 
-/// A file read in the browser (name, contents), or why it couldn't be read.
-type Upload = Result<(String, Vec<u8>), String>;
+/// What a file read in the browser holds: its contents, or why they couldn't be read.
+type Contents = Result<Vec<u8>, String>;
+
+/// A file read in the browser (name, contents), waiting for the app's next frame.
+struct Upload {
+    /// The name the app opens it as.
+    name: String,
+    /// Its contents, or why they couldn't be read.
+    contents: Contents,
+    /// True for a drawing the page embedding CADCraft sent: [`Inbox::drain`] answers it.
+    reply_to_host: bool,
+}
+
+impl Upload {
+    /// A file picked, dropped or unreadable: nobody outside the page is waiting for an answer.
+    fn local(name: &str, contents: Contents) -> Self {
+        Self { name: name.to_string(), contents, reply_to_host: false }
+    }
+
+    /// A drawing the page embedding CADCraft sent, which it hears about once opened (#1666).
+    fn from_host(name: &str, contents: Contents) -> Self {
+        Self { name: name.to_string(), contents, reply_to_host: true }
+    }
+}
 
 /// Files read in the background, waiting for the app's next frame.
 #[derive(Clone)]
@@ -34,7 +56,8 @@ impl Inbox {
     /// [`Self::drain`]; cancelling the picker does nothing.
     pub fn pick(&self) {
         if let Err(e) = self.show_picker() {
-            self.push(Err(format!("Open: the browser's file picker is not available ({e})")));
+            // No file was picked at all: only the error matters.
+            self.push(Upload::local("", Err(format!("Open: the browser's file picker is not available ({e})"))));
         }
     }
 
@@ -85,30 +108,32 @@ impl Inbox {
         let size = file.size();
         let len = if size.is_finite() && size >= 0.0 { size as u64 } else { u64::MAX };
         if let Some(e) = CadApp::open_size_error(&name, len) {
-            return self.push(Err(e));
+            return self.push(Upload::local(&name, Err(e)));
         }
         let inbox = self.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let r = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-                Ok(buf) => Ok((name, js_sys::Uint8Array::new(&buf).to_vec())),
+            let contents = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                Ok(buf) => Ok(js_sys::Uint8Array::new(&buf).to_vec()),
                 Err(e) => Err(format!("Open: could not read {name}: {}", js_error(e))),
             };
-            inbox.push(r);
+            inbox.push(Upload::local(&name, contents));
         });
     }
 
     /// A file read elsewhere (sent by the page embedding CADCraft): opened on the next frame like
-    /// a picked file, or refused when too large to open.
+    /// a picked file, or refused when too large to open. Either way the page hears how it went
+    /// ([`Self::drain`]).
     pub fn receive(&self, name: String, bytes: Vec<u8>) {
-        match CadApp::open_size_error(&name, bytes.len() as u64) {
-            Some(e) => self.push(Err(e)),
-            None => self.push(Ok((name, bytes))),
-        }
+        let contents = match CadApp::open_size_error(&name, bytes.len() as u64) {
+            Some(e) => Err(e),
+            None => Ok(bytes),
+        };
+        self.push(Upload::from_host(&name, contents));
     }
 
-    /// A file from elsewhere refused before it was read (`error` says why).
-    pub fn refuse(&self, error: String) {
-        self.push(Err(error));
+    /// A drawing the page embedding CADCraft sent, refused before it was read (`error` says why).
+    pub fn refuse(&self, name: &str, error: String) {
+        self.push(Upload::from_host(name, Err(error)));
     }
 
     fn push(&self, upload: Upload) {
@@ -118,14 +143,23 @@ impl Inbox {
         self.ctx.request_repaint();
     }
 
-    /// Open what arrived since the last frame (or report why it couldn't be read).
-    pub fn drain(&self, app: &mut CadApp) {
+    /// Open what arrived since the last frame (or report why it couldn't be read), answering the
+    /// page embedding CADCraft for the drawings it sent: opened, or why not (#1666).
+    pub fn drain(&self, app: &mut CadApp) -> Vec<crate::OpenReply> {
+        let mut replies = Vec::new();
         for upload in self.files.take() {
-            match upload {
-                Ok((name, bytes)) => app.open_bytes(&name, &bytes),
-                Err(e) => app.open_failed(e),
+            let outcome = match upload.contents {
+                Ok(bytes) => app.open_bytes(&upload.name, &bytes),
+                Err(e) => {
+                    app.open_failed(e.clone());
+                    Err(e)
+                }
+            };
+            if upload.reply_to_host {
+                replies.push(crate::OpenReply::new(&upload.name, outcome.as_ref().err().map(String::as_str)));
             }
         }
+        replies
     }
 }
 

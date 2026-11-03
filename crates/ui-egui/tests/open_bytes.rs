@@ -17,13 +17,15 @@ fn open_bytes_opens_the_named_drawing_and_reports_failures() {
     let mut app = CadApp::new(Session::empty(), Services::default());
     app.ui.start_tab = true;
 
-    app.open_bytes("Bracket.dwg", b"0\nSECTION\n2\nHEADER\n");
+    assert!(app.open_bytes("Bracket.dwg", b"0\nSECTION\n2\nHEADER\n").is_ok());
     assert_eq!(app.session.docs.len(), 1);
     assert_eq!(app.session.state().map(|s| s.title.clone()).ok().as_deref(), Some("Bracket.dwg"));
     assert!(!app.ui.start_tab && app.canvas.zoom_pending, "shown and zoomed like a drawing opened from a path");
 
-    // A file the reader rejects: nothing opens; the error reaches the command line and status bar.
-    app.open_bytes("junk.dxf", b"junk");
+    // A file the reader rejects: nothing opens; the error reaches the command line and status bar,
+    // and comes back to the caller (the page embedding the app reports it, #1666).
+    let e = app.open_bytes("junk.dxf", b"junk").err();
+    assert!(e.as_deref().is_some_and(|e| e.contains("not a drawing")), "{e:?}");
     assert_eq!(app.session.docs.len(), 1);
     assert!(app.session.log.last().is_some_and(|l| l.contains("not a drawing")), "{:?}", app.session.log.last());
     assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("not a drawing")));
