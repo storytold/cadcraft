@@ -630,8 +630,8 @@ mod tests {
         let e = d.entity(h).unwrap();
         let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
         assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
-        // The line, and the block's bounding rectangle.
-        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+        // The line alone: a block is not picked along its bounding rectangle.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 1);
     }
 
     /// A dashed line in a block is hit across its gaps, as one outside a block is.
