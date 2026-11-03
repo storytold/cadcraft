@@ -1386,3 +1386,15 @@ menu	Modify	Modifikace
 	Units	Jednotky
 	Save Layout as Template	Uložit rozvržení jako šablonu
 	Save changes to block "{name}"?	Uložit změny do bloku „{name}“?
+	Find All	Najít vše
+	Find what:	Najít co:
+	Match case	Rozlišovat velikost písmen
+	Replace	Nahradit
+	Replace All	Nahradit vše
+	Replace with:	Nahradit čím:
+	Replacement text	Nahrazující text
+	Results	Výsledky
+	Searches the current space.	Prohledává aktuální prostor.
+	Text to find	Hledaný text
+	Whole words	Celá slova
+	Nothing found	Nic nenalezeno
