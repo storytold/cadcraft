@@ -291,7 +291,7 @@
 	Enter a vertex editing option	Digite uma opção de edição de vértice
 	Enter an option	Digite uma opção
 	Enter angle of xline	Digite o ângulo da linha infinita
-	Enter angle of xline (0) or	Digite o ângulo da linha infinita (0) ou
+	Enter angle of xline (0)	Digite o ângulo da linha infinita (0)
 	Enter area of rectangle in current units	Digite a área do retângulo nas unidades atuais
 	Enter attribute prompt	Digite o texto de solicitação do atributo
 	Enter attribute tag name	Digite o nome do rótulo do atributo
@@ -302,7 +302,7 @@
 	Enter default attribute value	Digite o valor padrão do atributo
 	Enter degree of spline	Digite o grau da spline
 	Enter delta angle	Digite o ângulo delta
-	Enter delta length or	Digite o comprimento delta ou
+	Enter delta length	Digite o comprimento delta
 	Enter dimension text	Digite o texto da cota
 	Enter dimension text (<> = measurement)	Digite o texto da cota (<> = medida)
 	Enter dimension value or [name=expression]	Digite o valor da cota ou [nome=expressão]
@@ -616,6 +616,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Um dos Crafting Apps da equipe e da comunidade ArtCraft.
 	Only in this drawing: {n}	Somente neste desenho: {n}
 	Only in {name}: {n}	Somente em {name}: {n}
+	Oops	Restaurar objetos apagados
 	Open	Abrir
 	Open (⌘O)	Abrir (⌘O)
 	Open Sample Drawing	Abrir desenho de exemplo
@@ -879,8 +880,8 @@
 	Select an arc or circle	Selecione um arco ou círculo
 	Select an arc.	Selecione um arco.
 	Select an object	Selecione um objeto
-	Select an object to change or	Selecione um objeto para alterar ou
-	Select an object to measure or	Selecione um objeto para medir ou
+	Select an object to change	Selecione um objeto para alterar
+	Select an object to measure	Selecione um objeto para medir
 	Select an object.	Selecione um objeto.
 	Select an open curve.	Selecione uma curva aberta.
 	Select an open line, arc, polyline, ellipse arc or spline.	Selecione uma linha aberta, arco, polilinha, arco elíptico ou spline.
@@ -894,9 +895,8 @@
 	Select first line	Selecione a primeira linha
 	Select first line or arc	Selecione a primeira linha ou arco
 	Select first object	Selecione o primeiro objeto
-	Select first object or	Selecione o primeiro objeto ou
 	Select first point	Selecione o primeiro ponto
-	Select nested objects to copy or	Selecione objetos aninhados para copiar ou
+	Select nested objects to copy	Selecione objetos aninhados para copiar
 	Select object	Selecione o objeto
 	Select object to dimension	Selecione o objeto a cotar
 	Select object to divide	Selecione o objeto a dividir
@@ -912,7 +912,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Selecione uma polilinha (a opção Multiple está disponível pela forma JSON).
 	Select path curve	Selecione a curva da trajetória
 	Select point or object	Selecione um ponto ou objeto
-	Select polyline or	Selecione uma polilinha ou
+	Select polyline	Selecione uma polilinha
 	Select second line	Selecione a segunda linha
 	Select second line or shift-select to apply corner	Selecione a segunda linha ou use Shift para aplicar o canto
 	Select second object	Selecione o segundo objeto
@@ -965,9 +965,8 @@
 	Specify axis endpoint of ellipse	Especifique a extremidade do eixo da elipse
 	Specify base diameter	Especifique o diâmetro da base
 	Specify base point	Especifique o ponto base
-	Specify base point or	Especifique o ponto base ou
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Especifique o ponto base ou o deslocamento (arraste com o botão do meio do mouse para pan em tempo real)
-	Specify base radius or	Especifique o raio da base ou
+	Specify base radius	Especifique o raio da base
 	Specify center of donut	Especifique o centro do anel
 	Specify center of ellipse	Especifique o centro da elipse
 	Specify center of polygon	Especifique o centro do polígono
@@ -1009,7 +1008,7 @@
 	Specify first point on circle: _tan to	Especifique o primeiro ponto no círculo: _tan para
 	Specify first source point	Especifique o primeiro ponto de origem
 	Specify height	Especifique a altura
-	Specify helix height or	Especifique a altura da hélice ou
+	Specify helix height	Especifique a altura da hélice
 	Specify included angle	Especifique o ângulo incluído
 	Specify insertion base point	Especifique o ponto base de inserção
 	Specify insertion point	Especifique o ponto de inserção
@@ -1028,7 +1027,6 @@
 	Specify new width for all segments	Especifique a nova largura para todos os segmentos
 	Specify next point	Especifique o próximo ponto
 	Specify offset distance	Especifique a distância de offset
-	Specify offset distance or	Especifique a distância de offset ou
 	Specify opposite corner	Especifique o canto oposto
 	Specify other corner point	Especifique o outro ponto de canto
 	Specify other endpoint of axis	Especifique a outra extremidade do eixo
@@ -1041,7 +1039,6 @@
 	Specify radius of circle	Especifique o raio do círculo
 	Specify rotation angle	Especifique o ângulo de rotação
 	Specify rotation angle of text	Especifique o ângulo de rotação do texto
-	Specify rotation angle or	Especifique o ângulo de rotação ou
 	Specify scale factor	Especifique o fator de escala
 	Specify second angle endpoint	Especifique a segunda extremidade do ângulo
 	Specify second break point	Especifique o segundo ponto de quebra
@@ -1074,9 +1071,9 @@
 	Specify third source point or <continue>	Especifique o terceiro ponto de origem ou <continuar>
 	Specify through point	Especifique o ponto de passagem
 	Specify top diameter	Especifique o diâmetro superior
-	Specify top radius or	Especifique o raio superior ou
+	Specify top radius	Especifique o raio superior
 	Specify total angle	Especifique o ângulo total
-	Specify total length or	Especifique o comprimento total ou
+	Specify total length	Especifique o comprimento total
 	Specify width for rectangles	Especifique a largura para retângulos
 	Sphere	Esfera
 	Spline	Spline
@@ -1256,3 +1253,200 @@
 	Check for Updates…	Verificar atualizações…
 	CADCraft is up to date.	O CADCraft está atualizado.
 	Could not check for updates.	Não foi possível verificar atualizações.
+# Strings the sibling catalogs translate that pt-BR did not yet cover (translated 2026-10-31).
+	Add: Pick points	Adicionar: indicar pontos
+	Add: Select objects	Adicionar: selecionar objetos
+	Add…	Adicionar…
+	Alias	Alias
+	Alias file: {file}	Arquivo de aliases: {file}
+	Align Multileaders	Alinhar multilinhas
+	Analyze Usage	Analisar uso
+	Angstroms	Angströms
+	Apply to Layout	Aplicar à apresentação
+	Architectural	Arquitetônico
+	Arrow size	Tamanho da seta
+	Associate	Associar
+	Associative	Associativo
+	Astronomical Units	Unidades astronômicas
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Backup copy	Cópia de backup
+	Block to create or edit	Bloco a criar ou editar
+	Bottom left	Inferior esquerdo
+	Bottom right	Inferior direito
+	Boundaries	Contornos
+	Boundaries picked: {n}	Contornos selecionados: {n}
+	Break-line Symbol	Símbolo de linha de quebra
+	built-in	integrado
+	Center the plot	Centralizar a plotagem
+	Centered	Centralizado
+	Centimeters	Centímetros
+	Change Properties	Alterar propriedades
+	Choose the command the alias starts.	Escolha o comando que o alias inicia.
+	Clear Recent Files	Limpar arquivos recentes
+	Click the ruler to add a tab stop, right-click to remove one	Clique na régua para adicionar uma parada de tabulação; clique com o botão direito para remover
+	Click to set new origin	Clique para definir a nova origem
+	Close Block Editor	Fechar o editor de blocos
+	Collect	Coletar
+	Collect Multileaders	Coletar multilinhas
+	Color 1	Cor 1
+	Color 2	Cor 2
+	Command	Comando
+	contains authoring elements. Open in Block Editor?	contém elementos de autoria. Abrir no editor de blocos?
+	Convert Text to Mtext	Converter texto em Mtexto
+	Create backup copy with each save	Criar cópia de backup a cada salvamento
+	Create separate hatches	Criar hachuras separadas
+	Crossing selection color:	Cor da seleção por cruzamento:
+	Curved	Curvo
+	Custom	Personalizado
+	Customize	Personalizar
+	Decameters	Decâmetros
+	Decimal	Decimal
+	Decimal Degrees	Graus decimais
+	Decimeters	Decímetros
+	Default to boundary extents	Padrão para a extensão do contorno
+	Deg/Min/Sec	Gra/Min/Seg
+	Dim scale overall	Escala geral de cotas
+	Discard	Descartar
+	Don't Save	Não salvar
+	Drag Dynamic Grip	Arrastar pinça dinâmica
+	Drawing Units	Unidades do desenho
+	Dynamic Block Data	Dados de bloco dinâmico
+	Dynamic Block Grips	Pinças de bloco dinâmico
+	Dynamic Block Reference	Referência de bloco dinâmico
+	Edit Block Definition	Editar definição de bloco
+	Edit Command Aliases (PGP)...	Editar aliases de comandos (PGP)...
+	Edit Multileader	Editar multilinha
+	Edit…	Editar…
+	Engineering	Engenharia
+	Enter block names to extract	Insira os nomes dos blocos a extrair
+	Enter geometric characteristic	Insira a característica geométrica
+	Enter name of LISP file to load	Insira o nome do arquivo LISP a carregar
+	Evaluate LISP	Avaliar LISP
+	Exclude:	Excluir:
+	Explode Attributes to Text	Explodir atributos em texto
+	Express Tools	Ferramentas Express
+	Feet	Pés
+	First corner	Primeiro canto
+	Fit to paper	Ajustar ao papel
+	Font	Fonte
+	Fractional	Fracionário
+	Gigameters	Gigâmetros
+	Grads	Grados
+	Grips	Pinças
+	Groups	Grupos
+	Hatch and Gradient	Hachura e gradiente
+	Hatch origin	Origem da hachura
+	Hatch Pick	Seleção de hachura
+	Hatches	Hachuras
+	Hectometers	Hectômetros
+	Hemispherical	Hemisférico
+	Ignore	Ignorar
+	Imperial (inches)	Imperial (polegadas)
+	Implied Loops	Laços implícitos
+	Inches	Polegadas
+	Indicate selection area	Indicar área de seleção
+	Insertion scale	Escala de inserção
+	Interface scale	Escala da interface
+	Inverted	Invertido
+	Island	Ilha
+	Island detection	Detecção de ilhas
+	Italic	Itálico
+	Justify	Justificar
+	Kilometers	Quilômetros
+	Landscape	Paisagem
+	Layouts	Apresentações
+	Light Years	Anos-luz
+	Limits	Limites
+	Load Application...	Carregar aplicativo...
+	Meters	Metros
+	Metric (millimetres)	Métrico (milímetros)
+	Microinches	Micropolegadas
+	Microns	Mícrons
+	Miles	Milhas
+	Millimeters	Milímetros
+	Mils	Mils
+	More than {n} aliases.	Mais de {n} aliases.
+	Move/Copy/Rotate	Mover/Copiar/Girar
+	Multiline text	Texto multilinha
+	Nanometers	Nanômetros
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Novos desenhos e o primeiro desenho na inicialização usam estas unidades, a menos que um modelo padrão esteja definido (QNEWTEMPLATE).
+	New block	Novo bloco
+	No alias file loaded. REINIT replaces these aliases with a file's.	Nenhum arquivo de aliases carregado. O REINIT substitui estes aliases pelos de um arquivo.
+	Object grouping	Agrupamento de objetos
+	Object selection limit for display of grips	Limite de seleção de objetos para exibir pinças
+	Objects on locked layers	Objetos em camadas bloqueadas
+	Open in Block Editor	Abrir no editor de blocos
+	Open Recent	Abrir recentes
+	Opposite corner	Canto oposto
+	Orientation	Orientação
+	Origin: {x}, {y}	Origem: {x}, {y}
+	Outer	Externo
+	Overline	Sobrelinha
+	overrides built-in	substitui o integrado
+	Paper size	Tamanho do papel
+	Parsecs	Parsecs
+	Plot area	Área de plotagem
+	Plot object lineweights	Plotar espessuras de linha dos objetos
+	Plot offset	Deslocamento da plotagem
+	Plot transparency	Plotar transparência
+	Portrait	Retrato
+	Precision	Precisão
+	Preview	Visualizar
+	Printer/plotter	Impressora/plotter
+	Radians	Radianos
+	Sample output	Amostra de saída
+	Save alias	Salvar alias
+	Save Block	Salvar bloco
+	Save Block As	Salvar bloco como
+	Save changes to block "{name}"?	Salvar alterações no bloco "{name}"?
+	Save changes to {name}?	Salvar alterações em {name}?
+	Save Layout as Template	Salvar apresentação como modelo
+	Scientific	Científico
+	Select boundaries to remove	Selecione contornos para remover
+	Selection Area Effect	Efeito da área de seleção
+	Selection area opacity:	Opacidade da área de seleção:
+	Selection effect color	Cor do efeito de seleção
+	Selection modes	Modos de seleção
+	Selection preview	Visualização da seleção
+	Selection Preview Filter	Filtro de visualização da seleção
+	Set Dynamic Property	Definir propriedade dinâmica
+	Shape	Forma
+	Sheet Books to PDF...	Livros de folhas em PDF...
+	Show grips	Mostrar pinças
+	Specified origin	Origem especificada
+	Spherical	Esférico
+	Surveyor's Units	Unidades de topografia
+	Tables	Tabelas
+	Text color	Cor do texto
+	This drawing	Este desenho
+	Top left	Superior esquerdo
+	Top right	Superior direito
+	Type an alias name.	Digite um nome de alias.
+	Underline	Sublinhado
+	Unitless	Adimensional
+	Units of new drawings	Unidades de novos desenhos
+	Units to scale inserted content	Unidades para dimensionar conteúdo inserido
+	Unsaved changes	Alterações não salvas
+	US Survey Feet	Pés topográficos norte-americanos
+	US Survey Inch	Polegada topográfica norte-americana
+	US Survey Mile	Milha topográfica norte-americana
+	US Survey Yard	Jarda topográfica norte-americana
+	Use current origin	Usar origem atual
+	Visual Effect Settings	Configurações de efeitos visuais
+	Visual Effect Settings...	Configurações de efeitos visuais...
+	When a command is active	Quando um comando está ativo
+	When no command is active	Quando nenhum comando está ativo
+	Window <	Janela <
+	Window selection color:	Cor da seleção por janela:
+	X offset (mm)	Deslocamento X (mm)
+	Xrefs	Referências externas
+	Y offset (mm)	Deslocamento Y (mm)
+	Yards	Jardas
+	Your changes will be lost if you don't save them.	Suas alterações serão perdidas se você não salvá-las.
+	{alias} is already defined; select it and use Edit.	{alias} já está definido; selecione-o e use Editar.
+	{command} is an unknown command.	{command} é um comando desconhecido.
+# Strings the sibling catalogs translate that pt-BR did not yet cover (translated 2026-10-31).
+menu	Dimension	Cota
+menu	Draw	Desenho
+menu	Modify	Modificar
+menu	View	Exibir
