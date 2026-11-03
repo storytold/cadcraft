@@ -484,6 +484,9 @@ pub struct Polyline {
     pub closed: bool,
 }
 
+/// Sampled points one [`Polyline::tessellate`] call produces before arcs become chords.
+pub const MAX_TESSELLATED_POINTS: usize = 4_000_000;
+
 impl Polyline {
     pub fn from_points(pts: &[Vec2], closed: bool) -> Self {
         Polyline { vertices: pts.iter().map(|p| PolyVertex::new(*p)).collect(), closed }
@@ -516,10 +519,23 @@ impl Polyline {
         b
     }
     pub fn tessellate(&self, tol: f64) -> Vec<Vec2> {
+        let mut budget = MAX_TESSELLATED_POINTS;
+        self.tessellate_within(tol, &mut budget)
+    }
+    /// [`Polyline::tessellate`] spending at most `budget` sampled points (shared by the caller
+    /// across many polylines): once it is spent, the remaining arcs are drawn as chords, so the
+    /// output stays proportional to the input vertices. Each arc can sample thousands of points,
+    /// so a compact polyline could otherwise expand into gigabytes (CWE-400).
+    pub fn tessellate_within(&self, tol: f64, budget: &mut usize) -> Vec<Vec2> {
         let mut out: Vec<Vec2> = Vec::new();
         for s in self.segments() {
             let mut pts = Vec::new();
-            s.tessellate(tol, &mut pts);
+            if *budget > 0 {
+                s.tessellate(tol, &mut pts);
+                *budget = budget.saturating_sub(pts.len());
+            } else {
+                pts.extend([s.start(), s.end()]);
+            }
             let skip = usize::from(out.last().is_some_and(|l| pts.first().is_some_and(|f| l.near(*f, 1e-9))));
             out.extend(pts.into_iter().skip(skip));
         }
