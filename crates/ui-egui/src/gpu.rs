@@ -89,7 +89,7 @@ impl FrameCap {
 }
 
 /// Samples per pixel of the window's render pass (eframe `NativeOptions::
-/// multisampling`). The native app sets it before the window opens (4, or `CADCRAFT_MSAA`), so
+/// multisampling`). The native app sets it before the window opens (4, or 1 with `CADCRAFT_MSAA=1`), so
 /// the canvas pipelines match the pass; 1 (no multisampling) when [`set_msaa_samples`] is never
 /// called, as in the web app and the tests. With 4 the hairlines and edges are anti-aliased
 /// instead of drawn with stair-steps.

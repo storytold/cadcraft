@@ -296,12 +296,7 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
-    // 4x multisampling anti-aliases the drawing's lines by default; CADCRAFT_MSAA=1, 2, 4 or 8
-    // chooses the count (1 turns it off) and any other value keeps 4.
-    let msaa: u16 = match std::env::var("CADCRAFT_MSAA").ok().and_then(|v| v.trim().parse::<u16>().ok()) {
-        Some(n) if matches!(n, 1 | 2 | 4 | 8) => n,
-        _ => 4,
-    };
+    let msaa = msaa_samples(std::env::var("CADCRAFT_MSAA").ok().as_deref());
     cadcraft_ui_egui::gpu::set_msaa_samples(u32::from(msaa));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
@@ -428,9 +423,20 @@ fn main() -> eframe::Result {
     )
 }
 
+/// Samples per pixel of the window and the canvas: 4 (anti-aliased lines) by default,
+/// `CADCRAFT_MSAA=1` turns multisampling off. Only 1 and 4 are taken: they are the counts
+/// WebGPU guarantees for every format, so any device can create the window with them; any
+/// other value (2, 8, text) keeps 4 rather than risk a window that cannot be created.
+fn msaa_samples(var: Option<&str>) -> u16 {
+    match var.map(str::trim) {
+        Some("1") => 1,
+        _ => 4,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{filters_for_save, follow_desktop, msaa_samples, saved_window, window_options};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -487,5 +493,18 @@ mod tests {
         let mut raw = egui::RawInput::default();
         follow_desktop(&mut raw, None);
         assert_eq!(raw.system_theme, None);
+    }
+
+    /// #2691 review: only 1 and 4 samples, the counts every device supports; 2 or 8 could stop
+    /// the window from being created, so they and anything else keep the default 4.
+    #[test]
+    fn msaa_takes_only_one_or_four_samples() {
+        assert_eq!(msaa_samples(None), 4);
+        assert_eq!(msaa_samples(Some("1")), 1);
+        assert_eq!(msaa_samples(Some(" 1 ")), 1);
+        assert_eq!(msaa_samples(Some("4")), 4);
+        for other in ["2", "8", "16", "0", "", "off", "-1", "99999999999"] {
+            assert_eq!(msaa_samples(Some(other)), 4, "{other:?}");
+        }
     }
 }
