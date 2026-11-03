@@ -118,7 +118,11 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     // Each Copy clones every selected object: the copies together stay within MAXARRAY, as an array's do.
-    crate::cmd::array::check_size(s, ops.iter().filter(|o| matches!(o, Op::Copy(_))).count() as u64, objs.len())?;
+    // Erased handles are skipped by `apply`, so only live objects count (none: nothing is copied).
+    let live = counts(s, &objs)?.0;
+    if live > 0 {
+        crate::cmd::array::check_size(s, ops.iter().filter(|o| matches!(o, Op::Copy(_))).count() as u64, live)?;
+    }
     let mut copies = Vec::new();
     for op in ops {
         copies.extend(apply(s, &objs, &mut base, op)?);
