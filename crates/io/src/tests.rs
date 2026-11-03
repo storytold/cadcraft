@@ -337,6 +337,20 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// A table declaring 10 000 rows and no columns (or the reverse) is read as an empty table.
+#[test]
+fn table_with_an_empty_dimension_allocates_nothing() {
+    for (rows, cols) in [(10_000, 0), (0, 10_000)] {
+        let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
+        let d = read(t.as_bytes(), "t.dxf").unwrap();
+        for e in d.model.iter() {
+            if let EntityKind::Table(t) = &e.kind {
+                assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
+            }
+        }
+    }
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
