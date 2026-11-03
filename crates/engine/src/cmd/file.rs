@@ -440,13 +440,14 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if is_drawing_file(path) && crate::autosave::isavebak() {
+        // A file in a folder still to be made has nothing to back up.
+        if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
                 .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
         }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -695,8 +696,11 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
 fn drawing_version(s: &Session, path: &str) -> Version {
-    let v =
-        s.doc().ok().and_then(|d| d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver)).unwrap_or_default();
+    let v = s
+        .state()
+        .ok()
+        .and_then(|st| st.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
+        .unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
 }
 
@@ -725,6 +729,8 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
+    } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
+        report_sat_text_dropped(s, &mut r);
     }
     Ok(r)
 }
@@ -742,15 +748,28 @@ pub fn not_saved(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
 /// store section, which is written back with the drawing (`Foreign::data_store`).
 const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 
+/// Entity types CADCraft doesn't model that the DWG bridge writes all the same: acadrust reads
+/// them from our DXF into entities of its own and writes them to DWG of every version we save,
+/// an OLE object with its frame and its embedded object's bytes unchanged. Matched exactly: the
+/// bridge gets the type as stored, and acadrust knows only this spelling of it.
+const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
+
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted.
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`].
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
-            if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&e.handle) {
+            // A DWG before 2013 writes a solid's SAT text as it is; from 2013 the geometry has to be
+            // in the data store, and SAT text alone is lost (#2334).
+            if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t))
+                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::has_sat_text(&u.tags)))
+            {
+                continue;
+            }
+            if DWG_WRITES.contains(&u.dxf_type.as_str()) {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
@@ -766,18 +785,37 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
         return None;
     }
     let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    Some(format!("Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): {}", list.join(", ")))
+    Some(format!(
+        "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them, solids only when saved as 2010 or earlier): {}",
+        list.join(", ")
+    ))
 }
 
 /// What saving the active drawing to `path` would leave out, before anything is written: empty
 /// when the format keeps everything. The interactive save asks with this; [`save_reporting`]
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
+    let version = drawing_version(s, path);
+    if is_dxf_file(path) && version >= Version::R2013 {
+        // The drawing a file holds: the host while the Block Editor is open.
+        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    }
     if !drops_unknown(path) {
         return Default::default();
     }
-    let version = drawing_version(s, path);
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
+}
+
+/// Report what the file `path`, just written at the drawing's own version, left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+    if is_dxf_file(path) {
+        if drawing_version(s, path) >= Version::R2013 {
+            report_sat_text_dropped(s, r);
+        }
+    } else {
+        let lost = loss_on_save(s, path);
+        report_not_saved(s, r, &lost);
+    }
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
@@ -791,8 +829,53 @@ fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path).is_some_and(Format::is_drawing)
 }
 
+/// Whether `path` is a DXF file.
+fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path) == Some(Format::Dxf)
+}
+
+/// Say on the command line which solid modeler entities a DXF of 2013 or later left out because
+/// they hold SAT-text ACIS data, which such files keep in a data store instead (#2334).
+fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
+    // The drawing a file holds: the host while the Block Editor is open.
+    let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    if lost.is_empty() {
+        return;
+    }
+    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
+    s.echo(format!(
+        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
+        list.join(", ")
+    ));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("notSaved".into(), json!(lost));
+    }
+}
+
+/// The folder a write to `path` has to create, asked before writing so it can be reported after.
+/// The web has no folders.
+pub(super) fn new_folder(path: &str) -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return crate::atomic_write::missing_folder(std::path::Path::new(path)).map(|f| f.display().to_string());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Say on the command line that the file went into a folder that didn't exist, so a mistyped path
+/// is noticed, and name the folder in the result's `createdFolder`.
+pub(super) fn report_new_folder(s: &mut Session, r: &mut Value, folder: Option<String>) {
+    let Some(folder) = folder else { return };
+    s.echo(format!("Created the folder {folder}, which did not exist. Check the path if you did not mean to."));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("createdFolder".into(), json!(folder));
+    }
+}
+
 /// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
-fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
+pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
     let Some(msg) = not_saved_message(lost) else { return };
     s.echo(msg);
     if let Some(o) = r.as_object_mut() {
@@ -801,14 +884,19 @@ fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTr
 }
 
 /// Save, then report the entities the file couldn't keep (nothing is dropped silently).
-fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>) -> Result<Value> {
+fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
     // What the file will hold depends on the version it is saved as (the data store from 2013).
+    // QSAVE takes no `version` and keeps the drawing's own; SAVEAS writes the one asked for.
     let path = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone())).unwrap_or_default();
-    let version = save_options("save", p).ok().and_then(|o| o.version).unwrap_or_else(|| drawing_version(s, &path));
+    let version = asked.unwrap_or_else(|| drawing_version(s, &path));
     let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
+    let folder = new_folder(&path);
     let mut r = run(s, p)?;
+    report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
+    } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        report_sat_text_dropped(s, &mut r);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);
@@ -848,11 +936,12 @@ fn report_fonts(s: &mut Session, r: &mut Value) {
 }
 
 fn run_qsave_reporting(s: &mut Session, p: &Value) -> Result<Value> {
-    save_reporting(s, p, run_save)
+    save_reporting(s, p, run_save, None)
 }
 
 fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
-    save_reporting(s, p, run_saveas)
+    let asked = save_options("saveas", p)?.version;
+    save_reporting(s, p, run_saveas, asked)
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

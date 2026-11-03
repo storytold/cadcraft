@@ -197,6 +197,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 text_rotation: t.fd(53, 0.0).to_radians(),
                 user_text_pos: t.i(70).unwrap_or(0) & 128 != 0,
                 block: t.s(2).filter(|s| !s.is_empty()),
+                insertion_point: t.p(12),
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),
@@ -246,7 +247,8 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             center: t.p(10),
             width: t.fd(40, 1.0),
             height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
+            // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+            view_center: t.view_center(12, 17),
             view_height: t.fd(45, 1.0),
             id: t.i(69).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
@@ -297,7 +299,9 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
     // Large declared sizes must be backed by cell records (no allocation from a bare count).
     let n_cells = tail.iter().filter(|x| x.code == 171).count();
     let declared = rows.saturating_mul(cols);
-    if declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
+    // A table with no rows or no columns has no cells: keep neither dimension, so its row heights
+    // and column widths (allocated per dimension, outside the cell budget) are not allocated.
+    if declared == 0 || declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
         rows = 0;
         cols = 0;
     }
@@ -410,20 +414,26 @@ pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String
     out
 }
 
-/// The named plot style an entity record points at (group 390 among its AcDbEntity groups).
+/// The plot style an entity record names among its AcDbEntity groups: a named style (group 390,
+/// its placeholder's handle) or ByBlock (group 380 = 1, AcDb::PlotStyleNameType).
 pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
     let mut in_entity = false;
+    let mut by_block = false;
     for t in tags {
         if t.code == 100 {
             if in_entity {
-                return None;
+                break;
             }
             in_entity = t.str() == "AcDbEntity";
-        } else if t.code == 390 && in_entity {
-            return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned();
+        } else if in_entity {
+            match t.code {
+                390 => return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned(),
+                380 => by_block = t.i64() == 1,
+                _ => {}
+            }
         }
     }
-    None
+    by_block.then(|| "ByBlock".to_string())
 }
 
 /// Dimension overrides and associativity, table references: data of an entity record that
