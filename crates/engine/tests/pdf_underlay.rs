@@ -28,6 +28,10 @@ fn hooks() {
             if !off("COTES") {
                 l.push(vec![(0.1, 0.5), (0.9, 0.5)]);
             }
+            // A dense page: a zigzag of 2 million points in its lower left corner.
+            if bytes.windows(6).any(|w| w == b"%DENSE") {
+                l.push((0..2_000_000).map(|i| (f64::from(i) * 2e-8, if i % 2 == 0 { 0.0 } else { 0.01 })).collect());
+            }
             Ok(l)
         },
         region: |_, _, _, w, h| Ok((w, h, vec![255; (w * h * 4) as usize])),
@@ -675,6 +679,28 @@ fn object_snaps_find_the_page_lines_read_in_the_background() {
     }
     assert!(hit.is_some_and(|p| p.dist(at) < 1e-6), "{hit:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn object_snaps_on_a_page_of_millions_of_points_look_at_the_lines_near_the_cursor_only() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Dense.pdf", b"%PDF-1.7 fake %DENSE");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    s.execute("pdfattach", &json!({"path": path, "at": [0, 0], "scale": 1})).unwrap();
+    let d = s.doc().unwrap();
+    let at = cadcraft_geom::Vec2::new(0.5 * 297.0, 0.5 * 210.0);
+    // Each query used to go through the 2 million points: 300 of them took tens of seconds.
+    let t = std::time::Instant::now();
+    for _ in 0..300 {
+        let hit = osnap(d, &Space::Model, at + cadcraft_geom::Vec2::new(0.7, -0.4), 3.0, mode::INT, None, false).map(|h| h.point);
+        assert!(hit.is_some_and(|p| p.dist(at) < 1e-6), "{hit:?}");
+    }
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    // The dense corner still snaps.
+    let hit = osnap(d, &Space::Model, cadcraft_geom::Vec2::new(0.001, 0.0), 0.5, mode::END, None, false);
+    assert!(hit.is_some());
 }
 
 #[test]

@@ -498,10 +498,21 @@ fn underlay_lines(u: &cadcraft_doc::PdfUnderlay, probe: &Bounds2, osmode: u32, f
     let o = u.insert.xy();
     let (ax, ay) = u.axes();
     let to = |p: Vec2| o + ax * p.x + ay * p.y;
+    // The probe in page fractions: only the runs of lines that cross it are looked at.
+    let det = ax.x * ay.y - ax.y * ay.x;
+    let from = |p: Vec2| {
+        let q = p - o;
+        Vec2::new((q.x * ay.y - q.y * ay.x) / det, (ax.x * q.y - ax.y * q.x) / det)
+    };
+    let corners = [probe.min, Vec2::new(probe.max.x, probe.min.y), probe.max, Vec2::new(probe.min.x, probe.max.y)];
+    let on_page = Bounds2::from_points(corners.map(from));
+    if !(on_page.min.is_finite() && on_page.max.is_finite()) {
+        return;
+    }
     let clip = u.clip_outline().and_then(|c| cadcraft_render::clip::PolyClip::new(&c));
     let mut n = 0usize;
-    for l in lines.iter() {
-        for w in l.windows(2) {
+    for run in lines.iter().filter(|r| r.bounds.intersects(&on_page)) {
+        for w in run.points.windows(2) {
             let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
             let (a, b) = (to(*a), to(*b));
             if !Bounds2::from_points([a, b]).intersects(probe) || a == b {

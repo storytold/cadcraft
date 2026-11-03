@@ -48,13 +48,19 @@ fn underlay_bytes(hooks: &PdfHooks, stored: &str, document: Option<&str>, layers
     (hooks.with_layers)(&bytes, layers).map_err(|e| bad("pdfattach", format!("{stored}: {e}")))
 }
 
-/// The key of a set of layer visibilities in the caches.
-fn layers_key(layers: &[(String, bool)]) -> String {
-    layers.iter().map(|(n, on)| format!("{}{n}\u{1f}", if *on { '+' } else { '-' })).collect()
+/// A page's lines in page fractions, shared by every underlay showing it, in runs of at most
+/// [`RUN_POINTS`] points with their bounds: a snap query skips the runs away from the cursor.
+pub type PageLines = Arc<Vec<LineRun>>;
+
+/// Part of a page's line: its points (the last one starts the next run) and their bounds.
+#[derive(Debug)]
+pub struct LineRun {
+    pub bounds: cadcraft_geom::Bounds2,
+    pub points: Vec<Vec2>,
 }
 
-/// A page's lines in page fractions, shared by every underlay showing it.
-pub type PageLines = Arc<Vec<Vec<Vec2>>>;
+/// Most points in a [`LineRun`].
+const RUN_POINTS: usize = 64;
 
 /// Pages' lines read so far, by stored path and page. Object snaps see the drawing only, so the
 /// lines are read when an underlay is attached or its drawing opened.
@@ -99,7 +105,7 @@ pub fn page_lines(stored: &str, page: u32, layers: &str) -> Option<PageLines> {
 /// Read and keep the lines of page `page` of the PDF `stored` (in the drawing saved at
 /// `document`), unless they are kept already. A file that can't be read gives no lines.
 pub(crate) fn load_lines(stored: &str, document: Option<&str>, page: u32, layers: &[(String, bool)]) {
-    let key = layers_key(layers);
+    let key = cadcraft_doc::PdfUnderlay::key_of_layers(layers);
     if page_lines(stored, page, &key).is_some() {
         return;
     }
@@ -107,10 +113,18 @@ pub(crate) fn load_lines(stored: &str, document: Option<&str>, page: u32, layers
     let Some(hooks) = pdf() else { return };
     let Ok(bytes) = underlay_bytes(hooks, stored, document, layers) else { return };
     let Ok(lines) = (hooks.lines)(&bytes, page) else { return };
-    let lines: Vec<Vec<Vec2>> = lines
+    let lines: Vec<LineRun> = lines
         .into_iter()
         .map(|l| l.into_iter().map(|(x, y)| Vec2::new(x, y)).filter(|p| p.is_finite()).collect::<Vec<_>>())
         .filter(|l| l.len() >= 2)
+        .flat_map(|l| {
+            // Runs of RUN_POINTS points, each starting where the last ended.
+            (0..l.len() - 1)
+                .step_by(RUN_POINTS - 1)
+                .filter_map(|i| l.get(i..(i + RUN_POINTS).min(l.len())))
+                .map(|pts| LineRun { bounds: cadcraft_geom::Bounds2::from_points(pts.iter().copied()), points: pts.to_vec() })
+                .collect::<Vec<_>>()
+        })
         .collect();
     let mut g = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let map = g.get_or_insert_with(HashMap::new);
