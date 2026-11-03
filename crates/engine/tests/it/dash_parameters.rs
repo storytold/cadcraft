@@ -87,6 +87,38 @@ fn names_are_checked_where_they_are_typed() {
     assert!(!s.prompting(), "Enter ends the command");
 }
 
+/// Only an expression that names a parameter keeps it from being deleted, even one that doesn't
+/// parse; an expression broken for another reason doesn't block deleting something else.
+#[test]
+fn delete_is_blocked_only_by_expressions_that_name_the_parameter() {
+    let mut s = Session::new();
+    s.execute("parameters", &json!({ "name": "w", "expr": "3" })).unwrap();
+    s.execute("parameters", &json!({ "name": "spare", "expr": "1" })).unwrap();
+    // As a drawing from a file can hold them: one expression names a parameter that's gone, and
+    // one doesn't parse but names w.
+    let params = &mut s.doc_mut().unwrap().parametric.parameters;
+    params.push(cadcraft_doc::Parameter { name: "stale".into(), expr: "missing*2".into(), description: String::new() });
+    params.push(cadcraft_doc::Parameter { name: "torn".into(), expr: "w*(".into(), description: String::new() });
+
+    s.execute("parameters", &json!({ "delete": "spare" })).expect("the stale expression doesn't name spare");
+    assert!(parameter(&mut s, "spare").is_none());
+    let e = s.execute("parameters", &json!({ "delete": "w" })).unwrap_err().to_string();
+    assert!(e.contains("`w` is used by `torn`"), "{e}");
+}
+
+/// Renaming a parameter to its own name changes nothing, so UNDO goes back past it (CodeRabbit on
+/// #2694); a name that isn't there is still reported.
+#[test]
+fn renaming_to_the_same_name_leaves_no_step_to_undo() {
+    let mut s = Session::new();
+    s.execute("parameters", &json!({ "name": "w", "expr": "3" })).unwrap();
+    typed(&mut s, &["-parameters", "r", "w", "w"]);
+    assert!(!s.prompting());
+    s.undo().unwrap();
+    assert!(parameter(&mut s, "w").is_none(), "UNDO took back making w, not an empty rename");
+    assert!(s.execute("parameters", &json!({ "name": "w", "rename": "w" })).is_err(), "no parameter w");
+}
+
 #[test]
 fn json_form_is_parameters() {
     let mut s = Session::new();

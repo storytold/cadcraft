@@ -902,16 +902,22 @@ fn set_parameter(s: &mut Session, name: &str, expr: &str) -> Result<()> {
     Ok(())
 }
 
-/// Rename parameter `old` to `new` in every expression that uses it.
+/// Rename parameter `old` to `new` in every expression that uses it. Renaming a parameter to its
+/// own name changes nothing, so the drawing isn't written and leaves no step to undo.
 fn rename_parameter(s: &mut Session, old: &str, new: &str) -> Result<()> {
+    let (old, new) = (old.trim(), new.trim());
+    if old == new {
+        return if cs::name_in_use(s.doc()?, old) { Ok(()) } else { Err(EngineError::Other(format!("no parameter `{old}`"))) };
+    }
     let mut d = s.doc()?.clone();
-    cs::rename_parameter(&mut d, old.trim(), new.trim()).map_err(err)?;
+    cs::rename_parameter(&mut d, old, new).map_err(err)?;
     *s.doc_mut()? = d;
     Ok(())
 }
 
 /// Delete user parameter `name`. A dimensional constraint's parameter goes only with its
-/// constraint, and a parameter another expression uses stays.
+/// constraint, and a parameter another expression names stays; an expression already broken for
+/// some other reason doesn't stop it.
 fn delete_parameter(s: &mut Session, name: &str) -> Result<()> {
     let d = s.doc()?;
     if d.constraints.iter().any(|c| c.name == name) {
@@ -920,12 +926,12 @@ fn delete_parameter(s: &mut Session, name: &str) -> Result<()> {
     if !d.parametric.parameters.iter().any(|q| q.name == name) {
         return Err(EngineError::Other(format!("no parameter `{name}`")));
     }
-    let mut d = d.clone();
-    d.parametric.parameters.retain(|q| q.name != name);
-    if let Some(row) = cs::parameter_table(&d).into_iter().find(|r| r.error.is_some()) {
-        return Err(EngineError::Other(format!("`{name}` is used by `{}`", row.name)));
+    let dimensional = d.constraints.iter().filter(|c| c.kind.is_dimensional()).map(|c| (&c.name, &c.expr));
+    let others = d.parametric.parameters.iter().filter(|q| q.name != name).map(|q| (&q.name, &q.expr));
+    if let Some((user, _)) = dimensional.chain(others).find(|(_, expr)| cs::expr::uses(expr, name)) {
+        return Err(EngineError::Other(format!("`{name}` is used by `{user}`")));
     }
-    *s.doc_mut()? = d;
+    s.doc_mut()?.parametric.parameters.retain(|q| q.name != name);
     Ok(())
 }
 
