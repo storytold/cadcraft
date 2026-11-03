@@ -482,29 +482,31 @@ impl Host {
         s.finished.push_back(Terminal { request: request.into(), metadata, owner: TerminalOwner::Open });
         s.flush_finished();
     }
-    pub fn recent_ui(&self, ui: &mut egui::Ui) {
-        self.provider_recent_ui(ui);
+    /// Draw the recent lists and return a selected resource; the caller dispatches its command.
+    pub fn recent_ui(&self, ui: &mut egui::Ui) -> Option<String> {
+        let selected = self.provider_recent_ui(ui);
         self.device_recent_ui(ui);
+        selected
     }
-    pub(crate) fn provider_recent_ui(&self, ui: &mut egui::Ui) {
+    pub(crate) fn provider_recent_ui(&self, ui: &mut egui::Ui) -> Option<String> {
         let (label, resources, enabled) = {
             let s = self.state();
             (s.provider.as_ref().map(|p| p.label.clone()), s.resources.clone(), s.enabled)
         };
-        let Some(label) = label.filter(|_| enabled) else { return };
+        let Some(label) = label.filter(|_| enabled) else { return None };
         ui.add_space(12.0);
         ui.strong(format!("Recent files — {label}"));
         if resources.is_empty() {
             ui.weak("No recent files from this provider");
         }
+        let mut selected = None;
         for resource in resources {
             if ui.button(&resource.name).on_hover_text(&resource.updated_at).clicked() {
-                if let Err(error) = self.request_open(&resource.id) {
-                    ui.label(error);
-                }
+                selected = Some(resource.id);
                 ui.ctx().request_repaint();
             }
         }
+        selected
     }
     pub(crate) fn device_recent_ui(&self, ui: &mut egui::Ui) {
         if self.enabled() {

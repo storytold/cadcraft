@@ -14,6 +14,8 @@ pub const OPEN_RECENT: &str = "Open Recent";
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
 const RECENT_CLEAR: &str = "ui.recent.clear";
+/// Open a resource from the registered provider through the ordinary application command route.
+pub const PROVIDER_RECENT_OPEN: &str = "ui.provider.open";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -23,6 +25,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dock", "Arrange Panel", &[], None),
     ("ui.dock.reset", "Reset Panel Layout", &["Window", "Reset Panel Layout"], None),
     ("ui.open", "Open...", &[], Some("Cmd+O")),
+    (PROVIDER_RECENT_OPEN, "Open Provider File", &[], None),
     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
     ("ui.saveas", "Save As...", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
@@ -343,6 +346,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         return Some(Ok(Value::Null));
     }
     let r = match id {
+        PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
             if let Some(p) = picked {
@@ -706,7 +710,12 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 for ((menu, entries), title) in tree.iter().zip(&titles) {
                     egui::Popup::menu(title).show(|ui| {
                         if menu == "File" && app.file_providers.enabled() {
-                            ui.menu_button("Open Recent — file provider", |ui| app.file_providers.recent_ui(ui));
+                            let resource = ui.menu_button("Open Recent — file provider", |ui| app.file_providers.recent_ui(ui)).inner.flatten();
+                            if let Some(resource) = resource
+                                && app.run(PROVIDER_RECENT_OPEN, json!({"resource":resource})).is_ok()
+                            {
+                                ui.close();
+                            }
                         }
                         for e in entries {
                             entry_ui(ui, e, &mut clicked);

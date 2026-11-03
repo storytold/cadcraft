@@ -11,6 +11,21 @@ pub(crate) fn save(app: &mut CadApp, save_as: bool) -> Result<Value, String> {
     }
     result
 }
+/// Queue a provider read through CadApp::run without creating a filesystem picker.
+pub(crate) fn open_recent(app: &mut CadApp, params: &Value) -> Result<Value, String> {
+    let result = params
+        .get("resource")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "a file provider resource ID is required".to_string())
+        .and_then(|resource| app.file_providers.request_open(resource))
+        .map(|request| json!({"pending":"fileProvider","requestId":request}));
+    if let Err(error) = &result {
+        app.session.echo(error.clone());
+        app.set_status(error.clone());
+    }
+    result
+}
+
 fn capture(app: &mut CadApp, save_as: bool) -> Result<Value, String> {
     let host = app.file_providers.clone();
     let state = app.session.state().map_err(|e| e.to_string())?;

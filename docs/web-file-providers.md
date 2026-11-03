@@ -13,6 +13,11 @@ as cadcraft-file-provider CustomEvents; detail contains bounded metadata and, on
 a Uint8Array named bytes. The host subscribes before registering, and can discover an already-ready
 editor through the protocol object. The capability is independent of the optional control API.
 
+The application command `ui.provider.open` accepts `{"resource":"resource-id"}` and returns
+the queued provider request ID. Home and File-menu provider Recents both dispatch through
+`CadApp::run`; rejected reads remain in the status and command history instead of a one-frame
+inline label. This command uses the current account's resource list and never opens a local path.
+
 | Method | Arguments / result |
 | --- | --- |
 | registerProvider | (providerId, label, namespace) -> connectionId. Repeating the exact identity is idempotent. |

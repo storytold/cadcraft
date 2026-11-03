@@ -123,3 +123,88 @@ fn real_dxf_delivery_failure_preserves_the_owned_drawing_and_later_edits_through
     assert_eq!(host.take_events()[0].metadata["type"], "saved");
     assert!(!host.busy());
 }
+
+fn recent_provider_app() -> CadApp {
+    let app = CadApp::new(Session::new(), crate::Services::default());
+    app.file_providers.set_session("0123456789abcdef0123456789abcdef".into()).unwrap();
+    let connection = app.file_providers.connect("test".into(), "Test storage".into(), "account".into()).unwrap();
+    app.file_providers
+        .set_resources(
+            &connection,
+            vec![
+                crate::file_providers::Resource { id: "owned".into(), name: "Owned.dxf".into(), updated_at: String::new() },
+                crate::file_providers::Resource { id: "other".into(), name: "Other.dxf".into(), updated_at: String::new() },
+            ],
+        )
+        .unwrap();
+    app.file_providers.take_events();
+    app
+}
+
+#[test]
+fn provider_recent_command_queues_only_the_selected_resource_without_retargeting_the_drawing() {
+    let mut app = recent_provider_app();
+    let before = app.session.state().unwrap().clone();
+    let local = app.ui.recent_files.clone();
+    assert!(crate::menus::is_ui_command(crate::menus::PROVIDER_RECENT_OPEN));
+    let result = app.run(crate::menus::PROVIDER_RECENT_OPEN, json!({"resource":"owned"})).unwrap();
+    assert_eq!(result["pending"], "fileProvider");
+    let events = app.file_providers.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].metadata["type"], "openRequested");
+    assert_eq!(events[0].metadata["resourceId"], "owned");
+    assert_eq!(events[0].metadata["requestId"], result["requestId"]);
+    let after = app.session.state().unwrap();
+    assert_eq!((after.uid, after.revision), (before.uid, before.revision));
+    assert!(std::sync::Arc::ptr_eq(&after.doc, &before.doc));
+    assert_eq!(after.path, before.path);
+    assert_eq!(app.ui.recent_files, local);
+}
+
+#[test]
+fn provider_recent_command_backpressure_remains_in_status_and_command_history() {
+    let mut app = recent_provider_app();
+    let mut full = false;
+    for _ in 0..128 {
+        if app.file_providers.request_open("owned").is_err() {
+            full = true;
+            break;
+        }
+        app.file_providers.take_events();
+    }
+    assert!(full, "the fixture must reach the actual bounded read capacity");
+    let before = app.session.state().unwrap().clone();
+    let error = app.run(crate::menus::PROVIDER_RECENT_OPEN, json!({"resource":"owned"})).unwrap_err();
+    assert!(app.file_providers.take_events().is_empty(), "a refused command cannot publish a partial read");
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| app.logic(ctx));
+    output.textures_delta.clear();
+    assert_eq!(app.status.as_ref().map(|(text, _)| text.as_str()), Some(error.as_str()));
+    assert_eq!(app.session.log.last(), Some(&error));
+    assert_eq!((app.session.state().unwrap().uid, app.session.state().unwrap().revision), (before.uid, before.revision));
+}
+
+#[test]
+fn provider_recent_command_rejects_malformed_and_disabled_requests_without_opening_files() {
+    let mut app = CadApp::new(Session::new(), crate::Services::default());
+    let before = app.session.state().unwrap().clone();
+    for params in [Value::Null, json!({}), json!({"resource":42}), json!({"resource":""}), json!({"resource":"owned"})] {
+        assert!(app.run(crate::menus::PROVIDER_RECENT_OPEN, params).is_err());
+        assert!(!app.file_providers.enabled());
+        assert!(app.file_providers.take_events().is_empty());
+        assert_eq!((app.session.state().unwrap().uid, app.session.state().unwrap().revision), (before.uid, before.revision));
+        assert!(std::sync::Arc::ptr_eq(&app.session.state().unwrap().doc, &before.doc));
+    }
+
+    let mut connected = recent_provider_app();
+    let before = connected.session.state().unwrap().clone();
+    let connection = connected.file_providers.snapshot()["connectionId"].clone();
+    connected.file_providers.set_enabled(false).unwrap();
+    connected.file_providers.take_events();
+    let error = connected.run(crate::menus::PROVIDER_RECENT_OPEN, json!({"resource":"owned"})).unwrap_err();
+    assert!(connected.file_providers.connected() && !connected.file_providers.enabled());
+    assert_eq!(connected.file_providers.snapshot()["connectionId"], connection);
+    assert!(connected.file_providers.take_events().is_empty());
+    assert!(std::sync::Arc::ptr_eq(&connected.session.state().unwrap().doc, &before.doc));
+    assert_eq!(connected.session.log.last(), Some(&error));
+}
