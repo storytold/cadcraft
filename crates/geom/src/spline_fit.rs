@@ -81,11 +81,13 @@ pub struct FitOptions {
 }
 
 impl FitOptions {
-    /// Normalised tangents (zero or non-finite directions dropped) and a finite, non-negative
-    /// tolerance: what [`Spline::fit_with`] stores.
+    /// Normalised tangents (non-finite directions and those too short to normalise dropped) and a
+    /// finite, non-negative tolerance: what [`Spline::fit_with`] stores.
     pub fn sanitized(self) -> FitOptions {
         let o = self.sanitized_keeping_length();
-        FitOptions { start_tangent: o.start_tangent.map(Vec2::normalized), end_tangent: o.end_tangent.map(Vec2::normalized), ..o }
+        // `normalized` gives zero for a direction too short to scale to a unit.
+        let unit = |t: Option<Vec2>| t.map(Vec2::normalized).filter(|d| d.len() > 0.5);
+        FitOptions { start_tangent: unit(o.start_tangent), end_tangent: unit(o.end_tangent), ..o }
     }
 
     /// As [`FitOptions::sanitized`], but the tangents keep their length.
@@ -203,8 +205,11 @@ impl Spline {
         }
         let turn = |t: Option<Vec2>| {
             t.and_then(|v| {
-                let d = m.apply_vec(v).normalized();
-                (d.len() > 0.5).then_some(d * v.len())
+                let w = m.apply_vec(v);
+                let (lv, lw) = (v.len(), w.len());
+                // Scaled by lengths, not through `normalized`, which zeroes a short tangent. A map
+                // that flattens the tangent's direction drops it.
+                (lw.is_finite() && lw > crate::EPS * lv).then(|| w / lw * lv)
             })
         };
         self.fit_opts.start_tangent = turn(self.fit_opts.start_tangent);
@@ -1137,6 +1142,23 @@ mod tests {
             let again = e.refit(&e.fit, false);
             assert!(again.control.iter().zip(&e.control).all(|(a, b)| a.near(*b, 1e-9)), "{:?} vs {:?}", again.control, e.control);
         }
+    }
+
+    #[test]
+    fn short_tangents_are_no_zero_directions() {
+        let fit = pts();
+        // A direction too short to scale to a unit is no tangent, not a zero one.
+        let short = Some(Vec2::new(0.0, 1e-10));
+        let s = Spline::fit_with(&fit, false, FitOptions { start_tangent: short, end_tangent: short, ..FitOptions::default() });
+        assert_eq!((s.fit_opts.start_tangent, s.fit_opts.end_tangent), (None, None));
+        // A file's short tangent is kept, and a transform turns it rather than dropping it.
+        let mut f = Spline::fit_with_end_derivatives(&fit, false, FitOptions { start_tangent: short, ..FitOptions::default() });
+        assert_eq!(f.fit_opts.start_tangent, short);
+        f.transform(&Mat3::rotate(std::f64::consts::FRAC_PI_2));
+        assert!(f.fit_opts.start_tangent.is_some_and(|t| t.near(Vec2::new(-1e-10, 0.0), 1e-24)), "{:?}", f.fit_opts.start_tangent);
+        // A map that flattens its direction drops it.
+        f.transform(&Mat3::scale(0.0, 1.0));
+        assert_eq!(f.fit_opts.start_tangent, None);
     }
 }
 
