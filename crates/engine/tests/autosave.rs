@@ -324,6 +324,26 @@ fn an_emergency_save_finishes_before_it_returns_even_with_savetime_off() {
 }
 
 #[test]
+fn a_new_autosave_folder_keeps_the_old_folder_locked() {
+    hooks();
+    let _turn = folder_turn();
+    let (old, new) = (temp_dir("moved-old"), temp_dir("moved-new"));
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("44-e");
+    autosave_once(&mut a, &s, &old);
+    autosave::set_savefilepath(&new.to_string_lossy());
+    draw(&mut s);
+    assert_eq!(a.emergency_save(&s), 1);
+    assert!(new.join("44-e.lock").exists());
+    assert!(autosave::recoverable(&old, "9-f").is_empty(), "this app is still running");
+    a.shutdown();
+    assert!(!old.join("44-e.lock").exists() && !new.join("44-e.lock").exists());
+    let _ = std::fs::remove_dir_all(&old);
+    let _ = std::fs::remove_dir_all(&new);
+}
+
+#[test]
 fn a_normal_exit_removes_the_lock_file() {
     hooks();
     let _turn = folder_turn();
@@ -366,7 +386,7 @@ fn a_failed_autosave_is_tried_again_without_another_change() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(rearmed, "a failed autosave must be tried again");
-    assert!(a.failure().is_some_and(|m| m.contains("out")), "{:?}", a.failure());
+    assert!(a.failures().next().is_some_and(|(_, why)| why.contains("out")));
 
     std::fs::remove_file(&out).unwrap();
     let jobs = a.plan(&s, 180.0, 1, &dir);
@@ -387,7 +407,7 @@ fn a_failed_autosave_is_tried_again_without_another_change() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(a.next_due(1e4, 1), None);
-    assert_eq!(a.failure(), None, "a write that worked clears the failure");
+    assert_eq!(a.failures().next(), None, "a write that worked clears the failure");
     a.shutdown();
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -407,16 +427,16 @@ fn a_failure_ends_when_the_drawing_no_longer_needs_a_copy() {
     a.perform(jobs);
     for _ in 0..500 {
         a.reap();
-        if a.failure().is_some() {
+        if a.failures().next().is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(a.failure().is_some());
+    assert!(a.failures().next().is_some());
     let i = s.active;
     s.execute("close", &json!({ "index": i })).unwrap();
     a.plan(&s, 120.0, 1, &dir);
-    assert_eq!(a.failure(), None);
+    assert_eq!(a.failures().next(), None);
     a.shutdown();
     let _ = std::fs::remove_dir_all(&root);
 }

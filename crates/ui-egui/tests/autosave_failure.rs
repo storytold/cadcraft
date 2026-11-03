@@ -67,7 +67,12 @@ fn a_failed_autosave_is_shown_until_a_write_works() {
     app.autosave_tick(&ctx);
     assert!(app.autosave_notice.as_ref().is_some_and(|n| n.dismissed));
     assert!(painted_text(&mut app, &ctx).is_empty());
-    assert_eq!(said(&app), 1);
+
+    // Another drawing's failure is news, even after the first was dismissed.
+    app.autosave_notice.as_mut().unwrap().reported.clear();
+    app.autosave_tick(&ctx);
+    assert!(app.autosave_notice.as_ref().is_some_and(|n| !n.dismissed));
+    assert_eq!(said(&app), 2);
 
     // The folder comes back: the next write clears it.
     std::fs::remove_file(&dir).unwrap();
