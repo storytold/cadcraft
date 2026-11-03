@@ -102,7 +102,13 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
         };
         let (local, _) = cadcraft_fonts::place(&font, text, &params);
         let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
-        let points = local.strokes.iter().map(Vec::len).sum::<usize>() + local.glyphs.iter().flatten().map(Vec::len).sum::<usize>();
+        // Points plus one per stroke and glyph slot, and one for the label itself, so a label of empty
+        // glyphs still has a cost proportional to its size.
+        let points = local.strokes.iter().map(Vec::len).sum::<usize>()
+            + local.glyphs.iter().flatten().map(Vec::len).sum::<usize>()
+            + local.strokes.len()
+            + local.glyphs.len()
+            + 1;
         out.push(Element {
             at,
             points,

@@ -510,6 +510,12 @@ impl Family<'_> {
 
     /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
     fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+        // Transforming the boundary is charged before it is done, at the scanline rate (one unit per 8 vertices).
+        let verts: u64 = loops.iter().map(|l| l.len() as u64).sum();
+        if *work == 0 {
+            return;
+        }
+        *work = work.saturating_sub(verts / 8 + 1);
         let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
         let bb = Bounds2::from_points(local.iter().flatten().copied());
         if bb.is_empty() {
