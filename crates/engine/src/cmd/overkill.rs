@@ -146,18 +146,47 @@ impl Opts {
     }
 }
 
-/// Round every number of a JSON value to a multiple of `q`.
-fn quantize(v: &mut Value, q: f64) {
+/// Take the measurements (floating-point numbers) out of a JSON value, in order, leaving a marker
+/// in their place: two objects are equal when what is left matches, counts and flags included,
+/// and each pair of measurements is within the tolerance.
+fn split_numbers(v: &mut Value, nums: &mut Vec<f64>) {
     match v {
         Value::Number(n) => {
-            if let Some(x) = n.as_f64() {
-                *v = json!((x / q).round());
+            if n.is_f64()
+                && let Some(x) = n.as_f64()
+            {
+                nums.push(x);
+                *v = Value::String(NUMBER.into());
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(|x| quantize(x, q)),
-        Value::Object(o) => o.values_mut().for_each(|x| quantize(x, q)),
+        Value::Array(a) => a.iter_mut().for_each(|x| split_numbers(x, nums)),
+        Value::Object(o) => o.values_mut().for_each(|x| split_numbers(x, nums)),
         _ => {}
     }
+}
+
+/// What [`split_numbers`] leaves where a number was.
+const NUMBER: &str = "\u{0}#";
+
+/// Whether two lists of numbers match pairwise to within `tol`.
+fn within(a: &[f64], b: &[f64], tol: f64) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
+}
+
+/// The numbers summed with weights in [1, 2) that no simple pattern shares (golden-ratio steps),
+/// so points on a diagonal of a grid don't all get the same sum; and the sum of the weights.
+fn weighted_sum(nums: &[f64]) -> (f64, f64) {
+    nums.iter().enumerate().fold((0.0, 0.0), |(sum, total), (j, x)| {
+        let w = 1.0 + (j as f64 * 0.618_033_988_749_895).fract();
+        (sum + w * x, total + w)
+    })
+}
+
+/// The cell of `x` on a grid of `step`. Values within one step of each other land in the same or
+/// neighbouring cells; values too large for the grid share the outermost ones.
+fn cell_of(x: f64, step: f64) -> i64 {
+    let k = (x / step).floor();
+    if k.is_finite() { k.clamp(-9e15, 9e15) as i64 } else { i64::MIN }
 }
 
 #[derive(Default)]
@@ -234,33 +263,37 @@ fn overkill(s: &mut Session, hs: Option<Vec<Handle>>, o: &Opts) -> Result<Report
 
 /// Equal objects (numbers compared to the tolerance): the first in draw order stays, unless a
 /// later one is followed by an associative object.
+///
+/// Objects are hashed by their properties and shape (their JSON without the numbers), then by a
+/// weighted sum of their numbers on a grid of the tolerance times the weights' sum: two equal
+/// objects' sums are that close, so they land in the same or neighbouring cells, wherever the
+/// numbers fall.
 fn duplicates(cands: &[Cand], o: &Opts, gone: &mut [bool], rep: &mut Report) {
-    let mut seen: HashMap<(u32, String), usize> = HashMap::new();
-    for (i, c) in cands.iter().enumerate() {
+    // Keepers so far: (properties, shape) → cell of the sum → their numbers.
+    type Keepers = HashMap<i64, Vec<Vec<f64>>>;
+    let mut seen: HashMap<(u32, String), Keepers> = HashMap::new();
+    // Followed objects first, so a keeper is never displaced: everything deleted is within the
+    // tolerance of an object that stays.
+    let (followed, rest): (Vec<usize>, Vec<usize>) = (0..cands.len()).partition(|i| cands.get(*i).is_some_and(|c| c.protected));
+    for i in followed.into_iter().chain(rest) {
+        let Some(c) = cands.get(i) else { continue };
         let Ok(mut v) = serde_json::to_value(&c.e.kind) else { continue };
-        if o.tol > 0.0 {
-            quantize(&mut v, o.q());
+        let mut nums = Vec::new();
+        split_numbers(&mut v, &mut nums);
+        let (sum, weights) = weighted_sum(&nums);
+        let cell = cell_of(sum, o.q() * weights.max(1.0));
+        let cells = seen.entry((c.prop, v.to_string())).or_default();
+        let found = [cell.saturating_sub(1), cell, cell.saturating_add(1)]
+            .into_iter()
+            .any(|k| cells.get(&k).is_some_and(|keepers| keepers.iter().any(|n| within(n, &nums, o.tol))));
+        if !found || c.protected {
+            // A followed object stays even when it matches another.
+            cells.entry(cell).or_default().push(nums);
+            continue;
         }
-        let key = (c.prop, v.to_string());
-        match seen.get(&key).copied() {
-            None => {
-                seen.insert(key, i);
-            }
-            Some(k) => {
-                let keeper_protected = cands.get(k).is_some_and(|x| x.protected);
-                let victim = match (keeper_protected, c.protected) {
-                    (_, false) => i,
-                    (false, true) => {
-                        seen.insert(key, i);
-                        k
-                    }
-                    (true, true) => continue,
-                };
-                if let Some(g) = gone.get_mut(victim) {
-                    *g = true;
-                    rep.duplicates += 1;
-                }
-            }
+        if let Some(g) = gone.get_mut(i) {
+            *g = true;
+            rep.duplicates += 1;
         }
     }
 }
@@ -421,8 +454,8 @@ fn collinear(members: &[&LineRec], cands: &[Cand], o: &Opts, gone: &mut [bool], 
 fn arcs(cands: &[Cand], o: &Opts, gone: &mut [bool], changed: &mut HashMap<usize, EntityKind>, rep: &mut Report) {
     let q = o.q();
     let g = q.max(1e-9);
-    let cell = |x: f64| (x / g).round() as i64;
-    let mut buckets: HashMap<(u32, i64, i64, i64, i64), Vec<usize>> = HashMap::new();
+    // (index, properties, centre and radius); cells of `g` hold them.
+    let mut recs: Vec<(usize, u32, [f64; 4])> = Vec::new();
     for (i, c) in cands.iter().enumerate() {
         if gone.get(i).copied().unwrap_or(true) || c.protected {
             continue;
@@ -442,12 +475,45 @@ fn arcs(cands: &[Cand], o: &Opts, gone: &mut [bool], changed: &mut HashMap<usize
         {
             continue;
         }
-        buckets.entry((c.prop, cell(center.x), cell(center.y), cell(r), cell(center.z))).or_default().push(i);
+        recs.push((i, c.prop, [center.x, center.y, r, center.z]));
     }
-    let mut keys: Vec<_> = buckets.keys().copied().collect();
-    keys.sort_unstable();
-    for key in keys {
-        let Some(group) = buckets.get(&key) else { continue };
+    // Those within `g` of each other in centre and radius are on one circle. Each object joins the
+    // first group whose every member is within `g` of it, or starts one: matches don't chain, so
+    // nothing is deleted for matching only an object that itself matches the keeper. Members are
+    // looked for in the neighbouring cells too, so values on either side of a cell boundary meet.
+    let mut grid: HashMap<(u32, [i64; 4]), Vec<usize>> = HashMap::new();
+    let mut group_of: Vec<usize> = Vec::with_capacity(recs.len());
+    // Each group's records, in draw order; groups in the order of their first object.
+    let mut members: Vec<Vec<usize>> = Vec::new();
+    for (ri, (_, prop, v)) in recs.iter().enumerate() {
+        let cells = v.map(|x| cell_of(x, g));
+        let mut near_groups: Vec<usize> = Vec::new();
+        for n in 0..81_i64 {
+            let near = [n % 3 - 1, n / 3 % 3 - 1, n / 9 % 3 - 1, n / 27 % 3 - 1];
+            let mut key = cells;
+            for (k, d) in key.iter_mut().zip(near) {
+                *k = k.saturating_add(d);
+            }
+            near_groups.extend(grid.get(&(*prop, key)).map(Vec::as_slice).unwrap_or_default().iter().filter_map(|rj| group_of.get(*rj)));
+        }
+        near_groups.sort_unstable();
+        near_groups.dedup();
+        let fits = |gi: &usize| members.get(*gi).is_some_and(|m| m.iter().all(|rk| recs.get(*rk).is_some_and(|(_, _, w)| within(v, w, g))));
+        let gi = match near_groups.into_iter().find(fits) {
+            Some(gi) => gi,
+            None => {
+                members.push(Vec::new());
+                members.len() - 1
+            }
+        };
+        if let Some(m) = members.get_mut(gi) {
+            m.push(ri);
+        }
+        group_of.push(gi);
+        grid.entry((*prop, cells)).or_default().push(ri);
+    }
+    let groups = members.iter().map(|m| m.iter().filter_map(|ri| recs.get(*ri).map(|r| r.0)).collect::<Vec<usize>>());
+    for group in groups {
         if group.len() < 2 {
             continue;
         }
@@ -465,7 +531,7 @@ fn arcs(cands: &[Cand], o: &Opts, gone: &mut [bool], changed: &mut HashMap<usize
             }
             continue;
         }
-        same_circle(group, cands, o, gone, changed, rep);
+        same_circle(&group, cands, o, gone, changed, rep);
     }
 }
 
