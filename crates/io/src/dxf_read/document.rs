@@ -178,14 +178,32 @@ pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: 
     (paper_block_for, first_layout)
 }
 
+/// The drawing's layer names (lower-cased), so adding the layer an entity names is a set lookup
+/// rather than a scan of the layer table per entity: many distinct names made that quadratic
+/// (CWE-407).
+struct LayerSet(std::collections::HashSet<String>);
+
+impl LayerSet {
+    fn new(d: &Drawing) -> Self {
+        Self(d.layers.iter().map(|l| l.name.to_ascii_lowercase()).collect())
+    }
+    /// [`Drawing::ensure_layer`] through the set.
+    fn ensure(&mut self, d: &mut Drawing, name: &str) {
+        if self.0.insert(name.to_ascii_lowercase()) {
+            d.layers.push(cadcraft_doc::Layer::new(name));
+        }
+    }
+}
+
 /// Place the BLOCKS entities: model and paper space blocks go to their space, the rest become
 /// block definitions.
 pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
+    let mut layers = LayerSet::new(d);
     for (name, base, description, ents, xref) in blocks {
         let up = name.to_ascii_uppercase();
         if up == "*MODEL_SPACE" {
             for (_, _, e) in ents {
-                d.ensure_layer(&e.common.layer);
+                layers.ensure(d, &e.common.layer);
                 d.model.push(e);
             }
             continue;
@@ -241,8 +259,9 @@ pub(super) fn place_entities(
     paper_block_for: &HashMap<String, String>,
     first_layout: &str,
 ) {
+    let mut layers = LayerSet::new(d);
     for (owner, paper, e) in entities {
-        d.ensure_layer(&e.common.layer);
+        layers.ensure(d, &e.common.layer);
         let owner_name = owner.and_then(|o| rx.brs.get(&o.trim().to_ascii_uppercase()).cloned()).map(|n| n.to_ascii_uppercase());
         let to_paper = paper || owner_name.as_deref().is_some_and(|n| n.starts_with("*PAPER_SPACE"));
         if to_paper {
