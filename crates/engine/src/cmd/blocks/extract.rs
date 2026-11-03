@@ -139,16 +139,15 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
         }
         let block = d.block(&ins.block).map(|b| b.name.clone()).unwrap_or_else(|| ins.block.clone());
         out.push(Found {
-            block,
             handle: e.handle.hex(),
             layer: e.common.layer.clone(),
             at: ins.insert.xy(),
             rotation: ins.rotation.to_degrees(),
+            block: block.clone(),
             values: values(
                 ins,
-                consts
-                    .entry(ins.block.to_ascii_uppercase())
-                    .or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &o.tags)).unwrap_or_default()),
+                // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
+                consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &o.tags)).unwrap_or_default()),
                 &o.tags,
             ),
         });

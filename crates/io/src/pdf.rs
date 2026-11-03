@@ -462,7 +462,10 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         // pages times the links must not multiply without a bound.
         let mut annotations_left = MAX_FILE_ANNOTATIONS;
         for (s, po) in items {
-            let mut page = sheet(drawn, s, po, &links)?;
+            // Once the budget is spent no link is built (scanned and cloned) for later pages.
+            let mut page = sheet(drawn, s, po, if annotations_left == 0 { &links[..0] } else { &links })?;
+            // Only targets `write_page` accepts count against the budget.
+            page.links.retain(|(_, url)| uri(url).is_some());
             page.links.truncate(annotations_left);
             annotations_left -= page.links.len();
             let doc = writer.document_mut();
