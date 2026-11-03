@@ -470,7 +470,11 @@ impl Chain {
     pub fn at_length_in(&self, ends: &[f64], d: f64) -> Option<(Vec2, Vec2)> {
         let first = ends.partition_point(|e| d > e + 1e-12);
         // A segment of no length can't hold the point; the next one that has length does.
-        let i = (first..self.segs.len()).find(|&i| self.segs.get(i).is_some_and(|s| s.len() > 0.0));
+        // `ends` never decreases, so the first segment past `first` with length is found by search
+        // (a run of zero-length segments can be long) instead of a scan.
+        let base = first.checked_sub(1).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
+        let i = first + ends.get(first..).unwrap_or_default().partition_point(|e| *e <= base);
+        let i = (i < self.segs.len()).then_some(i);
         if let Some(s) = i.and_then(|i| self.segs.get(i)) {
             let start = i.and_then(|i| i.checked_sub(1)).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
             let t = ((d - start) / s.len()).clamp(0.0, 1.0);
