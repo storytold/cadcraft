@@ -314,6 +314,8 @@ fn write_header(w: &mut W, d: &Drawing, version: Version) -> usize {
     seed_pos
 }
 
+/// Declare DXF classes required by the emitted entities and objects, including WIPEOUT frame
+/// settings even when those settings exist without a WIPEOUT entity.
 fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity], has_wipeout: bool, has_wipeout_vars: bool) {
     w.s(0, "SECTION");
     w.s(2, "CLASSES");
@@ -555,6 +557,8 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     }
 }
 
+/// Open OBJECTS and write its root dictionary and groups, linking optional image and WIPEOUT
+/// settings to the handles allocated by the write plan.
 fn write_root_group_objects(
     w: &mut W,
     plan: &ObjectWritePlan<'_>,
@@ -659,6 +663,8 @@ fn write_style_objects(w: &mut W, plan: &ObjectWritePlan<'_>, mleader_dict: &str
     }
 }
 
+/// Write drawing-wide WIPEOUT frame settings, plot style placeholders, CADCraft records and
+/// annotation scales under the dictionaries reserved by the write plan.
 fn write_named_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     let root_dict = plan.root_dict;
     let pstyle_dict = plan.pstyle_dict;

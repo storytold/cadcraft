@@ -128,6 +128,7 @@ fn text_fill_variables_are_style_overrides() {
     assert!(!arrows.is_empty() && arrows.iter().all(|i| Some(*i) < solid), "{arrows:?} before {solid:?}");
 }
 
+/// EXPLODE retains the frame-free text mask and mark order, including through undo and redo.
 #[test]
 fn exploding_background_colour_fill_keeps_a_mask_and_undo_restores_the_dimension() {
     let mut s = Session::new();

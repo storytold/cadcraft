@@ -45,6 +45,8 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Resolve annotation scale, visibility and drawing properties before dispatching an entity's
+/// geometry, including native text backgrounds and stored dimension blocks.
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -267,6 +269,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Draw leader paths, arrowheads and doglegs, followed by the text or block content.
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
     // Straight or spline leader lines; block content draws like a block reference.
     for pts in m.leader_paths() {
@@ -311,6 +314,8 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
     }
 }
 
+/// Draw a saved dimension block, synthesizing DIMTFILL only for visible text without a native
+/// mask or covering visible fill; otherwise generate the dimension from its definition points.
 fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimension, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64) {
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH

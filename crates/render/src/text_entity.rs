@@ -63,6 +63,8 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
     }
 }
 
+/// Draw a normalized, frame-free background before the MTEXT glyphs. `layer` resolves ByLayer
+/// fill colours; layer 0 inherits `ctx.block_layer`. The fill also draws when text is disabled.
 pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32, layer: &str) {
     if b.opts.fill
         && let Some(mask) = t.background.map(cadcraft_doc::MTextMask::normalized)

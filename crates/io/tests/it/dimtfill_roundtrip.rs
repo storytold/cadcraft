@@ -202,6 +202,7 @@ fn dimension_block_holds_the_text_background() {
     assert_eq!(lines_after, 6, "the frame after the background, the other lines before it");
 }
 
+/// Saving native and legacy masks preserves dimension padding across units and drawing scales.
 #[test]
 fn dimension_gap_ratios_survive_mask_normalization() {
     for base in [
@@ -234,6 +235,7 @@ fn dimension_gap_ratios_survive_mask_normalization() {
     }
 }
 
+/// Repeated DXF/DWG saves retain native text masks and marks without changing user WIPEOUT frames.
 #[test]
 fn background_colour_mask_is_native_in_saved_dimension_blocks() {
     let mut d = Drawing::new_imperial();
@@ -297,6 +299,7 @@ fn background_colour_mask_is_native_in_saved_dimension_blocks() {
     }
 }
 
+/// Saved block entities mask underlying geometry without a DIMENSION to synthesize the fill.
 #[test]
 fn dimension_block_alone_masks_underlying_geometry_on_light_and_dark_backgrounds() {
     use cadcraft_render::raster::{RasterOptions, View, render};
@@ -362,6 +365,7 @@ fn dimension_block_alone_masks_underlying_geometry_on_light_and_dark_backgrounds
     }
 }
 
+/// Disabled fills and suppressed dimension text produce no native mask in the saved block.
 #[test]
 fn unfilled_or_suppressed_dimension_text_writes_no_mask() {
     for (fill, text) in [(0, ""), (1, " "), (2, " ")] {

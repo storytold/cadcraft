@@ -40,6 +40,8 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     }
 }
 
+/// Draw bounded block copies and their attributes, inheriting layer 0 and ByBlock properties
+/// from the insert while keeping attached attribute coordinates in the parent context.
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
@@ -96,15 +98,12 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
             if shown {
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
+                let layer = a.props.layer.as_deref().or_else(|| def.map(|d| d.common.layer.as_str())).unwrap_or(&e.common.layer);
+                // Attribute layer 0 follows this insert; mtext resolves an insert on layer 0
+                // through the parent context, without transforming the attribute a second time.
+                let layer = if layer == "0" { e.common.layer.as_str() } else { layer };
                 match (&multiline, &sh) {
-                    (Some(m), _) => mtext(
-                        b,
-                        ctx,
-                        m,
-                        ink,
-                        lw,
-                        a.props.layer.as_deref().or_else(|| def.map(|d| d.common.layer.as_str())).unwrap_or(&e.common.layer),
-                    ),
+                    (Some(m), _) => mtext(b, ctx, m, ink, lw, layer),
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }

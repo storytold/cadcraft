@@ -278,6 +278,8 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
     }
 }
 
+/// Write TEXT, MTEXT or ATTDEF geometry and REGION boundary fallbacks, selecting native MTEXT
+/// masks and columns when supported and fallback metadata for older formats.
 fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Text(t) => {

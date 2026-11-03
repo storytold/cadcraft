@@ -108,6 +108,7 @@ fn attributes_without_properties_stay_without() {
     assert!(a.iter().all(|a| a.props.is_empty()), "{a:?}");
 }
 
+/// ByLayer mask colours follow attribute precedence and inherit layer 0 through nested inserts.
 #[test]
 fn multiline_attribute_mask_uses_own_layer_then_definition_then_insert() {
     for (tag, own_layer, expected) in [
@@ -115,6 +116,9 @@ fn multiline_attribute_mask_uses_own_layer_then_definition_then_insert() {
         ("NODEF", Some("A"), Rgb(12, 34, 56)),
         ("DEFLAYER", None, Rgb(78, 90, 12)),
         ("NODEF", None, Rgb(34, 56, 78)),
+        ("DEFLAYER", Some("0"), Rgb(34, 56, 78)),
+        ("NODEF", Some("0"), Rgb(34, 56, 78)),
+        ("OWN", None, Rgb(34, 56, 78)),
     ] {
         let mut a = attrib(tag, 0.0, AttribProps { layer: own_layer.map(str::to_owned), ..Default::default() });
         a.multiline = Some(MultilineAttrib {
@@ -133,7 +137,7 @@ fn multiline_attribute_mask_uses_own_layer_then_definition_then_insert() {
                 background: Some(MTextMask { use_background: false, color: Color::ByLayer, ..Default::default() }),
             },
         });
-        let (mut d, _) = drawing(vec![a]);
+        let (mut d, handle) = drawing(vec![a]);
         for (name, color) in [("A", Rgb(12, 34, 56)), ("TXT", Rgb(78, 90, 12)), ("INS", Rgb(34, 56, 78))] {
             d.layers.iter_mut().find(|l| l.name == name).unwrap().color = Color::True(color);
         }
@@ -141,6 +145,21 @@ fn multiline_attribute_mask_uses_own_layer_then_definition_then_insert() {
         let fills: Vec<_> = list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Tris).collect();
         assert_eq!(fills.len(), 1, "{tag}, {own_layer:?}: one mask fill");
         assert_eq!(fills[0].color, expected, "{tag}, {own_layer:?}");
+
+        // The inner insert on layer 0 inherits INS from the outer insert.
+        let mut outer = Block::new("OUTER");
+        let mut inner = d.model.get(handle).unwrap().as_ref().clone();
+        inner.common.layer = "0".into();
+        let EntityKind::Insert(ins) = &inner.kind else { panic!("insert") };
+        let reference = Insert { block: "OUTER".into(), attribs: Vec::new(), ..ins.clone() };
+        outer.entities.push(inner);
+        d.blocks.insert(outer.name.clone(), Arc::new(outer));
+        d.remove_entity(handle);
+        d.add(&Space::Model, Common { layer: "INS".into(), ..Common::default() }, EntityKind::Insert(reference)).unwrap();
+        let list = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+        let fills: Vec<_> = list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Tris).collect();
+        assert_eq!(fills.len(), 1, "nested {tag}, {own_layer:?}: one mask fill");
+        assert_eq!(fills[0].color, expected, "nested {tag}, {own_layer:?}");
     }
 }
 

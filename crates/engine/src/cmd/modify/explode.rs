@@ -65,6 +65,8 @@ fn segment_entities(e: &Entity, segs: impl IntoIterator<Item = Segment>) -> Vec<
         .collect()
 }
 
+/// Replace a dimension with its styled geometry, keeping background-colour fills on the MTEXT
+/// and emitting inspection or text marks after the background.
 fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::Dimension) -> Vec<Entity> {
     // The dimension as drawn: its overrides, DIMSCALE (0 = the drawing's) and text font.
     let style = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);

@@ -55,6 +55,8 @@ pub(super) fn run_text(s: &mut Session, p: &Value) -> Result<Value> {
     added(s.add_entity(k)?)
 }
 
+/// Create MTEXT from JSON with validated height, text style, justification and layout options.
+/// New text starts without a background mask.
 pub(super) fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
     let at = point_req("mtext", p, "at")?;
     let text = str_param(p, "text").ok_or_else(|| bad("mtext", "`text` is required"))?;

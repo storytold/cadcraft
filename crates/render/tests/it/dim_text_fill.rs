@@ -164,6 +164,7 @@ fn a_dimension_read_with_its_block_keeps_the_block_and_gets_the_background() {
     assert!(mid.dist(Vec2::new(20.0, 20.0)) < 0.05, "{mid:?}");
 }
 
+/// Separate measurement and tolerance texts in a saved dimension block each receive a fill.
 #[test]
 fn every_text_of_a_block_gets_a_background() {
     // A measurement and a tolerance as two MTEXTs of the block.
@@ -192,6 +193,7 @@ fn every_text_of_a_block_gets_a_background() {
     assert_eq!(list.prims.iter().filter(|p| p.kind == Kind::Mask).count(), 2);
 }
 
+/// A covering SOLID or WIPEOUT suppresses fallback fills; partial coverage still needs a mask.
 #[test]
 fn a_block_that_holds_its_background_gets_no_second_one() {
     // A block with a SOLID or WIPEOUT, then text away from where CADCraft would put it: the
@@ -266,6 +268,7 @@ fn a_block_with_turned_text_gets_a_turned_background() {
     assert!(!text.is_empty() && text.iter().all(|p| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y), "the text inside {lo:?} {hi:?}");
 }
 
+/// Entity, layer, isolation and plot visibility determine whether a stored fill covers text.
 #[test]
 fn invisible_stored_backgrounds_do_not_suppress_the_dimension_fill() {
     for mode in ["visible", "entity", "layer_off", "layer_frozen", "no_plot", "isolated"] {
@@ -319,6 +322,7 @@ fn invisible_stored_backgrounds_do_not_suppress_the_dimension_fill() {
     }
 }
 
+/// Hidden candidates are filtered before the cap so a later visible fill can cover the text.
 #[test]
 fn hidden_backgrounds_do_not_consume_the_coverage_budget() {
     let mut d = Drawing::new_imperial();

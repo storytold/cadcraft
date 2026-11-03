@@ -24,6 +24,7 @@ fn drawing(background: MTextMask) -> Drawing {
     d
 }
 
+/// Repeated native and legacy saves preserve mask scales, fill colour and frame-free rendering.
 #[test]
 fn background_and_true_colour_masks_round_trip_in_dxf_and_dwg() {
     for mask in [
@@ -60,6 +61,7 @@ fn background_and_true_colour_masks_round_trip_in_dxf_and_dwg() {
     }
 }
 
+/// Hostile native scales fall back to 1.5; explicit native fill-off overrides stale fallback data.
 #[test]
 fn invalid_native_mask_values_are_bounded_and_native_off_overrides_legacy_data() {
     let source = drawing(MTextMask::default());

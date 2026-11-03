@@ -20,6 +20,7 @@ fn wipeoutvariables_sets_the_frame_flag() {
     assert_eq!(frame(Some(7)), 1, "an out-of-range flag is ignored");
 }
 
+/// The latest WIPEOUTFRAME setting survives successive saves without stale raw objects overriding it.
 #[test]
 fn changed_frame_setting_survives_save_without_an_old_copy_overriding_it() {
     let mut drawing = cadcraft_io::read_dxf(dxf(Some(0)).as_bytes()).unwrap();

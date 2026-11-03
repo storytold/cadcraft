@@ -54,6 +54,8 @@ pub(crate) fn read_background(tags: &[Tag]) -> Option<MTextMask> {
     None
 }
 
+/// Encode a normalized mask as native MTEXT fill groups or CADCraft fallback xdata for R2000.
+/// An absent mask emits no tags; background fills remain independent of WIPEOUTFRAME.
 pub(crate) fn background_tags(mask: Option<MTextMask>, native: bool) -> Vec<Tag> {
     let Some(mask) = mask.map(MTextMask::normalized) else { return Vec::new() };
     if !native {
