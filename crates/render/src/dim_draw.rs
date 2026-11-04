@@ -2,7 +2,7 @@ use super::dim::ArrowGeom;
 use super::display::Kind;
 use super::draw::stroke_with;
 use super::props::default_lineweight;
-use super::text_entity::{layout_mtext_entity, place_text_entity, text_style};
+use super::text_entity::{layout_mtext_entity, place_text_entity, style_font, text_style};
 use super::{Builder, Color, Ctx, DimGeometry, DimText, Drawing, Entity, EntityKind, LineRole, Lineweight, Vec2, dim, fill, ink};
 use cadcraft_geom::Bounds2;
 
@@ -20,7 +20,7 @@ pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
         }
     }
     DimText {
-        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
+        font: style_font(&ts),
         fixed_height: ts.height,
         width_factor: ts.width_factor,
         oblique: ts.oblique,
