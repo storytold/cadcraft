@@ -305,3 +305,52 @@ fn a_dimension_formula_keeps_its_braces_through_the_editor() {
     assert_eq!(dim(&s).marks.formula.as_deref(), Some(r#"=LOWER("{B}")"#));
     assert_eq!(dim(&s).text, "{b}", "the result, braces as letters");
 }
+
+/// FredApps on #2318: a block reference's attribute that holds a formula (or a field) is worked
+/// out by UPDATEFIELD and when the drawing is opened, as other text is; a value typed over it
+/// replaces the formula.
+#[test]
+fn a_block_references_attribute_formulas_are_worked_out() {
+    let mut s = Session::new();
+    s.execute("attdef", &json!({"tag": "T", "default": "one", "at": [0, 1]})).unwrap();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "B", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+    let r = s.execute("insert", &json!({"name": "B", "at": [100, 0], "attribs": {"T": "old"}})).unwrap();
+    let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    let attrib = |s: &Session| {
+        let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+        let t = &i.attribs.iter().find(|a| a.tag == "T").unwrap().text;
+        (t.value.clone(), t.formula.clone())
+    };
+    // As read from a file: the formula, with a stale value.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs.iter_mut().for_each(|a| a.text.formula = Some("=2+3".into()));
+            }
+        })
+        .unwrap();
+    assert_eq!(s.execute("updatefield", &json!({})).unwrap()["updated"], 1);
+    assert_eq!(attrib(&s), ("5".to_string(), Some("=2+3".to_string())));
+
+    // Opening the drawing works it out too.
+    let mut d = s.doc().unwrap().clone();
+    d.modify_entity(h, |e| {
+        if let EntityKind::Insert(i) = &mut e.kind {
+            i.attribs.iter_mut().for_each(|a| a.text.value = "stale".into());
+        }
+    })
+    .unwrap();
+    let env = cadcraft_engine::textformula::env(&s);
+    assert_eq!(cadcraft_engine::textformula::refresh(&mut d, &env), 1);
+    let EntityKind::Insert(i) = &d.entity(h).unwrap().kind else { panic!("not an insert") };
+    assert_eq!(i.attribs.first().map(|a| a.text.value.as_str()), Some("5"));
+
+    // A value typed over it replaces the formula; UPDATEFIELD then leaves it alone.
+    s.execute("-attedit", &json!({"tag": "T", "find": "5", "replace": "typed"})).unwrap();
+    assert_eq!(attrib(&s), ("typed".to_string(), None));
+    s.execute("updatefield", &json!({})).unwrap();
+    assert_eq!(attrib(&s).0, "typed");
+}
