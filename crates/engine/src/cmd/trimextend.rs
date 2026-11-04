@@ -249,6 +249,18 @@ type EdgeCache = (usize, Space, bool, Arc<Vec<(Handle, Segment)>>);
 /// The last glow worked out: the drawing (by address), the cursor and the result.
 type GlowCache = (usize, (u64, u64), Option<Glow>);
 
+/// The last hatch glow worked out: the drawing (by address), the hatch, Quick mode and implied
+/// edges, the area the cutting edges bound around the cursor (outline, then islands) and the
+/// glow. A cursor moving within that area glows the same, without the hatch traced again.
+struct HatchGlowCache {
+    doc: usize,
+    hatch: Handle,
+    quick: bool,
+    implied: bool,
+    face: Vec<Vec<Vec2>>,
+    glow: Option<Glow>,
+}
+
 pub(crate) struct TrimM {
     extend: bool,
     /// Cutting/boundary edges; `None`: all objects.
@@ -258,6 +270,7 @@ pub(crate) struct TrimM {
     undo: Vec<Arc<Drawing>>,
     edge_cache: Mutex<Option<EdgeCache>>,
     glow_cache: Mutex<Option<GlowCache>>,
+    hatch_glow_cache: Mutex<Option<HatchGlowCache>>,
 }
 
 /// Samples along an object when finding the part of it a trim takes away or an extend adds.
@@ -341,7 +354,15 @@ fn uncovered(orig: &EntityKind, others: &[EntityKind]) -> Vec<EntityKind> {
 
 impl TrimM {
     pub(crate) fn new(extend: bool) -> Self {
-        TrimM { extend, edges: None, stage: Stage::Pick, undo: Vec::new(), edge_cache: Mutex::new(None), glow_cache: Mutex::new(None) }
+        TrimM {
+            extend,
+            edges: None,
+            stage: Stage::Pick,
+            undo: Vec::new(),
+            edge_cache: Mutex::new(None),
+            glow_cache: Mutex::new(None),
+            hatch_glow_cache: Mutex::new(None),
+        }
     }
     /// The cutting (boundary) edges with their objects, from the cache while the drawing is the
     /// same.
@@ -378,14 +399,41 @@ impl TrimM {
             let kinds = uncovered(&new, std::slice::from_ref(&e.kind));
             return (!kinds.is_empty()).then_some(Glow { kinds, removing: false });
         }
+        // A hatch: the same as last time while the cursor stays in the area it was worked out
+        // for (tracing a big hatch among many objects on every move stalls the cursor).
+        let doc = Arc::as_ptr(&s.state().ok()?.doc) as usize;
+        let hatch = match &d.entity(h)?.kind {
+            EntityKind::Hatch(hatch) => Some(hatch),
+            _ => None,
+        };
+        if hatch.is_some()
+            && let Ok(cache) = self.hatch_glow_cache.lock()
+            && let Some(hc) = cache.as_ref()
+            && (hc.doc, hc.hatch, hc.quick, hc.implied) == (doc, h, quick, implied)
+            && hc.face.iter().filter(|l| cadcraft_geom::point_in_polygon(l, c)).count() % 2 == 1
+        {
+            return hc.glow.clone();
+        }
         // A trim only meets the edges around the object.
         let cut = trim_edges(s, Edges { only: self.edges.as_deref(), implied }, h).ok()?;
         // A hatch's trim is worked out once, for the part it takes away (`trim_result` would
         // work it out again only to drop that part).
-        let result = match &d.entity(h)?.kind {
-            EntityKind::Hatch(hatch) => super::trim_hatch::trim_hatch(hatch, &cut, c).map(|(_, face)| hatch_glow(hatch, face)),
-            _ => trim_result(s, h, c, &cut).map(|(e, pieces)| uncovered(&e.kind, &pieces)),
+        let mut face = Vec::new();
+        let result = match hatch {
+            Some(hatch) => super::trim_hatch::trim_hatch_at(hatch, &cut, c, &mut face).map(|(_, face)| hatch_glow(hatch, face)),
+            None => trim_result(s, h, c, &cut).map(|(e, pieces)| uncovered(&e.kind, &pieces)),
         };
+        let glow = Self::glow_of(result, quick, d, h);
+        if !face.is_empty()
+            && let Ok(mut cache) = self.hatch_glow_cache.lock()
+        {
+            *cache = Some(HatchGlowCache { doc, hatch: h, quick, implied, face, glow: glow.clone() });
+        }
+        glow
+    }
+    /// The glow of a trim's result: what it takes away, or all of the object when a Quick-mode
+    /// trim of an object no edge crosses erases it.
+    fn glow_of(result: Result<Vec<EntityKind>>, quick: bool, d: &Drawing, h: Handle) -> Option<Glow> {
         let kinds = match result {
             Ok(kinds) => kinds,
             // A Quick-mode trim of an object no edge crosses erases all of it.
@@ -552,6 +600,9 @@ impl Interactive for TrimM {
             *c = None;
         }
         if let Ok(c) = self.glow_cache.get_mut() {
+            *c = None;
+        }
+        if let Ok(c) = self.hatch_glow_cache.get_mut() {
             *c = None;
         }
         let quick = quick_mode(s);

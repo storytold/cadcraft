@@ -346,3 +346,37 @@ fn lines_inside_a_block_cut_a_hatch() {
     assert_eq!(left.len(), 1, "trimmed, not erased");
     assert!(left[0].loops.iter().flat_map(|l| l.vertices.iter()).all(|v| v.p.x >= 4.0 - 1e-6));
 }
+
+/// TRIM's glow over a big hatch among many objects (its boundary erased, so the cursor finds the
+/// hatch everywhere inside it) is worked out once for the area under the cursor, not again on
+/// every move within it: tracing the hatch on each move stalled the cursor.
+#[test]
+fn a_hatch_glow_is_kept_while_the_cursor_stays_in_its_area() {
+    let mut s = Session::new();
+    let mut edges = Vec::new();
+    for (a, b) in [((0, 0), (40000, 0)), ((40000, 0), (40000, 24000)), ((40000, 24000), (0, 24000)), ((0, 24000), (0, 0))] {
+        let r = s.execute("line", &json!({"points": [[a.0, a.1], [b.0, b.1]]})).unwrap();
+        edges.push(r["handle"].as_str().or_else(|| r["handles"][0].as_str()).unwrap().to_string());
+    }
+    s.execute("hatch", &json!({"points": [[20000, 12000]], "pattern": "SOLID"})).unwrap();
+    s.execute("erase", &json!({"handles": edges})).unwrap();
+    // Furniture in the right part of the room, a wall line across it.
+    for i in 0..400 {
+        let (x, y) = (17500.0 + f64::from(i % 20) * 1100.0, 1000.0 + f64::from(i / 20) * 1100.0);
+        s.execute("circle", &json!({"center": [x, y], "radius": 300})).unwrap();
+        s.execute("line", &json!({"points": [[x - 500.0, y - 500.0], [x + 500.0, y + 400.0]]})).unwrap();
+    }
+    s.execute("line", &json!({"points": [[16000, -100], [16000, 30000]]})).unwrap();
+    s.cmdline("trim").unwrap();
+    let at = |i: u32| cadcraft_engine::geom::Vec2::new(4000.0 + f64::from(i) * 50.0, 12000.0);
+    let t = std::time::Instant::now();
+    let first = s.glow(at(0));
+    let once = t.elapsed();
+    assert!(first.as_ref().is_some_and(|(_, removing)| *removing), "the left part glows");
+    let t = std::time::Instant::now();
+    for i in 1..=40 {
+        assert_eq!(s.glow(at(i)), first, "the same part glows at {:?}", at(i));
+    }
+    let moves = t.elapsed();
+    assert!(moves < once * 4, "40 moves took {moves:?}, one trace {once:?}");
+}
