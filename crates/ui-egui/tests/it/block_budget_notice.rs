@@ -37,6 +37,7 @@ fn harness(copies: u32) -> Harness<'static, CadApp> {
         rows: copies,
         col_spacing: 2.0,
         row_spacing: 2.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     app.session.execute("view.set", &json!({"center": [100, 100], "height": 250})).unwrap();
