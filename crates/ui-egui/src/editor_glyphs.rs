@@ -53,10 +53,11 @@ fn fonts() -> &'static Mutex<HashMap<(String, String), TextFont>> {
 }
 
 /// Forget what was worked out with fonts that changed since: the font folders were edited or
-/// searched again ([`cadcraft_fonts::ttf::generation`]), so a font that was missing may be there.
+/// searched again ([`cadcraft_fonts::ttf::generation`], [`cadcraft_fonts::shx::generation`]), so a
+/// font that was missing may be there.
 fn follow_font_changes() {
     static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let now = cadcraft_fonts::ttf::generation();
+    let now = cadcraft_fonts::ttf::generation().wrapping_add(cadcraft_fonts::shx::generation() << 32);
     if SEEN.swap(now, std::sync::atomic::Ordering::Relaxed) != now {
         clear();
     }
@@ -69,7 +70,7 @@ fn resolve(font: &str, big: &str) -> TextFont {
     if let Some(t) = f.get(&k) {
         return t.clone();
     }
-    let t = TextFont::resolve_style(font, big);
+    let t = TextFont::resolve_style(font, big, false);
     if f.len() > 64 {
         f.clear();
     }

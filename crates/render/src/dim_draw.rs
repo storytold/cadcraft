@@ -4,7 +4,6 @@ use super::draw::stroke_with;
 use super::props::default_lineweight;
 use super::text_entity::{layout_mtext_entity, place_text_entity, style_font, text_style};
 use super::{Builder, Color, Ctx, DimGeometry, DimText, Drawing, Entity, EntityKind, LineRole, Lineweight, Vec2, dim, fill, ink};
-use cadcraft_geom::Bounds2;
 
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
@@ -101,10 +100,18 @@ pub(crate) fn arrow_geometry(b: &cadcraft_doc::Block) -> Option<ArrowGeom> {
     const MAX_POINTS: usize = 200_000;
     let used = |g: &ArrowGeom| g.lines.iter().map(Vec::len).sum::<usize>().saturating_add(g.tris.len());
     for e in b.entities.iter().take(512) {
-        // What this object may add before it is worked out: its vertices, every arc sampled.
+        // What this object may add before it is worked out: its vertices, every arc sampled
+        // (curves are flattened to SEGS pieces per arc first, so a wide polyline's band is six
+        // points per piece, and a fill's edges are what its triangulation works through).
         let input = match &e.kind {
-            K::LwPolyline(p) => p.vertices.len().saturating_mul(SEGS),
-            K::Hatch(h) => h.loops.iter().map(|l| l.vertices.len()).sum::<usize>().saturating_mul(SEGS),
+            K::LwPolyline(p) => p.vertices.len().saturating_mul(SEGS).saturating_mul(6),
+            K::Hatch(h) => {
+                let edges = h.loops.iter().map(|l| l.vertices.len()).sum::<usize>().saturating_mul(SEGS);
+                if edges > MAX_FILL_EDGES {
+                    return None;
+                }
+                edges.saturating_mul(6)
+            }
             _ => SEGS,
         };
         if used(&g).saturating_add(input) > MAX_POINTS {
@@ -121,10 +128,11 @@ pub(crate) fn arrow_geometry(b: &cadcraft_doc::Block) -> Option<ArrowGeom> {
                 let w = p.const_width.max(p.vertices.iter().map(|v| v.start_width.max(v.end_width)).fold(0.0, f64::max));
                 if w > 1e-12 {
                     // A wide polyline with its widths as drawn, tapers included (a tip from width
-                    // 0 to 1 is a triangle, not a band).
-                    let size = Bounds2::from_points(p.vertices.iter().map(|v| v.p));
-                    let tol = ((size.width() + size.height()).max(w) / 2000.0).max(1e-9);
-                    g.tris.extend(fill::wide_polyline(p, tol).into_iter().map(|q| q - base));
+                    // 0 to 1 is a triangle, not a band). Its arcs flattened first: a sampling
+                    // tolerance would let a nearly closed arc on a short chord run to millions
+                    // of points.
+                    let flat = cadcraft_doc::LwPolyline { vertices: flatten(&p.vertices, p.closed, SEGS), closed: false, ..p.clone() };
+                    g.tris.extend(fill::wide_polyline(&flat, 1e-9).into_iter().map(|q| q - base));
                 } else {
                     g.lines.push(poly_pts(&p.vertices, p.closed));
                 }
@@ -138,9 +146,15 @@ pub(crate) fn arrow_geometry(b: &cadcraft_doc::Block) -> Option<ArrowGeom> {
             K::Hatch(h) if h.solid => {
                 // The loops its island detection fills (as the hatch itself is drawn), together
                 // even-odd: an island stays a hole, a concave outline is filled as it is.
-                let size = Bounds2::from_points(h.loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)));
-                let tol = ((size.width() + size.height()) / 2000.0).max(1e-9);
-                let loops: Vec<Vec<Vec2>> = crate::hatch::fill_loops(h, tol).into_iter().map(|l| l.into_iter().map(|p| p - base).collect()).collect();
+                // Its arcs flattened first, as a wide polyline's are.
+                let mut flat = h.clone();
+                for l in &mut flat.loops {
+                    let mut vs = flatten(&l.vertices, true, SEGS);
+                    vs.pop();
+                    l.vertices = vs;
+                }
+                let loops: Vec<Vec<Vec2>> =
+                    crate::hatch::fill_loops(&flat, 1e-9).into_iter().map(|l| l.into_iter().map(|p| p - base).collect()).collect();
                 g.tris.extend(fill::triangulate_evenodd(&loops));
             }
             _ => {}
@@ -148,6 +162,40 @@ pub(crate) fn arrow_geometry(b: &cadcraft_doc::Block) -> Option<ArrowGeom> {
     }
     let ok = used(&g) <= MAX_POINTS && g.lines.iter().flatten().chain(&g.tris).all(|p| p.is_finite());
     (ok && !(g.lines.is_empty() && g.tris.is_empty())).then_some(g)
+}
+
+/// Most fill edges of one user arrowhead hatch (arcs flattened): its triangulation cuts the
+/// fill into a slab at every vertex, so its work grows with the square of the edges.
+const MAX_FILL_EDGES: usize = 4096;
+
+/// A polyline's vertices with each arc segment replaced by `segs` straight pieces (widths
+/// interpolated along it); a closed polyline ends where it starts.
+fn flatten(vs: &[cadcraft_geom::PolyVertex], closed: bool, segs: usize) -> Vec<cadcraft_geom::PolyVertex> {
+    let n = vs.len();
+    let count = if closed { n } else { n.saturating_sub(1) };
+    let mut out = Vec::new();
+    for i in 0..count {
+        let (Some(a), Some(c)) = (vs.get(i), vs.get((i + 1) % n.max(1))) else { break };
+        let pieces = if a.bulge.abs() > 1e-9 && a.bulge.is_finite() && (c.p - a.p).len() > 1e-12 { segs.max(1) } else { 1 };
+        let theta = 4.0 * a.bulge.atan();
+        let chord = c.p - a.p;
+        // The centre sits off the chord's midpoint by (1 - b²) / 4b chords, to its left.
+        let center = a.p.mid(c.p) + chord.perp() * ((1.0 - a.bulge * a.bulge) / (4.0 * a.bulge));
+        let (r, a0) = ((a.p - center).len(), (a.p - center).angle());
+        for k in 0..pieces {
+            let t0 = k as f64 / pieces as f64;
+            let t1 = (k + 1) as f64 / pieces as f64;
+            let p = if k == 0 { a.p } else { center + Vec2::from_angle(a0 + theta * t0) * r };
+            let mut v = cadcraft_geom::PolyVertex::new(p);
+            v.start_width = a.start_width + (a.end_width - a.start_width) * t0;
+            v.end_width = a.start_width + (a.end_width - a.start_width) * t1;
+            out.push(v);
+        }
+    }
+    if let Some(last) = if closed { vs.first() } else { vs.last() } {
+        out.push(cadcraft_geom::PolyVertex::new(last.p));
+    }
+    out
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.
