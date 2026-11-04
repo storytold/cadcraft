@@ -101,6 +101,7 @@ fn attribute_and_multileader_formulas_roundtrip() {
     d.add(&Space::Model, Common::default(), EntityKind::AttDef(def.clone())).unwrap();
     d.blocks.insert("B".into(), cadcraft_doc::Block::new("B").into());
     let ins = cadcraft_doc::Insert {
+        clip: Default::default(),
         block: "B".into(),
         insert: Vec3::new(5.0, 0.0, 0.0),
         scale: Vec3::new(1.0, 1.0, 1.0),

@@ -102,6 +102,7 @@ mod hatch_pick_tests {
         b.entities.push(cadcraft_engine::doc::Entity::new(cadcraft_engine::doc::Handle(0x7001), EntityKind::Line(line)));
         d.blocks.insert("SITEPLAN".into(), std::sync::Arc::new(b));
         let ins = Insert {
+            clip: Default::default(),
             block: "siteplan".into(),
             insert: Vec3::ZERO,
             scale: Vec3::new(1.0, 1.0, 1.0),
