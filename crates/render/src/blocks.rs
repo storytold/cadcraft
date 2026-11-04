@@ -56,12 +56,14 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
                 let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
                 for be in blk.entities.iter() {
+                    // Every visit is charged, drawn or not, so a block of definitions can't make
+                    // the copies loop free.
+                    if !b.expand() {
+                        break 'copies;
+                    }
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
                         continue;
-                    }
-                    if !b.expand() {
-                        break 'copies;
                     }
                     entity(b, &sub, be);
                 }
@@ -73,6 +75,17 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
         let attmode = ctx.d.header.i64("ATTMODE", 1);
         // The reference's transparency; each attribute draws with its own.
         let reference = b.transparency;
+        // The block's first definition per tag (without case), built once for all the attributes.
+        let mut defs: std::collections::HashMap<String, &Entity> = std::collections::HashMap::new();
+        if !ins.attribs.is_empty()
+            && let Some(blk) = ctx.d.block(&ins.block)
+        {
+            for be in blk.entities.iter() {
+                if let EntityKind::AttDef(d) = &be.kind {
+                    defs.entry(d.tag.to_ascii_lowercase()).or_insert(be.as_ref());
+                }
+            }
+        }
         for a in &ins.attribs {
             if attmode == 0 || (a.invisible && attmode != 2) {
                 continue;
@@ -83,7 +96,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
-            let def = ctx.d.block(&ins.block).and_then(|blk| blk.entities.iter().find(|be| attdef_tag(be, &a.tag)));
+            let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
             let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
@@ -116,9 +129,4 @@ fn by_block() -> cadcraft_doc::Common {
         transparency: cadcraft_doc::Transparency::ByBlock,
         ..cadcraft_doc::Common::default()
     }
-}
-
-/// The attribute definition with tag `tag` (any case).
-fn attdef_tag(e: &Entity, tag: &str) -> bool {
-    matches!(&e.kind, EntityKind::AttDef(d) if d.tag.eq_ignore_ascii_case(tag))
 }

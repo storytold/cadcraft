@@ -490,3 +490,30 @@ fn arc_solved_with_a_negative_radius_keeps_its_points() {
         }
     }
 }
+
+/// The default name is the first free numbered one, found in one pass over many names in use.
+#[test]
+fn next_name_skips_names_in_use() {
+    let mut d = Drawing::default();
+    assert_eq!(next_name(&d, ConstraintKind::Radius), "rad1");
+    for i in (1..=20_000).filter(|i| *i != 15_000) {
+        d.parametric.parameters.push(cadcraft_doc::Parameter { name: format!("d{i}"), expr: "1".into(), description: String::new() });
+    }
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d15000");
+    d.parametric.parameters.push(cadcraft_doc::Parameter { name: "d15000".into(), expr: "1".into(), description: String::new() });
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d20001");
+    // A differently spelled suffix does not occupy the plain name.
+    let mut d = Drawing::default();
+    for name in ["d01", "d+1", "d1x", "D1"] {
+        d.parametric.parameters.push(cadcraft_doc::Parameter { name: name.into(), expr: "1".into(), description: String::new() });
+    }
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d1");
+    d.constraints.push(Constraint {
+        id: 1,
+        kind: ConstraintKind::Distance(DistAxis::Aligned),
+        refs: Vec::new(),
+        name: "d1".into(),
+        expr: "1".into(),
+    });
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d2");
+}
