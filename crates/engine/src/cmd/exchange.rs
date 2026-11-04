@@ -422,6 +422,15 @@ fn write_pdf(path: &str, bytes: &[u8]) -> Result<()> {
     }
 }
 
+/// The options of a combined PUBLISH's PDF: PLOTTRANSPARENCYOVERRIDE and the call's
+/// `plotTransparency` decide transparency, as they do for each sheet published on its own.
+fn book_options(s: &Session, p: &Value) -> Value {
+    match super::plotters::plot_transparency(s, p) {
+        Some(on) => json!({ "plotTransparency": on }),
+        None => json!({}),
+    }
+}
+
 /// PUBLISH of a `sheets` list: sheets of any open drawing, in order, into one PDF (`combine`) or
 /// one PDF each.
 fn publish_list(s: &mut Session, p: &Value, list: Vec<PubSheet>) -> Result<Value> {
@@ -433,7 +442,7 @@ fn publish_list(s: &mut Session, p: &Value, list: Vec<PubSheet>) -> Result<Value
     if p.get("combine").and_then(Value::as_bool) == Some(true) {
         let hook = super::file::plot_book().ok_or_else(|| bad("publish", "combining sheets is not available in this build"))?;
         let items: Vec<(&Drawing, Space)> = list.iter().map(|x| (&*s.docs[x.doc].doc, x.space.clone())).collect();
-        let bytes = hook(&items, &json!({})).map_err(|e| bad("publish", e))?;
+        let bytes = hook(&items, &book_options(s, p)).map_err(|e| bad("publish", e))?;
         let r = match &path {
             Some(path) => {
                 write_pdf(path, &bytes)?;
@@ -459,6 +468,9 @@ fn publish_list(s: &mut Session, p: &Value, list: Vec<PubSheet>) -> Result<Value
     for x in &list {
         let name = x.space.tab_name().to_string();
         let mut q = json!({ "layout": name });
+        if let Some(on) = p.get("plotTransparency").and_then(Value::as_bool) {
+            q["plotTransparency"] = json!(on);
+        }
         if let Some((dir, stem)) = &base {
             // Sheets of other drawings carry the drawing's name; a repeated sheet is numbered.
             let mut file = if several {
@@ -1071,6 +1083,36 @@ mod tests {
         let path = temp("combined.pdf");
         assert!(s.execute("publish", &json!({ "combine": true, "layouts": "Layout1", "path": path.to_string_lossy() })).is_err());
         assert!(!path.exists());
+    }
+
+    /// FredApps on #2328: a combined PUBLISH applies PLOTTRANSPARENCYOVERRIDE (and the call's
+    /// `plotTransparency`) to its PDF, as a sheet published on its own does.
+    #[test]
+    fn a_combined_publish_follows_the_transparency_override() {
+        static SEEN: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
+        crate::cmd::file::set_plot_book(|_, opts| {
+            SEEN.lock().unwrap().push(opts.clone());
+            Ok(b"%PDF-1.7".to_vec())
+        });
+        let mut s = session();
+        s.execute("line", &json!({ "points": [[0, 0], [10, 10]] })).unwrap();
+        let seen = |s: &mut Session, p: Value| {
+            SEEN.lock().unwrap().clear();
+            s.execute("publish", &p).unwrap();
+            SEEN.lock().unwrap().first().cloned().unwrap_or_default()
+        };
+        let one = json!({ "sheets": [{ "layout": "Model" }], "combine": true });
+        for (over, want) in [(0, Some(false)), (2, Some(true))] {
+            s.execute("setvar", &json!({ "name": "PLOTTRANSPARENCYOVERRIDE", "value": over })).unwrap();
+            let mut p = one.clone();
+            p["plotTransparency"] = json!(!want.unwrap_or(false));
+            assert_eq!(seen(&mut s, p)["plotTransparency"].as_bool(), want, "override {over}");
+        }
+        s.execute("setvar", &json!({ "name": "PLOTTRANSPARENCYOVERRIDE", "value": 1 })).unwrap();
+        let mut p = one.clone();
+        p["plotTransparency"] = json!(true);
+        assert_eq!(seen(&mut s, p)["plotTransparency"].as_bool(), Some(true), "the call decides");
+        assert_eq!(seen(&mut s, one)["plotTransparency"].as_bool(), None, "each page setup decides");
     }
 
     #[test]
