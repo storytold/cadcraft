@@ -335,3 +335,18 @@ fn damaged_embedded_text_does_not_panic() {
         let _ = read_dxf(save(&d).as_bytes()).unwrap();
     }
 }
+
+#[test]
+fn entmod_leaves_the_embedded_text_alone() {
+    // entget and entmod convert the carets of the attribute's own groups, not the embedded MTEXT's,
+    // which has its own encoding: `^ J` there is a caret and a J, not a line feed.
+    let d = read_dxf(dxf(FIXTURE).replace("SITE\\PNAME", "SITE^ JNAME").as_bytes()).unwrap();
+    let Some(e) = d.block("TAG").and_then(|b| b.entities.iter().find(|e| matches!(e.kind, EntityKind::AttDef(_)))) else {
+        panic!("no definition");
+    };
+    let (kind, groups) = cadcraft_io::entity_groups(&d, e);
+    let embedded: Vec<String> = groups.iter().skip_while(|t| t.code != 101).filter(|t| t.code == 1).map(|t| t.str()).collect();
+    assert_eq!(embedded, ["SITE^ JNAME"]);
+    let Some((_, EntityKind::AttDef(a))) = cadcraft_io::entity_from_groups(&kind, &groups) else { panic!("no ATTDEF") };
+    assert_eq!(a.multiline.map(|m| m.mtext.contents), Some("SITE^JNAME".to_string()));
+}
