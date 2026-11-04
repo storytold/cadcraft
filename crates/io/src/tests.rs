@@ -669,6 +669,11 @@ fn viewport_frozen_layers_roundtrip() {
 /// `Layout1` with viewports 1 (the sheet), 2 and 3, written to DXF and read back with the id (69)
 /// of every viewport `blank` names replaced by -1 (ZWCAD's "unknown"): the ids and widths read.
 fn viewport_ids_read_back(blank: impl Fn(&str) -> bool) -> (Drawing, Vec<(u32, f64)>) {
+    viewport_ids_read_back_as(blank, "-1")
+}
+
+/// [`viewport_ids_read_back`], with `value` in place of the id of every viewport `blank` names.
+fn viewport_ids_read_back_as(blank: impl Fn(&str) -> bool, value: &str) -> (Drawing, Vec<(u32, f64)>) {
     let mut d = sample();
     let paper = Space::Paper("Layout1".into());
     for (id, w) in [(1, 420.0), (2, 8.0), (3, 4.0)] {
@@ -687,7 +692,7 @@ fn viewport_ids_read_back(blank: impl Fn(&str) -> bool) -> (Drawing, Vec<(u32, f
     let mut lines: Vec<String> = text.lines().map(String::from).collect();
     for i in (0..lines.len() - 1).step_by(2) {
         if lines[i].trim() == "69" && blank(lines[i + 1].trim()) {
-            lines[i + 1] = "-1".into();
+            lines[i + 1] = value.into();
         }
     }
     let back = read_dxf(lines.join("\n").as_bytes()).unwrap();
@@ -721,6 +726,18 @@ fn viewport_ids_unknown_sheet_becomes_one() {
     let (back, ids) = viewport_ids_read_back(|v| v == "1");
     assert_eq!(ids, [(1, 420.0), (2, 8.0), (3, 4.0)]);
     assert!(!write_dxf(&back).contains("PAPERVIEW"), "the first viewport is the sheet");
+}
+
+/// Group 69 is a 16-bit code: an id outside 1..=32767 reads as unknown (0), and is never truncated
+/// into a real id (4294967297 would become a second id 1, a second paper-space viewport).
+#[test]
+fn viewport_ids_out_of_range_read_as_unknown() {
+    for bad in ["4294967297", "65537", "32768"] {
+        let (_, ids) = viewport_ids_read_back_as(|v| v == "2", bad);
+        assert_eq!(ids, [(1, 420.0), (0, 8.0), (3, 4.0)], "69 = {bad}");
+    }
+    let (_, ids) = viewport_ids_read_back_as(|v| v == "2", "32767");
+    assert_eq!(ids, [(1, 420.0), (32767, 8.0), (3, 4.0)]);
 }
 
 /// A layout whose only viewport has id 0 (entmake, MCP): the writer adds the PAPERVIEW sheet ahead
