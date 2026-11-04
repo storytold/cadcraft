@@ -1,5 +1,5 @@
 //! #1407: MOVE/COPY carry a Z delta; planar ROTATE/SCALE/MIRROR preserve Z.
-use cadcraft_doc::{EntityKind, Handle};
+use cadcraft_doc::{Attrib, Block, Common, Entity, EntityKind, Handle, Insert, Space, Text};
 use cadcraft_engine::Session;
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
@@ -99,4 +99,74 @@ fn planar_ops_preserve_z() {
     s.execute("rotate", &json!({"handles": [e.hex()], "base": [0, 0], "angle": 90})).unwrap();
     s.execute("scale", &json!({"handles": [e.hex()], "base": [0, 0], "factor": 2})).unwrap();
     assert_eq!(helix_center(&s, e).z, 0.0);
+}
+
+/// Text and an insert's attributes move by `dz` too: a block reference moved in Z used to leave
+/// its attributes behind, and a plain text entity silently dropped the offset (#1407).
+#[test]
+fn move_carries_z_to_text_and_insert_attributes() {
+    let mut s = Session::new();
+    let t = h(&s.execute("text", &json!({"at": [0, 10], "height": 1, "text": "Note"})).unwrap());
+    // The text command places text in the plane; give it an elevation the way a 3D file would.
+    s.doc_mut().unwrap().model.modify(t, |e| {
+        if let EntityKind::Text(x) = &mut e.kind {
+            x.insert.z = 2.0;
+        }
+    });
+    let ins = {
+        let d = s.doc_mut().unwrap();
+        let attrib = |tag: &str, z: f64| Attrib {
+            tag: tag.into(),
+            text: Text {
+                insert: Vec3::new(0.0, 0.0, z),
+                align_pt: None,
+                height: 1.0,
+                value: "P-1".into(),
+                rotation: 0.0,
+                width_factor: 1.0,
+                oblique: 0.0,
+                style: "Standard".into(),
+                halign: Default::default(),
+                valign: Default::default(),
+            },
+            invisible: false,
+            constant: false,
+            prompt: String::new(),
+            props: Default::default(),
+            multiline: None,
+            modes: Default::default(),
+        };
+        let mut blk = Block::new("TITLE");
+        blk.entities.push(Entity::new(Handle(0x900), EntityKind::AttDef(attrib("PART", 0.0))));
+        d.blocks.insert("TITLE".into(), std::sync::Arc::new(blk));
+        let e = Entity::new(
+            Handle(0x901),
+            EntityKind::Insert(Insert {
+                block: "TITLE".into(),
+                insert: Vec3::new(0.0, 0.0, 1.0),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: vec![attrib("PART", 1.0)],
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            }),
+        );
+        d.add(&Space::Model, Common::default(), e.kind).unwrap()
+    };
+    s.execute("move", &json!({"handles": [t.hex(), ins.hex()], "delta": [1.0, 2.0, 3.0]})).unwrap();
+    let d = s.doc().unwrap();
+    let text_z = match &d.entity(t).unwrap().kind {
+        EntityKind::Text(x) => x.insert.z,
+        k => panic!("not text: {k:?}"),
+    };
+    assert_eq!(text_z, 5.0, "a text entity keeps the Z delta");
+    match &d.entity(ins).unwrap().kind {
+        EntityKind::Insert(i) => {
+            assert_eq!(i.insert.z, 4.0, "the insert moves");
+            assert_eq!(i.attribs[0].text.insert.z, 4.0, "its attribute moves with it, not left behind");
+        }
+        k => panic!("not an insert: {k:?}"),
+    }
 }
