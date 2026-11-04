@@ -31,10 +31,15 @@ struct Store {
     thumbs: HashMap<String, Thumb>,
     /// When each path was last checked, and its size and date then (`None`: not there).
     seen: HashMap<String, (f64, Option<Version>)>,
-    /// The path being made now, and the channel its PNG arrives on.
+    /// The path being made now, the file's version it was started for, and the channel its
+    /// PNG arrives on (with the file's version once it was made).
     #[cfg(not(target_arch = "wasm32"))]
-    job: Option<(String, std::sync::mpsc::Receiver<Option<Vec<u8>>>)>,
+    job: Option<Job>,
 }
+
+/// A preview being made on the worker thread: what [`Store::job`] holds.
+#[cfg(not(target_arch = "wasm32"))]
+type Job = (String, Version, std::sync::mpsc::Receiver<(Option<Vec<u8>>, Option<Version>)>);
 
 /// A file's size and modification time (nanoseconds since 1970): it changes when the file is
 /// saved or replaced.
@@ -107,17 +112,20 @@ pub fn get(ctx: &egui::Context, path: &str) -> Thumb {
                 }
             }
         }
-        if s.job.is_none() {
+        if s.job.is_none()
+            && let Some(v) = version(path)
+        {
             let (tx, rx) = std::sync::mpsc::channel();
             let p = path.to_string();
             let c = ctx.clone();
             let spawned = std::thread::Builder::new().name("cadcraft-thumb".into()).spawn(move || {
                 let png = std::panic::catch_unwind(|| make(&p)).ok().flatten();
-                let _ = tx.send(png);
+                // The file as it was once read: a save meanwhile makes this preview stale.
+                let _ = tx.send((png, version(&p)));
                 c.request_repaint();
             });
             if spawned.is_ok() {
-                s.job = Some((path.to_string(), rx));
+                s.job = Some((path.to_string(), v, rx));
             } else {
                 s.thumbs.insert(path.to_string(), Thumb::Failed);
             }
@@ -127,20 +135,25 @@ pub fn get(ctx: &egui::Context, path: &str) -> Thumb {
     Thumb::Pending
 }
 
-/// Take a finished preview.
+/// Take a finished preview. One made from a file that changed while it was being made (or since)
+/// is dropped, so the next look at the file starts it again: it is neither shown nor kept on
+/// disk under the file's new version.
 #[cfg(not(target_arch = "wasm32"))]
 fn poll(s: &mut Store, ctx: &egui::Context) {
-    let Some((path, rx)) = &s.job else { return };
-    let got = match rx.try_recv() {
-        Ok(png) => Some(png),
+    let Some((path, started, rx)) = &s.job else { return };
+    let (got, made_at) = match rx.try_recv() {
+        Ok((png, v)) => (png, v),
         Err(std::sync::mpsc::TryRecvError::Empty) => return,
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => (None, Some(*started)),
     };
-    let path = path.clone();
+    let (path, started) = (path.clone(), *started);
     s.job = None;
-    let t = match got.flatten() {
+    if made_at != Some(started) || version(&path) != Some(started) {
+        return;
+    }
+    let t = match got {
         Some(png) => {
-            if let Some(f) = cache_file(&path) {
+            if let Some(f) = config_dir().map(|d| d.join("thumbnails").join(cache_name(&path, started))) {
                 if let Some(dir) = f.parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
@@ -458,6 +471,40 @@ mod tests {
         super::store().lock().unwrap().thumbs.insert(p.clone(), super::Thumb::Failed);
         assert!(super::exists(&p, 20.0));
         assert!(super::store().lock().unwrap().thumbs.contains_key(&p));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// FredApps on #2327: a preview made while the file was saved again is the old drawing; it
+    /// is dropped (the next look starts a new one), not shown or cached under the new version.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_preview_of_a_file_changed_meanwhile_is_dropped() {
+        let path = std::env::temp_dir().join(format!("cadcraft-thumb-race-{}.dxf", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        std::fs::write(&path, "0\nEOF\n").unwrap();
+        let started = super::version(&p).unwrap();
+        let ctx = egui::Context::default();
+        // Made from the first version, delivered after the file was rewritten.
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send((Some(vec![1, 2, 3]), Some(started))).unwrap();
+        std::fs::write(&path, "0\nSECTION\n0\nENDSEC\n0\nEOF\n").unwrap();
+        {
+            let mut s = super::store().lock().unwrap();
+            s.thumbs.remove(&p);
+            s.job = Some((p.clone(), started, rx));
+            super::poll(&mut s, &ctx);
+            assert!(s.job.is_none() && !s.thumbs.contains_key(&p), "the stale preview is not taken");
+        }
+        // Changed while it was being made (the worker saw another version): dropped too.
+        let now = super::version(&p).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send((Some(vec![1, 2, 3]), Some((now.0 + 1, now.1)))).unwrap();
+        {
+            let mut s = super::store().lock().unwrap();
+            s.job = Some((p.clone(), now, rx));
+            super::poll(&mut s, &ctx);
+            assert!(s.job.is_none() && !s.thumbs.contains_key(&p));
+        }
         let _ = std::fs::remove_file(&path);
     }
 
