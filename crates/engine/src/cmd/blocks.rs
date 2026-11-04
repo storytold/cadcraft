@@ -349,13 +349,14 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// MINSERT's JSON form: INSERT's parameters and the grid.
 fn run_minsert(s: &mut Session, p: &Value) -> Result<Value> {
+    // A whole number, as the array commands' JSON counts are: 2.0 and 1e2 are refused too.
     let count = |key: &str| -> Result<u32> {
         match p.get(key) {
             None | Some(Value::Null) => Ok(1),
             Some(v) => v
-                .as_f64()
-                .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= f64::from(Grid::MAX))
-                .map(|n| n as u32)
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| (1..=Grid::MAX).contains(n))
                 .ok_or_else(|| bad("minsert", format!("`{key}` must be an integer between 1 and {}", Grid::MAX))),
         }
     };
