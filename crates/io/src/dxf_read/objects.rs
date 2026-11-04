@@ -170,7 +170,6 @@ impl Objects {
                 .iter()
                 .filter(|x| x.code == 340)
                 .filter_map(|x| Handle::parse_hex(&x.str()))
-                // Members name the file's handles, which the reader keeps (#913).
                 .filter(|m| d.entity(*m).is_some())
                 .take(MAX_OBJECTS)
                 .collect();
@@ -227,7 +226,7 @@ impl Objects {
         self.apply_groups(d);
         // Standard associativity, for dimensions without CADCraft's exact links.
         for tags in &self.dimassocs {
-            dimassoc(d, tags, rx);
+            dimassoc(d, tags);
         }
     }
 }
