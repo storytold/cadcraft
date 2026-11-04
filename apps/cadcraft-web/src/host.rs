@@ -8,7 +8,8 @@
 //!   file CADCraft would otherwise download (SAVE, SAVEAS, exports): it replaces the engine's
 //!   delivery hook. The parent stores the file and reports failures itself.
 //! - `cadcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
-//! - `cadcraft:failed` (to the parent): `{ error }` when the app couldn't start.
+//! - `cadcraft:failed` (to the parent): `{ error }` when the app couldn't start, and when a
+//!   drawing couldn't be opened -- including one the parent sent with `cadcraft:open`.
 //!
 //! Only the parent window on the page's own origin is heard or answered. In host mode the app
 //! starts on the Start tab rather than an empty Drawing1, and the parent guards leaving the page.

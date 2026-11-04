@@ -36,3 +36,30 @@ fn open_bytes_opens_the_named_drawing_and_reports_failures() {
     assert_eq!(app.session.log.last().map(String::as_str), Some("Open: huge.dwg is 512.0 MB, larger than the 256 MB CADCraft opens in the browser"));
     assert_eq!(app.session.docs.len(), 1);
 }
+
+/// A shell driven from outside -- the web build in a page that sent the drawing -- reports a
+/// failed open to whoever sent it (#1603); the status bar and command line are no use to them.
+/// The error is readable once, so one failed open is reported once.
+#[test]
+fn a_failed_open_is_reported_once() {
+    set_io(IoHooks {
+        read: |b, _| if b.starts_with(b"0\nSECTION\n") { Ok(Drawing::new_imperial()) } else { Err("not a drawing".into()) },
+        write: |_, _| Ok(Vec::new()),
+        plot: None,
+    });
+    let mut app = CadApp::new(Session::empty(), Services::default());
+    assert_eq!(app.take_open_error(), None, "nothing has been opened yet");
+
+    app.open_bytes("junk.dxf", b"junk");
+    assert!(app.take_open_error().is_some_and(|e| e.contains("not a drawing")));
+    assert_eq!(app.take_open_error(), None, "reported once, not on every frame after");
+
+    // Refused before anything is read: also reported.
+    app.open_failed("Open: huge.dwg is too large");
+    assert_eq!(app.take_open_error().as_deref(), Some("Open: huge.dwg is too large"));
+
+    // A drawing that opens leaves nothing to report.
+    app.open_bytes("Bracket.dxf", b"0\nSECTION\n2\nHEADER\n");
+    assert_eq!(app.session.docs.len(), 1);
+    assert_eq!(app.take_open_error(), None);
+}
