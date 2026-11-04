@@ -156,6 +156,7 @@ mod table_formulas;
 mod table_styles;
 mod temp_tracking;
 mod text_commands;
+mod text_editor_on_create;
 mod text_formulas;
 mod text_left_justify;
 mod tolerance;

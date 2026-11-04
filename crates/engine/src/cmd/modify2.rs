@@ -86,8 +86,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("textedit", "Edit Text...", run_textedit)
             .menu(&["Modify", "Object", "Edit Text..."])
             .alias(&["ed", "ddedit"])
-            .params("{handle, text} (text, mtext, attribute definitions, dimension text override)")
+            .params("{handle, text} (text, mtext, attribute definitions, dimension text override, multileader text)")
             .interactive(|_| Ok(Box::new(TextEditM::default()))),
+        // Double-clicking text, a dimension or a multileader: TEXTEDIT for that one object, in the
+        // in-place editor.
+        CommandSpec::new("textedit.object", "Edit Text", run_textedit)
+            .params("same as textedit")
+            .interactive(|_| Ok(Box::new(TextEditM::single()))),
     ]
 }
 
@@ -157,6 +162,7 @@ pub(super) use patharray::PathArrayM;
 use patharray::run_arraypath;
 use pedit::{PPhase, PeditM, run_pedit};
 use selop::{SelKind, SelOp, run_chspace, run_flatten, run_reverse};
+pub(crate) use textedit::line_box;
 use textedit::{TextEditM, run_textedit, run_updatefield};
 use trimext::{ellipse_kind, ellipse_of};
 pub(crate) use trimext::{extend_other, trim_other};
