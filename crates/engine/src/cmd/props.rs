@@ -1479,6 +1479,27 @@ fn mtext_attach(j: &str) -> Option<u8> {
 fn rejustify_text(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::Text, h: cadcraft_doc::HAlign, v: cadcraft_doc::VAlign) {
     use cadcraft_doc::{HAlign, VAlign};
     let before = cadcraft_render::place_text_entity(d, t, &t.value).1;
+    let font = d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font, st.vertical)).unwrap_or_default();
+    // Aligned and fit text take their size and angle from the two points: leaving that
+    // justification, the text keeps the height (aligned), width factor (fit) and angle it was
+    // drawn with.
+    if matches!(t.halign, HAlign::Aligned | HAlign::Fit)
+        && h != t.halign
+        && let Some(p2) = t.align_pt
+    {
+        let (a, b) = (t.insert.xy(), p2.xy());
+        let span = a.dist(b);
+        let natural = cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor);
+        if span > 1e-12 && natural > 1e-12 && span.is_finite() && natural.is_finite() {
+            let k = span / natural;
+            if t.halign == HAlign::Aligned {
+                t.height *= k;
+            } else {
+                t.width_factor *= k;
+            }
+            t.rotation = a.angle_to(b);
+        }
+    }
     // The baseline's start: where left-baseline text at the same spot would begin.
     let mut left = t.clone();
     (left.halign, left.valign, left.align_pt) = (HAlign::Left, VAlign::Baseline, None);
@@ -1488,11 +1509,7 @@ fn rejustify_text(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::Text, h: cadc
     let start = if before.is_empty() || lb.is_empty() { t.insert.xy() } else { at + (before.min - lb.min) };
     let width = match t.halign {
         HAlign::Aligned | HAlign::Fit => t.align_pt.map_or(0.0, |a| a.xy().dist(t.insert.xy())),
-        _ => {
-            let font =
-                d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font, st.vertical)).unwrap_or_default();
-            cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor)
-        }
+        _ => cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor),
     };
     let z = t.insert.z;
     let v3 = |p: Vec2| cadcraft_geom::Vec3::new(p.x, p.y, z);

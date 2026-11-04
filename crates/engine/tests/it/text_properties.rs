@@ -88,3 +88,33 @@ fn a_missing_big_font_is_reported() {
     assert!(fonts.contains(&"cadcraft_no_such_bigfont.shx"), "{fonts:?}");
     assert!(!fonts.contains(&"txt.shx"), "the stroke font stands in for txt.shx");
 }
+
+/// FredApps on #2326: fit and aligned text take their width factor (fit), height (aligned) and
+/// angle from their two points; given another justification, they keep the size and angle they
+/// were drawn with, so the letters stay where they are.
+#[test]
+fn fit_and_aligned_text_keep_their_size_and_angle_when_justified_again() {
+    use cadcraft_engine::doc::{HAlign, VAlign};
+    use cadcraft_engine::geom::{Vec2, Vec3};
+    for (from, j) in [(HAlign::Fit, "L"), (HAlign::Aligned, "MC"), (HAlign::Fit, "A"), (HAlign::Aligned, "TR")] {
+        let mut s = Session::new();
+        let r = s.execute("text", &json!({ "at": [10, 5], "height": 2, "text": "Fit me" })).unwrap();
+        let h = r["handle"].as_str().or_else(|| r["handles"][0].as_str()).unwrap().to_string();
+        // Spanning 30 units at 40°; the stored rotation is stale, as in a file.
+        let end = Vec2::new(10.0, 5.0) + Vec2::from_angle(40f64.to_radians()) * 30.0;
+        let hd = cadcraft_engine::doc::Handle::parse_hex(&h).unwrap();
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(hd, |e| {
+                if let EntityKind::Text(t) = &mut e.kind {
+                    (t.halign, t.valign, t.rotation) = (from, VAlign::Baseline, 0.0);
+                    t.align_pt = Some(Vec3::new(end.x, end.y, 0.0));
+                }
+            })
+            .unwrap();
+        let b0 = bounds(&s, &h);
+        s.execute("properties.set", &json!({ "handles": [h], "justify": j })).unwrap();
+        let b1 = bounds(&s, &h);
+        assert!(b1.min.dist(b0.min) < 1e-6 && b1.max.dist(b0.max) < 1e-6, "{from:?} to {j}: {b0:?} became {b1:?}");
+    }
+}
