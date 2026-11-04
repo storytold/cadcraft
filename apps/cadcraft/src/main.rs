@@ -86,7 +86,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
-        self.cad.logic(ctx);
+        self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -116,7 +116,7 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.cad.ui(ui);
+        self.cad.guarded_ui(ui);
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
@@ -146,6 +146,7 @@ pub fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
@@ -264,6 +265,11 @@ fn version_string() -> String {
 
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
+    // A copy of this program started to read or write a DWG file does only that.
+    if let Some(code) = cadcraft_io::dwg_worker::serve_if_asked() {
+        std::process::exit(code);
+    }
+    cadcraft_io::dwg_worker::use_own_worker();
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
     // The update helper relaunches this binary after a self-update; it runs and exits here.
@@ -295,6 +301,9 @@ fn main() -> eframe::Result {
     }
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
+    if let Some(dir) = &vars.config_dir {
+        cadcraft_ui_egui::fault::install_report_hook(dir.join(cadcraft_ui_egui::fault::REPORT_DIR));
+    }
     if let Some(name) = &vars.font_alt {
         cadcraft_engine::fonts::ttf::set_font_alt(name);
     }

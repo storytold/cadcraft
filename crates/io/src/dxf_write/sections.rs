@@ -136,14 +136,15 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.s(2, &v.name);
         w.i(70, i64::from(v.layout.is_some()));
         w.f(40, v.height);
-        w.p2(10, v.center);
+        let twist = cadcraft_geom::norm_angle(v.twist);
+        w.p2(10, dxf_ext::model_center_to_dcs(v.center, twist));
         w.f(41, v.width);
         w.p(11, Vec3::Z);
         w.p(12, Vec3::ZERO);
         w.f(42, 50.0);
         w.f(43, 0.0);
         w.f(44, 0.0);
-        w.f(50, if v.twist.is_finite() { v.twist.to_degrees() } else { 0.0 });
+        w.f(50, twist.to_degrees());
         w.i(71, 0);
         w.i(281, 0);
         w.i(72, 0);
@@ -908,6 +909,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
+    // XCLIP boundaries go into the foreign data the raw writer places on the references.
+    let clipped = crate::dxf_clip::prepare(d);
+    let d: &Drawing = clipped.as_ref().unwrap_or(d);
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),
@@ -1137,7 +1141,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     if let Some(t) = w.t.get_mut(seed_pos + 1) {
         *t = Tag::s(5, seed);
     }
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors);
+    // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
+    // DWG writer, which keeps SAT-text solids (#2334).
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
