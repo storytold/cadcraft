@@ -157,9 +157,7 @@ impl<'a> Builder<'a> {
             blocks: blocks::Plans::default(),
         }
     }
-}
 
-impl Builder<'_> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -353,6 +351,23 @@ impl Builder<'_> {
             len: 2,
         });
     }
+    /// An empty builder drawing like this one (for contents cut afterwards, an XCLIP), with the
+    /// block-expansion count carried over.
+    fn part(&self) -> Builder<'a> {
+        let mut list = DisplayList::default();
+        list.expanded = self.list.expanded;
+        Builder {
+            list,
+            opts: self.opts,
+            plotting: self.plotting,
+            styles: self.styles,
+            named: self.named,
+            shared_budget: self.shared_budget,
+            transparency: self.transparency,
+            // Block plans are a cache: a part (one clipped copy) works out the few it needs.
+            blocks: blocks::Plans::default(),
+        }
+    }
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
@@ -402,6 +417,7 @@ pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
+use viewports::{Clip, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 
 #[cfg(test)]
