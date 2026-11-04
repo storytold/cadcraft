@@ -420,7 +420,7 @@ pub(crate) fn extend_result(s: &Session, h: Handle, pick: Vec2, cut: &[Segment])
             let none = || EngineError::Other("Object does not intersect an edge.".into());
             if let Some((ga, _)) = cadcraft_geom::bulge_to_arc(prev, end, bulge) {
                 // An arc end segment runs on round its circle, as an arc does.
-                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), &cut).ok_or_else(none)?;
+                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), cut).ok_or_else(none)?;
                 if let Some(v) = vs.get_mut(i_end) {
                     v.p = np;
                 }
