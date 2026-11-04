@@ -390,7 +390,7 @@ pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, 
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
+pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
 use viewports::{Clip, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 
