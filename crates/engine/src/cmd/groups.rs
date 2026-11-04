@@ -11,7 +11,8 @@ use cadcraft_doc::{Drawing, Group, Handle};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod dash;
