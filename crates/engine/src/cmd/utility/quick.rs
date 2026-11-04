@@ -297,17 +297,20 @@ pub(crate) fn readout_json(r: &Readout) -> Value {
 }
 
 /// MEASUREGEOM `{mode: "quick", at: [x, y]}` measures around a point; with `areas: [[x, y], ...]`
-/// it measures the closed areas around those points together, as Shift+clicks there would.
+/// it measures the closed areas around those points together, each area once (a second point in
+/// an area already measured adds nothing; Shift+click there would take it away).
 pub(crate) fn run(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(pts) = super::points_param(p, "areas") {
         if pts.len() > MAX_AREAS {
             return Err(super::bad("measuregeom", format!("at most {MAX_AREAS} areas at a time")));
         }
-        let mut areas = Vec::new();
+        let mut areas: Vec<QuickArea> = Vec::new();
         for q in pts {
-            if !click(&mut areas, s, q, true) {
-                return Err(super::bad("measuregeom", format!("no closed area around {}, {}", q.x, q.y)));
+            if areas.iter().any(|a| a.contains(q)) {
+                continue;
             }
+            let a = QuickArea::at(s, q).ok_or_else(|| super::bad("measuregeom", format!("no closed area around {}, {}", q.x, q.y)))?;
+            areas.push(a);
         }
         let (area, perimeter) = totals(&areas);
         s.area = area;

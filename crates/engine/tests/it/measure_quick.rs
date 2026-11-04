@@ -89,6 +89,10 @@ fn areas_add_up_and_islands_count() {
     let r = s.execute("measuregeom", &json!({ "mode": "quick", "areas": [[2, 2], [7, 2.5]] })).unwrap();
     assert!(close(&r["area"], 50.0), "{r}");
     assert!(r["message"].as_str().is_some_and(|m| m.contains("Total area = 50.0000")), "{r}");
+    // Two points in one area, or one point twice, measure it once: they don't cancel out.
+    let r = s.execute("measuregeom", &json!({ "mode": "quick", "areas": [[2, 2], [3, 3], [2, 2]] })).unwrap();
+    assert!(close(&r["area"], 50.0 - pi), "{r}");
+    assert_eq!(r["areas"].as_array().map(Vec::len), Some(1), "{r}");
     let err = s.execute("measuregeom", &json!({ "mode": "quick", "areas": [[30, 30]] })).unwrap_err().to_string();
     assert!(err.contains("no closed area"), "{err}");
 }
