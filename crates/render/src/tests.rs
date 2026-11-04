@@ -1199,3 +1199,37 @@ fn a_block_of_only_attribute_definitions_makes_no_copies() {
     assert_eq!(l.expanded, 0);
     assert!(!l.truncated);
 }
+
+/// #2770 review: block plans are kept per block definition, not per name: two entries of
+/// `Drawing::blocks` whose blocks share a name each draw their own contents.
+#[test]
+fn blocks_with_the_same_name_keep_their_own_plans() {
+    let line = |y: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(1.0, y, 0.0) });
+    let block = |lines: u64| {
+        let mut blk = cadcraft_doc::Block::new("PT");
+        for i in 0..lines {
+            blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line(i as f64)));
+        }
+        std::sync::Arc::new(blk)
+    };
+    let mut d = Drawing::new_imperial();
+    d.blocks.insert("A".into(), block(1));
+    d.blocks.insert("B".into(), block(2));
+    for name in ["A", "B"] {
+        let ins = cadcraft_doc::Insert {
+            block: name.into(),
+            insert: Vec3::ZERO,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    }
+    // One line from A, two from B: B doesn't reuse A's plan for the name they share.
+    assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), 3);
+}

@@ -31,16 +31,20 @@ impl BlockPlan {
     }
 }
 
-/// The plans of the blocks a display list has referenced so far, by block name.
-pub(crate) type Plans = HashMap<String, Arc<BlockPlan>>;
+/// The plans of the blocks a display list has referenced so far, keyed by the block definition's
+/// address in the drawing: the definition a reference resolves to, not its name, since two
+/// entries of `Drawing::blocks` may hold blocks with the same name. The drawing is borrowed for
+/// the whole build, so the addresses stay valid and distinct.
+pub(crate) type Plans = HashMap<usize, Arc<BlockPlan>>;
 
 /// The plan of `blk`, worked out at its first reference in this list.
 fn block_plan(b: &mut Builder, blk: &cadcraft_doc::Block) -> Arc<BlockPlan> {
-    if let Some(plan) = b.blocks.get(&blk.name) {
+    let key = std::ptr::from_ref(blk) as usize;
+    if let Some(plan) = b.blocks.get(&key) {
         return plan.clone();
     }
     let plan = Arc::new(BlockPlan::of(blk));
-    b.blocks.insert(blk.name.clone(), plan.clone());
+    b.blocks.insert(key, plan.clone());
     plan
 }
 
@@ -105,6 +109,12 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 // XCLIP: the copy is drawn on its own, then cut to the boundary.
                 let clip = xclip_region(ins, &sub.xf);
                 let mut part = clip.as_ref().map(|_| b.part());
+                // The part borrows the list's block plans and gives them back below, so nested
+                // references in a clipped copy reuse them instead of working them out per copy
+                // (unbudgeted work a clipped MINSERT would otherwise repeat for every copy).
+                if let Some(p) = part.as_mut() {
+                    p.blocks = std::mem::take(&mut b.blocks);
+                }
                 let target = part.as_mut().unwrap_or(&mut *b);
                 let mut stop = false;
                 // Only what a copy draws is visited, each charged once: attribute definitions
@@ -117,6 +127,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                     entity(target, &sub, be);
                 }
                 if let (Some(part), Some((region, inverted))) = (part, &clip) {
+                    b.blocks = part.blocks;
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
                     append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });

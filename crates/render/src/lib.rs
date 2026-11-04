@@ -364,7 +364,8 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
-            // Block plans are a cache: a part (one clipped copy) works out the few it needs.
+            // Empty here: a clipped copy's part is lent the list's plans by `blocks::insert`, and
+            // an attribute part draws no references.
             blocks: blocks::Plans::default(),
         }
     }
