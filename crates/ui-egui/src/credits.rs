@@ -292,19 +292,20 @@ fn natural(ui: &egui::Ui, header: RichText, cells: impl Iterator<Item = String>)
 
 /// Opening column widths: each column's natural width, with the spare room shared out by `grow`,
 /// so the columns fill `room` exactly. When there is too little room, only the growing columns
-/// give way, down to [`MIN_COLUMN`].
+/// give way, each in proportion to its width above [`MIN_COLUMN`], and none goes below that.
 fn fit_widths(natural: &[f32], grow: &[f32], room: f32) -> Vec<f32> {
     let spare = room - natural.iter().sum::<f32>();
     let weight = grow.iter().sum::<f32>();
-    let flexible: f32 = natural.iter().zip(grow).filter(|(_, g)| **g > 0.0).map(|(w, _)| *w).sum();
+    let slack = |w: f32| (w - MIN_COLUMN).max(0.0);
+    let flexible: f32 = natural.iter().zip(grow).filter(|(_, g)| **g > 0.0).map(|(w, _)| slack(*w)).sum();
     natural
         .iter()
         .zip(grow)
         .map(|(w, g)| {
-            if spare >= 0.0 && weight > 0.0 {
+            if *g > 0.0 && spare >= 0.0 {
                 w + spare * g / weight
             } else if *g > 0.0 && flexible > 0.0 {
-                (w + spare * w / flexible).max(MIN_COLUMN)
+                w - (-spare).min(flexible) * slack(*w) / flexible
             } else {
                 *w
             }
@@ -313,26 +314,27 @@ fn fit_widths(natural: &[f32], grow: &[f32], room: f32) -> Vec<f32> {
 }
 
 /// A striped table whose columns open at [`fit_widths`], so it fills the width and nothing scrolls
-/// sideways. Each column can be dragged wider or narrower at its edge. The last column fills
-/// whatever width is left but never shrinks below its opening width, so widening a column grows
-/// the table, as in a spreadsheet, instead of crushing the last one: only a table dragged wider
-/// than the window scrolls sideways. Text too long for its column is clipped.
+/// sideways. Every column, the last included, can be dragged wider or narrower at its right edge:
+/// only a table dragged wider than the window scrolls sideways. Text too long for its column is
+/// clipped. When the fit itself changes (a longer name, a resized window) the columns go back to
+/// the new fit, dropping any dragged widths.
 fn fitted_table<'a>(ui: &'a mut egui::Ui, id: &str, natural: &[f32], grow: &[f32]) -> egui_extras::TableBuilder<'a> {
     // Every cell is followed by the item gap, and the vertical scrollbar keeps its margins.
     let s = ui.spacing();
     let gaps = s.item_spacing.x * natural.len() as f32;
     let bar = s.scroll.bar_width + s.scroll.bar_inner_margin + s.scroll.bar_outer_margin;
     let widths = fit_widths(natural, grow, (ui.available_width() - gaps - bar).max(0.0));
+    // The table keeps its own column widths, so a new fit has to clear them.
+    let fit = egui::Id::unique(("credits_fit", id));
+    let refit = ui.data_mut(|d| d.get_temp::<Vec<f32>>(fit)).as_ref() != Some(&widths);
+    ui.data_mut(|d| d.insert_temp(fit, widths.clone()));
     let mut t =
         egui_extras::TableBuilder::new(ui).id_salt(id).striped(true).resizable(true).auto_shrink([false, false]).max_scroll_height(f32::INFINITY);
-    let last = widths.len().saturating_sub(1);
-    for (i, w) in widths.into_iter().enumerate() {
-        let c = if i == last {
-            egui_extras::Column::remainder().at_least(w.max(MIN_COLUMN))
-        } else {
-            egui_extras::Column::initial(w).at_least(MIN_COLUMN)
-        };
-        t = t.column(c.clip(true));
+    if refit {
+        t.reset();
+    }
+    for w in widths {
+        t = t.column(egui_extras::Column::initial(w).at_least(MIN_COLUMN).clip(true));
     }
     t
 }
@@ -556,5 +558,96 @@ mod tests {
         assert_eq!(fit_widths(&[100.0, 40.0, 60.0], &[1.0, 0.0, 0.0], 150.0), [50.0, 40.0, 60.0]);
         assert_eq!(fit_widths(&[100.0, 40.0, 60.0], &[1.0, 0.0, 0.0], 0.0), [MIN_COLUMN, 40.0, 60.0]);
         assert_eq!(fit_widths(&[100.0, 40.0], &[0.0, 0.0], 50.0), [100.0, 40.0]);
+    }
+
+    #[test]
+    fn a_column_at_the_minimum_leaves_the_shortfall_to_the_others() {
+        let w = fit_widths(&[100.0, 300.0, 50.0], &[1.0, 1.0, 0.0], 140.0);
+        assert!((w.iter().sum::<f32>() - 140.0).abs() < 0.01, "the columns still fit the room: {w:?}");
+        assert!(w.iter().all(|c| *c >= MIN_COLUMN), "no column goes below the minimum: {w:?}");
+        assert_eq!(fit_widths(&[100.0, 300.0, 50.0], &[1.0, 1.0, 0.0], 0.0), [MIN_COLUMN, MIN_COLUMN, 50.0]);
+    }
+
+    const WINDOW: f32 = 640.0;
+    const NATURAL: [f32; 3] = [120.0, 80.0, 80.0];
+    const GROW: [f32; 3] = [1.0, 0.0, 0.0];
+
+    /// One frame of a table long enough to scroll; the rects of its header cells.
+    fn table_frame(ctx: &egui::Context, width: f32, natural: &[f32], events: Vec<egui::Event>) -> Vec<egui::Rect> {
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 300.0)));
+        let raw = egui::RawInput { screen_rect, events, ..Default::default() };
+        let mut cells = Vec::new();
+        let out = ctx.run_ui(raw, |ui| {
+            cells.clear();
+            egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
+                fitted_table(ui, "test", natural, &GROW)
+                    .header(20.0, |mut header| {
+                        for _ in natural {
+                            header.col(|ui| cells.push(ui.max_rect()));
+                        }
+                    })
+                    .body(|mut body| {
+                        for _ in 0..40 {
+                            body.row(20.0, |mut row| {
+                                for _ in natural {
+                                    row.col(|ui| {
+                                        ui.label("x");
+                                    });
+                                }
+                            });
+                        }
+                    });
+            });
+        });
+        out.drop_without_applying_deltas();
+        cells
+    }
+
+    /// A new context with the table open and settled, and the rects of its header cells.
+    fn opened_table() -> (egui::Context, Vec<egui::Rect>) {
+        let ctx = egui::Context::default();
+        table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+        let cells = table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+        (ctx, cells)
+    }
+
+    /// Drags a column's right edge, which runs midway through the gap after `cell`, then lets go.
+    fn drag_edge(ctx: &egui::Context, cell: egui::Rect, by: f32) {
+        use egui::{Event, Modifiers, PointerButton};
+        let start = egui::pos2(cell.right() + 4.0, cell.center().y);
+        let halfway = start + egui::vec2(by / 2.0, 0.0);
+        let end = start + egui::vec2(by, 0.0);
+        let moved = Event::PointerMoved;
+        let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        for event in [moved(start), button(start, true), moved(halfway), moved(end), button(end, false)] {
+            table_frame(ctx, WINDOW, &NATURAL, vec![event]);
+        }
+    }
+
+    #[test]
+    fn every_column_can_be_dragged_at_its_right_edge_and_stays_there() {
+        let (_, opened) = opened_table();
+        for (dragged, cell) in opened.iter().enumerate() {
+            let (ctx, _) = opened_table();
+            drag_edge(&ctx, *cell, -30.0);
+            table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+            let after = table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+            for (column, (was, now)) in opened.iter().zip(&after).enumerate() {
+                let want = if column == dragged { was.width() - 30.0 } else { was.width() };
+                assert!((now.width() - want).abs() < 1.0, "dragging column {dragged}: column {column} is {now:?}, was {was:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_changed_fit_replaces_the_column_widths() {
+        let (ctx, opened) = opened_table();
+        drag_edge(&ctx, opened[0], -30.0);
+        let wider = table_frame(&ctx, WINDOW, &[120.0, 200.0, 80.0], Vec::new());
+        let widths: Vec<f32> = wider.iter().map(|c| c.width().round()).collect();
+        assert!(widths.ends_with(&[200.0, 80.0]), "a longer cell widens its column: {widths:?}");
+        assert!(wider[2].right() < WINDOW, "the table still fits the window: {wider:?}");
+        let narrower = table_frame(&ctx, 400.0, &NATURAL, Vec::new());
+        assert!(narrower[2].right() < 400.0, "a narrower window refits the table: {narrower:?}");
     }
 }
