@@ -185,7 +185,7 @@ fn move_with_pickfirst_and_window_selection() {
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();

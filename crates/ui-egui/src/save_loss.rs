@@ -1,5 +1,6 @@
 //! Asking before a save throws content away. DWG can't yet hold everything a drawing read from
-//! another program keeps (`cadcraft_engine::cmd::file::not_saved`), and QSAVE replaces the file
+//! another program keeps (`cadcraft_engine::cmd::file::not_saved`), a DXF of 2013 or later can't
+//! hold a solid's SAT text (`cadcraft_doc::foreign::sat_text_dropped`), and QSAVE replaces the file
 //! that still has it, so File ▸ Save, its shortcut or typing QSAVE says what would go first:
 //! Save Anyway / Save As... / Cancel. Agreeing lasts for that same loss on that same file, so
 //! later saves in the session don't ask again; the file no longer holds what was agreed to.
@@ -120,7 +121,12 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.label(RichText::new(crate::tf!("Saving {name} will remove content", name = file)).strong());
         ui.add_space(4.0);
         ui.label(crate::tf!("This format can't keep these objects yet: {objects}.", objects = pending.summary()));
-        ui.label(RichText::new(crate::tl!("DXF keeps them. Use Save As to keep them in the drawing.")).color(t.text_dim));
+        let keeps = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dxf")) {
+            crate::tl!("DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.")
+        } else {
+            crate::tl!("DXF keeps them. Use Save As to keep them in the drawing.")
+        };
+        ui.label(RichText::new(keeps).color(t.text_dim));
         let on_disk = if save_keeps_current(path) {
             crate::tf!("The current file is kept as {name} until the next save.", name = backup)
         } else if isavebak() {

@@ -1,19 +1,78 @@
+use cadcraft_geom::{Ellipse as GEllipse, Mat3};
+
 use super::{Entity, EntityKind, Handle, PolyVertex, Polyline, Result, Segment, Session, Value, Vec2, arc, json, line, lwpoly, targets, v3};
 
 // ---------------- explode / array / order / break / join ----------------
+
+/// `ell` placed by `m` as an ELLIPSE at elevation `z`; `None` when `m` flattens it.
+fn placed_ellipse(ell: GEllipse, m: &Mat3, z: f64) -> Option<EntityKind> {
+    let g = ell.transformed(m);
+    let len = g.major.len();
+    (len.is_finite() && len > 0.0 && g.ratio.is_finite() && g.ratio > 0.0).then(|| {
+        EntityKind::Ellipse(cadcraft_doc::Ellipse { center: g.center.to3(z), major: g.major.to3(0.0), ratio: g.ratio, start: g.start, end: g.end })
+    })
+}
+
+/// The pieces of block object `be` placed by `m`, a transform that stretches unevenly (a block
+/// reference whose X and Y scales differ), where its own kind can't hold the result: a circle
+/// or an arc becomes an ellipse or an elliptical arc, a polyline with arc segments (and no
+/// widths) its lines and elliptical arcs. `None`: the object transforms as itself.
+fn stretched_pieces(be: &Entity, m: &Mat3) -> Option<Vec<Entity>> {
+    let circular = |center: Vec2, radius: f64, start: f64, end: f64| GEllipse { center, major: Vec2::X * radius, ratio: 1.0, start, end };
+    let kinds = match &be.kind {
+        EntityKind::Circle(c) => vec![placed_ellipse(GEllipse::full(c.center.xy(), Vec2::X * c.radius, 1.0), m, c.center.z)?],
+        EntityKind::Arc(a) => vec![placed_ellipse(circular(a.center.xy(), a.radius, a.start, a.end), m, a.center.z)?],
+        EntityKind::Ellipse(el) => {
+            let g = GEllipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
+            vec![placed_ellipse(g, m, el.center.z)?]
+        }
+        EntityKind::LwPolyline(p)
+            if p.vertices.iter().any(|v| v.bulge != 0.0)
+                && p.const_width == 0.0
+                && p.vertices.iter().all(|v| v.start_width == 0.0 && v.end_width == 0.0) =>
+        {
+            let z = p.elevation;
+            let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
+            pl.segments()
+                .into_iter()
+                .map(|s| match s {
+                    Segment::Line(l) => Some(EntityKind::Line(cadcraft_doc::Line { a: m.apply(l.a).to3(z), b: m.apply(l.b).to3(z) })),
+                    Segment::Arc { arc: a, .. } => placed_ellipse(circular(a.center, a.radius, a.start, a.end), m, z),
+                })
+                .collect::<Option<Vec<_>>>()?
+        }
+        _ => return None,
+    };
+    // The pieces of a polyline are new objects, as when it explodes itself: its xdata goes.
+    let mut common = be.common.clone();
+    if matches!(be.kind, EntityKind::LwPolyline(_)) {
+        common.xdata.clear();
+    }
+    Some(kinds.into_iter().map(|kind| Entity { handle: Handle(0), common: common.clone(), kind }).collect())
+}
 
 fn explode_block_ref(d: &cadcraft_doc::Drawing, e: &Entity, ins: &cadcraft_doc::Insert) -> Option<Vec<Entity>> {
     if let Some(items) = crate::cmd::array::explode_array(d, e) {
         return Some(items);
     }
+    // A MINSERT grid stays whole, as in AutoCAD 2024 (see `explode`).
+    if minserted(ins) {
+        return None;
+    }
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
+    let stretched = m.similarity_scale().is_none();
     Some(
         blk.entities
             .iter()
-            .map(|be| {
-                let mut ne = (**be).clone();
-                ne.kind.transform(&m);
+            .flat_map(|be| {
+                stretched.then(|| stretched_pieces(be, &m)).flatten().unwrap_or_else(|| {
+                    let mut ne = (**be).clone();
+                    ne.kind.transform(&m);
+                    vec![ne]
+                })
+            })
+            .map(|mut ne| {
                 if ne.common.layer == "0" {
                     ne.common.layer = e.common.layer.clone();
                 }
@@ -170,7 +229,22 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
 }
 
 pub(super) fn explode(s: &mut Session, hs: &[Handle]) -> Result<Vec<Handle>> {
+    // AutoCAD 2024 refuses a MINSERT grid: "The object is minserted." (Locked ones are left
+    // without a word, as `explode_with` leaves them.)
+    let d = s.doc()?;
+    let grids = hs
+        .iter()
+        .filter(|h| !crate::cmd::curves::is_locked(s, **h) && d.entity(**h).is_some_and(|e| matches!(&e.kind, EntityKind::Insert(i) if minserted(i))))
+        .count();
+    for _ in 0..grids {
+        s.echo("The object is minserted.");
+    }
     explode_with(s, hs, explode_kind)
+}
+
+/// A block reference with more than one row or column (MINSERT).
+fn minserted(i: &cadcraft_doc::Insert) -> bool {
+    i.rows > 1 || i.cols > 1
 }
 
 /// Replace each of `hs` (off locked layers) by the pieces `pieces` gives for it; objects it gives
