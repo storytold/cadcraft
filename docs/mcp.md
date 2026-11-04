@@ -47,7 +47,7 @@ configuration works across the suite) keep the agent to the folders you give it:
   `aliasedit`, `reinit`), data links, plot style and plotter configuration files named by a path,
   and the shared plotter settings folder.
 - Every file a command **writes** must lie inside the **write root**: `save`/`qsave`/`saveas`
-  (including the temporary file written beside the destination), `export`, `plot`, `publish`,
+  (including the temporary file and `.bak` written beside the destination), `export`, `plot`, `publish`,
   `pdfbook`, `wblock`, data extraction, table export, plot style and plotter saves, the shared
   plotter settings folder, and `render {path}`. The write root itself is refused: a save's
   temporary file would sit beside it, outside the root.
@@ -67,12 +67,24 @@ configuration works across the suite) keep the agent to the folders you give it:
   root): /etc/x.png`, `automation path rejected: the write root itself cannot be written:
   /work/project/out`, or `automation filesystem access is not granted: write authority is absent:
   /work/project/out/x.png`.
+- A file a drawing names is held to the roots too: an image or xref saved with a path outside them
+  stays unloaded, and the answer doesn't say whether the file exists.
+- A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):
+  one nobody classified is refused, whatever it does. `drawingrecovery` is refused, and SAVEFILEPATH
+  can't be changed, because both work on the server's autosave folder.
+- The server itself still reads the system's fonts, from the system font folders and
+  `CADCRAFT_SHXPATH`. Their paths come from the server's setup, never from the agent, but a font file
+  named by a drawing can decide which of them is read.
 - The roots must be existing folders; a missing one stops the server with an error. Each flag is
   given once (`--flag <dir>` or `--flag=<dir>`).
 
 The flags confine the headless server. `--connect` with them is an error, since the server would
 otherwise talk to an app that isn't confined; the app's control channel does not take them yet
 (#1585). Without `--connect` the server writes the files itself, so every check happens here.
+
+A path is checked, then opened: another program on the computer that swaps in a link between the two
+can still win that race, and a hard link can't be told from a file. Use the operating system's
+sandbox as well if other programs can change these folders.
 
 ## Tools
 

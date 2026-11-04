@@ -1,0 +1,535 @@
+//! Walks every command in the registry through the real MCP server with paths outside the
+//! automation roots (#1472). Reads show as a changed access time and writes as a changed size,
+//! modification time or folder, whatever the command does with the path. The same walk without
+//! roots has to find escapes, or finding none under roots would prove nothing.
+#![cfg(unix)]
+// Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Never crash).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, FileTimes};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, SystemTime};
+
+use serde_json::{Value, json};
+
+/// Longest a call may take before the server counts as hung.
+const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The extensions commands choose their behaviour by.
+const EXTENSIONS: &[&str] = &["dxf", "dwg", "dwt", "scr", "lsp", "lin", "pat", "pgp", "csv", "txt", "png", "pdf", "svg", "ctb"];
+/// The parameter names a command might take a path under.
+const PATH_KEYS: &[&str] =
+    &["path", "file", "template", "patternFile", "from", "to", "source", "target", "output", "folder", "dir", "filename", "document"];
+/// A valid 1x1 PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4,
+    0x89, 0, 0, 0, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0, 1, 0, 0, 5, 0, 1, 0x0D, 0x0A, 0x2D, 0xB4, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44,
+    0xAE, 0x42, 0x60, 0x82,
+];
+
+fn s(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+/// A running `cadcraft-cli mcp`.
+struct Server {
+    child: Child,
+    stdin: ChildStdin,
+    replies: Receiver<Value>,
+    next: u64,
+}
+
+impl Server {
+    fn start(args: &[String], cwd: &Path, config: &Path) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_cadcraft-cli"))
+            .arg("mcp")
+            .args(args)
+            .current_dir(cwd)
+            .env("CADCRAFT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn cadcraft-cli");
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, replies) = channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && tx.send(v).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let mut server = Self { child, stdin, replies, next: 1 };
+        server.request("initialize", json!({"protocolVersion": "2025-06-18"})).expect("initialize");
+        server
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Option<Value> {
+        let id = self.next;
+        self.next += 1;
+        let req = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        writeln!(self.stdin, "{req}").ok()?;
+        loop {
+            let reply = self.replies.recv_timeout(CALL_TIMEOUT).ok()?;
+            if reply["id"] == id {
+                return Some(reply);
+            }
+        }
+    }
+
+    /// A tool's first text block, or `None` when the server hung or stopped.
+    fn tool(&mut self, name: &str, arguments: Value) -> Option<String> {
+        let reply = self.request("tools/call", json!({"name": name, "arguments": arguments}))?;
+        Some(reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string())
+    }
+
+    fn execute(&mut self, command: &str, params: Value) -> Option<String> {
+        self.tool("execute", json!({"command": command, "params": params}))
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The folders of one walk: `in` and `out` are the roots, nothing under `outside` may be touched.
+struct Fixture {
+    base: PathBuf,
+    outside: PathBuf,
+    /// Each path under `outside`, with its size, modification time and access time.
+    baseline: BTreeMap<PathBuf, (u64, SystemTime, SystemTime)>,
+    /// Whether this file system records reads at all (`noatime` doesn't).
+    sees_reads: bool,
+}
+
+impl Fixture {
+    fn new(tag: &str) -> Self {
+        let base = std::env::temp_dir().join(format!("cc-walk-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["in", "out"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        let probe = base.join("probe");
+        std::fs::write(&probe, "x").unwrap();
+        age_access_time(&probe);
+        let before = std::fs::metadata(&probe).unwrap().accessed().unwrap();
+        std::fs::read(&probe).unwrap();
+        let sees_reads = std::fs::metadata(&probe).unwrap().accessed().unwrap() != before;
+        let outside = base.join("outside");
+        let mut f = Self { base, outside, baseline: BTreeMap::new(), sees_reads };
+        f.reset();
+        f
+    }
+
+    /// Lay out `outside` afresh and start watching it.
+    fn reset(&mut self) {
+        let o = self.outside.clone();
+        let _ = std::fs::remove_dir_all(&o);
+        for d in ["cwd", "config/plotters", "recover"] {
+            std::fs::create_dir_all(o.join(d)).unwrap();
+        }
+        let dxf = cadcraft_io::write(&cadcraft_engine::doc::Drawing::new_imperial(), "x.dxf").unwrap();
+        for ext in EXTENSIONS {
+            let body: &[u8] = match *ext {
+                "dxf" | "dwg" | "dwt" => &dxf,
+                "scr" => b"CIRCLE 0,0 5\n",
+                "lsp" => b"(princ 1)\n",
+                "lin" => b"*WALK,walk\nA,1,-1\n",
+                "pat" => b"*WALK,walk\n0,0,0,0,1\n",
+                "pgp" => b"W,*LINE\n",
+                "csv" | "txt" => b"a,b\n1,2\n",
+                "png" => PNG,
+                _ => b"canary",
+            };
+            std::fs::write(o.join(format!("canary.{ext}")), body).unwrap();
+        }
+        // Two images, so that a drawing naming both loads them on threads of their own.
+        std::fs::write(o.join("second.png"), PNG).unwrap();
+        let device = cadcraft_engine::doc::PlotterConfig { name: "Office".into(), ..Default::default() };
+        std::fs::write(o.join("config/plotters/Office.plotter.json"), device.to_file_text()).unwrap();
+        self.baseline.clear();
+        for p in tree(&o) {
+            age_access_time(&p);
+            let m = std::fs::metadata(&p).unwrap();
+            self.baseline.insert(p, (m.len(), m.modified().unwrap(), m.accessed().unwrap()));
+        }
+    }
+
+    /// What happened under `outside` since [`Self::reset`]. Only metadata is read: this leaves
+    /// the access times as they are.
+    fn touched(&self) -> Vec<String> {
+        let mut seen = Vec::new();
+        for (p, (len, modified, accessed)) in &self.baseline {
+            let name = p.strip_prefix(&self.outside).unwrap().display();
+            match std::fs::metadata(p) {
+                Err(_) => seen.push(format!("removed {name}")),
+                Ok(m) if m.modified().unwrap() != *modified || (!m.is_dir() && m.len() != *len) => seen.push(format!("wrote {name}")),
+                Ok(m) if self.sees_reads && m.accessed().unwrap() != *accessed => seen.push(format!("read {name}")),
+                Ok(_) => {}
+            }
+        }
+        seen
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
+}
+
+fn tree(dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![dir.to_path_buf()];
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        if e.path().is_dir() {
+            out.extend(tree(&e.path()));
+        } else {
+            out.push(e.path());
+        }
+    }
+    out
+}
+
+/// Put `p`'s access time in the past, so that the next read updates it even under `relatime`.
+fn age_access_time(p: &Path) {
+    let past = SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+    File::open(p).unwrap().set_times(FileTimes::new().set_accessed(past)).unwrap();
+}
+
+/// The `action` or `option` values a parameter doc lists: `action?: list|open|discard (…)`.
+fn actions(doc: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for key in ["action", "option"] {
+        let Some(at) = doc.find(key) else { continue };
+        let rest = doc[at + key.len()..].trim_start_matches(['?', ':', ' ']);
+        let end = rest.find([',', '}', '(']).unwrap_or(rest.len());
+        out.extend(rest[..end].split('|').map(|w| w.trim().trim_matches('"').to_string()).filter(|w| !w.is_empty()));
+    }
+    out
+}
+
+/// The calls to try for command `id`: every path-like key set to `target`, with each action.
+fn variants(doc: &str, target: &str, handle: &str, table: &str) -> Vec<Value> {
+    let mut base = json!({"handle": table, "handles": [handle], "at": [0, 0], "name": "walk"});
+    for key in PATH_KEYS {
+        base[*key] = json!(target);
+    }
+    let mut named = base.clone();
+    named["name"] = json!(target);
+    let mut device = base.clone();
+    device["name"] = json!("Office");
+    // Commands refuse parameters that don't go together, so each key the doc names goes on its own too.
+    let lower = doc.to_ascii_lowercase();
+    let documented = PATH_KEYS.iter().filter(|key| **key == "path" || lower.contains(&key.to_ascii_lowercase()));
+    let alone = documented.flat_map(|key| {
+        [
+            json!({*key: target}),
+            json!({*key: target, "handles": [handle]}),
+            json!({*key: target, "handle": table}),
+            json!({*key: target, "name": "Office"}),
+        ]
+    });
+    let mut out = Vec::new();
+    for v in [base, named, device].into_iter().chain(alone) {
+        out.push(v.clone());
+        for a in actions(doc) {
+            let mut with = v.clone();
+            with["action"] = json!(a);
+            with["option"] = json!(a);
+            out.push(with);
+        }
+    }
+    out
+}
+
+/// Whether a command's doc says it takes a file. These get every extension; the rest, one.
+fn takes_a_file(doc: &str) -> bool {
+    let d = doc.to_ascii_lowercase();
+    ["path", "file", "template", "folder", "action", "option"].iter().any(|w| d.contains(w))
+}
+
+/// A fresh drawing with a circle and a table, selected; the circle's and table's handles.
+fn seed(server: &mut Server) -> Option<(String, String)> {
+    // Closed first: the walk starts tens of thousands of drawings, and they would all stay open.
+    server.execute("closeall", json!({}))?;
+    server.execute("new", json!({}))?;
+    let handle_of = |text: &str| serde_json::from_str::<Value>(text).ok().and_then(|v| v["handle"].as_str().map(str::to_string)).unwrap_or_default();
+    let circle = server.execute("circle", json!({"center": [0, 0], "radius": 1}))?;
+    let table = server.execute("table", json!({"at": [5, 5], "rows": 2, "columns": 2}))?;
+    server.execute("selectall", json!({}))?;
+    Some((handle_of(&circle), handle_of(&table)))
+}
+
+/// What one walk saw.
+struct Walk {
+    /// The command and the call that touched each file outside.
+    escapes: BTreeMap<String, Vec<String>>,
+    calls: usize,
+    commands: usize,
+    /// Calls that hung or stopped the server.
+    lost: Vec<String>,
+    sees_reads: bool,
+}
+
+/// Run the walk, under `in` and `out` as roots or with no roots at all.
+fn walk(tag: &str, roots: bool) -> Walk {
+    let mut f = Fixture::new(tag);
+    let args = if roots {
+        vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))]
+    } else {
+        vec![]
+    };
+    let cwd = f.outside.join("cwd");
+    let config = f.outside.join("config");
+    let start = |f: &mut Fixture| {
+        let server = Server::start(&args, &cwd, &config);
+        f.reset();
+        server
+    };
+    let mut server = start(&mut f);
+    let listed = server.tool("list_commands", json!({})).expect("list_commands");
+    let specs: Vec<Value> = serde_json::from_str(&listed).expect("the command list");
+    assert!(specs.len() > 400, "the walk has to see the registry: {} commands", specs.len());
+    let mut result = Walk { escapes: BTreeMap::new(), calls: 0, commands: specs.len(), lost: Vec::new(), sees_reads: f.sees_reads };
+
+    let mut steps: Vec<(String, Value)> = Vec::new();
+    let o = f.outside.clone();
+    let canary = |ext: &str| s(&o.join(format!("canary.{ext}")));
+    let (circle, table) = seed(&mut server).expect("seed");
+    assert!(!table.is_empty(), "the seed table has no handle");
+    for spec in &specs {
+        let id = spec["id"].as_str().unwrap().to_string();
+        let doc = spec["params"].as_str().unwrap_or_default();
+        let mut targets: Vec<String> = if takes_a_file(doc) { EXTENSIONS.iter().map(|e| canary(e)).collect() } else { vec![canary("dxf")] };
+        if takes_a_file(doc) {
+            // A file that isn't there yet, in a folder that isn't there yet, and a relative path.
+            targets.extend(["dxf", "png", "pdf", "csv"].iter().map(|e| s(&o.join(format!("fresh/x.{e}")))));
+            targets.push("../canary.dxf".to_string());
+        }
+        for target in targets {
+            for v in variants(doc, &target, &circle, &table) {
+                steps.push((id.clone(), v));
+            }
+        }
+    }
+
+    let run_step =
+        |server: &mut Server, f: &mut Fixture, result: &mut Walk, id: &str, label: String, call: &mut dyn FnMut(&mut Server) -> Option<String>| {
+            result.calls += 1;
+            let done = call(server);
+            let touched = f.touched();
+            if !touched.is_empty() {
+                for what in touched {
+                    result.escapes.entry(id.to_string()).or_default().push(format!("{what}: {label}"));
+                }
+            }
+            if done.is_none() {
+                result.lost.push(format!("{id}: {label}"));
+            }
+            done.is_some()
+        };
+
+    for (id, params) in &steps {
+        let label = params.to_string();
+        let params = params.clone();
+        let alive = run_step(&mut server, &mut f, &mut result, id, label, &mut |sv| sv.execute(id, params.clone()));
+        let dirty = !f.touched().is_empty();
+        if !alive {
+            server = start(&mut f);
+        } else if dirty {
+            f.reset();
+        }
+        // A command can stop the server without its own reply being lost.
+        if seed(&mut server).is_none() {
+            result.lost.push(format!("after {id}: {params}"));
+            server = start(&mut f);
+            seed(&mut server);
+        }
+    }
+
+    // The ways in that aren't one command with a path parameter.
+    let dxf = canary("dxf");
+    let png = canary("png");
+    let scr = canary("scr");
+    let lsp = canary("lsp");
+    let tools: Vec<(&str, &str, Value)> = vec![
+        ("tool:open", "open", json!({"path": dxf})),
+        ("tool:save", "save", json!({"path": dxf})),
+        ("tool:save-new", "save", json!({"path": s(&o.join("fresh/y.dxf"))})),
+        ("tool:render", "render", json!({"path": png})),
+        ("tool:command_line", "command_line", json!({"text": format!("SCRIPT {scr}")})),
+        ("tool:command_line", "command_line", json!({"text": format!("OPEN {dxf}")})),
+        ("tool:command_line", "command_line", json!({"text": format!("SAVEAS {dxf}")})),
+        ("tool:script", "script", json!({"text": format!("OPEN {dxf}\n")})),
+    ];
+    for (label, name, a) in tools {
+        let text = a.to_string();
+        let a = a.clone();
+        let alive = run_step(&mut server, &mut f, &mut result, label, text, &mut |sv| sv.tool(name, a.clone()));
+        if alive {
+            f.reset();
+        } else {
+            server = start(&mut f);
+        }
+        seed(&mut server);
+    }
+    let lisp = [
+        format!("(setq f (open {dxf:?} \"r\")) (read-line f) (close f)"),
+        format!("(setq f (open {dxf:?} \"w\")) (write-line \"x\" f) (close f)"),
+        format!("(setq f (open {:?} \"w\")) (write-line \"x\" f) (close f)", s(&o.join("new.txt"))),
+        format!("(load {lsp:?})"),
+    ];
+    for code in lisp {
+        let label = code.clone();
+        run_step(&mut server, &mut f, &mut result, "lisp:code", label, &mut |sv| sv.execute("lisp", json!({"code": code})));
+        f.reset();
+        seed(&mut server);
+    }
+    // Settings that name a file or a folder, then the commands that use them.
+    let chained: Vec<(&str, Vec<(&str, Value)>)> = vec![
+        (
+            "stylesmanager",
+            vec![
+                ("stylesmanager", json!({"action": "new", "name": "walk.ctb"})),
+                ("stylesmanager", json!({"action": "save", "name": "walk.ctb", "path": canary("ctb")})),
+                ("stylesmanager", json!({"action": "load", "path": canary("ctb")})),
+            ],
+        ),
+        (
+            "pdfbook",
+            vec![("pline", json!({"points": [[0, 0], [210, 0], [210, 297], [0, 297]], "closed": true})), ("pdfbook", json!({"path": canary("pdf")}))],
+        ),
+        ("setvar:SAVEFILEPATH", vec![("setvar", json!({"name": "SAVEFILEPATH", "value": s(&o.join("recover"))})), ("drawingrecovery", json!({}))]),
+        ("setvar:QNEWTEMPLATE", vec![("setvar", json!({"name": "QNEWTEMPLATE", "value": dxf})), ("new", json!({}))]),
+    ];
+    for (label, calls) in chained {
+        for (id, params) in calls {
+            run_step(&mut server, &mut f, &mut result, label, format!("{id} {params}"), &mut |sv| sv.execute(id, params.clone()));
+        }
+        f.reset();
+        seed(&mut server);
+    }
+    result
+}
+
+fn summary(w: &Walk) -> String {
+    format!(
+        "{} commands, {} calls, reads seen: {}, {} commands touched files outside, {} calls lost the server",
+        w.commands,
+        w.calls,
+        w.sees_reads,
+        w.escapes.len(),
+        w.lost.len()
+    )
+}
+
+/// Under roots, nothing in the registry reaches a file outside them.
+#[test]
+fn no_command_escapes_the_roots() {
+    let w = walk("roots", true);
+    println!("under roots: {}", summary(&w));
+    let found: Vec<String> = w.escapes.iter().flat_map(|(id, what)| what.iter().take(3).map(move |l| format!("{id}: {l}"))).collect();
+    assert!(found.is_empty(), "escapes under the roots:\n{}", found.join("\n"));
+    assert!(w.lost.is_empty(), "calls that lost the server: {:?}", w.lost);
+}
+
+/// The control: without roots the same walk finds these commands reaching the same files. If this
+/// fails, the walk has stopped reaching them and [`no_command_escapes_the_roots`] proves nothing.
+#[test]
+fn the_walk_finds_escapes_without_roots() {
+    let w = walk("control", false);
+    println!("without roots: {}", summary(&w));
+    let found: BTreeSet<&str> = w.escapes.keys().map(String::as_str).collect();
+    println!("touched files outside: {}", found.iter().copied().collect::<Vec<_>>().join(" "));
+    let writers = [
+        "saveas",
+        "export",
+        "plot",
+        "exportpdf",
+        "publish",
+        "pdfbook",
+        "wblock",
+        "-wblock",
+        "layout.saveas",
+        "layout",
+        "stylesmanager",
+        "plottermanager",
+        "tableexport",
+        "dataextraction",
+        "tool:save",
+        "tool:save-new",
+        "tool:render",
+        "lisp:code",
+    ];
+    for id in writers {
+        assert!(found.contains(id), "the walk no longer finds `{id}` writing outside: {found:?}");
+    }
+    if w.sees_reads {
+        for id in [
+            "open",
+            "new",
+            "recover",
+            "script",
+            "import",
+            "insert",
+            "minsert",
+            "xattach",
+            "-xref",
+            "compare",
+            "imageattach",
+            "attach",
+            "aliasedit",
+            "linetype",
+            "hatch.patterns",
+            "appload",
+            "datalink",
+            "tool:open",
+            "setvar:QNEWTEMPLATE",
+            "setvar:SAVEFILEPATH",
+        ] {
+            assert!(found.contains(id), "the walk no longer finds `{id}` reading outside: {found:?}");
+        }
+    }
+}
+
+/// A drawing inside the roots can't bring in what it names outside them: an image or an xref saved
+/// with a path outside stays unloaded, and nothing outside is read.
+#[test]
+fn a_drawing_cannot_reach_files_it_names_outside_the_roots() {
+    let mut f = Fixture::new("named");
+    let host = f.base.join("in/host.dxf");
+    {
+        // Made without roots: a drawing someone hands the agent.
+        let mut free = Server::start(&[], &f.outside.join("cwd"), &f.outside.join("config"));
+        free.execute("new", json!({})).unwrap();
+        let image = free.execute("imageattach", json!({"path": s(&f.outside.join("canary.png"))})).unwrap();
+        assert!(image.contains("handle"), "the image attaches: {image}");
+        let second = free.execute("imageattach", json!({"path": s(&f.outside.join("second.png"))})).unwrap();
+        assert!(second.contains("handle"), "the second image attaches: {second}");
+        let xref = free.execute("xattach", json!({"path": s(&f.outside.join("canary.dxf")), "name": "walk"})).unwrap();
+        assert!(xref.contains("handle"), "the xref attaches: {xref}");
+        free.execute("saveas", json!({"path": s(&host)})).unwrap();
+    }
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    f.reset();
+    let opened = server.tool("open", json!({"path": s(&host)})).unwrap();
+    let images = server.execute("image", json!({})).unwrap();
+    let xrefs = server.execute("xref", json!({})).unwrap();
+    server.tool("render", json!({})).unwrap();
+    let touched = f.touched();
+    assert!(touched.is_empty(), "{touched:?}\nopen: {opened}\nimage: {images}\nxref: {xrefs}");
+    assert!(images.contains("canary.png") && !images.contains("\"Loaded\""), "the image stays unloaded: {images}");
+    assert!(images.contains("\"foundAt\": null") || images.contains("\"foundAt\":null"), "and it isn't said to exist: {images}");
+    assert!(!xrefs.contains("\"Loaded\""), "the xref stays unloaded: {xrefs}");
+}

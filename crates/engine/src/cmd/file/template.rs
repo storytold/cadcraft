@@ -75,7 +75,6 @@ fn read_template(path: &str) -> Result<Drawing> {
 #[cfg(not(target_arch = "wasm32"))]
 fn read_bytes(path: &str) -> Result<Vec<u8>> {
     crate::file_access::check_read(path).map_err(|e| bad("new", e))?;
-    crate::file_access::check_read(path).map_err(|e| bad("new", e))?;
     std::fs::read(path).map_err(|e| bad("new", format!("template {path}: {e}")))
 }
 

@@ -32,7 +32,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
-    } else if !can_write(&path) || crate::file_access::check_write(&path).is_err() {
+    } else if crate::file_access::check_write(&path).is_err() || !can_write(&path) {
         return Ok(Flow::Value(Value::Nil));
     }
     let id = ctx.env.next_file;

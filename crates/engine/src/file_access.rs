@@ -22,6 +22,8 @@
 //! a link) can still win that race. The roots keep an agent to the files it was given; they don't
 //! guard against other programs on the computer.
 
+pub mod commands;
+
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};

@@ -374,6 +374,9 @@ fn run_xopen(s: &mut Session, p: &Value) -> Result<Value> {
     let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|m| match m {
         load::Missing::NotFound => bad("xopen", format!("{path}: file not found")),
         load::Missing::Refused(r) => bad("xopen", format!("{path}: not opened, {r}")),
+        load::Missing::OutsideRoots => {
+            bad("xopen", format!("{path}: not opened, automation path rejected: outside the read root (or the write root)"))
+        }
     })?;
     s.execute("open", &json!({ "path": file.to_string_lossy() }))
 }
