@@ -102,6 +102,10 @@ fn matrix_values(m: &Mat3) -> [f64; 12] {
 
 /// The `count` vertices (10/20) a SPATIAL_FILTER holds, as written.
 fn vertices(tags: &[RawTag], count: usize) -> Option<Vec<Vec2>> {
+    // The count is the file's: bound it before allocating.
+    if count > MAX_CLIP_VERTICES {
+        return None;
+    }
     let mut points = Vec::with_capacity(count);
     for w in tags.windows(2) {
         let [x, y] = w else { continue };
@@ -528,5 +532,20 @@ mod tests {
         // A filter changed since the record was made (the clip edited elsewhere) isn't inverted.
         let (f, filter) = marked(&[(0.0, 0.0), (5.0, 5.0)], &rect, &rect);
         assert!(roundtrip(&f, &index(&f), &filter).is_none());
+    }
+
+    #[test]
+    fn a_hostile_vertex_count_beside_the_record_does_not_allocate() {
+        let rect = [(20.0, 10.0), (80.0, 40.0)];
+        for count in ["9223372036854775807", "1000000000", "1e300"] {
+            let (mut f, mut filter) = marked(&rect, &rect, &rect);
+            for t in filter.tags.iter_mut().filter(|t| t.code == 70) {
+                t.value = count.into();
+            }
+            f.objects.retain(|o| o.handle != filter.handle);
+            f.objects.push(filter.clone());
+            assert!(roundtrip(&f, &index(&f), &filter).is_none(), "{count}");
+            assert!(parse_filter(&filter, None).is_none(), "{count}");
+        }
     }
 }
