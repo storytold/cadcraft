@@ -20,6 +20,7 @@ mod raster;
 mod refedit;
 mod store;
 mod tables;
+mod xclip;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,6 +39,7 @@ pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
+pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
 
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
