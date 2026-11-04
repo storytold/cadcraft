@@ -133,4 +133,18 @@ fn a_proxy_is_written_back_unchanged_and_draws_again() {
     };
     assert_eq!(graphics(&again), graphics(&d));
     assert_eq!(graphics(&d).map(|g| g.1), Some(3));
+    // The saved LAYER table keeps the file's order, so index 1 is still BALLOONS (CADCraft's
+    // Defpoints comes after it) and the reopened graphics stay on that layer.
+    let layers = |d: &cadcraft_doc::Drawing| -> Vec<String> {
+        d.model
+            .iter()
+            .find_map(|e| match &e.kind {
+                EntityKind::Unknown(u) => Some(u.graphics.iter().map(|g| g.common.layer.clone()).collect()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(layers(&again), ["BALLOONS"; 3]);
+    let names: Vec<&str> = again.layers.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["0", "BALLOONS", "Defpoints"]);
 }

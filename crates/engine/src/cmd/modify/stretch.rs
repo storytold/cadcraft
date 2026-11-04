@@ -270,9 +270,9 @@ impl StretchM {
                     "all" => {
                         Some(store.map(|st| st.iter().filter(|e| crate::select::selectable(d, e)).map(|e| e.handle).collect()).unwrap_or_default())
                     }
-                    "l" | "last" => Some(
-                        store.and_then(|st| st.iter().filter(|e| crate::select::selectable(d, e)).last()).map(|e| vec![e.handle]).unwrap_or_default(),
-                    ),
+                    "l" | "last" => {
+                        Some(store.and_then(|st| st.iter_rev().find(|e| crate::select::selectable(d, e))).map(|e| vec![e.handle]).unwrap_or_default())
+                    }
                     "p" | "previous" => Some(s.state()?.previous_selection.clone()),
                     _ => {
                         s.echo("*Invalid selection*");

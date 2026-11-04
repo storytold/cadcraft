@@ -57,6 +57,10 @@ impl EntityStore {
     pub fn iter(&self) -> impl Iterator<Item = &Arc<Entity>> + '_ {
         self.chunks.iter().flat_map(|c| c.items.iter())
     }
+    /// Iterate from the top of the draw order down.
+    pub fn iter_rev(&self) -> impl Iterator<Item = &Arc<Entity>> + '_ {
+        self.chunks.iter().rev().flat_map(|c| c.items.iter().rev())
+    }
     pub fn handles(&self) -> Vec<Handle> {
         self.iter().map(|e| e.handle).collect()
     }
@@ -346,6 +350,7 @@ mod tests {
         }
         assert!(s.move_next_to(Handle(1), Handle(3), true));
         assert_eq!(order(&s), [2, 3, 1, 4, 5]);
+        assert_eq!(s.iter_rev().map(|e| e.handle.0).collect::<Vec<_>>(), [5, 4, 1, 3, 2], "top down");
         assert!(s.move_next_to(Handle(5), Handle(2), false));
         assert_eq!(order(&s), [5, 2, 3, 1, 4]);
         assert!(!s.move_next_to(Handle(5), Handle(5), true));
