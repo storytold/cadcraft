@@ -19,13 +19,7 @@ pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
             user_arrows.push((n.to_string(), g));
         }
     }
-    DimText {
-        font: style_font(&ts),
-        fixed_height: ts.height,
-        width_factor: ts.width_factor,
-        oblique: ts.oblique,
-        user_arrows,
-    }
+    DimText { font: style_font(&ts), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique, user_arrows }
 }
 
 /// The block a DIMBLK name refers to, if the drawing has one (names compare without case).
