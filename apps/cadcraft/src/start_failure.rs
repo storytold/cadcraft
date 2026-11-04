@@ -10,12 +10,17 @@
 //! Now the reason also goes to an error dialog, as FilmCraft does since 0.14.0. The dialog keeps
 //! the process alive until it is dismissed; the exit code afterwards is still the error's.
 
-/// What the dialog and the log say. Any error `run_native` returns lands here, also one after the
-/// window was up, so graphics is only the likely cause, not the certain one.
+/// What the dialog and the log say. Any error `run_native` returns lands here. One from the app's
+/// own start-up (`AppCreation`, e.g. a `--control` file it can't write) says only that it couldn't
+/// start. Any other comes from the window or graphics, possibly after the window was up, so
+/// graphics is named as the likely cause, not the certain one.
 pub(crate) fn message(error: &eframe::Error) -> String {
-    format!(
-        "CADCraft's window could not start or stopped with an error: {error}\n\nIf this keeps happening, updating the graphics driver often fixes it."
-    )
+    match error {
+        eframe::Error::AppCreation(_) => format!("CADCraft could not start: {error}"),
+        _ => format!(
+            "CADCraft's window could not start or stopped with an error: {error}\n\nIf this keeps happening, updating the graphics driver often fixes it."
+        ),
+    }
 }
 
 /// Logs the failure and shows it in a dialog, which stays until the user closes it.
@@ -30,10 +35,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_message_names_the_cause_and_what_to_do() {
-        let text = message(&eframe::Error::AppCreation("no adapter".into()));
+    fn a_window_or_graphics_error_names_the_driver_as_the_likely_fix() {
+        let text = message(&eframe::Error::Wgpu(eframe::egui_wgpu::WgpuError::NoSurfaceFormatsAvailable));
         assert!(text.starts_with("CADCraft's window could not start or stopped"), "{text}");
-        assert!(text.contains("no adapter"), "{text}");
+        assert!(text.contains("no valid format for the surface"), "{text}");
         assert!(text.contains("graphics driver"), "{text}");
+    }
+
+    #[test]
+    fn an_app_start_up_error_does_not_blame_the_graphics() {
+        let text = message(&eframe::Error::AppCreation("can't write the control file".into()));
+        assert!(text.starts_with("CADCraft could not start"), "{text}");
+        assert!(text.contains("can't write the control file"), "{text}");
+        assert!(!text.contains("graphics"), "{text}");
     }
 }
