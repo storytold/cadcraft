@@ -26,11 +26,7 @@ pub fn plain_mtext(s: &str) -> String {
             '\\' => {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
+                    'P' | 'N' | 'X' | 'x' => {
                         out.push('\n');
                         i += 2;
                     }
@@ -63,7 +59,7 @@ pub fn plain_mtext(s: &str) -> String {
                         out.push_str(stack.trim_end_matches('/'));
                         i = j + 1;
                     }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' | 'X' | 'x' => i += 2,
+                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
                     // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
                     'U' if crate::unicode_escape(&chars, i).is_some() => {
                         if let Some(u) = crate::unicode_escape(&chars, i) {
@@ -293,7 +289,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 i += 2;
                 match code {
-                    'P' | 'N' => {
+                    'P' | 'N' | 'X' | 'x' => {
                         end_word(&mut atoms, &mut word);
                         atoms.push(Atom::Para(cur));
                     }
@@ -303,7 +299,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
                     'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
                     'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' | 'X' | 'x' => {}
+                    'K' | 'k' => {}
                     // `\U+XXXX`: a character by its Unicode code.
                     'U' if i >= 2 && crate::unicode_escape(&chars, i - 2).is_some() => {
                         if let Some(u) = crate::unicode_escape(&chars, i - 2) {
@@ -812,14 +808,16 @@ mod tests {
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
         assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
         assert_eq!(plain_mtext("\\U+12"), "", "a short escape is a code with an argument");
-        assert_eq!(plain_mtext("top\\Xbottom"), "topbottom");
+        assert_eq!(plain_mtext("top\\Xbottom"), "top\nbottom");
         assert_eq!(plain_mtext("\\U+00B110"), "±10");
     }
 
     #[test]
     fn dimension_x_and_unicode_escapes_lay_out() {
         let l = layout_mtext("top\\Xbottom", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
-        assert_eq!(l.lines[0], "topbottom");
+        assert_eq!(l.lines.len(), 2);
+        assert_eq!(l.lines[0], "top");
+        assert_eq!(l.lines[1], "bottom");
 
         let l_uni = layout_mtext("\\U+00B110", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
         assert_eq!(l_uni.lines[0], "±10");

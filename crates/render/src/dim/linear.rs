@@ -18,6 +18,7 @@ struct LinearDimState {
     text_outside: bool,
     just: u8,
     centred: bool,
+    has_x: bool,
     moved: bool,
     outside_arrows: bool,
     angle: f64,
@@ -79,7 +80,8 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     };
     let inside_angle = if st.text_inside_horizontal { 0.0 } else { along_angle };
     let tvp = if st.text_above == 0 && st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 };
-    let centred = st.text_above == 0 && tvp.abs() < 0.7;
+    let has_x = g.mtext.contains("\\X") || g.mtext.contains("\\x");
+    let centred = st.text_above == 0 && tvp.abs() < 0.7 && !has_x;
     let text_need = if centred { 2.0 * (extent(inside_angle) + config.gap) } else { 2.0 * extent(inside_angle) };
     let fits = !has_text || measurement >= text_need + 2.0 * arrow_width;
     let text_fits = !has_text || measurement >= text_need;
@@ -117,6 +119,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
         text_outside,
         just,
         centred,
+        has_x,
         moved: text_outside && st.text_move != 0,
         outside_arrows: !arrows_inside && !st.suppress_outside_arrows,
         angle: 0.0,
@@ -164,11 +167,15 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
     } else {
         -state.n
     };
-    state.offset = match st.text_above {
-        0 => above * (if st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 } * config.text_height),
-        2 => state.side_out * off_along(state.side_out),
-        4 => -above * off_along(-above),
-        _ => above * off_along(above),
+    state.offset = if state.has_x {
+        Vec2::ZERO
+    } else {
+        match st.text_above {
+            0 => above * (if st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 } * config.text_height),
+            2 => state.side_out * off_along(state.side_out),
+            4 => -above * off_along(-above),
+            _ => above * off_along(above),
+        }
     };
     if state.just >= 3 && !config.dimension.user_text_pos && state.has_text {
         let (point, foot) = if state.just == 3 { (state.p1, state.f1) } else { (state.p2, state.f2) };
