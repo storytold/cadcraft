@@ -75,6 +75,11 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// MTEXT contents (with their field codes) as they were rebuilt from the file's field
+    /// objects, by the MTEXT's handle: while an MTEXT's contents still equal them, saving writes
+    /// the file's own field objects back (they hold data CADCraft does not model, such as a
+    /// date's time); once they differ, the field objects are written again from the contents.
+    pub fields: BTreeMap<Handle, String>,
 }
 
 impl Foreign {
@@ -87,6 +92,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.fields.is_empty()
     }
 
     /// The entities the data store has records for (their 320 handles).

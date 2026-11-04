@@ -122,9 +122,15 @@ pub fn has_fields(s: &str) -> bool {
 /// option to the closing quote).
 fn quoted_opt(inner: &str, opt: &str) -> Option<(String, Range<usize>)> {
     let b = inner.as_bytes();
+    // Options of a field nested in this one's code (a formula's operand) are not this field's.
+    let nested: Vec<Range<usize>> = if inner.contains("%<") { find(inner).into_iter().map(|s| s.range).collect() } else { Vec::new() };
     let mut i = 0;
     while let Some(off) = inner.get(i..).and_then(|t| t.find(opt)) {
         let at = i + off;
+        if let Some(r) = nested.iter().find(|r| r.contains(&at)) {
+            i = r.end;
+            continue;
+        }
         let mut j = at + opt.len();
         // The option name must end here (`\f` but not `\foo`).
         if b.get(j).is_some_and(|c| c.is_ascii_alphanumeric()) {
@@ -216,6 +222,19 @@ pub fn object_code(handle: Handle, property: &str, format: Option<&str>) -> Stri
     format!("%<\\AcObjProp Object(%<\\_ObjId {}>%).{property}{f}>%", handle.hex())
 }
 
+/// A field's code (between `%<` and `>%`) without its cached value, and that value.
+pub fn split_value(inner: &str) -> (String, Option<String>) {
+    match quoted_opt(inner, VALUE_OPT) {
+        Some((v, r)) => (format!("{}{}", inner.get(..r.start).unwrap_or("").trim_end(), inner.get(r.end..).unwrap_or("")), Some(v)),
+        None => (inner.to_string(), None),
+    }
+}
+
+/// A field's code (without a cached value) with `value` as its cached value.
+pub fn with_value(code: &str, value: &str) -> String {
+    format!("{} {VALUE_OPT} \"{}\"", code.trim_end(), escape(value))
+}
+
 /// Store each field's new value in the text: `value` returns the value of a field (`None`: no
 /// value, shown as [`NO_VALUE`]). Returns the new text and the number of fields.
 pub fn set_values(s: &str, mut value: impl FnMut(&Field) -> Option<String>) -> (String, usize) {
@@ -229,12 +248,9 @@ pub fn set_values(s: &str, mut value: impl FnMut(&Field) -> Option<String>) -> (
         out.push_str(s.get(last..sp.range.start).unwrap_or(""));
         let inner = s.get(sp.range.start + 2..sp.range.end - 2).unwrap_or("");
         // The code without its old value.
-        let mut code = match quoted_opt(inner, VALUE_OPT) {
-            Some((_, r)) => format!("{}{}", inner.get(..r.start).unwrap_or("").trim_end(), inner.get(r.end..).unwrap_or("")),
-            None => inner.to_string(),
-        };
+        let mut code = split_value(inner).0;
         if let Some(v) = value(&sp.field) {
-            code = format!("{} {VALUE_OPT} \"{}\"", code.trim_end(), escape(&v));
+            code = with_value(&code, &v);
         }
         out.push_str("%<");
         out.push_str(&code);
@@ -308,6 +324,25 @@ mod tests {
         assert_eq!(v2.matches("CcValue").count(), 1);
         assert_eq!(set_values(&v2, |_| None).0, s);
         assert_eq!(display_mtext(&set_values(&s, |_| Some("{a}".into())).0), "x \\{a\\} y");
+    }
+
+    #[test]
+    fn nested_field_keeps_its_own_value() {
+        let inner = "\\AcExpr (%<\\AcVar LTSCALE \\CcValue \"1.0\">%*2) \\f \"%lu2\" \\CcValue \"2.0000\"";
+        let s = format!("x %<{inner}>%");
+        let f = find(&s);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].field.value.as_deref(), Some("2.0000"));
+        assert_eq!(f[0].field.format.as_deref(), Some("%lu2"));
+        assert_eq!(display(&s), "x 2.0000");
+        let (code, value) = split_value(inner);
+        assert_eq!(value.as_deref(), Some("2.0000"));
+        assert_eq!(code, "\\AcExpr (%<\\AcVar LTSCALE \\CcValue \"1.0\">%*2) \\f \"%lu2\"");
+        assert_eq!(with_value(&code, "2.0000"), inner);
+        // A new value goes to the outer field; the nested one is kept.
+        let (v, _) = set_values(&s, |_| Some("6".into()));
+        assert_eq!(display(&v), "x 6");
+        assert!(v.contains("\\CcValue \"1.0\""));
     }
 
     #[test]
