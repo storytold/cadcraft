@@ -67,8 +67,7 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let mut b =
-        Builder { list: DisplayList::default(), opts, plotting: false, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder::new(opts, false, styler.as_ref(), None);
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }
@@ -112,15 +111,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // spent so a viewport's contents cannot start over with a fresh allowance and exceed the
     // documented limit (CWE-400). Both the serial sub-builder and the parallel chunks share it.
     let budget = std::sync::atomic::AtomicUsize::new(b.list.expanded);
-    let mut sub = Builder {
-        list: DisplayList::default(),
-        opts: b.opts,
-        plotting: b.plotting,
-        styles: b.styles,
-        named: None,
-        shared_budget: Some(&budget),
-        transparency: 0,
-    };
+    let mut sub = Builder::new(b.opts, b.plotting, b.styles, Some(&budget));
     #[cfg(not(target_arch = "wasm32"))]
     let parallel = !b.plotting && b.styles.is_none() && d.model.len() >= 2 * PARALLEL_CHUNK;
     #[cfg(target_arch = "wasm32")]
@@ -135,15 +126,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
             let parts: Vec<DisplayList> = ents
                 .par_chunks(PARALLEL_CHUNK)
                 .map(|chunk| {
-                    let mut part = Builder {
-                        list: DisplayList::default(),
-                        opts,
-                        plotting: false,
-                        styles: None,
-                        named: None,
-                        shared_budget: Some(&budget),
-                        transparency: 0,
-                    };
+                    let mut part = Builder::new(opts, false, None, Some(&budget));
                     let c = ctx();
                     for me in chunk.iter().filter(|me| seen(me)) {
                         entity(&mut part, &c, me);

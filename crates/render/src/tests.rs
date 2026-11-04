@@ -1149,3 +1149,51 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// A block "PT" with the attribute definitions `tags` and `lines` lines, as a survey point block
+/// is: number, elevation and description over a small symbol.
+fn point_block(tags: &[&str], lines: u64) -> cadcraft_doc::Block {
+    let mut blk = cadcraft_doc::Block::new("PT");
+    for (h, tag) in (1..).zip(tags) {
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(attrib(tag))));
+    }
+    for h in 0..lines {
+        let (c, k) = line_common(Common::default());
+        blk.entities.push(block_entity(1000 + h, c, k));
+    }
+    blk
+}
+
+/// Each reference charges the expansion budget one for its copy and one per entity it draws;
+/// attribute definitions, which a copy never draws, cost nothing. Charging them too (as #2724
+/// did) used up `MAX_BLOCK_EXPANSION` twice as fast on survey drawings of attributed points,
+/// and the end of the drawing silently stopped drawing.
+#[test]
+fn attribute_definitions_cost_no_block_budget() {
+    let mut d = Drawing::new_imperial();
+    d.blocks.insert("PT".into(), std::sync::Arc::new(point_block(&["NUMBER", "ELEVATION", "DESCRIPTION"], 2)));
+    for _ in 0..10 {
+        let EntityKind::Insert(mut ins) = insert_of("PT") else { panic!("an insert") };
+        ins.attribs.push(attrib("NUMBER"));
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    }
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.expanded, 10 * 3, "a copy and its two lines per reference");
+    assert!(!l.truncated);
+}
+
+/// A block of nothing but attribute definitions under a large MINSERT makes no copies: there is
+/// nothing to draw, so it takes neither budget nor time, however many definitions it has.
+#[test]
+fn a_block_of_only_attribute_definitions_makes_no_copies() {
+    let mut d = Drawing::new_imperial();
+    let tags: Vec<String> = (0..10_000).map(|i| format!("T{i}")).collect();
+    let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+    d.blocks.insert("PT".into(), std::sync::Arc::new(point_block(&tags, 0)));
+    let EntityKind::Insert(mut ins) = insert_of("PT") else { panic!("an insert") };
+    (ins.cols, ins.rows) = (1000, 1000);
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.expanded, 0);
+    assert!(!l.truncated);
+}
