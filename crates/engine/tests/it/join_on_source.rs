@@ -966,3 +966,233 @@ fn an_arc_closing_a_polyline_and_a_source_of_no_length() {
     assert!(s.execute("join", &json!({ "handles": [z.hex(), l.hex()] })).is_err());
     assert_eq!(objects(&s), before);
 }
+
+#[test]
+fn objects_meeting_only_in_plan_at_another_height_stay_apart() {
+    // AutoCAD 2024 (accoreconsole, measured): an end that meets the source only in plan, at
+    // another height, is no join. The line (0,0,0)-(10,0,0) keeps (10,0,5)-(20,0,5) apart ("1
+    // object discarded"), a polyline at elevation 0 that line, and a polyline at elevation 5 the
+    // line (10,0,0)-(20,0,0) ("0 segments added"). Both lines at 5 join into one.
+    let elevated = |s: &mut Session, h: Handle, z: f64| {
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::LwPolyline(p) = &mut e.kind {
+                    p.elevation = z;
+                }
+            })
+            .unwrap();
+    };
+    for (source_z, other_z, poly) in [(0.0, 5.0, false), (0.0, 5.0, true), (5.0, 0.0, true)] {
+        let mut s = Session::new();
+        let a = if poly { pline(&mut s, &[(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]) } else { line(&mut s, [0.0, 0.0], [10.0, 0.0]) };
+        if poly {
+            elevated(&mut s, a, source_z);
+        } else {
+            raise(&mut s, a, source_z);
+        }
+        let b = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+        raise(&mut s, b, other_z);
+        let before = objects(&s);
+        let _ = s.execute("join", &json!({ "handles": [a.hex(), b.hex()] }));
+        assert_eq!(objects(&s), before, "source at {source_z}, other at {other_z}, polyline {poly}");
+    }
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    raise(&mut s, a, 5.0);
+    raise(&mut s, b, 5.0);
+    join(&mut s, &[a, b]);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && matches!(&objs[0].1, EntityKind::Line(l) if l.b.x == 20.0 && l.a.z == 5.0 && l.b.z == 5.0), "{objs:?}");
+    // A sloped line ends at its own heights (AutoCAD 2024, measured): after a polyline at 0, the
+    // line (20,0,5)-(10,0,0), turned round, leaves the chain at height 5, so a line on from
+    // (20,0,5) joins too ("2 segments added") and one from (20,0,0) stays apart ("1 segments
+    // added"). An arc whose centre is at another height stays apart ("0 segments added").
+    for (next_z, joins) in [(5.0, true), (0.0, false)] {
+        let mut s = Session::new();
+        let p = pline(&mut s, &[(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]);
+        let sloped = line(&mut s, [20.0, 0.0], [10.0, 0.0]);
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(sloped, |e| {
+                if let EntityKind::Line(l) = &mut e.kind {
+                    l.a.z = 5.0;
+                }
+            })
+            .unwrap();
+        let next = line(&mut s, [20.0, 0.0], [30.0, 0.0]);
+        raise(&mut s, next, next_z);
+        assert_eq!(join(&mut s, &[p, sloped, next]), p);
+        let objs = objects(&s);
+        let left: Vec<Handle> = objs.iter().map(|o| o.0).collect();
+        assert_eq!(left, if joins { vec![p] } else { vec![p, next] }, "next at {next_z}");
+        assert_eq!(vertices(&objs[0].1).len(), if joins { 4 } else { 3 }, "next at {next_z}");
+    }
+    let mut s = Session::new();
+    let p = pline(&mut s, &[(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0)]);
+    let a = arc(&mut s, [10.0, 5.0], 5.0, 270.0, 0.0);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(a, |e| {
+            if let EntityKind::Arc(o) = &mut e.kind {
+                o.center.z = 5.0;
+            }
+        })
+        .unwrap();
+    let before = objects(&s);
+    let _ = s.execute("join", &json!({ "handles": [p.hex(), a.hex()] }));
+    assert_eq!(objects(&s), before);
+}
+
+#[test]
+fn objects_facing_the_other_way_from_the_source_stay_apart() {
+    // AutoCAD 2024 (accoreconsole, measured) with polylines whose normal is 0,0,-1, here in world
+    // coordinates as the DXF reader keeps them: one at elevation 5 takes no line on from its end,
+    // at Z -5 or 5; it takes another such polyline at elevation 5 ("1 segments added") but not one
+    // at -5; and a polyline facing up at elevation -5 doesn't take one at 5, though they meet at Z
+    // -5 ("0 segments added").
+    let poly = |s: &mut Session, from: f64, elevation: f64, down: bool| {
+        let h = pline(s, &[(from, 0.0, 0.0, 0.0, 0.0), (from + 10.0, 0.0, 0.0, 0.0, 0.0)]);
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if down {
+                    e.common.extrusion = cadcraft_engine::geom::Vec3::new(0.0, 0.0, -1.0);
+                }
+                if let EntityKind::LwPolyline(p) = &mut e.kind {
+                    p.elevation = elevation;
+                }
+            })
+            .unwrap();
+        h
+    };
+    for line_z in [-5.0, 5.0] {
+        let mut s = Session::new();
+        let p = poly(&mut s, 0.0, 5.0, true);
+        let l = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+        raise(&mut s, l, line_z);
+        let before = objects(&s);
+        let _ = s.execute("join", &json!({ "handles": [p.hex(), l.hex()] }));
+        assert_eq!(objects(&s), before, "line at {line_z}");
+    }
+    for (first, second, joins) in [((5.0, true), (5.0, true), true), ((5.0, true), (-5.0, true), false), ((-5.0, false), (5.0, true), false)] {
+        let mut s = Session::new();
+        let p = poly(&mut s, 0.0, first.0, first.1);
+        let q = poly(&mut s, 10.0, second.0, second.1);
+        let before = objects(&s);
+        let _ = s.execute("join", &json!({ "handles": [p.hex(), q.hex()] }));
+        let objs = objects(&s);
+        if joins {
+            assert!(objs.len() == 1 && objs[0].0 == p && vertices(&objs[0].1).len() == 3, "{first:?} {second:?} {objs:?}");
+        } else {
+            assert_eq!(objs, before, "{first:?} {second:?}");
+        }
+    }
+    // A line faces up whatever its normal (AutoCAD 2024, measured): a polyline facing up takes a
+    // line with normal 0,0,-1 from its end, square to it ("1 segments added") or straight on with
+    // an arc facing up after it ("2 segments added"), and one facing down at elevation 0 takes no
+    // line from its end, whichever way the line's normal points ("0 segments added").
+    let face_down = |s: &mut Session, h: Handle| {
+        s.doc_mut().unwrap().modify_entity(h, |e| e.common.extrusion = cadcraft_engine::geom::Vec3::new(0.0, 0.0, -1.0)).unwrap();
+    };
+    let mut s = Session::new();
+    let p = poly(&mut s, 0.0, 0.0, false);
+    let l = line(&mut s, [10.0, 0.0], [10.0, 10.0]);
+    face_down(&mut s, l);
+    assert_eq!(join(&mut s, &[p, l]), p);
+    assert_eq!(objects(&s).len(), 1);
+    let mut s = Session::new();
+    let p = poly(&mut s, 0.0, 0.0, false);
+    let l = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    face_down(&mut s, l);
+    let a = arc(&mut s, [20.0, 5.0], 5.0, 270.0, 0.0);
+    assert_eq!(join(&mut s, &[p, l, a]), p);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && vertices(&objs[0].1).len() == 4, "{objs:?}");
+    for line_down in [false, true] {
+        let mut s = Session::new();
+        let p = poly(&mut s, 0.0, 0.0, true);
+        let l = line(&mut s, [10.0, 0.0], [10.0, 10.0]);
+        if line_down {
+            face_down(&mut s, l);
+        }
+        let before = objects(&s);
+        let _ = s.execute("join", &json!({ "handles": [p.hex(), l.hex()] }));
+        assert_eq!(objects(&s), before, "line facing down {line_down}");
+    }
+    // An arc faces its normal (AutoCAD 2024, measured, with the arc from (10,0) to (15,5) round
+    // (10,5)): a polyline facing up takes no arc facing down, and one facing down at elevation 0 no
+    // arc facing up, but it takes one facing down, with the bulge and vertex AutoCAD writes (-0.414
+    // and (-15,5) in the polyline's own coordinates). At elevation 5, its world height is -5: it
+    // takes the arc facing down whose centre is at Z -5 and not one at 5.
+    for (poly_down, elevation, arc_down, arc_z, joins) in [
+        (false, 0.0, true, 0.0, false),
+        (true, 0.0, false, 0.0, false),
+        (true, 0.0, true, 0.0, true),
+        (true, 5.0, true, -5.0, true),
+        (true, 5.0, true, 5.0, false),
+    ] {
+        let mut s = Session::new();
+        let p = poly(&mut s, 0.0, elevation, poly_down);
+        let a = arc(&mut s, [10.0, 5.0], 5.0, 270.0, 0.0);
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(a, |e| {
+                if let EntityKind::Arc(o) = &mut e.kind {
+                    o.center.z = arc_z;
+                }
+            })
+            .unwrap();
+        if arc_down {
+            face_down(&mut s, a);
+        }
+        let before = objects(&s);
+        let r = s.execute("join", &json!({ "handles": [p.hex(), a.hex()] }));
+        let objs = objects(&s);
+        let case = format!("polyline down {poly_down} at {elevation}, arc down {arc_down} at {arc_z}");
+        if joins {
+            assert!(r.is_ok() && objs.len() == 1 && objs[0].0 == p, "{case}: {objs:?}");
+            let v = vertices(&objs[0].1);
+            assert!(v.len() == 3 && near(v[1].0, 10.0) && near(v[2].0, 15.0) && near(v[2].1, 5.0), "{case}: {v:?}");
+            assert!(near(v[1].4, std::f64::consts::FRAC_PI_8.tan()), "{case}: {v:?}");
+        } else {
+            assert_eq!(objs, before, "{case}");
+        }
+    }
+    // A polyline of one vertex has no segment to join: the source is the first object that has
+    // one, for the way it faces as for its properties.
+    let mut s = Session::new();
+    let dot = poly(&mut s, 50.0, 0.0, true);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(dot, |e| {
+            if let EntityKind::LwPolyline(p) = &mut e.kind {
+                p.vertices.truncate(1);
+            }
+        })
+        .unwrap();
+    let p = poly(&mut s, 0.0, 0.0, false);
+    let l = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    assert_eq!(join(&mut s, &[dot, p, l]), p);
+    assert_eq!(objects(&s).iter().map(|o| o.0).collect::<Vec<_>>(), [dot, p]);
+    // JOIN onto a line source takes a collinear line with normal 0,0,-1 (AutoCAD 2024, measured:
+    // "1 line joined to source").
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    face_down(&mut s, b);
+    assert_eq!(join(&mut s, &[a, b]), a);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && matches!(&objs[0].1, EntityKind::Line(l) if l.b.x == 20.0), "{objs:?}");
+    // Onto a line source, objects facing the other way weren't measured: the core console's JOIN
+    // takes only collinear lines onto one. An arc facing down still joins it into a new polyline,
+    // as before.
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = arc(&mut s, [10.0, 5.0], 5.0, 270.0, 0.0);
+    face_down(&mut s, b);
+    join(&mut s, &[a, b]);
+    let objs = objects(&s);
+    assert!(objs.len() == 1 && vertices(&objs[0].1).len() == 3, "{objs:?}");
+}

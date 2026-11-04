@@ -151,35 +151,50 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     let d = s.doc()?;
     // Each object JOIN can take, as the pieces it is made of: a line or an arc is one piece, an
     // open polyline its segments in order, each keeping its vertices, bulge and widths exactly.
-    let mut units: Vec<Vec<Piece>> = Vec::new();
+    // Each also with whether it faces down: an arc or a polyline whose normal points down Z
+    // (measured with 0,0,-1; a tilted one is taken the same way). A line faces up whatever its
+    // normal (AutoCAD 2024 joins one with normal 0,0,-1 to a polyline facing up, and no line to a
+    // polyline facing down; measured).
+    let mut units: Vec<(bool, Vec<Piece>)> = Vec::new();
+    let down = |e: &Entity| !matches!(e.kind, EntityKind::Line(_)) && e.common.extrusion.z < 0.0;
     for h in hs {
         let Some(e) = d.entity(*h) else { continue };
-        let piece = |ends: (Vec2, Vec2), bulge: f64, widths: Option<(f64, f64)>| Piece { owner: *h, ends, bulge, widths };
+        let piece =
+            |ends: (Vec2, Vec2), heights: (f64, f64), bulge: f64, widths: Option<(f64, f64)>| Piece { owner: *h, ends, heights, bulge, widths };
         let unit: Vec<Piece> = match &e.kind {
             // A line of no length joins as AutoCAD 2024 joins it, a repeated vertex.
-            EntityKind::Line(l) => vec![piece((l.a.xy(), l.b.xy()), 0.0, None)],
+            EntityKind::Line(l) => vec![piece((l.a.xy(), l.b.xy()), (l.a.z, l.b.z), 0.0, None)],
             EntityKind::Arc(a) => {
                 let arc = Arc::new(a.center.xy(), a.radius, a.start, a.end);
-                vec![piece((arc.start_point(), arc.end_point()), cadcraft_geom::arc_to_bulge(arc.sweep()), None)]
+                vec![piece((arc.start_point(), arc.end_point()), (a.center.z, a.center.z), cadcraft_geom::arc_to_bulge(arc.sweep()), None)]
             }
             // Repeated vertices included: AutoCAD 2024 keeps them.
-            EntityKind::LwPolyline(p) if !p.closed => p
-                .vertices
-                .windows(2)
-                .map(|w| {
-                    let widths = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (w[0].start_width, w[0].end_width) };
-                    piece((w[0].p, w[1].p), w[0].bulge, Some(widths))
-                })
-                .collect(),
+            EntityKind::LwPolyline(p) if !p.closed => {
+                // The elevation is along the polyline's normal: down Z for a mirrored one.
+                let z = if down(e) { -p.elevation } else { p.elevation };
+                p.vertices
+                    .windows(2)
+                    .map(|w| {
+                        let widths = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (w[0].start_width, w[0].end_width) };
+                        piece((w[0].p, w[1].p), (z, z), w[0].bulge, Some(widths))
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
         };
         if !unit.is_empty() {
-            units.push(unit);
+            units.push((down(e), unit));
         }
     }
-    if units.iter().map(Vec::len).sum::<usize>() < 2 {
+    if units.iter().map(|u| u.1.len()).sum::<usize>() < 2 {
         return Err(EngineError::Other("Select at least two objects to join.".into()));
     }
+    // An object facing the other way from a polyline source stays out (AutoCAD 2024, measured: one
+    // facing up takes no arc facing down, and one facing down no arc or polyline facing up). Onto a
+    // line or an arc it wasn't measured (the core console's JOIN takes only collinear lines or arcs
+    // on one circle onto those), so objects facing either way still join there.
+    let polyline_source = units.first().filter(|u| u.1.first().is_some_and(|p| p.widths.is_some())).map(|u| u.0);
+    let units: Vec<Vec<Piece>> = units.into_iter().filter(|u| polyline_source.is_none_or(|down| u.0 == down)).map(|u| u.1).collect();
     // A new polyline takes the source's properties.
     let first = units.first().and_then(|u| u.first()).map(|p| p.owner);
     let common = first.and_then(|h| d.entity(h)).map(|e| e.common.clone());
@@ -187,7 +202,7 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     let links = chain_units(units, tol);
     // One object alone joins nothing, even a polyline whose ends meet: AutoCAD 2024 leaves it open
     // ("0 segments added to polyline").
-    let closed = links.first().zip(links.last()).is_some_and(|(a, b)| a.ends.0.near(b.ends.1, tol));
+    let closed = links.first().zip(links.last()).is_some_and(|(a, b)| meet(a.start(), b.end(), tol));
     let one_object = links.first().is_some_and(|f| links.iter().all(|l| l.owner == f.owner));
     if links.len() < 2 || one_object {
         return Err(EngineError::Other("Objects are not connected.".into()));
@@ -286,9 +301,11 @@ fn arc_reach(g: &cadcraft_doc::Arc, others: &[&cadcraft_doc::Arc], tol: f64) -> 
 /// The chain JOIN builds from the first object: each next object with an end on one of the
 /// chain's ends joins whole, turned round where needed, as AutoCAD 2024 joins them, until a join
 /// closes the chain; one that the chain meets only at an inner vertex of a polyline stays out.
-/// Ends are compared at the objects' own end points, not ones worked out again from arcs.
+/// Ends are compared at the objects' own end points, not ones worked out again from arcs, and at
+/// their heights.
 fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
-    let ends = |u: &[Piece]| u.first().zip(u.last()).map(|(a, b)| (a.ends.0, b.ends.1));
+    let ends = |u: &[Piece]| u.first().zip(u.last()).map(|(a, b)| (a.start(), b.end()));
+    let near = |p, q| meet(p, q, tol);
     if units.is_empty() {
         return Vec::new();
     }
@@ -299,8 +316,8 @@ fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
     if chain.iter().all(|p| p.ends.0.near(p.ends.1, tol)) {
         return chain.into();
     }
-    while let (Some(start), Some(end)) = (chain.front().map(|p| p.ends.0), chain.back().map(|p| p.ends.1)) {
-        let meets = |u: &Vec<Piece>| ends(u).is_some_and(|(a, b)| a.near(end, tol) || b.near(end, tol) || a.near(start, tol) || b.near(start, tol));
+    while let (Some(start), Some(end)) = (chain.front().map(Piece::start), chain.back().map(Piece::end)) {
+        let meets = |u: &Vec<Piece>| ends(u).is_some_and(|(a, b)| near(a, end) || near(b, end) || near(a, start) || near(b, start));
         let Some(i) = units.iter().position(meets) else { break };
         let unit = units.remove(i);
         let Some((a, b)) = ends(&unit) else { break };
@@ -310,19 +327,19 @@ fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
         // before its start on the chain's start.
         let polyline = unit.first().is_some_and(|p| p.widths.is_some());
         let (before, turned) = if polyline {
-            if a.near(start, tol) {
+            if near(a, start) {
                 (true, true)
-            } else if a.near(end, tol) {
+            } else if near(a, end) {
                 (false, false)
             } else {
-                (b.near(start, tol), !b.near(start, tol))
+                (near(b, start), !near(b, start))
             }
-        } else if b.near(end, tol) {
+        } else if near(b, end) {
             (false, true)
-        } else if a.near(start, tol) {
+        } else if near(a, start) {
             (true, true)
         } else {
-            (!a.near(end, tol), false)
+            (!near(a, end), false)
         };
         match (before, turned) {
             (false, false) => chain.extend(unit),
@@ -331,7 +348,7 @@ fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
             (true, true) => unit.into_iter().for_each(|p| chain.push_front(p.flipped())),
         }
         // A chain that a join closes takes nothing more.
-        if chain.front().zip(chain.back()).is_some_and(|(f, l)| f.ends.0.near(l.ends.1, tol)) {
+        if chain.front().zip(chain.back()).is_some_and(|(f, l)| near(f.start(), l.end())) {
             break;
         }
     }
@@ -339,20 +356,43 @@ fn chain_units(mut units: Vec<Vec<Piece>>, tol: f64) -> Vec<Piece> {
 }
 
 /// A segment in the chain JOIN builds: the object it came from, its end points as the object has
-/// them (turned round when it runs backwards in the chain), its bulge and, for a polyline's own
-/// segment, its widths.
+/// them (turned round when it runs backwards in the chain) and their world heights (a line's own
+/// Z, an arc's centre Z, a polyline's elevation, negated for one facing down), its bulge and, for a
+/// polyline's own segment, its widths.
 #[derive(Clone, Copy)]
 struct Piece {
     owner: Handle,
     ends: (Vec2, Vec2),
+    heights: (f64, f64),
     bulge: f64,
     widths: Option<(f64, f64)>,
 }
 
 impl Piece {
     fn flipped(self) -> Self {
-        Piece { ends: (self.ends.1, self.ends.0), bulge: -self.bulge, widths: self.widths.map(|(a, b)| (b, a)), ..self }
+        Piece {
+            ends: (self.ends.1, self.ends.0),
+            heights: (self.heights.1, self.heights.0),
+            bulge: -self.bulge,
+            widths: self.widths.map(|(a, b)| (b, a)),
+            ..self
+        }
     }
+
+    fn start(&self) -> (Vec2, f64) {
+        (self.ends.0, self.heights.0)
+    }
+
+    fn end(&self) -> (Vec2, f64) {
+        (self.ends.1, self.heights.1)
+    }
+}
+
+/// Whether two ends meet: in plan and at the same height. AutoCAD 2024 leaves an end that meets
+/// another only in plan apart (measured: a line or a polyline at 0 and a line at 5, or a polyline
+/// at 5 and a line at 0, end to end in plan, stay as they are).
+fn meet(p: (Vec2, f64), q: (Vec2, f64), tol: f64) -> bool {
+    p.0.near(q.0, tol) && (p.1 - q.1).abs() < tol
 }
 
 /// The open polyline `sp` (handle `src`) with the chain's other pieces added before and after
