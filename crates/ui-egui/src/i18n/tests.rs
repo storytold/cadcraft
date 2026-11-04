@@ -41,20 +41,6 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
 }
 
 
-/// Ukrainian is the reference translation and must cover everything. Other languages fall back
-/// to English for what they don't cover yet; their gaps are reported, not enforced, so adding a
-/// command doesn't require a row in every language.
-const REQUIRED: &[&str] = &["uk"];
-const REPORTED: &[&str] = &["pl", "pt-BR", "de", "es", "cs", "ru", "fr", "zh", "it", "ko", "sv", "ar", "hu", "tr", "bs", "vi", "el"];
-
-fn check(language: &str, what: &str, missing: Vec<String>) {
-    if REQUIRED.contains(&language) {
-        assert!(missing.is_empty(), "{language}: missing {what}: {missing:?}");
-    } else if !missing.is_empty() {
-        eprintln!("{language}: {} {what} fall back to English: {missing:?}", missing.len());
-    }
-}
-
 /// A prompt with options is translated without its own "or": the command line adds the
 /// translated " or [" before the options ("Select polyline or [Multiple]").
 #[test]
