@@ -422,6 +422,10 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(100, "AcDbPlotSettings");
     w.s(1, "");
     let device = page.device.trim();
+    // AutoCAD stores the paper in its displayed orientation with rotation 0: landscape is the
+    // longer side first (#1649).
+    let (short_side, long_side) = (page.width_mm.min(page.height_mm), page.width_mm.max(page.height_mm));
+    let (paper_w, paper_h) = if page.landscape { (long_side, short_side) } else { (short_side, long_side) };
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
     w.s(4, page.paper.replace(' ', "_"));
     w.s(6, "");
@@ -430,8 +434,8 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
         (41, page.margins_mm[1]),
         (42, page.margins_mm[2]),
         (43, page.margins_mm[3]),
-        (44, page.width_mm),
-        (45, page.height_mm),
+        (44, paper_w),
+        (45, paper_h),
         (46, 0.0),
         (47, 0.0),
         (48, page.plot_window[0]),
@@ -446,7 +450,7 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(70, plot_flags);
     // Plot paper units: 1 millimetres, 0 inches (#1058).
     w.i(72, i64::from(cadcraft_render::paper::page_unit_mm(d, page) == 1.0));
-    w.i(73, i64::from(page.landscape));
+    w.i(73, 0);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
     w.i(75, if page.scale_to_fit { 0 } else { 16 });
