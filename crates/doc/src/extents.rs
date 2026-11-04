@@ -179,6 +179,13 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                     }
                 };
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
+                // XCLIP: the reference app takes the boundary's box, also where it reaches past the
+                // block or misses it (an inverted clip can show anything, so it keeps the block's).
+                if let Some(c) = ins.clip.as_ref().filter(|c| c.active() && !c.inverted)
+                    && !b.is_empty()
+                {
+                    b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
+                }
                 if ins.cols > 1 || ins.rows > 1 {
                     let off =
                         Vec2::new(ins.col_spacing * f64::from(ins.cols.saturating_sub(1)), ins.row_spacing * f64::from(ins.rows.saturating_sub(1)))
@@ -352,6 +359,7 @@ mod tests {
 
     fn text(halign: HAlign, valign: VAlign) -> Text {
         Text {
+            formula: None,
             insert: Vec3::new(0.0, 0.0, 0.0),
             align_pt: Some(Vec3::new(0.0, 0.0, 0.0)),
             height: 1.0,
@@ -371,6 +379,7 @@ mod tests {
 
     fn mtext(contents: &str, width: f64) -> crate::MText {
         crate::MText {
+            formula: None,
             insert: Vec3::new(10.0, 10.0, 0.0),
             height: 2.5,
             width,
@@ -437,6 +446,7 @@ mod tests {
     #[test]
     fn multileader_text_is_inside_its_bounds() {
         let mtext = crate::MText {
+            formula: None,
             insert: Vec3::new(25.45, 0.0, 0.0),
             height: 5.0,
             width: 0.0,
@@ -486,6 +496,7 @@ mod tests {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 }),
             )
         };

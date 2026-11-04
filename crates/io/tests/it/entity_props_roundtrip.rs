@@ -72,6 +72,7 @@ fn thickness_roundtrips_on_every_entity_that_has_one() {
     let mut d = Drawing::new_metric();
     let p = |x, y| Vec3::new(x, y, 0.0);
     let text = Text {
+        formula: None,
         insert: p(0.0, 0.0),
         align_pt: None,
         height: 2.5,
@@ -187,6 +188,7 @@ fn xref_block_flag_and_path_roundtrip() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let h = add(&mut d, 0.0, EntityKind::Insert(ins));
 

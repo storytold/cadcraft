@@ -189,6 +189,7 @@ fn inserts_of_missing_or_empty_blocks_do_not_stretch_extents() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     };
     d.blocks.insert("Empty".into(), std::sync::Arc::new(Block::new("Empty")));
@@ -211,6 +212,7 @@ fn visible_attributes_of_a_missing_block_still_count() {
     let attrib = |invisible: bool| Attrib {
         tag: "TAG".into(),
         text: Text {
+            formula: None,
             insert: Vec3::new(1000.0, 1000.0, 0.0),
             align_pt: None,
             height: 10.0,
@@ -242,6 +244,7 @@ fn visible_attributes_of_a_missing_block_still_count() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
     };
@@ -285,6 +288,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     ));
     b.entities.push(Entity::new(Handle(2), line((0.0, 0.0), (1.0, 1.0))));
@@ -303,6 +307,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
         .unwrap();
@@ -420,6 +425,7 @@ fn plain_insert(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -428,6 +434,7 @@ fn plain_attrib(tag: &str) -> Attrib {
     Attrib {
         tag: tag.into(),
         text: Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -568,6 +575,7 @@ fn attdef_in_block_is_ignored_in_insert_extents() {
         EntityKind::AttDef(Attrib {
             tag: "TAG".into(),
             text: Text {
+                formula: None,
                 insert: Vec3::new(5000.0, 5000.0, 0.0),
                 align_pt: None,
                 height: 1.0,
@@ -593,6 +601,7 @@ fn attdef_in_block_is_ignored_in_insert_extents() {
 
 fn text_kind(value: &str) -> EntityKind {
     EntityKind::Text(Text {
+        formula: None,
         insert: Vec3::new(10.0, 10.0, 0.0),
         align_pt: None,
         height: 2.0,
@@ -608,6 +617,7 @@ fn text_kind(value: &str) -> EntityKind {
 
 fn mtext_kind(contents: &str) -> EntityKind {
     EntityKind::MText(MText {
+        formula: None,
         insert: Vec3::new(10.0, 10.0, 0.0),
         height: 2.0,
         width: 0.0,

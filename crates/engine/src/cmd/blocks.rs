@@ -25,6 +25,7 @@ mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
 mod wblock;
+mod xclip;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -92,6 +93,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
     .chain(refedit::specs())
+    .chain(xclip::specs())
     .chain(bedit::specs())
     .collect()
 }
@@ -228,6 +230,7 @@ fn insert_entity(blk: &Block, at: Vec2, scale: Vec3, rotation: f64, base: Option
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     if let Some(b) = base {
         let landed = ins.transform(blk.base.xy()).apply(b);
@@ -402,6 +405,7 @@ fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, he
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
+            formula: None,
             insert: v3(at),
             align_pt: None,
             height,

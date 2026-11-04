@@ -101,6 +101,7 @@ fn leader_arrows_use_their_style_dimscale() {
 
 fn text(x: f64, value: &str) -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(x, 0.0, 0.0),
         align_pt: None,
         height: 1.0,
@@ -171,6 +172,7 @@ fn attributes_draw_with_their_own_properties() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let common = Common { color: Color::Index(1), lineweight: Lineweight::Mm100(35), ..on("INS") };
     d.add(&Space::Model, common, EntityKind::Insert(ins)).unwrap();

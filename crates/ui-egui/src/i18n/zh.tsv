@@ -1381,6 +1381,8 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Text Formulas	文字公式
+	Update Fields	更新字段
 	Find All	查找全部
 	Find what:	查找内容：
 	Match case	区分大小写
@@ -1469,3 +1471,6 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	Clip Xref	剪裁外部参照
+	Xref	外部参照
+	Xref Clip Frame	外部参照剪裁边框

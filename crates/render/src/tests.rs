@@ -48,6 +48,7 @@ fn text_produces_strokes() {
         &Space::Model,
         Common::default(),
         EntityKind::Text(cadcraft_doc::Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -256,6 +257,7 @@ fn text_doc(style_font: &str, value: &str) -> Drawing {
         &Space::Model,
         Common::default(),
         EntityKind::Text(cadcraft_doc::Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -330,6 +332,7 @@ fn truetype_mtext_and_dimension_text() {
         &Space::Model,
         Common::default(),
         EntityKind::MText(cadcraft_doc::MText {
+            formula: None,
             insert: Vec3::ZERO,
             height: 1.0,
             width: 0.0,
@@ -634,6 +637,7 @@ fn hatch_in_a_squashed_block_keeps_lines_that_show() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // One pixel = 1 unit: 0.125 spacing × 100 along x is far more than a pixel.
@@ -678,6 +682,7 @@ fn insert_of(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -766,6 +771,7 @@ fn attrib(tag: &str) -> cadcraft_doc::Attrib {
     cadcraft_doc::Attrib {
         tag: tag.into(),
         text: cadcraft_doc::Text {
+            formula: None,
             insert: Vec3::new(1.0, 1.0, 0.0),
             align_pt: None,
             height: 1.0,
@@ -863,6 +869,7 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 fn mtext_exact_spacing_ignores_taller_lines() {
     // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {
+        formula: None,
         insert: Vec3::ZERO,
         height: 1.0,
         width: 10.0,

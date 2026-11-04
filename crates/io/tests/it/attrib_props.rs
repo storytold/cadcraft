@@ -10,6 +10,7 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn text(x: f64, value: &str) -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(x, 0.0, 0.0),
         align_pt: None,
         height: 1.0,
@@ -66,6 +67,7 @@ fn drawing(attribs: Vec<Attrib>) -> (Drawing, Handle) {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let h = d.add(&Space::Model, Common { layer: "INS".into(), ..Common::default() }, EntityKind::Insert(ins)).expect("add");
     (d, h)
