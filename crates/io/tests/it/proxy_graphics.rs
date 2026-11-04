@@ -148,3 +148,25 @@ fn a_proxy_is_written_back_unchanged_and_draws_again() {
     let names: Vec<&str> = again.layers.iter().map(|l| l.name.as_str()).collect();
     assert_eq!(names, ["0", "BALLOONS", "Defpoints"]);
 }
+
+/// A proxy text takes the first style on its font. With ISO and then Standard both on
+/// isocp.shx, it is ISO, and stays ISO after a save: CADCraft's own Standard, which the file's
+/// replaces, would otherwise come first in the saved STYLE table.
+#[test]
+fn a_proxy_text_keeps_its_style_after_a_save() {
+    let iso = "0\nSTYLE\n5\n12\n2\nISO\n3\nisocp.shx\n";
+    let src = file().replacen(iso, &format!("{iso}0\nSTYLE\n5\n13\n2\nStandard\n3\nisocp.shx\n"), 1);
+    let style = |d: &cadcraft_doc::Drawing| {
+        d.model.iter().find_map(|e| match &e.kind {
+            EntityKind::Unknown(u) => u.graphics.iter().find_map(|g| match &g.kind {
+                EntityKind::Text(t) => Some(t.style.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+    };
+    let d = read_dxf(src.as_bytes()).expect("read");
+    assert_eq!(style(&d).as_deref(), Some("ISO"));
+    let again = read_dxf(write_dxf(&d).as_bytes()).expect("reopen");
+    assert_eq!(style(&again).as_deref(), Some("ISO"), "after a save");
+}

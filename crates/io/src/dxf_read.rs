@@ -147,6 +147,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     // writes them unchanged: the tables keep the file's order, with what CADCraft adds after it.
     keep_file_order(&mut d.layers, |l| &l.name, &rx.proxy_tables.layers, &[]);
     keep_file_order(&mut d.linetypes, |l| &l.name, &rx.proxy_tables.linetypes, &["ByBlock", "ByLayer"]);
+    // A proxy text takes the first style on its font, so the styles keep the file's order too.
+    let styles: Vec<String> = rx.proxy_tables.styles.iter().map(|(n, _)| n.clone()).collect();
+    keep_file_order(&mut d.text_styles, |s| &s.name, &styles, &[]);
     // A file CADCraft wrote names its own next handle (#495): its table records and objects
     // are numbered above it and rebuilt on save, so following $HANDSEED would drift every save.
     let own_seed = objs.xrecord_text(crate::dxf_ext::HANDSEED_KEY).and_then(|t| Handle::parse_hex(t.trim()));
