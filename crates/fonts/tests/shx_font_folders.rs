@@ -20,6 +20,9 @@ fn shx_fonts_in_the_users_font_folders_are_found() {
     assert!(shx::find("cadcraft-top.shx").is_some_and(|f| f.has_shape(65)));
     assert!(shx::find("CADCRAFT-DEEP").is_some(), "in a folder under the font folder");
     assert!(ttf::available("cadcraft-deep.shx"));
+    // Font lists name them.
+    let names = shx::installed();
+    assert!(names.iter().any(|n| n == "cadcraft-top") && names.iter().any(|n| n == "cadcraft-deep"), "{names:?}");
 
     // A file added later is found after Look for Fonts Again.
     std::fs::write(dir.join("cadcraft-later.shx"), &bytes).unwrap();
@@ -28,5 +31,6 @@ fn shx_fonts_in_the_users_font_folders_are_found() {
 
     ttf::set_font_dirs::<&str>(&[]);
     assert!(shx::find("cadcraft-top.shx").is_none());
+    assert!(!shx::installed().iter().any(|n| n.starts_with("cadcraft-")));
     let _ = std::fs::remove_dir_all(&dir);
 }
