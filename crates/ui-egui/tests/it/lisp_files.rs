@@ -15,6 +15,17 @@ fn a_dropped_lisp_file_loads_and_defines_its_commands() {
     assert_eq!(app.session.log.last().map(String::as_str), Some("hi from lisp"));
 }
 
+/// A `.lsp` file the reader rejects (here an unclosed form) doesn't load: the error is returned,
+/// so a page that sent the file is told, and shown on the command line.
+#[test]
+fn a_lisp_file_the_reader_rejects_returns_the_error() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.open_bytes("Broken.lsp", b"(defun c:broken ()\n  (princ \"x\")\n");
+    assert!(r.as_ref().is_err_and(|e| e.contains("malformed list")), "{r:?}");
+    assert!(app.session.log.iter().any(|l| l.contains("malformed list")), "{:?}", app.session.log);
+    assert!(!app.session.log.iter().any(|l| l.contains("successfully loaded")), "{:?}", app.session.log);
+}
+
 #[test]
 fn a_long_routine_runs_across_frames() {
     let mut app = CadApp::new(Session::new(), Services::default());
