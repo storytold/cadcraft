@@ -52,15 +52,11 @@ fn collect(d: &Drawing, handles: &[Handle]) -> Geo {
                     g.curves.push((GeomRef::whole(h), ga.center, a.radius));
                 }
             }
-            EntityKind::Circle(c) => {
-                if c.center.is_finite() && c.radius.is_finite() {
-                    g.curves.push((GeomRef::whole(h), c.center.xy(), c.radius));
-                }
+            EntityKind::Circle(c) if c.center.is_finite() && c.radius.is_finite() => {
+                g.curves.push((GeomRef::whole(h), c.center.xy(), c.radius));
             }
-            EntityKind::Point(p) => {
-                if p.p.is_finite() {
-                    g.points.push((GeomRef::whole(h), p.p.xy()));
-                }
+            EntityKind::Point(p) if p.p.is_finite() => {
+                g.points.push((GeomRef::whole(h), p.p.xy()));
             }
             EntityKind::LwPolyline(p) => {
                 let n = p.vertices.len();
@@ -102,7 +98,11 @@ fn ang_between(d1: Vec2, d2: Vec2) -> f64 {
 pub fn infer(d: &Drawing, handles: &[Handle], o: &InferOptions) -> Vec<Constraint> {
     let tol = if o.distance_tolerance.is_finite() { o.distance_tolerance.clamp(0.0, 1e9) } else { 0.05 };
     let atol = if o.angle_tolerance.is_finite() { o.angle_tolerance.clamp(0.0, 45.0).to_radians() } else { 1f64.to_radians() };
-    let allow = |k: ConstraintKind| o.types.is_empty() || o.types.iter().any(|t| t.eq_ignore_ascii_case(k.name()));
+    // Resolve the allowed type names into a set once, so membership is O(1) per candidate instead
+    // of re-scanning the whole (attacker-controllable) `o.types` list for every geometric match
+    // (CWE-407). Empty `o.types` means "all types".
+    let allowed: std::collections::HashSet<String> = o.types.iter().map(|t| t.to_ascii_lowercase()).collect();
+    let allow = |k: ConstraintKind| allowed.is_empty() || allowed.contains(&k.name().to_ascii_lowercase());
     let g = collect(d, handles);
     let mut out: Vec<Constraint> = Vec::new();
     let mut push = |kind: ConstraintKind, refs: Vec<GeomRef>| {
