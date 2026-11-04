@@ -282,6 +282,31 @@ fn imageattach_at_the_command_line_places_the_image() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A file given at the prompt is read, even when pixels handed over with `data` are kept under
+/// the same name: those may not be the file's.
+#[test]
+fn imageattach_reads_the_chosen_file_not_pixels_kept_under_its_name() {
+    use cadcraft_engine::Input;
+    hooks();
+    let dir = folder("cached");
+    let file = dir.join("photo.png");
+    let path = file.to_string_lossy().into_owned();
+    let mut s = Session::new();
+    // 4 x 2 pixels handed over under the file's name; the file itself is missing.
+    s.execute("imageattach", &json!({ "path": path, "data": base64_encode(&png()) })).unwrap();
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(path.clone())).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("file not found")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Enter image file name"), "{}", s.prompt_text());
+    // The file, 2 x 2 pixels: its own size is what is placed.
+    let square: Vec<u8> = (0..4u8).flat_map(|i| [i * 60, 0, 0, 255]).collect();
+    std::fs::write(&file, cadcraft_io::raster::encode_png(&Raster::new(2, 2, square).unwrap()).unwrap()).unwrap();
+    s.input(Input::Text(path)).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Height: 1.000000")), "{:?}", s.log);
+    s.cancel();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A file given at the prompt is that file or none: a missing one is not replaced by a file of
 /// the same name beside the drawing. A relative name is taken from the drawing's folder.
 #[test]

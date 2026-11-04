@@ -327,10 +327,11 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
     Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
 }
 
-/// The pixels of the image file at `path`: the ones already loaded for it, else read and decoded
-/// (a path the user just `chosen` is used as given, see [`read_file`]).
+/// The pixels of the image file at `path`: the ones already loaded for it, else read and decoded.
+/// A path the user just `chosen` is always read (as given, see [`read_file`]): pixels kept under
+/// that name may have come with the JSON form's `data`, not from that file.
 fn file_pixels(s: &Session, path: &str, chosen: bool) -> Result<Arc<Raster>> {
-    if let Some(loaded) = s.doc()?.rasters.get(path) {
+    if !chosen && let Some(loaded) = s.doc()?.rasters.get(path) {
         return Ok(loaded.clone());
     }
     let host = s.state()?.path.clone();
