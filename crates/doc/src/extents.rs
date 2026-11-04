@@ -179,12 +179,12 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                     }
                 };
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
-                // XCLIP: what shows is within the boundary (an inverted clip can show anything).
+                // XCLIP: the reference app takes the boundary's box, also where it reaches past the
+                // block or misses it (an inverted clip can show anything, so it keeps the block's).
                 if let Some(c) = ins.clip.as_ref().filter(|c| c.active() && !c.inverted)
                     && !b.is_empty()
                 {
-                    let cb = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
-                    b = if b.intersects(&cb) { Bounds2 { min: b.min.max(cb.min), max: b.max.min(cb.max) } } else { Bounds2::EMPTY };
+                    b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
                 }
                 if ins.cols > 1 || ins.rows > 1 {
                     let off =
@@ -493,6 +493,7 @@ mod tests {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 }),
             )
         };

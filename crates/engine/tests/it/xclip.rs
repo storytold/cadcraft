@@ -81,6 +81,23 @@ fn rectangular_clip_cuts_only_that_reference() {
 }
 
 #[test]
+fn extents_are_the_boundary_box_as_in_the_reference_app() {
+    let (mut s, r1, _) = setup();
+    let bounds = |s: &Session| {
+        let d = s.doc().unwrap();
+        cadcraft_engine::doc::entity_bounds(d, d.entity(Handle::parse_hex(&r1).unwrap()).unwrap(), 0)
+    };
+    // A boundary reaching past the block (0..100 x -50..50): its own box, not the overlap.
+    s.execute("xclip", &json!({ "handle": r1, "rectangle": [[50, -20], [150, 30]] })).unwrap();
+    let b = bounds(&s);
+    assert!((b.min - Vec2::new(50.0, -20.0)).length() < 1e-9 && (b.max - Vec2::new(150.0, 30.0)).length() < 1e-9, "{b:?}");
+    // One that misses the block entirely: still its box.
+    s.execute("xclip", &json!({ "handle": r1, "rectangle": [[200, 200], [300, 300]] })).unwrap();
+    let b = bounds(&s);
+    assert!((b.min - Vec2::new(200.0, 200.0)).length() < 1e-9 && (b.max - Vec2::new(300.0, 300.0)).length() < 1e-9, "{b:?}");
+}
+
+#[test]
 fn rotated_and_scaled_reference_gets_a_polygon_in_block_coordinates() {
     let (mut s, _, r2) = setup();
     // r2: scale 2, rotated 90 degrees at (1000, 0): the block's x axis points up.
@@ -189,6 +206,14 @@ fn typed_xclip_follows_the_prompts() {
     s.input(Input::Enter).unwrap();
     s.cmdline("d").unwrap();
     assert!(clip(&s, &r1).is_none() && clip(&s, &r2).is_none());
+    // Delete with no boundary left says so and asks again.
+    s.start("xclip").unwrap();
+    s.input(pick(&r1)).unwrap();
+    s.input(Input::Enter).unwrap();
+    s.cmdline("d").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("No clip boundary found.")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Enter clipping option"), "{}", s.prompt_text());
+    s.input(Input::Cancel).unwrap();
     // XCLIPFRAME typed.
     s.cmdline("xclipframe").unwrap();
     s.cmdline("1").unwrap();

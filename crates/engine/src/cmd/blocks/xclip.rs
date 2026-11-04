@@ -280,6 +280,15 @@ impl XclipM {
         }
     }
 
+    /// Delete: as the reference app, with nothing to delete it says so and asks again.
+    fn delete(&mut self, s: &mut Session) -> Result<Step> {
+        if !self.any_clipped(s) {
+            s.echo("No clip boundary found.");
+            return Ok(Step::Continue);
+        }
+        self.apply(s, json!({ "option": "delete" }))
+    }
+
     fn any_clipped(&self, s: &Session) -> bool {
         self.refs.iter().any(|h| clip_of(s, *h).is_some())
     }
@@ -352,7 +361,7 @@ impl Interactive for XclipM {
                         s.echo("Clip depth does not apply to a 2D drawing: front and back clipping planes are ignored.");
                         Ok(Step::Done)
                     }
-                    Some(k) if k.starts_with('d') => self.apply(s, json!({ "option": "delete" })),
+                    Some(k) if k.starts_with('d') => self.delete(s),
                     Some(k) if k.starts_with('p') || k.starts_with('g') => self.apply(s, json!({ "option": "polyline" })),
                     Some(k) if k.starts_with('n') => {
                         self.stage = if self.any_clipped(s) { Stage::DeleteOld } else { Stage::Boundary };

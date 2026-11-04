@@ -103,6 +103,7 @@ fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
         rows: 1_000,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
     let viewport = |center: Vec3, view_center: Vec2, frozen_layers| Viewport {

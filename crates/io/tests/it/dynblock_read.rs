@@ -462,6 +462,7 @@ fn door_reference(src: &str) -> (cadcraft_doc::Drawing, Handle) {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(ins)).unwrap();
     (d, r)
