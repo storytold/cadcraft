@@ -156,17 +156,9 @@ pub fn is_legacy_text(text: &str, hint: Option<&str>) -> bool {
 
 /// Return a human-readable summary of the matched legacy encoding family.
 pub fn transcode_summary(hint: Option<&str>) -> &'static str {
-    match hint {
-        Some(h) => {
-            let lower = h.to_ascii_lowercase();
-            if lower.contains("vni") {
-                "VNI Windows"
-            } else if lower.contains(".vn") || lower.contains("vnsimli") {
-                "TCVN3"
-            } else {
-                "legacy 8-bit"
-            }
-        }
+    match hint.and_then(vietnamese::is_vietnamese_font) {
+        Some(vietnamese::VietnameseEncoding::Vni) => "VNI Windows",
+        Some(vietnamese::VietnameseEncoding::Tcvn3) | Some(vietnamese::VietnameseEncoding::Tcvn3H) => "TCVN3",
         None => "legacy 8-bit",
     }
 }
@@ -264,8 +256,11 @@ mod tests {
         assert!(!is_legacy_text("Hello", None));
 
         assert_eq!(transcode_summary(Some(".VnTime")), "TCVN3");
+        assert_eq!(transcode_summary(Some(".VnTimeH")), "TCVN3");
+        assert_eq!(transcode_summary(Some("VnArial")), "TCVN3");
         assert_eq!(transcode_summary(Some("vnsimli.shx")), "TCVN3");
         assert_eq!(transcode_summary(Some("VNI-Helve")), "VNI Windows");
+        assert_eq!(transcode_summary(Some("VHELVCN.TTF")), "VNI Windows");
         assert_eq!(transcode_summary(Some("Standard")), "legacy 8-bit");
         assert_eq!(transcode_summary(None), "legacy 8-bit");
     }
