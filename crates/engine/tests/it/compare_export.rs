@@ -316,6 +316,7 @@ fn a_named_block_whose_dimension_draws_another_block_shows_the_other_definition(
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     let blocks = |dim_end: f64, first: u64| {
         let mut part = Block::new("PART");
@@ -402,6 +403,7 @@ fn a_named_block_whose_dimension_block_has_another_generated_name_keeps_this_dra
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            insertion_point: Vec3::ZERO,
         };
         let mut part = Block::new("PART");
         part.entities.push(Entity::new(Handle(first), EntityKind::Dimension(dim)));
@@ -516,6 +518,7 @@ fn a_dimension_block_copy_keeps_its_geometry_when_the_snapshot_is_saved() {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     let mut s = Session::new();
     let mut drawn = Block::new("*D1");
@@ -835,6 +838,7 @@ fn a_dimension_whose_block_is_past_the_nesting_limit_is_drawn_again() {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     for k in 1..=MAX_BLOCK_DEPTH {
         let mut b = Block::new(&format!("B{k}"));

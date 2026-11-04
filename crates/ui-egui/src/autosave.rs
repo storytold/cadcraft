@@ -32,6 +32,18 @@ pub fn load_prefs(json: &str) {
     }
 }
 
+/// What the autosave failure notice says (see [`failure_notice`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutosaveNotice {
+    /// The drawings it has told the user about. Another drawing's failure is news, even after
+    /// the notice was dismissed.
+    pub reported: std::collections::BTreeSet<u64>,
+    pub message: String,
+    /// The user closed it. The failure stays recorded so the notice doesn't come back on every
+    /// retry; it does for the next failure after a write has worked.
+    pub dismissed: bool,
+}
+
 /// What the GPU error notice says (see [`gpu_notice`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpuNotice {
@@ -90,6 +102,40 @@ impl CadApp {
         if let Some(wait) = self.autosave.as_mut().and_then(|s| s.tick(&self.session)) {
             _ctx.request_repaint_after(wait);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // A write that fails while the app is idle must still reach the notice.
+            if self.autosave.as_ref().is_some_and(cadcraft_engine::autosave::Autosaver::results_pending) {
+                _ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            self.note_autosave_failure(_ctx);
+        }
+    }
+
+    /// Keep [`Self::autosave_notice`] in step with autosave: a new failure is said once at the
+    /// command line and shown until it is dismissed or a write works.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn note_autosave_failure(&mut self, ctx: &egui::Context) {
+        let failures: Vec<(u64, String)> = self.autosave.iter().flat_map(|s| s.failures()).map(|(uid, why)| (uid, why.to_string())).collect();
+        if failures.is_empty() {
+            self.autosave_notice = None;
+            return;
+        }
+        let notice =
+            self.autosave_notice.get_or_insert_with(|| AutosaveNotice { reported: Default::default(), message: String::new(), dismissed: false });
+        notice.reported.retain(|uid| failures.iter().any(|(failed, _)| failed == uid));
+        for (uid, message) in &failures {
+            if notice.reported.insert(*uid) {
+                self.session.echo(format!("Autosave failed: {message}"));
+                notice.message.clone_from(message);
+                notice.dismissed = false;
+                ctx.request_repaint();
+            }
+        }
+        // The drawing it names recovered while another still fails.
+        if let Some((_, message)) = failures.first().filter(|_| !failures.iter().any(|(_, m)| *m == notice.message)) {
+            notice.message.clone_from(message);
+        }
     }
 
     /// Every frame: after a GPU error or device loss, autosave unsaved drawings at once (the
@@ -107,8 +153,9 @@ impl CadApp {
 
     /// The app closes normally: this app's autosave files are not needed any more.
     pub fn shutdown_autosave(&mut self) {
+        // After the interface gave up, the recovery copies are all that's left of the work.
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(s) = &mut self.autosave {
+        if let Some(s) = self.autosave.as_mut().filter(|_| !self.fault.broken) {
             s.shutdown();
         }
     }
@@ -116,7 +163,7 @@ impl CadApp {
 
 /// `secs` since 1970 as `YYYY-MM-DD HH:MM` (UTC). Past chrono's year 262143 range the proleptic
 /// Gregorian date is kept via the 400-year cycle rather than falling back to the epoch.
-fn utc(secs: u64) -> String {
+pub(crate) fn utc(secs: u64) -> String {
     let (h, m) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
     let (y, mo, d) = civil_from_days(secs / 86_400);
     // `{y:04}` rather than `%Y`, which writes a `+` before years past 9999.
@@ -239,6 +286,37 @@ pub fn gpu_notice(app: &mut CadApp, ctx: &egui::Context) {
         });
     if dismiss {
         app.gpu_notice = None;
+    }
+}
+
+/// The notice that autosave isn't working, so unsaved changes have no recovery copy. It doesn't
+/// block the drawing: the user needs to be able to save.
+pub fn failure_notice(app: &mut CadApp, ctx: &egui::Context) {
+    let Some(n) = app.autosave_notice.as_ref().filter(|n| !n.dismissed) else { return };
+    let t = Tokens::get();
+    let mut dismiss = false;
+    egui::Window::new("Autosave failed")
+        .id(egui::Id::unique("cc_autosave_notice"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))
+        .show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label("CADCraft could not write a recovery copy, so recent changes would be lost if the app stopped now.");
+            ui.label(RichText::new("Save your work. Autosave tries again after the SAVETIME interval; its folder is in Options.").strong());
+            ui.add_space(4.0);
+            ui.collapsing("Details", |ui| {
+                ui.label(RichText::new(&n.message).color(t.text_dim).monospace());
+            });
+            // A row just as tall as the button (a plain right-to-left layout takes the rest).
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Dismiss").clicked() {
+                    dismiss = true;
+                }
+            });
+        });
+    if dismiss && let Some(n) = &mut app.autosave_notice {
+        n.dismissed = true;
     }
 }
 
