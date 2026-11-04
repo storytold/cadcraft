@@ -21,6 +21,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod bidi_edit;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
@@ -33,6 +34,7 @@ pub mod credits;
 pub mod dialogs;
 pub mod dimstyles;
 pub mod docking;
+pub mod editor_glyphs;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
