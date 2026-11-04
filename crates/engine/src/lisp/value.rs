@@ -343,18 +343,30 @@ pub fn eq(a: &Value, b: &Value) -> bool {
 
 /// `equal`: the same structure, numbers within `fuzz`.
 pub fn equal(a: &Value, b: &Value, fuzz: f64) -> bool {
-    equal_depth(a, b, fuzz, 0)
+    // A shared cons DAG can expand into exponentially many node visits when compared as a tree.
+    // Bound the total comparisons so `equal` on adversarial shared structure cannot monopolise the
+    // thread (CWE-407); exhausting the budget reports "not equal" rather than looping.
+    let mut budget: u64 = EQUAL_BUDGET;
+    equal_depth(a, b, fuzz, 0, &mut budget)
 }
 
-fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize) -> bool {
-    if depth > MAX_DEPTH {
+/// Largest number of node comparisons one `equal` call may perform.
+const EQUAL_BUDGET: u64 = 50_000_000;
+
+/// Compare nested values within depth and node-work limits, returning false when either limit is reached.
+fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize, budget: &mut u64) -> bool {
+    if depth > MAX_DEPTH || *budget == 0 {
         return false;
     }
+    *budget -= 1;
     let (mut a, mut b) = (a.clone(), b.clone());
     loop {
+        if *budget == 0 {
+            return false;
+        }
         match (&a, &b) {
             (Value::Cons(x), Value::Cons(y)) => {
-                if !equal_depth(&x.car, &y.car, fuzz, depth + 1) {
+                if !equal_depth(&x.car, &y.car, fuzz, depth + 1, budget) {
                     return false;
                 }
                 let (na, nb) = (x.cdr.clone(), y.cdr.clone());
@@ -398,16 +410,20 @@ pub fn real_text(r: f64) -> String {
     if r == 0.0 {
         return "0.0".into();
     }
-    let exp = r.abs().log10().floor() as i32;
+    // Round to six significant digits first so the exponent already includes any carry
+    // (999999.5 -> 1.00000e6) and subnormals never divide by an underflowed power of ten.
+    let sci = format!("{:.5e}", r.abs());
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
     // As C's %g with six digits: exponent form outside 1e-5 ..< 1e6.
     if !(-5..6).contains(&exp) {
         // Exponent form: d.ddddde+NNN
-        let m = r / 10f64.powi(exp);
-        let mut s = trim_fraction(&format!("{m:.5}"));
+        let mut s = trim_fraction(mantissa);
         if !s.contains('.') {
             s.push_str(".0");
         }
-        return format!("{s}e{}{:03}", if exp < 0 { '-' } else { '+' }, exp.abs());
+        let sign = if r < 0.0 { "-" } else { "" };
+        return format!("{sign}{s}e{}{:03}", if exp < 0 { '-' } else { '+' }, exp.abs());
     }
     let decimals = (5 - exp).max(0) as usize;
     let mut s = trim_fraction(&format!("{r:.decimals$}"));

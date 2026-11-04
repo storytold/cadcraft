@@ -19,11 +19,13 @@ mod spline_fit;
 mod vec;
 
 pub use bounds::Bounds2;
-pub use curve::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, shoelace};
+pub use curve::{
+    Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, polygon_centroid, shoelace,
+};
 pub use fillet::{CornerFit, TanCurve, tangent_circles};
 pub use intersect::{circle_circle, intersect_ext, intersect_segments, line_circle, line_line, line_line_infinite};
 pub use mat::{Mat3, Mat4};
-pub use spline::Spline;
+pub use spline::{MAX_DEGREE as MAX_SPLINE_DEGREE, Spline};
 pub use spline_fit::{FitOptions, KnotParam};
 pub use vec::{Vec2, Vec3};
 

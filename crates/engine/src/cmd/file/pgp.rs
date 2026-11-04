@@ -12,8 +12,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use serde_json::{Value, json};
 
+use super::super::always;
 use super::super::helpers::support_text;
-use super::*;
+use super::{CommandSpec, Result, Session, bad, bool_or, find_command};
 
 /// Most user aliases held.
 pub const MAX_ALIASES: usize = 10_000;
@@ -43,13 +44,13 @@ pub(crate) fn user_alias(name: &str) -> Option<String> {
 }
 
 /// The command id `target` names (`*LINE`, `_.line`, `-LAYER`…), if there is such a command.
-fn command_id(target: &str) -> Option<String> {
+pub fn command_id(target: &str) -> Option<String> {
     let t = target.trim().trim_start_matches('*').trim().trim_start_matches(['_', '.']).to_ascii_lowercase();
     find_command(&t).map(|c| c.id.to_string())
 }
 
 /// Whether `a` can be typed as an alias: one word of printable characters, not a command name.
-fn alias_name(a: &str) -> std::result::Result<String, String> {
+pub fn alias_name(a: &str) -> std::result::Result<String, String> {
     let a = a.trim();
     if a.is_empty() || a.chars().count() > MAX_ALIAS_CHARS || a.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\'' || c == '{') {
         return Err(format!("`{a}` can't be an alias"));
@@ -193,6 +194,7 @@ fn run_reinit(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("aliasedit", "Command Aliases", run_aliasedit)
+            .menu(&["Tools", "Customize", "Edit Command Aliases (PGP)..."])
             .params("{file?: path to a .pgp alias file | text?: its contents, set?: {alias: command}, remove?: [alias], clear?: bool} → {aliases, file, loaded, warnings}")
             .enabled(always)
             .noundo(),
