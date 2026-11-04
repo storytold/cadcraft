@@ -22,7 +22,7 @@ pub(super) fn draw_jogged_radius(config: &DimConfig<'_>, g: &mut DimGeometry, te
         let r = center.dist(tip);
         let j = d.marks.jogged.clone().unwrap_or_default();
         let (o, jp) = (j.center.xy(), j.jog.xy());
-        g.mtext = linear_text(r, d, st, "R");
+        g.mtext = linear_text(r, d, st, "R", config.hint);
         // A NaN or infinite radius leaves no line to draw (and NaN is no bound for `clamp`).
         if !r.is_finite() {
             break 'jogged;
@@ -73,7 +73,7 @@ pub(super) fn draw_radius_or_diameter(config: &DimConfig<'_>, g: &mut DimGeometr
     let radius = matches!(d.kind, DimKind::Radius);
     let (center, r) = if radius { (a, a.dist(b)) } else { (a.mid(b), a.dist(b) / 2.0) };
     let meas = if radius { r } else { 2.0 * r };
-    g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" });
+    g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" }, config.hint);
     g.measurement = meas;
     let (tw, tht) = measure(&g.mtext);
     let u = (b - center).normalized();
@@ -180,7 +180,7 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
     let azin = (st.angular_zero_suppression & 3) * 4;
     let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
     // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
-    g.mtext = inspected(apply_override(&txt, d), d);
+    g.mtext = inspected(apply_override(&txt, d, st, config.hint), d, config.hint);
     let mut pts = Vec::new();
     arc.tessellate(r * 1e-3, &mut pts);
     g.dim(pts);
@@ -224,7 +224,7 @@ pub(super) fn draw_ordinate(config: &DimConfig<'_>, g: &mut DimGeometry, text_an
     let leader_end = d.p14.xy();
     let origin = d.defpt.xy();
     let meas = if x_type { (feature.x - origin.x).abs() } else { (feature.y - origin.y).abs() };
-    g.mtext = linear_text(meas, d, st, "");
+    g.mtext = linear_text(meas, d, st, "", config.hint);
     g.measurement = meas;
     let (tw, _) = measure(&g.mtext);
     g.dim(vec![feature, leader_end]);
@@ -257,7 +257,7 @@ pub(super) fn draw_arc_length(config: &DimConfig<'_>, g: &mut DimGeometry, text_
     let arc = Arc::new(c, c.dist(d.defpt.xy()).max(1e-9), c.angle_to(d.p13.xy()), c.angle_to(d.p14.xy()));
     let meas = r * arc.sweep();
     // DIMARCSYM: the arc symbol before the text (0), over it (1) or none (2).
-    g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" });
+    g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" }, config.hint);
     g.measurement = meas;
     let mut pts = Vec::new();
     arc.tessellate(arc.radius * 1e-3, &mut pts);

@@ -126,7 +126,9 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
         if !(height.is_finite() && height > 0.0) {
             continue;
         }
-        let font = crate::style_font(&ts);
+        let style_name = el.style.as_deref().unwrap_or("");
+        let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, style_name]);
+        let font = crate::style_font_with_hint(&ts, hint);
         let params = TextParams {
             width_factor: if ts.width_factor.is_finite() && ts.width_factor > 0.0 { ts.width_factor } else { 1.0 },
             oblique: if ts.oblique.is_finite() { ts.oblique } else { 0.0 },
@@ -134,7 +136,8 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
             upside_down: ts.upside_down,
             ..TextParams::new(Vec2::ZERO, height)
         };
-        let (local, _) = cadcraft_fonts::place(&font, text, &params);
+        let transcoded = cadcraft_fonts::legacy_encoding::transcode(text, hint);
+        let (local, _) = cadcraft_fonts::place(&font, &transcoded, &params);
         out.push(Element {
             at,
             local,
