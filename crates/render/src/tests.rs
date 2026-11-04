@@ -1233,6 +1233,46 @@ fn a_huge_user_arrowhead_is_refused() {
     assert!(t.elapsed().as_secs() < 2);
 }
 
+/// CodeRabbit on #2321: a wide polyline or a solid hatch whose arcs are nearly closed circles on
+/// short chords passed the vertex count check, then sampled each arc into thousands of points
+/// before the budget was looked at again. Arcs are flattened to a fixed number of pieces first:
+/// the arrowhead is drawn, quickly, from a bounded number of points.
+#[test]
+fn a_user_arrowhead_of_nearly_closed_arcs_stays_within_its_budget() {
+    use cadcraft_doc::{Block, Entity, EntityKind, Handle, Hatch, HatchLoop, LwPolyline};
+    use cadcraft_geom::PolyVertex;
+    // 200 arcs of almost a full turn each on chords of a thousandth: radius about 250.
+    let mut v = PolyVertex::new(Vec2::ZERO);
+    v.bulge = 1e6;
+    let vertices: Vec<PolyVertex> = (0..200).map(|i| PolyVertex { p: Vec2::new(i as f64 * 1e-3, 0.0), ..v }).collect();
+    let mut b = Block::new("CURLS");
+    b.entities.push(Entity::new(
+        Handle(1),
+        EntityKind::LwPolyline(LwPolyline { vertices: vertices.clone(), closed: false, const_width: 1.0, elevation: 0.0, plinegen: false }),
+    ));
+    let t = std::time::Instant::now();
+    let g = crate::dim_draw::arrow_geometry(&b).expect("drawn from the block");
+    assert!(g.tris.len() <= 200 * 32 * 6, "{}", g.tris.len());
+    let hatch = Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops: vec![HatchLoop { vertices: vertices.iter().take(40).copied().collect(), outer: true, sources: Vec::new() }],
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: None,
+        origin: Vec2::ZERO,
+        background: None,
+        pattern_lines: Vec::new(),
+    };
+    let mut b = Block::new("CURLFILL");
+    b.entities.push(Entity::new(Handle(1), EntityKind::Hatch(hatch)));
+    let _ = crate::dim_draw::arrow_geometry(&b);
+    assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+}
+
 /// `Options::linetypes` off draws a dashed line, a dashed wide polyline and a linetype on a layer
 /// as the same whole line a Continuous one draws: what hit tests look at.
 #[test]
