@@ -107,7 +107,9 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
                 continue;
             }
             let (Some(first), Some(last)) = (at(run, a), at(run, b)) else { continue };
-            let inner = run.iter().filter(|x| x.s > a && x.s < b).copied();
+            // The samples strictly between a and b: `run` is ordered by `s`, so a slice, not a scan.
+            let (lo, hi) = (run.partition_point(|x| x.s <= a), run.partition_point(|x| x.s < b));
+            let inner = run.get(lo..hi.max(lo)).unwrap_or_default().iter().copied();
             let pts: Vec<Sample> = std::iter::once(first).chain(inner).chain(std::iter::once(last)).collect();
             for w in pts.windows(2) {
                 if let [x, y] = w {

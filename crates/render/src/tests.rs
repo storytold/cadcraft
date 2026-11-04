@@ -137,6 +137,7 @@ fn vp(center: Vec2, w: f64, h: f64, view_center: Vec2, view_height: f64, id: u32
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     }
 }
 
@@ -370,6 +371,7 @@ fn lin_dim() -> cadcraft_doc::Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
