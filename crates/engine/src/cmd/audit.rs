@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, file, str_param};
+
+use super::always;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -84,7 +86,11 @@ fn run_audit(s: &mut Session, p: &Value) -> Result<Value> {
     if fix && !issues.is_empty() {
         s.state_mut()?.doc = Arc::new(copy);
     }
-    Ok(crate::audit::Report { issues, fixed: fix }.to_json())
+    let report = crate::audit::Report { issues, fixed: fix };
+    if s.settings.auditctl {
+        write_audit_log(s, &report);
+    }
+    Ok(report.to_json())
 }
 
 /// Open a drawing file as tolerantly as the readers allow, then fix what AUDIT finds. The
@@ -119,11 +125,35 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
         st.saved = Arc::new((*st.doc).clone());
     }
     let uid = st.uid;
+    if s.settings.auditctl {
+        write_audit_log(s, &report);
+    }
     let mut r = report.to_json();
     r["index"] = json!(i);
     r["uid"] = json!(uid);
     Ok(r)
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_audit_log(s: &Session, report: &crate::audit::Report) {
+    let (path_str, title) = match s.state() {
+        Ok(st) => (st.path.clone(), st.title.clone()),
+        Err(_) => (None, "Drawing".to_string()),
+    };
+    // An unsaved drawing has no folder of its own to hold the log.
+    let Some(path) = &path_str else { return };
+    let adt_path = std::path::PathBuf::from(path).with_extension("adt");
+    let content = report.format_adt(&title, path_str.as_deref());
+    // Write through an exclusively-created temporary and rename over the companion path, so a
+    // planted `.adt` symlink beside the drawing cannot redirect the report onto another file
+    // writable by the victim (CWE-59).
+    if let Err(e) = crate::atomic_write::write_atomic(&adt_path, content.as_bytes()) {
+        log::warn!("AUDITCTL: could not write audit log {}: {e}", adt_path.display());
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {

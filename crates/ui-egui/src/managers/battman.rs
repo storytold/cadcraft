@@ -21,17 +21,19 @@ struct Row {
 }
 
 fn temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str) -> Option<T> {
-    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::new(id)))
+    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::unique(id)))
 }
 
 fn set_temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str, v: T) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id), v));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id), v));
 }
 
 /// A text field committing on Enter / focus loss when changed (an empty value too).
-fn text_field(ui: &mut egui::Ui, id: egui::Id, value: &str) -> Option<String> {
+///
+/// `label` is the visible row label's widget id, so the field has an accessible name.
+fn text_field(ui: &mut egui::Ui, id: egui::Id, value: &str, label: egui::Id) -> Option<String> {
     let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string());
-    let resp = ui.add(egui::TextEdit::singleline(&mut buf).id(id.with("te")).desired_width(180.0));
+    let resp = ui.add(egui::TextEdit::singleline(&mut buf).id(id.with("te")).desired_width(180.0)).labelled_by(label);
     if resp.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, buf.clone()));
     } else {
@@ -101,7 +103,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Option<
         }
         ui.horizontal(|ui| {
             ui.label("Block:");
-            egui::ComboBox::from_id_salt("battman_blocks").selected_text(block.as_str()).width(180.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("battman_blocks").selected_text(block.as_str()).width(180.0).show_ui(ui, |ui| {
                 for b in &blocks {
                     if ui.selectable_label(*b == block, b).clicked() {
                         block = b.clone();
@@ -153,19 +155,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Option<
             ui.label(RichText::new(format!("Edit attribute {}", r.tag)).strong());
             let edit = |key: &str, v: Value| json!({ "name": block, "action": "edit", "tag": r.tag, key: v });
             egui::Grid::new("battman_edit").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-                ui.label("Tag");
-                if let Some(v) = text_field(ui, egui::Id::new(("battman_tag", &block, &r.tag)), &r.tag) {
+                let label = ui.label("Tag");
+                if let Some(v) = text_field(ui, egui::Id::unique(("battman_tag", &block, &r.tag)), &r.tag, label.id) {
                     action = act(edit("newTag", json!(v)), apply);
                     sel = Some(v.trim().to_ascii_uppercase());
                 }
                 ui.end_row();
-                ui.label("Prompt");
-                if let Some(v) = text_field(ui, egui::Id::new(("battman_prompt", &block, &r.tag)), &r.prompt) {
+                let label = ui.label("Prompt");
+                if let Some(v) = text_field(ui, egui::Id::unique(("battman_prompt", &block, &r.tag)), &r.prompt, label.id) {
                     action = act(edit("prompt", json!(v)), apply);
                 }
                 ui.end_row();
-                ui.label("Default");
-                if let Some(v) = text_field(ui, egui::Id::new(("battman_default", &block, &r.tag)), &r.default) {
+                let label = ui.label("Default");
+                if let Some(v) = text_field(ui, egui::Id::unique(("battman_default", &block, &r.tag)), &r.default, label.id) {
                     action = act(edit("default", json!(v)), apply);
                 }
                 ui.end_row();
@@ -180,14 +182,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Option<
                     }
                 });
                 ui.end_row();
-                ui.label("Height");
-                let height = text_field(ui, egui::Id::new(("battman_height", &block, &r.tag)), &fmt_num(r.height));
+                let label = ui.label("Height");
+                let height = text_field(ui, egui::Id::unique(("battman_height", &block, &r.tag)), &fmt_num(r.height), label.id);
                 if let Some(h) = height.and_then(|v| v.trim().parse::<f64>().ok()).filter(|h| h.is_finite() && *h > 0.0) {
                     action = act(edit("height", json!(h)), apply);
                 }
                 ui.end_row();
                 ui.label("Layer");
-                egui::ComboBox::from_id_salt("battman_layer").selected_text(r.layer.as_str()).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("battman_layer").selected_text(r.layer.as_str()).show_ui(ui, |ui| {
                     for l in &layers {
                         if ui.selectable_label(*l == r.layer, l).clicked() && *l != r.layer {
                             action = act(edit("layer", json!(l)), apply);

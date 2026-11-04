@@ -66,10 +66,11 @@ fn edges(x: &Sample) -> (Vec2, Vec2) {
     (x.p + nrm, x.p - nrm)
 }
 
-/// Triangles for the dashes of a wide polyline drawn with `lt` at `scale`, plus a line across the
-/// band for each dot. With PLINEGEN the pattern runs along the whole polyline; otherwise it
-/// restarts at every vertex. A pattern shorter than `min_pattern` fills the whole band.
-pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> (Vec<Vec2>, Vec<Vec<Vec2>>) {
+/// Triangles for the dashes of a wide polyline drawn with `lt` at `scale`, a line across the band
+/// for each dot, and the centre line of each dash. With PLINEGEN the pattern runs along the whole
+/// polyline; otherwise it restarts at every vertex. A pattern shorter than `min_pattern` fills
+/// the whole band.
+pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> (Vec<Vec2>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
     let mut runs = segments(p, tol);
     if p.plinegen && runs.len() > 1 {
         let mut whole: Vec<Sample> = Vec::new();
@@ -81,6 +82,7 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
     }
     let mut tris = Vec::new();
     let mut ticks = Vec::new();
+    let mut centres = Vec::new();
     for run in &runs {
         let len = run.last().map(|x| x.s).unwrap_or(0.0);
         let dashes = linetype::ranges(len, lt, scale, min_pattern).unwrap_or_else(|| vec![(0.0, len)]);
@@ -93,7 +95,9 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
                 continue;
             }
             let (Some(first), Some(last)) = (at(run, a), at(run, b)) else { continue };
-            let inner = run.iter().filter(|x| x.s > a && x.s < b).copied();
+            // The samples strictly between a and b: `run` is ordered by `s`, so a slice, not a scan.
+            let (lo, hi) = (run.partition_point(|x| x.s <= a), run.partition_point(|x| x.s < b));
+            let inner = run.get(lo..hi.max(lo)).unwrap_or_default().iter().copied();
             let pts: Vec<Sample> = std::iter::once(first).chain(inner).chain(std::iter::once(last)).collect();
             for w in pts.windows(2) {
                 if let [x, y] = w {
@@ -102,10 +106,11 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
                     tris.extend_from_slice(&[a0, a1, b1, a0, b1, b0]);
                 }
             }
+            centres.push(pts.iter().map(|x| x.p).collect());
             if tris.len() > 6_000_000 {
-                return (tris, ticks);
+                return (tris, ticks, centres);
             }
         }
     }
-    (tris, ticks)
+    (tris, ticks, centres)
 }

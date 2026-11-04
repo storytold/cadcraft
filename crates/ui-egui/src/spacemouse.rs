@@ -128,12 +128,13 @@ fn navigate(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if !center.is_finite() || !height.is_finite() {
         return Err("3D mouse navigation would produce an invalid view".into());
     }
-    state.set_view_quiet(View { center, height });
+    state.set_view_quiet(View { center, height, twist: view.twist });
     Ok(json!({"center": [center.x, center.y], "height": height}))
 }
 
+/// 3D Mouse window showing connection status, detected device/detail and the navigation settings, with a Calibrate action.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    egui::Window::new(crate::tl!("3D Mouse")).id(egui::Id::new("spacemouse")).open(open).resizable(false).show(ctx, |ui| {
+    egui::Window::new(crate::tl!("3D Mouse")).id(egui::Id::unique("spacemouse")).open(open).resizable(false).show(ctx, |ui| {
         ui.label(crate::i18n::t(app.spacemouse.status.message()));
         if let Some(device) = &app.spacemouse.device {
             ui.label(device);
