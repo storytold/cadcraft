@@ -559,7 +559,9 @@ fn run_selectall(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let hs: Vec<Handle> = d
         .space(&space)
-        .map(|st| st.iter().filter(|e| d.is_visible(e) && d.layer(&e.common.layer).is_none_or(|l| !l.locked)).map(|e| e.handle).collect())
+        .map(|st| {
+            st.iter().filter(|e| crate::select::selectable(d, e) && d.layer(&e.common.layer).is_none_or(|l| !l.locked)).map(|e| e.handle).collect()
+        })
         .unwrap_or_default();
     let n = hs.len();
     s.set_selection(hs);

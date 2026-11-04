@@ -267,8 +267,15 @@ impl StretchM {
                         self.removing = false;
                         None
                     }
-                    "all" => Some(store.map(|st| st.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()).unwrap_or_default()),
-                    "l" | "last" => Some(store.and_then(|st| st.last()).map(|e| vec![e.handle]).unwrap_or_default()),
+                    "all" => {
+                        Some(store.map(|st| st.iter().filter(|e| crate::select::selectable(d, e)).map(|e| e.handle).collect()).unwrap_or_default())
+                    }
+                    "l" | "last" => Some(
+                        store
+                            .and_then(|st| st.iter().filter(|e| !matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_))).last())
+                            .map(|e| vec![e.handle])
+                            .unwrap_or_default(),
+                    ),
                     "p" | "previous" => Some(s.state()?.previous_selection.clone()),
                     _ => {
                         s.echo("*Invalid selection*");

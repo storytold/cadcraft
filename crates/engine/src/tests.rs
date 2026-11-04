@@ -1490,3 +1490,34 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
         }
     }
 }
+
+#[test]
+fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
+    // A proxy's graphics are drawn and measured, but saving writes its record unchanged: an edit
+    // could not hold. So a window round a line and a proxy, ALL, SELECTALL and a pick on the
+    // proxy's graphics leave the proxy out, and MOVE moves the line alone.
+    use cadcraft_doc::{Common, Entity, Handle, Line, Space, Unknown, entity_bounds};
+    use cadcraft_geom::Vec3;
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let line = s.doc().unwrap().model.last().unwrap().handle;
+    let drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
+    let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
+    let proxy = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(unknown)).unwrap();
+    let bounds = |s: &Session| entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(proxy).unwrap(), 0);
+    let before = bounds(&s);
+    assert!(!before.is_empty(), "the proxy measures as its graphics");
+
+    s.idle_click(Vec2::new(5.0, 5.0), false).unwrap();
+    assert_eq!(s.selection(), Vec::<Handle>::new(), "a pick on the proxy's graphics");
+    s.idle_click(Vec2::new(-1.0, -1.0), false).unwrap();
+    s.idle_click(Vec2::new(11.0, 6.0), false).unwrap();
+    assert_eq!(s.selection(), vec![line], "a window round both");
+    s.execute("selectall", &json!({})).unwrap();
+    assert_eq!(s.selection(), vec![line], "SELECTALL");
+
+    s.execute("move", &json!({"delta": [0, 20]})).unwrap();
+    let d = s.doc().unwrap();
+    assert!(matches!(&d.entity(line).unwrap().kind, EntityKind::Line(l) if l.a.y == 20.0), "the line moved");
+    assert_eq!(bounds(&s), before, "the proxy stayed where its record puts it");
+}

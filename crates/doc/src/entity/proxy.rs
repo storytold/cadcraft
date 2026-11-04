@@ -280,8 +280,8 @@ impl Decoder<'_> {
     /// A full circle around `c`, through the pushed matrices.
     fn circle(&mut self, c: Vec3, r: f64) {
         let r = r * self.scale();
-        if r.is_finite() && r > 0.0 {
-            let c = self.xy(c);
+        let c = self.xy(c);
+        if r.is_finite() && r > 0.0 && c.is_finite() {
             self.push(EntityKind::Circle(Circle { center: c.to3(0.0), radius: r }));
         }
     }
@@ -359,6 +359,9 @@ impl Decoder<'_> {
             return;
         }
         let at = self.xy(p);
+        if !at.is_finite() {
+            return;
+        }
         let towards = self.xy(p + dir) - at;
         let rotation = if towards.len() > 1e-12 { towards.y.atan2(towards.x) } else { 0.0 };
         let stem = |f: &str| f.trim().rsplit(['/', '\\']).next().unwrap_or_default().split('.').next().unwrap_or_default().to_ascii_lowercase();
@@ -632,6 +635,33 @@ mod tests {
         let es = proxy_entities(&graphics(&[chunk(29, &push), chunk(2, &circle), chunk(31, &[]), chunk(2, &circle)]), &tables(), Handle(1));
         assert!(matches!(&es[0].kind, EntityKind::Circle(c) if c.center == Vec3::new(102.0, 52.0, 0.0) && c.radius == 2.0));
         assert!(matches!(&es[1].kind, EntityKind::Circle(c) if c.center == Vec3::new(1.0, 1.0, 0.0) && c.radius == 1.0));
+    }
+
+    /// A finite matrix can still move a point past the largest float: a circle or a text that
+    /// would land there is left out, as a polyline is, so no infinity reaches the extents.
+    #[test]
+    fn what_a_matrix_moves_out_of_range_is_left_out() {
+        let mut m = [0.0f64; 16];
+        (m[0], m[5], m[10], m[15], m[3]) = (1.0, 1.0, 1.0, 1.0, 1.7e308);
+        let push: Vec<u8> = m.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut circle = pt(1e308, 0.0);
+        circle.extend(1.0f64.to_le_bytes());
+        circle.extend(pt(0.0, 0.0));
+        let mut text = pt(1e308, 0.0);
+        text.extend([0.0f64, 0.0, 1.0].iter().flat_map(|v| v.to_le_bytes()));
+        text.extend(pt(1.0, 0.0));
+        text.extend(b"far\0");
+        text.extend(0i32.to_le_bytes());
+        text.extend(1i32.to_le_bytes());
+        for v in [2.5f64, 1.0, 0.0, 0.0] {
+            text.extend(v.to_le_bytes());
+        }
+        text.extend([0u8; 20]);
+        text.extend(b"txt\0");
+        let es = proxy_entities(&graphics(&[chunk(29, &push), chunk(2, &circle), chunk(11, &text)]), &tables(), Handle(1));
+        assert!(es.is_empty(), "{es:?}");
+        // The same text without the matrix is drawn: the chunk itself is sound.
+        assert_eq!(proxy_entities(&graphics(&[chunk(11, &text)]), &tables(), Handle(1)).len(), 1);
     }
 
     #[test]
