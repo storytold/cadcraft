@@ -91,7 +91,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text embedded in the linetype (shapes need SHX files and are not drawn).
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
             if b.opts.text {
                 for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
                     b.shaped(ctx, rgb, lw, &sh);
@@ -195,14 +195,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         EntityKind::Wipeout(w) => draw_wipeout(b, ctx, w, rgb, lw),
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
-        }
+        EntityKind::Image(i) => draw_image(b, ctx, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {
@@ -297,6 +290,23 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
     }
 }
 
+fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
+    let o = i.insert.xy();
+    let u = i.u.xy() * i.size.x;
+    let v = i.v.xy() * i.size.y;
+    // Display flag 1: show the image. Without pixels (file not found, not loaded yet, hidden)
+    // the rectangle is crossed out.
+    let raster = if i.display & 1 != 0 { ctx.d.rasters.get(&i.path) } else { None };
+    if let Some(r) = raster {
+        b.image(ctx, rgb, i, r);
+    }
+    b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+    if raster.is_none() {
+        b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+        b.polyline(ctx, rgb, lw, &[o + u, o + v]);
+    }
+}
+
 fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink, lw: f32) {
     // Hide what was drawn before it (draw order), then the frame per WIPEOUTFRAME:
     // 0 = none, 1 = shown and plotted, 2 = shown but not plotted.
@@ -321,7 +331,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
+        // the insertion point, so the block draws translated by it (#2634).
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -341,6 +354,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();
