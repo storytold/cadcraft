@@ -316,7 +316,12 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
             if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_IMAGE_BASE64 {
                 return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
             }
-            base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
+            let bytes = base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?;
+            // The longest text allowed can still hold a byte or two more than the limit.
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_IMAGE_BYTES {
+                return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
+            }
+            bytes
         }
         None => {
             if let Some(loaded) = s.doc()?.rasters.get(path) {

@@ -151,6 +151,13 @@ fn oversized_data_is_refused_before_decoding() {
     let too_long = "A".repeat(usize::try_from(LIMIT.div_ceil(3) * 4 + 1).unwrap());
     let e = s.execute("imageattach", &json!({ "path": "a.png", "data": too_long })).unwrap_err().to_string();
     assert!(e.contains("`data` is larger than 256 MB"), "{e}");
+
+    // The longest text allowed, holding one byte more than the limit, is refused once decoded.
+    let groups = usize::try_from(LIMIT / 3).unwrap();
+    let one_over = format!("{}AAA=", "AAAA".repeat(groups));
+    assert_eq!(u64::try_from(one_over.len()).unwrap(), LIMIT.div_ceil(3) * 4, "as long as the text for the limit itself");
+    let e = s.execute("imageattach", &json!({ "path": "a.png", "data": one_over })).unwrap_err().to_string();
+    assert!(e.contains("`data` is larger than 256 MB"), "{e}");
     assert!(images(&s).is_empty());
 }
 
