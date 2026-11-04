@@ -85,18 +85,39 @@ pub fn profile(s: &Session) -> Value {
     Value::Object(m)
 }
 
+/// The profile variables the drawing keeps in its header rather than in the session's settings.
+const DRAWING_VARS: &[&str] = &["SNAPUNIT", "GRIDUNIT"];
+
 /// Set the profile variables named in `values` (an object; other keys are refused). All or
-/// nothing: one bad name or value leaves every setting as it was.
+/// nothing: one bad name or value leaves every setting, and the drawing's [`DRAWING_VARS`], as
+/// they were.
 pub fn apply(s: &mut Session, values: &Value) -> Result<()> {
     let Some(obj) = values.as_object() else { return Err(bad("options", "expected an object of profile variables")) };
     let before = s.settings.clone();
+    // The header entries exactly as the drawing has them (reading them through the variables
+    // would give a zero grid spacing as the snap spacing).
+    let drawing: Vec<(&str, Option<cadcraft_doc::HVal>)> =
+        s.doc().map(|d| DRAWING_VARS.iter().map(|n| (*n, d.header.get(n).cloned())).collect()).unwrap_or_default();
+    let put_back = |s: &mut Session| {
+        s.settings = before.clone();
+        if let Ok(d) = s.doc_mut() {
+            for (name, v) in &drawing {
+                match v {
+                    Some(v) => d.header.set(name, v.clone()),
+                    None => {
+                        d.header.vars.remove(*name);
+                    }
+                }
+            }
+        }
+    };
     for (name, v) in obj {
         if !is_profile_var(name) {
-            s.settings = before;
+            put_back(s);
             return Err(bad("options", format!("{name} is not a profile setting")));
         }
         if let Err(e) = crate::sysvars::set(s, name, v) {
-            s.settings = before;
+            put_back(s);
             return Err(bad("options", format!("invalid value for {}: {e}", name.to_ascii_uppercase())));
         }
     }
@@ -117,7 +138,8 @@ pub fn restore(s: &mut Session, saved: &Value) {
     }
 }
 
-/// Put every profile variable back to its default.
+/// Put every profile variable back to its default, except [`DRAWING_VARS`]: a reset doesn't change
+/// the drawing.
 pub fn reset(s: &mut Session) {
     let d = Settings::default();
     let st = &mut s.settings;
@@ -145,6 +167,21 @@ pub fn reset(s: &mut Session) {
     st.pickadd = d.pickadd;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
+    st.dynprompt = d.dynprompt;
+    st.dyndigrip = d.dyndigrip;
+    st.dyndivis = d.dyndivis;
+    st.selectioneffect = d.selectioneffect;
+    st.selectionpreview = d.selectionpreview;
+    st.previeweffect = d.previeweffect;
+    st.previewfilter = d.previewfilter;
+    st.grips = d.grips;
+    st.gripobjlimit = d.gripobjlimit;
+    st.selectionarea = d.selectionarea;
+    st.windowareacolor = d.windowareacolor;
+    st.crossingareacolor = d.crossingareacolor;
+    st.selectionareaopacity = d.selectionareaopacity;
+    st.pickstyle = d.pickstyle;
+    st.measureinit = d.measureinit;
 }
 
 fn run_options(s: &mut Session, p: &Value) -> Result<Value> {
@@ -190,5 +227,50 @@ mod tests {
         let mut b = Session::new();
         restore(&mut b, &saved);
         assert_eq!(profile(&b), saved);
+    }
+
+    #[test]
+    fn a_refused_change_leaves_the_drawings_snap_and_grid_too() {
+        let mut s = Session::new();
+        let before = profile(&s);
+        for bad_one in [json!({ "SNAPUNIT": [2, 3], "GRIDUNIT": [4, 5], "WINDOWAREACOLOR": 0 }), json!({ "GRIDUNIT": [4, 5], "LUNITS": 2 })] {
+            assert!(apply(&mut s, &bad_one).is_err(), "{bad_one}");
+            assert_eq!(profile(&s), before, "{bad_one}");
+        }
+        assert!(s.execute("options", &json!({ "reset": true, "SNAPUNIT": [2, 3], "WINDOWAREACOLOR": 0 })).is_err());
+        assert_eq!(profile(&s), before);
+        // The header entries come back exactly: a zero grid spacing (which reads as the snap
+        // spacing), and a snap spacing the drawing doesn't have. The refused value comes last, so
+        // both are written first (the keys are taken in name order).
+        let header = |s: &Session, n: &str| s.doc().unwrap().header.get(n).cloned();
+        s.doc_mut().unwrap().header.set("GRIDUNIT", cadcraft_doc::HVal::Point(cadcraft_geom::Vec3::new(0.0, 0.0, 0.0)));
+        s.doc_mut().unwrap().header.vars.remove("SNAPUNIT");
+        let (grid, snap) = (header(&s, "GRIDUNIT"), header(&s, "SNAPUNIT"));
+        assert!(apply(&mut s, &json!({ "GRIDUNIT": [4, 5], "SNAPUNIT": [2, 3], "WINDOWAREACOLOR": 0 })).is_err());
+        assert_eq!((header(&s, "GRIDUNIT"), header(&s, "SNAPUNIT")), (grid, snap));
+    }
+
+    #[test]
+    fn reset_puts_every_profile_var_back_except_the_drawings() {
+        let defaults = profile(&Session::new());
+        let mut s = Session::new();
+        for name in PROFILE_VARS.iter().filter(|n| !DRAWING_VARS.contains(n)) {
+            // A value the variable takes that isn't its default: 0 and 1 swapped, or a number one
+            // more or less, or an angle.
+            let was = &defaults[*name];
+            let n = was.as_f64().unwrap_or(0.0);
+            let tries = [json!(if n == 0.0 { 1 } else { 0 }), json!(n + 1.0), json!(n - 1.0), json!("15")];
+            let changed = tries.iter().any(|v| apply(&mut s, &json!({ *name: v })).is_ok() && profile(&s)[*name] != *was);
+            assert!(changed, "no other value found for {name} (default {was})");
+        }
+        assert!(PROFILE_VARS.iter().filter(|n| !DRAWING_VARS.contains(n)).all(|n| profile(&s)[*n] != defaults[*n]));
+        apply(&mut s, &json!({ "SNAPUNIT": [2, 3], "GRIDUNIT": [4, 5] })).unwrap();
+        reset(&mut s);
+        let after = profile(&s);
+        for name in PROFILE_VARS.iter().filter(|n| !DRAWING_VARS.contains(n)) {
+            assert_eq!(after[*name], defaults[*name], "{name}");
+        }
+        // The snap and grid spacing are the drawing's, and stay.
+        assert_eq!((after["SNAPUNIT"].clone(), after["GRIDUNIT"].clone()), (json!([2.0, 3.0]), json!([4.0, 5.0])));
     }
 }
