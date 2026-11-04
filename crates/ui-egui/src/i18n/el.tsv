@@ -124,7 +124,7 @@
 	Box	Κουτί (Box)
 	Break	Διακοπή (Break)
 	Break At Point	Διακοπή σε σημείο (Break at Point)
-	Break-line Symbol	Σύμβολο γραμμής διακοπής
+	Break-line Symbol	Σύμβολο γραμμής διακοπής (Break-line Symbol)
 	Bring Above Objects	Μεταφορά πάνω από τα αντικείμενα
 	Bring Annotations to Front	Μεταφορά σχολιασμών στο προσκήνιο
 	Bring to Front	Μεταφορά στο προσκήνιο
@@ -153,7 +153,7 @@
 	Centered	Κεντραρισμένο
 	Chamfer	Λοξότμηση (Chamfer)
 	Change	Αλλαγή
-	Change Properties	Αλλαγή ιδιοτήτων
+	Change Properties	Αλλαγή ιδιοτήτων (Change Properties)
 	Change Space	Αλλαγή χώρου σχεδίασης
 	Change to Current Layer	Μεταφορά στο τρέχον επίπεδο (Layer)
 	Changed: {n}	Αλλαγές: {n}
@@ -226,10 +226,10 @@
 	Metric (millimetres)	Μετρικό (χιλιοστά)
 	More than {n} aliases.	Περισσότερα από {n} ψευδώνυμα.
 	Move/Copy/Rotate	Μετακίνηση/Αντιγραφή/Περιστροφή
-	Multiple Insert	Πολλαπλή εισαγωγή
+	Multiple Insert	Πολλαπλή εισαγωγή (Multiple Insert)
 	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Τα νέα σχέδια και το πρώτο σχέδιο κατά την εκκίνηση χρησιμοποιούν αυτές τις μονάδες, εκτός αν έχει οριστεί προεπιλεγμένο πρότυπο (QNEWTEMPLATE).
 	No alias file loaded. REINIT replaces these aliases with a file's.	Δεν έχει φορτωθεί αρχείο ψευδωνύμων. Η εντολή REINIT αντικαθιστά αυτά τα ψευδώνυμα με αυτά ενός αρχείου.
-	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο
+	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο (Save Layout as Template)
 	Save alias	Αποθήκευση ψευδωνύμου
 	Save changes to block "{name}"?	Να αποθηκευτούν οι αλλαγές στο μπλοκ «{name}»;
 	Save changes to {name}?	Να αποθηκευτούν οι αλλαγές στο {name};
