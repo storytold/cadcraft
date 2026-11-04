@@ -1,4 +1,5 @@
 use super::{DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
+use crate::transcode_mtext;
 
 /// Format a linear measurement per the style (plain text).
 pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
@@ -24,7 +25,7 @@ pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str,
         let tf = NumFormat { decimals: st.tol_decimals, zin: st.tol_zero_suppression, round: 0.0, ..nf.clone() };
         // DIMPOST's suffix (what follows `<>`, or all of it) also goes on the tolerance values.
         let raw_suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
-        let suffix = cadcraft_fonts::legacy_encoding::transcode(raw_suffix, hint);
+        let suffix = transcode_mtext(raw_suffix, hint);
         if (st.tol_plus - st.tol_minus).abs() < 1e-12 {
             s += &format!("%%p{}{suffix}", format_linear(st.tol_plus, &tf).1);
         } else {
@@ -73,7 +74,7 @@ fn tol_height_code(st: &DimStyle) -> String {
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
 fn post(template: &str, meas: &str, hint: Option<&str>) -> String {
-    let t = cadcraft_fonts::legacy_encoding::transcode(template, hint);
+    let t = transcode_mtext(template, hint);
     if t.contains("<>") {
         bounded_replace(&t, meas)
     } else {
@@ -92,7 +93,7 @@ pub(super) fn apply_override(base: &str, d: &Dimension, st: &DimStyle, hint: Opt
         String::new()
     } else {
         let hint = hint.or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
-        let text = cadcraft_fonts::legacy_encoding::transcode(&d.text, hint);
+        let text = transcode_mtext(&d.text, hint);
         bounded_replace(&text, base)
     }
 }
