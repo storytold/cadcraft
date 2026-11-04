@@ -410,9 +410,14 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             });
             r
         }
-        // WBLOCK from the menu or typed: ask where to write the file, then write the selection (or
-        // the `name` block) there. JSON calls carry `path` and never open a dialog.
+        // WBLOCK from the menu or typed: ask where to write the selection. With nothing selected it
+        // says so instead of writing an empty drawing. JSON calls carry `path` (and `name` or
+        // `handles`) and never open a dialog.
         "wblock" | "w" if params.is_null() && app.session.state().is_ok() => {
+            if app.session.selection().is_empty() {
+                app.session.echo("WBLOCK: select the objects to write first");
+                return Some(Ok(Value::Null));
+            }
             let pick = app.services.pick_save.as_ref()?;
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());

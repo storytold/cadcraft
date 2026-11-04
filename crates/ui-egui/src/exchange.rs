@@ -211,6 +211,13 @@ mod tests {
     #[test]
     fn typed_wblock_asks_for_the_file() {
         let (mut app, asked) = app();
+        // Nothing selected: no dialog, no empty file.
+        app.start("wblock");
+        assert!(asked.borrow().is_empty());
+        assert!(app.session.log.iter().any(|l| l.contains("select the objects")));
+        let l = app.session.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone();
+        app.session.execute("select", &json!({ "handles": [l] })).unwrap();
+        assert!(!app.session.selection().is_empty());
         app.start("wblock");
         app.cmdline("w");
         assert_eq!(*asked.borrow(), ["Drawing1.dwg", "Drawing1.dwg"]);

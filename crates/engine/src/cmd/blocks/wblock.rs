@@ -106,6 +106,13 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     // Through a temporary file, as SAVE writes, so a failed write keeps the file it replaces.
     #[cfg(not(target_arch = "wasm32"))]
     crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    // The web build has no file system: hand the file to the browser as a download, as SAVE does.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+        let deliver = super::super::file::deliver().ok_or_else(|| bad(cmd, "saving files is not available in this build"))?;
+        deliver(&name, "application/octet-stream", &bytes).map_err(|e| bad(cmd, format!("{name}: {e}")))?;
+    }
     let lost = if drops_unknown(path) { not_saved(&d) } else { BTreeMap::new() };
     Ok((d.model.len(), bytes.len(), lost))
 }
