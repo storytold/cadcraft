@@ -22,7 +22,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
-rstar = { version = "0.12", default-features = false }
+rstar = { version = "0.13", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # Real DXF files for the external reference tests (io is a lower layer).
