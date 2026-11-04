@@ -415,10 +415,17 @@ impl Backend for Headless {
                 let (w, h) = (view.width, view.height);
                 let png =
                     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
+                let mut r =
+                    json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
-                    std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
+                    let file = std::path::Path::new(&path);
+                    let folder = cadcraft_engine::atomic_write::missing_folder(file);
+                    cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png).map_err(|e| format!("{path}: {e}"))?;
+                    if let Some(folder) = folder {
+                        r["createdFolder"] = json!(folder.display().to_string());
+                    }
                 }
-                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
+                Ok(r)
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;

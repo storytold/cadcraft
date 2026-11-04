@@ -70,6 +70,19 @@ pub fn entity_codec() -> Option<&'static EntityCodec> {
 /// COMPARE (drawing comparison).
 pub mod compare;
 
+/// Decode a raster image file (PNG, JPEG, BMP, TIFF) to pixels: installed by the app with the
+/// image reader, a lower layer.
+pub type ImageHook = fn(&[u8]) -> std::result::Result<cadcraft_doc::Raster, String>;
+
+static IMAGE: OnceLock<ImageHook> = OnceLock::new();
+
+pub fn set_image_decoder(h: ImageHook) {
+    let _ = IMAGE.set(h);
+}
+pub fn image_decoder() -> Option<ImageHook> {
+    IMAGE.get().copied()
+}
+
 /// Hand finished file bytes to the user where there is no file system (the browser: a download).
 /// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
 pub type DeliverHook = fn(&str, &str, &[u8]) -> std::result::Result<(), String>;
@@ -311,6 +324,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -363,6 +377,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            super::image::after_open(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -373,6 +388,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Drawing.dxf");
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, false))
 }
 
@@ -440,13 +456,14 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if is_drawing_file(path) && crate::autosave::isavebak() {
+        // A file in a folder still to be made has nothing to back up.
+        if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
                 .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
         }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -851,6 +868,28 @@ fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
     }
 }
 
+/// The folder a write to `path` has to create, asked before writing so it can be reported after.
+/// The web has no folders.
+pub(super) fn new_folder(path: &str) -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return crate::atomic_write::missing_folder(std::path::Path::new(path)).map(|f| f.display().to_string());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Say on the command line that the file went into a folder that didn't exist, so a mistyped path
+/// is noticed, and name the folder in the result's `createdFolder`.
+pub(super) fn report_new_folder(s: &mut Session, r: &mut Value, folder: Option<String>) {
+    let Some(folder) = folder else { return };
+    s.echo(format!("Created the folder {folder}, which did not exist. Check the path if you did not mean to."));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("createdFolder".into(), json!(folder));
+    }
+}
+
 /// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
 pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
     let Some(msg) = not_saved_message(lost) else { return };
@@ -867,7 +906,9 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     let path = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone())).unwrap_or_default();
     let version = asked.unwrap_or_else(|| drawing_version(s, &path));
     let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
+    let folder = new_folder(&path);
     let mut r = run(s, p)?;
+    report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
     } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {

@@ -1,7 +1,10 @@
 //! Nested, self-referencing and arrayed block references in a hostile DXF must not hang drawing
 //! or extents (issue #255): the expansion is bounded, not only its depth.
 
-use cadcraft_doc::{Drawing, EntityKind, Space};
+use std::sync::Arc;
+
+use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
+use cadcraft_geom::{Vec2, Vec3};
 use cadcraft_render::{MAX_BLOCK_EXPANSION, Options, build};
 
 fn read(text: &str) -> Drawing {
@@ -62,4 +65,64 @@ fn ordinary_nested_and_arrayed_blocks_are_drawn_whole() {
     let d = read(&self_referencing(1));
     assert!(matches!(d.model.iter().next().map(|e| &e.kind), Some(EntityKind::Insert(_))));
     assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), cadcraft_doc::MAX_BLOCK_DEPTH);
+}
+
+#[test]
+fn a_build_that_spends_the_expansion_budget_says_so() {
+    // 10,000 x 10,000 copies of a one-line block: far past the budget. The list stops at the
+    // budget and says so, so a screen, plot or export missing contents is not silent (#1070).
+    let d = read(&minsert(10_000, 10_000));
+    let list = build(&d, &Space::Model, &Options::default());
+    assert!(list.truncated, "block contents were left out without a word");
+    assert!(list.prims.len() <= MAX_BLOCK_EXPANSION, "{}", list.prims.len());
+    // A drawing within the budget is whole and says nothing.
+    let d = read(&minsert(3, 2));
+    let list = build(&d, &Space::Model, &Options::default());
+    assert!(!list.truncated);
+    assert_eq!(list.prims.len(), 6);
+}
+
+#[test]
+fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
+    let mut d = Drawing::new_imperial();
+    d.ensure_layer("FROZEN");
+    let mut block = Block::new("A");
+    block.entities.push(Entity {
+        handle: Handle(0x200),
+        common: Common { layer: "FROZEN".into(), ..Common::default() },
+        kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 1.0, 0.0) }),
+    });
+    d.blocks.insert(block.name.clone(), Arc::new(block));
+    let insert = Insert {
+        block: "A".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1_000,
+        rows: 1_000,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+    let viewport = |center: Vec3, view_center: Vec2, frozen_layers| Viewport {
+        center,
+        width: 100.0,
+        height: 100.0,
+        view_center,
+        view_height: 100.0,
+        id: 2,
+        locked: false,
+        frozen_layers,
+        layer_colors: Vec::new(),
+        clip: None,
+        on: true,
+    };
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(viewport(Vec3::new(50.0, 50.0, 0.0), Vec2::ZERO, vec!["FROZEN".into()]))).unwrap();
+    d.add(&paper, Common::default(), EntityKind::Viewport(viewport(Vec3::new(200.0, 50.0, 0.0), Vec2::new(10_000.0, 10_000.0), Vec::new()))).unwrap();
+
+    let list = build(&d, &paper, &Options::default());
+    assert_eq!(list.expanded, MAX_BLOCK_EXPANSION);
+    assert!(!list.truncated, "the first viewport consumed the budget exactly and the second saw no model content");
 }
