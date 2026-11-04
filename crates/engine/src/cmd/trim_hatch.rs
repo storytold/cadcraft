@@ -206,6 +206,13 @@ fn chain(edges: Vec<(Vec2, Vec2)>, tol: f64) -> Vec<Vec<Vec2>> {
 /// Trim the hatch at `pick` against the cutting edges `cut`: the hatch that is left (`None`: none
 /// of its area is) and the outline of the part taken away (its outer loop, then its islands).
 pub(crate) fn trim_hatch(h: &Hatch, cut: &[Segment], pick: Vec2) -> Result<(Option<EntityKind>, Vec<Vec<Vec2>>)> {
+    trim_hatch_at(h, cut, pick, &mut Vec::new())
+}
+
+/// [`trim_hatch`], also giving the area around `pick` that the cutting edges bound (`face`),
+/// whether or not a trim there takes anything away: a pick anywhere inside it trims the same.
+/// Left empty when no such area is found.
+pub(crate) fn trim_hatch_at(h: &Hatch, cut: &[Segment], pick: Vec2, face_out: &mut Vec<Vec<Vec2>>) -> Result<(Option<EntityKind>, Vec<Vec<Vec2>>)> {
     // The exact extents, arcs included: a circle kept as two half-circle arcs is as tall as it is
     // wide, not the flat sliver its chords make.
     let bounds = Bounds2::from_points(
@@ -277,6 +284,7 @@ pub(crate) fn trim_hatch(h: &Hatch, cut: &[Segment], pick: Vec2) -> Result<(Opti
     if face.is_empty() {
         return Err(no_cut());
     }
+    face_out.clone_from(&face);
     // Inside the face: its outer loop and not an island (even-odd over its loops, the islands
     // lying inside the outer loop and apart).
     let face_rows = EdgeRows::new(face.iter().flat_map(|l| edges_of(l)).collect());
