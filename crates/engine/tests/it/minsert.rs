@@ -222,6 +222,14 @@ fn the_json_form_makes_the_same_grid() {
     let r = s.execute("minsert", &json!({"name": "B", "at": [0, 200], "rows": 2, "rowSpacing": 15, "explode": true})).unwrap();
     assert!(r["handle"].is_string(), "{r}");
     assert_eq!(inserts(&s).last().map(grid), Some((1, 2, 0.0, 15.0)));
+    // A null count is 1 and a null distance 0, as missing ones are: each count on its own, then
+    // both distances with two rows and two columns (one row or column keeps no distance anyway).
+    s.execute("minsert", &json!({"name": "B", "at": [0, 250], "rows": null, "columns": 2, "columnSpacing": 20})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((2, 1, 20.0, 0.0)));
+    s.execute("minsert", &json!({"name": "B", "at": [0, 270], "rows": 2, "columns": null, "rowSpacing": 15})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((1, 2, 0.0, 15.0)));
+    s.execute("minsert", &json!({"name": "B", "at": [0, 290], "rows": 2, "columns": 2, "rowSpacing": null, "columnSpacing": null})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((2, 2, 0.0, 0.0)));
     s.execute("minsert", &json!({"name": "B", "at": [0, 300], "columns": 32767, "columnSpacing": 1})).unwrap();
     assert_eq!(inserts(&s).last().map(grid), Some((32767, 1, 1.0, 0.0)));
 }
