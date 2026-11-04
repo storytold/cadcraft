@@ -337,6 +337,64 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// Several SORTENTSTABLEs for one space sort it once, in the last table's order.
+#[test]
+fn repeated_sortents_tables_use_the_last() {
+    let table =
+        |a: u32, b: u32| format!("0\nSORTENTSTABLE\n5\n{:X}\n100\nAcDbSortentsTable\n330\n1F\n331\nA\n5\n{a:X}\n331\nB\n5\n{b:X}\n", 0x100 + a);
+    let mut t = String::from(
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Model_Space\n0\nENDTAB\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLINE\n5\nA\n330\n1F\n10\n0\n20\n0\n11\n1\n21\n1\n0\nLINE\n5\nB\n330\n1F\n10\n0\n20\n0\n11\n2\n21\n2\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n",
+    );
+    for _ in 0..1000 {
+        t.push_str(&table(2, 1));
+    }
+    t.push_str(&table(1, 2));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(t.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xA, 0xB]);
+    let reversed = t.replacen(&table(1, 2), &table(2, 1), 1);
+    let d = read(reversed.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xB, 0xA]);
+}
+
+/// A table declaring 10 000 rows and no columns (or the reverse) is read as an empty table.
+#[test]
+fn table_with_an_empty_dimension_allocates_nothing() {
+    for (rows, cols) in [(10_000, 0), (0, 10_000)] {
+        let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
+        let d = read(t.as_bytes(), "t.dxf").unwrap();
+        let tables: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t) } else { None }).collect();
+        assert_eq!(tables.len(), 1, "the table is read");
+        for t in tables {
+            assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
+        }
+    }
+}
+
+/// Many distinct layer, linetype and style names (in the tables and on entities) read in linear
+/// time, with the duplicate rules kept: first LTYPE wins, last STYLE wins, layers case-insensitive.
+#[test]
+fn many_distinct_symbol_names_read_quickly() {
+    const N: usize = 40_000;
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLTYPE\n2\nLT{i}\n3\nfirst\n0\nSTYLE\n2\nST{i}\n40\n1\n"));
+    }
+    t.push_str("0\nLTYPE\n2\nlt0\n3\nsecond\n0\nSTYLE\n2\nst0\n40\n2\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\nL{i}\n10\n0\n20\n0\n11\n1\n21\n1\n"));
+    }
+    t.push_str("0\nLINE\n8\nl0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+    assert!(d.layers.len() > N && d.layers.len() < N + 3, "{}", d.layers.len());
+    assert_eq!(d.linetype("LT0").map(|l| l.description.as_str()), Some("first"));
+    assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
@@ -482,6 +540,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }),
     )
     .unwrap();
@@ -588,6 +647,7 @@ fn viewport_frozen_layers_roundtrip() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -630,6 +690,7 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     });
     d.add(&paper, Common::default(), vp).unwrap();
     let text = dxf_2018(&d);
@@ -772,6 +833,7 @@ fn viewport_layer_colors_roundtrip() {
             layer_colors: colors,
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];
