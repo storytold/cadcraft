@@ -1013,17 +1013,14 @@ impl Interactive for InsertM {
                 return self.advance(s);
             }
             InsStage::Rows | InsStage::Cols => {
+                // A whole number as typed: AutoCAD 2024 takes +3 and 03 here and refuses 5.0, 5.,
+                // 1e1, 8/2, 3', 4.5 and a point (measured at the rows, and 5.0 and +3 at the columns).
                 let n = match i {
-                    Input::Text(t) => t
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= f64::from(Grid::MAX))
-                        .map(|v| v as u32)
-                        .ok_or_else(|| EngineError::Other(format!("Requires an integer between 1 and {}.", Grid::MAX)))?,
-                    Input::Enter => 1,
-                    _ => return Ok(Step::Continue),
-                };
+                    Input::Text(t) => t.trim().parse::<u32>().ok().filter(|v| (1..=Grid::MAX).contains(v)),
+                    Input::Enter => Some(1),
+                    _ => None,
+                }
+                .ok_or_else(|| EngineError::Other(format!("Requires an integer between 1 and {}.", Grid::MAX)))?;
                 if self.stage == InsStage::Rows {
                     self.rows = Some(n);
                 } else {
