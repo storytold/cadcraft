@@ -125,19 +125,26 @@ impl SelectThen {
         let Some(base) = self.pts.first().copied() else { return Ok(Step::Continue) };
         let placed = match (self.copy_array, i) {
             (CopyArray::Count, Input::Enter) => return self.copy_done(s),
-            (CopyArray::Count, Input::Text(t)) => {
-                // MAXARRAY caps the copies (items after the first, times the objects), as it
-                // caps ARRAY's.
-                let per_item = u64::try_from(self.objs.len()).unwrap_or(u64::MAX).max(1);
-                let max = u16::try_from((s.settings.maxarray / per_item).saturating_add(1)).unwrap_or(MAX_COPY_ITEMS).min(MAX_COPY_ITEMS);
-                let msg = match max {
-                    MAX_COPY_ITEMS => format!("Requires an integer between 2 and {MAX_COPY_ITEMS}."),
-                    0 | 1 => "The selection is too large to array (MAXARRAY limits the size of the array).".to_string(),
-                    _ => format!("Requires an integer between 2 and {max} (MAXARRAY limits the size of the array)."),
-                };
-                // A whole number as typed: AutoCAD 2024 takes +3 and 03 here, and refuses 4.0, 1e1,
-                // 8/2, 1' and 3" (measured).
-                let n = t.trim().parse::<u16>().ok().filter(|v| (2..=max).contains(v)).ok_or(EngineError::Other(msg))?;
+            (CopyArray::Count, i) => {
+                // A whole number as typed, from 2 to 32767 whatever the selection: AutoCAD 2024 takes
+                // +3 and 03 here, refuses 4.0, 1e1, 8/2, 1', 3", 50002 and a point, and doesn't
+                // apply MAXARRAY (with MAXARRAY 100000, four lines and 26000 items made 104000
+                // lines; measured).
+                let n = match i {
+                    Input::Text(t) => t.trim().parse::<u16>().ok().filter(|v| (2..=MAX_COPY_ITEMS).contains(v)),
+                    _ => None,
+                }
+                .ok_or_else(|| EngineError::Other(format!("Requires an integer between 2 and {MAX_COPY_ITEMS}.")))?;
+                // Not AutoCAD's: the copies (items after the first, times the objects) stay within
+                // ARRAY's own limit, whatever MAXARRAY says, so a large selection can't run out of
+                // memory.
+                let copies = u64::from(n - 1).saturating_mul(u64::try_from(self.objs.len()).unwrap_or(u64::MAX));
+                if copies > cadcraft_doc::MAX_ARRAY_ITEMS {
+                    return Err(EngineError::Other(format!(
+                        "The array would create {copies} objects; the limit is {}. Use fewer items or select fewer objects.",
+                        cadcraft_doc::MAX_ARRAY_ITEMS
+                    )));
+                }
                 self.copy_array = CopyArray::Items { n, fit: false };
                 return Ok(Step::Continue);
             }

@@ -166,15 +166,19 @@ fn array_takes_2_to_32767_items() {
     let mut s = with_line(1);
     copy(&mut s, &["0,0", "A"]);
     assert_eq!(s.current_prompt().unwrap().display(), "Enter number of items to array:");
-    for bad in ["1", "0", "2.5", "32768", "-3", "1'", "8/2", "x", "4.0", "1e1", "3\""] {
+    // A point from LISP is refused too (AutoCAD 2024 with '(1 2): the same message).
+    for bad in ["1", "0", "2.5", "32768", "-3", "1'", "8/2", "x", "4.0", "1e1", "3\"", "(list 1 2)"] {
+        let logged = s.log.len();
         s.cmdline(bad).unwrap();
-        assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 2 and 32767."), "{bad}");
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, ["Requires an integer between 2 and 32767."], "{bad}");
         assert_eq!(s.current_prompt().unwrap().display(), "Enter number of items to array:", "{bad}");
     }
     s.cmdline("32767").unwrap();
     assert_eq!(s.current_prompt().unwrap().display(), "Specify second point or [Fit]:");
-    // A sign or a leading zero is still a whole number (AutoCAD 2024: three items each).
-    for three in ["+3", "03"] {
+    // A sign or a leading zero is still a whole number, and so is the LISP real 3.0 (AutoCAD 2024:
+    // three items each).
+    for three in ["+3", "03", "(+ 1.5 1.5)"] {
         let mut s = with_line(1);
         copy(&mut s, &["0,0", "A", three, "5,0"]);
         assert_eq!(starts(&s), [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)], "{three}");
@@ -187,26 +191,43 @@ fn array_takes_2_to_32767_items() {
 }
 
 #[test]
-fn maxarray_caps_the_items_times_the_objects() {
-    // Two lines and MAXARRAY 100 (its least): 50 copies of each at most, so 51 items.
+fn maxarray_doesnt_limit_the_items() {
+    // AutoCAD 2024 with MAXARRAY 100000: four lines and 26000 items made 104000 lines (measured).
+    // Here MAXARRAY is 100 (its least): two lines and 60 items, and 101 lines and 2 items, go past
+    // it and are still made.
     let mut s = with_line(1);
     s.execute("line", &json!({ "points": [[0, 5], [1, 5]] })).unwrap();
     s.execute("setvar", &json!({ "name": "MAXARRAY", "value": 100 })).unwrap();
-    copy(&mut s, &["0,0", "A", "52"]);
-    assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 2 and 51 (MAXARRAY limits the size of the array)."));
-    for t in ["51", "10,0"] {
-        s.cmdline(t).unwrap();
-    }
+    copy(&mut s, &["0,0", "A", "60", "10,0"]);
     assert!(s.current_prompt().is_none());
-    assert_eq!(starts(&s).len(), 102);
-    // More objects than MAXARRAY: no array at all.
+    assert_eq!(starts(&s).len(), 120);
     let mut s = with_line(1);
     s.execute("setvar", &json!({ "name": "MAXARRAY", "value": 100 })).unwrap();
     for y in 1..=100 {
         s.execute("line", &json!({ "points": [[0, y], [1, y]] })).unwrap();
     }
-    copy(&mut s, &["0,0", "A", "2"]);
-    assert_eq!(s.log.last().map(String::as_str), Some("The selection is too large to array (MAXARRAY limits the size of the array)."));
+    copy(&mut s, &["0,0", "A", "2", "10,0"]);
+    assert!(s.current_prompt().is_none());
+    assert_eq!(starts(&s).len(), 202);
+}
+
+#[test]
+fn the_copies_stay_within_ten_million() {
+    // Not AutoCAD's limit, ARRAY's: 400 lines times 25000 more items is exactly 10 million copies
+    // and is taken; one item more is refused before anything is made.
+    let mut s = with_line(1);
+    for y in 1..400 {
+        s.execute("line", &json!({ "points": [[0, y], [1, y]] })).unwrap();
+    }
+    copy(&mut s, &["0,0", "A", "25002"]);
+    assert_eq!(
+        s.log.last().map(String::as_str),
+        Some("The array would create 10000400 objects; the limit is 10000000. Use fewer items or select fewer objects.")
+    );
+    assert_eq!(s.current_prompt().unwrap().display(), "Enter number of items to array:");
+    assert_eq!(starts(&s).len(), 400);
+    s.cmdline("25001").unwrap();
+    assert_eq!(s.current_prompt().unwrap().display(), "Specify second point or [Fit]:");
 }
 
 #[test]
