@@ -637,7 +637,8 @@ fn strip_entries(tags: &mut Vec<RawTag>) {
 /// An entity of a type CADCraft doesn't model, as read, with its handle, owner, space and layer
 /// from the drawing. Its reactors, extension dictionary and xdata are added by [`finish`] (they
 /// are kept with the drawing's other foreign data); its references are remapped there too. An
-/// application's own `102 {NAME` groups are kept as read, like those of unknown objects.
+/// application's own `102 {NAME` groups are kept as read, like those of unknown objects; handles inside them
+/// are not remapped (the same limit as for unknown objects).
 pub(crate) fn unknown_entity(u: &Unknown, e: &Entity, owner: &str, paper: bool) -> Vec<Tag> {
     let kind = up(&u.dxf_type);
     if STRUCTURAL.contains(&kind.as_str()) || u.dxf_type.trim() != u.dxf_type {
