@@ -149,6 +149,7 @@
 	Cut with Base Point	带基点剪切
 	Cyan	青色
 	Cylinder	圆柱体
+	DView	动态视图
 	DWG	DWG
 	DXF	DXF
 	Dark	深色
@@ -222,7 +223,7 @@
 	Enter a vertex editing option	输入顶点编辑选项
 	Enter an option	输入选项
 	Enter angle of xline	输入构造线角度
-	Enter angle of xline (0) or	输入构造线角度 (0) 或
+	Enter angle of xline (0)	输入构造线角度 (0)
 	Enter area of rectangle in current units	在当前单位中输入矩形面积
 	Enter attribute prompt	输入属性提示
 	Enter attribute tag name	输入属性标记名称
@@ -233,7 +234,7 @@
 	Enter default attribute value	输入默认属性值
 	Enter degree of spline	输入样条曲线次数
 	Enter delta angle	输入增量角度
-	Enter delta length or	输入增量长度或
+	Enter delta length	输入增量长度
 	Enter dimension text	输入标注文字
 	Enter dimension text (<> = measurement)	输入标注文字 (<> = 测量值)
 	Enter dimension value or [name=expression]	输入标注值或 [名称=表达式]
@@ -448,6 +449,7 @@
 	Multiline Text	多行文字
 	Multiline Text...	多行文字...
 	Multiple	多个
+	Multiple Insert	多重插入
 	Multiple Point	多点
 	My	我的
 	My properties: not available yet	我的属性：暂不可用
@@ -592,6 +594,8 @@
 	Quit CADCraft	退出 CADCraft
 	Radius	半径
 	Raster Image	光栅图像
+	Raster Image Reference...	光栅图像参照...
+	Raster Images	光栅图像
 	Ray	射线
 	Read-only	只读
 	Real name	真实姓名
@@ -669,8 +673,8 @@
 	Select an arc or circle	选择圆弧或圆
 	Select an arc.	选择一段圆弧。
 	Select an object	选择对象
-	Select an object to change or	Select an object to change or
-	Select an object to measure or	Select an object to measure or
+	Select an object to change	Select an object to change
+	Select an object to measure	Select an object to measure
 	Add to Working Set	添加到工作集
 	Edit Reference In-Place	就地编辑参照
 	Save Reference Edits	保存参照编辑
@@ -689,9 +693,8 @@
 	Select first line	选择第一条直线
 	Select first line or arc	选择第一条直线或圆弧
 	Select first object	选择第一个对象
-	Select first object or	Select first object or
 	Select first point	指定第一点
-	Select nested objects to copy or	Select nested objects to copy or
+	Select nested objects to copy	Select nested objects to copy
 	Select object	选择对象
 	Select object to dimension	选择要标注的对象
 	Select object to divide	选择要定数等分的对象
@@ -707,7 +710,7 @@
 	Select one polyline (Multiple is available through the JSON form).	选择一条多段线（可通过 JSON 表单选择多个）。
 	Select path curve	选择路径曲线
 	Select point or object	选择点或对象
-	Select polyline or	选择多段线或
+	Select polyline	选择多段线
 	Select second line	选择第二条直线
 	Select second line or shift-select to apply corner	选择第二条直线，或按 Shift 键应用角点
 	Select second object	选择第二个对象
@@ -760,9 +763,8 @@
 	Specify axis endpoint of ellipse	指定椭圆的轴端点
 	Specify base diameter	指定底面直径
 	Specify base point	指定基点
-	Specify base point or	Specify base point or
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基点或位移（按住鼠标中键拖动以进行实时平移）
-	Specify base radius or	Specify base radius or
+	Specify base radius	Specify base radius
 	Specify center of donut	指定圆环中心
 	Specify center of ellipse	指定椭圆中心
 	Specify center of polygon	指定多边形中心
@@ -804,7 +806,7 @@
 	Specify first point on circle: _tan to	指定圆上的第一点: _tan 到
 	Specify first source point	指定第一个源点
 	Specify height	指定高度
-	Specify helix height or	Specify helix height or
+	Specify helix height	Specify helix height
 	Specify included angle	指定夹角
 	Specify insertion base point	指定插入基点
 	Specify insertion point	指定插入点
@@ -823,7 +825,6 @@
 	Specify new width for all segments	指定所有段的新宽度
 	Specify next point	指定下一点
 	Specify offset distance	指定偏移距离
-	Specify offset distance or	Specify offset distance or
 	Specify opposite corner	指定对角点
 	Specify other corner point	指定另一角点
 	Specify other endpoint of axis	指定轴的另一端点
@@ -836,7 +837,6 @@
 	Specify radius of circle	指定圆半径
 	Specify rotation angle	指定旋转角度
 	Specify rotation angle of text	指定文字旋转角度
-	Specify rotation angle or	Specify rotation angle or
 	Specify scale factor	指定比例因子
 	Specify second angle endpoint	指定第二角度端点
 	Specify second break point	指定第二打断点
@@ -869,9 +869,9 @@
 	Specify third source point or <continue>	指定第三个源点或 <继续>
 	Specify through point	指定通过点
 	Specify top diameter	指定顶面直径
-	Specify top radius or	Specify top radius or
+	Specify top radius	Specify top radius
 	Specify total angle	指定总角度
-	Specify total length or	Specify total length or
+	Specify total length	Specify total length
 	Specify width for rectangles	指定矩形宽度
 	Sphere	球体
 	Spline	样条曲线
@@ -1385,3 +1385,91 @@
 	Update Fields	更新字段
 	Edit Table Cells	编辑表格单元格
 	Edit Text	编辑文字
+	Find All	查找全部
+	Find what:	查找内容：
+	Match case	区分大小写
+	Replace	替换
+	Replace All	全部替换
+	Replace with:	替换为：
+	Replacement text	替换文本
+	Results	结果
+	Searches the current space.	仅搜索当前空间。
+	Text to find	要查找的文字
+	Whole words	全字匹配
+	Nothing found	未找到
+
+# The strings the report listed as missing for zh.
+	Add…	添加…
+	Alias	别名
+	Alias file: {file}	别名文件：{file}
+	Associative	关联
+	AutoLISP (LSP)	AutoLISP (LSP)
+	B	B
+	Backup copy	备份副本
+	Block to create or edit	要创建或编辑的块
+	Choose the command the alias starts.	选择别名要启动的命令。
+	Click the ruler to add a tab stop, right-click to remove one	单击标尺可添加制表位，右键单击可将其删除
+	Command	命令
+	Create backup copy with each save	每次保存时创建备份副本
+	Crossing selection color:	交叉选择颜色：
+	Custom	自定义
+	Define each corner of the selection window with a separate click.	分别单击以定义选择窗口的各个角点。
+	Discard	放弃
+	Edit Block Definition	编辑块定义
+	Edit…	编辑…
+	Exclude:	排除：
+	Font	字体
+	Grips	夹点
+	Hatches	图案填充
+	Imperial (inches)	英制（英寸）
+	Indicate selection area	指示选择区域
+	Interface scale	界面缩放
+	Island	孤岛
+	Italic	斜体
+	Metric (millimetres)	公制（毫米）
+	More than {n} aliases.	超过 {n} 个别名。
+	Multiline text	多行文字
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	启动时的新建图形和第一个图形使用这些单位，除非设置了默认样板 (QNEWTEMPLATE)。
+	New block	新建块
+	No alias file loaded. REINIT replaces these aliases with a file's.	未加载别名文件。REINIT 将用文件中的别名替换这些别名。
+	Object grouping	对象编组
+	Object selection limit for display of grips	显示夹点时对象选择的数目上限
+	Objects on locked layers	锁定图层上的对象
+	Open in Block Editor	在块编辑器中打开
+	Origin: {x}, {y}	原点：{x}, {y}
+	Overline	上划线
+	Save alias	保存别名
+	Save changes to block "{name}"?	保存对块“{name}”的更改吗？
+	Select boundaries to remove	选择要删除的边界
+	Select using two clicks only	仅用两次单击选择
+	Selection Area Effect	选择区域效果
+	Selection Preview Filter	选择预览过滤器
+	Selection area opacity:	选择区域不透明度：
+	Selection effect color	选择效果颜色
+	Selection modes	选择模式
+	Selection preview	选择预览
+	Show grips	显示夹点
+	Tables	表格
+	Text color	文字颜色
+	This drawing	此图形
+	Type an alias name.	输入别名名称。
+	Underline	下划线
+	Units of new drawings	新图形的单位
+	Unsaved changes	未保存的更改
+	Visual Effect Settings	视觉效果设置
+	Visual Effect Settings...	视觉效果设置...
+	When a command is active	命令处于活动状态时
+	When no command is active	无活动命令时
+	Window selection color:	窗口选择颜色：
+	X	X
+	Xrefs	外部参照
+	Y	Y
+	built-in	内置
+	contains authoring elements. Open in Block Editor?	包含编写元素。在块编辑器中打开吗？
+	overrides built-in	覆盖内置
+	{alias} is already defined; select it and use Edit.	{alias} 已定义；请选择它并使用编辑。
+	{command} is an unknown command.	{command} 是未知命令。
+menu	Dimension	标注
+menu	Draw	绘图
+menu	Modify	修改
+menu	View	视图
