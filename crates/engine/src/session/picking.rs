@@ -16,6 +16,13 @@ impl Session {
         true
     }
 
+    /// Whether a selection window from `corner` to `p` is a crossing window: it was dragged
+    /// leftwards on screen (in a twisted view, not along the drawing's X axis).
+    pub fn window_is_crossing(&self, corner: Vec2, p: Vec2) -> bool {
+        let twist = self.state().map_or(0.0, |st| st.view().twist);
+        (p - corner).rotate(twist).x < 0.0
+    }
+
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///
     /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
@@ -24,7 +31,7 @@ impl Session {
         let space = self.space();
         let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
-            let crossing = p.x < pw.corner.x;
+            let crossing = self.window_is_crossing(pw.corner, p);
             let bx = Bounds2::new(pw.corner, p);
             let mut hit = select::select_window(self.doc()?, &space, bx, crossing);
             // Only the objects the window hit are stretched by it; the rest of their groups

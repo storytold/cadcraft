@@ -185,7 +185,7 @@ fn move_with_pickfirst_and_window_selection() {
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
@@ -216,7 +216,7 @@ fn stretch_uses_a_pickfirst_crossing_window() {
     };
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     let a = rect(&mut s);
     s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();
     let c = s.doc().unwrap().model.last().unwrap().handle;
@@ -240,7 +240,7 @@ fn stretch_uses_a_pickfirst_crossing_window() {
     // Picked, not windowed: moves whole.
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     let b = rect(&mut s);
     s.idle_click(Vec2::new(10.0, 2.0), false).unwrap();
     assert_eq!(s.selection(), vec![b]);
@@ -256,7 +256,7 @@ fn stretch_uses_a_pickfirst_crossing_window() {
 fn stretch_moves_a_windowed_groups_other_members_whole() {
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
     let a = s.doc().unwrap().model.last().unwrap().handle;
     s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();
@@ -294,7 +294,7 @@ fn stretch_moves_an_objects_vertices_only_by_its_own_windows() {
     };
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(15.0, 2.5), height: 40.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(15.0, 2.5), height: 40.0, twist: 0.0 });
     s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
     let a = s.doc().unwrap().model.last().unwrap().handle;
     s.cmdline("PLINE 20,0 30,0 30,5 20,5 C").unwrap();
@@ -325,7 +325,7 @@ fn stretch_moves_an_objects_vertices_only_by_its_own_windows() {
 fn a_pick_beats_a_later_window_and_an_edit_drops_the_windows() {
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     s.cmdline("LINE 0,0 10,0").unwrap();
     s.cmdline("").unwrap();
     let l = s.doc().unwrap().model.last().unwrap().handle;
@@ -359,7 +359,7 @@ fn a_pick_beats_a_later_window_and_an_edit_drops_the_windows() {
 fn the_block_editor_forgets_the_selection_windows() {
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     let l = s.execute("line", &json!({ "points": [[20, 0], [22, 0]] })).unwrap()["handles"][0].clone();
     s.execute("block", &json!({ "name": "B", "base": [20, 0], "handles": [l] })).unwrap();
     s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
@@ -377,7 +377,7 @@ fn the_block_editor_forgets_the_selection_windows() {
 fn undo_forgets_the_selection_windows() {
     let mut s = Session::new();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(5.0, 2.5), height: 20.0, twist: 0.0 });
     s.cmdline("PLINE 0,0 10,0 10,5 0,5 C").unwrap();
     let a = s.doc().unwrap().model.last().unwrap().handle;
     s.execute("circle", &json!({"center": [30, 0], "radius": 1})).unwrap();

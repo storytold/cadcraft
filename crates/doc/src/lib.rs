@@ -16,6 +16,7 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod raster;
 mod refedit;
 mod store;
 mod tables;
@@ -27,12 +28,13 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds};
+pub use extents::{BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
@@ -136,6 +138,8 @@ pub struct Drawing {
     /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
     /// drawing reopens with it. Never set on an open drawing.
     pub portable_fonts: bool,
+    /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
+    pub rasters: Rasters,
 }
 
 impl Default for Drawing {
@@ -196,6 +200,7 @@ impl Drawing {
             refedit: None,
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
+            rasters: Rasters::default(),
         }
     }
 
@@ -383,10 +388,13 @@ impl Drawing {
     /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
+        // One block-bounds cache for the whole space: every reference to a block reuses its
+        // measured contents instead of measuring the definition again.
+        let mut cache = BlockBoundsCache::default();
         if let Some(store) = self.space(space) {
             for e in store.iter() {
                 if self.in_extents(e) {
-                    b = b.union(&extent_bounds(self, e));
+                    b = b.union(&extent_bounds_cached(self, e, &mut cache));
                 }
             }
         }
