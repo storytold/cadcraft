@@ -24,6 +24,7 @@ fn insert(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -57,6 +58,7 @@ fn corrupt(d: &mut Drawing) -> (Handle, Handle) {
         &Space::Model,
         on("0"),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,

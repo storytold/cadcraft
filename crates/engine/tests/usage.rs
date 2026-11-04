@@ -20,6 +20,7 @@ fn text(handle: u64, layer: &str, style: &str) -> Entity {
     let mut e = Entity::new(
         Handle(handle),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -50,6 +51,7 @@ fn insert(handle: u64, block: &str, layer: &str) -> Entity {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     );
     e.common = Common { layer: layer.into(), ..Common::default() };

@@ -173,7 +173,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP, dxf_ext::FORMULA_APP];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
@@ -909,6 +909,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
+    // XCLIP boundaries go into the foreign data the raw writer places on the references.
+    let clipped = crate::dxf_clip::prepare(d);
+    let d: &Drawing = clipped.as_ref().unwrap_or(d);
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),

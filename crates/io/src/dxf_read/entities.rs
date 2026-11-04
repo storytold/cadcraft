@@ -167,6 +167,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {
@@ -453,6 +454,7 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
                 dm.p15 = center;
             }
             dm.marks = crate::dxf_ext::read_marks(tags);
+            dm.marks.formula = crate::dxf_ext::formula(tags);
             // Group 52: the extension lines' angle relative to the dimension line (DIMEDIT Oblique).
             let base = match dm.kind {
                 DimKind::Linear { rotation } => Some(rotation),
@@ -478,6 +480,9 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
         }
         ("MULTILEADER" | "MLEADER", EntityKind::MLeader(m)) => {
             let pending = crate::dxf_mleader::resolve(tags, m, &rx.styles, &rx.brs);
+            if let Some(t) = &mut m.text {
+                t.formula = crate::dxf_ext::formula(tags);
+            }
             if let Some(b) = &m.block {
                 rx.inserted.insert(b.block.to_ascii_uppercase());
             }
@@ -577,6 +582,8 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
             if let Some(m) = &multiline {
                 text.value.clone_from(&m.read_as);
             }
+            // The formula's xdata closes the record, after any embedded multiline text.
+            text.formula = crate::dxf_ext::formula(t2);
             attribs.push(Attrib {
                 tag: own.s(2).unwrap_or_default(),
                 text,

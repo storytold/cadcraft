@@ -9,6 +9,7 @@ use cadcraft_io::{SaveOptions, Version, read_dxf, write_dxf, write_with};
 
 fn attrib(tag: &str, modes: AttribModes) -> Attrib {
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 1.0,
@@ -49,6 +50,7 @@ fn drawing_c(constant: bool) -> Drawing {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).expect("add");
     d

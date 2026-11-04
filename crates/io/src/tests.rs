@@ -30,6 +30,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::new(1.0, 1.0, 0.0),
             align_pt: None,
             height: 0.25,
@@ -47,6 +48,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 0.2,
             width: 3.0,
@@ -141,6 +143,7 @@ fn sample() -> Drawing {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     )
     .unwrap();
@@ -259,6 +262,7 @@ fn block_definition_properties_and_constant_attdefs_roundtrip() {
     let mut b = Block::new("Title");
     (b.description, b.units, b.explodable) = ("Drawing title block".into(), 4, false);
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.5,
@@ -1522,6 +1526,7 @@ const INTL: &str = "图号 Ä°ø Ø 😀";
 
 fn intl_text(value: &str) -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(1.0, 1.0, 0.0),
         align_pt: None,
         height: 2.5,
@@ -1546,6 +1551,7 @@ fn intl_sample() -> Drawing {
         &Space::Model,
         on.clone(),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 2.5,
             width: 30.0,
@@ -1595,6 +1601,7 @@ fn intl_sample() -> Drawing {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     )
     .unwrap();
@@ -1787,6 +1794,7 @@ fn dwg_roundtrip_keeps_extension_data() {
 fn mleader_is_written_as_multileader() {
     let mut d = Drawing::new_metric();
     let text = cadcraft_doc::MText {
+        formula: None,
         insert: Vec3::new(12.0, 5.0, 0.0),
         height: 2.5,
         width: 0.0,
@@ -1821,6 +1829,7 @@ fn mleader_is_written_as_multileader() {
 fn attdef_prompt_survives_dxf_roundtrip() {
     let mut d = Drawing::new_metric();
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.0,
@@ -2695,6 +2704,7 @@ fn pdf_strokes_each_transparent_primitive_inside_a_block() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         d.add(&Space::Model, Common { transparency: Transparency::Percent(t), ..Common::default() }, EntityKind::Insert(ins)).unwrap();
         d

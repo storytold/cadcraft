@@ -217,7 +217,8 @@ fn common(expected: &Common, actual: &Common, context: &str) {
 }
 
 fn text(expected: &Text, actual: &Text, context: &str) {
-    let Text { insert, align_pt, height, value, rotation, width_factor, oblique, style, halign, valign } = expected;
+    let Text { formula, insert, align_pt, height, value, rotation, width_factor, oblique, style, halign, valign } = expected;
+    equal(formula, &actual.formula, context, "formula");
     equal(insert, &actual.insert, context, "insert");
     equal(align_pt, &actual.align_pt, context, "align_pt");
     equal(height, &actual.height, context, "height");
@@ -231,7 +232,8 @@ fn text(expected: &Text, actual: &Text, context: &str) {
 }
 
 fn mtext(expected: &MText, actual: &MText, context: &str) {
-    let MText { insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns } = expected;
+    let MText { formula, insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns } = expected;
+    equal(formula, &actual.formula, context, "mtext.formula");
     equal(insert, &actual.insert, context, "mtext.insert");
     equal(height, &actual.height, context, "mtext.height");
     equal(width, &actual.width, context, "mtext.width");
@@ -263,7 +265,7 @@ fn attrib(expected: &Attrib, actual: &Attrib, context: &str) {
 }
 
 fn insert(expected: &Insert, actual: &Insert, context: &str) {
-    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing } = expected;
+    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing, clip } = expected;
     equal(block, &actual.block, context, "insert.block");
     equal(insert, &actual.insert, context, "insert.insert");
     equal(scale, &actual.scale, context, "insert.scale");
@@ -272,6 +274,7 @@ fn insert(expected: &Insert, actual: &Insert, context: &str) {
     equal(rows, &actual.rows, context, "insert.rows");
     equal(col_spacing, &actual.col_spacing, context, "insert.col_spacing");
     equal(row_spacing, &actual.row_spacing, context, "insert.row_spacing");
+    equal(clip, &actual.clip, context, "insert.clip");
     equal(&attribs.len(), &actual.attribs.len(), context, "insert.attribs.len");
     for (index, (a, b)) in attribs.iter().zip(&actual.attribs).enumerate() {
         attrib(a, b, &format!("{context}.attrib[{index}]"));
