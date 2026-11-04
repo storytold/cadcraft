@@ -31,6 +31,7 @@ fn drawing() -> Result<(Drawing, Vec<(Handle, String)>), Box<dyn std::error::Err
     cases.push(format!("{}^ C B", "A".repeat(260)));
     for contents in cases {
         let kind = EntityKind::MText(MText {
+            frame: false,
             formula: None,
             insert: Vec3::new(1.0, 2.0, 0.0),
             height: 0.5,
