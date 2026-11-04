@@ -1489,7 +1489,8 @@ fn rejustify_text(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::Text, h: cadc
     let width = match t.halign {
         HAlign::Aligned | HAlign::Fit => t.align_pt.map_or(0.0, |a| a.xy().dist(t.insert.xy())),
         _ => {
-            let font = d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font, st.vertical)).unwrap_or_default();
+            let font =
+                d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font, st.vertical)).unwrap_or_default();
             cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor)
         }
     };
