@@ -81,6 +81,16 @@ fn rectangular_clip_cuts_only_that_reference() {
 }
 
 #[test]
+fn off_on_a_selection_with_an_unclipped_reference_changes_nothing() {
+    let (mut s, r1, r2) = setup();
+    s.execute("xclip", &json!({ "handle": r1, "rectangle": [[20, -10], [70, 10]] })).unwrap();
+    // r2 has no boundary: the command fails, and r1 keeps its clip on.
+    assert!(s.execute("xclip", &json!({ "handles": [r1, r2], "option": "off" })).is_err());
+    assert!(clip(&s, &r1).unwrap().enabled);
+    assert!(clip(&s, &r2).is_none());
+}
+
+#[test]
 fn a_clipped_reference_plots_its_contents_on_their_own_layers() {
     let mut s = Session::new();
     s.doc_mut().unwrap().layers.push(cadcraft_engine::doc::Layer { name: "Walls".into(), ..Default::default() });

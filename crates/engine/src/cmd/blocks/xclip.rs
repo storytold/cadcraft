@@ -116,10 +116,15 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "on" | "off" => {
             let on = option == "on";
+            // Every reference is checked before any changes: an error leaves the drawing as it was.
+            let mut clips = Vec::with_capacity(hs.len());
             for h in &hs {
                 let mut c = clip_of(s, *h).ok_or_else(|| bad("xclip", "no clipping boundary on the selected reference"))?;
                 c.enabled = on;
-                set_clip(s, *h, Some(c))?;
+                clips.push((*h, c));
+            }
+            for (h, c) in clips {
+                set_clip(s, h, Some(c))?;
             }
         }
         "delete" | "d" => {
