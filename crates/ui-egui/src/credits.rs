@@ -316,18 +316,21 @@ fn fit_widths(natural: &[f32], grow: &[f32], room: f32) -> Vec<f32> {
 /// A striped table whose columns open at [`fit_widths`], so it fills the width and nothing scrolls
 /// sideways. Every column, the last included, can be dragged wider or narrower at its right edge:
 /// only a table dragged wider than the window scrolls sideways. Text too long for its column is
-/// clipped. When the fit itself changes (a longer name, a resized window) the columns go back to
-/// the new fit, dropping any dragged widths.
+/// clipped. When a column's natural width or the window changes, the columns go back to a new fit,
+/// dropping any dragged widths.
 fn fitted_table<'a>(ui: &'a mut egui::Ui, id: &str, natural: &[f32], grow: &[f32]) -> egui_extras::TableBuilder<'a> {
     // Every cell is followed by the item gap, and the vertical scrollbar keeps its margins.
     let s = ui.spacing();
     let gaps = s.item_spacing.x * natural.len() as f32;
     let bar = s.scroll.bar_width + s.scroll.bar_inner_margin + s.scroll.bar_outer_margin;
     let widths = fit_widths(natural, grow, (ui.available_width() - gaps - bar).max(0.0));
-    // The table keeps its own column widths, so a new fit has to clear them.
+    // The table keeps its own column widths, so a change in what they were fitted to has to clear
+    // them. A longer name can leave the fit itself unchanged, and scrolling can nudge the available
+    // width, so this compares the natural widths and the clip rect, which scrolling never moves.
     let fit = egui::Id::unique(("credits_fit", id));
-    let refit = ui.data_mut(|d| d.get_temp::<Vec<f32>>(fit)).as_ref() != Some(&widths);
-    ui.data_mut(|d| d.insert_temp(fit, widths.clone()));
+    let measured = (natural.to_vec(), ui.clip_rect().width());
+    let refit = ui.data_mut(|d| d.get_temp::<(Vec<f32>, f32)>(fit)).as_ref() != Some(&measured);
+    ui.data_mut(|d| d.insert_temp(fit, measured));
     let mut t =
         egui_extras::TableBuilder::new(ui).id_salt(id).striped(true).resizable(true).auto_shrink([false, false]).max_scroll_height(f32::INFINITY);
     if refit {
@@ -568,18 +571,23 @@ mod tests {
         assert_eq!(fit_widths(&[100.0, 300.0, 50.0], &[1.0, 1.0, 0.0], 0.0), [MIN_COLUMN, MIN_COLUMN, 50.0]);
     }
 
-    const WINDOW: f32 = 640.0;
+    const WINDOW: f32 = 640.5;
     const NATURAL: [f32; 3] = [120.0, 80.0, 80.0];
     const GROW: [f32; 3] = [1.0, 0.0, 0.0];
 
     /// One frame of a table long enough to scroll; the rects of its header cells.
     fn table_frame(ctx: &egui::Context, width: f32, natural: &[f32], events: Vec<egui::Event>) -> Vec<egui::Rect> {
+        scrolled_frame(ctx, width, natural, 0.0, events)
+    }
+
+    /// [`table_frame`], scrolled `offset` points sideways.
+    fn scrolled_frame(ctx: &egui::Context, width: f32, natural: &[f32], offset: f32, events: Vec<egui::Event>) -> Vec<egui::Rect> {
         let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 300.0)));
         let raw = egui::RawInput { screen_rect, events, ..Default::default() };
         let mut cells = Vec::new();
         let out = ctx.run_ui(raw, |ui| {
             cells.clear();
-            egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::horizontal().auto_shrink([false, false]).horizontal_scroll_offset(offset).show(ui, |ui| {
                 fitted_table(ui, "test", natural, &GROW)
                     .header(20.0, |mut header| {
                         for _ in natural {
@@ -643,11 +651,27 @@ mod tests {
     fn a_changed_fit_replaces_the_column_widths() {
         let (ctx, opened) = opened_table();
         drag_edge(&ctx, opened[0], -30.0);
+        let longer_name = table_frame(&ctx, WINDOW, &[200.0, 80.0, 80.0], Vec::new());
+        assert!((longer_name[0].width() - opened[0].width()).abs() < 1.0, "a longer name drops a dragged width: {longer_name:?}");
         let wider = table_frame(&ctx, WINDOW, &[120.0, 200.0, 80.0], Vec::new());
         let widths: Vec<f32> = wider.iter().map(|c| c.width().round()).collect();
         assert!(widths.ends_with(&[200.0, 80.0]), "a longer cell widens its column: {widths:?}");
         assert!(wider[2].right() < WINDOW, "the table still fits the window: {wider:?}");
         let narrower = table_frame(&ctx, 400.0, &NATURAL, Vec::new());
         assert!(narrower[2].right() < 400.0, "a narrower window refits the table: {narrower:?}");
+    }
+
+    #[test]
+    fn scrolling_sideways_keeps_dragged_widths() {
+        let (ctx, opened) = opened_table();
+        drag_edge(&ctx, opened[0], 100.0);
+        table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+        let dragged = table_frame(&ctx, WINDOW, &NATURAL, Vec::new());
+        assert!((dragged[0].width() - opened[0].width() - 100.0).abs() < 1.0, "the drag took: {dragged:?}");
+        for offset in [13.3, 27.77, 41.1, 0.6] {
+            scrolled_frame(&ctx, WINDOW, &NATURAL, offset, Vec::new());
+            let scrolled = scrolled_frame(&ctx, WINDOW, &NATURAL, offset, Vec::new());
+            assert!((scrolled[0].width() - dragged[0].width()).abs() < 1.0, "scrolled {offset}: {scrolled:?}");
+        }
     }
 }
