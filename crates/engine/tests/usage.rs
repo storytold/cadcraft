@@ -51,6 +51,7 @@ fn insert(handle: u64, block: &str, layer: &str) -> Entity {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     );
     e.common = Common { layer: layer.into(), ..Common::default() };
