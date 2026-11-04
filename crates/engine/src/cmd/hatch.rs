@@ -15,6 +15,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_p
 use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
 
 mod assoc;
+pub(crate) use assoc::detach;
 mod edit;
 mod pick;
 use super::has_doc;
