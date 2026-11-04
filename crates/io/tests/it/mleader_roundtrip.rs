@@ -52,6 +52,7 @@ fn insert(block: &str, at: Vec3) -> Insert {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }
 }
 
