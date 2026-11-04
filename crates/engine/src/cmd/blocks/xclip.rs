@@ -117,14 +117,22 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         "on" | "off" => {
             let on = option == "on";
             // Every reference is checked before any changes: an error leaves the drawing as it was.
-            let mut clips = Vec::with_capacity(hs.len());
-            for h in &hs {
-                let mut c = clip_of(s, *h).ok_or_else(|| bad("xclip", "no clipping boundary on the selected reference"))?;
-                c.enabled = on;
-                clips.push((*h, c));
+            let d = s.doc()?;
+            if !hs.iter().all(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Insert(i)) if i.clip.is_some())) {
+                return Err(bad("xclip", "no clipping boundary on the selected reference"));
             }
-            for (h, c) in clips {
-                set_clip(s, h, Some(c))?;
+            // Only the flag changes, once per reference (a selection may name one many times).
+            let mut seen = std::collections::HashSet::new();
+            for h in hs.iter().filter(|h| seen.insert(**h)) {
+                s.doc_mut()?
+                    .modify_entity(*h, |e| {
+                        if let EntityKind::Insert(i) = &mut e.kind
+                            && let Some(c) = &mut i.clip
+                        {
+                            c.enabled = on;
+                        }
+                    })
+                    .map_err(|e| bad("xclip", e.to_string()))?;
             }
         }
         "delete" | "d" => {

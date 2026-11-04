@@ -88,6 +88,10 @@ fn off_on_a_selection_with_an_unclipped_reference_changes_nothing() {
     assert!(s.execute("xclip", &json!({ "handles": [r1, r2], "option": "off" })).is_err());
     assert!(clip(&s, &r1).unwrap().enabled);
     assert!(clip(&s, &r2).is_none());
+    // A reference named many times is turned off once, its boundary kept.
+    s.execute("xclip", &json!({ "handles": vec![r1.clone(); 1000], "option": "off" })).unwrap();
+    let c = clip(&s, &r1).unwrap();
+    assert!(!c.enabled && c.points.len() == 2);
 }
 
 #[test]
