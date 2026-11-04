@@ -32,6 +32,64 @@ pub(super) fn hatch_reactors(d: &Drawing) -> HashMap<Handle, Vec<String>> {
     out
 }
 
+/// A polyface mesh as one POLYLINE record: the vertices (flags 64 | 128), then one face record
+/// (128) per face that names them (the others draw nothing and are dropped, as on read). Counts
+/// and indices are 16-bit groups (71–74), and no index is above the vertex count: a mesh too large
+/// for them is written as its 3D faces rather than with numbers cut short.
+fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, owner: &str, paper: bool, cx: &Ctx) {
+    let faces: Vec<&[i32; 4]> = m.faces.iter().filter(|f| m.face3d(f).is_some()).collect();
+    let max = usize::try_from(i16::MAX).unwrap_or(usize::MAX);
+    if m.vertices.len() > max || faces.len() > max {
+        for (i, f) in m.faces3d().into_iter().enumerate() {
+            let handle = if i == 0 { e.handle } else { Handle(w.next_handle()) };
+            let face = Entity { handle, common: e.common.clone(), kind: EntityKind::Face3d(f) };
+            entity(w, d, &face, owner, paper, cx);
+        }
+        return;
+    }
+    w.s(0, "POLYLINE");
+    common(w, e, owner, paper, "AcDbPolyFaceMesh");
+    w.i(66, 1);
+    w.p(10, Vec3::ZERO);
+    w.i(70, 64);
+    w.i(71, m.vertices.len() as i64);
+    w.i(72, faces.len() as i64);
+    for q in &m.vertices {
+        let vh = w.h();
+        w.s(0, "VERTEX");
+        w.s(5, vh);
+        w.s(330, e.handle.hex());
+        w.s(100, "AcDbEntity");
+        w.s(8, &e.common.layer);
+        w.s(100, "AcDbVertex");
+        w.s(100, "AcDbPolyFaceMeshVertex");
+        w.p(10, *q);
+        w.i(70, 192);
+    }
+    for f in faces {
+        let vh = w.h();
+        w.s(0, "VERTEX");
+        w.s(5, vh);
+        w.s(330, e.handle.hex());
+        w.s(100, "AcDbEntity");
+        w.s(8, &e.common.layer);
+        w.s(100, "AcDbFaceRecord");
+        w.p(10, Vec3::ZERO);
+        w.i(70, 128);
+        for (code, ix) in [71, 72, 73, 74].into_iter().zip(f) {
+            if *ix != 0 {
+                w.i(code, i64::from(*ix));
+            }
+        }
+    }
+    let sh = w.h();
+    w.s(0, "SEQEND");
+    w.s(5, sh);
+    w.s(330, e.handle.hex());
+    w.s(100, "AcDbEntity");
+    w.s(8, &e.common.layer);
+}
+
 pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     write_basic_entity(w, d, e, owner, paper, cx);
     write_text_entity(w, d, e, owner, paper, cx);
@@ -45,7 +103,7 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
     write_other_entity(w, d, e, owner, paper, cx);
 }
 
-fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Line(l) => {
             w.s(0, "LINE");
@@ -53,6 +111,7 @@ fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
             thickness(w, e);
             w.p(10, l.a);
             w.p(11, l.b);
+            extrusion(w, e);
         }
         EntityKind::Point(p) => {
             w.s(0, "POINT");
@@ -143,6 +202,7 @@ fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
             w.s(100, "AcDbEntity");
             w.s(8, &e.common.layer);
         }
+        EntityKind::PolyfaceMesh(m) => polyface(w, d, e, m, owner, paper, cx),
         EntityKind::Spline(s) => {
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
@@ -256,7 +316,8 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.f(40, t.height);
             w.f(41, t.width);
             w.i(71, i64::from(t.attach));
-            w.i(72, 1);
+            // Drawing direction: 5, by style.
+            w.i(72, 5);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
             // A text whose fields are written as objects goes out as shown (#551).
             let shown = if cx.fields.contains(&e.handle) {
@@ -280,7 +341,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
-            w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
+            w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
         }
         _ => {}
     }
@@ -344,6 +405,12 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
         let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
         w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+        // Group 12: a block read from a file keeps the dimension's moved-by offset (AutoCAD
+        // draws the block translated by it); regenerated geometry already sits where the
+        // definition points place it, so it writes no offset.
+        if dm.block.is_some() && dm.insertion_point != Vec3::ZERO {
+            w.p(12, dm.insertion_point);
+        }
         let ty: i64 = match dm.kind {
             DimKind::Linear { .. } => 0,
             DimKind::Aligned => 1,
@@ -359,7 +426,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
         w.f(42, g.measurement);
         if !dm.text.is_empty() {
-            w.s(1, &dm.text);
+            w.s(1, crate::dxf_read::mtext_dxf::encode_line(&dm.text));
         }
         w.s(3, &dm.style);
         if dm.text_rotation != 0.0 {
@@ -539,6 +606,9 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
     }
 }
 
+/// Writes a HATCH: its pattern name, solid and associative flags, its boundary loops, and the
+/// pattern angle, scale and double flag (written for solid hatches too). Pattern lines are written
+/// only for non-solid hatches.
 fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
     if let EntityKind::Hatch(h) = &e.kind {
         w.s(0, "HATCH");
@@ -573,10 +643,12 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         }
         w.i(75, i64::from(h.style));
         w.i(76, 1);
+        // Angle, scale and double flag are written for solid fills too, as read (AutoCAD and
+        // other writers keep them on SOLID hatches; readers ignore them there).
+        w.f(52, h.angle.to_degrees());
+        w.f(41, h.scale);
+        w.i(77, 0);
         if !h.solid {
-            w.f(52, h.angle.to_degrees());
-            w.f(41, h.scale);
-            w.i(77, 0);
             // The lines read from the file, else the library's pattern of that name.
             let lines = if h.pattern_lines.is_empty() {
                 cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
@@ -618,28 +690,37 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // Within one turn, so a hostile twist (from JSON or MCP) writes a sane angle.
+        let twist = cadcraft_geom::norm_angle(v.view_twist());
+        // The view centre in display coordinates (turned by the twist).
+        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, twist));
         w.f(45, v.view_height);
+        // View twist (degrees), when the viewport has one.
+        if twist != 0.0 {
+            w.f(51, twist.to_degrees());
+        }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
         let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
+        // AutoCAD's frozen-layer list, before group 90 as in the DXF Reference: one pointer per
+        // layer, to its LAYER record. A name with no record goes in CADCraft's xdata below.
+        let mut unrecorded: Vec<String> = Vec::new();
+        for name in &v.frozen_layers {
+            match w.layers.get(&name.to_ascii_uppercase()).cloned() {
+                Some(h) => w.s(if cx.frozen_341 { 341 } else { 331 }, h),
+                None => unrecorded.push(name.clone()),
+            }
+        }
         w.i(90, flags);
         if let Some(h) = clip {
             w.s(340, h.hex());
         }
-        // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
-        // programs read only this; CADCraft prefers its own xdata below when present.
-        for name in &v.frozen_layers {
-            if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                w.s(341, h);
-            }
-        }
         // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
-        if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
+        if !unrecorded.is_empty() || !v.layer_colors.is_empty() {
             w.s(1001, dxf_ext::APP);
-            if !v.frozen_layers.is_empty() {
-                w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
+            if !unrecorded.is_empty() {
+                w.xdata(dxf_ext::frozen_xdata(&unrecorded));
             }
             if !v.layer_colors.is_empty() {
                 w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
@@ -755,6 +836,24 @@ fn gradient(w: &mut W, g: &Gradient) {
 fn thickness(w: &mut W, e: &Entity) {
     if e.common.thickness != 0.0 {
         w.f(39, e.common.thickness);
+    }
+}
+
+/// The extrusion (210) of an entity whose points are world coordinates, when it is not the Z axis.
+fn extrusion(w: &mut W, e: &Entity) {
+    // Zero and non-finite vectors are not a direction: nothing is written. `Vec3::normalized` would
+    // also drop a tiny one (its zero threshold is the drawing tolerance) and turn infinity into NaN.
+    let v = e.common.extrusion;
+    let max = v.x.abs().max(v.y.abs()).max(v.z.abs());
+    if !v.is_finite() || max == 0.0 {
+        return;
+    }
+    // Scaled by the largest component first: the length of a huge one would overflow to infinity.
+    let v = Vec3::new(v.x / max, v.y / max, v.z / max);
+    let len = v.len();
+    let n = Vec3::new(v.x / len, v.y / len, v.z / len);
+    if n != Vec3::Z {
+        w.p(210, n);
     }
 }
 

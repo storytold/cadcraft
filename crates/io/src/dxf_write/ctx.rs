@@ -55,6 +55,11 @@ pub(super) struct Ctx {
     pub(super) target: Version,
     /// MTEXTs whose fields are written as field objects (#551): their contents go out as shown.
     pub(super) fields: std::collections::HashSet<Handle>,
+    /// A VIEWPORT's frozen layers in group 341, as an R2000 DXF has them; otherwise 331 (DXF 2004
+    /// and later, and the DWG bridge, which reads only 331).
+    pub(super) frozen_341: bool,
+    /// MTEXT columns as the legacy groups 75..79 even from R2018 (the groups AutoLISP lists).
+    pub(super) legacy_columns: bool,
 }
 
 impl Ctx {
