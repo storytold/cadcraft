@@ -102,6 +102,18 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The other corner of a rectangle drawn turned by this angle (radians) from `base`: its
+    /// width and height run along the turned sides (RECTANG's Rotation).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub corner_rotation: f64,
+    /// `base` is the rectangle's centre, not a corner: the other corner is half its width and
+    /// height away (RECTANG's CEnter).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub corner_center: bool,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -152,6 +164,13 @@ impl Prompt {
     pub fn corner(mut self, p: Vec2) -> Self {
         self.base = Some(p);
         self.corner = true;
+        self
+    }
+    /// The rectangle `corner` is turned by `rotation` and measured from its centre when
+    /// `center` (the `corner_rotation` and `corner_center` fields).
+    pub fn corner_frame(mut self, rotation: f64, center: bool) -> Self {
+        self.corner_rotation = if rotation.is_finite() { rotation } else { 0.0 };
+        self.corner_center = center;
         self
     }
     /// Asks for a distance from the base (the `distance` field).
