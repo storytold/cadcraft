@@ -58,8 +58,9 @@ pub struct BlockIndex {
 
 /// Whether `e`'s measured bounds can fall far short of what is drawn, so a screen build must not
 /// leave it out by them: MTEXT (its box counts `\P` paragraphs, not the lines wrapped at the
-/// column width or `\H` height changes), XLINE and RAY (infinite), points drawn as a sized figure
-/// (`PDMODE`), and references to blocks
+/// column width or `\H` height changes), a multileader's text (measured the same way, drawn
+/// wrapped), XLINE and RAY (infinite), points drawn as a sized figure (`PDMODE`), references
+/// with a multiline attribute (measured by its box, drawn wrapped), and references to blocks
 /// holding any of these. `blocks` remembers the answer per block name; recursion is bounded by
 /// `MAX_BLOCK_DEPTH`, past which a reference counts as estimated.
 pub(crate) fn estimated(d: &cadcraft_doc::Drawing, e: &Entity, blocks: &mut std::collections::HashMap<String, bool>, depth: usize) -> bool {
@@ -67,7 +68,8 @@ pub(crate) fn estimated(d: &cadcraft_doc::Drawing, e: &Entity, blocks: &mut std:
         EntityKind::MText(_) | EntityKind::XLine(_) | EntityKind::Ray(_) => true,
         // A point measures as its position, but a sized figure (PDMODE) reaches around it.
         EntityKind::Point(_) => super::point::sized(d.header.i64("PDMODE", 0)),
-        EntityKind::Insert(ins) => block_estimated(d, &ins.block, blocks, depth),
+        EntityKind::MLeader(m) => m.text.is_some() || m.block.as_ref().is_some_and(|ins| block_estimated(d, &ins.block, blocks, depth)),
+        EntityKind::Insert(ins) => ins.attribs.iter().any(|a| a.multiline.is_some()) || block_estimated(d, &ins.block, blocks, depth),
         _ => false,
     }
 }

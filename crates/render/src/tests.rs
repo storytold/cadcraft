@@ -1366,6 +1366,104 @@ fn a_screen_build_keeps_what_its_estimated_bounds_would_leave_out() {
     assert_eq!(lines_left_out, 100, "only the far lines are left out; the note and the XLINE are drawn");
 }
 
+/// #2692 review: a multileader's text and a multiline attribute are measured like MTEXT (by
+/// paragraphs) but drawn wrapped, so zoomed onto the lower part of a long note they are still
+/// drawn, at top level and inside a large block.
+#[test]
+fn a_screen_build_keeps_wrapped_multileader_text_and_multiline_attributes() {
+    use cadcraft_geom::Bounds2;
+    let note = || cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "word ".repeat(600),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let mleader = || {
+        EntityKind::MLeader(cadcraft_doc::MLeader {
+            leaders: vec![vec![Vec3::new(-20.0, 10.0, 0.0)]],
+            landing: Vec3::ZERO,
+            dogleg: 0.0,
+            text: Some(note()),
+            style: "Standard".into(),
+            arrow_size: 1.0,
+            spline: false,
+            block: None,
+        })
+    };
+    let window = Some(Bounds2::new(Vec2::new(0.0, -150.0), Vec2::new(100.0, -120.0)));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), mleader()).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the multileader draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole, "multileader at top level");
+    // Inside a large block: 100 short lines far from the window and the multileader.
+    let far_lines = |blk: &mut cadcraft_doc::Block| {
+        for i in 0..100u64 {
+            let x = 10_000.0 + i as f64 * 10.0;
+            let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+            blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+        }
+    };
+    let insert = |block: &str, attribs: Vec<cadcraft_doc::Attrib>| cadcraft_doc::Insert {
+        block: block.into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs,
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    };
+    let mut blk = cadcraft_doc::Block::new("NOTES");
+    far_lines(&mut blk);
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), mleader()));
+    let mut b = Drawing::new_imperial();
+    b.blocks.insert("NOTES".into(), std::sync::Arc::new(blk));
+    b.add(&Space::Model, Common::default(), EntityKind::Insert(insert("NOTES", vec![]))).unwrap();
+    let drawn = build(&b, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    let left_out = build(&b, &Space::Model, &Options::default()).prims.len() - drawn;
+    assert_eq!(left_out, 100, "only the far lines are left out; the multileader is drawn");
+    // A reference to a block of far lines whose multiline attribute holds the note.
+    let mut blk = cadcraft_doc::Block::new("TAGS");
+    far_lines(&mut blk);
+    let text = cadcraft_doc::Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "word ".repeat(600),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let attrib = cadcraft_doc::Attrib {
+        tag: "NOTE".into(),
+        text: text.clone(),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: Some(cadcraft_doc::MultilineAttrib { mtext: note(), read_as: text.value.clone() }),
+        modes: Default::default(),
+    };
+    let mut a = Drawing::new_imperial();
+    a.blocks.insert("TAGS".into(), std::sync::Arc::new(blk));
+    a.add(&Space::Model, Common::default(), EntityKind::Insert(insert("TAGS", vec![attrib]))).unwrap();
+    let whole = build(&a, &Space::Model, &Options::default()).prims.len();
+    let drawn = build(&a, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    assert!(whole > 100, "the attribute draws");
+    assert_eq!(whole - drawn, 100, "only the far lines are left out; the multiline attribute is drawn");
+}
+
 /// #2692 review: a point measures as its position, but a sized figure (PDMODE 3, a cross of
 /// PDSIZE 10) reaches around it, so a point just outside the window whose cross reaches into it
 /// is still drawn; as a plain dot (PDMODE 0) it is left out.
