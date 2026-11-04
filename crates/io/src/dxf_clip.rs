@@ -4,11 +4,15 @@
 //! 10/20 the vertices), whether clipping is on (71), the front and back clip (72/73, 40/41) and
 //! two 3×4 matrices (group 40, row by row): the inverse of the reference's transform, which takes
 //! the boundary into the block's coordinates, and the boundary's own transform (identity here).
-//! Group 290 is 1 for an inverted clip ("Invert clip"), as the reference app writes it.
 //!
-//! The DWG bridge drops group 290, so an inverted clip is also marked by CADCraft's own entry
-//! `CADCRAFT_XCLIP` beside `ACAD_FILTER` (an XRECORD with group 70 = 1), which a DWG keeps. It
-//! is read only when the filter has no group 290.
+//! An inverted clip ("Invert clip") is marked as the reference app writes it in a file: the
+//! filter has an extension dictionary whose `ACAD_XREC_ROUNDTRIP` entry is an XRECORD holding
+//! `102 ACAD_INVERTEDCLIP_ROUNDTRIP` then the boundary (10/20/30), and
+//! `102 ACAD_INVERTEDCLIP_ROUNDTRIP_COMPARE` then the filter's own vertices. While the filter
+//! still holds those vertices the clip is inverted, with the first list as its boundary. The
+//! reference app shows the flag as group 290 on the object but never writes 290 in a DXF file,
+//! and discards a file whose filter has one; 290 is read when another program wrote it, never
+//! written. The record goes through DWG as it is.
 //!
 //! Reading takes the planar filters the model can hold out of the kept foreign data and puts them
 //! on the references ([`read`]); others (front/back clipping, a skewed boundary transform) stay
@@ -23,8 +27,10 @@ use cadcraft_doc::foreign::{Foreign, ForeignObject};
 use cadcraft_doc::{ClipBoundary, Drawing, EntityKind, Handle, MAX_CLIP_VERTICES, RawTag};
 use cadcraft_geom::{Mat3, Vec2};
 
-/// The extension-dictionary entry of CADCraft's inverted-clip flag (for DWG, see above).
-const INVERT_KEY: &str = "CADCRAFT_XCLIP";
+/// The filter's extension-dictionary entry of the reference app's inverted-clip record.
+const ROUNDTRIP_KEY: &str = "ACAD_XREC_ROUNDTRIP";
+const ROUNDTRIP: &str = "ACAD_INVERTEDCLIP_ROUNDTRIP";
+const COMPARE: &str = "ACAD_INVERTEDCLIP_ROUNDTRIP_COMPARE";
 /// Handles above this are not handed out (the DXF handle space is 64-bit, keep a margin).
 const MAX_HANDLE: u64 = 1 << 48;
 
@@ -94,9 +100,70 @@ fn matrix_values(m: &Mat3) -> [f64; 12] {
     [m.a, m.c, 0.0, m.e, m.b, m.d, 0.0, m.f, 0.0, 0.0, 1.0, 0.0]
 }
 
-/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates. `None` for anything
+/// The `count` vertices (10/20) a SPATIAL_FILTER holds, as written.
+fn vertices(tags: &[RawTag], count: usize) -> Option<Vec<Vec2>> {
+    let mut points = Vec::with_capacity(count);
+    for w in tags.windows(2) {
+        let [x, y] = w else { continue };
+        if x.code != 10 {
+            continue;
+        }
+        if y.code != 20 || points.len() >= count {
+            return None;
+        }
+        points.push(Vec2::new(x.value.trim().parse().ok()?, y.value.trim().parse().ok()?));
+    }
+    (points.len() == count).then_some(points)
+}
+
+/// The handle of an object's own extension dictionary (`102 {ACAD_XDICTIONARY`, 360).
+fn own_xdict(tags: &[RawTag]) -> Option<Handle> {
+    tags.windows(2)
+        .find(|w| matches!(w, [k, v] if k.code == 102 && k.value.trim().eq_ignore_ascii_case("{ACAD_XDICTIONARY") && v.code == 360))
+        .and_then(|w| w.get(1))
+        .and_then(|v| Handle::parse_hex(&v.value))
+}
+
+/// The boundary of an inverted clip as the reference app marks it on `filter` (see above), when
+/// the filter still holds the vertices the mark was made for.
+fn roundtrip(f: &Foreign, idx: &Index, filter: &ForeignObject) -> Option<Vec<Vec2>> {
+    let rec = object(f, idx, entry(&object(f, idx, own_xdict(&filter.tags)?)?.tags, ROUNDTRIP_KEY)?)?;
+    if !rec.kind.eq_ignore_ascii_case("XRECORD") {
+        return None;
+    }
+    let (mut boundary, mut compare) = (Vec::new(), Vec::new());
+    // 0 before either list, 1 in the boundary, 2 in the filter's vertices.
+    let mut list = 0;
+    for w in rec.tags.windows(2) {
+        let [x, y] = w else { continue };
+        match x.code {
+            102 => {
+                list = match x.value.trim() {
+                    v if v.eq_ignore_ascii_case(ROUNDTRIP) => 1,
+                    v if v.eq_ignore_ascii_case(COMPARE) => 2,
+                    _ => 0,
+                }
+            }
+            10 if list != 0 && y.code == 20 => {
+                let into = if list == 1 { &mut boundary } else { &mut compare };
+                if into.len() >= MAX_CLIP_VERTICES {
+                    return None;
+                }
+                into.push(Vec2::new(x.value.trim().parse().ok()?, y.value.trim().parse().ok()?));
+            }
+            _ => {}
+        }
+    }
+    let own = vertices(&filter.tags, usize::try_from(number(&filter.tags, 70)? as i64).ok()?)?;
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * (1.0 + a.abs().max(b.abs()));
+    let same = own.len() == compare.len() && own.iter().zip(&compare).all(|(p, q)| near(p.x, q.x) && near(p.y, q.y));
+    (same && boundary.len() >= 2).then_some(boundary)
+}
+
+/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates; with `boundary`, the
+/// clip is inverted and that is its outline (in the filter's coordinates). `None` for anything
 /// the model can't hold as it is (it then stays foreign).
-fn parse_filter(o: &ForeignObject) -> Option<ClipBoundary> {
+fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoundary> {
     let count = usize::try_from(number(&o.tags, 70)? as i64).ok()?;
     if !(2..=MAX_CLIP_VERTICES).contains(&count) {
         return None;
@@ -124,31 +191,18 @@ fn parse_filter(o: &ForeignObject) -> Option<ClipBoundary> {
     {
         return None;
     }
-    let mut points = Vec::with_capacity(count);
-    for w in o.tags.windows(2) {
-        let [x, y] = w else { continue };
-        if x.code != 10 {
-            continue;
-        }
-        if y.code != 20 || points.len() >= count {
-            return None;
-        }
-        let p = inverse.apply(Vec2::new(x.value.trim().parse().ok()?, y.value.trim().parse().ok()?));
-        if !p.is_finite() {
-            return None;
-        }
-        points.push(p);
+    let own = vertices(&o.tags, count)?;
+    let outline = boundary.unwrap_or(&own);
+    if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
+        return None;
     }
-    let clip = ClipBoundary { points, enabled: number(&o.tags, 71).unwrap_or(1.0) != 0.0, inverted: number(&o.tags, 290).is_some_and(|v| v != 0.0) };
-    (clip.points.len() == count && cadcraft_render::clip::PolyClip::new(&clip.polygon()).is_some()).then_some(clip)
-}
-
-/// Whether the extension dictionary `xd` marks the clip inverted (CADCraft's own flag).
-fn inverted_record(f: &Foreign, idx: &Index, xd: Handle) -> bool {
-    object(f, idx, xd)
-        .and_then(|o| entry(&o.tags, INVERT_KEY))
-        .and_then(|h| object(f, idx, h))
-        .is_some_and(|o| o.kind.eq_ignore_ascii_case("XRECORD") && number(&o.tags, 70).is_some_and(|v| v != 0.0))
+    let points: Vec<Vec2> = outline.iter().map(|p| inverse.apply(*p)).collect();
+    if !points.iter().all(|p| p.is_finite()) {
+        return None;
+    }
+    let inverted = boundary.is_some() || number(&o.tags, 290).is_some_and(|v| v != 0.0);
+    let clip = ClipBoundary { points, enabled: number(&o.tags, 71).unwrap_or(1.0) != 0.0, inverted };
+    cadcraft_render::clip::PolyClip::new(&clip.polygon()).is_some().then_some(clip)
 }
 
 /// Put the planar filters of the file read into `d` on their references, taking them out of
@@ -163,12 +217,9 @@ pub(crate) fn read(d: &mut Drawing) {
         .entities
         .keys()
         .filter_map(|h| {
-            let (xd, _, o) = chain(&d.foreign, &idx, *h)?;
-            let mut clip = parse_filter(o)?;
-            if number(&o.tags, 290).is_none() {
-                clip.inverted = inverted_record(&d.foreign, &idx, xd);
-            }
-            Some((*h, clip))
+            let (_, _, o) = chain(&d.foreign, &idx, *h)?;
+            let boundary = roundtrip(&d.foreign, &idx, o);
+            Some((*h, parse_filter(o, boundary.as_deref())?))
         })
         .collect();
     if found.is_empty() {
@@ -207,7 +258,7 @@ pub(crate) fn read(d: &mut Drawing) {
 }
 
 /// Take the clip of entity `h` out of the foreign data: the ACAD_FILTER entry and what it holds,
-/// CADCraft's inverted flag, and the extension dictionary when nothing else is left in it. The
+/// and the extension dictionary when nothing else is left in it. The
 /// objects to remove are added to `gone`; the caller removes them all at once.
 fn forget(f: &mut Foreign, idx: &Index, h: Handle, all_gone: &mut HashSet<Handle>) {
     let Some(xd) = f.entities.get(&h).and_then(|x| x.xdict) else { return };
@@ -215,19 +266,19 @@ fn forget(f: &mut Foreign, idx: &Index, h: Handle, all_gone: &mut HashSet<Handle
     let mut empty = false;
     if let Some(o) = idx.get(&xd).copied().and_then(|i| f.objects.get_mut(i)) {
         gone.extend(remove_entry(&mut o.tags, "ACAD_FILTER"));
-        gone.extend(remove_entry(&mut o.tags, INVERT_KEY));
         empty = !o.tags.iter().any(|t| t.code == 3);
     }
-    // The filter dictionary's entries go with it.
+    // The filter dictionary's entries go with it, and the filter's own extension dictionary.
     let mut i = 0;
     while let Some(g) = gone.get(i).copied() {
-        if let Some(o) = object(f, idx, g)
-            && o.kind.eq_ignore_ascii_case("DICTIONARY")
-        {
-            gone.extend(o.tags.windows(2).filter_map(|w| match w {
-                [k, v] if k.code == 3 && matches!(v.code, 350 | 360) => Handle::parse_hex(&v.value),
-                _ => None,
-            }));
+        if let Some(o) = object(f, idx, g) {
+            if o.kind.eq_ignore_ascii_case("DICTIONARY") {
+                gone.extend(o.tags.windows(2).filter_map(|w| match w {
+                    [k, v] if k.code == 3 && matches!(v.code, 350 | 360) => Handle::parse_hex(&v.value),
+                    _ => None,
+                }));
+            }
+            gone.extend(own_xdict(&o.tags));
         }
         i += 1;
         if i > MAX_CLIP_VERTICES {
@@ -263,17 +314,14 @@ fn dictionary(h: Handle, owner: Handle) -> ForeignObject {
     }
 }
 
-fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3, inverse: &Mat3) -> ForeignObject {
-    let mut tags = vec![
-        raw(5, h.hex()),
-        raw(102, "{ACAD_REACTORS"),
-        raw(330, owner.hex()),
-        raw(102, "}"),
-        raw(330, owner.hex()),
-        raw(100, "AcDbFilter"),
-        raw(100, "AcDbSpatialFilter"),
-        raw(70, clip.points.len()),
-    ];
+/// The SPATIAL_FILTER of `clip`; `xdict` is its extension dictionary (an inverted clip's).
+/// No group 290: the reference app discards a file whose filter has one.
+fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3, inverse: &Mat3, xdict: Option<Handle>) -> ForeignObject {
+    let mut tags = vec![raw(5, h.hex()), raw(102, "{ACAD_REACTORS"), raw(330, owner.hex()), raw(102, "}")];
+    if let Some(x) = xdict {
+        tags.extend([raw(102, "{ACAD_XDICTIONARY"), raw(360, x.hex()), raw(102, "}")]);
+    }
+    tags.extend([raw(330, owner.hex()), raw(100, "AcDbFilter"), raw(100, "AcDbSpatialFilter"), raw(70, clip.points.len())]);
     for p in &clip.points {
         let q = to_world.apply(*p);
         tags.push(raw(10, q.x));
@@ -284,25 +332,21 @@ fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3
     for v in matrix_values(inverse).into_iter().chain(matrix_values(&Mat3::IDENTITY)) {
         tags.push(raw(40, v));
     }
-    tags.push(raw(290, i32::from(clip.inverted)));
     ForeignObject { handle: h, kind: "SPATIAL_FILTER".into(), tags }
 }
 
-fn invert_record(h: Handle, owner: Handle) -> ForeignObject {
-    ForeignObject {
-        handle: h,
-        kind: "XRECORD".into(),
-        tags: vec![
-            raw(5, h.hex()),
-            raw(102, "{ACAD_REACTORS"),
-            raw(330, owner.hex()),
-            raw(102, "}"),
-            raw(330, owner.hex()),
-            raw(100, "AcDbXrecord"),
-            raw(280, 1),
-            raw(70, 1),
-        ],
+/// The reference app's inverted-clip record for a filter whose vertices are `points` (drawing
+/// coordinates): the boundary and the filter's vertices are the same list.
+fn roundtrip_record(h: Handle, owner: Handle, points: &[Vec2]) -> ForeignObject {
+    let mut tags = vec![raw(5, h.hex()), raw(102, "{ACAD_REACTORS"), raw(330, owner.hex()), raw(102, "}")];
+    tags.extend([raw(330, owner.hex()), raw(100, "AcDbXrecord"), raw(280, 1)]);
+    for name in [ROUNDTRIP, COMPARE] {
+        tags.push(raw(102, name));
+        for p in points {
+            tags.extend([raw(10, p.x), raw(20, p.y), raw(30, 0.0)]);
+        }
     }
+    ForeignObject { handle: h, kind: "XRECORD".into(), tags }
 }
 
 /// A copy of `d` whose foreign data holds the SPATIAL_FILTER of every clipped reference (any
@@ -336,7 +380,7 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
     let mut gone = HashSet::new();
     for (insert, clip, to_world) in clips {
         let Some(inverse) = to_world.inverse() else { continue };
-        if next.saturating_add(5) >= MAX_HANDLE {
+        if next.saturating_add(6) >= MAX_HANDLE {
             break;
         }
         // A filter kept from the file for this reference is replaced.
@@ -352,12 +396,10 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             }
         };
         let (fd, sf) = (fresh(&mut next), fresh(&mut next));
-        let flag = clip.inverted.then(|| fresh(&mut next));
+        // An inverted clip's filter has an extension dictionary and the record in it.
+        let marks = clip.inverted.then(|| (fresh(&mut next), fresh(&mut next)));
         if let Some(o) = idx.get(&xd).copied().and_then(|i| f.objects.get_mut(i)) {
             o.tags.extend([raw(3, "ACAD_FILTER"), raw(360, fd.hex())]);
-            if let Some(x) = flag {
-                o.tags.extend([raw(3, INVERT_KEY), raw(360, x.hex())]);
-            }
         }
         let mut filters = dictionary(fd, xd);
         filters.tags.extend([raw(3, "SPATIAL"), raw(360, sf.hex())]);
@@ -366,9 +408,13 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             f.objects.push(o);
         };
         add(filters);
-        add(spatial_filter(sf, fd, &clip, &to_world, &inverse));
-        if let Some(x) = flag {
-            add(invert_record(x, xd));
+        add(spatial_filter(sf, fd, &clip, &to_world, &inverse, marks.map(|(x, _)| x)));
+        if let Some((x, r)) = marks {
+            let mut own = dictionary(x, sf);
+            own.tags.extend([raw(3, ROUNDTRIP_KEY), raw(360, r.hex())]);
+            add(own);
+            let world: Vec<Vec2> = clip.points.iter().map(|p| to_world.apply(*p)).collect();
+            add(roundtrip_record(r, x, &world));
         }
     }
     f.objects.retain(|o| !gone.contains(&o.handle));
@@ -395,11 +441,11 @@ mod tests {
     #[test]
     fn hostile_filters_stay_foreign() {
         let o = |tags: Vec<RawTag>| ForeignObject { handle: Handle(1), kind: "SPATIAL_FILTER".into(), tags };
-        assert!(parse_filter(&o(vec![raw(70, 1_000_000_000)])).is_none());
-        assert!(parse_filter(&o(vec![raw(70, 3), raw(10, 0), raw(20, 0)])).is_none());
-        assert!(parse_filter(&o(vec![raw(70, 2), raw(10, "nan"), raw(20, 0), raw(10, 1), raw(20, 1)])).is_none());
-        assert!(parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1), raw(72, 1)])).is_none());
-        let ok = parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1)])).unwrap();
+        assert!(parse_filter(&o(vec![raw(70, 1_000_000_000)]), None).is_none());
+        assert!(parse_filter(&o(vec![raw(70, 3), raw(10, 0), raw(20, 0)]), None).is_none());
+        assert!(parse_filter(&o(vec![raw(70, 2), raw(10, "nan"), raw(20, 0), raw(10, 1), raw(20, 1)]), None).is_none());
+        assert!(parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1), raw(72, 1)]), None).is_none());
+        let ok = parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1)]), None).unwrap();
         assert_eq!((ok.points.len(), ok.inverted), (2, false));
     }
 
@@ -418,15 +464,69 @@ mod tests {
     }
 
     #[test]
-    fn group_290_is_the_inverted_flag() {
+    fn group_290_is_read_but_never_written() {
         let tags = |invert: &str| vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1), raw(290, invert)];
         let o = |invert| ForeignObject { handle: Handle(1), kind: "SPATIAL_FILTER".into(), tags: tags(invert) };
-        assert!(parse_filter(&o("1")).unwrap().inverted);
-        assert!(!parse_filter(&o("0")).unwrap().inverted);
-        assert!(!parse_filter(&o("junk")).unwrap().inverted);
+        assert!(parse_filter(&o("1"), None).unwrap().inverted);
+        assert!(!parse_filter(&o("0"), None).unwrap().inverted);
+        assert!(!parse_filter(&o("junk"), None).unwrap().inverted);
+        // The reference app discards a DXF whose filter has 290.
         let clip = ClipBoundary { inverted: true, ..ClipBoundary::new(vec![Vec2::ZERO, Vec2::new(1.0, 1.0)]) };
-        let written = spatial_filter(Handle(2), Handle(1), &clip, &Mat3::IDENTITY, &Mat3::IDENTITY);
-        assert!(written.tags.iter().any(|t| t.code == 290 && t.value == "1"));
-        assert!(parse_filter(&written).unwrap().inverted);
+        let written = spatial_filter(Handle(2), Handle(1), &clip, &Mat3::IDENTITY, &Mat3::IDENTITY, Some(Handle(3)));
+        assert!(!written.tags.iter().any(|t| t.code == 290));
+        assert_eq!(own_xdict(&written.tags), Some(Handle(3)));
+    }
+
+    /// The filter, its extension dictionary and the reference app's record, as one foreign set.
+    fn marked(filter_points: &[(f64, f64)], boundary: &[(f64, f64)], compare: &[(f64, f64)]) -> (Foreign, ForeignObject) {
+        let mut tags = vec![raw(5, "10"), raw(102, "{ACAD_XDICTIONARY"), raw(360, "11"), raw(102, "}"), raw(70, filter_points.len())];
+        for (x, y) in filter_points {
+            tags.extend([raw(10, x), raw(20, y)]);
+        }
+        let filter = ForeignObject { handle: Handle(0x10), kind: "SPATIAL_FILTER".into(), tags };
+        let mut f = Foreign::default();
+        let mut dict = dictionary(Handle(0x11), Handle(0x10));
+        dict.tags.extend([raw(3, ROUNDTRIP_KEY), raw(360, "12")]);
+        f.objects.push(dict);
+        let mut rec = vec![raw(100, "AcDbXrecord"), raw(280, 1)];
+        for (name, list) in [(ROUNDTRIP, boundary), (COMPARE, compare)] {
+            rec.push(raw(102, name));
+            for (x, y) in list {
+                rec.extend([raw(10, x), raw(20, y), raw(30, 0)]);
+            }
+        }
+        f.objects.push(ForeignObject { handle: Handle(0x12), kind: "XRECORD".into(), tags: rec });
+        f.objects.push(filter.clone());
+        (f, filter)
+    }
+
+    #[test]
+    fn the_reference_apps_record_marks_an_inverted_clip() {
+        // As the reference app writes an inverted rectangle: a keyhole filter, the rectangle kept.
+        let keyhole = [
+            (0.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 50.0),
+            (0.0, 50.0),
+            (0.0, 10.0),
+            (20.0, 10.0),
+            (20.0, 40.0),
+            (80.0, 40.0),
+            (80.0, 10.0),
+            (20.0, 10.0),
+            (0.0, 10.0),
+        ];
+        let (f, filter) = marked(&keyhole, &[(20.0, 10.0), (80.0, 40.0)], &keyhole);
+        let boundary = roundtrip(&f, &index(&f), &filter).unwrap();
+        let clip = parse_filter(&filter, Some(&boundary)).unwrap();
+        assert!(clip.inverted);
+        assert_eq!(clip.points, vec![Vec2::new(20.0, 10.0), Vec2::new(80.0, 40.0)]);
+        // The simpler form: the filter keeps the boundary itself.
+        let rect = [(20.0, 10.0), (80.0, 40.0)];
+        let (f, filter) = marked(&rect, &rect, &rect);
+        assert!(roundtrip(&f, &index(&f), &filter).is_some());
+        // A filter changed since the record was made (the clip edited elsewhere) isn't inverted.
+        let (f, filter) = marked(&[(0.0, 0.0), (5.0, 5.0)], &rect, &rect);
+        assert!(roundtrip(&f, &index(&f), &filter).is_none());
     }
 }

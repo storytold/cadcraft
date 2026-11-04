@@ -77,13 +77,15 @@ fn clips_round_trip_through_dxf() {
     let bytes = save(&d, "a.dxf", Version::R2018);
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert_eq!(text.matches("SPATIAL_FILTER").count(), 3, "one filter per clipped reference");
-    // The inverted triangle also carries CADCraft's flag, which a DWG keeps.
-    assert!(text.contains("ACAD_FILTER") && text.matches("CADCRAFT_XCLIP").count() == 1);
-    // The inverted triangle is marked on its filter (group 290, last), as the reference app writes it.
+    assert!(text.contains("ACAD_FILTER"));
+    // No filter has group 290: the reference app discards a DXF whose filter has one. The
+    // inverted triangle's filter has its record instead, in the filter's extension dictionary.
     let filters: Vec<&str> = text.split("\r\nSPATIAL_FILTER\r\n").skip(1).map(|f| f.split("\r\n  0\r\n").next().unwrap_or("")).collect();
     assert_eq!(filters.len(), 3);
-    assert!(filters.iter().all(|f| f.contains("\r\n290\r\n")), "every filter says whether it is inverted");
-    assert_eq!(filters.iter().filter(|f| f.ends_with("\r\n290\r\n1")).count(), 1, "{filters:?}");
+    assert!(!filters.iter().any(|f| f.contains("\r\n290\r\n")), "{filters:?}");
+    assert_eq!(filters.iter().filter(|f| f.contains("{ACAD_XDICTIONARY")).count(), 1, "{filters:?}");
+    assert_eq!(text.matches("ACAD_XREC_ROUNDTRIP").count(), 1);
+    assert!(text.contains("ACAD_INVERTEDCLIP_ROUNDTRIP\r\n") && text.contains("ACAD_INVERTEDCLIP_ROUNDTRIP_COMPARE\r\n"));
     let first = read(&bytes, "a.dxf").unwrap();
     same(&clips(&first), &clips(&d));
     // The model owns the filters now: nothing of them is left as foreign data.
@@ -95,6 +97,7 @@ fn clips_round_trip_through_dxf() {
         assert!(!back.foreign.objects.iter().any(|o| o.kind == "SPATIAL_FILTER"), "{}", v.year());
         let again = String::from_utf8(save(&back, "a.dxf", v)).unwrap();
         assert_eq!(again.matches("SPATIAL_FILTER").count(), 3, "no duplicate filters on resave");
+        assert_eq!(again.matches("ACAD_XREC_ROUNDTRIP").count(), 1, "no duplicate records on resave");
     }
 }
 
@@ -124,7 +127,7 @@ fn deleting_a_clip_read_from_a_file_removes_its_filter() {
         .unwrap();
     }
     let text = String::from_utf8(save(&d, "a.dxf", Version::R2018)).unwrap();
-    assert!(!text.contains("SPATIAL_FILTER") && !text.contains("CADCRAFT_XCLIP"));
+    assert!(!text.contains("SPATIAL_FILTER") && !text.contains("ACAD_XREC_ROUNDTRIP"));
     assert!(clips(&read(text.as_bytes(), "a.dxf").unwrap()).iter().all(Option::is_none));
 }
 
