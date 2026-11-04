@@ -31,6 +31,7 @@ mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
 mod hatch_pattern_def;
 mod helix_roundtrip;
+mod layout_limits_roundtrip;
 mod layout_paper_units;
 mod layout_plot_window;
 mod leader_vertex_elevation;
@@ -41,10 +42,13 @@ mod mleader_roundtrip;
 mod mline_roundtrip;
 #[cfg(not(target_arch = "wasm32"))]
 mod model_layout_plot_type;
+mod mtext_caret_spaces;
 mod mtext_columns_roundtrip;
 mod mtext_embedded_object;
 mod mtext_line_spacing;
 mod multiline_attributes;
+#[cfg(not(target_arch = "wasm32"))]
+mod ole2frame_roundtrip;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
@@ -74,5 +78,6 @@ mod text_left_justify;
 mod tolerance_roundtrip;
 mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
+mod view_target;
 mod viewport_clip_roundtrip;
 mod xref_roundtrip;
