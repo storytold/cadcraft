@@ -170,7 +170,10 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
 /// whichever way the list was built; it costs a flag and an id comparison.
 pub(super) fn note_truncated(app: &mut CadApp) {
     let Ok(uid) = app.session.state().map(|st| st.uid) else { return };
-    if app.canvas.list.as_ref().is_some_and(|l| l.truncated) && app.canvas.truncation_noted != Some(uid) {
+    // The active MSPACE viewport's contents are built into their own list (`VpContent`), after
+    // this check in a frame; the next frame's check sees them.
+    let truncated = app.canvas.list.as_ref().is_some_and(|l| l.truncated) || app.canvas.vp.truncated();
+    if truncated && app.canvas.truncation_noted != Some(uid) {
         app.canvas.truncation_noted = Some(uid);
         app.session.echo(format!(
             "Some block contents are not drawn: this drawing's block references expand to more than {} objects.",
