@@ -48,23 +48,34 @@ fn is_greek_letter(c: char) -> bool {
 
 /// `word` read as the Latin keys of a Greek-layout keyboard, lower case: `Some` only when the word
 /// has a Greek letter and every character is a Greek letter the layout types, the semicolon on
-/// the Q key, or ASCII (kept as it is). A combining tonos or dialytika after a letter, the
-/// accent of decomposed text, is ignored like the accent of a precomposed letter.
+/// the Q key, or ASCII (kept as it is). A combining tonos or dialytika, the accent of decomposed
+/// text, is ignored like the accent of a precomposed letter, but only straight after the Greek
+/// letter it accents and once each: anywhere else the word is not Greek-layout typing.
 pub fn latin_keys(word: &str) -> Option<String> {
     let mut greek = false;
+    // What the previous Greek letter already carries (tonos, dialytika); `None` when the previous
+    // character is not a Greek letter, which leaves a combining mark nothing to accent.
+    let mut marks: Option<(bool, bool)> = None;
     let mut out = String::with_capacity(word.len());
     for c in word.chars() {
         if matches!(c, '\u{301}' | '\u{308}') {
+            let (tonos, dialytika) = marks.as_mut()?;
+            if std::mem::replace(if c == '\u{301}' { tonos } else { dialytika }, true) {
+                return None;
+            }
             continue;
         }
         if c.is_ascii() {
             // The Q key types the ASCII semicolon in the Greek layout; every other ASCII character is itself.
             out.push(if c == ';' { 'q' } else { c.to_ascii_lowercase() });
+            marks = None;
             continue;
         }
         let lower = c.to_lowercase().next().unwrap_or(c);
         out.push(key_of(lower)?);
-        greek |= is_greek_letter(lower);
+        let letter = is_greek_letter(lower);
+        greek |= letter;
+        marks = letter.then_some((false, false));
     }
     greek.then_some(out)
 }
@@ -90,6 +101,7 @@ mod tests {
         assert_eq!(latin_keys("ΛΙ\u{301}ΝΕ").as_deref(), Some("line"));
         assert_eq!(latin_keys("ΛΙΝΕ\u{301}").as_deref(), Some("line"));
         assert_eq!(latin_keys("ΛΙ\u{308}ΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙ\u{308}\u{301}ΝΕ").as_deref(), Some("line"), "dialytika and tonos on one letter");
         // Prefixes and digits are kept.
         assert_eq!(latin_keys("-ΛΑΥΕΡ").as_deref(), Some("-layer"));
         assert_eq!(latin_keys("_ΛΙΝΕ").as_deref(), Some("_line"));
@@ -103,6 +115,16 @@ mod tests {
         assert_eq!(latin_keys("ΛΙΝΕ Ж"), None, "a letter the layout does not type");
         assert_eq!(latin_keys("ΛΙΝΕ 日本"), None);
         assert_eq!(latin_keys("\u{387}"), None, "the ano teleia is punctuation, not a letter");
+    }
+
+    #[test]
+    fn a_combining_mark_must_follow_the_greek_letter_it_accents() {
+        assert_eq!(latin_keys("\u{301}ΛΙΝΕ"), None, "no letter before the mark");
+        assert_eq!(latin_keys("\u{308}ΛΙΝΕ"), None);
+        assert_eq!(latin_keys("ΛΙΝΕ-\u{301}"), None, "after punctuation");
+        assert_eq!(latin_keys("a\u{301}ΛΙΝΕ"), None, "after a Latin letter");
+        assert_eq!(latin_keys("Λ\u{301}\u{301}ΙΝΕ"), None, "a second tonos on one letter");
+        assert_eq!(latin_keys("Λ\u{308}\u{308}ΙΝΕ"), None, "a second dialytika on one letter");
     }
 
     #[test]

@@ -22,6 +22,9 @@ fn greek_layout_commands_start_like_the_latin_ones() {
     // here: it reports, it never fails as an unknown command).
     let err = s.start(";ΣΑΩΕ").map(|_| String::new()).unwrap_or_else(|e| e.to_string());
     assert!(!err.contains("unknown command"), "{err}");
+    // A Greek word that is no command's keys is reported as typed, not as the Latin letters read from it.
+    let err = s.start("ΧΥΖ").unwrap_err().to_string();
+    assert!(err.contains("ΧΥΖ") && !err.contains("xyz"), "{err}");
 }
 
 #[test]
@@ -78,4 +81,17 @@ fn greek_layout_keywords_match_prompt_options() {
     assert!(yes.running.is_none(), "{}", yes.prompt_text());
     let circles = yes.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
     assert_eq!(circles, 1, "Υ answered Yes and the source was erased");
+}
+
+#[test]
+fn a_greek_block_name_typed_at_a_name_or_select_prompt_reaches_the_command_as_typed() {
+    let mut s = Session::new();
+    let l = s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap()["handles"][0].clone();
+    s.execute("block", &json!({ "name": "ΠΟΡΤΑ", "base": [0, 0], "handles": [l] })).unwrap();
+    // BEDIT asks for a block name or a selected reference. ΠΟΡΤΑ is also the keys P-O-R-T-A, which a
+    // selection word would be read from, but no selection word is meant here: the name is typed as it is.
+    s.start("BEDIT").unwrap();
+    s.cmdline("ΠΟΡΤΑ").unwrap();
+    let open = s.state().unwrap().block_editor().map(str::to_string);
+    assert_eq!(open.as_deref(), Some("ΠΟΡΤΑ"), "{}", s.prompt_text());
 }

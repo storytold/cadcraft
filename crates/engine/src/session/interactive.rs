@@ -27,6 +27,7 @@ impl Session {
         };
         // A name typed with the Greek keyboard layout active (ΛΙΝΕ for LINE) is the Latin name's keys,
         // unless it is a command, alias or LISP function of its own.
+        let typed = name;
         let latin = crate::keyboard::latin_keys(name).filter(|_| !self.names_a_command(name));
         let name = latin.as_deref().unwrap_or(name);
         let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
@@ -49,7 +50,7 @@ impl Session {
                 self.start(if transparent { "'setvar" } else { "setvar" })?;
                 return self.input(Input::Text(var));
             }
-            return Err(EngineError::UnknownCommand(name.to_string()));
+            return Err(EngineError::UnknownCommand(typed.to_string()));
         };
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
@@ -183,25 +184,29 @@ impl Session {
             return self.select_mode_input(input);
         }
         // `_L`, `_ALL`, `_W`: the English name of a selection keyword, as scripts write it.
-        // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is its Latin keys.
         let input = match input {
-            Input::Text(t) => {
-                let t = t.trim().strip_prefix('_').map(str::to_string).unwrap_or(t);
-                Input::Text(crate::keyboard::latin_keys(&t).unwrap_or(t))
-            }
+            Input::Text(t) => Input::Text(t.trim().strip_prefix('_').map(str::to_string).unwrap_or(t)),
             other => other,
         };
-        if let Input::Text(t) | Input::Keyword(t) = &input
-            && let Some(m) = select::SelectMode::from_keyword(t)
+        // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is looked up as its
+        // Latin keys. Only the lookup is: text that is no selection word (a block name at BEDIT's prompt,
+        // which also takes a selection) reaches the command as typed.
+        let word = match &input {
+            Input::Text(t) => Some(crate::keyboard::latin_keys(t.trim()).unwrap_or_else(|| t.clone())),
+            Input::Keyword(k) => Some(k.clone()),
+            _ => None,
+        };
+        if let Some(w) = &word
+            && let Some(m) = select::SelectMode::from_keyword(w)
         {
             self.pending_window = None;
             self.select_mode = Some(m);
             return Ok(None);
         }
-        if let Input::Text(t) | Input::Keyword(t) = &input
-            && !prompt.keywords.iter().any(|k| k.eq_ignore_ascii_case(t.trim()))
+        if let Some(w) = &word
+            && !prompt.keywords.iter().any(|k| k.eq_ignore_ascii_case(w.trim()))
         {
-            match t.trim().to_ascii_lowercase().as_str() {
+            match w.trim().to_ascii_lowercase().as_str() {
                 "si" | "single" => {
                     self.select_single = true;
                     return Ok(None);
@@ -229,8 +234,8 @@ impl Session {
                     }
                 }
             }
-            Input::Text(ref t) | Input::Keyword(ref t) => {
-                let tl = t.trim().to_ascii_lowercase();
+            Input::Text(_) | Input::Keyword(_) => {
+                let tl = word.as_deref().unwrap_or_default().trim().to_ascii_lowercase();
                 let d = self.doc()?;
                 let store = d.space(&space);
                 let picked = match tl.as_str() {
