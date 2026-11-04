@@ -8,32 +8,42 @@ pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
 /// The font a text style draws with: its font file (TrueType, or an SHX font found by name),
 /// its big font and its vertical flag.
 pub fn style_font(ts: &cadcraft_doc::TextStyle) -> cadcraft_fonts::TextFont {
-    cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font, ts.vertical)
+    style_font_with_hint(ts, None)
+}
+
+/// Like [`style_font`], with an optional legacy font hint.
+pub fn style_font_with_hint(ts: &cadcraft_doc::TextStyle, hint: Option<&str>) -> cadcraft_fonts::TextFont {
+    cadcraft_fonts::TextFont::resolve_style(hint.unwrap_or(&ts.font), &ts.big_font, ts.vertical)
 }
 
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
     let ts = text_style(d, &t.style);
-    let font = style_font(&ts);
+    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &t.style]);
+    let transcoded = cadcraft_fonts::legacy_encoding::transcode(value, hint);
+    let font = style_font_with_hint(&ts, hint);
     let (h, v) = align(t.halign, t.valign);
+    let twf = if t.width_factor.is_finite() && t.width_factor > 0.0 { t.width_factor } else { 1.0 };
+    let swf = if ts.width_factor.is_finite() && ts.width_factor > 0.0 { ts.width_factor } else { 1.0 };
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
         align_pt: t.align_pt.map(|p| p.xy()),
         height: t.height,
         rotation: t.rotation,
-        width_factor: t.width_factor,
-        oblique: t.oblique,
+        width_factor: twf * swf,
+        oblique: t.oblique + ts.oblique,
         h,
         v,
         backwards: ts.backwards,
         upside_down: ts.upside_down,
     };
-    cadcraft_fonts::place(&font, value, &p)
+    cadcraft_fonts::place(&font, &transcoded, &p)
 }
 
 /// Lay out an MTEXT with its style's font.
 pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fonts::MTextLayout {
     let ts = text_style(d, &t.style);
+    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &t.style]);
     let params = cadcraft_fonts::MTextParams {
         insert: t.insert.xy(),
         height: t.height,
@@ -42,7 +52,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: style_font(&ts),
+        font: style_font_with_hint(&ts, hint),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {
@@ -54,7 +64,8 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
             reversed: c.flow_reversed,
         }),
     };
-    cadcraft_fonts::layout_mtext_with(&t.contents, &params)
+    let transcoded = cadcraft_fonts::legacy_encoding::transcode(&t.contents, hint);
+    cadcraft_fonts::layout_mtext_with(&transcoded, &params)
 }
 
 fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {

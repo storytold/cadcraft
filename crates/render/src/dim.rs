@@ -215,11 +215,12 @@ fn readable(a: f64) -> f64 {
     a
 }
 
-struct DimConfig<'a> {
-    dimension: &'a Dimension,
-    style: &'a DimStyle,
-    font: &'a DimText,
-    scale: f64,
+pub(super) struct DimConfig<'a> {
+    pub(super) dimension: &'a Dimension,
+    pub(super) style: &'a DimStyle,
+    pub(super) font: &'a DimText,
+    pub(super) hint: Option<&'a str>,
+    pub(super) scale: f64,
     arrow_size: f64,
     text_height: f64,
     gap: f64,
@@ -232,6 +233,7 @@ struct DimConfig<'a> {
 
 impl<'a> DimConfig<'a> {
     fn new(dimension: &'a Dimension, style: &'a DimStyle, dimscale: f64, font: &'a DimText) -> Self {
+        let hint = font.font_hint.as_deref().or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&style.text_style]));
         let scale = style.effective_scale(dimscale);
         let arrow_size = style.arrow_size * scale;
         let text_height = if font.fixed_height > 0.0 { font.fixed_height } else { style.text_height * scale };
@@ -242,6 +244,7 @@ impl<'a> DimConfig<'a> {
             dimension,
             style,
             font,
+            hint,
             scale,
             arrow_size,
             text_height,
@@ -294,6 +297,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
     let overridden = st.with_overrides(&d.overrides);
     let config = DimConfig::new(d, &overridden, dimscale, font);
     let st = config.style;
+    let hint = config.hint;
     let th = config.text_height;
     let gap = config.gap;
     let mut g = DimGeometry { text_height: th, ..Default::default() };
@@ -330,16 +334,18 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
         // Widths of the label, value and rate as laid out: the two spaces between parts measured
         // in "x  x", the value is what the rest leaves.
         let gap2 = (measure("x  x").0 - 2.0 * measure("x").0).max(0.0);
-        let (wl, wr) = (measure(&ins.label).0, measure(&ins.rate).0);
-        let seps = usize::from(!ins.label.is_empty()) + usize::from(!ins.rate.is_empty());
+        let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+        let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+        let (wl, wr) = (measure(&label).0, measure(&rate).0);
+        let seps = usize::from(!label.is_empty()) + usize::from(!rate.is_empty());
         let wv = (w - wl - wr - gap2 * seps as f64).max(0.0);
         let mut left = -w / 2.0;
-        if !ins.label.is_empty() {
+        if !label.is_empty() {
             left += wl;
             g.text_mark(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
             left += gap2;
         }
-        if !ins.rate.is_empty() {
+        if !rate.is_empty() {
             left += wv;
             g.text_mark(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
         }

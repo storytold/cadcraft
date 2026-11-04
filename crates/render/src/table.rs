@@ -375,7 +375,8 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
     }
     for tx in &g.texts {
         let ts = crate::text_style(ctx.d, &tx.style);
-        let font = crate::style_font(&ts);
+        let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &tx.style]);
+        let font = crate::style_font_with_hint(&ts, hint);
         // Cell content is MTEXT (`\P`, `{\Q15;…}`, `\F…;`): laid out as such, at the cell's
         // alignment point (its numbering is MTEXT's attachment).
         let mp = cadcraft_fonts::MTextParams {
@@ -385,7 +386,8 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
             oblique: ts.oblique,
             ..cadcraft_fonts::MTextParams::new(tx.at, tx.height)
         };
-        let layout = cadcraft_fonts::layout_mtext_with(&tx.text, &mp);
+        let transcoded = cadcraft_fonts::legacy_encoding::transcode(&tx.text, hint);
+        let layout = cadcraft_fonts::layout_mtext_with(&transcoded, &mp);
         for piece in &layout.pieces {
             b.shaped(ctx, style_ink(tx.color, rgb), lw, &piece.shaped);
         }

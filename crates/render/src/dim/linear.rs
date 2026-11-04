@@ -55,7 +55,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     };
     let (f1, f2) = (foot(p1), foot(p2));
     let raw_measurement = (p2 - p1).dot(direction).abs();
-    g.mtext = linear_text(raw_measurement, d, st, "");
+    g.mtext = linear_text(raw_measurement, d, st, "", config.hint);
     g.measurement = raw_measurement;
     let measurement = f1.dist(f2);
     if !st.suppress_ext1 {
