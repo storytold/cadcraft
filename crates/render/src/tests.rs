@@ -1149,3 +1149,51 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// #2773: past the block budget a screen build leaves out the same objects at every build, the
+/// last ones in drawing order, as a one-thread build does. Built on all cores, the budget ran out
+/// in whichever chunks the threads reached first, so blocks came and went between rebuilds.
+#[test]
+fn past_the_block_budget_every_build_leaves_out_the_last_objects() {
+    // A block whose copy draws one line and costs 5002 budget units: the copy, that line, and
+    // 5000 lines on a frozen layer (charged, never drawn).
+    let mut d = Drawing::new_imperial();
+    d.ensure_layer("HIDDEN");
+    d.layer_mut("HIDDEN").unwrap().frozen = true;
+    let line = |y: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(1.0, y, 0.0) });
+    let mut blk = cadcraft_doc::Block::new("HEAVY");
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line(0.0)));
+    for i in 0..5000u64 {
+        let mut e = cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 2), line(1.0));
+        e.common.layer = "HIDDEN".into();
+        blk.entities.push(e);
+    }
+    d.blocks.insert("HEAVY".into(), std::sync::Arc::new(blk));
+    // 600 references, more than two chunks, so the screen build runs on all cores: 3,001,200 units.
+    for i in 0..600u32 {
+        let ins = cadcraft_doc::Insert {
+            block: "HEAVY".into(),
+            insert: Vec3::new(f64::from(i) * 2.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    }
+    // The budget runs out inside the 400th reference (399 × 5002 = 1,995,798; its copy and line
+    // still fit): the first 400 lines are drawn, in drawing order.
+    let first: Vec<cadcraft_doc::Handle> = d.model.iter().take(400).map(|e| e.handle).collect();
+    let handles = |l: &DisplayList| l.prims.iter().map(|p| p.handle).collect::<Vec<_>>();
+    let one_thread = build_entities(&d, d.model.iter().map(|e| e.as_ref()), &Options::default());
+    assert!(one_thread.truncated);
+    assert_eq!(handles(&one_thread), first);
+    for _ in 0..2 {
+        let all_cores = build(&d, &Space::Model, &Options::default());
+        assert!(all_cores.truncated, "the cut is still reported");
+        assert_eq!(handles(&all_cores), first, "the same objects as one thread, at every build");
+    }
+}
