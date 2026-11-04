@@ -17,6 +17,7 @@
 
 pub mod bidi;
 mod complex;
+pub mod legacy_encoding;
 mod linebreak;
 mod mtext;
 pub mod shx;
@@ -24,6 +25,8 @@ mod stroke;
 pub mod subset;
 pub mod ttf;
 pub mod windows;
+
+pub use legacy_encoding::vietnamese;
 
 use cadcraft_geom::{Bounds2, Vec2};
 
@@ -319,17 +322,49 @@ pub enum TextFont {
 }
 
 impl TextFont {
-    /// Resolve a text style font name (no big font, horizontal): see [`TextFont::resolve_style`].
+    /// Resolve a text style font name: substitutes a modern Unicode outline face matching the profile's
+    /// FontClass if the font is identified as a legacy-encoded font (e.g. TCVN3, VNI);
+    /// otherwise delegates to [`Self::resolve_style`].
     pub fn resolve(name: &str) -> TextFont {
-        TextFont::resolve_style(name, "", false)
+        Self::resolve_style(name, "", false)
     }
 
-    /// Resolve a text style's fonts: an installed TTF/OTF/TTC when `font` names one; else the
-    /// SHX font and big font when found ([`shx::find`]), a missing one replaced by the FONTALT
-    /// font ([`ttf::font_alt`], which may name both: `simplex.shx,bigfont.shx`); else FONTALT
-    /// as a TrueType font; else the stroke font (which also draws the characters a missing big
-    /// font would have). `vertical` is the style's vertical flag, honoured by fonts made for it.
+    /// Resolve a text style font name without applying legacy-encoding face substitutions:
+    /// see [`Self::resolve_style_raw`].
+    pub fn resolve_raw(name: &str) -> TextFont {
+        Self::resolve_style_raw(name, "", false)
+    }
+
+    /// Resolve a text style's fonts: substitutes a modern Unicode outline face if `font`
+    /// matches a legacy-encoded profile; otherwise delegates to [`Self::resolve_style_raw`].
     pub fn resolve_style(font: &str, big_font: &str, vertical: bool) -> TextFont {
+        let n = font.trim();
+        if !n.is_empty() && !n.eq_ignore_ascii_case(BUILTIN_FONT) {
+            // Legacy 8-bit fonts lack Unicode CMAP tables. Once text is transcoded to Unicode NFC,
+            // substitute a modern Unicode outline face matching the profile's FontClass.
+            if let Some(class) = legacy_encoding::substitute_face(n) {
+                let face = match class {
+                    legacy_encoding::FontClass::Serif => ttf::find("times new roman")
+                        .or_else(|| ttf::find("times"))
+                        .or_else(|| ttf::find("liberation serif"))
+                        .or_else(|| ttf::find("arial")),
+                    legacy_encoding::FontClass::Sans => ttf::find("arial").or_else(|| ttf::find("segoe ui")).or_else(|| ttf::find("dejavu sans")),
+                };
+                if let Some(f) = face {
+                    return TextFont::Outline(f);
+                }
+            }
+        }
+        Self::resolve_style_raw(font, big_font, vertical)
+    }
+
+    /// Resolve a text style's fonts without applying legacy-encoding face substitutions:
+    /// an installed TTF/OTF/TTC when `font` names one; else the SHX font and big font
+    /// when found ([`shx::find`]), a missing one replaced by the FONTALT font ([`ttf::font_alt`],
+    /// which may name both: `simplex.shx,bigfont.shx`); else FONTALT as a TrueType font; else
+    /// the stroke font (which also draws the characters a missing big font would have).
+    /// `vertical` is the style's vertical flag, honoured by fonts made for it.
+    pub fn resolve_style_raw(font: &str, big_font: &str, vertical: bool) -> TextFont {
         if let Some(f) = ttf::find(font) {
             return TextFont::Outline(f);
         }
@@ -756,6 +791,19 @@ mod tests {
         assert!(u[0].1 && u[1].1 && !u[2].1);
         assert_eq!(decode_controls("%%065")[0].0, 'A');
         assert_eq!(decode_controls("%%").len(), 2);
+    }
+
+    #[test]
+    fn test_shape_hinh_dang() {
+        let sh = shape_stroke("HÌNH DÁNG", 1.0, 1.0, 0.0);
+        assert!(sh.width > 5.0);
+        let fallback_available = ["arial", "segoe ui", "dejavu sans"].into_iter().any(|name| crate::ttf::find(name).is_some());
+        let font = TextFont::resolve("VHELVCN.TTF");
+        if fallback_available {
+            assert!(font.is_outline());
+        } else {
+            assert!(matches!(font, TextFont::Stroke));
+        }
     }
 
     #[test]
