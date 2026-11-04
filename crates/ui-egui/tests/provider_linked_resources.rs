@@ -469,6 +469,117 @@ fn linked_absolute_mappings_and_xopen_never_follow_native_paths() -> Result<(), 
     Ok(())
 }
 
+fn assert_xopen_title_and_provider_save(app: &mut CadApp, connection: &str, block: &str, key: &str, expected_name: &str) -> Result<u64, String> {
+    app.run("xopen", json!({"name":block}))?;
+    let doc = app.session.state().map_err(|e| e.to_string())?;
+    let uid = doc.uid;
+    let revision = doc.revision;
+    let checkpoint = doc.saved.clone();
+    assert_eq!(doc.title, expected_name);
+    assert!(doc.path.is_none(), "a logical key never becomes filesystem authority");
+    let original = resources(app, uid)?;
+    assert_eq!(original.name, expected_name);
+    assert_eq!(original.main.key, key);
+    assert!(original.granted_to("fixture", "account-one", connection));
+    let request = text(&app.run("qsave", Value::Null)?, "requestId")?;
+    let dialog = event(&app.file_providers, "saveDialog")?;
+    assert_eq!(text(&dialog.metadata, "filename")?, expected_name, "actual unbound Save chooser must retain the XOPEN name");
+    assert_eq!(text(&dialog.metadata, "documentId")?, uid.to_string());
+    assert_eq!(text(&dialog.metadata, "revision")?, revision.to_string());
+    app.file_providers.resolve_dialog(&request, "provider", expected_name)?;
+    let transfer = event(&app.file_providers, "save")?;
+    assert_eq!(text(&transfer.metadata, "requestId")?, request);
+    assert_eq!(text(&transfer.metadata, "filename")?, expected_name);
+    let Some(LinkedPayload::Set(captured)) = transfer.linked else { return Err("XOPEN save lost its complete native resource set".into()) };
+    assert_eq!(captured.name, expected_name);
+    assert_eq!(captured.main.key, key);
+    assert!(captured.version.is_empty(), "an uncommitted capture must not invent a provider version");
+    assert_eq!(captured.authority, original.authority);
+    assert_eq!(captured.grant_connection, original.grant_connection);
+    assert_eq!(captured.edges, original.edges);
+    assert_eq!(captured.files.len(), original.files.len());
+    for attachment in &original.files {
+        let actual = captured.file(&attachment.key).ok_or("XOPEN save lost an authorized attachment")?;
+        assert_eq!(actual.kind, attachment.kind);
+        assert_eq!(actual.bytes.data(), attachment.bytes.data());
+    }
+    app.file_providers.cancel_resource_set(connection, request.clone(), String::new())?;
+    tick(app);
+    assert_eq!(text(&event(&app.file_providers, "saveCancelled")?.metadata, "requestId")?, request);
+    assert!(Arc::ptr_eq(&state(app, uid)?.saved, &checkpoint), "cancelled capture must keep the checkpoint");
+    assert_eq!(resources(app, uid)?.digest(), original.digest());
+    assert!(!app.file_providers.busy());
+    Ok(uid)
+}
+#[test]
+fn linked_xopen_retains_distinct_nested_names_and_provider_save_suggestions() -> Result<(), String> {
+    let (mut app, connection, main_uid) = opened()?;
+    let original = resources(&app, main_uid)?;
+    let child = assert_xopen_title_and_provider_save(&mut app, &connection, "Child", "parts/child.dxf", "child.dxf")?;
+    let nested = assert_xopen_title_and_provider_save(&mut app, &connection, "Nested", "parts/nested.dxf", "nested.dxf")?;
+    assert_ne!(child, main_uid);
+    assert_ne!(nested, child);
+    assert_ne!(nested, main_uid);
+    assert_eq!(state(&app, child)?.title, "child.dxf");
+    assert_eq!(state(&app, nested)?.title, "nested.dxf");
+    assert_eq!(app.file_providers.bound_document("main"), Some(main_uid));
+    assert!(Arc::ptr_eq(&resources(&app, main_uid)?, &original), "XOPEN must preserve the original authorized drawing");
+    Ok(())
+}
+fn named_xref_input(key: &str) -> Result<Input, String> {
+    fixture::install_formats();
+    let mut main = cadcraft_engine::doc::Drawing::new_imperial();
+    let raw = "C:\\original-fixture\\not-the-logical-name.dxf";
+    let mut block = cadcraft_engine::doc::Block::new("Child");
+    block.xref_path = Some(raw.into());
+    main.blocks.insert("Child".into(), Arc::new(block));
+    let main = Bytes::new(cadcraft_io::write(&main, "Main.dxf").map_err(|e| e.to_string())?)?;
+    let child = cadcraft_engine::doc::Drawing::new_imperial();
+    let child = Bytes::new(cadcraft_io::write(&child, "Child.dxf").map_err(|e| e.to_string())?)?;
+    Ok(Input {
+        main_key: "plans/main.dxf".into(),
+        name: "Main.dxf".into(),
+        main_hash: main.hash().into(),
+        main: Some(main),
+        files: vec![cadcraft_engine::linked_files::File { key: key.into(), kind: "dxf".into(), bytes: child }],
+        edges: vec![cadcraft_engine::linked_files::Edge {
+            from_key: "plans/main.dxf".into(),
+            raw_reference: raw.into(),
+            role: "xref".into(),
+            target_key: key.into(),
+        }],
+        version: "version-1".into(),
+    })
+}
+#[test]
+fn linked_xopen_validates_native_basename_bytes_and_preserves_safe_fallback_save_names() -> Result<(), String> {
+    let max_name = format!("{}a.dxf", "é".repeat(125));
+    let overlong_unicode = format!("{}.dxf", "é".repeat(126));
+    let overlong_ascii = format!("{}.dxf", "x".repeat(252));
+    assert_eq!(max_name.len(), 255);
+    assert_eq!(overlong_unicode.len(), 256);
+    assert_eq!(overlong_ascii.len(), 256);
+    let cases = [
+        ("parts/Beam.DXF".into(), "Beam.DXF".into()),
+        ("parts/Étage.dXf".into(), "Étage.dXf".into()),
+        (format!("parts/{max_name}"), max_name),
+        ("parts/opaque-id".into(), "Reference.dxf".into()),
+        ("parts/reference.bin".into(), "Reference.dxf".into()),
+        (format!("parts/{overlong_unicode}"), "Reference.dxf".into()),
+        (format!("parts/{overlong_ascii}"), "Reference.dxf".into()),
+    ];
+    for (key, expected) in cases {
+        let (mut app, connection) = connected()?;
+        let main_uid = open_input(&mut app, &connection, named_xref_input(&key)?)?;
+        let original = resources(&app, main_uid)?;
+        let uid = assert_xopen_title_and_provider_save(&mut app, &connection, "Child", &key, &expected)?;
+        assert_ne!(uid, main_uid);
+        assert_eq!(app.file_providers.bound_document("main"), Some(main_uid));
+        assert!(Arc::ptr_eq(&resources(&app, main_uid)?, &original));
+    }
+    Ok(())
+}
+
 fn depth_chain(count: usize) -> Result<Input, String> {
     let mut main = None;
     let mut files = Vec::new();

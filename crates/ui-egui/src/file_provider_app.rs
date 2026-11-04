@@ -52,9 +52,10 @@ fn capture(app: &mut CadApp, save_as: bool) -> Result<Value, String> {
             "DXF references external images or drawings; make a self-contained drawing before provider save (external files are not uploaded)".into(),
         );
     }
-    let mut name = host.bound_filename(state.uid).unwrap_or_else(|| {
-        let stem = state.title.strip_suffix(".dxf").or_else(|| state.title.strip_suffix(".dwg")).unwrap_or(&state.title);
-        format!("{stem}.dxf")
+    let mut name = host.bound_filename(state.uid).unwrap_or_else(|| match state.title.rsplit_once('.') {
+        Some((_, extension)) if extension.eq_ignore_ascii_case("dxf") => state.title.clone(),
+        Some((stem, extension)) if extension.eq_ignore_ascii_case("dwg") => format!("{stem}.dxf"),
+        _ => format!("{}.dxf", state.title),
     });
     if name.trim() == ".dxf" {
         name = "Drawing.dxf".into();

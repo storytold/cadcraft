@@ -274,7 +274,7 @@ fn input_set(host: &Host, connection: &str, request: &str, value: JsValue) -> Re
         files.push(file);
     }
     if total > u64::from(MAX_BYTES) {
-        return Err(error("resource buffers exceed80MiB"));
+        return Err(error("resource buffers exceed 80 MiB"));
     }
     let mut references = Vec::new();
     for index in 0..edge_count {

@@ -147,7 +147,11 @@ one native file. The editor decodes **every reachable DXF**, verifies all its ac
 checks each role/kind, rejects missing, duplicate, ambiguous or unreachable declarations and only
 then changes the document. Nested, unloaded and overlay xrefs require their bytes too. Cycles are
 retained as relations and visited once. Xrefs inside the provided context are not expanded through
-the native filesystem. `XOPEN` uses the supplied DXF and its reachable authorized set. Native
+the native filesystem. `XOPEN` uses the supplied DXF and its reachable authorized set. Its display
+name comes from the logical key's last component when that is a native `.dxf` filename (ASCII
+case-insensitive extension, at most 255 UTF-8 bytes, no separators or controls), otherwise
+`Reference.dxf`. The resulting document title and unbound provider Save suggestion retain that
+name, including extension case. These display names never grant filesystem authority. Native
 xref reload/path/attach/bind operations in that context are refused rather than reading a path or
 binding unloaded geometry. Non-provider drawings keep their existing native xref behavior.
 

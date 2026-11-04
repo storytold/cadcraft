@@ -29,7 +29,7 @@ impl Drop for Bytes {
 impl Bytes {
     pub fn new(data: Vec<u8>) -> Result<Arc<Self>, String> {
         if data.is_empty() || data.len() > MAX_BYTES {
-            return Err("linked file is empty or exceeds80MiB".into());
+            return Err("linked file is empty or exceeds 80 MiB".into());
         }
         let hash = format!("{:x}", Sha256::digest(&data));
         let pool = POOL.get_or_init(Mutex::default);
@@ -43,7 +43,7 @@ impl Bytes {
         }
         let size = USED.load(Ordering::SeqCst).checked_add(data.len()).ok_or("linked-file budget overflow")?;
         if size > MAX_BYTES || COUNT.load(Ordering::SeqCst) >= MAX_RESIDENT_FILES {
-            return Err("resident linked-file snapshots exceed the80MiB/file-count budget".into());
+            return Err("resident linked-file snapshots exceed the 80 MiB/file-count budget".into());
         }
         USED.fetch_add(data.len(), Ordering::SeqCst);
         COUNT.fetch_add(1, Ordering::SeqCst);
@@ -106,11 +106,13 @@ pub struct ResourceSet {
     pub grant_connection: Option<String>,
     digest: String,
 }
+/// Display names use the same bounded native-DXF contract at ingress and XOPEN.
+fn valid_native_dxf_name(name: &str) -> bool {
+    name.len() <= 255 && name.to_ascii_lowercase().ends_with(".dxf") && !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'))
+}
 impl ResourceSet {
     pub fn new(input: Input, main: Arc<Bytes>) -> Result<Arc<Self>, String> {
-        if !input.name.to_ascii_lowercase().ends_with(".dxf")
-            || input.name.len() > 255
-            || input.name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'))
+        if !valid_native_dxf_name(&input.name)
             || input.version.len() > 160
             || input.version.chars().any(char::is_control)
             || input.main_hash != main.hash()
@@ -124,7 +126,7 @@ impl ResourceSet {
         for file in &files {
             total = total.checked_add(file.bytes.data().len()).ok_or("linked-file byte count overflow")?;
             if total > MAX_BYTES {
-                return Err("linked-file declared bytes exceed80MiB".into());
+                return Err("linked-file declared bytes exceed 80 MiB".into());
             }
         }
         files.sort_by(|a, b| a.key.cmp(&b.key));
@@ -164,9 +166,10 @@ impl ResourceSet {
             .filter(|item| item != key)
             .map(|item| self.file(&item).cloned().ok_or_else(|| "authorized xref closure is missing bytes".to_string()))
             .collect::<Result<Vec<_>, _>>()?;
+        let name = key.rsplit('/').next().filter(|name| valid_native_dxf_name(name)).unwrap_or("Reference.dxf");
         let input = Input {
             main_key: key.into(),
-            name: "Reference.dxf".into(),
+            name: name.into(),
             main: None,
             main_hash: main.bytes.hash().into(),
             files,
@@ -617,7 +620,7 @@ pub fn preserve_style_files(bytes: Vec<u8>, replacements: &BTreeMap<String, (Str
     }
     let bytes = if binary { cadcraft_dxf::write_binary(&output, false) } else { cadcraft_dxf::write_ascii(&output).into_bytes() };
     if bytes.len() > MAX_BYTES {
-        return Err("preserved native DXF exceeds80MiB".into());
+        return Err("preserved native DXF exceeds 80 MiB".into());
     }
     Ok(bytes)
 }

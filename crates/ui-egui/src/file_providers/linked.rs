@@ -187,7 +187,7 @@ impl Host {
     /// Admission uses declared hashes/lengths before the WASM adapter copies any payload buffers.
     pub fn preflight_linked_bytes(&self, additional: usize) -> Result<(), String> {
         if self.state().retained_bytes().saturating_add(additional) > MAX_BYTES {
-            return Err("retained linked and ordinary transfers exceed80MiB".into());
+            return Err("retained linked and ordinary transfers exceed 80 MiB".into());
         }
         Ok(())
     }
