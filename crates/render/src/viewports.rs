@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::display::append;
-use super::display::{DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
+use super::display::{DImage, DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
@@ -88,11 +88,12 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     if !ok(s) {
         return;
     }
-    let xf = Mat3::translate(center).then_before(Mat3::scale(s, s)).then_before(Mat3::translate(-vp.view_center));
-    let mhalf = Vec2::new(area.width(), area.height()) / (2.0 * s);
-    let mcenter = vp.view_center + (area.center() - center) / s;
-    // Model window with slack: entity bounds are approximate (text, dimensions).
-    let win = Bounds2::new(mcenter - mhalf, mcenter + mhalf).expand(mhalf.x.max(mhalf.y) * 0.1);
+    // Model space scaled onto the sheet and turned by the viewport's view twist.
+    let xf = vp.model_to_paper_matrix();
+    // The model box the area covers (turned, with a twist), with slack: entity bounds are
+    // approximate (text, dimensions).
+    let mbox = Bounds2::from_points(area.corners().map(|p| vp.paper_to_model(p)));
+    let win = mbox.expand(mbox.width().max(mbox.height()) * 0.05);
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
@@ -187,6 +188,14 @@ pub fn viewport_clip(d: &Drawing, handle: Handle, vp: &cadcraft_doc::Viewport) -
     clip::PolyClip::new(&clip::boundary_polygon(&be.kind)?)
 }
 
+/// `list` clipped to `clip` (a clipped viewport's outline in the list's own units), for a list
+/// drawn inside a clipped viewport apart from its contents.
+pub fn clip_list(list: &DisplayList, clip: &clip::PolyClip) -> DisplayList {
+    let mut out = DisplayList::default();
+    append_clipped(&mut out, list, &Clip::Poly(clip));
+    out
+}
+
 /// What viewport contents are clipped to.
 enum Clip<'a> {
     /// The viewport rectangle (the fast path).
@@ -229,6 +238,11 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                     push_raw(dst, p, Kind::Point, &[*q]);
                 }
             }
+            (Kind::Image { index }, _) => {
+                if let Some(img) = src.images.get(index as usize) {
+                    push_clipped_image(dst, p, img, pts, clip);
+                }
+            }
             (Kind::Infinite { ray }, Clip::Rect(rect)) => {
                 if let (Some(base), Some(dir)) = (pts.first(), pts.get(1))
                     && let Some((a, c)) = clip::clip_infinite(*base, *dir, ray, rect)
@@ -245,6 +259,29 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
             }
         }
     }
+}
+
+/// Append image `img` (primitive `p`, corners `corners`) to `dst`, to be cut to `clip` when it
+/// is drawn: the picture is not cut here, the outline is added to those it carries.
+fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &[Vec2], clip: &Clip) {
+    let (outline, area) = match clip {
+        Clip::Rect(rect) => (vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)], *rect),
+        Clip::Poly(c) => (c.polygon().to_vec(), c.bounds()),
+    };
+    let own = Bounds2::from_points(corners.iter().copied());
+    if !own.intersects(&area) {
+        return;
+    }
+    let Ok(index) = u32::try_from(dst.images.len()) else { return };
+    let mut img = img.clone();
+    img.clips.push(outline);
+    dst.images.push(img);
+    // The list's bounds take only the part inside the clip, as for the other primitives.
+    let before = dst.bounds;
+    push_raw(dst, p, Kind::Image { index }, corners);
+    dst.bounds = before;
+    dst.bounds.add(own.min.max(area.min));
+    dst.bounds.add(own.max.min(area.max));
 }
 
 fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {
