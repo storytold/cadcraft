@@ -30,8 +30,8 @@ selection. Resetting palettes keeps the language choice.
 The catalogs cover command and menu labels, tool groups and tooltips, the Start page,
 file and model-space tabs, status controls, object snaps, drafting prompts, property labels,
 dialogs, and the About window's controls. The command reference can be searched by English
-command ID, English label, or translated label. Ukrainian has enforced coverage;
-missing entries in the other catalogs are reported by tests and fall back to English.
+command ID, English label, or translated label. A missing entry falls back to English and
+never fails a build; `cargo xtask i18n` (a step of `cargo xtask ci`) lists each language's.
 
 Czech has 1,202 catalog rows, covering the reference catalog and every marked UI
 literal, including Options. Four `menu` entries distinguish menu headings from object/command
@@ -46,12 +46,15 @@ The translations are original, AI-assisted Korean CAD terminology (for example, 
 치수, 모깎기, 모따기, 간격띄우기 and 객체 스냅). Independent native proofreading and
 platform-specific layout/IME validation remain follow-up work.
 
-Brazilian Portuguese has 1,231 catalog rows and also covers the reference catalog and every marked UI
-literal: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
+Brazilian Portuguese has 1,447 catalog rows and also covers the reference catalog, every marked UI
+literal and the strings the sibling catalogs translate: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
 Preferences; its gaps are now zero. Its plural rule is `one|other` (0 and 1 are `one`), as CLDR defines
 for `pt`, and the catalog's accented letters (`Á Â Í Ó Ú à á â ã ç é ê í ó ô õ ú`) render in the
 bundled fonts. The original catalog was contributed by @WladmirJunior; the remaining rows were completed
-by @RicSchonfelder with AI assistance and have not yet been proofread by a native speaker.
+by @RicSchonfelder with AI assistance. A native-speaker terminology pass by @ffishman (2026-10-19) fixed
+mistranslations (Thaw Layer, Snap type, Revolve) and made the CAD vocabulary consistent with Brazilian
+usage: *snap* for every snap mode, *viewport*, *grip* and *offset* kept as loanwords (Brazilian university
+AutoCAD handouts keep these names in English), *Ligar/Desligar camada*, *Explodir*, *Multilinha*.
 
 Hungarian has **1,326 rows**: 1,320 ordinary labels, four contextual menu headings, and two
 single-form count templates. It covers the reference catalog and every marked UI literal,
@@ -139,14 +142,14 @@ The implementation follows the display-time catalog pattern used by
 - Windows retain explicit IDs based on their English source, and tool groups retain their
   source names as keys, so switching languages preserves their state.
 - Add a translation attribution row in `ATTRIBUTION.md`, update the language lists, and add
-  locale, plural, font-glyph and live-switch tests. Add the catalog to `REPORTED` in
-  `i18n/tests.rs`: only Ukrainian, the reference translation, is in `REQUIRED`, so adding a
-  command needs a row in one language, not in all of them.
+  the language's locale tags and plural rule. The rendering, font-glyph and live-switch tests
+  run for every catalog; no test checks one language's wording, and adding a command needs
+  only its English label.
 - Catalogs are embedded and parsed once. Missing or malformed rows cannot crash the app;
   tests reject invalid rows, duplicate keys, changed placeholders, and mismatched ellipses.
-- `cargo test -p cadcraft-ui-egui i18n` checks menu/command/tool/snap coverage, every marked
-  UI literal, locale resolution, preferences, integer plurals, bundled glyphs and actual
-  egui renders with language switching. `cargo xtask assets` checks asset attribution;
+- `cargo test -p cadcraft-ui-egui i18n` checks the catalogs, locale resolution, preferences,
+  integer plurals, bundled glyphs and actual egui renders with language switching.
+  `cargo xtask i18n` prints the strings each language shows in English. `cargo xtask assets` checks asset attribution;
   `cargo xtask ci` runs the workspace quality gates.
 
 Translations are original work under `MIT OR Apache-2.0`, written from the meaning of

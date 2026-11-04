@@ -49,6 +49,13 @@ pub fn plain_mtext(s: &str) -> String {
                         i = j + 1;
                     }
                     'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
+                    // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
+                    'U' if unicode_escape(&chars, i).is_some() => {
+                        if let Some(u) = unicode_escape(&chars, i) {
+                            out.push(u);
+                        }
+                        i += 7;
+                    }
                     // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
                     _ => {
                         let mut j = i + 2;
@@ -71,4 +78,16 @@ pub fn plain_mtext(s: &str) -> String {
         }
     }
     out
+}
+
+/// The character of a `\U+XXXX` escape (four hex digits) starting at `chars[i]`.
+pub fn unicode_escape(chars: &[char], i: usize) -> Option<char> {
+    if chars.get(i) != Some(&'\\') || !matches!(chars.get(i + 1), Some('U' | 'u')) || chars.get(i + 2) != Some(&'+') {
+        return None;
+    }
+    let hex: String = chars.get(i + 3..i + 7)?.iter().collect();
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
 }

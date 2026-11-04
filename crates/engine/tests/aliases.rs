@@ -8,6 +8,11 @@ use cadcraft_engine::Session;
 use cadcraft_engine::cmd::resolve_alias;
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 const PGP: &str = "\
@@ -55,10 +60,8 @@ fn an_alias_file_adds_and_overrides_aliases() {
 #[test]
 fn reinit_reads_the_alias_file_again() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("cadcraft-aliases-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("mine.pgp").to_string_lossy().into_owned();
-    std::fs::write(&file, "ZZR, *RECTANG\n").unwrap();
+    let dir = TempDir::new("aliases");
+    let file = dir.file("mine.pgp", "ZZR, *RECTANG\n");
     let mut s = Session::new();
     s.execute("aliasedit", &json!({ "file": file })).unwrap();
     assert_eq!(resolve_alias("zzr"), "rectang");

@@ -64,8 +64,10 @@ fn items(p: &PickSet) -> Vec<Handle> {
 
 /// `(command arg…)`: arguments go to the command line as typed input: a string starts a command
 /// or answers a prompt ("" is Enter), a number or a point is entered, an entity name or a
-/// selection set picks objects, and `pause` waits for the user. A command not finished by the
-/// arguments stays active for the next `command` call. No arguments: cancel the active command.
+/// selection set picks objects (a name, alone or with a point as `entsel` gives it, also answers
+/// a prompt picking one object: [`Session::input_object`]), and `pause` waits for the user. A
+/// command not finished by the arguments stays active for the next `command` call. No
+/// arguments: cancel the active command.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     if a.is_empty() {
         if ctx.s.running.is_some() {
@@ -108,14 +110,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                     }
                 }
             }
-            Value::Ename(h) => feed(ctx.s, Input::Pick(vec![*h])),
+            Value::Ename(h) => named(ctx.s, *h, None),
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
                     feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
-                    feed(ctx.s, Input::Pick(vec![h]));
+                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| Vec2::new(p[0], p[1])));
                 } else {
                     return Err(LispError::bad_arg("command argument", arg));
                 }
@@ -129,6 +131,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn feed(s: &mut Session, input: Input) {
     if s.running.is_some()
         && let Err(e) = s.input(input)
+    {
+        s.echo(e.to_string());
+    }
+}
+
+fn named(s: &mut Session, h: Handle, at: Option<Vec2>) {
+    if s.running.is_some()
+        && let Err(e) = s.input_object(h, at)
     {
         s.echo(e.to_string());
     }
@@ -151,28 +161,67 @@ pub fn from_json(v: &serde_json::Value) -> Value {
     }
 }
 
-/// A LISP value as JSON (for `setvar`).
-pub fn to_json(v: &Value) -> serde_json::Value {
-    match v {
+/// A LISP value as JSON (for `setvar`), bounded so a shared cons structure cannot expand into
+/// exponentially many owned array elements before the setter can reject it (CWE-400).
+///
+/// Largest number of elements it may expand, and the deepest nesting it follows.
+const TO_JSON_BUDGET: u64 = 2_000_000;
+const TO_JSON_MAX_DEPTH: usize = 256;
+
+/// Convert a LISP value to owned JSON within element and nesting limits.
+/// Return `None` before a shared cons structure can expand beyond the remaining budget.
+fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_json::Value> {
+    if depth > TO_JSON_MAX_DEPTH || *budget == 0 {
+        return None;
+    }
+    *budget -= 1;
+    Some(match v {
         Value::Nil => serde_json::Value::Null,
         Value::Int(i) => serde_json::json!(i),
         Value::Real(r) => serde_json::json!(r),
         Value::Str(s) => serde_json::json!(&**s),
-        Value::Cons(_) => serde_json::Value::Array(v.iter().map(|x| to_json(&x)).collect()),
+        Value::Cons(_) => {
+            let mut arr = Vec::new();
+            for x in v.iter() {
+                arr.push(to_json_bounded(&x, depth + 1, budget)?);
+            }
+            serde_json::Value::Array(arr)
+        }
         other => serde_json::json!(to_text(other, false)),
-    }
+    })
+}
+
+/// Angle variables CADCraft reports and takes in degrees, as the SETVAR command shows them, which
+/// AutoLISP's `getvar` and `setvar` give and take in radians, as AutoCAD 2024's do: each of these
+/// set to 30 by the SETVAR command, or to `(/ pi 6)` by `setvar`, reads 0.5235987755982987.
+const RADIAN_VARS: [&str; 6] = ["ANGBASE", "CHAMFERD", "DIMJOGANG", "HPANG", "POLARANG", "SNAPANG"];
+
+fn in_radians(name: &str) -> bool {
+    RADIAN_VARS.iter().any(|v| v.eq_ignore_ascii_case(name.trim()))
 }
 
 pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let name = string(&a[0])?;
-    Ok(Flow::Value(crate::sysvars::get(ctx.s, &name).map(|v| from_json(&v)).unwrap_or_default()))
+    Ok(Flow::Value(match crate::sysvars::get(ctx.s, &name) {
+        Some(serde_json::Value::Number(n)) if in_radians(&name) => Value::Real(n.as_f64().unwrap_or(0.0).to_radians()),
+        v => v.map(|v| from_json(&v)).unwrap_or_default(),
+    }))
 }
 
+/// Set a system variable after bounded JSON conversion, reporting invalid or oversized values as LISP errors.
 pub fn setvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 2)?;
     let name = string(&a[0])?;
-    match crate::sysvars::set(ctx.s, &name, &to_json(&a[1])) {
+    let mut budget: u64 = TO_JSON_BUDGET;
+    let Some(json) = to_json_bounded(&a[1], 0, &mut budget) else {
+        return Err(LispError::new(format!("AutoCAD variable setting rejected: {} value too large", to_text(&a[0], true))));
+    };
+    let json = match json {
+        serde_json::Value::Number(n) if in_radians(&name) => serde_json::json!(n.as_f64().unwrap_or(0.0).to_degrees()),
+        other => other,
+    };
+    match crate::sysvars::set(ctx.s, &name, &json) {
         Ok(()) => Ok(Flow::Value(a[1].clone())),
         Err(_) => Err(LispError::new(format!("AutoCAD variable setting rejected: {} {}", to_text(&a[0], true), to_text(&a[1], true)))),
     }
@@ -334,10 +383,25 @@ fn entity_from_list(ctx: &Ctx<'_>, list: &Value) -> Result<(String, cadcraft_doc
 pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(list) = a.first().filter(|v| !v.is_nil()) else { return Ok(Flow::Value(Value::Nil)) };
+    // A block definition is a BLOCK list, its entities, then an ENDBLK list (#1662).
+    match list_to_groups(list) {
+        Ok((k, tags)) if k == "BLOCK" => return Ok(Flow::Value(begin_block(ctx, list, &tags))),
+        Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
+        _ => {}
+    }
     let (_, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
+    if let Some((_, ents)) = ctx.env.pending_block.as_mut() {
+        // Into the block being defined; it is added to the drawing, with handles and the layers
+        // its entities name, at ENDBLK (a refused or dropped definition leaves nothing behind).
+        if ents.len() >= MAX_PENDING_BLOCK_ENTITIES {
+            return Ok(Flow::Value(Value::Nil));
+        }
+        ents.push(Entity { handle: Handle(0), common, kind });
+        return Ok(Flow::Value(list.clone()));
+    }
     let space = ctx.s.space();
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     // A layer entmake names that doesn't exist yet is created.
@@ -349,6 +413,75 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Err(_) => Ok(Flow::Value(Value::Nil)),
     }
+}
+
+/// `entmake` of a BLOCK list (2 name, 70 flags, 10 base point, 4 description): begin a block
+/// definition. Flag 1 makes an anonymous block (`*U…`, named at ENDBLK); xrefs (flag 4) can't be
+/// made this way. nil, and the definition already begun kept, when one is open.
+fn begin_block(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
+    if ctx.env.pending_block.is_some() {
+        return Value::Nil;
+    }
+    let group = |code: i32| tags.iter().find(|t| t.code == code);
+    let flags = group(70).map(Tag::i64).unwrap_or(0);
+    let name = group(2).map(|t| t.str().trim().to_string()).unwrap_or_default();
+    let anonymous = flags & 1 != 0;
+    if flags & 4 != 0 || !(anonymous && name.starts_with('*') || crate::cmd::blocks::valid_block_name(&name)) {
+        return Value::Nil;
+    }
+    let mut b = cadcraft_doc::Block::new(&name);
+    b.anonymous = anonymous;
+    b.base = cadcraft_geom::Vec3::new(
+        group(10).map(Tag::f64).unwrap_or(0.0),
+        group(20).map(Tag::f64).unwrap_or(0.0),
+        group(30).map(Tag::f64).unwrap_or(0.0),
+    );
+    if !b.base.is_finite() {
+        return Value::Nil;
+    }
+    b.description = group(4).map(Tag::str).unwrap_or_default();
+    ctx.env.pending_block = Some((b, Vec::new()));
+    list.clone()
+}
+
+/// The most entities one `entmake` block definition takes (a runaway loop can't fill memory).
+const MAX_PENDING_BLOCK_ENTITIES: usize = 1_000_000;
+
+/// `entmake` of an ENDBLK list: add the block begun to the drawing (redefining one of the same
+/// name) and return its name, generated for an anonymous block. nil without one begun, or when
+/// its entities reference the block itself.
+fn end_block(ctx: &mut Ctx<'_>) -> Value {
+    let Some((mut b, ents)) = ctx.env.pending_block.take() else { return Value::Nil };
+    let Ok(d) = ctx.s.doc_mut() else { return Value::Nil };
+    if b.anonymous {
+        // Its kind letter (`*U`, `*X`…) is kept; a name that isn't one gets `*U`.
+        let prefix: String = b.name.chars().take(2).collect();
+        let prefix = if prefix.chars().count() == 2 && prefix.starts_with('*') { prefix.as_str() } else { "*U" };
+        b.name = d.anonymous_block_name(prefix);
+    } else {
+        // Block names are case-insensitive: a redefinition keeps the existing name.
+        if let Some(existing) = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(&b.name)) {
+            b.name = existing.clone();
+        }
+        // As BLOCK: a block being edited in place isn't redefined until REFCLOSE.
+        if d.refedit.as_ref().is_some_and(|r| r.block.eq_ignore_ascii_case(&b.name)) {
+            return Value::Nil;
+        }
+    }
+    // Named or anonymous (a routine can know the name an anonymous block will get), a block
+    // that inserts itself isn't added.
+    if crate::cmd::blocks::references_block(d, &ents, &b.name) {
+        return Value::Nil;
+    }
+    for mut e in ents {
+        d.ensure_layer(&e.common.layer);
+        e.handle = d.new_handle();
+        b.entities.push(e);
+    }
+    let name = b.name.clone();
+    d.blocks.insert(name.clone(), Arc::new(b));
+    ctx.s.touch();
+    Value::str(&name)
 }
 
 pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -922,7 +1055,7 @@ pub fn rtos(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 fn decimal(v: f64, prec: usize, dimzin: i64) -> String {
-    let mut s = format!("{v:.prec$}");
+    let mut s = crate::units::fixed(v, prec);
     if s.starts_with("-0") && s.trim_start_matches(['-', '0', '.']).is_empty() {
         s = s.trim_start_matches('-').to_string();
     }
@@ -962,7 +1095,14 @@ pub fn distof(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let s = string(&a[0])?;
-    Ok(Flow::Value(ctx.s.angle_settings().direction(&s).map(Value::Real).unwrap_or_default()))
+    let mut settings = ctx.s.angle_settings();
+    // AUNITS 0..=4; any other units argument is an error in AutoCAD, nil here.
+    match a.get(1) {
+        None | Some(Value::Nil) => {}
+        Some(Value::Int(u)) if (0..=4).contains(u) => settings.aunits = i64::from(*u),
+        Some(_) => return Ok(Flow::Value(Value::Nil)),
+    }
+    Ok(Flow::Value(settings.direction(&s).map(Value::Real).unwrap_or_default()))
 }
 
 /// `(trans pt from to [disp])`: points are in the world system throughout (no UCS yet).
@@ -983,5 +1123,5 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     // As given (a path, or relative to the working folder), then in the support folder.
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(|c| super::builtins::read_text_file(c))
+    candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
 }

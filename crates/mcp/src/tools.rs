@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 
+/// The `tools/list` payload: one definition (name, description, input schema) per MCP tool,
+/// including the UI-only tools when `has_ui` says a window is available.
 pub fn tool_definitions(has_ui: bool) -> Value {
     let mut tools = vec![
         json!({"name": "command_line", "description": "Type one line at the CADCraft command line, exactly as a user would at an AutoCAD-style prompt. Starts commands by name or alias (LINE, L, CIRCLE, C, PLINE, RECTANG, MOVE, TRIM, OFFSET, ZOOM…) and answers the active prompt: points `x,y`, relative `@dx,dy`, polar `@dist<angle`, distances, keywords (e.g. `c` for Close), empty text = Enter. Spaces act as Enter, so `circle 0,0 5` works in one call. Returns the new prompt and command-line output, and `error` when the line was refused.",
@@ -30,7 +32,7 @@ pub fn tool_definitions(has_ui: bool) -> Value {
                 "limit": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}}}}),
         json!({"name": "new_drawing", "description": "Create a new drawing (imperial by default, or metric).",
             "inputSchema": {"type": "object", "properties": {"metric": {"type": "boolean"}}}}),
-        json!({"name": "open", "description": "Open a DXF file.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}),
+        json!({"name": "open", "description": "Open a DXF or DWG file.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}),
         json!({"name": "save", "description": "Save the drawing (DXF or DWG by extension). A .svg, .png or .pdf path exports instead: the drawing keeps its name and unsaved changes.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}}}),
         json!({"name": "cancel", "description": "Press Escape: cancel the running command (or clear the selection).", "inputSchema": {"type": "object", "properties": {}}}),
     ];
@@ -42,10 +44,12 @@ pub fn tool_definitions(has_ui: bool) -> Value {
     json!({ "tools": tools })
 }
 
+/// Wrap a JSON value as a successful MCP result containing pretty-printed text.
 fn text(v: &Value) -> Value {
     json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(v).unwrap_or_default()}]})
 }
 
+/// Wrap an error message as an MCP tool error result (`isError`), not a protocol error.
 fn err_text(e: &str) -> Value {
     json!({"content": [{"type": "text", "text": e}], "isError": true})
 }
