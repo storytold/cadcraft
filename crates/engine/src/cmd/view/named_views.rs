@@ -185,13 +185,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
     if let Some(state) = &v.layer_state {
         let d = s.doc_mut()?;
         match d.layer_states.iter().find(|l| l.name.eq_ignore_ascii_case(state)).cloned() {
-            Some(saved) => {
-                for layer in saved.layers {
-                    if let Some(l) = d.layer_mut(&layer.name) {
-                        *l = layer;
-                    }
-                }
-            }
+            Some(saved) => super::super::layer::restore_layers(d, saved.layers),
             None => msg.push_str(&format!(" Its layer snapshot \"{state}\" is missing.")),
         }
     }
