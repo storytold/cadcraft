@@ -896,7 +896,7 @@ pub fn preview(ui: &mut egui::Ui, st: &DimStyle, size: egui::Vec2, src: Option<&
     }
     let inner = rect.shrink(12.0);
     let scale = (f64::from(inner.width()) / b.width()).min(f64::from(inner.height()) / b.height());
-    let xf = crate::canvas::Xf { rect, center: b.center(), scale };
+    let xf = crate::canvas::Xf { twist: Default::default(), rect, center: b.center(), scale };
     let bg = cadcraft_color::Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b());
     crate::canvas::draw_list(&p, &xf, &list, bg, false);
 }

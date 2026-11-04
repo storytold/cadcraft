@@ -35,6 +35,7 @@ pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, d
 pub use fill::triangulate_evenodd;
 pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
+pub use text::triangulate_placed as triangulate_glyph;
 pub use tolerance::{gdt_points, tolerance_in};
 
 /// A resolved colour: its RGB, whether it is colour 7, and its index colour (0 = a true
@@ -134,7 +135,7 @@ struct Builder<'a> {
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -328,6 +329,21 @@ impl Builder<'_> {
             len: 2,
         });
     }
+    /// An empty builder drawing like this one (for contents cut afterwards, an XCLIP), with the
+    /// block-expansion count carried over.
+    fn part(&self) -> Builder<'a> {
+        let mut list = DisplayList::default();
+        list.expanded = self.list.expanded;
+        Builder {
+            list,
+            opts: self.opts,
+            plotting: self.plotting,
+            styles: self.styles,
+            named: self.named,
+            shared_budget: self.shared_budget,
+            transparency: self.transparency,
+        }
+    }
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
@@ -377,6 +393,7 @@ pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, mtext_frame, place_text_entity, style_font, text_align};
+use viewports::{Clip, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 
 #[cfg(test)]
