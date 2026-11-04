@@ -772,6 +772,14 @@ fn revcloud_arc_length_asks_max_and_object_asks_reverse() {
     assert!(s.running.is_some() && s.prompt_text().contains("Reverse direction"), "{}", s.prompt_text());
     s.cmdline("n").unwrap();
     assert!(s.running.is_none());
+    // Yes reverses the arcs (negative bulges).
+    s.execute("rectang", &json!({"p1": [30, 30], "p2": [32, 32]})).unwrap();
+    s.cmdline("revcloud o 30,31 y").unwrap();
+    assert!(s.running.is_none());
+    match last(&s) {
+        EntityKind::LwPolyline(p) => assert!(p.vertices.iter().all(|v| v.bulge < 0.0)),
+        k => panic!("{k:?}"),
+    }
 }
 
 // ---------------- BREAKLINE ----------------
