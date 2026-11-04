@@ -250,6 +250,28 @@ fn inside_an_active_viewport_it_twists_that_viewport_as_one_undo_step() {
 }
 
 #[test]
+fn a_locked_viewport_keeps_its_twist() {
+    let (mut s, h) = layout_session();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                v.locked = true;
+            }
+        })
+        .unwrap();
+    s.execute("mspace", &json!({ "handle": h.hex() })).unwrap();
+    let undo = s.state().unwrap().undo.len();
+    assert!(s.execute("dview", &json!({ "twist": 30 })).is_err());
+    let v = view(&s);
+    assert!(s.execute("view.set", &json!({ "center": [v.center.x, v.center.y], "height": v.height, "twist": 30 })).is_err());
+    assert_eq!(vp(&s, h).twist, 0.0);
+    assert_eq!(s.state().unwrap().undo.len(), undo);
+    // A view with the twist it already has is fine.
+    s.execute("view.set", &json!({ "center": [v.center.x, v.center.y], "height": v.height })).unwrap();
+}
+
+#[test]
 fn escape_inside_an_active_viewport_keeps_the_twist_as_one_undo_step() {
     let (mut s, h) = layout_session();
     s.execute("mspace", &json!({ "handle": h.hex() })).unwrap();

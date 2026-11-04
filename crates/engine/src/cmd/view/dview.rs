@@ -94,6 +94,10 @@ pub(super) fn set_twist(s: &mut Session, target: Target, twist: f64) -> Result<(
             if viewport_twist(s, h) == Some(twist) {
                 return Ok(());
             }
+            // A locked viewport keeps its view, the twist with it.
+            if s.state()?.active_viewport().is_some_and(|(vh, vp)| vh == h && vp.locked) {
+                return Err(EngineError::Other("The viewport is locked.".into()));
+            }
             let space = s.state()?.space.clone();
             let d = s.doc_mut()?;
             if let Some(store) = d.space_mut(&space) {
