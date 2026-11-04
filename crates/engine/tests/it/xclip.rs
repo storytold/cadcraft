@@ -90,11 +90,11 @@ fn extents_are_the_boundary_box_as_in_the_reference_app() {
     // A boundary reaching past the block (0..100 x -50..50): its own box, not the overlap.
     s.execute("xclip", &json!({ "handle": r1, "rectangle": [[50, -20], [150, 30]] })).unwrap();
     let b = bounds(&s);
-    assert!((b.min - Vec2::new(50.0, -20.0)).length() < 1e-9 && (b.max - Vec2::new(150.0, 30.0)).length() < 1e-9, "{b:?}");
+    assert!((b.min - Vec2::new(50.0, -20.0)).len() < 1e-9 && (b.max - Vec2::new(150.0, 30.0)).len() < 1e-9, "{b:?}");
     // One that misses the block entirely: still its box.
     s.execute("xclip", &json!({ "handle": r1, "rectangle": [[200, 200], [300, 300]] })).unwrap();
     let b = bounds(&s);
-    assert!((b.min - Vec2::new(200.0, 200.0)).length() < 1e-9 && (b.max - Vec2::new(300.0, 300.0)).length() < 1e-9, "{b:?}");
+    assert!((b.min - Vec2::new(200.0, 200.0)).len() < 1e-9 && (b.max - Vec2::new(300.0, 300.0)).len() < 1e-9, "{b:?}");
 }
 
 #[test]

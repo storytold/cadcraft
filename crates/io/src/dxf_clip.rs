@@ -6,6 +6,10 @@
 //! the boundary into the block's coordinates, and the boundary's own transform (identity here).
 //! Group 290 is 1 for an inverted clip ("Invert clip"), as the reference app writes it.
 //!
+//! The DWG bridge drops group 290, so an inverted clip is also marked by CADCraft's own entry
+//! `CADCRAFT_XCLIP` beside `ACAD_FILTER` (an XRECORD with group 70 = 1), which a DWG keeps. It
+//! is read only when the filter has no group 290.
+//!
 //! Reading takes the planar filters the model can hold out of the kept foreign data and puts them
 //! on the references ([`read`]); others (front/back clipping, a skewed boundary transform) stay
 //! foreign and are written back untouched. Writing adds the dictionaries and the filter of every
@@ -18,6 +22,8 @@ use cadcraft_doc::foreign::{Foreign, ForeignObject};
 use cadcraft_doc::{ClipBoundary, Drawing, EntityKind, Handle, MAX_CLIP_VERTICES, RawTag};
 use cadcraft_geom::{Mat3, Vec2};
 
+/// The extension-dictionary entry of CADCraft's inverted-clip flag (for DWG, see above).
+const INVERT_KEY: &str = "CADCRAFT_XCLIP";
 /// Handles above this are not handed out (the DXF handle space is 64-bit, keep a margin).
 const MAX_HANDLE: u64 = 1 << 48;
 
@@ -124,6 +130,14 @@ fn parse_filter(o: &ForeignObject) -> Option<ClipBoundary> {
     (clip.points.len() == count && cadcraft_render::clip::PolyClip::new(&clip.polygon()).is_some()).then_some(clip)
 }
 
+/// Whether the extension dictionary `xd` marks the clip inverted (CADCraft's own flag).
+fn inverted_record(f: &Foreign, xd: Handle) -> bool {
+    object(f, xd)
+        .and_then(|o| entry(&o.tags, INVERT_KEY))
+        .and_then(|h| object(f, h))
+        .is_some_and(|o| o.kind.eq_ignore_ascii_case("XRECORD") && number(&o.tags, 70).is_some_and(|v| v != 0.0))
+}
+
 /// Put the planar filters of the file read into `d` on their references, taking them out of
 /// the kept foreign data (the model writes them from now on).
 pub(crate) fn read(d: &mut Drawing) {
@@ -135,8 +149,12 @@ pub(crate) fn read(d: &mut Drawing) {
         .entities
         .keys()
         .filter_map(|h| {
-            let (_, _, o) = chain(&d.foreign, *h)?;
-            Some((*h, parse_filter(o)?))
+            let (xd, _, o) = chain(&d.foreign, *h)?;
+            let mut clip = parse_filter(o)?;
+            if number(&o.tags, 290).is_none() {
+                clip.inverted = inverted_record(&d.foreign, xd);
+            }
+            Some((*h, clip))
         })
         .collect();
     if found.is_empty() {
@@ -173,13 +191,14 @@ pub(crate) fn read(d: &mut Drawing) {
 }
 
 /// Take the clip of entity `h` out of the foreign data: the ACAD_FILTER entry and what it holds,
-/// and the extension dictionary when nothing else is left in it.
+/// CADCraft's inverted flag, and the extension dictionary when nothing else is left in it.
 fn forget(f: &mut Foreign, h: Handle) {
     let Some(xd) = f.entities.get(&h).and_then(|x| x.xdict) else { return };
     let mut gone: Vec<Handle> = Vec::new();
     let mut empty = false;
     if let Some(o) = f.objects.iter_mut().find(|o| o.handle == xd) {
         gone.extend(remove_entry(&mut o.tags, "ACAD_FILTER"));
+        gone.extend(remove_entry(&mut o.tags, INVERT_KEY));
         empty = !o.tags.iter().any(|t| t.code == 3);
     }
     // The filter dictionary's entries go with it.
@@ -252,6 +271,23 @@ fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3
     ForeignObject { handle: h, kind: "SPATIAL_FILTER".into(), tags }
 }
 
+fn invert_record(h: Handle, owner: Handle) -> ForeignObject {
+    ForeignObject {
+        handle: h,
+        kind: "XRECORD".into(),
+        tags: vec![
+            raw(5, h.hex()),
+            raw(102, "{ACAD_REACTORS"),
+            raw(330, owner.hex()),
+            raw(102, "}"),
+            raw(330, owner.hex()),
+            raw(100, "AcDbXrecord"),
+            raw(280, 1),
+            raw(70, 1),
+        ],
+    }
+}
+
 /// A copy of `d` whose foreign data holds the SPATIAL_FILTER of every clipped reference (any
 /// filter kept from the file for it is replaced). `None` when no reference is clipped.
 pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
@@ -296,13 +332,20 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             }
         };
         let (fd, sf) = (fresh(&mut next), fresh(&mut next));
+        let flag = clip.inverted.then(|| fresh(&mut next));
         if let Some(o) = f.objects.iter_mut().find(|o| o.handle == xd) {
             o.tags.extend([raw(3, "ACAD_FILTER"), raw(360, fd.hex())]);
+            if let Some(x) = flag {
+                o.tags.extend([raw(3, INVERT_KEY), raw(360, x.hex())]);
+            }
         }
         let mut filters = dictionary(fd, xd);
         filters.tags.extend([raw(3, "SPATIAL"), raw(360, sf.hex())]);
         f.objects.push(filters);
         f.objects.push(spatial_filter(sf, fd, &clip, &to_world, &inverse));
+        if let Some(x) = flag {
+            f.objects.push(invert_record(x, xd));
+        }
     }
     Some(out)
 }

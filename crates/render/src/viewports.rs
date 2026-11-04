@@ -309,6 +309,14 @@ fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &
     let (outline, area) = match clip {
         Clip::Rect(rect) => (vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)], *rect),
         Clip::Poly(c) => (c.polygon().to_vec(), c.bounds()),
+        // An image can only be cut to the inside of an outline: under an inverted XCLIP it is
+        // drawn whole, which shows too much rather than losing any of it.
+        Clip::Outside(_) => {
+            let Ok(index) = u32::try_from(dst.images.len()) else { return };
+            dst.images.push(img.clone());
+            push_raw(dst, p, Kind::Image { index }, corners);
+            return;
+        }
     };
     let own = Bounds2::from_points(corners.iter().copied());
     if !own.intersects(&area) {

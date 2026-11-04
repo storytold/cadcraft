@@ -77,11 +77,13 @@ fn clips_round_trip_through_dxf() {
     let bytes = save(&d, "a.dxf", Version::R2018);
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert_eq!(text.matches("SPATIAL_FILTER").count(), 3, "one filter per clipped reference");
-    assert!(text.contains("ACAD_FILTER") && !text.contains("CADCRAFT_XCLIP"));
-    // The inverted triangle is marked on its filter (group 290), as the reference app writes it.
+    // The inverted triangle also carries CADCraft's flag, which a DWG keeps.
+    assert!(text.contains("ACAD_FILTER") && text.matches("CADCRAFT_XCLIP").count() == 1);
+    // The inverted triangle is marked on its filter (group 290, last), as the reference app writes it.
     let filters: Vec<&str> = text.split("\r\nSPATIAL_FILTER\r\n").skip(1).map(|f| f.split("\r\n  0\r\n").next().unwrap_or("")).collect();
+    assert_eq!(filters.len(), 3);
     assert!(filters.iter().all(|f| f.contains("\r\n290\r\n")), "every filter says whether it is inverted");
-    assert_eq!(filters.iter().filter(|f| f.contains("\r\n290\r\n1\r\n")).count(), 1);
+    assert_eq!(filters.iter().filter(|f| f.ends_with("\r\n290\r\n1")).count(), 1, "{filters:?}");
     let first = read(&bytes, "a.dxf").unwrap();
     same(&clips(&first), &clips(&d));
     // The model owns the filters now: nothing of them is left as foreign data.
