@@ -458,7 +458,7 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
 /// (a Hebrew text or layer name in a prompt, history line or typed value) would otherwise be
 /// turned around as a whole by the shaper, English words and numbers included.
 fn lay(p: &egui::Painter, s: String, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
-    p.layout_job(crate::i18n::job(&s, font, color))
+    p.layout_job(crate::i18n::job_ltr(&s, font, color))
 }
 
 /// The text shown left of the caret when it is not the whole of `buffer`: a buffer ending in a
@@ -528,7 +528,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = lay(&p, if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                // As the engine's prompt text says it; only " or [" has words to translate.
+                let lead = match pr.keyword_lead() {
+                    " or [" => crate::tl!(" or ["),
+                    lead => lead,
+                };
+                let g = lay(&p, lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;

@@ -185,7 +185,7 @@ fn move_with_pickfirst_and_window_selection() {
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
@@ -651,6 +651,18 @@ fn setvar_rejects_out_of_range_units() {
     s.execute("setvar", &json!({"name": "LUPREC", "value": 8})).unwrap();
     assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 8);
     assert_ne!(s.doc().unwrap().header.i64("LUNITS", 2), 9);
+}
+
+#[test]
+fn setvar_rejects_out_of_range_osmode() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 4133})).unwrap();
+    for v in [4294967296u64, 65536, 32768] {
+        assert!(s.execute("setvar", &json!({"name": "OSMODE", "value": v})).is_err(), "{v}");
+        assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(4133)), "{v}");
+    }
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 0x7fff})).unwrap();
+    assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(0x7fff)));
 }
 
 #[test]
@@ -1464,4 +1476,17 @@ fn array_counts_reject_invalid_values() {
         }
     }
     s.execute("arraypolar", &json!({"center": [0, 0], "count": 1, "associative": false})).unwrap();
+}
+
+#[test]
+fn setvar_rejects_non_finite_text_for_real_variables() {
+    let mut s = Session::new();
+    for name in ["LTSCALE", "TEXTSIZE", "SNAPANG"] {
+        let before = s.execute("getvar", &json!({"name": name})).unwrap();
+        for text in ["nan", "inf", "-inf"] {
+            let r = s.execute("setvar", &json!({"name": name, "value": text}));
+            assert!(r.is_err(), "SETVAR {name} {text} was accepted");
+            assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
+        }
+    }
 }
