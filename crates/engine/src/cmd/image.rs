@@ -441,6 +441,15 @@ impl Interactive for ImageM {
                     s.echo("Requires a positive number.");
                     return Ok(Step::Continue);
                 }
+                // A pixel, and the image's height, must have a size that can be drawn (the
+                // checks `attach` makes), or the scale is asked again.
+                if let Some((_, raster)) = &self.file {
+                    let pixel = width / f64::from(raster.width());
+                    if !(pixel.is_normal() && (pixel * f64::from(raster.height())).is_normal()) {
+                        s.echo("The image would be too small or too large to draw.");
+                        return Ok(Step::Continue);
+                    }
+                }
                 self.width = Some(width);
                 self.stage = Stage::Rotation;
             }
@@ -460,8 +469,10 @@ impl Interactive for ImageM {
                 };
                 let Some((path, raster)) = self.file.clone() else { return Ok(Step::Cancel) };
                 let place = Placement { at, rotation, width: self.width.unwrap_or(1.0) };
+                // Refused: reported, and the scale asked again rather than the command ended.
                 if let Err(e) = attach(s, &path, raster, &place, None) {
-                    report(s, e)?;
+                    self.stage = Stage::Scale;
+                    return report(s, e);
                 }
                 return Ok(Step::Done);
             }

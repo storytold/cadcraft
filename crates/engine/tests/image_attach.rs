@@ -267,6 +267,10 @@ fn imageattach_at_the_command_line_places_the_image() {
     assert_eq!((p.vertices[1].p.x, p.vertices[1].p.y), (18.0, 20.0));
     s.cmdline("-3").unwrap();
     assert!(s.prompt_text().contains("Specify scale factor"), "a negative scale is refused: {}", s.prompt_text());
+    // Positive but so small a pixel would have no size that can be drawn: asked again, not ended.
+    s.cmdline("1e-320").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("too small or too large to draw")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Specify scale factor"), "{}", s.prompt_text());
     s.cmdline("40").unwrap();
     assert!(s.prompt_text().contains("Specify rotation angle"), "{}", s.prompt_text());
     s.cmdline("90").unwrap();
