@@ -40,9 +40,18 @@ pub fn measured(d: &Drawing, dm: &cadcraft_doc::Dimension) -> Option<f64> {
 /// value just typed: typing over an AutoCAD field turns it into plain text, typing a value that
 /// is not a formula drops the formula. Text, attribute definitions, multiline text,
 /// multileader text and dimension text (whose `<>` is its measurement, `env.measured`).
+/// A block reference's attributes are worked out too (each as one-line text; a multiline
+/// attribute's value replaces its contents when it is saved).
 pub fn apply(kind: &mut EntityKind, env: &Env, edited: bool) {
     // Multiline text keeps a result's `\`, `{` and `}` as letters, not formatting codes.
     let (value, formula, mtext): (&mut String, &mut Option<String>, bool) = match kind {
+        EntityKind::Insert(i) => {
+            // The reference's attributes were not typed here: their formulas are only worked out.
+            for a in &mut i.attribs {
+                apply_text(&mut a.text, env, false);
+            }
+            return;
+        }
         EntityKind::Text(t) => (&mut t.value, &mut t.formula, false),
         EntityKind::AttDef(a) => (&mut a.text.value, &mut a.text.formula, false),
         EntityKind::MText(t) => (&mut t.contents, &mut t.formula, true),
@@ -53,6 +62,17 @@ pub fn apply(kind: &mut EntityKind, env: &Env, edited: bool) {
         EntityKind::Dimension(d) => (&mut d.text, &mut d.marks.formula, false),
         _ => return,
     };
+    work(value, formula, mtext, env, edited);
+}
+
+/// [`apply`] for one line of text: a block reference's attribute, whose value was just typed
+/// when `edited` (ATTEDIT, EATTEDIT).
+pub fn apply_text(t: &mut cadcraft_doc::Text, env: &Env, edited: bool) {
+    work(&mut t.value, &mut t.formula, false, env, edited);
+}
+
+/// [`apply`] on a text's value and formula.
+fn work(value: &mut String, formula: &mut Option<String>, mtext: bool, env: &Env, edited: bool) {
     if edited {
         // Multiline text is read without its formatting codes; one-line text and dimension text
         // as typed (their braces and backslashes are letters).
@@ -91,6 +111,7 @@ fn has_formula(k: &EntityKind) -> bool {
         EntityKind::MText(t) => t.formula.is_some(),
         EntityKind::MLeader(m) => m.text.as_ref().is_some_and(|t| t.formula.is_some()),
         EntityKind::Dimension(d) => d.marks.formula.is_some(),
+        EntityKind::Insert(i) => i.attribs.iter().any(|a| a.text.formula.is_some()),
         _ => false,
     }
 }
