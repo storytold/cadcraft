@@ -70,6 +70,19 @@ pub fn entity_codec() -> Option<&'static EntityCodec> {
 /// COMPARE (drawing comparison).
 pub mod compare;
 
+/// Decode a raster image file (PNG, JPEG, BMP, TIFF) to pixels: installed by the app with the
+/// image reader, a lower layer.
+pub type ImageHook = fn(&[u8]) -> std::result::Result<cadcraft_doc::Raster, String>;
+
+static IMAGE: OnceLock<ImageHook> = OnceLock::new();
+
+pub fn set_image_decoder(h: ImageHook) {
+    let _ = IMAGE.set(h);
+}
+pub fn image_decoder() -> Option<ImageHook> {
+    IMAGE.get().copied()
+}
+
 /// Hand finished file bytes to the user where there is no file system (the browser: a download).
 /// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
 pub type DeliverHook = fn(&str, &str, &[u8]) -> std::result::Result<(), String>;
@@ -311,6 +324,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -320,6 +334,12 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
+    // The SHX fonts its text styles name are looked for beside the drawing too.
+    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+        // A bare file name is in the current folder.
+        let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
+        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+    }
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
@@ -363,6 +383,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            super::image::after_open(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -373,6 +394,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Drawing.dxf");
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, false))
 }
 

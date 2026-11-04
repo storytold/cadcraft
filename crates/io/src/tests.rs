@@ -337,6 +337,64 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// Several SORTENTSTABLEs for one space sort it once, in the last table's order.
+#[test]
+fn repeated_sortents_tables_use_the_last() {
+    let table =
+        |a: u32, b: u32| format!("0\nSORTENTSTABLE\n5\n{:X}\n100\nAcDbSortentsTable\n330\n1F\n331\nA\n5\n{a:X}\n331\nB\n5\n{b:X}\n", 0x100 + a);
+    let mut t = String::from(
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Model_Space\n0\nENDTAB\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLINE\n5\nA\n330\n1F\n10\n0\n20\n0\n11\n1\n21\n1\n0\nLINE\n5\nB\n330\n1F\n10\n0\n20\n0\n11\n2\n21\n2\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n",
+    );
+    for _ in 0..1000 {
+        t.push_str(&table(2, 1));
+    }
+    t.push_str(&table(1, 2));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(t.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xA, 0xB]);
+    let reversed = t.replacen(&table(1, 2), &table(2, 1), 1);
+    let d = read(reversed.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xB, 0xA]);
+}
+
+/// A table declaring 10 000 rows and no columns (or the reverse) is read as an empty table.
+#[test]
+fn table_with_an_empty_dimension_allocates_nothing() {
+    for (rows, cols) in [(10_000, 0), (0, 10_000)] {
+        let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
+        let d = read(t.as_bytes(), "t.dxf").unwrap();
+        let tables: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t) } else { None }).collect();
+        assert_eq!(tables.len(), 1, "the table is read");
+        for t in tables {
+            assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
+        }
+    }
+}
+
+/// Many distinct layer, linetype and style names (in the tables and on entities) read in linear
+/// time, with the duplicate rules kept: first LTYPE wins, last STYLE wins, layers case-insensitive.
+#[test]
+fn many_distinct_symbol_names_read_quickly() {
+    const N: usize = 40_000;
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLTYPE\n2\nLT{i}\n3\nfirst\n0\nSTYLE\n2\nST{i}\n40\n1\n"));
+    }
+    t.push_str("0\nLTYPE\n2\nlt0\n3\nsecond\n0\nSTYLE\n2\nst0\n40\n2\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\nL{i}\n10\n0\n20\n0\n11\n1\n21\n1\n"));
+    }
+    t.push_str("0\nLINE\n8\nl0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+    assert!(d.layers.len() > N && d.layers.len() < N + 3, "{}", d.layers.len());
+    assert_eq!(d.linetype("LT0").map(|l| l.description.as_str()), Some("first"));
+    assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
@@ -482,6 +540,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }),
     )
     .unwrap();
@@ -588,6 +647,7 @@ fn viewport_frozen_layers_roundtrip() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -630,6 +690,7 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     });
     d.add(&paper, Common::default(), vp).unwrap();
     let text = dxf_2018(&d);
@@ -772,6 +833,7 @@ fn viewport_layer_colors_roundtrip() {
             layer_colors: colors,
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];
@@ -1039,7 +1101,7 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     // Lines that aren't even group codes: the size is reported before anything is parsed.
     let text = "not a group code\nx\n".repeat(60);
     let e = cadcraft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
-    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
+    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
 }
 
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
@@ -2962,6 +3024,20 @@ fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
     assert_eq!(entities, [Some("WIDGETX".to_string())]);
 }
 
+/// What the DWG writer reports it left out counts the proxy it can't name, so a save's loss
+/// report has it with the other records the DWG doesn't keep.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_proxy_left_out_of_the_dwg_is_counted_as_unwritten() {
+    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&proxy_file(), "AC1032").unwrap();
+    assert_eq!(unwritten, [("ACAD_PROXY_OBJECT".to_string(), 1)].into_iter().collect());
+    let d = read(&proxy_file(), "p.dxf").unwrap();
+    let binary = write_with(&d, "p.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
+    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&binary, "AC1032").unwrap();
+    // CADCraft's own save already left the stray proxy out; the binary DXF's other three go.
+    assert_eq!(unwritten, [("ACAD_PROXY_ENTITY".to_string(), 1), ("ACAD_PROXY_OBJECT".to_string(), 2)].into_iter().collect());
+}
+
 /// A binary DXF given to the DWG conversion directly: its CLASSES aren't read, so the proxies'
 /// numbers can't be mapped to the DWG's classes. Kept as they were, they named other classes
 /// (the ODA refuses such a file), so the DWG leaves them out, as a pre-2013 DWG does, and the
@@ -2994,4 +3070,20 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(read(&bytes, name("dxf")).is_ok());
     assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
+}
+
+/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
+/// wrote them for pattern fills only.
+#[test]
+fn solid_hatch_keeps_angle_scale_and_double_flag() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
+91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
+75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
+    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&out);
+    let h = dxf_records(&pairs, "HATCH")[0];
+    let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
+    assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
+    assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
+    assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
