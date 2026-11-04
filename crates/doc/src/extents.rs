@@ -65,7 +65,7 @@ fn blank(s: &str) -> bool {
 
 /// Approximate box of an MTEXT, from its attachment point, width and line count.
 fn mtext_box(t: &crate::MText) -> Bounds2 {
-    // Measure the text the MTEXT shows: inline codes (`{Arial|b0;...}`, `\H0.8x;`) draw nothing, and a text
+    // Measure the text the MTEXT shows: inline codes (`{\fArial|b0;...}`, `\H0.8x;`) draw nothing, and a text
     // with nothing to show takes no room, wherever the MTEXT comes from (entity, attribute, leader).
     let plain = cadcraft_geom::plain_mtext(&t.contents);
     if blank(&plain) {
