@@ -48,11 +48,15 @@ fn is_greek_letter(c: char) -> bool {
 
 /// `word` read as the Latin keys of a Greek-layout keyboard, lower case: `Some` only when the word
 /// has a Greek letter and every character is a Greek letter the layout types, the semicolon on
-/// the Q key, or ASCII (kept as it is).
+/// the Q key, or ASCII (kept as it is). A combining tonos or dialytika after a letter, the
+/// accent of decomposed text, is ignored like the accent of a precomposed letter.
 pub fn latin_keys(word: &str) -> Option<String> {
     let mut greek = false;
     let mut out = String::with_capacity(word.len());
     for c in word.chars() {
+        if matches!(c, '\u{301}' | '\u{308}') {
+            continue;
+        }
         if c.is_ascii() {
             // The Q key types the ASCII semicolon in the Greek layout; every other ASCII character is itself.
             out.push(if c == ';' { 'q' } else { c.to_ascii_lowercase() });
@@ -82,6 +86,10 @@ mod tests {
         // Accented letters (the layout's dead key) read as the plain letter.
         assert_eq!(latin_keys("ΛΊΝΕ").as_deref(), Some("line"));
         assert_eq!(latin_keys("ΆΡΡΑΥ").as_deref(), Some("array"));
+        // The same accents written as a combining mark after the letter (decomposed text).
+        assert_eq!(latin_keys("ΛΙ\u{301}ΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙΝΕ\u{301}").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙ\u{308}ΝΕ").as_deref(), Some("line"));
         // Prefixes and digits are kept.
         assert_eq!(latin_keys("-ΛΑΥΕΡ").as_deref(), Some("-layer"));
         assert_eq!(latin_keys("_ΛΙΝΕ").as_deref(), Some("_line"));
