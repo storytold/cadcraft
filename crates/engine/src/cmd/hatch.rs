@@ -93,7 +93,7 @@ fn handles_of(owners: &[Handle], idx: &[usize]) -> Vec<Handle> {
 }
 
 /// Closed loops of entities that are closed curves (for islands and "select objects").
-fn closed_loop(d: &Drawing, e: &Entity) -> Option<Vec<PolyVertex>> {
+pub(crate) fn closed_loop(d: &Drawing, e: &Entity) -> Option<Vec<PolyVertex>> {
     match &e.kind {
         EntityKind::Circle(c) => {
             let ctr = c.center.xy();

@@ -16,6 +16,7 @@ mod hidden_command_line;
 mod instant_modals;
 mod lisp_files;
 mod measure_distance_snapping;
+mod measure_dropdown;
 mod menubar_hover;
 mod mspace_viewport_view;
 mod named_viewports_dialog;
