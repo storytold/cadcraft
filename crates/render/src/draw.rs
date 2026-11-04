@@ -89,7 +89,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text embedded in the linetype (shapes need SHX files and are not drawn).
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
             if b.opts.text {
                 for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
                     b.shaped(ctx, rgb, lw, &sh);
