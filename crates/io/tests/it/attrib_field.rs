@@ -2,6 +2,8 @@
 //! dictionary (ACAD_FIELD dictionary and FIELD objects) is written for the attribute too, with the
 //! checksum and cached result of the text the attribute shows.
 
+use cadcraft_doc::foreign::ForeignObject;
+use cadcraft_doc::{Handle, RawTag};
 use cadcraft_io::{SaveOptions, Version, read, write, write_with};
 
 /// An `_text` FIELD object (AutoCAD's R2007 and later layout) that owns the variable field `child`.
@@ -203,4 +205,86 @@ fn a_dwg_with_attribute_fields_reopens() {
 /// The object a dictionary's first entry names (hard owner 360 or soft owner 350).
 fn entry(r: &Groups) -> Option<&str> {
     r.iter().find(|t| t.0 == 350 || t.0 == 360).map(|t| t.1.as_str())
+}
+
+/// A field of an object property (`AcObjProp`) points at an object of the drawing, which a copy
+/// could not keep: the attribute stays a plain value, as before.
+#[test]
+fn a_field_that_points_at_an_object_is_not_copied() {
+    let dxf = String::from_utf8(drawing(true, "TEMPLATE")).unwrap().replace("1\nAcVar\n", "1\nAcObjProp\n").into_bytes();
+    let d = read(&dxf, "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    assert_eq!(records(&g, "FIELD").len(), 2, "only the definition's own fields");
+    let attrib = records(&g, "ATTRIB").into_iter().next().expect("the placed attribute");
+    assert_eq!(first(&attrib, 360), None, "no extension dictionary on the attribute");
+}
+
+/// The field list names exactly the FIELD objects written: one that no longer exists is dropped,
+/// another field of the drawing stays, and the copies are added.
+#[test]
+fn the_field_list_names_the_written_fields() {
+    let mut d = read(&drawing(true, "246-302-A"), "t.dxf").unwrap();
+    let mut f = (*d.foreign).clone();
+    let tag = |code: i32, value: &str| RawTag { code, value: value.to_string() };
+    // A list that names a field that is gone (F7) and one that is kept (F9), owned by the named
+    // object dictionary under ACAD_FIELDLIST.
+    let list = [
+        "5",
+        "E1",
+        "330",
+        "E0",
+        "100",
+        "AcDbIdSet",
+        "90",
+        "4",
+        "99",
+        "0",
+        "330",
+        "F1",
+        "330",
+        "F7",
+        "330",
+        "F2",
+        "330",
+        "F9",
+        "100",
+        "AcDbFieldList",
+    ];
+    let tags = list.chunks(2).map(|c| tag(c[0].parse().unwrap(), c[1])).collect();
+    f.objects.push(ForeignObject { handle: Handle(0xE1), kind: "FIELDLIST".into(), tags });
+    let mut nine = f.objects.iter().find(|o| o.kind == "FIELD").cloned().unwrap();
+    nine.handle = Handle(0xF9);
+    nine.tags.iter_mut().filter(|t| t.code == 5).for_each(|t| t.value = "F9".into());
+    nine.tags.iter_mut().filter(|t| t.code == 360).for_each(|t| t.value = "0".into());
+    f.objects.push(nine);
+    f.targets.insert(Handle(0xE0), ("NOD".into(), String::new()));
+    f.dictionary.push(("ACAD_FIELDLIST".into(), Handle(0xE1)));
+    d.foreign = std::sync::Arc::new(f);
+    let g = groups(&write(&d, "246-302-A.dxf").unwrap());
+    let fields: Vec<String> = records(&g, "FIELD").iter().filter_map(|r| first(r, 5).map(str::to_string)).collect();
+    assert_eq!(fields.len(), 5, "the definition's two, F9 and the attribute's two");
+    let lists = records(&g, "FIELDLIST");
+    assert_eq!(lists.len(), 1);
+    let listed: Vec<&str> = lists[0].iter().skip_while(|t| t.0 != 90).skip(1).filter(|t| t.0 == 330).map(|t| t.1.as_str()).collect();
+    assert_eq!(first(&lists[0], 90), Some("5"));
+    let mut a: Vec<&str> = listed.clone();
+    let mut b: Vec<&str> = fields.iter().map(String::as_str).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b, "exactly the written fields, no dead or null handle");
+}
+
+/// Only so many objects are copied for the attributes of one file: past the limit the attributes
+/// are written as they are, and the save does not grow with the number of references.
+#[test]
+fn the_copies_for_many_attributes_are_limited() {
+    let base = String::from_utf8(drawing(true, "TEMPLATE")).unwrap();
+    let insert = "0\nINSERT\n5\nC1\n8\n0\n2\nB\n10\n0.0\n20\n0.0\n30\n0.0\n66\n1\n0\nATTRIB\n5\nC2\n8\n0\n10\n0.0\n20\n0.0\n40\n2.5\n1\nTEMPLATE\n7\nSTANDARD\n2\nNUMBER\n70\n0\n0\nSEQEND\n5\nC3\n8\n0\n";
+    let many = base.replacen(insert, &insert.repeat(11_000), 1);
+    assert_ne!(many, base, "the fixture has its references");
+    let d = read(many.as_bytes(), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    let fields = records(&g, "FIELD").len();
+    // A copy is a dictionary pair and two fields (and two more handles): 6 of the 65 536 allowed.
+    assert_eq!(fields, 2 + 2 * (65_536 / 6), "the limit stops the copies");
 }

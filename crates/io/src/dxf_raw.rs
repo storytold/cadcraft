@@ -1296,49 +1296,82 @@ fn max_handle(tags: &[Tag]) -> u64 {
     tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).max().unwrap_or(0)
 }
 
+/// The most objects copied for placed attributes in one save. Past it the remaining attributes are
+/// written as they are (a plain value): a file with very many attribute references can't make a
+/// save grow without bound.
+const MAX_INHERITED_OBJECTS: usize = 1 << 16;
+
+/// What a placed attribute inherits from its attribute definition.
+struct DefinitionField {
+    /// The kept objects of the definition's extension dictionary, root first.
+    tree: Vec<Handle>,
+    /// Just those objects, for copying without searching the drawing's whole list.
+    objects: Foreign,
+    /// The definition's own text, which is the field's cached result.
+    default_text: String,
+    /// The field codes of the file name fields in the tree, lower case.
+    file_name_codes: Vec<String>,
+}
+
 /// A placed attribute keeps the field of its attribute definition while it still shows what the
 /// field shows: for each written ATTRIB whose definition has an extension dictionary and whose text
 /// is the field's (see [`field_shows`]), a copy of that dictionary (the ACAD_FIELD dictionary and
 /// its FIELD objects) is kept for the ATTRIB under its written handle. An ATTRIB that holds any
 /// other text was typed over, which AutoCAD leaves a plain value: it gets no field, and keeps its
-/// text when the fields are next evaluated. Returns the drawing's foreign data with those copies,
-/// and the ATTRIBs' handles. `saved_as`: the name of the file the drawing is saved as, if known.
+/// text when the fields are next evaluated. What is inherited is worked out once per definition,
+/// and at most [`MAX_INHERITED_OBJECTS`] objects are copied. Returns the drawing's foreign data
+/// with those copies, and the ATTRIBs' handles. `saved_as`: the name of the file the drawing is
+/// saved as, if known.
 fn inherit_fields(tags: &[Tag], d: &Drawing, saved_as: Option<&str>) -> Option<(Foreign, HashSet<String>)> {
     let f = d.foreign.as_ref();
     if !f.objects.iter().any(|o| o.kind == "FIELD") {
         return None;
     }
+    let mut by_handle: HashMap<Handle, &ForeignObject> = HashMap::new();
+    for o in &f.objects {
+        by_handle.entry(o.handle).or_insert(o);
+    }
     let mut next = max_handle(tags).max(f.objects.iter().map(|o| o.handle.0).max().unwrap_or(0)).saturating_add(1);
     let mut out: Option<Foreign> = None;
+    let mut copied = 0usize;
     let mut attribs = HashSet::new();
+    let mut definitions: HashMap<(String, String), Option<DefinitionField>> = HashMap::new();
     let mut block = None;
+    let mut block_name = String::new();
     for (kind, _, body) in split(tags) {
         if kind == "INSERT" {
-            block = val(body, 2).and_then(|n| d.block(&n));
+            block_name = val(body, 2).unwrap_or_default();
+            block = d.block(&block_name);
         }
         if kind != "ATTRIB" {
             continue;
         }
         let (Some(h), Some(tag)) = (head(body).handle.and_then(|h| handle(&h)), val(body, 2)) else { continue };
-        let def = block.and_then(|b| b.entities.iter().find(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.eq_ignore_ascii_case(&tag))));
-        let Some(xdict) = def.and_then(|e| f.entities.get(&e.handle)).and_then(|x| x.xdict) else { continue };
-        let tree = f.tree(xdict);
-        if !has_field(f, &tree) {
-            continue;
+        let key = (block_name.clone(), tag.to_ascii_uppercase());
+        if !definitions.contains_key(&key) {
+            let def = block.and_then(|b| b.entities.iter().find(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.eq_ignore_ascii_case(&tag))));
+            let found = def.and_then(|e| {
+                let EntityKind::AttDef(a) = &e.kind else { return None };
+                let root = f.entities.get(&e.handle).and_then(|x| x.xdict)?;
+                definition_field(f, &by_handle, root, &a.text.value)
+            });
+            definitions.insert(key.clone(), found);
         }
+        let Some(Some(def)) = definitions.get(&key) else { continue };
         let text = val(body, 1).unwrap_or_default();
-        let default_text = def.and_then(|e| match &e.kind {
-            EntityKind::AttDef(a) => Some(a.text.value.as_str()),
-            _ => None,
-        });
-        if !field_shows(f, &tree, default_text, saved_as, &text) {
+        if !field_shows(def, saved_as, &text) {
             continue;
         }
-        let fresh: Vec<Handle> = (0..tree.len() as u64 + 2).map(|i| Handle(next.saturating_add(i))).collect();
-        next = next.saturating_add(fresh.len() as u64);
+        let need = def.tree.len().saturating_add(2);
+        if copied.saturating_add(need) > MAX_INHERITED_OBJECTS {
+            continue;
+        }
+        copied = copied.saturating_add(need);
+        let fresh: Vec<Handle> = (0..need as u64).map(|i| Handle(next.saturating_add(i))).collect();
+        next = next.saturating_add(need as u64);
         let target = out.get_or_insert_with(|| f.clone());
         let first = target.objects.len();
-        target.adopt_tree(f, &tree, &fresh, h);
+        target.adopt_tree(&def.objects, &def.tree, &fresh, h);
         for o in target.objects.iter_mut().skip(first).filter(|o| o.kind == "FIELD") {
             if o.tags.iter().any(|t| t.code == 1 && t.value == "_text") {
                 retarget_text_field(o, &text);
@@ -1352,27 +1385,37 @@ fn inherit_fields(tags: &[Tag], d: &Drawing, saved_as: Option<&str>) -> Option<(
     out.map(|o| (o, attribs))
 }
 
-/// Whether `tree` (the objects of an attribute definition's extension dictionary) holds a field:
-/// the definition's dictionary may be some other application's, and a field elsewhere in the
-/// drawing doesn't make it one.
-fn has_field(f: &Foreign, tree: &[Handle]) -> bool {
-    tree.iter().any(|h| f.objects.iter().any(|o| o.handle == *h && o.kind == "FIELD"))
+/// What an attribute definition whose extension dictionary starts at `root` gives its attributes,
+/// or `None` if the dictionary holds no field (it may be some other application's, and a field
+/// elsewhere in the drawing doesn't make it one) or holds one that is not a plain text field of
+/// a variable (`AcVar`): a field that points at an object of the drawing (`AcObjProp`, a formula)
+/// would be copied with a null pointer, which AutoCAD shows as an error where the attribute shows
+/// readable text now. `text`: the definition's own text.
+fn definition_field(f: &Foreign, by_handle: &HashMap<Handle, &ForeignObject>, root: Handle, text: &str) -> Option<DefinitionField> {
+    let tree = f.tree(root);
+    let fields: Vec<&ForeignObject> = tree.iter().filter_map(|h| by_handle.get(h).copied()).filter(|o| o.kind == "FIELD").collect();
+    let evaluator = |o: &&ForeignObject| o.tags.iter().find(|t| t.code == 1).map(|t| t.value.as_str()).unwrap_or_default().to_string();
+    if fields.is_empty() || !fields.iter().all(|o| matches!(evaluator(o).as_str(), "_text" | "AcVar")) {
+        return None;
+    }
+    let file_name_codes = fields
+        .iter()
+        .filter_map(|o| o.tags.iter().find(|t| t.code == 2).map(|t| t.value.to_ascii_lowercase()))
+        .filter(|code| code.contains("\\acvar filename"))
+        .collect();
+    let objects = Foreign { objects: tree.iter().filter_map(|h| by_handle.get(h).map(|o| (*o).clone())).collect(), ..Foreign::default() };
+    Some(DefinitionField { tree, objects, default_text: text.to_string(), file_name_codes })
 }
 
-/// Whether the field in `tree` (the objects of an attribute definition's extension dictionary)
-/// shows `text`: either the definition's own text, which is the field's cached result, or, for a
-/// file name field, the name of the file the drawing is saved as. Text that is neither was typed
-/// over the field.
-fn field_shows(f: &Foreign, tree: &[Handle], default_text: Option<&str>, saved_as: Option<&str>, text: &str) -> bool {
-    if default_text == Some(text) {
+/// Whether the field of a definition shows `text`: either the definition's own text, which is the
+/// field's cached result, or, for a file name field, the name of the file the drawing is saved as.
+/// Text that is neither was typed over the field.
+fn field_shows(def: &DefinitionField, saved_as: Option<&str>, text: &str) -> bool {
+    if def.default_text == text {
         return true;
     }
     let Some(stem) = saved_as else { return false };
-    tree.iter()
-        .filter_map(|h| f.objects.iter().find(|o| o.handle == *h))
-        .filter(|o| o.kind == "FIELD")
-        .filter_map(|o| o.tags.iter().find(|t| t.code == 2 && t.value.to_ascii_lowercase().contains("\\acvar filename")))
-        .any(|code| file_name_text(&code.value, stem).as_deref() == Some(text))
+    def.file_name_codes.iter().any(|code| file_name_text(code, stem).as_deref() == Some(text))
 }
 
 /// What the field code of a file name field (`\AcVar Filename \f "%tc1%fn2"`) shows for a file
@@ -1399,7 +1442,7 @@ fn file_name_text(code: &str, stem: &str) -> Option<String> {
 /// dictionary, and its checksum is that of the text it shows (AutoCAD takes text that doesn't
 /// match as edited by hand and drops the field).
 fn retarget_text_field(o: &mut ForeignObject, text: &str) {
-    let sum: u64 = text.chars().zip(1u64..).map(|(c, i)| u64::from(c).saturating_mul(i)).sum();
+    let sum = text.chars().zip(1u64..).map(|(c, i)| u64::from(c).saturating_mul(i)).fold(0u64, u64::saturating_add);
     if let Some(i) = o.tags.iter().position(|t| t.code == 6 && t.value == "ACFD_FIELDTEXT_CHECKSUM")
         && let Some(t) = o.tags.iter_mut().skip(i).find(|t| t.code == 140)
     {
@@ -1497,15 +1540,39 @@ mod field_tests {
         assert_eq!(o.tags, tags);
     }
 
-    /// Only a dictionary that holds a FIELD counts as a field's: another application's does not.
+    /// Only a dictionary that holds a plain text or variable field counts as a field's: another
+    /// application's does not, nor does a field of an object property, which has no copy to point at.
     #[test]
-    fn a_dictionary_without_a_field_is_not_a_field() {
-        let mut f = Foreign::default();
-        let object = |h: u64, kind: &str| ForeignObject { handle: Handle(h), kind: kind.into(), tags: Vec::new() };
-        f.objects = vec![object(1, "DICTIONARY"), object(2, "XRECORD"), object(3, "DICTIONARY"), object(4, "FIELD")];
-        assert!(!has_field(&f, &[Handle(1), Handle(2)]));
-        assert!(has_field(&f, &[Handle(3), Handle(4)]));
-        assert!(!has_field(&f, &[]));
+    fn a_dictionary_without_a_plain_field_is_not_a_field() {
+        let object = |h: u64, kind: &str, tags: Vec<RawTag>| ForeignObject { handle: Handle(h), kind: kind.into(), tags };
+        let mut f = Foreign {
+            objects: vec![
+                object(1, "DICTIONARY", vec![tag(360, "2")]),
+                object(2, "XRECORD", Vec::new()),
+                object(3, "DICTIONARY", vec![tag(360, "4")]),
+                object(4, "FIELD", vec![tag(1, "_text"), tag(360, "5")]),
+                object(5, "FIELD", vec![tag(1, "AcVar")]),
+            ],
+            ..Foreign::default()
+        };
+        let index = |f: &Foreign| -> HashMap<Handle, ForeignObject> { f.objects.iter().map(|o| (o.handle, o.clone())).collect() };
+        let check = |f: &Foreign, root: u64| {
+            let owned = index(f);
+            let by_handle: HashMap<Handle, &ForeignObject> = owned.iter().map(|(h, o)| (*h, o)).collect();
+            definition_field(f, &by_handle, Handle(root), "T").is_some()
+        };
+        assert!(!check(&f, 1), "no FIELD");
+        assert!(check(&f, 3), "a text field of a variable");
+        f.objects[4].tags[0].value = "AcObjProp".into();
+        assert!(!check(&f, 3), "an object property is not copied");
+    }
+
+    /// An attribute text of any length gives a checksum, not an overflow.
+    #[test]
+    fn the_checksum_is_the_sum_of_code_times_position() {
+        let mut o = field(vec![tag(6, "ACFD_FIELDTEXT_CHECKSUM"), tag(140, "0.0"), tag(330, "BB"), tag(1, "_text")]);
+        retarget_text_field(&mut o, "ab");
+        assert_eq!(o.tags.iter().find(|t| t.code == 140).map(|t| t.value.as_str()), Some("293.0"));
     }
 
     /// Without reactors, the group names the owner, not a handle inside some other group.
