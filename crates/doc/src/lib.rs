@@ -16,6 +16,7 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod raster;
 mod refedit;
 mod store;
 mod tables;
@@ -27,21 +28,20 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds};
+pub use extents::{BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
 
-/// Handles at or above this are not followed or handed out: a hostile or damaged file naming one
-/// (an object's handle, or its `$HANDSEED`) would leave nothing above it to allocate, and a new
-/// object given that same handle would replace the object that has it (#913). Objects read with
-/// such a handle get a fresh one; the four billion handles above the limit stay free for the
-/// drawing's own growth.
+/// Handles at or above this are not followed: a file may name one (an object's handle, or its
+/// `$HANDSEED`), and the four billion handles above the limit stay free for the drawing's own
+/// growth. A file's handles keep their identity, however high they are (#913, #939).
 pub const HANDLE_LIMIT: u64 = u64::MAX - 0xFFFF_FFFF;
 
 /// File data CADCraft doesn't model, kept for saving (#528).
@@ -139,6 +139,12 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
+    /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
+    pub rasters: Rasters,
 }
 
 impl Default for Drawing {
@@ -198,6 +204,8 @@ impl Drawing {
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            portable_fonts: false,
+            rasters: Rasters::default(),
         }
     }
 
@@ -208,6 +216,10 @@ impl Drawing {
         h
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
+    ///
+    /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not
+    /// followed, so a new object is never given the top handle and the file's object is never
+    /// replaced (#913). The handles above the limit are the drawing's room to grow.
     pub fn bump_handseed(&mut self, h: Handle) {
         if h.0 >= self.handseed && h.0 < HANDLE_LIMIT {
             self.handseed = h.0 + 1;
@@ -376,13 +388,22 @@ impl Drawing {
         !self.hidden_objects.is_empty() && self.hidden_objects.contains(&h)
     }
 
-    /// Bounds of all visible entities in a space.
+    /// Whether an entity counts in the extents: as AutoCAD 2024 counts it for ZOOM Extents and
+    /// EXTMIN/EXTMAX, on a layer that is off too, but not on a frozen one.
+    pub fn in_extents(&self, e: &Entity) -> bool {
+        e.common.visible && self.layer(&e.common.layer).is_none_or(|l| !l.frozen) && !self.is_hidden_object(e.handle)
+    }
+
+    /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
+        // One block-bounds cache for the whole space: every reference to a block reuses its
+        // measured contents instead of measuring the definition again.
+        let mut cache = BlockBoundsCache::default();
         if let Some(store) = self.space(space) {
             for e in store.iter() {
-                if self.is_visible(e) {
-                    b = b.union(&entity_bounds(self, e, 0));
+                if self.in_extents(e) {
+                    b = b.union(&extent_bounds_cached(self, e, &mut cache));
                 }
             }
         }
