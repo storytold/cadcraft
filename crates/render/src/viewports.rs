@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::display::append;
-use super::display::{DImage, DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
+use super::display::{DImage, DPrim, DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
@@ -221,6 +221,13 @@ pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip
     for (i, p) in src.prims.iter().enumerate() {
         let first = dst.prims.len();
         clip_prim(dst, src, p, clip);
+        // Each piece keeps its source's layer (block contents not on layer 0 keep theirs).
+        if let Some(layer) = src.prim_layers.get(i).copied() {
+            for k in first..dst.prims.len() {
+                dst.prim_layers.resize(k, NO_LAYER);
+                dst.prim_layers.push(layer);
+            }
+        }
         if let Some(pen) = src.pens.get(i).copied().filter(|pen| !pen.is_object()) {
             for k in first..dst.prims.len() {
                 dst.pens.resize(k, Pen::default());

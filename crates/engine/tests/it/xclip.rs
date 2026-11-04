@@ -81,6 +81,26 @@ fn rectangular_clip_cuts_only_that_reference() {
 }
 
 #[test]
+fn a_clipped_reference_plots_its_contents_on_their_own_layers() {
+    let mut s = Session::new();
+    s.doc_mut().unwrap().layers.push(cadcraft_engine::doc::Layer { name: "Walls".into(), ..Default::default() });
+    let a = h(&s.execute("line", &json!({ "points": [[0, 0], [100, 0]] })).unwrap());
+    let b = h(&s.execute("line", &json!({ "points": [[50, -50], [50, 50]] })).unwrap());
+    s.doc_mut().unwrap().modify_entity(Handle::parse_hex(&a).unwrap(), |e| e.common.layer = "Walls".into()).unwrap();
+    s.execute("block", &json!({ "name": "B", "base": [0, 0], "handles": [a, b], "keep": "delete" })).unwrap();
+    let r = insert(&mut s, "B", (0.0, 0.0), 1.0, 0.0);
+    s.execute("setvar", &json!({ "name": "XCLIPFRAME", "value": 0 })).unwrap();
+    s.execute("xclip", &json!({ "handle": r, "rectangle": [[20, -10], [70, 10]] })).unwrap();
+    let d = s.doc().unwrap();
+    let index = |name: &str| d.layers.iter().position(|l| l.name == name).map(|i| i as u32);
+    let list = render::build_plot(d, &Space::Model, &Options::default());
+    assert_eq!(list.prim_layers.len(), list.prims.len());
+    // The horizontal line is on Walls, the vertical one (layer 0) takes the reference's layer.
+    assert!(list.prim_layers.contains(&index("Walls").unwrap()), "{:?}", list.prim_layers);
+    assert!(list.prim_layers.contains(&index("0").unwrap()), "{:?}", list.prim_layers);
+}
+
+#[test]
 fn extents_are_the_boundary_box_as_in_the_reference_app() {
     let (mut s, r1, _) = setup();
     let bounds = |s: &Session| {

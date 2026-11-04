@@ -16,6 +16,7 @@
 //! clipped reference to a copy of the drawing's foreign data ([`prepare`]), which the raw-data
 //! writer (#528) then places on the reference.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignObject};
@@ -58,16 +59,28 @@ fn number(tags: &[RawTag], code: i32) -> Option<f64> {
     tags.iter().find(|t| t.code == code)?.value.trim().parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
-fn object(f: &Foreign, h: Handle) -> Option<&ForeignObject> {
-    f.objects.iter().find(|o| o.handle == h)
+/// Where each handle's object is in `Foreign::objects` (the first, as a scan would find it), so
+/// a file with many references and objects isn't searched once per reference.
+type Index = HashMap<Handle, usize>;
+
+fn index(f: &Foreign) -> Index {
+    let mut idx = Index::with_capacity(f.objects.len());
+    for (i, o) in f.objects.iter().enumerate() {
+        idx.entry(o.handle).or_insert(i);
+    }
+    idx
+}
+
+fn object<'a>(f: &'a Foreign, idx: &Index, h: Handle) -> Option<&'a ForeignObject> {
+    f.objects.get(*idx.get(&h)?)
 }
 
 /// The extension dictionary, ACAD_FILTER dictionary and SPATIAL_FILTER of entity `h`.
-fn chain(f: &Foreign, h: Handle) -> Option<(Handle, Handle, &ForeignObject)> {
+fn chain<'a>(f: &'a Foreign, idx: &Index, h: Handle) -> Option<(Handle, Handle, &'a ForeignObject)> {
     let xd = f.entities.get(&h)?.xdict?;
-    let fd = entry(&object(f, xd)?.tags, "ACAD_FILTER")?;
-    let sf = entry(&object(f, fd)?.tags, "SPATIAL")?;
-    Some((xd, fd, object(f, sf).filter(|o| o.kind.eq_ignore_ascii_case("SPATIAL_FILTER"))?))
+    let fd = entry(&object(f, idx, xd)?.tags, "ACAD_FILTER")?;
+    let sf = entry(&object(f, idx, fd)?.tags, "SPATIAL")?;
+    Some((xd, fd, object(f, idx, sf).filter(|o| o.kind.eq_ignore_ascii_case("SPATIAL_FILTER"))?))
 }
 
 /// A 3×4 matrix (12 values row by row) as a 2D transform, when it is one (no Z mixing).
@@ -131,10 +144,10 @@ fn parse_filter(o: &ForeignObject) -> Option<ClipBoundary> {
 }
 
 /// Whether the extension dictionary `xd` marks the clip inverted (CADCraft's own flag).
-fn inverted_record(f: &Foreign, xd: Handle) -> bool {
-    object(f, xd)
+fn inverted_record(f: &Foreign, idx: &Index, xd: Handle) -> bool {
+    object(f, idx, xd)
         .and_then(|o| entry(&o.tags, INVERT_KEY))
-        .and_then(|h| object(f, h))
+        .and_then(|h| object(f, idx, h))
         .is_some_and(|o| o.kind.eq_ignore_ascii_case("XRECORD") && number(&o.tags, 70).is_some_and(|v| v != 0.0))
 }
 
@@ -144,15 +157,16 @@ pub(crate) fn read(d: &mut Drawing) {
     if d.foreign.objects.is_empty() {
         return;
     }
+    let idx = index(&d.foreign);
     let found: Vec<(Handle, ClipBoundary)> = d
         .foreign
         .entities
         .keys()
         .filter_map(|h| {
-            let (xd, _, o) = chain(&d.foreign, *h)?;
+            let (xd, _, o) = chain(&d.foreign, &idx, *h)?;
             let mut clip = parse_filter(o)?;
             if number(&o.tags, 290).is_none() {
-                clip.inverted = inverted_record(&d.foreign, xd);
+                clip.inverted = inverted_record(&d.foreign, &idx, xd);
             }
             Some((*h, clip))
         })
@@ -185,18 +199,21 @@ pub(crate) fn read(d: &mut Drawing) {
         }
     }
     let f = Arc::make_mut(&mut d.foreign);
+    let mut gone = HashSet::new();
     for h in taken {
-        forget(f, h);
+        forget(f, &idx, h, &mut gone);
     }
+    f.objects.retain(|o| !gone.contains(&o.handle));
 }
 
 /// Take the clip of entity `h` out of the foreign data: the ACAD_FILTER entry and what it holds,
-/// CADCraft's inverted flag, and the extension dictionary when nothing else is left in it.
-fn forget(f: &mut Foreign, h: Handle) {
+/// CADCraft's inverted flag, and the extension dictionary when nothing else is left in it. The
+/// objects to remove are added to `gone`; the caller removes them all at once.
+fn forget(f: &mut Foreign, idx: &Index, h: Handle, all_gone: &mut HashSet<Handle>) {
     let Some(xd) = f.entities.get(&h).and_then(|x| x.xdict) else { return };
     let mut gone: Vec<Handle> = Vec::new();
     let mut empty = false;
-    if let Some(o) = f.objects.iter_mut().find(|o| o.handle == xd) {
+    if let Some(o) = idx.get(&xd).copied().and_then(|i| f.objects.get_mut(i)) {
         gone.extend(remove_entry(&mut o.tags, "ACAD_FILTER"));
         gone.extend(remove_entry(&mut o.tags, INVERT_KEY));
         empty = !o.tags.iter().any(|t| t.code == 3);
@@ -204,7 +221,7 @@ fn forget(f: &mut Foreign, h: Handle) {
     // The filter dictionary's entries go with it.
     let mut i = 0;
     while let Some(g) = gone.get(i).copied() {
-        if let Some(o) = object(f, g)
+        if let Some(o) = object(f, idx, g)
             && o.kind.eq_ignore_ascii_case("DICTIONARY")
         {
             gone.extend(o.tags.windows(2).filter_map(|w| match w {
@@ -226,7 +243,7 @@ fn forget(f: &mut Foreign, h: Handle) {
             f.entities.remove(&h);
         }
     }
-    f.objects.retain(|o| !gone.contains(&o.handle));
+    all_gone.extend(gone);
 }
 
 fn dictionary(h: Handle, owner: Handle) -> ForeignObject {
@@ -315,17 +332,20 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
         *next = next.saturating_add(1);
         h
     }
+    let mut idx = index(f);
+    let mut gone = HashSet::new();
     for (insert, clip, to_world) in clips {
         let Some(inverse) = to_world.inverse() else { continue };
         if next.saturating_add(5) >= MAX_HANDLE {
             break;
         }
         // A filter kept from the file for this reference is replaced.
-        forget(f, insert);
-        let xd = match f.entities.get(&insert).and_then(|x| x.xdict).filter(|h| object(f, *h).is_some()) {
+        forget(f, &idx, insert, &mut gone);
+        let xd = match f.entities.get(&insert).and_then(|x| x.xdict).filter(|h| idx.contains_key(h) && !gone.contains(h)) {
             Some(h) => h,
             None => {
                 let h = fresh(&mut next);
+                idx.insert(h, f.objects.len());
                 f.objects.push(dictionary(h, insert));
                 f.entities.entry(insert).or_default().xdict = Some(h);
                 h
@@ -333,7 +353,7 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
         };
         let (fd, sf) = (fresh(&mut next), fresh(&mut next));
         let flag = clip.inverted.then(|| fresh(&mut next));
-        if let Some(o) = f.objects.iter_mut().find(|o| o.handle == xd) {
+        if let Some(o) = idx.get(&xd).copied().and_then(|i| f.objects.get_mut(i)) {
             o.tags.extend([raw(3, "ACAD_FILTER"), raw(360, fd.hex())]);
             if let Some(x) = flag {
                 o.tags.extend([raw(3, INVERT_KEY), raw(360, x.hex())]);
@@ -341,12 +361,19 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
         }
         let mut filters = dictionary(fd, xd);
         filters.tags.extend([raw(3, "SPATIAL"), raw(360, sf.hex())]);
-        f.objects.push(filters);
-        f.objects.push(spatial_filter(sf, fd, &clip, &to_world, &inverse));
+        let mut add = |o: ForeignObject| {
+            idx.insert(o.handle, f.objects.len());
+            f.objects.push(o);
+        };
+        add(filters);
+        add(spatial_filter(sf, fd, &clip, &to_world, &inverse));
         if let Some(x) = flag {
-            f.objects.push(invert_record(x, xd));
+            add(invert_record(x, xd));
         }
     }
+    f.objects.retain(|o| !gone.contains(&o.handle));
+    // The writer hands out handles of its own from the seed on: start it past these.
+    out.handseed = out.handseed.max(next);
     Some(out)
 }
 
@@ -374,6 +401,20 @@ mod tests {
         assert!(parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1), raw(72, 1)])).is_none());
         let ok = parse_filter(&o(vec![raw(70, 2), raw(10, 0), raw(20, 0), raw(10, 1), raw(20, 1)])).unwrap();
         assert_eq!((ok.points.len(), ok.inverted), (2, false));
+    }
+
+    #[test]
+    fn the_writer_starts_its_handles_past_the_clip_objects() {
+        let mut d = Drawing::new_metric();
+        d.blocks.insert("B".into(), Arc::new(cadcraft_doc::Block::new("B")));
+        for i in 0..3 {
+            let clip = ClipBoundary::new(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)]);
+            let ins = cadcraft_doc::Insert { block: "B".into(), clip: Some(ClipBoundary { inverted: i == 0, ..clip }), ..Default::default() };
+            d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
+        }
+        let out = prepare(&d).unwrap();
+        let highest = out.foreign.objects.iter().map(|o| o.handle.0).max().unwrap();
+        assert!(out.handseed > highest, "seed {} at or below {highest}", out.handseed);
     }
 
     #[test]
