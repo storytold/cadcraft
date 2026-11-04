@@ -3,6 +3,11 @@
 use cadcraft_doc::Linetype;
 use cadcraft_geom::Vec2;
 
+/// The most dashes one polyline may expand into. A plot or export has no zoom, so it keeps a
+/// long line's pattern (#1069), but a damaged or hostile file must not ask for a billion dash
+/// vectors in memory: past this budget the line is drawn continuous instead (#1285).
+pub const MAX_DASHES: f64 = 2_000_000.0;
+
 /// Split `pts` into dashes. Dots come back as single-point runs. When the scaled pattern is
 /// shorter than `min_pattern` (sub-pixel), the polyline is returned whole; a display build
 /// (`min_pattern` above 0) also returns it whole when the pattern would repeat too often (see
@@ -15,9 +20,10 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
     }
     // A display build zoomed out a lot falls back to a continuous line rather than expanding a
     // huge dash count. A plot or export has no zoom — `min_pattern` is 0 — so it keeps the
-    // pattern (#1069).
+    // pattern (#1069). Either way the expansion has an absolute ceiling (#1285).
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if min_pattern > 0.0 && len / total > 50_000.0 {
+    let repeats = len / total;
+    if repeats > MAX_DASHES || (min_pattern > 0.0 && repeats > 50_000.0) {
         return vec![pts.to_vec()];
     }
     let pattern: Vec<f64> = lt.pattern.iter().map(|d| d.length * scale).collect();
@@ -94,7 +100,13 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
 pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<Vec<(f64, f64)>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
-    if !(len.is_finite() && len > 0.0) || total <= 1e-12 || total < min_pattern || (min_pattern > 0.0 && len / total > 50_000.0) {
+    if !(len.is_finite() && len > 0.0) || total <= 1e-12 || total < min_pattern {
+        return None;
+    }
+    // The same absolute ceiling as `apply`: past it the run is continuous, not a truncated
+    // pattern (#1285).
+    let repeats = len / total;
+    if repeats > MAX_DASHES || (min_pattern > 0.0 && repeats > 50_000.0) {
         return None;
     }
     let mut out = Vec::new();
@@ -175,5 +187,18 @@ mod tests {
         // With a level of detail (a display build) the fallback stays.
         assert_eq!(apply(&pts, &lt, 1.0, 1e-9).len(), 1);
         assert!(ranges(len, &lt, 1.0, 1e-9).is_none());
+    }
+
+    #[test]
+    fn a_plot_stops_at_the_dash_ceiling() {
+        // A billion units of DASHED asks for about 1.3 billion dashes. Past the ceiling the line
+        // is drawn continuous instead of filling memory (#1285), and nothing is truncated.
+        let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
+        let len = 1_000_000_000.0;
+        let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 1);
+        assert!(ranges(len, &lt, 1.0, 0.0).is_none());
+        // One period past the ceiling is continuous too; the boundary is not off by one.
+        assert!(ranges((MAX_DASHES + 1.0) * 0.75, &lt, 1.0, 0.0).is_none());
     }
 }
