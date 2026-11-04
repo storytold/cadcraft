@@ -336,7 +336,7 @@ fn typed_arrayedit() {
     let a = rect_array(&mut s);
     typed(&mut s, &["arrayedit", "l"]);
     let p = s.prompt_text();
-    assert!(p.contains("Enter an option or [Source/REPlace/Base point/Rows/Columns/Levels/RESet/eXit] <eXit>"), "{p}");
+    assert!(p.contains("Enter an option [Source/REPlace/Base point/Rows/Columns/Levels/RESet/eXit] <eXit>"), "{p}");
     typed(&mut s, &["c", "4", "t", "9", "r", "2", "5", ""]);
     assert!(s.prompt_text().contains("Enter an option"), "{}", s.prompt_text());
     assert_eq!(centres(&s, &a).len(), 8);

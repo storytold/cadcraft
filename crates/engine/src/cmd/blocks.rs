@@ -28,6 +28,7 @@ mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
 mod wblock;
+mod xclip;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -46,6 +47,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
+        CommandSpec::new("minsert", "Multiple Insert", run_minsert)
+            .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
+            .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -92,6 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
     .chain(refedit::specs())
+    .chain(xclip::specs())
     .chain(bedit::specs())
     .chain(bauthor::specs())
     .chain(belement::specs())
@@ -231,12 +236,40 @@ fn insert_entity(blk: &Block, at: Vec2, scale: Vec3, rotation: f64, base: Option
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     if let Some(b) = base {
         let landed = ins.transform(blk.base.xy()).apply(b);
         ins.insert = v3(at + (at - landed));
     }
     ins
+}
+
+/// MINSERT's rectangular array of a block reference: rows and columns, and the distances between
+/// them along the reference's rotated axes (not scaled with it). One row and one column is a plain
+/// reference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Grid {
+    rows: u32,
+    cols: u32,
+    row_spacing: f64,
+    col_spacing: f64,
+}
+
+impl Grid {
+    const ONE: Grid = Grid { rows: 1, cols: 1, row_spacing: 0.0, col_spacing: 0.0 };
+    /// The most rows or columns MINSERT takes, as AutoCAD 2024 asks for them.
+    const MAX: u32 = 32767;
+
+    /// A distance is kept only along an axis with more than one copy: AutoCAD 2024 asks for no
+    /// other and stores 0 for it (one row of three columns: 44 = 20, 45 = 0).
+    fn new(rows: u32, cols: u32, row_spacing: f64, col_spacing: f64) -> Grid {
+        Grid { rows, cols, row_spacing: if rows > 1 { row_spacing } else { 0.0 }, col_spacing: if cols > 1 { col_spacing } else { 0.0 } }
+    }
+
+    fn apply(self, ins: &mut Insert) {
+        (ins.rows, ins.cols, ins.row_spacing, ins.col_spacing) = (self.rows, self.cols, self.row_spacing, self.col_spacing);
+    }
 }
 
 /// [`insert`] with separate X/Y scale factors (Z as X) and an optional base point (see
@@ -250,10 +283,12 @@ pub(crate) fn insert_with(
     base: Option<Vec2>,
     values: &serde_json::Map<String, Value>,
 ) -> Result<Handle> {
-    insert_scaled(s, name, at, Vec3::new(scale.x, scale.y, scale.x), rotation, base, values)
+    insert_scaled(s, name, at, Vec3::new(scale.x, scale.y, scale.x), rotation, base, values, Grid::ONE)
 }
 
-/// [`insert_with`] with a Z scale factor of its own.
+/// [`insert_with`] with a Z scale factor of its own, and MINSERT's grid. A grid has the one set
+/// of attributes (AutoCAD 2024 asks for their values once).
+#[allow(clippy::too_many_arguments)]
 fn insert_scaled(
     s: &mut Session,
     name: &str,
@@ -262,9 +297,11 @@ fn insert_scaled(
     rotation: f64,
     base: Option<Vec2>,
     values: &serde_json::Map<String, Value>,
+    grid: Grid,
 ) -> Result<Handle> {
     let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
     let mut ins = insert_entity(&blk, at, scale, rotation, base);
+    grid.apply(&mut ins);
     let m = ins.transform(blk.base.xy());
     for e in blk.entities.iter() {
         if let EntityKind::AttDef(ad) = &e.kind {
@@ -316,24 +353,52 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
+    insert_json(s, p, "insert", Grid::ONE)
+}
+
+/// MINSERT's JSON form: INSERT's parameters and the grid.
+fn run_minsert(s: &mut Session, p: &Value) -> Result<Value> {
+    let count = |key: &str| -> Result<u32> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(1),
+            Some(v) => v
+                .as_f64()
+                .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= f64::from(Grid::MAX))
+                .map(|n| n as u32)
+                .ok_or_else(|| bad("minsert", format!("`{key}` must be an integer between 1 and {}", Grid::MAX))),
+        }
+    };
+    // A distance given must be a number: `"15"` is refused, not taken as 0.
+    let spacing = |key: &str| -> Result<f64> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("minsert", format!("`{key}` must be a number"))),
+        }
+    };
+    let grid = Grid::new(count("rows")?, count("columns")?, spacing("rowSpacing")?, spacing("columnSpacing")?);
+    insert_json(s, p, "minsert", grid)
+}
+
+/// INSERT's and MINSERT's JSON form.
+fn insert_json(s: &mut Session, p: &Value, cmd: &str, grid: Grid) -> Result<Value> {
     let p = &insert_file::json_params(s, p)?;
-    let name = str_param(p, "name").ok_or_else(|| bad("insert", "`name` is required"))?.to_string();
-    let at = point_req("insert", p, "at")?;
+    let name = str_param(p, "name").ok_or_else(|| bad(cmd, "`name` is required"))?.to_string();
+    let at = point_req(cmd, p, "at")?;
     // `scale`: one factor, or [x, y] for different X and Y scale factors.
     let scale = match p.get("scale") {
-        Some(v) if v.is_array() => point_value(v).ok_or_else(|| bad("insert", "`scale` must be a number or [x, y]"))?,
+        Some(v) if v.is_array() => point_value(v).ok_or_else(|| bad(cmd, "`scale` must be a number or [x, y]"))?,
         _ => {
             let f = f64_or(p, "scale", 1.0);
             Vec2::new(f, f)
         }
     };
     if scale.x == 0.0 || scale.y == 0.0 {
-        return Err(bad("insert", "scale cannot be 0"));
+        return Err(bad(cmd, "scale cannot be 0"));
     }
     let rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
-    let h = insert_with(s, &name, at, scale, rot, point_param(p, "basePoint"), &vals)?;
-    if bool_or(p, "explode", false) {
+    let h = insert_scaled(s, &name, at, Vec3::new(scale.x, scale.y, scale.x), rot, point_param(p, "basePoint"), &vals, grid)?;
+    if cmd == "insert" && bool_or(p, "explode", false) {
         // The EXPLODE command body, not `execute`: INSERT records the one undo step.
         let explode = find_command("explode").ok_or_else(|| EngineError::UnknownCommand("explode".into()))?;
         return (explode.run)(s, &json!({ "handles": [h.hex()] }));
@@ -385,8 +450,11 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    // One object index for the whole listing: rebuilding it per block multiplies the block count
+    // by the drawing's kept object count (CWE-407).
+    let objects = cadcraft_doc::dynblock::ObjectIndex::new(d);
     let block = |b: &Block| {
-        let dynamic = cadcraft_doc::dynblock::dynamic_block(d, &b.name).is_some();
+        let dynamic = cadcraft_doc::dynblock::is_dynamic_block_in(d, &objects, &b.name);
         json!({"name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y], "description": b.description, "dynamic": dynamic})
     };
     Ok(json!({ "blocks": d.blocks.values().filter(|b| !b.anonymous).map(|b| block(b)).collect::<Vec<_>>() }))
@@ -563,6 +631,15 @@ enum InsStage {
     /// XYZ: the Z scale factor, after X and Y.
     ZScale,
     Rotation,
+    /// MINSERT: the number of rows, then of columns.
+    Rows,
+    Cols,
+    /// MINSERT: the distance between rows, or a unit cell's first corner.
+    RowSpacing,
+    /// MINSERT: the unit cell's opposite corner (its width between columns, its height between
+    /// rows).
+    Cell(Vec2),
+    ColSpacing,
     Attribs,
     /// A Verify attribute asked again.
     Verify,
@@ -595,6 +672,12 @@ struct InsertM {
     explode: bool,
     /// The file waiting for the Redefine answer.
     file: Option<insert_file::FileRef>,
+    /// MINSERT: after the rotation, the grid's rows and columns and the distances between them.
+    minsert: bool,
+    rows: Option<u32>,
+    cols: Option<u32>,
+    row_spacing: Option<f64>,
+    col_spacing: Option<f64>,
 }
 
 impl InsertM {
@@ -604,6 +687,8 @@ impl InsertM {
             if self.explode { InsStage::PresetScale } else { InsStage::XScale }
         } else if self.rotation.is_none() {
             InsStage::Rotation
+        } else if let Some(g) = self.grid_stage() {
+            g
         } else {
             InsStage::Attribs
         };
@@ -622,13 +707,37 @@ impl InsertM {
             && self.values.len() >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
-            let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values)?;
+            let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values, self.grid())?;
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
             return Ok(Step::Done);
         }
         Ok(Step::Continue)
+    }
+
+    /// MINSERT's next grid prompt, if any is left (as AutoCAD 2024 asks them): the rows, the
+    /// columns, then the distance between rows when there is more than one row and between
+    /// columns when there is more than one column. A unit cell gives both distances.
+    fn grid_stage(&self) -> Option<InsStage> {
+        if !self.minsert {
+            return None;
+        }
+        let (Some(rows), Some(cols)) = (self.rows, self.cols) else {
+            return Some(if self.rows.is_none() { InsStage::Rows } else { InsStage::Cols });
+        };
+        if rows > 1 && self.row_spacing.is_none() {
+            Some(InsStage::RowSpacing)
+        } else if cols > 1 && self.col_spacing.is_none() {
+            Some(InsStage::ColSpacing)
+        } else {
+            None
+        }
+    }
+
+    /// The grid answered so far (one copy for INSERT).
+    fn grid(&self) -> Grid {
+        Grid::new(self.rows.unwrap_or(1), self.cols.unwrap_or(1), self.row_spacing.unwrap_or(0.0), self.col_spacing.unwrap_or(0.0))
     }
 
     /// The Verify attributes asked for.
@@ -701,13 +810,18 @@ impl InsertM {
     }
 }
 
+/// A distance typed at MINSERT's grid prompts: any finite number, negative or 0 too.
+fn distance(t: &str) -> Result<f64> {
+    number(t).filter(|v| v.is_finite()).ok_or_else(|| EngineError::Other("Requires a distance.".into()))
+}
+
 fn nonzero(t: &str) -> Result<f64> {
     number(t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))
 }
 
 impl Interactive for InsertM {
     fn name(&self) -> &'static str {
-        "INSERT"
+        if self.minsert { "MINSERT" } else { "INSERT" }
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let at = self.at.unwrap_or_default();
@@ -734,9 +848,16 @@ impl Interactive for InsertM {
             InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
             InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
+            InsStage::Rows => Prompt::new("Enter number of rows (---)", Accept::NUMBER).default("1"),
+            InsStage::Cols => Prompt::new("Enter number of columns (|||)", Accept::NUMBER).default("1"),
+            InsStage::RowSpacing => Prompt::new("Enter distance between rows or specify unit cell (---)", Accept::POINT_OR_NUMBER),
+            InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
+            InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
             InsStage::Attribs => {
                 let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
-                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
+                let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
+                // No default shown when there is none ("Value:", AutoCAD 2024), not "<>".
+                if default.is_empty() { p } else { p.default(default) }
             }
             InsStage::Verify => {
                 let (tag, prompt) = self.verifying().get(self.verified).map(|a| (a.0.clone(), a.1.clone())).unwrap_or_default();
@@ -758,9 +879,9 @@ impl Interactive for InsertM {
                     s.echo(format!("Defined blocks: {}", names.join(", ")));
                     return Ok(Step::Continue);
                 }
-                // `*name`: insert exploded.
-                self.explode = n.starts_with('*');
-                let n = n.strip_prefix('*').map_or(n.as_str(), str::trim).to_string();
+                // `*name`: insert exploded (INSERT only: a grid has no exploded form).
+                self.explode = !self.minsert && n.starts_with('*');
+                let n = if self.explode { n.strip_prefix('*').map_or(n.as_str(), str::trim).to_string() } else { n };
                 match insert_file::file_ref(s, &n) {
                     Some(f) if f.ask_redefine(s) => {
                         self.file = Some(f);
@@ -900,6 +1021,45 @@ impl Interactive for InsertM {
                 });
                 return self.advance(s);
             }
+            InsStage::Rows | InsStage::Cols => {
+                let n = match i {
+                    Input::Text(t) => t
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= f64::from(Grid::MAX))
+                        .map(|v| v as u32)
+                        .ok_or_else(|| EngineError::Other(format!("Requires an integer between 1 and {}.", Grid::MAX)))?,
+                    Input::Enter => 1,
+                    _ => return Ok(Step::Continue),
+                };
+                if self.stage == InsStage::Rows {
+                    self.rows = Some(n);
+                } else {
+                    self.cols = Some(n);
+                }
+                return self.advance(s);
+            }
+            InsStage::RowSpacing => match i {
+                Input::Point(a) => self.stage = InsStage::Cell(a),
+                Input::Text(t) => {
+                    self.row_spacing = Some(distance(&t)?);
+                    return self.advance(s);
+                }
+                _ => {}
+            },
+            InsStage::Cell(a) => {
+                if let Input::Point(b) = i {
+                    (self.col_spacing, self.row_spacing) = (Some(b.x - a.x), Some(b.y - a.y));
+                    return self.advance(s);
+                }
+            }
+            InsStage::ColSpacing => {
+                if let Input::Text(t) = i {
+                    self.col_spacing = Some(distance(&t)?);
+                    return self.advance(s);
+                }
+            }
             InsStage::Attribs => {
                 let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let v = match i {
@@ -940,7 +1100,9 @@ impl Interactive for InsertM {
             _ => Vec2::new(1.0, 1.0),
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
-        vec![EntityKind::Insert(insert_entity(b, at, self.scale3(scale), rot, self.base))]
+        let mut ins = insert_entity(b, at, self.scale3(scale), rot, self.base);
+        self.grid().apply(&mut ins);
+        vec![EntityKind::Insert(ins)]
     }
 }
 
