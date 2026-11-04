@@ -17,6 +17,11 @@ fn text_of(k: &EntityKind) -> Option<String> {
     }
 }
 
+/// Why a multileader without text can't be edited: it carries a block (MLEADEREDIT moves that) or has no content.
+fn no_text(has_block: bool) -> &'static str {
+    if has_block { "This multileader carries a block, not text." } else { "This multileader has no content." }
+}
+
 pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
     if curves::is_locked(s, h) {
         return Err(other("The object is on a locked layer."));
@@ -28,8 +33,7 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         EntityKind::MText(t) => t.contents = text.replace('\n', "\\P"),
         EntityKind::MLeader(m) => match &mut m.text {
             Some(t) => t.contents = text.replace('\n', "\\P"),
-            // A multileader carrying a block has no text to change (MLEADEREDIT moves that).
-            None => return Err(other("This multileader carries a block, not text.")),
+            None => return Err(other(no_text(m.block.is_some()))),
         },
         EntityKind::Dimension(d) => {
             d.text = if text == "<>" { String::new() } else { text.to_string() };
@@ -90,8 +94,8 @@ impl Interactive for TextEditM {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
                 let kind = curves::entity(s, h)?.kind;
-                let old = text_of(&kind).ok_or_else(|| match kind {
-                    EntityKind::MLeader(_) => other("This multileader carries a block, not text."),
+                let old = text_of(&kind).ok_or_else(|| match &kind {
+                    EntityKind::MLeader(m) => other(no_text(m.block.is_some())),
                     _ => other("Select a text, mtext, attribute definition, dimension or multileader."),
                 })?;
                 self.h = Some((h, old));

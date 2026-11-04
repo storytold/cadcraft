@@ -695,6 +695,18 @@ fn textedit_edits_a_multileader() {
 }
 
 #[test]
+fn textedit_says_a_multileader_has_no_content() {
+    let mut s = Session::new();
+    let m = h(&s.execute("mleader", &json!({"points": [[10, 5], [0, 0]]})).unwrap());
+    assert!(matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.is_none() && x.block.is_none()));
+    let by_handle = s.execute("textedit", &json!({"handle": m, "text": "x"})).unwrap_err().to_string();
+    assert!(by_handle.contains("no content"), "{by_handle}");
+    s.cmdline("textedit 5,2.5").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("no content")), "{:?}", s.log);
+    assert!(!s.log.iter().any(|l| l.contains("carries a block")), "{:?}", s.log);
+}
+
+#[test]
 fn explode_polyline3d_keeps_elevations() {
     let mut s = Session::new();
     let p = h(&s.execute("3dpoly", &json!({"points": [[0, 0, 5], [1, 0, 6], [1, 1, 7]]})).unwrap());
