@@ -106,6 +106,20 @@ fn a_dragged_crossing_window_stretches() {
     }
     assert_eq!(lines(&s), vec![((0.0, 3.0), (10.0, 3.0))]);
 
+    // At "Remove objects" a dragged window takes objects out again: the upper line stays put.
+    let mut s = session_with_lines(&["0,0 10,0", "0,5 10,5"]);
+    s.cmdline("STRETCH").unwrap();
+    assert!(s.begin_window(cadcraft_engine::doc::geom::Vec2::new(12.0, 6.0)));
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::doc::geom::Vec2::new(8.0, -1.0))).unwrap();
+    s.cmdline("r").unwrap();
+    assert!(s.prompt_text().contains("Remove objects"), "{}", s.prompt_text());
+    assert!(s.begin_window(cadcraft_engine::doc::geom::Vec2::new(12.0, 6.0)));
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::doc::geom::Vec2::new(8.0, 4.0))).unwrap();
+    for t in ["", "0,0", "0,2"] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(lines(&s), vec![((0.0, 0.0), (10.0, 2.0)), ((0.0, 5.0), (10.0, 5.0))]);
+
     // Past "Select objects" a drag opens no window: the base point is a point.
     let mut s = session_with_lines(&["0,0 10,0"]);
     s.cmdline("STRETCH").unwrap();
