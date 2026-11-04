@@ -334,7 +334,7 @@ fn run_array(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A count parameter (at least 1); a missing key gives the default, an invalid value is refused.
-fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
+pub(crate) fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(default),
         Some(v) => v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, format!("`{key}` must be a whole number of at least 1"))),
