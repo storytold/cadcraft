@@ -72,9 +72,16 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
 
 /// The file a reference saved as `path` in a drawing at `host` is read from, if there is one
 /// (xrefs and raster images look in the same places). A path the user just `chosen` is used as
-/// given; one stored in a drawing only reaches this computer or the drawing's own share.
+/// given and names that file or none: a missing one is not replaced by a file of the same name
+/// beside the drawing. One stored in a drawing only reaches this computer or the drawing's own
+/// share.
 pub(crate) fn find_file(path: &str, host: Option<&str>, chosen: bool) -> Option<std::path::PathBuf> {
-    load::find(path, host.map(std::path::Path::new), chosen).ok()
+    let host = host.map(std::path::Path::new);
+    if chosen {
+        let file = load::chosen_path(path, host);
+        return file.is_file().then_some(file);
+    }
+    load::find(path, host, false).ok()
 }
 
 /// The open drawing's path (xref paths are relative to its folder).

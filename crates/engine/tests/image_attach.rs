@@ -282,6 +282,31 @@ fn imageattach_at_the_command_line_places_the_image() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A file given at the prompt is that file or none: a missing one is not replaced by a file of
+/// the same name beside the drawing. A relative name is taken from the drawing's folder.
+#[test]
+fn imageattach_never_attaches_another_file_of_the_same_name() {
+    use cadcraft_engine::Input;
+    hooks();
+    let dir = folder("chosen");
+    std::fs::write(dir.join("logo.png"), png()).unwrap();
+    let host = dir.join("host.dxf");
+    std::fs::write(&host, cadcraft_io::write(&Drawing::new_metric(), "host.dxf").unwrap()).unwrap();
+    let mut s = Session::new();
+    open(&mut s, &host);
+
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(dir.join("elsewhere").join("logo.png").to_string_lossy().into_owned())).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("file not found")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Enter image file name"), "{}", s.prompt_text());
+
+    s.input(Input::Text("logo.png".into())).unwrap();
+    assert!(s.prompt_text().contains("Specify insertion point"), "{}", s.prompt_text());
+    s.cancel();
+    assert!(images(&s).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Enter takes the defaults: at the origin, one unit wide, not rotated. Points answer the scale
 /// and rotation prompts by their distance and direction from the insertion point.
 #[test]

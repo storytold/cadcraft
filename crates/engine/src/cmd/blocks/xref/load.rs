@@ -177,12 +177,7 @@ fn candidates(path: &str, host: Option<&Path>, chosen: bool) -> (Vec<PathBuf>, O
     let mut out = Vec::new();
     let mut refused = None;
     if chosen {
-        let norm = if cfg!(windows) { path.to_string() } else { path.replace('\\', "/") };
-        let p = PathBuf::from(norm);
-        match folder(host) {
-            Some(d) if !p.is_absolute() => out.push(d.join(&p)),
-            _ => out.push(p),
-        }
+        out.push(chosen_path(path, host));
     } else {
         match doc_path::resolve(path, host) {
             Ok(p) => out.push(p),
@@ -199,6 +194,18 @@ fn candidates(path: &str, host: Option<&Path>, chosen: bool) -> (Vec<PathBuf>, O
         out.push(p);
     }
     (out, refused)
+}
+
+/// The file a path the user just chose names: as given, a relative one against the folder of
+/// the drawing at `host`.
+pub(crate) fn chosen_path(path: &str, host: Option<&Path>) -> PathBuf {
+    let path = path.trim();
+    let norm = if cfg!(windows) { path.to_string() } else { path.replace('\\', "/") };
+    let p = PathBuf::from(norm);
+    match folder(host) {
+        Some(d) if !p.is_absolute() => d.join(&p),
+        _ => p,
+    }
 }
 
 /// The file a referenced drawing at `path` (saved in the drawing at `host`, or just `chosen` by
