@@ -915,7 +915,8 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         .collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let fields = crate::dxf_field::plan(d);
+    // FIELD objects exist from AutoCAD 2004 (R2004) on.
+    let fields = if target >= Version::R2004 { crate::dxf_field::plan(d) } else { crate::dxf_field::Plan::default() };
     let mut cx = Ctx { paper_views: paper_views(d), target, fields: fields.fields, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();

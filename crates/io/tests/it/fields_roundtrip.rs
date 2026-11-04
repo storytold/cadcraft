@@ -169,10 +169,7 @@ fn check_structure(tags: &[Tag], fields: usize) {
     b.sort();
     assert_eq!(a, b, "FIELDLIST members are the FIELD objects");
     // The named object dictionary lists it, with a hard-owner (350) reference.
-    let root = recs
-        .iter()
-        .find(|(k, t)| k == "DICTIONARY" && t.iter().any(|x| x.code == 3 && x.str() == "ACAD_LAYOUT" || x.str() == "ACAD_FIELDLIST"))
-        .unwrap();
+    let root = recs.iter().find(|(k, t)| k == "DICTIONARY" && t.iter().any(|x| x.code == 3 && x.str() == "ACAD_FIELDLIST")).unwrap();
     let entry = root.1.iter().skip_while(|t| !(t.code == 3 && t.str() == "ACAD_FIELDLIST")).nth(1).unwrap();
     assert_eq!((entry.code, norm(&entry.str())), (350, handle_of(&list_tags(&recs))));
     // CLASS records, once each, with their instance counts.
@@ -347,4 +344,24 @@ fn text_without_fields_is_unchanged() {
     let saved = write_tags(&d);
     assert_eq!(mtext_groups(&saved), ["plain text"]);
     check_structure(&saved, 0);
+}
+
+/// A field whose value is the empty text is still a field after saving and reading.
+#[test]
+fn field_with_empty_value_roundtrips() {
+    let code = "T=%<\\AcVar Title \\CcValue \"\">%";
+    let d = drawing_with(&[code]);
+    assert_eq!(contents(&reread(&d)), [code]);
+}
+
+/// Before AutoCAD 2004 there are no FIELD objects: the text keeps its code.
+#[test]
+fn r2000_keeps_the_code() {
+    let d = drawing_with(&[DATE_CODE]);
+    let bytes =
+        cadcraft_io::write_with(&d, "out.dxf", &cadcraft_io::SaveOptions { version: Some(cadcraft_dxf::Version::R2000), ..Default::default() })
+            .unwrap();
+    let tags = cadcraft_dxf::parse(&bytes).unwrap();
+    assert_eq!(mtext_groups(&tags), [DATE_CODE]);
+    check_structure(&tags, 0);
 }

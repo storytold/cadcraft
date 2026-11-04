@@ -61,7 +61,8 @@ struct Parsed<'a> {
     evaluator: &'a str,
     code: &'a str,
     children: Vec<Handle>,
-    value: &'a str,
+    /// The cached value, when the field has one (an empty value is a value).
+    value: Option<&'a str>,
 }
 
 fn parse_object(o: &ForeignObject) -> Option<Parsed<'_>> {
@@ -83,7 +84,14 @@ fn parse_object(o: &ForeignObject) -> Option<Parsed<'_>> {
     if o.tags.iter().filter(|t| t.code == 6).any(|t| !KNOWN_KEYS.contains(&t.value.trim())) {
         return None;
     }
-    let value = o.tags.iter().rev().find(|t| t.code == 301).map_or("", |t| t.value.as_str());
+    // The value record (group 7) says whether there is a value: type 4 or 2 (flag 93 = 4), not 3.
+    let has_value = o
+        .tags
+        .iter()
+        .position(|t| t.code == 7)
+        .and_then(|i| o.tags.get(i + 1..)?.iter().find(|t| t.code == 93))
+        .is_some_and(|t| t.value.trim() == "4");
+    let value = o.tags.iter().rev().find(|t| t.code == 301).map(|t| t.value.as_str()).filter(|_| has_value);
     Some(Parsed { evaluator, code, children, value })
 }
 
@@ -117,7 +125,10 @@ fn rebuild(objs: &HashMap<Handle, &ForeignObject>, h: Handle, depth: usize, seen
         return None;
     }
     out.push_str(template.get(last..)?);
-    Some(if text || p.value.is_empty() { out } else { with_value(&out, &crate::dxf_read::mtext_dxf::decode_contents(p.value)) })
+    Some(match p.value {
+        Some(v) if !text => with_value(&out, v),
+        _ => out,
+    })
 }
 
 /// The entries (key, object) of a dictionary object.
@@ -210,7 +221,22 @@ fn tree(contents: &str) -> Option<(String, Vec<Node>)> {
     }
     let mut budget = MAX_NODES;
     let (template, nodes) = split(contents, 0, &mut budget)?;
-    (template.len() <= MAX_TEMPLATE).then_some((template, nodes))
+    (fits(&template) && nodes.iter().all(Node::fits)).then_some((template, nodes))
+}
+
+/// Whether a string fits a DXF group: non-ASCII characters are written as `\U+XXXX`.
+fn fits(s: &str) -> bool {
+    s.chars().map(|c| if c.is_ascii() { 1 } else { 7 }).sum::<usize>() <= MAX_TEMPLATE
+}
+
+impl Node {
+    fn fits(&self) -> bool {
+        fits(&self.code)
+            && self.variable.as_deref().is_none_or(fits)
+            && self.format.as_deref().is_none_or(fits)
+            && self.value.as_deref().is_none_or(fits)
+            && self.children.iter().all(Node::fits)
+    }
 }
 
 /// `text` with its outermost fields replaced by indexes, and those fields as nodes.
@@ -375,8 +401,13 @@ fn drop_objects(f: &mut Foreign, handle: Handle, keep_empty: bool) {
         if !gone.insert(h) || gone.len() > 4 * MAX_NODES {
             continue;
         }
+        // Only the entries of a dictionary and the children of a field belong to the tree.
         if let Some(o) = f.objects.iter().find(|o| o.handle == h) {
-            todo.extend(o.tags.iter().filter(|t| matches!(t.code, 350 | 360)).filter_map(|t| Handle::parse_hex(t.value.trim())));
+            match o.kind.as_str() {
+                "DICTIONARY" => todo.extend(dictionary_entries(o).into_iter().map(|(_, h)| h)),
+                "FIELD" => todo.extend(parse_object(o).map(|p| p.children).unwrap_or_default()),
+                _ => {}
+            }
         }
     }
     f.objects.retain(|o| !gone.contains(&o.handle) || !matches!(o.kind.as_str(), "DICTIONARY" | "FIELD"));

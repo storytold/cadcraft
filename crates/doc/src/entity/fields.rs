@@ -91,6 +91,23 @@ fn field_end(b: &[u8], start: usize) -> Option<usize> {
     None
 }
 
+/// The byte ranges of the fields in `s`, outermost only, without parsing them.
+fn nested_ranges(s: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(off) = s.get(i..).and_then(|t| t.find("%<")) {
+        let start = i + off;
+        match field_end(s.as_bytes(), start) {
+            Some(end) => {
+                out.push(start..end);
+                i = end;
+            }
+            None => i = start + 2,
+        }
+    }
+    out
+}
+
 /// The fields of a text, outermost only, in order. An unclosed `%<` is plain text.
 pub fn find(s: &str) -> Vec<FieldSpan> {
     let b = s.as_bytes();
@@ -123,7 +140,7 @@ pub fn has_fields(s: &str) -> bool {
 fn quoted_opt(inner: &str, opt: &str) -> Option<(String, Range<usize>)> {
     let b = inner.as_bytes();
     // Options of a field nested in this one's code (a formula's operand) are not this field's.
-    let nested: Vec<Range<usize>> = if inner.contains("%<") { find(inner).into_iter().map(|s| s.range).collect() } else { Vec::new() };
+    let nested = nested_ranges(inner);
     let mut i = 0;
     while let Some(off) = inner.get(i..).and_then(|t| t.find(opt)) {
         let at = i + off;
