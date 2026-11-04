@@ -231,6 +231,97 @@ fn the_alias_and_the_command_line_reach_the_command() {
     assert!(s.running.is_none() && images(&s).is_empty());
 }
 
+/// #1702: IMAGEATTACH at the command line asks for the file, the insertion point, the scale
+/// factor and the rotation, with the frame following the cursor, and one undo takes it away.
+#[test]
+fn imageattach_at_the_command_line_places_the_image() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::doc::geom::Vec2;
+    hooks();
+    let dir = folder("prompts");
+    let file = dir.join("site.png");
+    std::fs::write(&file, png()).unwrap();
+    let mut s = Session::new();
+    s.start("imageattach").unwrap();
+    assert!(s.prompt_text().contains("Enter image file name"), "{}", s.prompt_text());
+
+    // A file that isn't there is reported and the name asked again.
+    s.input(Input::Text(dir.join("none.png").to_string_lossy().into_owned())).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("file not found")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Enter image file name"), "{}", s.prompt_text());
+
+    s.input(Input::Text(file.to_string_lossy().into_owned())).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Height: 0.500000")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Specify insertion point"), "{}", s.prompt_text());
+    // The frame (4 x 2 pixels, one unit wide) hangs on the cursor.
+    let frame = s.preview(Vec2::new(3.0, 4.0));
+    assert_eq!(frame.len(), 1);
+    let EntityKind::LwPolyline(p) = &frame[0].kind else { panic!("{:?}", frame[0].kind) };
+    let corners: Vec<(f64, f64)> = p.vertices.iter().map(|v| (v.p.x, v.p.y)).collect();
+    assert_eq!(corners, [(3.0, 4.0), (4.0, 4.0), (4.0, 4.5), (3.0, 4.5)]);
+
+    s.cmdline("10,20").unwrap();
+    assert!(s.prompt_text().contains("Specify scale factor"), "{}", s.prompt_text());
+    // At the scale prompt the cursor's distance from the insertion point is the width.
+    let EntityKind::LwPolyline(p) = &s.preview(Vec2::new(10.0, 28.0))[0].kind else { panic!() };
+    assert_eq!((p.vertices[1].p.x, p.vertices[1].p.y), (18.0, 20.0));
+    s.cmdline("-3").unwrap();
+    assert!(s.prompt_text().contains("Specify scale factor"), "a negative scale is refused: {}", s.prompt_text());
+    s.cmdline("40").unwrap();
+    assert!(s.prompt_text().contains("Specify rotation angle"), "{}", s.prompt_text());
+    s.cmdline("90").unwrap();
+    assert!(s.running.is_none());
+
+    let i = images(&s).pop().unwrap();
+    assert_eq!((i.insert.x, i.insert.y, i.size.x, i.size.y), (10.0, 20.0, 4.0, 2.0));
+    assert!(i.u.x.abs() < 1e-9 && (i.u.y - 10.0).abs() < 1e-9 && (i.v.x + 10.0).abs() < 1e-9 && i.v.y.abs() < 1e-9, "{i:?}");
+    assert_eq!(i.name, "site");
+    assert!(s.doc().unwrap().rasters.get(&i.path).is_some());
+    s.execute("undo", &json!({})).unwrap();
+    assert!(images(&s).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Enter takes the defaults: at the origin, one unit wide, not rotated. Points answer the scale
+/// and rotation prompts by their distance and direction from the insertion point.
+#[test]
+fn imageattach_prompts_take_defaults_and_points() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::doc::geom::Vec2;
+    hooks();
+    let dir = folder("defaults");
+    let file = dir.join("logo.png");
+    std::fs::write(&file, png()).unwrap();
+    let mut s = Session::new();
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(file.to_string_lossy().into_owned())).unwrap();
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    let i = images(&s).pop().unwrap();
+    assert_eq!((i.insert.x, i.insert.y, i.u.x, i.u.y), (0.0, 0.0, 0.25, 0.0));
+
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(file.to_string_lossy().into_owned())).unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 13.0))).unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 9.0))).unwrap();
+    let i = images(&s).pop().unwrap();
+    // 8 units wide (2 per pixel), turned 90 degrees.
+    assert!((i.u.x).abs() < 1e-9 && (i.u.y - 2.0).abs() < 1e-9, "{i:?}");
+    assert_eq!(images(&s).len(), 2, "the second file reference shares the first one's definition");
+    assert_eq!(listed(&mut s)[0]["references"], 2);
+
+    // Cancelled before the last answer: nothing is added.
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(file.to_string_lossy().into_owned())).unwrap();
+    s.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    s.cancel();
+    assert!(s.running.is_none());
+    assert_eq!(images(&s).len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn images_in_blocks_and_layouts_are_loaded_on_open() {
     use cadcraft_engine::doc::geom::{Vec2, Vec3};

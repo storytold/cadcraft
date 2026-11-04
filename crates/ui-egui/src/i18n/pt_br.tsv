@@ -263,6 +263,7 @@
 	Drawing Template (DWT)	Modelo de desenho (DWT)
 	Drawing Utilities	Utilitários de desenho
 	Drawings (DWG, DXF)	Desenhos (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	Imagens raster (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Desenhos ainda sem arquivo são salvos na versão padrão. 0 minutos desativa o salvamento automático.
 	Dynamic	Dinâmico
 	Dynamic Dimensions	Cotas dinâmicas

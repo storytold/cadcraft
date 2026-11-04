@@ -12,8 +12,10 @@ use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::file::base64_decode;
+use super::helpers::lwpoly;
+use super::machines::number;
 use super::{CommandSpec, bad, f64_or, point_param, str_param};
-use crate::{Result, Session};
+use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most image files loaded per drawing.
 const MAX_IMAGE_FILES: usize = 1000;
@@ -29,12 +31,16 @@ const MAX_PATH: usize = 4096;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("imageattach", "Raster Image Reference...", run_imageattach).alias(&["iat"]).params(
-            "{path: PNG/JPEG/BMP/TIFF file (saved as given; a relative path is relative to this drawing's folder), data?: base64 file contents \
-             (instead of reading `path`), at?: [x,y] lower-left corner (default 0,0), scale?: number (default 1: the image is one drawing unit \
-             wide), width?: width in drawing units (instead of `scale`), rotation? (degrees), name? (default: the file name)} → {name, handle, \
-             path, pixels: [w, h], size: [w, h]}",
-        ),
+        CommandSpec::new("imageattach", "Raster Image Reference...", run_imageattach)
+            .menu(&["Insert", "Raster Image Reference..."])
+            .alias(&["iat"])
+            .params(
+                "{path: PNG/JPEG/BMP/TIFF file (saved as given; a relative path is relative to this drawing's folder), data?: base64 file contents \
+                 (instead of reading `path`), at?: [x,y] lower-left corner (default 0,0), scale?: number (default 1: the image is one drawing unit \
+                 wide), width?: width in drawing units (instead of `scale`), rotation? (degrees), name? (default: the file name)} → {name, handle, \
+                 path, pixels: [w, h], size: [w, h]}",
+            )
+            .interactive(|_| Ok(Box::new(ImageM::default()))),
         CommandSpec::new("image", "Raster Images", run_image)
             .alias(&["im"])
             .params("{} → {images: [{name, path, foundAt, status: Loaded|Not Found|Not loaded, references, pixels?: [w, h]}]}")
@@ -248,6 +254,13 @@ pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let place = placement(p)?;
     let raster = pixels(s, p, &path)?;
+    let wanted = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+    attach(s, &path, raster, &place, wanted)
+}
+
+/// Add an image of `raster`, the pixels of the file at `path`, placed as `place` says, under the
+/// definition name `wanted` (default: the file name).
+fn attach(s: &mut Session, path: &str, raster: Arc<Raster>, place: &Placement, wanted: Option<String>) -> Result<Value> {
     let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
     // One pixel in drawing units, along the image's bottom edge (`u`) and its left edge (`v`).
     let pixel = place.width / w;
@@ -256,18 +269,18 @@ pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     if !(pixel.is_normal() && (pixel * h).is_normal() && u.x.is_finite() && u.y.is_finite()) {
         return Err(bad(ID, "the image would be too small or too large to draw"));
     }
-    let wanted = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| stem(&path));
-    let name = def_name(s.doc()?, &path, &wanted);
+    let wanted = wanted.unwrap_or_else(|| stem(path));
+    let name = def_name(s.doc()?, path, &wanted);
     let image = Image {
         insert: place.at.to3(0.0),
         u: u.to3(0.0),
         v: v.to3(0.0),
         size: Vec2::new(w, h),
-        path: path.clone(),
+        path: path.to_string(),
         name: name.clone(),
         ..Image::default()
     };
-    s.doc_mut()?.rasters.insert(&path, raster);
+    s.doc_mut()?.rasters.insert(path, raster);
     let handle = s.add_entity(EntityKind::Image(image))?;
     Ok(json!({ "name": name, "handle": handle.hex(), "path": path, "pixels": [w, h], "size": [place.width, pixel * h] }))
 }
@@ -306,15 +319,158 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
             let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
             base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
         }
-        None => {
-            if let Some(loaded) = s.doc()?.rasters.get(path) {
-                return Ok(loaded.clone());
-            }
-            let host = s.state()?.path.clone();
-            read_file(path, host.as_deref()).map_err(|e| bad(ID, format!("{path}: {e}")))?
-        }
+        None => return file_pixels(s, path),
     };
     Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
+}
+
+/// The pixels of the image file at `path`: the ones already loaded for it, else read and decoded.
+fn file_pixels(s: &Session, path: &str) -> Result<Arc<Raster>> {
+    if let Some(loaded) = s.doc()?.rasters.get(path) {
+        return Ok(loaded.clone());
+    }
+    let host = s.state()?.path.clone();
+    let bytes = read_file(path, host.as_deref()).map_err(|e| bad(ID, format!("{path}: {e}")))?;
+    Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
+}
+
+// ---------------- interactive ----------------
+
+/// Where IMAGEATTACH is in its prompt sequence.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Stage {
+    #[default]
+    File,
+    Point,
+    Scale,
+    Rotation,
+}
+
+/// IMAGEATTACH at the command line, with AutoCAD's prompts after its dialog: the file, the
+/// insertion point, the scale factor (the image's width in drawing units) and the rotation. The
+/// image's frame follows the cursor.
+#[derive(Default)]
+struct ImageM {
+    stage: Stage,
+    /// The file as given, and its pixels.
+    file: Option<(String, Arc<Raster>)>,
+    at: Option<Vec2>,
+    width: Option<f64>,
+}
+
+impl ImageM {
+    /// The width the cursor gives at the scale prompt: its distance from the insertion point.
+    fn width_at(&self, cursor: Vec2) -> f64 {
+        let d = self.at.unwrap_or_default().dist(cursor);
+        if d.is_normal() { d } else { 1.0 }
+    }
+}
+
+/// An error at a prompt is reported and the prompt asked again.
+fn report(s: &mut Session, e: EngineError) -> Result<Step> {
+    match e {
+        EngineError::BadParams { msg, .. } => s.echo(msg),
+        other => s.echo(other.to_string()),
+    }
+    Ok(Step::Continue)
+}
+
+impl Interactive for ImageM {
+    fn name(&self) -> &'static str {
+        "IMAGEATTACH"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        let at = self.at.unwrap_or_default();
+        match self.stage {
+            Stage::File => Prompt::new("Enter image file name", Accept::TEXT),
+            Stage::Point => Prompt::new("Specify insertion point", Accept::POINT).default("0,0"),
+            Stage::Scale => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER).default("1").base(at).distance(),
+            Stage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(i, Input::Cancel) {
+            return Ok(Step::Cancel);
+        }
+        match self.stage {
+            Stage::File => {
+                let Input::Text(t) = i else { return Ok(Step::Continue) };
+                let path = t.trim().to_string();
+                if path.is_empty() {
+                    return Ok(Step::Continue);
+                }
+                if path.len() > MAX_PATH {
+                    s.echo("The file name is too long.");
+                    return Ok(Step::Continue);
+                }
+                let raster = match file_pixels(s, &path) {
+                    Ok(r) => r,
+                    Err(e) => return report(s, e),
+                };
+                let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
+                s.echo(format!("Base image size: Width: 1, Height: {:.6}, Unitless", h / w));
+                self.file = Some((path, raster));
+                self.stage = Stage::Point;
+            }
+            Stage::Point => {
+                self.at = Some(match i {
+                    Input::Point(p) => p,
+                    Input::Enter => Vec2::ZERO,
+                    _ => return Ok(Step::Continue),
+                });
+                self.stage = Stage::Scale;
+            }
+            Stage::Scale => {
+                let width = match i {
+                    Input::Point(p) => self.at.unwrap_or_default().dist(p),
+                    Input::Text(t) => number(&t).unwrap_or(0.0),
+                    Input::Enter => 1.0,
+                    _ => return Ok(Step::Continue),
+                };
+                if !(width.is_finite() && width > 0.0) {
+                    s.echo("Requires a positive number.");
+                    return Ok(Step::Continue);
+                }
+                self.width = Some(width);
+                self.stage = Stage::Rotation;
+            }
+            Stage::Rotation => {
+                let at = self.at.unwrap_or_default();
+                let rotation = match i {
+                    Input::Point(p) => at.angle_to(p),
+                    Input::Text(t) => match s.angle_settings().direction(&t) {
+                        Some(a) => a,
+                        None => {
+                            s.echo("Requires an angle.");
+                            return Ok(Step::Continue);
+                        }
+                    },
+                    Input::Enter => 0.0,
+                    _ => return Ok(Step::Continue),
+                };
+                let Some((path, raster)) = self.file.clone() else { return Ok(Step::Cancel) };
+                let place = Placement { at, rotation, width: self.width.unwrap_or(1.0) };
+                if let Err(e) = attach(s, &path, raster, &place, None) {
+                    report(s, e)?;
+                }
+                return Ok(Step::Done);
+            }
+        }
+        Ok(Step::Continue)
+    }
+    fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        let Some((_, raster)) = &self.file else { return Vec::new() };
+        let at = self.at.unwrap_or(cursor);
+        let width = self.width.unwrap_or(if self.stage == Stage::Scale { self.width_at(cursor) } else { 1.0 });
+        let rotation = if self.stage == Stage::Rotation { at.angle_to(cursor) } else { 0.0 };
+        let u = Vec2::from_angle(rotation) * width;
+        let v = u.perp() * (f64::from(raster.height()) / f64::from(raster.width()));
+        if !(u.x.is_finite() && u.y.is_finite() && v.x.is_finite() && v.y.is_finite()) {
+            return Vec::new();
+        }
+        let corners = [at, at + u, at + u + v, at + v];
+        vec![lwpoly(corners.into_iter().map(cadcraft_geom::PolyVertex::new).collect(), true)]
+    }
 }
 
 fn run_image(s: &mut Session, _p: &Value) -> Result<Value> {
