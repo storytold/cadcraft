@@ -10,6 +10,7 @@
 //! loaded further up (a circular reference) is not loaded again. Every failure leaves the xref's
 //! block empty with a status saying why; nothing here stops the host drawing from opening.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -339,14 +340,15 @@ fn load_in(d: &mut Drawing, name: &str, host: Option<&Path>, chosen: bool, cx: &
     let (status, detail) = match fetch(&path, host, chosen, cx, depth) {
         Ok((x, file)) => match import(d, &key, &x, cx) {
             Ok(()) => (XrefStatus::Loaded, file.to_string_lossy().into_owned()),
-            Err(e) => (XrefStatus::Unresolved, e),
+            Err(e) => {
+                // Whatever made it in before the failure goes again. A fetch that failed imported
+                // nothing, so it doesn't pay for a second scan of the block table.
+                clear(d, &key);
+                (XrefStatus::Unresolved, e)
+            }
         },
         Err(e) => e,
     };
-    if status != XrefStatus::Loaded {
-        // Whatever made it in before the failure goes again.
-        clear(d, &key);
-    }
     set_status(d, &key, status);
     (status, detail)
 }
@@ -390,9 +392,15 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
         return Err(format!("more than {MAX_XREF_OBJECTS} objects"));
     }
     let dep = |sym: Sym, n: &str| (!shared(sym, n)).then(|| format!("{key}|{n}"));
+    // The host's names per table, looked up in a set built once: both drawings are hostile input,
+    // so a scan per imported record would be quadratic.
+    fn names<T>(all: &[T], name: fn(&T) -> &str) -> HashSet<String> {
+        all.iter().map(|t| name(t).to_ascii_uppercase()).collect()
+    }
+    let mut have = names(&d.layers, |l| &l.name);
     for l in &x.layers {
         if let Some(n) = dep(Sym::Layer, &l.name)
-            && d.layer(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let mut l = l.clone();
             l.name = n;
@@ -400,39 +408,44 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
             d.layers.push(l);
         }
     }
+    let mut have = names(&d.linetypes, |t| &t.name);
     for t in &x.linetypes {
         if let Some(n) = dep(Sym::Linetype, &t.name)
-            && d.linetype(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.linetypes.push(cadcraft_doc::Linetype { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.text_styles, |t| &t.name);
     for t in &x.text_styles {
         if let Some(n) = dep(Sym::Style, &t.name)
-            && d.text_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.text_styles.push(cadcraft_doc::TextStyle { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.dim_styles, |t| &t.name);
     for t in &x.dim_styles {
         if let Some(n) = dep(Sym::DimStyle, &t.name)
-            && d.dim_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.dim_styles.push(cadcraft_doc::DimStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.mleader_styles, |t| &t.name);
     for t in &x.mleader_styles {
         if let Some(n) = dep(Sym::MLeaderStyle, &t.name)
-            && !d.mleader_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.mleader_styles.push(cadcraft_doc::MLeaderStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.table_styles, |t| &t.name);
     for t in &x.table_styles {
         if let Some(n) = dep(Sym::TableStyle, &t.name)
-            && !d.table_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             d.table_styles.push(cadcraft_doc::TableStyle { name: n, ..t.clone() });
         }
