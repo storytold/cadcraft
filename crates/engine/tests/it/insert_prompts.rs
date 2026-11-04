@@ -129,3 +129,105 @@ fn insert_options_match_autocad() {
     s.cmdline("(command \"_.-INSERT\" \"B7\" \"_B\" '(612350.678 2398770.432) '(612365.678 2398775.432) 1 \"\" 0)").unwrap();
     assert_eq!(last_insert(&s), (115.0, 55.0, 1.0, 1.0, 1.0, 0.0));
 }
+
+/// A session with block B1, a line from (0, 0) to (10, 0) based at the origin.
+fn with_b1() -> Session {
+    let mut s = Session::new();
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("block", &json!({ "name": "B1", "base": [0, 0], "keep": "delete", "handles": ["100"] })).unwrap();
+    s
+}
+
+/// Points at the scale and rotation prompts, as AutoCAD 2024 takes them (accoreconsole, unitless;
+/// INSERT measured at Scale, Rotate and XYZ's Z, MINSERT at every one): at the Scale, X, Y, Z and
+/// Rotate presets a point is the first of two, "Specify second point:" gives their distance or
+/// direction, and Enter there keeps the default; at XYZ's Z a point gives its distance from the
+/// insertion point.
+#[test]
+fn points_at_the_scale_and_rotation_prompts() {
+    let cases = [
+        ("\"_S\" '(3.0 4.0) '(6.0 8.0) '(10.0 0.0) 0", (10.0, 0.0, 5.0, 5.0, 5.0, 0.0)),
+        ("\"_X\" '(3.0 4.0) '(6.0 8.0) '(10.0 0.0) 0", (10.0, 0.0, 5.0, 1.0, 1.0, 0.0)),
+        ("\"_Z\" '(3.0 4.0) '(6.0 8.0) '(10.0 0.0) 0", (10.0, 0.0, 1.0, 1.0, 5.0, 0.0)),
+        ("\"_R\" '(3.0 4.0) '(3.0 8.0) '(10.0 0.0) 1 \"\"", (10.0, 0.0, 1.0, 1.0, 1.0, 90.0)),
+        // Enter at the second point keeps the preset's default.
+        ("\"_S\" '(3.0 4.0) \"\" '(10.0 0.0) 0", (10.0, 0.0, 1.0, 1.0, 1.0, 0.0)),
+        ("\"_X\" '(3.0 4.0) \"\" '(10.0 0.0) 0", (10.0, 0.0, 1.0, 1.0, 1.0, 0.0)),
+        ("\"_R\" '(3.0 4.0) \"\" '(10.0 0.0) 1 \"\"", (10.0, 0.0, 1.0, 1.0, 1.0, 0.0)),
+        // <<45 typed at the Rotate preset is still the angle 45, not an override for a point.
+        ("\"_R\" \"<<45\" '(10.0 0.0) 1 \"\"", (10.0, 0.0, 1.0, 1.0, 1.0, 45.0)),
+        // The same point twice is no turn.
+        ("\"_R\" '(3.0 4.0) '(3.0 4.0) '(10.0 0.0) 1 \"\"", (10.0, 0.0, 1.0, 1.0, 1.0, 0.0)),
+    ];
+    for (args, want) in cases {
+        let mut s = with_b1();
+        s.cmdline(&format!("(command \"_.-INSERT\" \"B1\" {args})")).unwrap();
+        assert!(s.running.is_none(), "{args}: {}", s.prompt_text());
+        assert_eq!(last_insert(&s), want, "{args}");
+    }
+    // Typed at the command line too: the prompt asks for the second point.
+    let mut s = with_b1();
+    s.cmdline("-insert B1 s 3,4").unwrap();
+    assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Specify second point:"));
+    s.cmdline("6,8 10,0 0").unwrap();
+    assert_eq!(last_insert(&s), (10.0, 0.0, 5.0, 5.0, 5.0, 0.0));
+    // XYZ's Z: (3, 4) is √65 from the insertion point (10, 0).
+    let mut s = with_b1();
+    s.cmdline("(command \"_.-INSERT\" \"B1\" '(10.0 0.0) \"_XYZ\" 2 3 '(3.0 4.0) 0)").unwrap();
+    let (.., z, _) = last_insert(&s);
+    assert!((z - 65f64.sqrt()).abs() < 1e-9, "{z}");
+}
+
+/// What the scale and rotation prompts refuse, with AutoCAD 2024's messages (accoreconsole,
+/// measured), and the prompt asked again ("" for the same one): a refusal at "Specify second point:"
+/// asks the first one.
+#[test]
+fn what_the_scale_and_rotation_prompts_refuse() {
+    const TWO: &str = "Requires numeric distance or two points.";
+    const NONZERO: &str = "Value must be nonzero.";
+    const NUMERIC: &str = "Requires numeric value.";
+    const SCALE: &str = "Specify scale factor for XYZ axes <1>:";
+    const Y: &str = "Enter Y scale factor <use X scale factor>:";
+    const Z: &str = "Specify Z scale factor or <use X scale factor>:";
+    let cases = [
+        ("-insert B1 s", "x", TWO, SCALE),
+        ("-insert B1 s", "0", NONZERO, SCALE),
+        ("-insert B1 s 3,4", "5", TWO, SCALE),
+        ("-insert B1 s 3,4", "3,4", NONZERO, SCALE),
+        ("-insert B1 x", "x", TWO, "Specify X scale factor <1>:"),
+        ("-insert B1 x", "0", NONZERO, "Specify X scale factor <1>:"),
+        ("-insert B1 x 3,4", "5", TWO, "Specify X scale factor <1>:"),
+        ("-insert B1 x 3,4", "3,4", NONZERO, "Specify X scale factor <1>:"),
+        ("-insert B1 r", "x", "Requires valid numeric angle or two points.", "Specify rotation angle <0>:"),
+        // A point from LISP: typed text at this prompt is read as an angle, as before.
+        ("-insert B1 r|(list 3 4)", "5", "Requires valid numeric angle or two points.", "Specify rotation angle <0>:"),
+        ("-insert B1 10,0", "0", NONZERO, ""),
+        ("-insert B1 10,0 2", "(list 3 4)", NUMERIC, Y),
+        ("-insert B1 10,0 2", "x", NUMERIC, Y),
+        ("-insert B1 10,0 2", "0", NONZERO, Y),
+        ("-insert B1 10,0 xyz 2 3", "x", "Requires numeric distance or second point.", Z),
+        ("-insert B1 10,0 xyz 2 3", "0", NONZERO, Z),
+        // XYZ's Z at the insertion point itself: no distance.
+        ("-insert B1 10,0 xyz 2 3", "10,0", NONZERO, Z),
+        // Exploded, after the insertion point, the scale is a positive number only.
+        ("-insert *B1 10,0", "(list 3 4)", NUMERIC, ""),
+        ("-insert *B1 10,0", "x", NUMERIC, ""),
+        ("-insert *B1 10,0", "0", "Value must be positive and nonzero.", ""),
+        ("-insert *B1 10,0", "-2", "Value must be positive and nonzero.", ""),
+    ];
+    for (typed, bad, message, again) in cases {
+        let mut s = with_b1();
+        // Separate inputs are split at `|`.
+        for t in typed.split('|') {
+            s.cmdline(t).unwrap();
+        }
+        let before = s.current_prompt().map(|p| p.display());
+        let logged = s.log.len();
+        s.cmdline(bad).unwrap();
+        let said: Vec<&str> =
+            s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires") || l.starts_with("Value must")).collect();
+        assert_eq!(said, [message], "{typed} then {bad}");
+        let again = if again.is_empty() { before.clone() } else { Some(again.to_string()) };
+        assert_eq!(s.current_prompt().map(|p| p.display()), again, "{typed} then {bad}");
+    }
+}

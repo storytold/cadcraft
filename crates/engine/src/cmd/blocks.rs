@@ -631,10 +631,34 @@ enum InsStage {
     /// rows).
     Cell(Vec2),
     ColSpacing,
+    /// The second of two points a preset or the column spacing takes after a point (AutoCAD 2024
+    /// asks "Specify second point:"), from the first.
+    Second(TwoPoints, Vec2),
     Attribs,
     /// A Verify attribute asked again.
     Verify,
 }
+
+/// What two points give: a preset scale factor (all axes, or one) or the column spacing by their
+/// distance, the preset rotation by their direction.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TwoPoints {
+    Scale,
+    Axis(usize),
+    Rotation,
+    ColSpacing,
+}
+
+// AutoCAD 2024's messages at INSERT's and MINSERT's scale, rotation and spacing prompts (measured):
+// a scale factor of 0; anything else that isn't a number where two points give a distance or an
+// angle, where a point gives the distance from the insertion point, and where only a number does.
+const NONZERO: &str = "Value must be nonzero.";
+/// Exploded INSERT's scale factor, which must be positive.
+const POSITIVE: &str = "Value must be positive and nonzero.";
+const TWO_POINTS: &str = "Requires numeric distance or two points.";
+const ANGLE_TWO_POINTS: &str = "Requires valid numeric angle or two points.";
+const SECOND_POINT: &str = "Requires numeric distance or second point.";
+const NUMERIC: &str = "Requires numeric value.";
 
 #[derive(Default)]
 struct InsertM {
@@ -799,6 +823,66 @@ impl InsertM {
         }
         Ok(d)
     }
+
+    /// The Scale preset `f` for every axis.
+    fn preset_scale(&mut self, s: &mut Session, f: f64) -> Result<Step> {
+        self.scale = Some(Vec2::new(f, f));
+        self.z_scale = Some(f.abs());
+        // An axis preset after it changes that axis alone (Scale -3 then X 2: 2/-3/3).
+        self.axes = [Some(f), Some(f), Some(f.abs())];
+        // Exploded insertion asks its one scale factor after the insertion point.
+        if self.at.is_some() {
+            return self.advance(s);
+        }
+        self.stage = InsStage::Point;
+        Ok(Step::Continue)
+    }
+
+    /// One axis preset: the others are 1, and no scale factors are asked after the point.
+    fn preset_axis(&mut self, ax: usize, f: f64) -> Result<Step> {
+        if let Some(a) = self.axes.get_mut(ax) {
+            *a = Some(f);
+        }
+        let [x, y, z] = self.axes.map(|a| a.unwrap_or(1.0));
+        self.scale = Some(Vec2::new(x, y));
+        self.z_scale = Some(z.abs());
+        self.stage = InsStage::Point;
+        Ok(Step::Continue)
+    }
+
+    fn preset_rotation(&mut self, r: f64) -> Result<Step> {
+        self.rotation = Some(r);
+        self.stage = InsStage::Point;
+        Ok(Step::Continue)
+    }
+
+    /// The second of two points (AutoCAD 2024, measured): their distance is a preset scale factor
+    /// (0 refused) or the column spacing (0 taken), their direction the preset rotation. Enter
+    /// keeps a preset's default and is refused for the spacing, as anything else is; a refusal asks
+    /// the first prompt again.
+    fn second_point(&mut self, s: &mut Session, what: TwoPoints, a: Vec2, i: Input) -> Result<Step> {
+        let (first, refused) = match what {
+            TwoPoints::Scale => (InsStage::PresetScale, TWO_POINTS),
+            TwoPoints::Axis(ax) => (InsStage::PresetAxis(ax), TWO_POINTS),
+            TwoPoints::Rotation => (InsStage::PresetRotation, ANGLE_TWO_POINTS),
+            TwoPoints::ColSpacing => (InsStage::ColSpacing, TWO_POINTS),
+        };
+        self.stage = first;
+        match (what, i) {
+            (TwoPoints::ColSpacing, Input::Point(b)) => {
+                self.col_spacing = Some(a.dist(b));
+                self.advance(s)
+            }
+            (TwoPoints::Rotation, Input::Point(b)) => self.preset_rotation(a.angle_to(b)),
+            (TwoPoints::Rotation, Input::Enter) => self.preset_rotation(0.0),
+            (TwoPoints::Scale | TwoPoints::Axis(_), Input::Point(b)) if a.dist(b) == 0.0 => Err(EngineError::Other(NONZERO.into())),
+            (TwoPoints::Scale, Input::Point(b)) => self.preset_scale(s, a.dist(b)),
+            (TwoPoints::Scale, Input::Enter) => self.preset_scale(s, 1.0),
+            (TwoPoints::Axis(ax), Input::Point(b)) => self.preset_axis(ax, a.dist(b)),
+            (TwoPoints::Axis(ax), Input::Enter) => self.preset_axis(ax, 1.0),
+            _ => Err(EngineError::Other(refused.into())),
+        }
+    }
 }
 
 /// A distance typed at MINSERT's grid prompts: any finite number, negative or 0 too.
@@ -806,8 +890,14 @@ fn distance(t: &str) -> Result<f64> {
     number(t).filter(|v| v.is_finite()).ok_or_else(|| EngineError::Other("Requires a distance.".into()))
 }
 
-fn nonzero(t: &str) -> Result<f64> {
-    number(t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))
+/// A scale factor typed at `t`: 0 gets AutoCAD 2024's "Value must be nonzero.", anything that
+/// isn't a number the prompt's own message.
+fn nonzero(t: &str, not_a_number: &str) -> Result<f64> {
+    let v = number(t).ok_or_else(|| EngineError::Other(not_a_number.into()))?;
+    if v == 0.0 {
+        return Err(EngineError::Other(NONZERO.into()));
+    }
+    Ok(v)
 }
 
 impl Interactive for InsertM {
@@ -828,22 +918,31 @@ impl Interactive for InsertM {
             }
             InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "X", "Y", "Z", "Rotate"]),
             InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
-            InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
-            InsStage::PresetAxis(i) => Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::NUMBER).default("1"),
+            // Exploded, after the insertion point, it takes a number only.
+            InsStage::PresetScale if self.at.is_some() => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
+            InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::POINT_OR_NUMBER).default("1"),
+            InsStage::PresetAxis(i) => {
+                Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::POINT_OR_NUMBER).default("1")
+            }
+            // Typed text is read as before (`<<45` the angle, not an override for a point); a point
+            // still comes from a click or LISP.
             InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
+            // Text is read here, not taken as a distance along the rubber band: the core console
+            // refuses 5 at this prompt (measured).
+            InsStage::Second(_, a) => Prompt::new("Specify second point", Accept::POINT_OR_NUMBER).base(a),
             InsStage::XScale if self.xyz => Prompt::new("Specify X scale factor", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at),
             InsStage::XScale => {
                 Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER).kw(&["Corner", "XYZ"]).default("1").base(at)
             }
             InsStage::Corner => Prompt::new("Specify opposite corner", Accept::POINT).base(at),
             InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
-            InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
+            InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::POINT_OR_NUMBER).default("use X scale factor").base(at),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
             InsStage::Rows => Prompt::new("Enter number of rows (---)", Accept::NUMBER).default("1"),
             InsStage::Cols => Prompt::new("Enter number of columns (|||)", Accept::NUMBER).default("1"),
             InsStage::RowSpacing => Prompt::new("Enter distance between rows or specify unit cell (---)", Accept::POINT_OR_NUMBER),
             InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
-            InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
+            InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::POINT_OR_NUMBER),
             InsStage::Attribs => {
                 let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
@@ -919,45 +1018,58 @@ impl Interactive for InsertM {
                     self.stage = InsStage::Point;
                 }
             }
-            InsStage::PresetScale => {
-                let f = match i {
-                    Input::Text(t) => nonzero(&t)?,
-                    Input::Enter => 1.0,
-                    _ => return Ok(Step::Continue),
+            // Exploded, after the insertion point: a positive number only (AutoCAD 2024 refuses a
+            // point and x with "Requires numeric value.", 0 and -2 with "Value must be positive and
+            // nonzero.", measured).
+            InsStage::PresetScale if self.at.is_some() => {
+                return match i {
+                    Input::Text(t) => {
+                        let f = number(&t).ok_or_else(|| EngineError::Other(NUMERIC.into()))?;
+                        let f = Some(f).filter(|f| *f > 0.0).ok_or_else(|| EngineError::Other(POSITIVE.into()))?;
+                        self.preset_scale(s, f)
+                    }
+                    Input::Enter => self.preset_scale(s, 1.0),
+                    _ => Err(EngineError::Other(NUMERIC.into())),
                 };
-                self.scale = Some(Vec2::new(f, f));
-                self.z_scale = Some(f.abs());
-                // An axis preset after it changes that axis alone (Scale -3 then X 2: 2/-3/3).
-                self.axes = [Some(f), Some(f), Some(f.abs())];
-                // Exploded insertion asks its one scale factor after the insertion point.
-                if self.at.is_some() {
-                    return self.advance(s);
-                }
-                self.stage = InsStage::Point;
             }
-            // One axis preset: the others are 1, and no scale factors are asked after the point.
-            InsStage::PresetAxis(ax) => {
-                let f = match i {
-                    Input::Text(t) => nonzero(&t)?,
-                    Input::Enter => 1.0,
-                    _ => return Ok(Step::Continue),
+            // A point at a preset is the first of two (AutoCAD 2024, measured).
+            InsStage::PresetScale => {
+                return match i {
+                    Input::Point(p) => {
+                        self.stage = InsStage::Second(TwoPoints::Scale, p);
+                        Ok(Step::Continue)
+                    }
+                    Input::Text(t) => self.preset_scale(s, nonzero(&t, TWO_POINTS)?),
+                    Input::Enter => self.preset_scale(s, 1.0),
+                    _ => Err(EngineError::Other(TWO_POINTS.into())),
                 };
-                if let Some(a) = self.axes.get_mut(ax) {
-                    *a = Some(f);
-                }
-                let [x, y, z] = self.axes.map(|a| a.unwrap_or(1.0));
-                self.scale = Some(Vec2::new(x, y));
-                self.z_scale = Some(z.abs());
-                self.stage = InsStage::Point;
+            }
+            InsStage::PresetAxis(ax) => {
+                return match i {
+                    Input::Point(p) => {
+                        self.stage = InsStage::Second(TwoPoints::Axis(ax), p);
+                        Ok(Step::Continue)
+                    }
+                    Input::Text(t) => self.preset_axis(ax, nonzero(&t, TWO_POINTS)?),
+                    Input::Enter => self.preset_axis(ax, 1.0),
+                    _ => Err(EngineError::Other(TWO_POINTS.into())),
+                };
             }
             InsStage::PresetRotation => {
-                self.rotation = Some(match i {
-                    Input::Text(t) => s.angle_settings().direction(&t).ok_or_else(|| EngineError::Other("Requires an angle.".into()))?,
-                    Input::Enter => 0.0,
-                    _ => return Ok(Step::Continue),
-                });
-                self.stage = InsStage::Point;
+                return match i {
+                    Input::Point(p) => {
+                        self.stage = InsStage::Second(TwoPoints::Rotation, p);
+                        Ok(Step::Continue)
+                    }
+                    Input::Text(t) => {
+                        let r = s.angle_settings().direction(&t).ok_or_else(|| EngineError::Other(ANGLE_TWO_POINTS.into()))?;
+                        self.preset_rotation(r)
+                    }
+                    Input::Enter => self.preset_rotation(0.0),
+                    _ => Err(EngineError::Other(ANGLE_TWO_POINTS.into())),
+                };
             }
+            InsStage::Second(what, a) => return self.second_point(s, what, a, i),
             InsStage::XScale => match i {
                 Input::Keyword(k) if k == "Corner" => self.stage = InsStage::Corner,
                 Input::Keyword(k) if k == "XYZ" => self.xyz = true,
@@ -966,7 +1078,7 @@ impl Interactive for InsertM {
                     return self.corner_scale(s, sc);
                 }
                 Input::Text(t) => {
-                    self.x_scale = Some(nonzero(&t)?);
+                    self.x_scale = Some(nonzero(&t, "Requires a non-zero number.")?);
                     self.stage = InsStage::YScale;
                 }
                 Input::Enter => {
@@ -983,10 +1095,11 @@ impl Interactive for InsertM {
             }
             InsStage::YScale => {
                 let x = self.x_scale.unwrap_or(1.0);
+                // A number only: AutoCAD 2024 refuses a point here (measured).
                 let y = match i {
-                    Input::Text(t) => nonzero(&t)?,
+                    Input::Text(t) => nonzero(&t, NUMERIC)?,
                     Input::Enter => x,
-                    _ => return Ok(Step::Continue),
+                    _ => return Err(EngineError::Other(NUMERIC.into())),
                 };
                 self.scale = Some(Vec2::new(x, y));
                 if self.xyz {
@@ -995,11 +1108,15 @@ impl Interactive for InsertM {
                 }
                 return self.advance(s);
             }
+            // A point gives its distance from the insertion point (AutoCAD 2024, measured).
             InsStage::ZScale => {
                 self.z_scale = Some(match i {
-                    Input::Text(t) => nonzero(&t)?,
+                    Input::Text(t) => nonzero(&t, SECOND_POINT)?,
                     Input::Enter => self.x_scale.unwrap_or(1.0).abs(),
-                    _ => return Ok(Step::Continue),
+                    Input::Point(p) => {
+                        Some(self.at.unwrap_or_default().dist(p)).filter(|d| *d != 0.0).ok_or_else(|| EngineError::Other(NONZERO.into()))?
+                    }
+                    _ => return Err(EngineError::Other(SECOND_POINT.into())),
                 });
                 return self.advance(s);
             }
@@ -1045,11 +1162,19 @@ impl Interactive for InsertM {
                     return self.advance(s);
                 }
             }
+            // A distance, or two points (AutoCAD 2024, measured): Enter is refused too.
             InsStage::ColSpacing => {
-                if let Input::Text(t) = i {
-                    self.col_spacing = Some(distance(&t)?);
-                    return self.advance(s);
-                }
+                return match i {
+                    Input::Text(t) => {
+                        self.col_spacing = Some(number(&t).filter(|v| v.is_finite()).ok_or_else(|| EngineError::Other(TWO_POINTS.into()))?);
+                        self.advance(s)
+                    }
+                    Input::Point(p) => {
+                        self.stage = InsStage::Second(TwoPoints::ColSpacing, p);
+                        Ok(Step::Continue)
+                    }
+                    _ => Err(EngineError::Other(TWO_POINTS.into())),
+                };
             }
             InsStage::Attribs => {
                 let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
