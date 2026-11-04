@@ -1436,3 +1436,39 @@ menu	Modify	แก้ไข
 	Save Layout as Template	บันทึกเลย์เอาต์เป็นเทมเพลต
 	Save changes to block "{name}"?	บันทึกการเปลี่ยนแปลงในบล็อก "{name}" หรือไม่?
 	Units	หน่วย
+	Backup copies are off, so the current file will be replaced.	ปิดการสำรองไฟล์อยู่ ไฟล์ปัจจุบันจะถูกแทนที่
+	DView	DView (มุมมองไดนามิก)
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 และก่อนหน้าเก็บไว้ได้ ใช้บันทึกเป็นเพื่อเก็บไว้ในแบบ
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF เก็บไว้ได้ ใช้บันทึกเป็นเพื่อเก็บไว้ในแบบ
+	Enter angle of xline (0)	ป้อนมุมของ xline (0)
+	Enter delta length	ป้อนความยาวที่เปลี่ยน
+	Find All	ค้นหาทั้งหมด
+	Find what:	ค้นหาคำว่า:
+	Match case	ตรงตามตัวพิมพ์
+	Multiple Insert	แทรกหลายชุด (MInsert)
+	Nothing found	ไม่พบ
+	Raster Image Reference...	ภาพแรสเตอร์อ้างอิง...
+	Raster Images	ภาพแรสเตอร์
+	Replace	แทนที่
+	Replace All	แทนที่ทั้งหมด
+	Replace with:	แทนที่ด้วย:
+	Replacement text	ข้อความแทนที่
+	Results	ผลลัพธ์
+	Save Anyway	บันทึกต่อไป
+	Save cancelled: {path} was not changed.	ยกเลิกการบันทึก: {path} ไม่ได้ถูกเปลี่ยน
+	Saving {name} will remove content	การบันทึก {name} จะทำให้เนื้อหาบางส่วนหายไป
+	Searches the current space.	ค้นหาในสเปซปัจจุบัน
+	Select an object to change	เลือกออบเจกต์ที่จะเปลี่ยน
+	Select an object to measure	เลือกออบเจกต์ที่จะวัด
+	Select nested objects to copy	เลือกออบเจกต์ซ้อนที่จะคัดลอก
+	Select polyline	เลือกโพลีไลน์
+	Specify base radius	ระบุรัศมีฐาน
+	Specify helix height	ระบุความสูงเฮลิกซ์
+	Specify top radius	ระบุรัศมีบน
+	Specify total length	ระบุความยาวรวม
+	Text to find	ข้อความที่จะค้นหา
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	ไฟล์ปัจจุบันดูไม่สมบูรณ์ จึงคง {name} ไว้ตามเดิม และไฟล์ปัจจุบันจะถูกแทนที่
+	The current file is kept as {name} until the next save.	ไฟล์ปัจจุบันจะเก็บไว้เป็น {name} จนถึงการบันทึกครั้งถัดไป
+	This format can't keep these objects yet: {objects}.	รูปแบบนี้ยังเก็บออบเจกต์เหล่านี้ไม่ได้: {objects}
+	Whole words	ทั้งคำ
+	{count} more types	อีก {count} ชนิด
