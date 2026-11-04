@@ -141,21 +141,26 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui.painter().circle_filled(br.center() + vec2(offset, 0.0), 1.5, t.text);
                 }
                 icons::describe_control(ui, &response, "More toolbar commands", None, false);
-                egui::Popup::menu(&response).show(|ui| {
-                    for (position, index) in fit.overflow.iter().enumerate() {
-                        let Some(group) = TOOLBAR.get(*index) else { continue };
-                        if position > 0 {
-                            ui.separator();
-                        }
-                        for (_, command, label, _) in *group {
-                            let response = ui.button(crate::i18n::t(label));
-                            crate::control::record_widget(ui, &response, label, "button", None);
-                            if response.clicked() {
-                                clicked = Some(*command);
-                                ui.close();
+                egui::Popup::menu(&response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                    let margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
+                    let height = (ui.ctx().content_rect().height() - margin).clamp(0.0, 300.0);
+                    ui.set_max_height(height);
+                    egui::ScrollArea::vertical().max_height(height).min_scrolled_height(0.0).show(ui, |ui| {
+                        for (position, index) in fit.overflow.iter().enumerate() {
+                            let Some(group) = TOOLBAR.get(*index) else { continue };
+                            if position > 0 {
+                                ui.separator();
+                            }
+                            for (_, command, label, _) in *group {
+                                let response = ui.button(crate::i18n::t(label));
+                                crate::control::record_widget(ui, &response, label, "button", None);
+                                if response.clicked() {
+                                    clicked = Some(*command);
+                                    ui.close();
+                                }
                             }
                         }
-                    }
+                    });
                 });
                 response.on_hover_text(crate::tl!("More toolbar commands"));
             }
