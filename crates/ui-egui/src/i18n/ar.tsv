@@ -1368,15 +1368,108 @@ menu	View	عرض
 	overrides built-in	يتجاوز المدمج
 	{alias} is already defined; select it and use Edit.	{alias} معرَّف مسبقاً؛ حدده واستخدم «تحرير».
 	{command} is an unknown command.	{command} أمر غير معروف.
-	Find All	Find All
-	Find what:	Find what:
-	Match case	Match case
-	Replace	Replace
-	Replace All	Replace All
-	Replace with:	Replace with:
-	Replacement text	Replacement text
-	Results	Results
-	Searches the current space.	Searches the current space.
-	Text to find	Text to find
-	Whole words	Whole words
-	Nothing found	Nothing found
+	Find All	بحث عن الكل
+	Find what:	البحث عن:
+	Match case	مطابقة حالة الأحرف
+	Replace	استبدال
+	Replace All	استبدال الكل
+	Replace with:	استبدال بـ:
+	Replacement text	النص البديل
+	Results	النتائج
+	Searches the current space.	يبحث في الفراغ الحالي.
+	Text to find	النص المراد البحث عنه
+	Whole words	كلمات كاملة
+	Nothing found	لم يُعثر على شيء
+	Angstroms	أنغستروم
+	Apply to Layout	تطبيق على التخطيط
+	Architectural	معماري
+	Arrow size	حجم السهم
+	Astronomical Units	وحدات فلكية
+	Backup copies are off, so the current file will be replaced.	النسخ الاحتياطية متوقفة، لذا سيُستبدل الملف الحالي.
+	CADCraft	CADCraft
+	Center the plot	توسيط الطباعة
+	Centimeters	سنتيمترات
+	Change	تغيير
+	Clear Recent Files	مسح الملفات الأخيرة
+	Custom	مخصص
+	DView	عرض ديناميكي
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	تحتفظ بها DXF 2010 وما قبله. استخدم «حفظ باسم» لإبقائها في الرسم.
+	DXF keeps them. Use Save As to keep them in the drawing.	تحتفظ بها DXF. استخدم «حفظ باسم» لإبقائها في الرسم.
+	Decameters	ديكامترات
+	Decimal	عشري
+	Decimal Degrees	درجات عشرية
+	Decimeters	ديسيمترات
+	Deg/Min/Sec	درجة/دقيقة/ثانية
+	Dim scale overall	مقياس التأشير الكلي
+	Don't Save	عدم الحفظ
+	Drawing Units	وحدات الرسم
+	E	ق
+	Engineering	هندسي
+	Enter block names to extract	أدخل أسماء الكتل المراد استخراجها
+	Enter geometric characteristic	أدخل الخاصية الهندسية
+	Enter name of LISP file to load	أدخل اسم ملف LISP المراد تحميله
+	Feet	أقدام
+	First corner	الزاوية الأولى
+	Fit to paper	ملاءمة للورقة
+	Fractional	كسري
+	Gigameters	غيغامترات
+	Grads	غراد
+	Hectometers	هكتومترات
+	Inches	بوصات
+	Insertion scale	مقياس الإدراج
+	Kilometers	كيلومترات
+	Landscape	أفقي
+	Layouts	التخطيطات
+	Light Years	سنوات ضوئية
+	Limits	الحدود
+	Meters	أمتار
+	Microinches	ميكروبوصات
+	Microns	ميكرونات
+	Miles	أميال
+	Millimeters	مليمترات
+	Mils	ميلات (جزء من ألف بوصة)
+	Multiple Insert	إدراج متعدد
+	N	ش
+	Nanometers	نانومترات
+	Open Recent	فتح الأخيرة
+	Opposite corner	الزاوية المقابلة
+	Orientation	الاتجاه
+	Paper size	حجم الورقة
+	Parsecs	فراسخ فلكية
+	Plot area	منطقة الطباعة
+	Plot object lineweights	طباعة سماكات خطوط الكائنات
+	Plot offset	إزاحة الطباعة
+	Plot transparency	طباعة الشفافية
+	Portrait	عمودي
+	Precision	الدقة
+	Printer/plotter	الطابعة/الراسمة
+	Radians	راديان
+	Raster Image Reference...	مرجع صورة نقطية...
+	Raster Images	الصور النقطية
+	S	ج
+	Sample output	مثال على المُخرَج
+	Save Anyway	الحفظ على أي حال
+	Save cancelled: {path} was not changed.	أُلغي الحفظ: لم يتغير {path}.
+	Save changes to {name}?	حفظ التغييرات في {name}؟
+	Saving {name} will remove content	حفظ {name} سيُزيل بعض المحتوى
+	Scientific	علمي
+	Surveyor's Units	وحدات المساحين
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	يبدو الملف الحالي غير مكتمل، لذا يبقى {name} كما هو وسيُستبدل الملف الحالي.
+	The current file is kept as {name} until the next save.	يُحتفظ بالملف الحالي باسم {name} حتى الحفظ التالي.
+	This drawing	هذا الرسم
+	This format can't keep these objects yet: {objects}.	لا يستطيع هذا التنسيق الاحتفاظ بهذه الكائنات بعد: {objects}.
+	US Survey Feet	أقدام المساحة الأمريكية
+	US Survey Inch	بوصة المساحة الأمريكية
+	US Survey Mile	ميل المساحة الأمريكي
+	US Survey Yard	ياردة المساحة الأمريكية
+	Unitless	بلا وحدات
+	Units	الوحدات
+	Units to scale inserted content	وحدات تحجيم المحتوى المُدرَج
+	W	غ
+	Window <	نافذة <
+	X offset (mm)	إزاحة X (مم)
+	Y offset (mm)	إزاحة Y (مم)
+	Yards	ياردات
+	Your changes will be lost if you don't save them.	ستضيع تغييراتك إن لم تحفظها.
+	contains authoring elements. Open in Block Editor?	يحتوي على عناصر تأليف. هل تريد فتحه في محرر الكتل؟
+	{count} more types	أنواع أخرى: {count}
