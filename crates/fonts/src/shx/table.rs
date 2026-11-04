@@ -238,6 +238,32 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_DIR_ENTRIES: usize = 10_000;
 
+/// The SHX fonts in the user's font folders ([`set_font_dirs`]) and the registered ones, by file
+/// stem, sorted without repeats (for font lists). Not read: only their names are listed.
+pub fn installed() -> Vec<String> {
+    let (dirs, mut out): (Vec<PathBuf>, Vec<String>) = {
+        let t = table();
+        (t.font_dirs.clone(), t.registered.keys().map(|k| k.trim_end_matches(".shx").to_string()).collect())
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    for d in &dirs {
+        let Ok(entries) = std::fs::read_dir(d) else { continue };
+        for e in entries.take(MAX_DIR_ENTRIES).filter_map(Result::ok) {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("shx"))
+                && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+            {
+                out.push(stem.to_string());
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = dirs;
+    out.sort_by_key(|n| n.to_lowercase());
+    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    out
+}
+
 /// The file `name` (a lower-case key) in the first of `dirs` that has it, whatever the case of
 /// its name: lower-case, upper-case, else any other case found in the directory (`Simplex.shx`
 /// on a case-sensitive file system).
