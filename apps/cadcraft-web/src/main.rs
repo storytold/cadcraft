@@ -119,6 +119,7 @@ mod web {
             write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
             plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
         });
+        cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
         // Plot style tables and combined PDFs (PUBLISH, Batch Plot), as on the desktop.
         cadcraft_engine::cmd::file::set_plot_style_reader(cadcraft_io::pia::read);
         cadcraft_engine::cmd::file::set_plot_book(|items, opts| cadcraft_io::plotter::plot_book(items, opts).map_err(|e| e.to_string()));
