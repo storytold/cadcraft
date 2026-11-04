@@ -197,19 +197,17 @@ fn candidates(path: &str, host: Option<&Path>, chosen: bool) -> (Vec<PathBuf>, O
 }
 
 /// The file a path the user just chose names: as given, a relative one against the folder of
-/// the drawing at `host`. Elsewhere than on Windows a backslash can be part of a file name: the
-/// name as typed is used when that file exists, else its backslashes are taken as separators.
+/// the drawing at `host`. Backslashes are separators everywhere, as they are when the drawing
+/// opens again ([`doc_path::resolve`]): the file chosen is the file the saved path reloads. (A
+/// file whose name holds a backslash, possible outside Windows, can't be kept by such a path.)
 pub(crate) fn chosen_path(path: &str, host: Option<&Path>) -> PathBuf {
     let path = path.trim();
-    let resolve = |p: PathBuf| match folder(host) {
+    let norm = if cfg!(windows) { path.to_string() } else { path.replace('\\', "/") };
+    let p = PathBuf::from(norm);
+    match folder(host) {
         Some(d) if !p.is_absolute() => d.join(&p),
         _ => p,
-    };
-    let literal = resolve(PathBuf::from(path));
-    if cfg!(windows) || !path.contains('\\') || literal.is_file() {
-        return literal;
     }
-    resolve(PathBuf::from(path.replace('\\', "/")))
 }
 
 /// The file a referenced drawing at `path` (saved in the drawing at `host`, or just `chosen` by
