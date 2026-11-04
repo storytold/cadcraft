@@ -1391,4 +1391,5 @@ mod blockedit;
 mod compare;
 
 /// Background rebuilds of the display list for a new view.
+mod images;
 mod rebuild;

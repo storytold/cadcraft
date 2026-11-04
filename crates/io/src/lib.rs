@@ -17,6 +17,8 @@ mod iges;
 mod mesh;
 pub mod pdf;
 pub mod plotter;
+/// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
+pub mod raster;
 /// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
 pub mod roundtrip;
 mod step;
