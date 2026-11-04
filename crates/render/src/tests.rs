@@ -634,6 +634,7 @@ fn hatch_in_a_squashed_block_keeps_lines_that_show() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // One pixel = 1 unit: 0.125 spacing × 100 along x is far more than a pixel.
@@ -678,6 +679,7 @@ fn insert_of(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -1218,6 +1220,7 @@ fn a_large_block_draws_only_what_is_near_the_window() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // World x 990..1105 holds block lines 0..=5 (the one at 1100 reaches 1102).
@@ -1267,6 +1270,7 @@ fn a_large_block_shows_what_an_edited_nested_block_gained() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     };
     let mut d = Drawing::new_imperial();
@@ -1359,6 +1363,7 @@ fn a_screen_build_keeps_what_its_estimated_bounds_would_leave_out() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     b.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     let drawn = build(&b, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
@@ -1420,6 +1425,7 @@ fn a_screen_build_keeps_wrapped_multileader_text_and_multiline_attributes() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let mut blk = cadcraft_doc::Block::new("NOTES");
     far_lines(&mut blk);
