@@ -76,11 +76,12 @@ fn paths(d: &Drawing) -> Vec<String> {
     paths
 }
 
-/// The contents of the image file saved as `path` in a drawing at `host`.
-fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, String> {
+/// The contents of the image file saved as `path` in a drawing at `host`, or just `chosen` by the
+/// user (a path given at IMAGEATTACH's prompt, used as given).
+fn read_file(path: &str, host: Option<&str>, chosen: bool) -> std::result::Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let file = super::blocks::xref::find_file(path, host).ok_or("file not found")?;
+        let file = super::blocks::xref::find_file(path, host, chosen).ok_or("file not found")?;
         let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
         if len > MAX_IMAGE_BYTES {
             return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
@@ -177,7 +178,7 @@ fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<R
         if decoded_bytes.load(Ordering::Relaxed) > MAX_LOADED_BYTES {
             return Err(format!("not loaded (more than {} MB of images)", MAX_LOADED_BYTES >> 20));
         }
-        let r = read_file(path, host).and_then(|bytes| decode(&bytes))?;
+        let r = read_file(path, host, false).and_then(|bytes| decode(&bytes))?;
         decoded_bytes.fetch_add(bytes_of(&r), Ordering::Relaxed);
         Ok(r)
     };
@@ -321,18 +322,19 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
             let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
             base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
         }
-        None => return file_pixels(s, path),
+        None => return file_pixels(s, path, false),
     };
     Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
 }
 
-/// The pixels of the image file at `path`: the ones already loaded for it, else read and decoded.
-fn file_pixels(s: &Session, path: &str) -> Result<Arc<Raster>> {
+/// The pixels of the image file at `path`: the ones already loaded for it, else read and decoded
+/// (a path the user just `chosen` is used as given, see [`read_file`]).
+fn file_pixels(s: &Session, path: &str, chosen: bool) -> Result<Arc<Raster>> {
     if let Some(loaded) = s.doc()?.rasters.get(path) {
         return Ok(loaded.clone());
     }
     let host = s.state()?.path.clone();
-    let bytes = read_file(path, host.as_deref()).map_err(|e| bad(ID, format!("{path}: {e}")))?;
+    let bytes = read_file(path, host.as_deref(), chosen).map_err(|e| bad(ID, format!("{path}: {e}")))?;
     Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
 }
 
@@ -409,7 +411,8 @@ impl Interactive for ImageM {
                     s.echo("The file name is too long.");
                     return Ok(Step::Continue);
                 }
-                let raster = match file_pixels(s, &path) {
+                // A file picked or typed here is the user's own choice, as XATTACH takes it.
+                let raster = match file_pixels(s, &path, true) {
                     Ok(r) => r,
                     Err(e) => return report(s, e),
                 };
@@ -505,7 +508,7 @@ fn run_image(s: &mut Session, _p: &Value) -> Result<Value> {
 /// pixels are loaded.
 fn describe(d: &Drawing, path: &str, host: Option<&str>) -> Value {
     let loaded = d.rasters.get(path);
-    let found_at = super::blocks::xref::find_file(path, host).map(|f| f.to_string_lossy().into_owned());
+    let found_at = super::blocks::xref::find_file(path, host, false).map(|f| f.to_string_lossy().into_owned());
     let status = match (loaded, &found_at) {
         (Some(_), _) => "Loaded",
         (None, None) => "Not Found",

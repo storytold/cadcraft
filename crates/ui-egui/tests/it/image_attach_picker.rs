@@ -78,7 +78,10 @@ fn without_a_file_system_it_says_what_to_do() {
     let mut app = CadApp::new(Session::new(), Services { no_file_system: true, ..Services::default() });
     menus::activate(&mut app, "imageattach");
     assert!(app.session.running.is_none());
-    assert!(app.session.log.iter().any(|l| l.contains("no file system") && l.contains("`data`")), "{:?}", app.session.log);
+    let log = &app.session.log;
+    assert!(log.iter().any(|l| l.contains("no file system")) && log.iter().any(|l| l.contains("`data`")), "{log:?}");
+    // Each line fits a narrow command history.
+    assert!(log.iter().filter(|l| l.contains("IMAGEATTACH") || l.contains("Attach the image")).all(|l| l.chars().count() <= 60), "{log:?}");
 }
 
 #[test]

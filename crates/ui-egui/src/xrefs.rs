@@ -39,9 +39,15 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         // so instead of asking for a name it could not read.
         "imageattach" => {
             if app.services.no_file_system {
-                let hint = "IMAGEATTACH: there is no file system here to read an image from; attach it in the desktop app, or with the JSON form and the file's `data`";
-                app.session.echo(hint.to_string());
-                app.set_status(hint);
+                // Short lines: the command history shows each on one row, however narrow.
+                for line in [
+                    "IMAGEATTACH: no file system here to read an image from.",
+                    "Attach the image in the desktop app,",
+                    "or with IMAGEATTACH's JSON form and the file's `data`.",
+                ] {
+                    app.session.echo(line.to_string());
+                }
+                app.set_status("IMAGEATTACH: no file system here; see the command history");
                 return Some(Ok(Value::Null));
             }
             let pick = app.services.pick_image.as_ref()?;
