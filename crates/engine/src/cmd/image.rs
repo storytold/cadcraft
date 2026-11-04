@@ -247,6 +247,8 @@ fn def_name(d: &Drawing, path: &str, wanted: &str) -> String {
 
 const ID: &str = "imageattach";
 
+/// IMAGEATTACH's JSON form: the image of `path` (or of the handed-over `data`) placed at `at`,
+/// `scale` or `width` wide and turned by `rotation`.
 pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad(ID, "`path` is required"))?.to_string();
     if path.len() > MAX_PATH {
@@ -379,6 +381,8 @@ impl Interactive for ImageM {
     fn name(&self) -> &'static str {
         "IMAGEATTACH"
     }
+    /// The file, then the insertion point, the scale factor and the rotation, each with
+    /// AutoCAD's default.
     fn prompt(&self, _s: &Session) -> Prompt {
         let at = self.at.unwrap_or_default();
         match self.stage {
@@ -388,6 +392,8 @@ impl Interactive for ImageM {
             Stage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
         }
     }
+    /// One answer: a file that can't be read, or a scale or angle that isn't one, is reported and
+    /// asked again; the rotation places the image.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if matches!(i, Input::Cancel) {
             return Ok(Step::Cancel);
@@ -458,6 +464,7 @@ impl Interactive for ImageM {
         }
         Ok(Step::Continue)
     }
+    /// The image's frame as it would be placed with the cursor's point, width or direction.
     fn preview(&self, _s: &Session, cursor: Vec2) -> Vec<EntityKind> {
         let Some((_, raster)) = &self.file else { return Vec::new() };
         let at = self.at.unwrap_or(cursor);

@@ -71,6 +71,16 @@ fn cancelling_the_picker_attaches_nothing_and_json_never_picks() {
     assert_eq!(picks.get(), 1, "a JSON call runs the command as it is");
 }
 
+/// With no file system (the web) there is no name to ask for: IMAGEATTACH says what to do instead
+/// of leaving a prompt that could never read the file.
+#[test]
+fn without_a_file_system_it_says_what_to_do() {
+    let mut app = CadApp::new(Session::new(), Services { no_file_system: true, ..Services::default() });
+    menus::activate(&mut app, "imageattach");
+    assert!(app.session.running.is_none());
+    assert!(app.session.log.iter().any(|l| l.contains("no file system") && l.contains("`data`")), "{:?}", app.session.log);
+}
+
 #[test]
 fn without_a_picker_the_command_line_asks_for_the_file() {
     let mut app = CadApp::new(Session::new(), Services::default());

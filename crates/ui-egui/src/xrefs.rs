@@ -35,8 +35,15 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         }
         // IMAGEATTACH asks for the image with the host's file picker and then for its place at
         // the command line; cancelling the picker attaches nothing. Without a picker the command
-        // asks for the file name.
+        // asks for the file name. With no file system to read an image from (the web) it says
+        // so instead of asking for a name it could not read.
         "imageattach" => {
+            if app.services.no_file_system {
+                let hint = "IMAGEATTACH: there is no file system here to read an image from; attach it in the desktop app, or with the JSON form and the file's `data`";
+                app.session.echo(hint.to_string());
+                app.set_status(hint);
+                return Some(Ok(Value::Null));
+            }
             let pick = app.services.pick_image.as_ref()?;
             let Some(picked) = pick() else { return Some(Ok(Value::Null)) };
             let path = relative_to_host(app, &picked);
