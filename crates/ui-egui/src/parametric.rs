@@ -259,18 +259,20 @@ enum Act {
 }
 
 /// Draw constraint bars and dynamic constraints. `xf` maps model space to the screen.
-pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
-    refresh(app);
-    let Ok(d) = app.session.doc() else { return };
-    if d.constraints.is_empty() {
-        app.canvas.param.editing = None;
-        return;
-    }
-    let t = Tokens::get();
-    let set = &d.parametric.settings;
-    let mut act: Option<Act> = None;
-    let glyphs = &app.canvas.param.glyphs;
-    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+struct DimensionalContext<'a> {
+    doc: &'a Drawing,
+    settings: &'a cadcraft_doc::ParametricSettings,
+    glyphs: &'a [Glyph],
+    xf: &'a Xf,
+    painter: &'a egui::Painter,
+    ui: &'a mut egui::Ui,
+    tokens: Tokens,
+    units: (i64, i64),
+}
+
+fn draw_dimensional_constraints(frame: DimensionalContext<'_>) -> Option<Act> {
+    let DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp) } = frame;
+    let mut act = None;
     // ----- dynamic (dimensional) constraints -----
     let dim_c = Color32::from_rgb(0x9f, 0xb6, 0xd6);
     let off_px: f32 = 26.0;
@@ -392,7 +394,7 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
         lock(painter, Rect::from_min_size(r.min + vec2(3.0, (r.height() - 13.0) / 2.0), vec2(13.0, 13.0)), col);
         painter.galley(r.min + vec2(19.0, 2.0), galley, col);
-        let resp = ui.interact(r, ui.id().with(("dimcon", c.id)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("dimcon", c.id)), Sense::click());
         if resp.double_clicked() {
             act = Some(Act::Edit(c.name.clone(), c.expr.clone(), r.left_center()));
         }
@@ -403,6 +405,13 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
             expression = c.expr
         ));
     }
+    act
+}
+
+fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf, t: Tokens) {
+    let Ok(d) = app.session.doc() else { return };
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
     // ----- geometric constraint bars -----
     let mut bars: Vec<(Handle, Vec2, Vec<(&str, u32)>)> = Vec::new();
     let mut dots: Vec<Vec2> = Vec::new();
@@ -464,7 +473,7 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_stroke(r, 4.0, Stroke::new(1.0, Color32::from_rgb(0x6e, 0x75, 0x80).gamma_multiply(alpha)), egui::StrokeKind::Inside);
         for (i, (kind, id)) in kinds.iter().take(16).enumerate() {
             let cr = Rect::from_min_size(r.min + vec2(2.0 + i as f32 * cell, 2.0), vec2(cell, cell));
-            let resp = ui.interact(cr, ui.id().with(("cbar", h.0, *id)), Sense::hover());
+            let resp = ui.interact(cr, ui.scope_id().with(("cbar", h.0, *id)), Sense::hover());
             if resp.hovered() {
                 painter.rect_filled(cr.shrink(1.0), 3.0, Color32::from_rgb(0xf2, 0xf4, 0xf7));
             }
@@ -475,7 +484,7 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         if let Some((text, col)) = status {
             let sr = Rect::from_min_max(pos2(r.right() - strip - 1.0, r.top() + 3.0), pos2(r.right() - 2.0, r.bottom() - 3.0));
             painter.rect_filled(sr, 2.0, col.gamma_multiply(alpha.max(0.5)));
-            ui.interact(sr.expand(2.0), ui.id().with(("cbar_dof", h.0)), Sense::hover()).on_hover_text(text);
+            ui.interact(sr.expand(2.0), ui.scope_id().with(("cbar_dof", h.0)), Sense::hover()).on_hover_text(text);
         }
     }
     // The drawing's constraint state.
@@ -488,6 +497,21 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
         painter.galley(at + vec2(4.0, 2.0), galley, col);
     }
+}
+
+pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
+    refresh(app);
+    let Ok(d) = app.session.doc() else { return };
+    if d.constraints.is_empty() {
+        app.canvas.param.editing = None;
+        return;
+    }
+    let t = Tokens::get();
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
+    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+    let act = draw_dimensional_constraints(DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp) });
+    draw_geometric_constraints(app, ui, painter, xf, t);
     let _ = act_take(app, act, ui);
 }
 
@@ -498,11 +522,12 @@ fn act_take(app: &mut CadApp, act: Option<Act>, ui: &mut egui::Ui) -> Option<()>
     // The inline expression editor.
     let (name, mut buf, at) = app.canvas.param.editing.clone()?;
     let mut done: Option<bool> = None;
-    egui::Area::new(egui::Id::new("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
+    egui::Area::new(egui::Id::unique("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(format!("{name} ="));
-                let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(140.0).id(egui::Id::new("dimcon_edit_te")));
+                let label = ui.label(format!("{name} ="));
+                let r =
+                    ui.add(egui::TextEdit::singleline(&mut buf).desired_width(140.0).id(egui::Id::unique("dimcon_edit_te"))).labelled_by(label.id);
                 if !r.has_focus() && !r.lost_focus() {
                     r.request_focus();
                 }
@@ -571,14 +596,14 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
         .and_then(|v| v.get("parameters").cloned())
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let filter_id = egui::Id::new("par_filter");
+    let filter_id = egui::Id::unique("par_filter");
     let mut filter = ctx.data_mut(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
     let mut action: Option<Value> = None;
     // The name being renamed in place: (old name, text typed so far).
-    let rename_id = egui::Id::new("par_rename");
+    let rename_id = egui::Id::unique("par_rename");
     let mut renaming = ctx.data_mut(|d| d.get_temp::<(String, String)>(rename_id));
     egui::Window::new(crate::tl!("Parameters Manager"))
-        .id(egui::Id::new("Parameters Manager"))
+        .id(egui::Id::unique("Parameters Manager"))
         .open(open)
         .default_size(vec2(560.0, 300.0))
         .resizable(true)
@@ -592,7 +617,8 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
                     action = Some(json!({ "name": format!("user{n}"), "expr": "1" }));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::tl!("Search for parameter")).desired_width(170.0));
+                    ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::tl!("Search for parameter")).desired_width(170.0))
+                        .accessible_name(crate::tl!("Search for parameter"));
                 });
             });
             ui.separator();
@@ -609,6 +635,7 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
                         ui.label(egui::RichText::new(crate::i18n::t(title)).color(t.text_dim).small());
                         ui.end_row();
                         for r in group {
+                            let mut name_label = None;
                             if let Some((old, buf)) = renaming.as_mut().filter(|(old, _)| *old == r.name) {
                                 if let Some(name) = rename_field(ui, rename_id.with("te"), old, buf) {
                                     if !name.is_empty() && name != *old {
@@ -616,11 +643,15 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
                                     }
                                     renaming = None;
                                 }
-                            } else if ui.add(egui::Label::new(&r.name).selectable(false).sense(egui::Sense::click())).double_clicked() {
-                                renaming = Some((r.name.clone(), r.name.clone()));
+                            } else {
+                                let label = ui.add(egui::Label::new(&r.name).selectable(false).sense(egui::Sense::click()));
+                                if label.double_clicked() {
+                                    renaming = Some((r.name.clone(), r.name.clone()));
+                                }
+                                name_label = Some(label.id);
                             }
-                            let id = egui::Id::new(("par_expr", &r.name));
-                            if let Some(v) = expr_field(ui, id, &r.expr) {
+                            let id = egui::Id::unique(("par_expr", &r.name));
+                            if let Some(v) = expr_field(ui, id, &r.expr, name_label) {
                                 action = Some(json!({ "name": r.name, "expr": v }));
                             }
                             match (&r.value, &r.error) {
@@ -662,8 +693,11 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
 /// The in-place name editor: focused with the old name selected when it opens, so typing goes
 /// here and not to the command line. `Some` when it closes: the new name on Enter, `""` otherwise.
 fn rename_field(ui: &mut egui::Ui, id: egui::Id, old: &str, buf: &mut String) -> Option<String> {
+    // The id must be the same on every frame; `Id::unique` hashes its source deterministically.
+    // A `TextEdit` stores its state while it renders, so after requesting focus here the
+    // select-all range is loaded from that state and takes effect on the next frame.
     let opening = egui::TextEdit::load_state(ui.ctx(), id).is_none();
-    let resp = ui.add(egui::TextEdit::singleline(buf).id(id).desired_width(120.0));
+    let resp = ui.add(egui::TextEdit::singleline(buf).id(id).desired_width(120.0)).accessible_name(crate::tl!("Name"));
     if opening {
         resp.request_focus();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
@@ -680,9 +714,16 @@ fn rename_field(ui: &mut egui::Ui, id: egui::Id, old: &str, buf: &mut String) ->
 }
 
 /// A text field committing on Enter / focus loss when changed.
-pub fn expr_field(ui: &mut egui::Ui, id: egui::Id, value: &str) -> Option<String> {
+///
+/// `label` is the id of the visible label beside the field, so a screen reader reads the field as
+/// that label instead of an unnamed text box.
+pub fn expr_field(ui: &mut egui::Ui, id: egui::Id, value: &str, label: Option<egui::Id>) -> Option<String> {
     let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string());
     let resp = ui.add(egui::TextEdit::singleline(&mut buf).id(id.with("te")).desired_width(150.0));
+    let resp = match label {
+        Some(label) => resp.labelled_by(label),
+        None => resp.accessible_name(crate::tl!("Value")),
+    };
     // Focus from memory: `Response::has_focus` is false while the OS window is unfocused,
     // which dropped the pending edit (matches `palettes::edit_field`).
     if ui.memory(|m| m.has_focus(id.with("te"))) {
@@ -713,14 +754,14 @@ mod tests {
     fn frame(ctx: &egui::Context, focused: bool, events: Vec<egui::Event>) -> Option<String> {
         let mut out = None;
         let input = egui::RawInput { focused, events, ..Default::default() };
-        ctx.run_ui(input, |ui| out = expr_field(ui, egui::Id::new("e"), "1")).drop_without_applying_deltas();
+        ctx.run_ui(input, |ui| out = expr_field(ui, egui::Id::unique("e"), "1", None)).drop_without_applying_deltas();
         out
     }
 
     #[test]
     fn pending_expression_survives_window_blur() {
         let ctx = egui::Context::default();
-        let id = egui::Id::new("e");
+        let id = egui::Id::unique("e");
         frame(&ctx, true, vec![]);
         ctx.memory_mut(|m| m.request_focus(id.with("te")));
         frame(&ctx, true, vec![egui::Event::Text("+2".into())]);

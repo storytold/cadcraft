@@ -44,6 +44,9 @@ Every command has a JSON form that runs without dialogs. `cadcraft-cli commands 
 the catalog: each command's id and its parameters.
 
 - **Headless batch jobs:** `cadcraft-cli run FILE --cmd 'id {json}' --save OUT --export OUT.png`.
+  A `--cmd` parameter value of exactly `{last}` is replaced with the last object handle an earlier
+  `--cmd` in the same run returned, so `viewport.set {"handle":"{last}","scale":1}` can follow
+  `mview`. Every other value is passed unchanged.
 - **The running app:** start it with `--control PORT` and send JSON lines to `127.0.0.1:PORT`.
   See [control-protocol.md](control-protocol.md).
 

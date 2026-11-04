@@ -5,14 +5,18 @@
 //! (`Noto Sans CJK TC`) among installed files with a similar name. TrueType collections
 //! (`.ttc` / `.otc`) are scanned too; a stem lookup takes their first face.
 //!
+//! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
+//! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
+//! partitions on Android and HarmonyOS, and the XDG directories elsewhere. Web builds have no
+//! system fonts.
+//!
 //! Two process-wide settings (like AutoCAD's profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
 //!   file we don't read, a missing TTF). Empty = the built-in stroke font.
 //! - [`fallback_fonts`] (`FONTFALLBACK`): fonts tried first for characters the text's font
 //!   lacks (CJK in an SHX big font, for example), before the automatic system font search.
 //!
-//! On native builds both start from the `CADCRAFT_FONTALT` / `CADCRAFT_FONTFALLBACK`
-//! environment variables.
+//! Both start empty; the host sets its starting values ([`set_font_alt`], [`set_fallback_fonts`]).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -75,6 +79,12 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
+    pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
+        let Some(f) = self.font() else { return vec![None; chars.len()] };
+        let map = f.charmap();
+        chars.iter().map(|c| map.map(*c).map(|g| g.to_u32())).collect()
+    }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
         [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FULL_NAME]
@@ -107,6 +117,9 @@ const MAX_FIRST_WORD_FILES: usize = 24;
 const MAX_LOADED_BYTES: usize = 256 << 20;
 const MAX_CACHED_NAMES: usize = 4096;
 const MAX_CACHED_CHARS: usize = 50_000;
+/// Cumulative outline points one shaped line may retain, so an oversized expanded glyph repeated
+/// across a string cannot grow the result without bound (CWE-400).
+pub(crate) const MAX_SHAPED_POINTS: usize = 8_000_000;
 
 /// Fonts known to cover many scripts (CJK first), tried first for missing glyphs. Matched as
 /// substrings of the normalised file stem.
@@ -153,14 +166,58 @@ const ARABIC_FALLBACK: &[&str] = &[
     "dejavusans",
 ];
 const HEBREW_FALLBACK: &[&str] = &["notosanshebrew", "notoserifhebrew", "arial", "tahoma", "segoeui", "dejavusans"];
+/// Fonts known to cover Thai, with the OpenType mark positioning its stacked vowels and tone
+/// marks need. First the Windows faces Thai drawings are laid out with (Cordia New, Angsana New,
+/// Browallia New: Thai SHX fonts such as `cordia2.shx` copy their design and widths, so text
+/// keeps its fit in title blocks and tables), then IBM Plex Sans Thai (installed, or embedded
+/// from craft-fonts, which makes it the web build's Thai font), then Noto and the fonts each OS
+/// ships (macOS Thonburi and Sukhumvit, Windows Leelawadee and Tahoma, the Linux TLWG fonts).
+/// Matched as parts of file names: `angsa` and `browa` find both today's Windows collections
+/// (`angsana.ttc`, `browalia.ttc`) and the older single faces (`angsa.ttf`, `browab.ttf`).
+const THAI_FALLBACK: &[&str] = &[
+    "cordia",
+    "angsa",
+    "browa",
+    "ibmplexsansthai",
+    "notosansthai",
+    "notoserifthai",
+    "thonburi",
+    "sukhumvit",
+    "leelawui",
+    "leelawadeeui",
+    "leelawad",
+    "tahoma",
+    "kinnari",
+    "norasi",
+    "garuda",
+    "loma",
+    "waree",
+    "sarabun",
+];
 /// Script-specific fallback files loaded per character, at most.
 const MAX_SCRIPT_FILES: usize = 4;
+
+/// The font file stems matching a script's fallback `names`, best first: regular weights before
+/// bold, light and the like, then in the order of `names`, then by name.
+fn script_candidates(stems: &[String], names: &[&str]) -> Vec<String> {
+    let mut v: Vec<(usize, usize, String)> = stems
+        .iter()
+        .filter_map(|s| {
+            let n = norm(s);
+            names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
+        })
+        .collect();
+    v.sort();
+    v.dedup_by(|a, b| a.2 == b.2);
+    v.into_iter().map(|(_, _, s)| s).collect()
+}
 
 /// Script-specific fallback font names for `c`, if any.
 fn script_fallback(c: char) -> &'static [&'static str] {
     match c {
         '\u{0600}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' => ARABIC_FALLBACK,
         '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => HEBREW_FALLBACK,
+        '\u{0E00}'..='\u{0E7F}' => THAI_FALLBACK,
         _ => &[],
     }
 }
@@ -218,15 +275,20 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
+/// The platform's system font directories, in search order.
 #[cfg(not(target_arch = "wasm32"))]
-fn scan() -> HashMap<String, PathBuf> {
-    let mut out = HashMap::new();
+fn font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into));
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(PathBuf::from(h).join("Library/Fonts"));
         }
+    } else if cfg!(any(target_os = "android", target_env = "ohos")) {
+        // Android and HarmonyOS keep system fonts under /system/fonts; Android devices also use
+        // the product and vendor partitions for faces of their own. An app may read all of them,
+        // and directories a device lacks are skipped.
+        dirs.extend(["/system/fonts", "/product/fonts", "/system_ext/fonts", "/vendor/fonts"].map(Into::into));
     } else if cfg!(windows) {
         dirs.push("C:\\Windows\\Fonts".into());
         if let Some(l) = std::env::var_os("LOCALAPPDATA") {
@@ -239,7 +301,14 @@ fn scan() -> HashMap<String, PathBuf> {
             dirs.push(PathBuf::from(h).join(".local/share/fonts"));
         }
     }
-    let mut stack = dirs;
+    dirs
+}
+
+/// Every font file under [`font_dirs`], by lower-case file stem.
+#[cfg(not(target_arch = "wasm32"))]
+fn scan() -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
+    let mut stack = font_dirs();
     let mut seen = 0usize;
     while let Some(d) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
@@ -360,18 +429,8 @@ impl Db {
         if names.is_empty() {
             return None;
         }
-        let mut stems: Vec<(usize, usize, String)> = self
-            .paths
-            .keys()
-            .chain(self.files.keys())
-            .filter_map(|s| {
-                let n = norm(s);
-                names.iter().position(|p| n.contains(p)).map(|pref| (weight_penalty(s, ""), pref, s.clone()))
-            })
-            .collect();
-        stems.sort();
-        stems.dedup_by(|a, b| a.2 == b.2);
-        for (_, _, stem) in stems.into_iter().take(MAX_SCRIPT_FILES) {
+        let stems: Vec<String> = self.paths.keys().chain(self.files.keys()).cloned().collect();
+        for stem in script_candidates(&stems, names).into_iter().take(MAX_SCRIPT_FILES) {
             let Some(bytes) = self.file(&stem) else { continue };
             let Some(face) = faces(&bytes).into_iter().find(|f| f.has_glyph(c)) else { continue };
             if let Some(i) = self.fallback.faces.iter().position(|f| f.same(&face)) {
@@ -521,16 +580,8 @@ struct Prefs {
 }
 
 fn prefs() -> MutexGuard<'static, Prefs> {
-    static P: OnceLock<Mutex<Prefs>> = OnceLock::new();
-    P.get_or_init(|| {
-        #[cfg(not(target_arch = "wasm32"))]
-        let env = |k: &str| std::env::var(k).unwrap_or_default();
-        #[cfg(target_arch = "wasm32")]
-        let env = |_: &str| String::new();
-        Mutex::new(Prefs { alt: clean_name(&env("CADCRAFT_FONTALT")), fallback: split_list(&env("CADCRAFT_FONTFALLBACK")) })
-    })
-    .lock()
-    .unwrap_or_else(PoisonError::into_inner)
+    static P: Mutex<Prefs> = Mutex::new(Prefs { alt: String::new(), fallback: Vec::new() });
+    P.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A font name setting: trimmed, capped, "." = none.
@@ -595,6 +646,7 @@ pub fn fallback_for(c: char) -> Option<Face> {
 #[derive(Default)]
 pub(crate) struct GlyphOutline {
     pub(crate) contours: Arc<[Vec<Vec2>]>,
+    points: usize,
     pub(crate) advance: f64,
     pub(crate) cap: f64,
     /// The font maps the character (false: the missing-glyph shape).
@@ -614,33 +666,62 @@ enum GlyphKey {
 /// Cached glyph outlines keyed by (font bytes address, length, face, glyph). Fonts live for the
 /// whole process in the font table, so the address identifies them. A read-write lock: display
 /// lists are built on all cores and nearly every lookup is a hit, which a mutex serialized.
-type GlyphCache = HashMap<(usize, usize, u32, GlyphKey), Arc<GlyphOutline>>;
+#[derive(Default)]
+struct GlyphCache {
+    glyphs: HashMap<(usize, usize, u32, GlyphKey), Arc<GlyphOutline>>,
+    points: usize,
+}
 
+/// Return the process-wide outline cache whose retained glyph and point counts are bounded during insertion.
 fn glyph_cache() -> &'static RwLock<GlyphCache> {
     static C: OnceLock<RwLock<GlyphCache>> = OnceLock::new();
-    C.get_or_init(|| RwLock::new(HashMap::new()))
+    C.get_or_init(|| RwLock::new(GlyphCache::default()))
 }
 
 const MAX_CACHED_GLYPHS: usize = 40_000;
 const UPEM: f32 = 1000.0;
 
+#[derive(Default)]
 struct Pen {
     contours: Vec<Vec<Vec2>>,
     cur: Vec<Vec2>,
+    points: usize,
+    truncated: bool,
 }
 
+const MAX_OUTLINE_POINTS: usize = 65_536;
+
 impl Pen {
+    /// Append one flattened outline point, discarding all contours if the per-glyph point limit is exceeded.
+    fn push(&mut self, point: Vec2) {
+        if self.truncated {
+            return;
+        }
+        if self.points == MAX_OUTLINE_POINTS {
+            // An incomplete contour is not safe to fill; retain only the advance for this glyph.
+            self.truncated = true;
+            self.cur.clear();
+            self.contours.clear();
+            return;
+        }
+        self.points += 1;
+        self.cur.push(point);
+    }
+
     fn pt(x: f32, y: f32) -> Vec2 {
         Vec2::new(f64::from(x), f64::from(y))
     }
+    /// Close and retain a nondegenerate contour only if its closing point also fits the outline budget.
     fn flush(&mut self) {
         if self.cur.len() > 2 {
             if let (Some(f), Some(l)) = (self.cur.first().copied(), self.cur.last().copied())
                 && f != l
             {
-                self.cur.push(f);
+                self.push(f);
             }
-            self.contours.push(std::mem::take(&mut self.cur));
+            if !self.truncated {
+                self.contours.push(std::mem::take(&mut self.cur));
+            }
         } else {
             self.cur.clear();
         }
@@ -648,13 +729,16 @@ impl Pen {
 }
 
 impl OutlinePen for Pen {
+    /// Finish the preceding contour and begin a new one through the budgeted point writer.
     fn move_to(&mut self, x: f32, y: f32) {
         self.flush();
-        self.cur.push(Self::pt(x, y));
+        self.push(Self::pt(x, y));
     }
+    /// Append a line endpoint through the budgeted point writer.
     fn line_to(&mut self, x: f32, y: f32) {
-        self.cur.push(Self::pt(x, y));
+        self.push(Self::pt(x, y));
     }
+    /// Flatten a quadratic segment into six samples, charging each retained point to the glyph budget.
     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
         let a = self.cur.last().copied().unwrap_or_default();
         let c = Self::pt(cx0, cy0);
@@ -662,9 +746,10 @@ impl OutlinePen for Pen {
         for i in 1..=6 {
             let t = f64::from(i) / 6.0;
             let u = 1.0 - t;
-            self.cur.push(a * (u * u) + c * (2.0 * u * t) + b * (t * t));
+            self.push(a * (u * u) + c * (2.0 * u * t) + b * (t * t));
         }
     }
+    /// Flatten a cubic segment into eight samples, charging each retained point to the glyph budget.
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
         let a = self.cur.last().copied().unwrap_or_default();
         let c0 = Self::pt(cx0, cy0);
@@ -673,12 +758,22 @@ impl OutlinePen for Pen {
         for i in 1..=8 {
             let t = f64::from(i) / 8.0;
             let u = 1.0 - t;
-            self.cur.push(a * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + b * (t * t * t));
+            self.push(a * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + b * (t * t * t));
         }
     }
     fn close(&mut self) {
         self.flush();
     }
+}
+
+/// How far below the baseline a face reaches, as a fraction of the text height (which is the
+/// face's cap height): its descent over its cap height. A bottom-justified text's alignment
+/// point is there, as AutoCAD places it (#2229). `None` when the face has no usable descent.
+pub fn descent_ratio(face: &Face) -> Option<f64> {
+    let f = face.font()?;
+    let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
+    let r = descent / cap_height(&f);
+    (r.is_finite() && r > 0.0 && r < 2.0).then_some(r)
 }
 
 /// Cap height of a font in font units at 1000 units per em: the OS/2 value, else the height
@@ -712,9 +807,11 @@ pub fn glyph_contours(face: &Face, gid: u16) -> Arc<[Vec<Vec2>]> {
     glyph_by_id(face, u32::from(gid)).contours.clone()
 }
 
+/// Load or build a glyph outline with bounded flattening, retaining its advance even when contours are discarded.
+/// Cache insertion clears existing entries when the glyph-count or aggregate point allowance would be exceeded.
 fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
     let key = (face.bytes.as_ptr() as usize, face.bytes.len(), face.index, k);
-    if let Some(g) = glyph_cache().read().unwrap_or_else(PoisonError::into_inner).get(&key) {
+    if let Some(g) = glyph_cache().read().unwrap_or_else(PoisonError::into_inner).glyphs.get(&key) {
         return g.clone();
     }
     let Some(f) = face.font() else { return Arc::new(GlyphOutline { cap: 1.0, ..Default::default() }) };
@@ -723,19 +820,24 @@ fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
         GlyphKey::Id(id) => Some(GlyphId::new(id)),
     };
     let gid = mapped.unwrap_or_default();
-    let mut pen = Pen { contours: Vec::new(), cur: Vec::new() };
+    let mut pen = Pen::default();
     if let Some(g) = f.outline_glyphs().get(gid) {
         let _ = g.draw(DrawSettings::unhinted(Size::new(UPEM), LocationRef::default()), &mut pen);
         pen.flush();
     }
     let advance = f64::from(f.glyph_metrics(Size::new(UPEM), LocationRef::default()).advance_width(gid).unwrap_or(UPEM * 0.5));
     let (cap, mapped, gid) = (cap_height(&f), mapped.is_some(), gid.to_u32());
-    let g = Arc::new(GlyphOutline { contours: pen.contours.into(), advance, cap, mapped, gid, face: Some(face.clone()) });
+    let points = pen.contours.iter().map(Vec::len).sum();
+    let g = Arc::new(GlyphOutline { points, contours: pen.contours.into(), advance, cap, mapped, gid, face: Some(face.clone()) });
     let mut cache = glyph_cache().write().unwrap_or_else(PoisonError::into_inner);
-    if cache.len() > MAX_CACHED_GLYPHS {
-        cache.clear();
+    if cache.glyphs.len() >= MAX_CACHED_GLYPHS || cache.points.saturating_add(points) > MAX_SHAPED_POINTS {
+        cache.glyphs.clear();
+        cache.points = 0;
     }
-    cache.insert(key, g.clone());
+    if let Some(old) = cache.glyphs.insert(key, g.clone()) {
+        cache.points -= old.points;
+    }
+    cache.points += points;
     g
 }
 
@@ -777,6 +879,13 @@ pub(crate) fn text_glyph_at(g: &GlyphOutline, c: char, origin: Vec2, scale: f64,
     })
 }
 
+/// Charge source outline points before copying and transforming a glyph.
+/// Return `None` without spending fuel when it cannot fit; empty outlines remain valid at zero budget.
+pub(crate) fn place_glyph_budgeted(g: &GlyphOutline, x: f64, h: f64, wf: f64, shear: f64, points_left: &mut usize) -> Option<Vec<Vec<Vec2>>> {
+    *points_left = points_left.checked_sub(g.points)?;
+    Some(place_glyph(g, x, h, wf, shear))
+}
+
 /// Contours of a glyph scaled so its font's cap height is `h`, at pen position `x`.
 pub(crate) fn place_glyph(g: &GlyphOutline, x: f64, h: f64, wf: f64, shear: f64) -> Vec<Vec<Vec2>> {
     place_glyph_at(g, Vec2::new(x, 0.0), h / g.cap, wf, shear)
@@ -802,9 +911,15 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
+    shape_dir(face, s, height, width_factor, oblique, None)
+}
+
+/// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
+pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique)
+    // As in [`crate::shape_stroke_dir`]: a line asked to run right to left takes the bidi path.
+    if (crate::complex::needed(s) || base_rtl == Some(true))
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique, base_rtl)
     {
         return Some(sh);
     }
@@ -814,16 +929,20 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
     let mut out = Shaped::default();
     let mut spans = Vec::new();
     let mut x = 0.0;
+    // Cumulative retained-point budget: a compact CFF/OTF font can expand one glyph into a huge
+    // outline, and a short repeated string copies it per occurrence, so cap the total geometry
+    // kept in the Shaped result (CWE-400). Advances still accumulate so the width stays sensible.
+    let mut points_left: usize = MAX_SHAPED_POINTS;
     for (c, under, over) in crate::decode_controls(s) {
         if crate::bidi::is_format_control(c) {
             continue;
         }
         let g = glyph_or_fallback(face, c);
-        if !c.is_whitespace() {
-            let contours = place_glyph(&g, x, h, wf, shear);
-            if !contours.is_empty() {
-                out.push_glyph(contours, text_glyph(&g, c, x, h, wf, shear));
-            }
+        if !c.is_whitespace()
+            && let Some(contours) = place_glyph_budgeted(&g, x, h, wf, shear, &mut points_left)
+        {
+            // Even an empty mapped glyph needs a valid outline slot for text export.
+            out.push_glyph(contours, text_glyph(&g, c, x, h, wf, shear));
         }
         let adv = g.advance * h / g.cap * wf;
         spans.push((x, x + adv, under, over));
@@ -837,8 +956,8 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 /// Width of one line set in a TrueType face.
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0)
+    if crate::complex::needed(s)
+        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0, None)
     {
         return Some(sh.width);
     }
@@ -868,6 +987,40 @@ mod family_tests {
     use super::*;
 
     #[test]
+    fn thai_looks_in_thai_fonts_before_the_general_search() {
+        // Letters, vowels, tone marks and digits: the general search loads a bounded number of
+        // files with the CJK fonts first, none of which has Thai.
+        for c in ['\u{0E01}', '\u{0E33}', '\u{0E34}', '\u{0E4C}', '\u{0E50}'] {
+            assert!(script_fallback(c).contains(&"notosansthai"), "{c}");
+        }
+        assert!(script_fallback('a').is_empty() && script_fallback('\u{0E80}').is_empty());
+        // Windows, macOS and Linux each ship one of them under these file names.
+        let stems: Vec<String> = ["LeelawUI", "Thonburi", "Loma", "msyh"].map(norm).to_vec();
+        assert!(stems.iter().filter(|s| THAI_FALLBACK.iter().any(|p| s.contains(p))).count() == 3);
+        // The faces Thai drawings are laid out with come first, then IBM Plex Sans Thai (an
+        // installed file or the craft-fonts face, both under this stem), then the others; regular
+        // weights before bold.
+        let stems: Vec<String> =
+            ["notosansthai-regular", "ibmplexsansthai-bold", "ibmplexsansthai-regular", "msyh", "cordiab", "cordia", "ibmplexsansthailooped-regular"]
+                .map(String::from)
+                .to_vec();
+        assert_eq!(
+            script_candidates(&stems, THAI_FALLBACK),
+            ["cordia", "cordiab", "ibmplexsansthai-regular", "ibmplexsansthailooped-regular", "notosansthai-regular", "ibmplexsansthai-bold"]
+        );
+        // A text style naming the family looks in its regular file first, not the Latin Plex
+        // Sans or the looped or bold variants.
+        let stems: Vec<String> = ["ibmplexsans-regular", "ibmplexsansthai-bold", "ibmplexsansthailooped-regular", "ibmplexsansthai-regular", "arial"]
+            .map(String::from)
+            .to_vec();
+        let found = family_candidates(&stems, &norm("IBM Plex Sans Thai"), "ibm");
+        assert_eq!(found.first().map(String::as_str), Some("ibmplexsansthai-regular"), "{found:?}");
+        // Angsana New and Browallia New under today's Windows file names and the older ones.
+        let stems: Vec<String> = ["browa", "notosansthai-regular", "angsana", "browalia", "angsa", "arial"].map(String::from).to_vec();
+        assert_eq!(script_candidates(&stems, THAI_FALLBACK), ["angsa", "angsana", "browa", "browalia", "notosansthai-regular"]);
+    }
+
+    #[test]
     fn a_family_is_looked_for_in_files_starting_with_its_first_word() {
         let stems: Vec<String> = ["gost", "gost2304a", "gost common", "arial", "isocpeur"].map(String::from).to_vec();
         let c = family_candidates(&stems, &norm("gost type a"), "gost");
@@ -876,5 +1029,94 @@ mod family_tests {
         assert!(family_candidates(&stems, &norm("gost type a"), "go").is_empty(), "too short a word matches nothing");
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
+    }
+}
+
+#[cfg(test)]
+mod geometry_budget_tests {
+    use super::*;
+    /// Placement checks the source point cost before copying and accepts empty outlines without spending points.
+    #[test]
+    fn placement_checks_source_size_and_accepts_empty_glyphs() {
+        let glyph = GlyphOutline { contours: vec![vec![Vec2::ZERO; 4]].into(), points: 4, cap: 1.0, ..Default::default() };
+        let mut budget = 3;
+        assert!(place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut budget).is_none());
+        assert_eq!(budget, 3);
+        let empty = GlyphOutline { cap: 1.0, ..Default::default() };
+        assert_eq!(place_glyph_budgeted(&empty, 0.0, 1.0, 1.0, 0.0, &mut 0), Some(Vec::new()));
+        let mut budget = 4;
+        assert!(place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut budget).is_some());
+        assert_eq!(budget, 0);
+        assert!(place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut budget).is_none());
+    }
+    /// Exceeding the per-glyph flattening limit discards all contour geometry before it reaches the cache.
+    #[test]
+    fn flattened_outlines_are_bounded_before_caching() {
+        let mut pen = Pen::default();
+        for _ in 0..MAX_OUTLINE_POINTS {
+            pen.line_to(0.0, 0.0);
+        }
+        pen.line_to(1.0, 1.0);
+        pen.close();
+        assert!(pen.truncated);
+        assert!(pen.contours.is_empty() && pen.cur.is_empty());
+        assert_eq!(pen.points, MAX_OUTLINE_POINTS);
+    }
+    /// A mapped empty glyph retains text metadata referring to an existing empty outline slot.
+    #[test]
+    fn mapped_empty_glyph_keeps_text_and_a_valid_outline_slot() {
+        // Metadata placement does not parse the face; an empty face suffices to check the index contract.
+        let glyph = GlyphOutline { cap: 1.0, mapped: true, gid: 1, face: Some(Face { bytes: Arc::new(Vec::new()), index: 0 }), ..Default::default() };
+        let contours = place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut 0).unwrap();
+        let mut shaped = Shaped::default();
+        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0));
+        assert_eq!(shaped.text.len(), 1);
+        assert_eq!(shaped.text[0].outline, 0);
+        assert!(shaped.glyphs[shaped.text[0].outline].is_empty());
+    }
+
+    /// An empty glyph with no text mapping leaves the shaped result empty.
+    #[test]
+    fn unmapped_empty_glyph_does_not_make_the_shape_nonempty() {
+        let glyph = GlyphOutline { cap: 1.0, ..Default::default() };
+        let contours = place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut 0).unwrap();
+        let mut shaped = Shaped::default();
+        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0));
+        assert!(shaped.is_empty());
+        assert!(shaped.text.is_empty());
+    }
+
+    /// Missing text metadata does not discard a glyph that has drawable contours.
+    #[test]
+    fn an_unmapped_glyph_with_contours_still_draws() {
+        let mut shaped = Shaped::default();
+        let contours = vec![vec![Vec2::ZERO, Vec2::new(1.0, 1.0)]];
+        shaped.push_glyph(contours.clone(), None);
+        assert!(!shaped.is_empty());
+        assert_eq!(shaped.glyphs, vec![contours]);
+        assert!(shaped.text.is_empty());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod scan_tests {
+    use super::*;
+
+    /// Each platform searches its own system font directories. A branch that is missing or
+    /// misnamed leaves a device with no fonts at all, so the platform's main location is checked
+    /// here rather than discovered by a drawing full of missing-glyph boxes.
+    #[test]
+    fn the_platforms_system_font_directory_is_searched() {
+        let dirs = font_dirs();
+        #[cfg(target_os = "macos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/System/Library/Fonts")), "{dirs:?}");
+        #[cfg(target_os = "android")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(target_env = "ohos")]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/system/fonts")), "{dirs:?}");
+        #[cfg(windows)]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
+        assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
     }
 }

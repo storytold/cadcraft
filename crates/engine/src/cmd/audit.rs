@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, file, str_param};
+
+use super::always;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -142,7 +144,10 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     let Some(path) = &path_str else { return };
     let adt_path = std::path::PathBuf::from(path).with_extension("adt");
     let content = report.format_adt(&title, path_str.as_deref());
-    if let Err(e) = std::fs::write(&adt_path, content) {
+    // Write through an exclusively-created temporary and rename over the companion path, so a
+    // planted `.adt` symlink beside the drawing cannot redirect the report onto another file
+    // writable by the victim (CWE-59).
+    if let Err(e) = crate::atomic_write::write_atomic(&adt_path, content.as_bytes()) {
         log::warn!("AUDITCTL: could not write audit log {}: {e}", adt_path.display());
     }
 }

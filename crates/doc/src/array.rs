@@ -248,10 +248,17 @@ impl ArrayParams {
             return false;
         }
         let Some(items) = self.items() else { return false };
+        // Index the replacement entries by placement so each item is matched in O(1) instead of
+        // scanning the whole `replaced` vector per item, which is quadratic when both the items
+        // and the replacements are large (CWE-407). Last entry wins, as `.rev().find` did.
+        let mut last_replaced: std::collections::HashMap<(u32, u32, u32), usize> = std::collections::HashMap::with_capacity(self.replaced.len());
+        for (idx, r) in self.replaced.iter().enumerate() {
+            last_replaced.insert((r.i, r.j, r.level), idx);
+        }
         let mut source: Option<&str> = None;
         for (it, e) in items.iter().zip(&ents) {
             let EntityKind::Insert(ins) = &e.kind else { return false };
-            match self.replaced.iter_mut().rev().find(|r| (r.i, r.j, r.level) == (it.i, it.j, it.level)) {
+            match last_replaced.get(&(it.i, it.j, it.level)).and_then(|&idx| self.replaced.get_mut(idx)) {
                 Some(r) => r.block.clone_from(&ins.block),
                 None => match source {
                     None => source = Some(&ins.block),
