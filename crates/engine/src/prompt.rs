@@ -291,11 +291,27 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
+    /// only its preview set); `None` shows the drawing.
+    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
+        None
+    }
     /// The text the in-place editor edits: where, how, its current contents and what kind of
     /// object holds it. By default the new multiline text of [`Interactive::editing_mtext`].
     fn text_editor(&self) -> Option<TextEditor> {
         self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new() })
     }
+}
+
+/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
+/// runs. The whole drawing is drawn again when it ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DisplayOnly {
+    /// Objects of the drawing, drawn as they are.
+    pub handles: Vec<Handle>,
+    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
+    /// DVIEWBLOCK block), with its own properties.
+    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// What the in-place text editor edits ([`Interactive::text_editor`]). The editor answers the
@@ -324,24 +340,6 @@ pub enum EditorKind {
     Dimension { measured: String },
     /// A table cell (`name` such as `B3`); Tab, Shift+Tab and the arrows move between cells.
     TableCell { name: String },
-    }
-
-    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
-    /// only its preview set); `None` shows the drawing.
-    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
-        None
-    }
-}
-
-/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
-/// runs. The whole drawing is drawn again when it ends.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct DisplayOnly {
-    /// Objects of the drawing, drawn as they are.
-    pub handles: Vec<Handle>,
-    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
-    /// DVIEWBLOCK block), with its own properties.
-    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// See [`Interactive::drag`].
