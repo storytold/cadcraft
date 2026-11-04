@@ -4,6 +4,9 @@ use cadcraft_geom::{PolyVertex, Vec2, Vec3};
 
 use crate::*;
 
+#[path = "../tests/support/pdf_read.rs"]
+mod pdf_read;
+
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
     d.layers.push(Layer { name: "Walls".into(), color: Color::Index(1), ..Layer::default() });
@@ -95,6 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            insertion_point: Vec3::ZERO,
         }),
     )
     .unwrap();
@@ -333,6 +337,64 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// Several SORTENTSTABLEs for one space sort it once, in the last table's order.
+#[test]
+fn repeated_sortents_tables_use_the_last() {
+    let table =
+        |a: u32, b: u32| format!("0\nSORTENTSTABLE\n5\n{:X}\n100\nAcDbSortentsTable\n330\n1F\n331\nA\n5\n{a:X}\n331\nB\n5\n{b:X}\n", 0x100 + a);
+    let mut t = String::from(
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Model_Space\n0\nENDTAB\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLINE\n5\nA\n330\n1F\n10\n0\n20\n0\n11\n1\n21\n1\n0\nLINE\n5\nB\n330\n1F\n10\n0\n20\n0\n11\n2\n21\n2\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n",
+    );
+    for _ in 0..1000 {
+        t.push_str(&table(2, 1));
+    }
+    t.push_str(&table(1, 2));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(t.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xA, 0xB]);
+    let reversed = t.replacen(&table(1, 2), &table(2, 1), 1);
+    let d = read(reversed.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xB, 0xA]);
+}
+
+/// A table declaring 10 000 rows and no columns (or the reverse) is read as an empty table.
+#[test]
+fn table_with_an_empty_dimension_allocates_nothing() {
+    for (rows, cols) in [(10_000, 0), (0, 10_000)] {
+        let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
+        let d = read(t.as_bytes(), "t.dxf").unwrap();
+        let tables: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t) } else { None }).collect();
+        assert_eq!(tables.len(), 1, "the table is read");
+        for t in tables {
+            assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
+        }
+    }
+}
+
+/// Many distinct layer, linetype and style names (in the tables and on entities) read in linear
+/// time, with the duplicate rules kept: first LTYPE wins, last STYLE wins, layers case-insensitive.
+#[test]
+fn many_distinct_symbol_names_read_quickly() {
+    const N: usize = 40_000;
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLTYPE\n2\nLT{i}\n3\nfirst\n0\nSTYLE\n2\nST{i}\n40\n1\n"));
+    }
+    t.push_str("0\nLTYPE\n2\nlt0\n3\nsecond\n0\nSTYLE\n2\nst0\n40\n2\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\nL{i}\n10\n0\n20\n0\n11\n1\n21\n1\n"));
+    }
+    t.push_str("0\nLINE\n8\nl0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+    assert!(d.layers.len() > N && d.layers.len() < N + 3, "{}", d.layers.len());
+    assert_eq!(d.linetype("LT0").map(|l| l.description.as_str()), Some("first"));
+    assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
@@ -418,50 +480,22 @@ fn hostile_export_window_is_an_error() {
     assert!(check_window(&raw(0.0, 0.0, 1e-3, 1e-3)).is_ok());
 }
 
-/// Structural sanity check of a PDF: header, object count, xref offsets pointing at `n 0 obj`.
+/// Read a PDF back (its structure checked by the reader) and return the first page's decoded
+/// content.
 fn check_pdf(bytes: &[u8]) -> String {
-    assert!(bytes.starts_with(b"%PDF-1.4"));
-    let find = |pat: &[u8]| bytes.windows(pat.len()).position(|w| w == pat);
-    let rfind = |pat: &[u8]| bytes.windows(pat.len()).rposition(|w| w == pat);
-    let tail = String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(64)..]).to_string();
-    assert!(tail.trim_end().ends_with("%%EOF"));
-    let sx = rfind(b"startxref\n").unwrap();
-    let after = String::from_utf8_lossy(&bytes[sx + 10..]).to_string();
-    let xref_off: usize = after.lines().next().unwrap().trim().parse().unwrap();
-    assert!(bytes[xref_off..].starts_with(b"xref\n"));
-    let xref = String::from_utf8_lossy(&bytes[xref_off..]).to_string();
-    let mut lines = xref.lines().skip(1);
-    let count: usize = lines.next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
-    let objs = bytes.windows(7).filter(|w| w == b" 0 obj\n").count();
-    assert_eq!(count, objs + 1, "xref size = objects + free entry");
-    assert_eq!(bytes.windows(6).filter(|w| w == b"endobj").count(), objs);
-    let entries: Vec<&str> = lines.take(count).collect();
-    assert!(entries[0].starts_with("0000000000 65535 f"));
-    for (i, e) in entries.iter().enumerate().skip(1) {
-        let off: usize = e[..10].parse().unwrap();
-        assert!(bytes[off..].starts_with(format!("{i} 0 obj").as_bytes()), "object {i} offset");
-    }
-    assert!(xref.contains(&format!("/Size {count}")));
-    // The content stream's /Length matches its data.
-    let sp = find(b"/Length ").unwrap();
-    let after = String::from_utf8_lossy(&bytes[sp + 8..sp + 30]).to_string();
-    let len: usize = after.split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
-    let start = find(b"stream\n").unwrap() + 7;
-    assert!(bytes[start + len..].starts_with(b"\nendstream"));
-    let compressed = find(b"/FlateDecode").is_some();
-    let data = &bytes[start..start + len];
-    if compressed {
-        String::from_utf8(miniz_oxide::inflate::decompress_to_vec_zlib(data).unwrap()).unwrap()
-    } else {
-        String::from_utf8(data.to_vec()).unwrap()
-    }
+    assert!(String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(64)..]).trim_end().ends_with("%%EOF"));
+    let doc = pdf_read::read(bytes);
+    assert!(!doc.pages.is_empty());
+    doc.content().to_string()
 }
 
 fn media_box(bytes: &[u8]) -> (f64, f64) {
-    let text = String::from_utf8_lossy(bytes).to_string();
-    let i = text.find("/MediaBox [0 0 ").unwrap() + 15;
-    let v: Vec<f64> = text[i..].split(']').next().unwrap().split_whitespace().map(|x| x.parse().unwrap()).collect();
-    (v[0], v[1])
+    pdf_read::read(bytes).media()
+}
+
+/// The line widths (`w`) the content sets.
+fn widths(content: &str) -> Vec<f64> {
+    pdf_read::ops(content).iter().filter(|o| o.op == "w").filter_map(|o| o.nums.first().copied()).collect()
 }
 
 #[test]
@@ -471,16 +505,17 @@ fn pdf_model_fitted_to_sheet() {
     let content = check_pdf(&bytes);
     let (w, h) = media_box(&bytes);
     assert!((w - 841.89).abs() < 0.01 && (h - 595.276).abs() < 0.01, "A4 landscape in points: {w} x {h}");
-    assert!(content.contains(" m\n") && content.contains(" l\n") && content.contains("S\n"));
+    assert!(pdf_read::count(&content, "m") > 0 && pdf_read::count(&content, "l") > 0 && pdf_read::count(&content, "S") > 0);
     // Walls layer is red; colour 7 prints black.
     assert!(content.contains("1 0 0 RG"));
     assert!(content.contains("0 0 0 RG"));
     // Uncompressed output is plain text and also valid.
     let raw = plot(&d, &Space::Model, &serde_json::json!({"paper": "Letter", "compress": false, "landscape": false})).unwrap();
     let c2 = check_pdf(&raw);
-    assert!(!String::from_utf8_lossy(&raw).contains("FlateDecode"));
+    assert!(!pdf_read::read(&raw).pages[0].compressed);
+    assert!(pdf_read::read(&bytes).pages[0].compressed);
     assert_eq!(media_box(&raw), (612.0, 792.0));
-    assert!(c2.contains("re W n"));
+    assert!(pdf_read::clip_rect(&c2).is_some(), "clipped to the plot area: {c2}");
     // write() picks PDF by extension.
     assert!(write(&d, "x.pdf").unwrap().starts_with(b"%PDF"));
 }
@@ -505,6 +540,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }),
     )
     .unwrap();
@@ -513,11 +549,12 @@ fn pdf_layout_one_to_one_with_viewport() {
     // ANSI A landscape (inches → points).
     assert_eq!(media_box(&bytes), (792.0, 612.0));
     // Viewport border at 1:1: x from 1in to 9in = 72pt..648pt.
-    assert!(content.contains("72 72 m") || content.contains("72 72 l"), "{content}");
+    let corner = |o: &pdf_read::Op| matches!(o.op.as_str(), "m" | "l") && (o.nums[0] - 72.0).abs() < 1e-6 && (o.nums[1] - 72.0).abs() < 1e-6;
+    assert!(pdf_read::drawn(&content).iter().any(corner), "{content}");
     // Lineweights on: default 0.25 mm = 0.709 pt.
-    assert!(content.contains("0.709 w"));
+    assert!(widths(&content).iter().any(|w| (w - 0.709).abs() < 0.001), "{content}");
     let off = plot(&d, &paper, &serde_json::json!({"lineweights": false})).unwrap();
-    assert!(check_pdf(&off).contains("0 w"));
+    assert!(widths(&check_pdf(&off)).contains(&0.0));
     assert!(plot(&d, &Space::Paper("Nope".into()), &serde_json::json!({})).is_err());
     assert!(plot(&d, &paper, &serde_json::json!({"paper": "Z9"})).is_err());
 }
@@ -581,6 +618,7 @@ fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -609,6 +647,7 @@ fn viewport_frozen_layers_roundtrip() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -625,6 +664,12 @@ fn viewport_frozen_layers_roundtrip() {
         .collect();
     assert!(frozen.contains(&(2, vec!["Walls".to_string(), "A B".to_string()])), "{frozen:?}");
     assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
+}
+
+/// `d` as an R2018 DXF (frozen viewport layers in group 331).
+fn dxf_2018(d: &Drawing) -> String {
+    let opts = SaveOptions { version: Some(Version::R2018), binary: false };
+    String::from_utf8(write_with(d, "t.dxf", &opts).unwrap()).unwrap()
 }
 
 /// A layout with viewport 2 frozen on `Walls` and `A B` (both real layers), and its written DXF as
@@ -645,12 +690,17 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     });
     d.add(&paper, Common::default(), vp).unwrap();
-    let text = write_dxf(&d);
+    let text = dxf_2018(&d);
+    (d, pairs(&text))
+}
+
+/// The (code, value) pairs of DXF text.
+fn pairs(text: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();
-    let pairs = lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect();
-    (d, pairs)
+    lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect()
 }
 
 /// The pair range of the VIEWPORT record whose group 69 is `id`.
@@ -699,47 +749,60 @@ fn join(p: &[(String, String)]) -> String {
         .collect()
 }
 
-#[test]
-fn viewport_frozen_layers_written_as_341_handles() {
-    let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    let rec = &p[r];
-    let h341: Vec<&str> = rec.iter().filter(|(c, _)| c == "341").map(|(_, v)| v.as_str()).collect();
-    assert_eq!(h341, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
-    let last341 = rec.iter().rposition(|(c, _)| c == "341").unwrap();
-    let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
-    assert!(last341 < x, "341 must precede the xdata");
+/// The group 331 values of viewport 2's record.
+fn frozen_331(p: &[(String, String)]) -> Vec<String> {
+    p[vp_record(p, "2")].iter().filter(|(c, _)| c == "331").map(|(_, v)| v.trim().to_string()).collect()
 }
 
 #[test]
-fn viewport_frozen_layers_read_from_341_without_xdata() {
+fn viewport_frozen_layers_written_as_331_handles() {
+    // Real layers go out as handles only, before group 90.
     let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    // Strip the CADCraft xdata, and add a 341 to a handle that names no layer.
-    let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
-    let mut q: Vec<(String, String)> = p[..r.start].to_vec();
-    let mut head = p[r.start..x].to_vec();
-    head.push(("341".into(), "FFFFF".into()));
-    q.extend(head);
-    q.extend(p[r.end..].iter().cloned());
-    let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    let rec = &p[vp_record(&p, "2")];
+    assert!(!rec.iter().any(|(c, v)| c == "1000" && v == "VPFROZEN"), "no xdata for layers with a handle");
+    assert!(rec.iter().position(|(c, _)| c == "331") < rec.iter().position(|(c, _)| c == "90"));
+    // An R2000 DXF holds them in group 341, as the DXF 2000 Reference has them.
+    let (d, _) = frozen_vp_dxf();
+    let p = pairs(&write_dxf(&d));
+    let h341: Vec<String> = p[vp_record(&p, "2")].iter().filter(|(c, _)| c == "341").map(|(_, v)| v.clone()).collect();
+    assert_eq!(h341, [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    assert!(frozen_331(&p).is_empty());
 }
 
 #[test]
-fn viewport_frozen_xdata_wins_over_341() {
+fn viewport_frozen_layers_read_from_331_or_341_once_each() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 341 at layer 0: the xdata list must still be what is read.
-    let zero = layer_handle(&p, "0");
+    // 341 instead of 331, then Walls again in 331 and a handle that names no layer.
     let mut q = p.clone();
-    for t in &mut q[r] {
-        if t.0 == "341" {
-            t.1 = zero.clone();
+    for t in &mut q[r.clone()] {
+        if t.0 == "331" {
+            t.0 = "341".into();
         }
     }
+    q.splice(r.end..r.end, [("331".into(), "FFFFF".into()), ("331".into(), layer_handle(&p, "Walls"))]);
+    // A 331 inside another application's `102 {…}` group isn't a frozen layer.
+    let app = [("102".into(), "{ACAD_OTHER".into()), ("331".into(), layer_handle(&p, "0")), ("102".into(), "}".into())];
+    q.splice(r.start + 2..r.start + 2, app);
     let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(viewport_frozen(&back, 2), ["Walls", "A B"]);
+}
+
+#[test]
+fn viewport_freeze_edited_in_autocad_is_read_as_edited() {
+    // Every layer thawed in AutoCAD (no 331 left) stays thawed; a layer it froze instead is read.
+    let (_, p) = frozen_vp_dxf();
+    let r = vp_record(&p, "2");
+    let thawed: Vec<(String, String)> = p.iter().enumerate().filter(|(i, (c, _))| !(r.contains(i) && c == "331")).map(|(_, t)| t.clone()).collect();
+    assert!(viewport_frozen(&read_dxf(join(&thawed).as_bytes()).unwrap(), 2).is_empty());
+    let mut zero = p.clone();
+    for t in &mut zero[r] {
+        if t.0 == "331" {
+            t.1 = layer_handle(&p, "0");
+        }
+    }
+    assert_eq!(viewport_frozen(&read_dxf(join(&zero).as_bytes()).unwrap(), 2), ["0"]);
 }
 
 #[test]
@@ -748,7 +811,9 @@ fn viewport_frozen_layers_survive_dwg() {
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
-    // Survives via the CADCraft xdata: the DWG converter does not yet carry group 341 itself.
+    // The DWG holds them in group 331, what AutoCAD reads.
+    let p = pairs(&String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
 }
 
 #[test]
@@ -768,6 +833,7 @@ fn viewport_layer_colors_roundtrip() {
             layer_colors: colors,
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];
@@ -876,6 +942,62 @@ fn user_block_arrowheads_are_referenced_not_regenerated() {
     assert_eq!(back.blocks.len(), d.blocks.len());
 }
 
+/// Every standard arrowhead CADCraft generates reads back as its own geometry, through DXF and
+/// DWG, so reopening a drawing CADCraft wrote never turns them into user blocks.
+#[test]
+fn generated_arrowhead_blocks_are_not_kept_as_user_blocks() {
+    let mut d = Drawing::new_metric();
+    for (i, (_, name)) in crate::dxf_ext::ARROWS.iter().enumerate() {
+        d.dim_styles.push(DimStyle { name: format!("S{i}"), arrow_block: (*name).into(), ..DimStyle::default() });
+    }
+    let dxf = write_dxf(&d);
+    for (_, name) in crate::dxf_ext::ARROWS.iter().filter(|(k, _)| *k != cadcraft_render::Arrowhead::ClosedFilled) {
+        assert!(dxf.contains(&format!("\r\n{name}\r\n")), "{name} is written");
+    }
+    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
+        assert!(back.blocks.keys().all(|k| !k.starts_with('_')), "{what}: {:?}", back.blocks.keys().collect::<Vec<_>>());
+        assert!(roundtrip(&back).blocks.keys().all(|k| !k.starts_with('_')), "{what}: second save");
+    }
+}
+
+/// A file's own arrowhead block with a standard name (AutoCAD's `_Dot` is a closed polyline
+/// with width, not CADCraft's disc of solids) is kept when only a dimension style names it, and
+/// saved as it was, through DXF and DWG, instead of being replaced by CADCraft's geometry.
+#[test]
+fn file_arrowhead_blocks_with_standard_names_are_kept() {
+    let mut d = Drawing::new_metric();
+    let donut = LwPolyline {
+        vertices: vec![
+            PolyVertex { p: Vec2::new(-0.25, 0.0), bulge: 1.0, start_width: 0.5, end_width: 0.5 },
+            PolyVertex { p: Vec2::new(0.25, 0.0), bulge: 1.0, start_width: 0.5, end_width: 0.5 },
+        ],
+        closed: true,
+        const_width: 0.0,
+        elevation: 0.0,
+        plinegen: false,
+    };
+    for (name, kind) in [("_Dot", EntityKind::LwPolyline(donut)), ("_DotSmall", EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 0.0625 }))] {
+        let mut b = Block::new(name);
+        b.entities.push(Entity::new(Handle(0), kind));
+        d.blocks.insert(name.into(), std::sync::Arc::new(b));
+    }
+    d.dim_styles.push(DimStyle { name: "Dots".into(), arrow_block1: "_Dot".into(), arrow_block2: "_DotSmall".into(), ..DimStyle::default() });
+    let kinds = |d: &Drawing, name: &str| d.block(name).map(|b| b.entities.iter().map(|e| e.kind.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    let dxf = write_dxf(&d);
+    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
+        for name in ["_Dot", "_DotSmall"] {
+            assert_eq!(kinds(&back, name), kinds(&d, name), "{what}: {name}");
+        }
+        let again = write_dxf(&back);
+        assert!(!again.contains("\nSOLID\r"), "{what}: no arrowhead geometry of CADCraft's is written");
+        assert_eq!(kinds(&roundtrip(&back), "_Dot"), kinds(&d, "_Dot"), "{what}: a second save keeps it too");
+    }
+}
+
 #[test]
 fn dimension_overrides_roundtrip_as_dstyle_xdata() {
     let mut d = Drawing::new_imperial();
@@ -979,7 +1101,7 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     // Lines that aren't even group codes: the size is reported before anything is parsed.
     let text = "not a group code\nx\n".repeat(60);
     let e = cadcraft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
-    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
+    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
 }
 
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
@@ -1017,6 +1139,11 @@ fn damaged_dwg_opens_partially_and_says_what_it_left_out() {
     assert!(partial > 0, "no damaged copy read partially");
 }
 
+/// A dimension's standard DIMASSOC objects carry the same associations as CADCraft's xdata, so
+/// a file from another writer (xdata stripped) still follows its geometry: a linear dimension's
+/// two origins, a polyline's vertex named by its segment (#1049), and since #1651 a radial
+/// dimension's circle, whose centre comes back as a `Center` link and its rim point as
+/// `OnCircle`.
 #[test]
 fn dimension_associativity_roundtrips() {
     let mut d = Drawing::new_imperial();
@@ -1086,9 +1213,118 @@ fn dimension_associativity_roundtrips() {
     assert_eq!(assoc_of(&foreign, hl), lin.assoc);
     let fa = assoc_of(&foreign, ha);
     assert_eq!(fa.len(), 2);
-    assert_eq!(fa[1], ali.assoc[1]);
+    assert_eq!(fa[1], ali.assoc[1], "the polyline vertex, named by its segment (#1049)");
     assert!(matches!(fa[0].snap, AssocSnap::OnCircle { angle } if angle.abs() < 1e-9));
-    assert!(assoc_of(&foreign, hr).is_empty(), "radial links are CADCraft-only");
+    let fr = assoc_of(&foreign, hr);
+    assert_eq!(fr.len(), 2, "a radial dimension's circle comes from the standard DIMASSOC");
+    assert_eq!(fr[0], rad.assoc[0], "the centre");
+    assert!(matches!(fr[1].snap, AssocSnap::OnCircle { angle } if angle.is_finite()));
+}
+
+/// #1049: a polyline vertex is referenced as AutoCAD does: an end of one of its segments,
+/// numbered from 1 (subentity type 73 = 2, segment in 91, osnap 1 end / 13 start, parameter 1 /
+/// 0), preferring a straight segment. The cases are the ones observed in AutoCAD 2026 (black box)
+/// in the PR review.
+#[test]
+fn polyline_vertex_references_name_the_segment() {
+    let poly = |pts: &[(f64, f64)], closed: bool, bulges: &[(usize, f64)]| LwPolyline {
+        vertices: pts
+            .iter()
+            .enumerate()
+            .map(|(i, (x, y))| {
+                let b = bulges.iter().find(|(j, _)| *j == i).map_or(0.0, |(_, b)| *b);
+                PolyVertex::with_bulge(Vec2::new(*x, *y), b)
+            })
+            .collect(),
+        closed,
+        const_width: 0.0,
+        elevation: 0.0,
+        plinegen: false,
+    };
+    let refs = |p: &LwPolyline| (0..p.vertices.len()).map(|i| crate::dxf_write::polyline_vertex_ref(p, i)).collect::<Vec<_>>();
+    // Open: vertex 0 is the start of segment 1, vertex k the end of segment k.
+    let open = poly(&[(0.0, 0.0), (100.0, 0.0), (100.0, 60.0), (40.0, 60.0)], false, &[]);
+    assert_eq!(refs(&open), [Some((13, 0.0, 1)), Some((1, 1.0, 1)), Some((1, 1.0, 2)), Some((1, 1.0, 3))]);
+    // Closed (clockwise): the same; the closing segment is the 4th.
+    let closed = poly(&[(0.0, 0.0), (0.0, 60.0), (100.0, 60.0), (100.0, 0.0)], true, &[]);
+    assert_eq!(refs(&closed), [Some((13, 0.0, 1)), Some((1, 1.0, 1)), Some((1, 1.0, 2)), Some((1, 1.0, 3))]);
+    // An arc as segment 3: its end, vertex 3, is the start of the straight segment 4 instead.
+    let arc = poly(&[(0.0, 0.0), (100.0, 0.0), (100.0, 60.0), (40.0, 60.0), (0.0, 30.0)], true, &[(2, 0.5)]);
+    assert_eq!(refs(&arc)[3], Some((13, 0.0, 4)));
+    assert_eq!(refs(&arc)[2], Some((1, 1.0, 2)));
+    // Between two arcs there is no straight segment: no reference.
+    let arcs = poly(&[(0.0, 0.0), (100.0, 0.0), (100.0, 60.0)], false, &[(0, 0.5), (1, 0.5)]);
+    assert_eq!(refs(&arcs)[1], None);
+}
+
+/// #1049: dimensions on the vertices of a polyline are written with segment references, and a
+/// file with only those (another writer's, whose reference points AutoCAD leaves at 0,0) is read
+/// back to the same vertices.
+#[test]
+fn polyline_vertex_dimensions_round_trip_by_segment() {
+    let mut d = Drawing::new_metric();
+    let c = Common::default;
+    let pts = [(0.0, 0.0), (160.0, 0.0), (160.0, 210.0), (0.0, 210.0)];
+    let pl = d
+        .add(
+            &Space::Model,
+            c(),
+            EntityKind::LwPolyline(LwPolyline {
+                vertices: pts.iter().map(|(x, y)| PolyVertex::new(Vec2::new(*x, *y))).collect(),
+                closed: true,
+                const_width: 0.0,
+                elevation: 0.0,
+                plinegen: false,
+            }),
+        )
+        .unwrap();
+    let mut on_pl = dim(DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 }, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 210.0, 0.0));
+    on_pl.assoc = vec![
+        DimAssoc { point: "p13".into(), handle: pl, snap: AssocSnap::Vertex { index: 0 } },
+        DimAssoc { point: "p14".into(), handle: pl, snap: AssocSnap::Vertex { index: 3 } },
+    ];
+    let hp = d.add(&Space::Model, c(), EntityKind::Dimension(on_pl.clone())).unwrap();
+    let text = write_dxf(&d);
+    let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
+    // Each reference to the polyline: (72, 73, 91).
+    let refs: Vec<(i64, i64, i64)> = tags
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.code == 331 && t.str() == pl.hex())
+        .map(|(i, _)| {
+            let back = |code: i32| tags[..i].iter().rev().find(|t| t.code == code).and_then(|t| t.str().parse().ok()).unwrap_or(-1);
+            let fwd = |code: i32| tags[i..].iter().find(|t| t.code == code).and_then(|t| t.str().parse().ok()).unwrap_or(-1);
+            (back(72), fwd(73), fwd(91))
+        })
+        .collect();
+    assert_eq!(refs, [(13, 2, 1), (1, 2, 3)]);
+
+    // Without CADCraft's xdata and with the reference points at 0,0 (as AutoCAD writes them),
+    // the segments still give the vertices.
+    let mut stripped = Vec::new();
+    let mut skipping = false;
+    let mut in_ref = false;
+    for mut t in tags {
+        if t.code == 1001 {
+            skipping = t.str() == "CADCRAFT";
+        } else if t.code < 1000 {
+            skipping = false;
+        }
+        if t.code == 1 {
+            in_ref = t.str() == "AcDbOsnapPointRef";
+        }
+        if in_ref && matches!(t.code, 10 | 20) {
+            t = cadcraft_dxf::Tag::new(t.code, cadcraft_dxf::Value::Real(0.0));
+        }
+        if !skipping {
+            stripped.push(t);
+        }
+    }
+    let foreign = read_dxf(cadcraft_dxf::write_ascii(&stripped).as_bytes()).unwrap();
+    match &foreign.entity(hp).unwrap().kind {
+        EntityKind::Dimension(x) => assert_eq!(x.assoc, on_pl.assoc),
+        _ => panic!(),
+    }
 }
 
 fn parametric_sample(d: &mut Drawing) -> (Vec<Constraint>, Parametric) {
@@ -1235,6 +1471,23 @@ fn tables_roundtrip_with_title_header_and_merges() {
     let again = roundtrip(&back);
     assert_eq!(first(&again, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None }), t);
     assert_eq!(again.blocks.len(), back.blocks.len());
+}
+
+#[test]
+fn table_block_is_relative_to_the_insertion_point() {
+    let d = Drawing::new_imperial();
+    let t = table_sample();
+    let ents = crate::dxf_write::table_block_entities(&d, &t, "0");
+    let mut xs = Vec::new();
+    for e in &ents {
+        if let EntityKind::Line(l) = &e.kind {
+            xs.extend([l.a.x, l.b.x]);
+        }
+    }
+    assert!(!xs.is_empty());
+    let (min, max) = xs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+    // Columns total 8 wide; the block starts at its own origin, not at the insert x of 5.
+    assert!(min.abs() < 1e-9 && (max - 8.0).abs() < 1e-9, "block x range {min}..{max}");
 }
 
 #[test]
@@ -1880,8 +2133,9 @@ fn autocad_header_dim_variables_are_not_overrides() {
     assert_eq!(back.header.str("DIMDSEP", ""), ",");
     assert!(back.header.get("DIMTXT").is_some() && back.header.get("DIMCLRD").is_some());
     assert_eq!(back.dim_overrides(), serde_json::Map::new());
-    // A variable that really differs from the style is an override.
-    let text = text.replacen("$DIMDEC\r\n70\r\n3\r\n", "$DIMDEC\r\n70\r\n5\r\n", 1);
+    // A variable that really differs from the style is an override. CADCraft writes the current
+    // style's variables in the header too (#1051), so both copies change.
+    let text = text.replacen("$DIMDEC\r\n70\r\n3\r\n", "$DIMDEC\r\n70\r\n5\r\n", 1).replacen("$DIMDEC\r\n 70\r\n3\r\n", "$DIMDEC\r\n 70\r\n5\r\n", 1);
     assert_eq!(read_dxf(text.as_bytes()).unwrap().dim_overrides().get("decimals"), Some(&serde_json::json!(5)));
 }
 
@@ -1972,6 +2226,30 @@ fn hatch_edges_keep_full_circles_splines_and_clockwise_ellipses() {
     let ellipse = |ccw| format!("72\n3\n10\n0\n20\n0\n11\n5\n21\n0\n40\n0.5\n50\n0\n51\n180\n73\n{ccw}\n72\n1\n10\n-5\n20\n0\n11\n5\n21\n0\n");
     near(hatch_edge_extents(&ellipse(0)), [-5.0, -2.5, 5.0, 0.0]);
     near(hatch_edge_extents(&ellipse(1)), [-5.0, 0.0, 5.0, 2.5]);
+}
+
+/// Issue #923: a HATCH spline edge caps its degree at 10 like the SPLINE reader does, both when the
+/// knots are valid for the stated degree and when the reader falls back to the control polygon.
+#[test]
+fn hatch_spline_edge_caps_degree_like_spline() {
+    let control: Vec<Vec2> = (0..13).map(|i| Vec2::new(f64::from(i), f64::from(i % 2) * 10.0)).collect();
+    let points: String = control.iter().map(|c| format!("10\n{}\n20\n{}\n", c.x, c.y)).collect();
+    let close = "72\n1\n10\n12\n20\n0\n11\n0\n21\n0\n";
+    // The degree-10 curve over the same controls, which is what the capped edge must produce.
+    let want = cadcraft_geom::Spline::from_control(control, 10).tessellate(1e-3);
+    let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+    for p in &want {
+        (lo, hi) = (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)));
+    }
+    // Degree 12 with 13 controls: a valid knot vector has 26 knots; the second edge gives none.
+    let knots = format!("{}{}", "40\n0\n".repeat(13), "40\n1\n".repeat(13));
+    for (nk, knots) in [(26, knots.as_str()), (0, "")] {
+        let edge = format!("72\n4\n94\n12\n73\n0\n74\n0\n95\n{nk}\n96\n13\n{knots}{points}97\n0\n{close}");
+        let b = hatch_edge_extents(&edge);
+        for (got, want) in [(b.min.x, lo.x), (b.min.y, lo.y), (b.max.x, hi.x), (b.max.y, hi.y)] {
+            assert!((got - want).abs() < 1e-6, "extents {b:?}, want {lo:?} {hi:?} (knots {nk})");
+        }
+    }
 }
 
 #[test]
@@ -2124,6 +2402,48 @@ fn svg_group_transforms_apply() {
     assert!((l.b - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
 }
 
+/// The geometry of everything read, for comparing two readings of one drawing.
+fn geometry(d: &Drawing) -> String {
+    format!("{:?}", d.model.iter().map(|e| &e.kind).collect::<Vec<_>>())
+}
+
+/// `transform` on a shape element (SVG 1.1 §7.5, every graphics element takes one) maps it as
+/// the same transform on a group around it would: for every shape kind, composed after the
+/// parent group's, and not passed on to the next sibling.
+#[test]
+fn svg_element_transforms_apply_like_a_group_around_the_element() {
+    let read_svg = |body: &str| read(format!("{SVG_PAGE}{body}</svg>").as_bytes(), "t.svg").unwrap();
+    let shapes = [
+        r#"<rect x="1" y="1" width="4" height="3"/>"#,
+        r#"<circle cx="5" cy="5" r="2"/>"#,
+        r#"<ellipse cx="5" cy="5" rx="3" ry="1"/>"#,
+        r#"<line x1="0" y1="0" x2="4" y2="2"/>"#,
+        r#"<polyline points="0,0 2,0 2,2"/>"#,
+        r#"<polygon points="0,0 2,0 1,1"/>"#,
+        r#"<path d="M1 1 L4 1 A2 2 0 0 1 6 3 C7 3 8 4 8 5"/>"#,
+    ];
+    for t in ["translate(5,2)", "rotate(30 5 5)", "scale(2,1)", "skewX(20)", "matrix(1 0.2 0 1 3 -1)"] {
+        for shape in shapes {
+            let on_element = shape.replacen("/>", &format!(r#" transform="{t}"/>"#), 1);
+            let in_group = format!(r#"<g transform="{t}">{shape}</g>"#);
+            assert_eq!(geometry(&read_svg(&on_element)), geometry(&read_svg(&in_group)), "{t} on {shape}");
+        }
+    }
+    // A rotated circle stays a circle; a skewed one is an ellipse.
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="rotate(30)"/>"#)), ["Circle"]);
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="skewX(20)"/>"#)), ["Ellipse"]);
+    // Inside a group: the group's transform, then the element's.
+    let nested = read_svg(r#"<g transform="scale(2)"><line x1="0" y1="0" x2="1" y2="0" transform="translate(1,0)"/></g>"#);
+    let both = read_svg(r#"<g transform="scale(2)"><g transform="translate(1,0)"><line x1="0" y1="0" x2="1" y2="0"/></g></g>"#);
+    assert_eq!(geometry(&nested), geometry(&both));
+    // Written with an end tag too, and the next sibling keeps its own place.
+    let d = read_svg(r#"<line x1="0" y1="0" x2="1" y2="0" transform="translate(5,0)"></line><line x1="0" y1="0" x2="1" y2="0"/>"#);
+    let lines: Vec<Line> = d.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).collect();
+    assert_eq!(lines.len(), 2);
+    assert!((lines[0].a - Vec3::new(5.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[0]);
+    assert!((lines[1].a - Vec3::new(0.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[1]);
+}
+
 #[test]
 fn svg_viewbox_scaling_and_mm_units() {
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm" viewBox="0 0 200 100"><circle cx="100" cy="50" r="50"/></svg>"#;
@@ -2131,6 +2451,18 @@ fn svg_viewbox_scaling_and_mm_units() {
     let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
     assert!((c.radius - 5.0).abs() < 1e-9, "{c:?}");
     assert!((c.center.x - 10.0).abs() < 1e-9 && (c.center.y - 5.0).abs() < 1e-9, "{c:?}");
+}
+
+#[test]
+fn svg_viewbox_with_px_or_unitless_root_size_uses_reference_pixel() {
+    for w in ["800", "800px"] {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="600" viewBox="0 0 400 300"><line x1="0" y1="0" x2="400" y2="0"/></svg>"#
+        );
+        let d = read(svg.as_bytes(), "vb.svg").unwrap();
+        let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
+        assert!((l.b.x - 800.0 * 25.4 / 96.0).abs() < 1e-9, "{w}: {l:?}");
+    }
 }
 
 #[test]
@@ -2157,6 +2489,28 @@ fn svg_hidden_and_defs_subtrees_are_skipped() {
     );
     let d = read(svg.as_bytes(), "skip.svg").unwrap();
     assert_eq!(kinds(&d), ["Polyline"]);
+}
+
+/// #627: what the reader doesn't read yet (text, raster images, `<use>` copies, style sheets,
+/// rounded corners) is named in a read note instead of being left out silently; what isn't drawn
+/// (in `<defs>` or hidden) isn't counted.
+#[test]
+fn svg_left_out_content_is_noted() {
+    let svg = format!(
+        "{SVG_PAGE}<defs><style>.a {{ stroke: red }}</style><text>in defs</text><rect id=\"r\" width=\"1\" height=\"1\"/></defs>\
+         <text x=\"0\" y=\"5\">one</text><text x=\"0\" y=\"8\"><tspan>two</tspan></text><text display=\"none\">hidden</text>\
+         <image href=\"a.png\" width=\"2\" height=\"2\"/><use href=\"#r\"/><use href=\"#r\" x=\"3\"></use>\
+         <rect x=\"1\" y=\"1\" width=\"4\" height=\"3\" rx=\"1\"/><rect x=\"6\" y=\"1\" width=\"4\" height=\"3\"/></svg>"
+    );
+    let d = read(svg.as_bytes(), "left-out.svg").unwrap();
+    assert_eq!(kinds(&d), ["Polyline", "Polyline"]);
+    assert_eq!(
+        d.read_notes,
+        ["SVG: CADCraft doesn't read these yet, so they were left out: 2 texts, 1 raster image, 2 `<use>` copies, \
+          1 `<style>` sheet (its class rules aren't applied), 1 rectangle with rounded corners (drawn square)"]
+    );
+    let plain = read(format!("{SVG_PAGE}<rect x=\"1\" y=\"1\" width=\"4\" height=\"3\"/></svg>").as_bytes(), "a.svg").unwrap();
+    assert!(plain.read_notes.is_empty(), "{:?}", plain.read_notes);
 }
 
 #[test]
@@ -2255,15 +2609,16 @@ fn pdf_plots_transparency_only_when_asked() {
     };
     let on = plot(&d, &Space::Model, &opts(serde_json::json!({"plotTransparency": true}))).unwrap();
     let content = check_pdf(&on);
-    let text = String::from_utf8_lossy(&on).to_string();
-    assert!(text.contains("/ExtGState << /T50 << /Type /ExtGState /CA 0.5 /ca 0.5 >> >>"), "{text}");
+    // One graphics state: fill alpha 0.5 (strokes stay opaque).
+    assert_eq!(pdf_read::read(&on).pages[0].alphas, [(1.0, 0.5)]);
     // The line is opaque, the solid at half alpha.
-    assert!(content.contains("/T50 gs\n1 0 0 rg"), "{content}");
+    let ops = pdf_read::ops(&content);
+    assert!(ops.windows(2).any(|w| w[0].op == "gs" && w[1].op == "rg" && w[1].nums == [1.0, 0.0, 0.0]), "{content}");
+    assert_eq!(pdf_read::count(&content, "gs"), 1, "{content}");
     // Off (the default, and explicitly): no graphics states, and the same bytes either way.
     let off = plot(&d, &Space::Model, &opts(serde_json::json!({}))).unwrap();
     assert_eq!(off, plot(&d, &Space::Model, &opts(serde_json::json!({"plotTransparency": false}))).unwrap());
-    let off_text = String::from_utf8_lossy(&off).to_string();
-    assert!(!off_text.contains("ExtGState") && !off_text.contains(" gs\n"));
+    assert!(pdf_read::read(&off).pages[0].alphas.is_empty() && pdf_read::count(&check_pdf(&off), "gs") == 0);
     // On, but nothing transparent: the same bytes as off.
     let opaque = transparent_over_line(0);
     assert_eq!(
@@ -2282,13 +2637,13 @@ fn layout_page_setup_plot_transparency_is_used() {
     let faint = Common { color: Color::Index(5), transparency: Transparency::Percent(90), ..Common::default() };
     d.add(&paper, faint, EntityKind::Solid(Solid { corners })).unwrap();
     let raw = serde_json::json!({"compress": false});
-    assert!(!String::from_utf8_lossy(&plot(&d, &paper, &raw).unwrap()).contains("ExtGState"));
+    let alphas = |d: &Drawing, o: &serde_json::Value| pdf_read::read(&plot(d, &paper, o).unwrap()).pages[0].alphas.clone();
+    assert!(alphas(&d, &raw).is_empty());
     d.layouts[0].page.plot_transparency = true;
-    let text = String::from_utf8_lossy(&plot(&d, &paper, &raw).unwrap()).to_string();
-    assert!(text.contains("/T90 << /Type /ExtGState /CA 0.1 /ca 0.1 >>"), "{text}");
+    let on = alphas(&d, &raw);
+    assert!(on.iter().any(|(_, f)| (f - 0.1).abs() < 1e-6), "the faint solid fills at alpha 0.1: {on:?}");
     // The plot's own option wins over the page setup.
-    let off = serde_json::json!({"compress": false, "plotTransparency": false});
-    assert!(!String::from_utf8_lossy(&plot(&d, &paper, &off).unwrap()).contains("ExtGState"));
+    assert!(alphas(&d, &serde_json::json!({"compress": false, "plotTransparency": false})).is_empty());
 }
 
 #[test]
@@ -2343,11 +2698,14 @@ fn pdf_strokes_overlapping_transparent_objects_one_by_one() {
     };
     // 50 %: each line is its own stroke, so they build up where they cross.
     let glass = content(&crossing(50), true);
-    assert!(glass.contains("/T50 gs"), "{glass}");
-    assert_eq!(glass.matches("S\n").count(), 2, "{glass}");
+    assert!(pdf_read::count(&glass, "gs") > 0, "{glass}");
+    let page =
+        pdf_read::read(&plot(&crossing(50), &Space::Model, &serde_json::json!({"paper": "A4", "plotTransparency": true})).unwrap()).pages.remove(0);
+    assert!(page.alphas.contains(&(0.5, 1.0)), "strokes at half alpha: {:?}", page.alphas);
+    assert_eq!(pdf_read::count(&glass, "S"), 2, "{glass}");
     // Opaque: one path as before, whether the option is on or off.
     let opaque = content(&crossing(0), true);
-    assert_eq!(opaque.matches("S\n").count(), 1, "{opaque}");
+    assert_eq!(pdf_read::count(&opaque, "S"), 1, "{opaque}");
     assert_eq!(opaque, content(&crossing(0), false));
     // Transparency off: the transparent layer plots as before too.
     assert_eq!(content(&crossing(50), false), opaque);
@@ -2384,11 +2742,15 @@ fn pdf_strokes_each_transparent_primitive_inside_a_block() {
         check_pdf(&plot(d, &Space::Model, &serde_json::json!({"paper": "A4", "compress": false, "plotTransparency": on})).unwrap())
     };
     let half = content(&crossing_block(50), true);
-    assert!(half.contains("/T50 gs"), "{half}");
-    assert_eq!(half.matches("S\n").count(), 2, "{half}");
+    assert!(pdf_read::count(&half, "gs") > 0, "{half}");
+    let page = pdf_read::read(&plot(&crossing_block(50), &Space::Model, &serde_json::json!({"paper": "A4", "plotTransparency": true})).unwrap())
+        .pages
+        .remove(0);
+    assert!(page.alphas.contains(&(0.5, 1.0)), "strokes at half alpha: {:?}", page.alphas);
+    assert_eq!(pdf_read::count(&half, "S"), 2, "{half}");
     // Opaque: one path, the same with the option on or off.
     let opaque = content(&crossing_block(0), true);
-    assert_eq!(opaque.matches("S\n").count(), 1, "{opaque}");
+    assert_eq!(pdf_read::count(&opaque, "S"), 1, "{opaque}");
     assert_eq!(opaque, content(&crossing_block(0), false));
     assert_eq!(content(&crossing_block(50), false), opaque);
 }
@@ -2411,4 +2773,243 @@ fn foreign_table_reads_cell_text_height_and_keeps_style_scale() {
     let t2 = first(&back, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None });
     assert_eq!(t2.cells[0][0].text_height, Some(150.0));
     assert_eq!(t2.cells[0][1].text_height, None);
+}
+
+/// Issue #1209: a file that declares no units ($INSUNITS absent or 0) stays unitless when written
+/// again; only a new drawing takes its template's units.
+#[test]
+fn drawing_without_insunits_stays_unitless() {
+    let r12 = |extra: &str| {
+        format!(
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n{extra}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let insunits = |text: &str| {
+        text.lines().map(str::trim).collect::<Vec<_>>().windows(3).find(|w| w[0] == "$INSUNITS" && w[1] == "70").map(|w| w[2].to_string())
+    };
+    let rewritten = |extra: &str| insunits(&write_dxf(&read_dxf(r12(extra).as_bytes()).unwrap()));
+    assert_eq!(rewritten(""), Some("0".into()), "absent");
+    assert_eq!(rewritten("9\n$INSUNITS\n70\n0\n"), Some("0".into()), "declared unitless");
+    assert_eq!(rewritten("9\n$INSUNITS\n70\n6\n"), Some("6".into()), "declared metres");
+    assert_eq!(insunits(&write_dxf(&Drawing::new_metric())), Some("4".into()));
+    assert_eq!(insunits(&write_dxf(&Drawing::new_imperial())), Some("1".into()));
+}
+
+#[test]
+fn pdf_clips_a_primitive_beyond_the_coordinate_range() {
+    let mut d = Drawing::new_metric();
+    let paper = Space::Paper("Layout1".into());
+    let v = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+    // 4e7 mm at 1:1 is about 1.1e8 pt, past the range the writer's f32 geometry takes.
+    d.add(&paper, Common::default(), EntityKind::Line(Line { a: v(10.0, 20.0), b: v(4.0e7, 20.0) })).unwrap();
+    d.add(&paper, Common::default(), EntityKind::Solid(Solid { corners: [v(10.0, 50.0), v(4.0e7, 50.0), v(10.0, 60.0), v(10.0, 60.0)] })).unwrap();
+    let bytes = plot(&d, &paper, &serde_json::json!({"fit": false, "scale": 1.0, "compress": false})).unwrap();
+    let content = check_pdf(&bytes);
+    let clip = pdf_read::clip_rect(&content).unwrap();
+    // The x extent of what each paint operator paints.
+    let (mut xs, mut painted) = (Vec::new(), Vec::new());
+    for o in pdf_read::drawn(&content) {
+        match o.op.as_str() {
+            "m" | "l" => xs.push(o.nums[0]),
+            "S" | "f" => painted.push((o.op, xs.drain(..).fold((f64::MAX, f64::MIN), |(a, b), x| (a.min(x), b.max(x))))),
+            _ => {}
+        }
+    }
+    let (stroke, fill) = (painted.iter().find(|p| p.0 == "S"), painted.iter().find(|p| p.0 == "f"));
+    // Both run from inside the plot area to its right edge: the stroke to just past it.
+    let (_, (lo, hi)) = stroke.expect("the line is drawn");
+    assert!(*lo < clip[2] && *hi > clip[2] && *hi < clip[2] + 5.0, "line from {lo} to {hi}, clip {clip:?}");
+    let (_, (lo, hi)) = fill.expect("the solid is filled");
+    assert!(*lo < clip[2] && (*hi - clip[2]).abs() < 1e-3, "fill from {lo} to {hi}, clip {clip:?}");
+}
+
+#[test]
+fn pdf_plots_a_zero_length_line_as_a_dot() {
+    let mut d = Drawing::new_metric();
+    let red = |lw| Common { color: Color::Index(1), lineweight: lw, ..Common::default() };
+    // Points at 1:1 on A4, so the dot sits away from the clip edges.
+    let at = Vec3::new(50.0, 50.0, 0.0);
+    d.add(&Space::Model, red(Lineweight::Mm100(100)), EntityKind::Line(Line { a: at, b: at })).unwrap();
+    // The x extent of what the content fills in red: the dot's diameter.
+    let red_fill_width = |o: serde_json::Value| {
+        let content = check_pdf(&plot(&d, &Space::Model, &o).unwrap());
+        let ops = pdf_read::ops(&content);
+        let start = ops.iter().position(|o| o.op == "rg" && o.nums == [1.0, 0.0, 0.0]).expect("a red fill");
+        let end = start + ops[start..].iter().position(|o| o.op == "f").expect("filled");
+        assert!(ops[start..end].iter().filter(|o| o.op == "c").count() == 4, "{content}");
+        let xs: Vec<f64> =
+            ops[start..end].iter().filter(|o| matches!(o.op.as_str(), "m" | "c")).flat_map(|o| o.nums.iter().step_by(2).copied()).collect();
+        xs.iter().copied().fold(f64::MIN, f64::max) - xs.iter().copied().fold(f64::MAX, f64::min)
+    };
+    let opts = |lineweights: bool| serde_json::json!({"paper": "A4", "fit": false, "scale": 1.0, "compress": false, "lineweights": lineweights});
+    // 1 mm lineweight: a dot 1 mm across.
+    let w = red_fill_width(opts(true));
+    assert!((w - 72.0 / 25.4).abs() < 0.01, "{w}");
+    // A hairline still leaves a mark.
+    let w = red_fill_width(opts(false));
+    assert!((w - 0.25).abs() < 0.01, "{w}");
+}
+
+/// DXF text as (code, value) pairs.
+fn dxf_pairs(text: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    lines.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0].trim().to_string(), c[1].trim().to_string())).collect()
+}
+
+/// The records of type `kind` in DXF pairs, each as its groups after the type.
+fn dxf_records<'a>(pairs: &'a [(String, String)], kind: &str) -> Vec<&'a [(String, String)]> {
+    let mut out = Vec::new();
+    for (i, p) in pairs.iter().enumerate() {
+        if p.0 == "0" && p.1 == kind {
+            let rest = &pairs[i + 1..];
+            let end = rest.iter().position(|q| q.0 == "0").unwrap_or(rest.len());
+            out.push(&rest[..end]);
+        }
+    }
+    out
+}
+
+fn group<'a>(rec: &'a [(String, String)], code: &str) -> Option<&'a str> {
+    rec.iter().find(|p| p.0 == code).map(|p| p.1.as_str())
+}
+
+/// #1812: a file whose CLASSES start with VISUALSTYLE (500) and WIDGETX (501), with proxy objects
+/// of both classes and of a number past its last class, and a proxy entity of WIDGETX.
+fn proxy_file() -> Vec<u8> {
+    let text = String::from_utf8(write(&Drawing::new_metric(), "p.dxf").unwrap()).unwrap();
+    let mut pairs = dxf_pairs(&text);
+    let p = |c: &str, v: &str| (c.to_string(), v.to_string());
+    let class = |name: &str, cpp: &str| {
+        vec![p("0", "CLASS"), p("1", name), p("2", cpp), p("3", "ObjectDBX Classes"), p("90", "4095"), p("280", "1"), p("281", "0")]
+    };
+    let classes = pairs.iter().position(|q| q.0 == "2" && q.1 == "CLASSES").unwrap() + 1;
+    let mut injected = class("VISUALSTYLE", "AcDbVisualStyle");
+    injected.extend(class("WIDGETX", "AcDbWidgetX"));
+    pairs.splice(classes..classes, injected);
+    let objects = pairs.iter().position(|q| q.0 == "2" && q.1 == "OBJECTS").unwrap();
+    let nod = objects + 1;
+    let nod_handle = pairs[nod + 1].1.clone();
+    let after = nod + pairs[nod..].iter().position(|q| q.0 == "281").unwrap() + 1;
+    pairs.splice(after..after, [p("3", "ACAD_VISUALSTYLE"), p("350", "AAA0")]);
+    let proxy = |h: &str, class: &str, data: &str| {
+        vec![
+            p("0", "ACAD_PROXY_OBJECT"),
+            p("5", h),
+            // An application's 102 group before the proxy's own groups holds a 91 of its own.
+            p("102", "{MYAPP"),
+            p("91", "7"),
+            p("102", "}"),
+            p("330", "AAA0"),
+            p("100", "AcDbProxyObject"),
+            p("90", "499"),
+            p("91", class),
+            p("95", "0"),
+            p("70", "0"),
+            p("92", "8"),
+            p("310", data),
+            p("94", "0"),
+        ]
+    };
+    let mut objs = vec![
+        p("0", "DICTIONARY"),
+        p("5", "AAA0"),
+        p("330", &nod_handle),
+        p("100", "AcDbDictionary"),
+        p("281", "1"),
+        p("3", "Realistic"),
+        p("350", "AAA1"),
+        p("3", "Widget"),
+        p("350", "AAA2"),
+        p("3", "Stray"),
+        p("350", "AAA3"),
+    ];
+    objs.extend(proxy("AAA1", "500", "AA"));
+    objs.extend(proxy("AAA2", "501", "BB"));
+    objs.extend(proxy("AAA3", "537", "CC"));
+    let end = objects + pairs[objects..].iter().position(|q| q.0 == "0" && q.1 == "ENDSEC").unwrap();
+    pairs.splice(end..end, objs);
+    let ms = {
+        let recs = dxf_records(&pairs, "BLOCK_RECORD");
+        group(recs.iter().find(|r| group(r, "2") == Some("*Model_Space")).unwrap(), "5").unwrap().to_string()
+    };
+    let ents = pairs.iter().position(|q| q.0 == "2" && q.1 == "ENTITIES").unwrap() + 1;
+    pairs.splice(
+        ents..ents,
+        [
+            p("0", "ACAD_PROXY_ENTITY"),
+            p("5", "AAA4"),
+            p("330", &ms),
+            p("100", "AcDbEntity"),
+            p("8", "0"),
+            p("100", "AcDbProxyEntity"),
+            p("90", "498"),
+            p("91", "501"),
+            p("92", "0"),
+            p("93", "0"),
+            p("94", "0"),
+            p("95", "0"),
+            p("70", "0"),
+        ],
+    );
+    pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+}
+
+#[test]
+fn proxies_keep_their_class_when_classes_are_rewritten() {
+    let d = read(&proxy_file(), "p.dxf").unwrap();
+    let text = String::from_utf8(write(&d, "out.dxf").unwrap()).unwrap();
+    let pairs = dxf_pairs(&text);
+    let classes: Vec<String> = dxf_records(&pairs, "CLASS").iter().map(|r| group(r, "1").unwrap().to_string()).collect();
+    let class_of = |n: &str| classes.get(n.parse::<usize>().unwrap() - 500).cloned();
+    // The proxy's own 91 (after its subclass marker); the application group's stays as it was.
+    let own_91 = |r: &[(String, String)]| r.iter().skip_while(|q| q.1 != "AcDbProxyObject").find(|q| q.0 == "91").map(|q| q.1.clone()).unwrap();
+    let objects: Vec<(String, Option<String>)> =
+        dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().map(|r| (group(r, "310").unwrap().to_string(), class_of(&own_91(r)))).collect();
+    assert!(dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().all(|r| group(r, "91") == Some("7")), "the application's 91 changed");
+    assert_eq!(
+        objects,
+        [("AA".to_string(), Some("VISUALSTYLE".to_string())), ("BB".to_string(), Some("WIDGETX".to_string()))],
+        "classes {classes:?}"
+    );
+    let entities: Vec<Option<String>> = dxf_records(&pairs, "ACAD_PROXY_ENTITY").iter().map(|r| class_of(group(r, "91").unwrap())).collect();
+    assert_eq!(entities, [Some("WIDGETX".to_string())]);
+    // The proxy whose number named no class is gone, with its dictionary entry.
+    assert!(!text.contains("\nStray\n"));
+    // And it stays so through another save.
+    let again = String::from_utf8(write(&read(text.as_bytes(), "out.dxf").unwrap(), "again.dxf").unwrap()).unwrap();
+    let pairs = dxf_pairs(&again);
+    let classes: Vec<String> = dxf_records(&pairs, "CLASS").iter().map(|r| group(r, "1").unwrap().to_string()).collect();
+    let names: Vec<String> =
+        dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().map(|r| classes[own_91(r).parse::<usize>().unwrap() - 500].clone()).collect();
+    assert_eq!(names, ["VISUALSTYLE", "WIDGETX"]);
+}
+
+/// A name that isn't valid Unicode still picks its format by extension.
+#[cfg(unix)]
+#[test]
+fn non_unicode_names_pick_the_format_by_extension() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let name = |ext: &str| std::path::PathBuf::from(std::ffi::OsString::from_vec([b"caf\xe9.".as_slice(), ext.as_bytes()].concat()));
+    assert!(is_image(name("png")) && !is_image(name("dxf")));
+    let d = sample();
+    let bytes = write(&d, name("dxf")).unwrap();
+    assert!(read(&bytes, name("dxf")).is_ok());
+    assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
+    assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
+}
+
+/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
+/// wrote them for pattern fills only.
+#[test]
+fn solid_hatch_keeps_angle_scale_and_double_flag() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
+91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
+75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
+    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&out);
+    let h = dxf_records(&pairs, "HATCH")[0];
+    let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
+    assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
+    assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
+    assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
