@@ -117,6 +117,7 @@ fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     };
     let paper = Space::Paper("Layout1".into());
     d.add(&paper, Common::default(), EntityKind::Viewport(viewport(Vec3::new(50.0, 50.0, 0.0), Vec2::ZERO, vec!["FROZEN".into()]))).unwrap();
