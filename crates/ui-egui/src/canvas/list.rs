@@ -163,6 +163,22 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     app.canvas.build_ms = crate::now_ms() - t0;
 }
 
+/// Say in the command history, once per drawing, that the display list leaves block contents
+/// out: the drawing's block references expand to more than a list draws
+/// ([`cadcraft_render::MAX_BLOCK_EXPANSION`]), and the objects past it are not shown (#2773).
+/// Without a word, those blocks just look missing. Called every frame after [`ensure_list`],
+/// whichever way the list was built; it costs a flag and an id comparison.
+pub(super) fn note_truncated(app: &mut CadApp) {
+    let Ok(uid) = app.session.state().map(|st| st.uid) else { return };
+    if app.canvas.list.as_ref().is_some_and(|l| l.truncated) && app.canvas.truncation_noted != Some(uid) {
+        app.canvas.truncation_noted = Some(uid);
+        app.session.echo(format!(
+            "Some block contents are not drawn: this drawing's block references expand to more than {} objects.",
+            cadcraft_render::MAX_BLOCK_EXPANSION
+        ));
+    }
+}
+
 /// The display list of what a running command shows in place of the drawing
 /// ([`cadcraft_engine::Session::display_only`]: DVIEW's preview set), rebuilt when the drawing,
 /// the set or the 2x zoom band changes.

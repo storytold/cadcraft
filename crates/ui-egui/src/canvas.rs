@@ -31,7 +31,7 @@ use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
 use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
-use list::{OnlyList, PrimIndex, ensure_list, rebuilt_preview};
+use list::{OnlyList, PrimIndex, ensure_list, note_truncated, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
 use pick::{edit_text_at, hatch_at, wheel_zoom_points};
@@ -193,6 +193,9 @@ pub struct CanvasState {
     hover_cycle: Option<(Pos2, Vec<Handle>, usize)>,
     /// What the cycling list and the Shift+Space highlight were made for (see [`CycleKey`]).
     cycle_key: Option<CycleKey>,
+    /// The drawing (its state's `uid`) whose display list was last said to leave block contents
+    /// out ([`list::note_truncated`]): said once per drawing, not at every rebuild.
+    truncation_noted: Option<u64>,
 }
 
 /// The command, prompt, drawing (and its revision) and view that the objects under the cursor
@@ -1017,6 +1020,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         (xf.world_bounds(), 1.0 / xf.scale)
     }));
     ensure_list(app, &xf_paper, &views, ui.ctx());
+    note_truncated(app);
     let sheet = app.canvas.list.as_ref().and_then(|l| l.sheet);
     let surround = Color32::from_rgb(0x50, 0x57, 0x63);
     let (bg, paper_rect) = match sheet {
