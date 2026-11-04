@@ -18,8 +18,9 @@ use crate::{Result, Session};
 /// Most image files loaded per drawing.
 const MAX_IMAGE_FILES: usize = 1000;
 /// Largest image file read (bytes).
-#[cfg(not(target_arch = "wasm32"))]
 const MAX_IMAGE_BYTES: u64 = 256 << 20;
+/// Longest base64 text taken for `data`: what a file of [`MAX_IMAGE_BYTES`] encodes to.
+const MAX_IMAGE_BASE64: u64 = MAX_IMAGE_BYTES.div_ceil(3) * 4;
 /// Most decoded pixel bytes kept per drawing; images past it stay unloaded.
 const MAX_LOADED_BYTES: u64 = 2 << 30;
 /// Most image files decoded at the same time when a drawing opens.
@@ -74,7 +75,14 @@ fn paths(d: &Drawing) -> Vec<String> {
 fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let file = super::blocks::xref::find_file(path, host).ok_or("file not found")?;
+        let file = super::blocks::xref::find_file(path, host).ok_or_else(|| {
+            // An unsaved drawing has no folder for a relative path to be relative to.
+            if host.is_none() && std::path::Path::new(path).is_relative() {
+                "file not found (save the drawing first, or give a full path)"
+            } else {
+                "file not found"
+            }
+        })?;
         let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
         if len > MAX_IMAGE_BYTES {
             return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
@@ -304,6 +312,10 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
     let bytes = match p.get("data") {
         Some(data) => {
             let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
+            // Refused before decoding, which would hold all of it in memory.
+            if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_IMAGE_BASE64 {
+                return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
+            }
             base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
         }
         None => {

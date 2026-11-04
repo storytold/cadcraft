@@ -142,6 +142,33 @@ fn bad_input_is_refused_and_changes_nothing() {
     assert_eq!(listed(&mut s), json!([]));
 }
 
+/// `data` longer than the largest image file encodes to is refused before it is decoded.
+#[test]
+fn oversized_data_is_refused_before_decoding() {
+    hooks();
+    const LIMIT: u64 = 256 << 20;
+    let mut s = Session::new();
+    let too_long = "A".repeat(usize::try_from(LIMIT.div_ceil(3) * 4 + 1).unwrap());
+    let e = s.execute("imageattach", &json!({ "path": "a.png", "data": too_long })).unwrap_err().to_string();
+    assert!(e.contains("`data` is larger than 256 MB"), "{e}");
+    assert!(images(&s).is_empty());
+}
+
+/// A relative path in an unsaved drawing has nothing to be relative to, and the error says so.
+#[test]
+fn a_relative_path_in_an_unsaved_drawing_says_what_to_do() {
+    hooks();
+    let mut s = Session::new();
+    let e = s.execute("imageattach", &json!({ "path": "missing.png" })).unwrap_err().to_string();
+    assert!(e.contains("save the drawing first, or give a full path"), "{e}");
+
+    let dir = folder("unsaved");
+    let full = dir.join("missing.png");
+    let e = s.execute("imageattach", &json!({ "path": full.to_string_lossy() })).unwrap_err().to_string();
+    assert!(e.contains("file not found") && !e.contains("save the drawing"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_image_among_many_objects_keeps_its_pixels() {
     // More objects than one build task takes: the display list is built in parts and joined,
