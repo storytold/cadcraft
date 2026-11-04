@@ -22,6 +22,9 @@ const ACCEPT: &str = ".dxf,.dwg,.shx";
 
 /// Most files taken from one pick.
 const MAX_PICKED: u32 = 64;
+/// Most bytes being read at once, all files together: a large pick must not exhaust the page's
+/// memory (each file is copied once more into the app).
+const MAX_READING_BYTES: u64 = 512 << 20;
 
 /// A file read in the browser (name, contents), or why it couldn't be read.
 type Upload = Result<(String, Vec<u8>), String>;
@@ -30,12 +33,14 @@ type Upload = Result<(String, Vec<u8>), String>;
 #[derive(Clone)]
 pub struct Inbox {
     files: Rc<Cell<Vec<Upload>>>,
+    /// Bytes of the files being read now.
+    reading: Rc<Cell<u64>>,
     ctx: egui::Context,
 }
 
 impl Inbox {
     pub fn new(ctx: &egui::Context) -> Self {
-        Inbox { files: Rc::default(), ctx: ctx.clone() }
+        Inbox { files: Rc::default(), reading: Rc::default(), ctx: ctx.clone() }
     }
 
     /// Show the browser's file picker and return at once. A chosen file arrives through
@@ -72,6 +77,10 @@ impl Inbox {
                         inbox.read(file);
                     }
                 }
+                let skipped: Vec<String> = (MAX_PICKED..files.length()).filter_map(|i| files.get(i)).map(|f| f.name()).collect();
+                if !skipped.is_empty() {
+                    inbox.push(Err(format!("Open: at most {MAX_PICKED} files at a time; not opened: {}", skipped.join(", "))));
+                }
             }
             chosen.remove();
         });
@@ -101,12 +110,18 @@ impl Inbox {
         if let Some(e) = CadApp::open_size_error(&name, len) {
             return self.push(Err(e));
         }
+        let reading = self.reading.get();
+        if reading.saturating_add(len) > MAX_READING_BYTES {
+            return self.push(Err(format!("Open: {name} was not read: the files being read together are too large; open it on its own")));
+        }
+        self.reading.set(reading.saturating_add(len));
         let inbox = self.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let r = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
                 Ok(buf) => Ok((name, js_sys::Uint8Array::new(&buf).to_vec())),
                 Err(e) => Err(format!("Open: could not read {name}: {}", js_error(e))),
             };
+            inbox.reading.set(inbox.reading.get().saturating_sub(len));
             inbox.push(r);
         });
     }

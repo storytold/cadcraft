@@ -56,7 +56,7 @@ pub fn plain_mtext(s: &str) -> String {
                     }
                     'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
                     // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
-                    'U' | 'u' if crate::unicode_escape(&chars, i).is_some() => {
+                    'U' if crate::unicode_escape(&chars, i).is_some() => {
                         if let Some(u) = crate::unicode_escape(&chars, i) {
                             out.push(u);
                         }

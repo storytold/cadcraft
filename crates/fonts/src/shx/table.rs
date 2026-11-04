@@ -140,7 +140,7 @@ pub fn drawing_dirs() -> Vec<PathBuf> {
 pub fn set_search_path(list: &str) {
     let dirs: Vec<PathBuf> = list
         .split(';')
-        .flat_map(|p| if cfg!(windows) { vec![PathBuf::from(p)] } else { std::env::split_paths(p).collect() })
+        .flat_map(|p| if cfg!(any(windows, target_arch = "wasm32")) { vec![PathBuf::from(p)] } else { std::env::split_paths(p).collect() })
         .filter(|d| !d.as_os_str().is_empty() && !d.to_string_lossy().trim().is_empty())
         .take(MAX_DIRS)
         .collect();
@@ -184,7 +184,7 @@ pub fn generation() -> u64 {
 /// The SHX font file a style or linetype names, if CADCraft can find and read it.
 pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     let mut k = key(name)?;
-    let (provider, dirs) = {
+    let (provider, dirs, generation) = {
         let t = table();
         // The font map renames once (a map can't loop).
         if let Some(to) = t.map.iter().find(|(from, _)| *from == k).and_then(|(_, to)| key(to)) {
@@ -197,9 +197,8 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
             return r.clone();
         }
         let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.search_path.iter()).cloned().collect();
-        (t.provider.clone(), dirs)
+        (t.provider.clone(), dirs, t.generation)
     };
-    let generation = generation();
     let font = provider
         .and_then(|p| p.load(&k))
         .or_else(|| read_from(&dirs, &k))
