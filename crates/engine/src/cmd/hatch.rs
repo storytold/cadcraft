@@ -143,11 +143,13 @@ fn closed_loop(d: &Drawing, e: &Entity) -> Option<Vec<PolyVertex>> {
 
 /// Open curves that can make up an island together (a square drawn as four LINEs, two ARCs
 /// forming a circle, the inner lines of multiline walls around a room). Closed objects are
-/// islands on their own (see `closed_loop`).
+/// islands on their own (see `closed_loop`). A block reference counts by the lines it draws: a
+/// closed outline inside a block bounds a hatch as the same outline drawn on its own does.
 fn island_curve(d: &Drawing, e: &Entity) -> bool {
     matches!(
         e.kind,
-        EntityKind::Line(_)
+        EntityKind::Insert(_)
+            | EntityKind::Line(_)
             | EntityKind::Arc(_)
             | EntityKind::Ellipse(_)
             | EntityKind::LwPolyline(_)
