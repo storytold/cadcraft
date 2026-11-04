@@ -589,7 +589,9 @@ fn run_select(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(f) = points_param(p, "fence") {
         crate::select::select_fence(s.doc()?, &space, &f)
     } else {
-        targets(s, p)?
+        // Handles named outright, less the proxies: no selection takes one in.
+        let d = s.doc()?;
+        targets(s, p)?.into_iter().filter(|h| !d.entity(*h).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_)))).collect()
     };
     let mut sel = if add { s.selection() } else { Vec::new() };
     sel.extend(picked);
