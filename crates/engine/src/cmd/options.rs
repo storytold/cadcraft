@@ -89,26 +89,18 @@ pub fn profile(s: &Session) -> Value {
 const DRAWING_VARS: &[&str] = &["SNAPUNIT", "GRIDUNIT"];
 
 /// Set the profile variables named in `values` (an object; other keys are refused). All or
-/// nothing: one bad name or value leaves every setting, and the drawing's [`DRAWING_VARS`], as
-/// they were.
+/// nothing: one bad name or value leaves every setting, and the drawing, as they were.
 pub fn apply(s: &mut Session, values: &Value) -> Result<()> {
     let Some(obj) = values.as_object() else { return Err(bad("options", "expected an object of profile variables")) };
     let before = s.settings.clone();
-    // The header entries exactly as the drawing has them (reading them through the variables
-    // would give a zero grid spacing as the snap spacing).
-    let drawing: Vec<(&str, Option<cadcraft_doc::HVal>)> =
-        s.doc().map(|d| DRAWING_VARS.iter().map(|n| (*n, d.header.get(n).cloned())).collect()).unwrap_or_default();
+    // When one of the values is a drawing variable, the drawing as it is: put back whole on a
+    // refusal, it is the same drawing again, so not marked as changed either.
+    let touches_drawing = obj.keys().any(|k| DRAWING_VARS.iter().any(|v| v.eq_ignore_ascii_case(k.trim())));
+    let drawing = if touches_drawing { s.state().ok().map(|st| st.doc.clone()) } else { None };
     let put_back = |s: &mut Session| {
         s.settings = before.clone();
-        if let Ok(d) = s.doc_mut() {
-            for (name, v) in &drawing {
-                match v {
-                    Some(v) => d.header.set(name, v.clone()),
-                    None => {
-                        d.header.vars.remove(*name);
-                    }
-                }
-            }
+        if let (Some(doc), Ok(st)) = (&drawing, s.state_mut()) {
+            st.doc = doc.clone();
         }
     };
     for (name, v) in obj {
@@ -233,9 +225,16 @@ mod tests {
     fn a_refused_change_leaves_the_drawings_snap_and_grid_too() {
         let mut s = Session::new();
         let before = profile(&s);
-        for bad_one in [json!({ "SNAPUNIT": [2, 3], "GRIDUNIT": [4, 5], "WINDOWAREACOLOR": 0 }), json!({ "GRIDUNIT": [4, 5], "LUNITS": 2 })] {
+        let refused = [
+            json!({ "SNAPUNIT": [2, 3], "GRIDUNIT": [4, 5], "WINDOWAREACOLOR": 0 }),
+            json!({ "GRIDUNIT": [4, 5], "LUNITS": 2 }),
+            json!({ "WINDOWAREACOLOR": 0 }),
+        ];
+        for bad_one in refused {
             assert!(apply(&mut s, &bad_one).is_err(), "{bad_one}");
             assert_eq!(profile(&s), before, "{bad_one}");
+            // The same drawing, so there is nothing new to save.
+            assert!(!s.state().unwrap().is_dirty(), "{bad_one}");
         }
         assert!(s.execute("options", &json!({ "reset": true, "SNAPUNIT": [2, 3], "WINDOWAREACOLOR": 0 })).is_err());
         assert_eq!(profile(&s), before);
