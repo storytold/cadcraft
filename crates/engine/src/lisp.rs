@@ -198,7 +198,8 @@ struct Run {
 
 /// Steps per slice before the interface gets a frame.
 const SLICE: u64 = 400_000;
-/// Steps a blocking run (a programmatic call) may take before it is stopped.
+/// Steps a blocking run (a programmatic call) may take in all, counting every wait for input, before it is stopped
+/// with the error "routine stopped after 500000000 steps".
 const BLOCKING_CAP: u64 = 500_000_000;
 
 impl Session {
