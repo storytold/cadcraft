@@ -381,13 +381,15 @@ impl Session {
         // A transparent command's changes belong to the command it ran inside, and a command a
         // LISP routine ran belongs to the routine's single undo step (the routine keeps it for U
         // inside it).
-        if self.suspended.is_some() || self.lisp_groups_undo() {
+        let suspended = self.suspended.is_some();
+        if suspended || self.lisp_groups_undo() {
             if let Ok(st) = self.state_mut()
                 && !Arc::ptr_eq(&run.before, &st.doc)
             {
                 st.revision += 1;
-                if self.suspended.is_none() {
-                    self.lisp_record_step(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+                if !suspended {
+                    let resources = st.resources.clone();
+                    self.lisp_record_step(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before, resources });
                 }
             }
             return;
@@ -395,7 +397,7 @@ impl Session {
         if let Ok(st) = self.state_mut()
             && !Arc::ptr_eq(&run.before, &st.doc)
         {
-            st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+            st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before, resources: st.resources.clone() });
             st.revision += 1;
         }
     }

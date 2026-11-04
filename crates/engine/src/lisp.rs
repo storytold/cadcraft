@@ -452,7 +452,7 @@ impl Session {
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            st.push_undo(crate::Snapshot { label: run.label.clone(), doc, selection: sel });
+            st.push_undo(crate::Snapshot { label: run.label.clone(), doc, selection: sel, resources: st.resources.clone() });
             st.revision += 1;
         }
         self.lisp_last = Some(result);

@@ -72,7 +72,7 @@ impl Session {
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel };
+            let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel, resources: st.resources.clone() };
             // Inside a LISP routine the routine's single undo step records it, and the routine
             // keeps it for U inside it.
             if grouped {

@@ -6,6 +6,7 @@ pub struct Snapshot {
     pub label: String,
     pub doc: Arc<Drawing>,
     pub selection: Vec<Handle>,
+    pub resources: Option<Arc<crate::linked_files::ResourceSet>>,
 }
 
 /// One open drawing.
@@ -21,6 +22,8 @@ pub struct DocState {
     pub path: Option<String>,
     pub title: String,
     pub saved: Arc<Drawing>,
+    pub resources: Option<Arc<crate::linked_files::ResourceSet>>,
+    pub saved_resources: Option<Arc<crate::linked_files::ResourceSet>>,
     pub revision: u64,
     pub space: Space,
     /// Tiled model viewports (VPORTS).
@@ -49,6 +52,8 @@ impl DocState {
         let doc = Arc::new(doc);
         DocState {
             saved: doc.clone(),
+            resources: None,
+            saved_resources: None,
             doc,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -73,12 +78,44 @@ impl DocState {
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet
     /// saved into its block.
     pub fn is_dirty(&self) -> bool {
-        !Arc::ptr_eq(self.drawing(), &self.saved) || self.block_unsaved()
+        !Arc::ptr_eq(self.drawing(), &self.saved)
+            || self.block_unsaved()
+            || !crate::linked_files::ResourceSet::content_eq(&self.resources, &self.saved_resources)
     }
+    /// Replace authorized resource bytes as an undoable revision without changing geometry.
+    pub fn replace_resources(&mut self, resources: Arc<crate::linked_files::ResourceSet>) -> std::result::Result<(), String> {
+        let revision = self.revision.checked_add(1).ok_or("drawing revision exhausted")?;
+        let before = Snapshot {
+            label: "Replace linked files".into(),
+            doc: self.doc.clone(),
+            selection: self.selection.clone(),
+            resources: self.resources.clone(),
+        };
+        self.push_undo(before);
+        self.resources = Some(resources);
+        self.revision = revision;
+        Ok(())
+    }
+    /// A captured ACK updates only its resource checkpoint and never replaces a newer generation.
+    pub fn checkpoint_resources(&mut self, original: &Option<Arc<crate::linked_files::ResourceSet>>, saved: Arc<crate::linked_files::ResourceSet>) {
+        if crate::linked_files::ResourceSet::content_eq(&self.resources, original) {
+            self.resources = Some(saved.clone());
+        }
+        if let Some(editor) = &mut self.block_edit {
+            editor.host.checkpoint_resources(original, saved.clone());
+        }
+        self.saved_resources = Some(saved);
+    }
+
     /// Show the drawing an undo or redo step holds, with nothing selected; returns the drawing as
     /// it was, as the step back.
     pub(crate) fn swap_in(&mut self, snap: Snapshot) -> Snapshot {
-        let cur = Snapshot { label: snap.label, doc: std::mem::replace(&mut self.doc, snap.doc), selection: std::mem::take(&mut self.selection) };
+        let cur = Snapshot {
+            label: snap.label,
+            doc: std::mem::replace(&mut self.doc, snap.doc),
+            selection: std::mem::take(&mut self.selection),
+            resources: std::mem::replace(&mut self.resources, snap.resources),
+        };
         self.follow_layout(&cur.doc);
         self.revision += 1;
         cur

@@ -276,6 +276,7 @@ fn file_name(path: &str) -> String {
 /// [`finish_open`] on the thread that owns the session.
 pub struct ReadFile {
     drawing: Drawing,
+    resources: Option<std::sync::Arc<crate::linked_files::ResourceSet>>,
     binary_dxf: bool,
     name: String,
     path: Option<String>,
@@ -306,10 +307,24 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
     }
 }
 
+/// Decode a provided native DXF set without granting filesystem or network authority.
+/// The provider must verify its complete native dependency graph before calling this function.
+pub fn read_resource_set(set: std::sync::Arc<crate::linked_files::ResourceSet>) -> std::result::Result<ReadFile, String> {
+    let mut file = std::panic::catch_unwind(|| read_bytes(set.main.bytes.data(), &set.name, None))
+        .map_err(|_| "native linked drawing decoder failed".to_string())?
+        .map_err(|e| e.to_string())?;
+    file.resources = Some(set);
+    Ok(file)
+}
+
 /// Add a [`read_file`] result to the session as the active drawing: the fast half of OPEN.
 pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
-    let ReadFile { drawing, binary_dxf, name, path } = f;
+    let ReadFile { drawing, binary_dxf, name, path, resources } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
+    if let Some(st) = s.docs.get_mut(i) {
+        st.resources = resources.clone();
+        st.saved_resources = resources;
+    }
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, true))
 }
@@ -320,7 +335,7 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { drawing, resources: None, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -337,7 +352,7 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 }
 
 pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>) -> Result<usize> {
-    let ReadFile { drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
+    let ReadFile { drawing, binary_dxf, name, path, .. } = read_bytes(bytes, name, path)?;
     Ok(add_read(s, drawing, binary_dxf, &name, path))
 }
 
@@ -417,7 +432,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     }
     let bytes = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
-    if is_drawing_file(path) {
+    if is_drawing_file(path) && s.state()?.resources.is_none() {
         let st = s.state_mut()?;
         st.binary_dxf = opts.binary;
         if let Some(v) = opts.version
@@ -647,10 +662,16 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
 /// browser owns the file from there (we can't see whether the user keeps it), and the name stays so
 /// a later QSAVE downloads the drawing again under it. An image or PDF export (SVG, PNG, PDF) only
 /// stores the file: the drawing keeps its name, title and unsaved changes, so closing still asks.
+/// A provided linked project is also a drawing-only copy here: attachments are not stored by
+/// this single-file writer, so its complete-set checkpoint/name remain untouched.
 fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&str, &[u8]) -> Result<()>) -> Result<usize> {
     s.state()?;
     store(path, bytes)?;
     if !is_drawing_file(path) {
+        return Ok(bytes.len());
+    }
+    if let Some(omitted) = s.state()?.resources.as_ref().map(|set| set.files.len()) {
+        s.echo(format!("Drawing-only copy: {omitted} cached linked files and their relations were not exported. Use the complete linked-set device export to keep the project together; the linked saved checkpoint is unchanged."));
         return Ok(bytes.len());
     }
     let st = s.state_mut()?;
@@ -900,6 +921,10 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);
+        if let Some(set) = s.state()?.resources.as_ref() {
+            r["linkedCopy"] = json!({"completeProject":false,"filesOmitted":set.files.iter().map(|file|file.key.clone()).collect::<Vec<_>>(),
+                                    "relationsOmitted":set.edges.len(),"checkpointAdvanced":false});
+        }
     }
     Ok(r)
 }

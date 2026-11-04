@@ -22,6 +22,7 @@ mod finite;
 pub mod grip_dims;
 pub mod grips;
 mod guard;
+pub mod linked_files;
 pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;

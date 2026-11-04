@@ -69,6 +69,7 @@ pub mod vpscale;
 
 pub mod exchange;
 mod file_provider_app;
+mod file_provider_links;
 pub mod file_providers;
 
 use std::path::Path;

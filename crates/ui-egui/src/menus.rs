@@ -19,6 +19,9 @@ pub const PROVIDER_RECENT_OPEN: &str = "ui.provider.open";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
+    ("ui.provider.openSet", "Open linked provider drawing", &[], None),
+    ("ui.provider.applyResources", "Apply linked file reply", &[], None),
+    ("ui.provider.refreshResources", "Refresh linked files", &["File", "Refresh linked files"], None),
     ("ui.spacemouse", "3D Mouse...", &["Tools", "3D Mouse..."], None),
     ("ui.spacemouse.calibrate", "Calibrate 3D Mouse", &[], None),
     ("ui.spacemouse.navigate", "3D Mouse Navigation", &[], None),
@@ -138,6 +141,18 @@ fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, S
         return Some(Ok(Value::Null));
     }
     None
+}
+
+fn run_provider_file_command(app: &mut CadApp, id: &str, params: &Value, no_path: bool) -> Option<Result<Value, String>> {
+    let result = match id {
+        PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
+        "ui.provider.openSet" => crate::file_provider_app::open_set(app, params),
+        "ui.provider.applyResources" => crate::file_provider_app::apply_resources(app, params),
+        "ui.provider.refreshResources" => crate::file_provider_app::refresh_resources(app),
+        "ui.saveas" | "saveas" if no_path && app.file_providers.enabled() => crate::file_provider_app::save(app, true),
+        _ => return None,
+    };
+    Some(result)
 }
 
 fn run_preference_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -316,17 +331,7 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
-fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if let Some(result) = route_ui_subsystems(app, id, params) {
-        return Some(result);
-    }
-    // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
-    // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
-    // never open a picker.
-    let no_path = should_pick_file_path(id, params);
-    if let Some(result) = run_recent_file_command(app, id) {
-        return Some(result);
-    }
+fn run_settings_and_close_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = run_preference_command(app, id, params) {
         return Some(result);
     }
@@ -339,6 +344,26 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(result) = run_close_command(app, id, params) {
         return Some(result);
     }
+    None
+}
+
+fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = route_ui_subsystems(app, id, params) {
+        return Some(result);
+    }
+    // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
+    // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
+    // never open a picker.
+    let no_path = should_pick_file_path(id, params);
+    if let Some(result) = run_recent_file_command(app, id) {
+        return Some(result);
+    }
+    if let Some(result) = run_settings_and_close_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_provider_file_command(app, id, params, no_path) {
+        return Some(result);
+    }
     // FIND typed, or chosen from Edit ▸ Find..., opens the window; a JSON call carries `find`
     // and falls through to the engine, so scripts, LISP and the MCP server keep their answer.
     if id == "find" && params.is_null() {
@@ -346,7 +371,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         return Some(Ok(Value::Null));
     }
     let r = match id {
-        PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
             if let Some(p) = picked {
@@ -394,9 +418,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "ui.saveas" | "saveas" if no_path => {
-            if app.file_providers.enabled() {
-                return Some(crate::file_provider_app::save(app, true));
-            }
             let title = app.session.state().map(|s| s.title.clone()).ok();
             let name = app.ui.save_format.suggested_name(title.as_deref());
             if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
@@ -633,7 +654,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
-        if !menu.is_empty() {
+        if !menu.is_empty() && (*id != "ui.provider.refreshResources" || (app.file_providers.enabled() && app.file_providers.linked_enabled())) {
             add(menu, label, id, *sc, true);
         }
     }
