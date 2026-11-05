@@ -147,6 +147,7 @@ enum LeftOut {
     Use,
     Style,
     RoundedCorners,
+    TooLarge,
 }
 
 impl LeftOut {
@@ -166,6 +167,7 @@ impl LeftOut {
             Self::Use => ("`<use>` copy", "`<use>` copies"),
             Self::Style => ("`<style>` sheet (its class rules aren't applied)", "`<style>` sheets (their class rules aren't applied)"),
             Self::RoundedCorners => ("rectangle with rounded corners (drawn square)", "rectangles with rounded corners (drawn square)"),
+            Self::TooLarge => ("shape with coordinates too large to represent", "shapes with coordinates too large to represent"),
         };
         format!("{n} {}", if n == 1 { one } else { many })
     }
@@ -353,6 +355,11 @@ impl Parser {
         self.elements += 1;
         if self.elements > MAX_ELEMENTS {
             return Err(IoError::Format(format!("SVG: more than {MAX_ELEMENTS} elements")));
+        }
+        // Finite numbers can still overflow through transforms and relative steps (`l1e308 0` twice).
+        if !finite(&kind) {
+            self.left_out(LeftOut::TooLarge);
+            return Ok(());
         }
         // Charge the vertices this entity retains against the shared document budget, so repeated
         // flattened arcs/curves cannot amplify a compact path into unbounded geometry (CWE-400).
@@ -578,6 +585,18 @@ impl Parser {
             ctrl.clear();
         }
         Ok(())
+    }
+}
+
+/// Every coordinate of an entity the reader makes is finite.
+fn finite(kind: &EntityKind) -> bool {
+    match kind {
+        EntityKind::Line(l) => l.a.is_finite() && l.b.is_finite(),
+        EntityKind::Circle(c) => c.center.is_finite() && c.radius.is_finite(),
+        EntityKind::Ellipse(e) => e.center.is_finite() && e.major.is_finite() && e.ratio.is_finite(),
+        EntityKind::LwPolyline(p) => p.vertices.iter().all(|v| v.p.is_finite() && v.bulge.is_finite()),
+        EntityKind::Spline(s) => s.control.iter().all(|p| p.is_finite()),
+        _ => true,
     }
 }
 

@@ -2515,6 +2515,20 @@ fn svg_hostile_input_errors_without_panicking() {
 }
 
 #[test]
+fn svg_coordinates_that_overflow_are_left_out() {
+    // Every number is finite; relative steps and transforms overflow them to infinity or NaN.
+    let svg = format!(
+        "{SVG_PAGE}<path d=\"M1e308 0 l1e308 0\"/><rect x=\"1e308\" width=\"1e308\" height=\"1\"/>\
+         <g transform=\"scale(1e308)\"><line x1=\"1e308\" y1=\"0\" x2=\"1\" y2=\"1\"/><circle r=\"1e308\"/></g>\
+         <g transform=\"scale(1e308,1)\"><ellipse rx=\"1e308\" ry=\"1\"/><path d=\"M0 0 C1e308 0 1 1 2 2\"/></g>\
+         <line x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"/></svg>"
+    );
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Line"]);
+    assert_eq!(d.read_notes, ["SVG: CADCraft doesn't read these yet, so they were left out: 6 shapes with coordinates too large to represent"]);
+}
+
+#[test]
 fn svg_no_geometry_yields_an_empty_drawing() {
     let svg = format!("{SVG_PAGE}</svg>");
     let d = read(svg.as_bytes(), "empty.svg").unwrap();
