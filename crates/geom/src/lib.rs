@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod bounds;
+mod conic;
 mod curve;
 mod fillet;
 mod intersect;
@@ -19,6 +20,9 @@ mod spline_fit;
 mod vec;
 
 pub use bounds::Bounds2;
+pub use conic::{
+    Conic, circle_ellipse, ellipse_arc_closest_param, ellipse_arcs, ellipse_closest_param, ellipse_ellipse, line_ellipse, on_ellipse_arc,
+};
 pub use curve::{
     Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, polygon_centroid, shoelace,
 };
@@ -76,6 +80,8 @@ pub fn arc_segments(radius: f64, sweep: f64, tol: f64) -> usize {
     (n as usize).clamp(1, 4096)
 }
 
+#[cfg(test)]
+mod conic_tests;
 #[cfg(test)]
 mod property_tests;
 #[cfg(test)]
