@@ -358,6 +358,22 @@ fn the_glyph_cache_is_bounded_by_points() {
 }
 
 #[test]
+fn a_name_is_looked_for_in_its_first_kilobyte_only() {
+    // Hostile: 65,535 big font records over one 64 KB run without a NUL were each searched to
+    // the end, 4 G bytes (1.7 s) for a 576 KB file.
+    let (short, long) = ("N".repeat(1024), "N".repeat(1025));
+    let f = font(&format!("*BIGFONT 2,1,081,09F\n*082A0,1,{short}\n010,0\n*082A1,1,{long}\n010,0\n"));
+    assert!(f.has_shape(0x82A0) && !f.has_shape(0x82A1));
+    let mut big = parse::BIGFONT.to_vec();
+    big.extend([3, 0, 3, 0, 0, 0]);
+    for n in 1..=3u8 {
+        big.extend([n, 0, 0xFF, 0xFF, 55, 0, 0, 0]);
+    }
+    big.extend([b'N'; 0xFFFF]);
+    assert_eq!(ShxFont::parse(&big).err(), Some(ShxError::Empty));
+}
+
+#[test]
 fn a_doubled_minus_sign_is_not_a_number() {
     // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
     // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
