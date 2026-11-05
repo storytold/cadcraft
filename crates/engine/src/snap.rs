@@ -492,7 +492,10 @@ fn finish(
                     Prim::Seg(Segment::Arc { arc, .. }) => {
                         SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end }.perpendiculars(bp, bp)
                     }
-                    Prim::Circle(c) => vec![c.closest(bp)],
+                    // Both antipodes too, so a pick on the far side of the circle snaps there
+                    // rather than across it. From the centre every point is perpendicular: the
+                    // one under the cursor.
+                    Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius }.perpendiculars(bp, cursor),
                     Prim::Infinite { base: b0, dir, .. } => vec![*b0 + *dir * (bp - *b0).dot(*dir)],
                     Prim::Ellipse(e) => curves::ellipse_perpendiculars(e, bp),
                     Prim::Spline(s) => curves::spline_perpendiculars(s, bp),
@@ -1200,6 +1203,22 @@ mod tests {
         let mirrored = Vec2::new(on_circle.x, -on_circle.y);
         let h = osnap(&d, &Space::Model, mirrored, 0.5, mode::TAN, Some(Vec2::new(30.0, 0.0)), false).unwrap();
         assert!(h.point.near(Vec2::new(upper.x, -upper.y), 1e-9), "{h:?}");
+    }
+
+    /// A circle offers both perpendicular points from the base, so a pick on its far side snaps
+    /// there, not to the near side across the circle (CodeRabbit on #2825).
+    #[test]
+    fn perpendicular_from_base_on_a_circle_takes_the_side_under_the_cursor() {
+        let d = drawing();
+        // The circle at (20,0), radius 2, seen from (30,0): perpendicular at (22,0) and (18,0).
+        let base = Some(Vec2::new(30.0, 0.0));
+        let far = osnap(&d, &Space::Model, Vec2::new(18.1, 0.1), 0.5, mode::PER, base, false).unwrap();
+        assert!(far.point.near(Vec2::new(18.0, 0.0), 1e-9), "{far:?}");
+        // Away from both points, at (19, √3) on the circle: 2 from (18,0) and √12 from (22,0).
+        let top = osnap(&d, &Space::Model, Vec2::new(19.0, 3.0f64.sqrt()), 0.5, mode::PER, base, false).unwrap();
+        assert!(top.point.near(Vec2::new(18.0, 0.0), 1e-9), "{top:?}");
+        let near = osnap(&d, &Space::Model, Vec2::new(21.9, 0.1), 0.5, mode::PER, base, false).unwrap();
+        assert!(near.point.near(Vec2::new(22.0, 0.0), 1e-9), "{near:?}");
     }
 
     /// With several objects under the aperture, the one nearest the cursor gives the
