@@ -43,6 +43,7 @@ pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
+pub mod xdedit;
 pub mod xrefs;
 
 pub mod dyngrips;
@@ -329,6 +330,7 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    pub xdedit_dlg: Option<xdedit::XdEditState>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -387,6 +389,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            xdedit_dlg: None,
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
         }
@@ -709,6 +712,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        xdedit::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;
