@@ -78,7 +78,10 @@ pub(super) fn grip_rect(kind: &cadcraft_doc::EntityKind, count: usize, index: us
 pub(super) fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, usize)> {
     let hp = hover?;
     let st = app.session.state().ok()?;
-    let gs = app.session.settings.gripsize as f32;
+    if matches!(st.edit_space(), cadcraft_doc::Space::Model) && !st.orbit.is_top() {
+        return None;
+    }
+    let gs = app.session.settings.gripsize as f32 + 3.0;
     let sel = app.session.selection();
     if !app.session.shows_grips(sel.len()) {
         return None;
