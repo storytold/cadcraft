@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 # default-members
 
 [workspace.package]
-version = "0.15.1"
+version = "0.17.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -51,7 +51,10 @@ skrifa = "0.48"
 # so the graph has both) and the Unicode Bidirectional Algorithm for right-to-left drawing text.
 harfrust = "0.14"
 unicode-bidi = "0.3.18"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Line-break opportunities between Thai words for MTEXT word wrap (Thai writes no spaces between
+# words): UAX #14 with ICU4X's compiled-in LSTM word model (not its dictionaries).
+icu_segmenter = { version = "~2.3", default-features = false, features = ["compiled_data", "lstm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
 encoding_rs = "0.8.35"
 # XML for the SVG reader (streaming parser, no entity expansion beyond the five predefined ones)
 quick-xml = "0.42"
@@ -60,6 +63,8 @@ quick-xml = "0.42"
 craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["serde"] }
 craft-window = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
 egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
+# Resizable table columns (About ▸ Contributors / Models); no image loaders.
+egui_extras = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 eframe = { version = "0.37", default-features = false }
 egui-wgpu = "0.37"

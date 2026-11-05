@@ -47,6 +47,7 @@ fn dimensions_take_the_viewport_layer_colour() {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     d.add(&Space::Model, on("A"), EntityKind::Dimension(dim)).unwrap();
     d.add(&Space::Model, on("A"), EntityKind::Line(Line { a: Vec3::new(0.0, -1.0, 0.0), b: Vec3::new(10.0, -1.0, 0.0) })).unwrap();
@@ -62,6 +63,7 @@ fn dimensions_take_the_viewport_layer_colour() {
         layer_colors: vec![("a".into(), Color::Index(3))],
         clip: None,
         on: true,
+        twist: 0.0,
     };
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
     let l = build(&d, &Space::Paper("Layout1".into()), &Options::default());
@@ -169,6 +171,7 @@ fn attributes_draw_with_their_own_properties() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let common = Common { color: Color::Index(1), lineweight: Lineweight::Mm100(35), ..on("INS") };
     d.add(&Space::Model, common, EntityKind::Insert(ins)).unwrap();
