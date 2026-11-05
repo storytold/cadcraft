@@ -1,4 +1,4 @@
-use super::common::{T, common, ocs};
+use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
 use super::hatch::hatch;
 use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
@@ -47,7 +47,7 @@ fn ellipse(c: &Common, t: &T) -> Ellipse {
 }
 
 /// A LWPOLYLINE, or the region CADCraft wrote as one.
-fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
+fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
     let mut verts = Vec::new();
     let mut cur: Option<PolyVertex> = None;
     for tg in tags {
@@ -83,13 +83,19 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     }
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
-    if c.extrusion.z < 0.0 {
+    let mut elevation = t.fd(38, 0.0);
+    if tilted(c.extrusion, run_points(&verts, elevation, flags & 1 != 0)) {
+        // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
+        // vertices now plan coordinates.
+        (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        c.extrusion = Vec3::Z;
+    } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
             v.p.x = -v.p.x;
             v.bulge = -v.bulge;
         }
     }
-    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation: t.fd(38, 0.0), plinegen: flags & 128 != 0 };
+    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation, plinegen: flags & 128 != 0 };
     // A region CADCraft wrote as polylines (`dxf_region`).
     crate::dxf_region::from_polyline(tags, pl)
 }
@@ -123,14 +129,14 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         return None;
     }
     let t = T(tags);
-    let c = common(&t);
+    let mut c = common(&t);
     let k = match kind {
         "LINE" => EntityKind::Line(Line { a: t.p(10), b: t.p(11) }),
         "POINT" => EntityKind::Point(Point { p: t.p(10), angle: t.fd(50, 0.0).to_radians() }),
         "CIRCLE" => EntityKind::Circle(Circle { center: ocs(&c, t.p(10)), radius: t.fd(40, 1.0).abs() }),
         "ARC" => EntityKind::Arc(arc(&c, &t)),
         "ELLIPSE" => EntityKind::Ellipse(ellipse(&c, &t)),
-        "LWPOLYLINE" => lwpolyline(tags, &c, &t)?,
+        "LWPOLYLINE" => lwpolyline(tags, &mut c, &t)?,
         "SPLINE" => EntityKind::Spline(spline(&t)),
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
@@ -231,7 +237,35 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
             let mut k = hatch(tags, &t)?;
-            if c.extrusion.z < 0.0
+            if let EntityKind::Hatch(h) = &mut k
+                && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
+            {
+                // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
+                // at its mean height, and the pattern direction and origin projected the same way.
+                let n = c.extrusion;
+                let m = cadcraft_geom::Mat4::ocs(n);
+                let (mut sum, mut count) = (0.0, 0usize);
+                for l in &mut h.loops {
+                    let (v, z) = plan_of_tilted(n, h.elevation, &l.vertices, true);
+                    sum += z * v.len() as f64;
+                    count += v.len();
+                    l.vertices = v;
+                }
+                // The pattern keeps the spacing and dashes of its plane: only its direction turns.
+                let plan_angle = |a: f64| {
+                    let dir = m.apply(Vec3::new(a.cos(), a.sin(), 0.0)).xy();
+                    if dir.len() > 1e-9 { cadcraft_geom::norm_angle(dir.y.atan2(dir.x)) } else { a }
+                };
+                h.angle = plan_angle(h.angle);
+                if let Some(g) = h.gradient.as_mut() {
+                    g.angle = plan_angle(g.angle);
+                }
+                h.origin = m.apply(Vec3::new(h.origin.x, h.origin.y, h.elevation)).xy();
+                if count > 0 {
+                    h.elevation = sum / count as f64;
+                }
+                c.extrusion = Vec3::Z;
+            } else if c.extrusion.z < 0.0
                 && let EntityKind::Hatch(h) = &mut k
             {
                 // Boundary in the mirrored OCS, like LWPOLYLINE; the pattern direction mirrors too.
@@ -529,7 +563,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
             break;
         }
     }
-    let c = common(t);
+    let mut c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
     let k = if flags & 64 != 0 {
         // Face records that name a missing vertex (or fewer than three) are dropped: they draw
@@ -551,13 +585,25 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
     } else if flags & 8 != 0 {
         EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
     } else {
-        // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
-        let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
+        // A 2D polyline's vertices are in its OCS, at the elevation of the POLYLINE's own point:
+        // in a tilted plane drawn as seen from above like LWPOLYLINE, else mirrored like it.
+        let closed = flags & 1 != 0;
+        let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
+        let mut elevation = t.p(10).z;
+        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+            (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            c.extrusion = Vec3::Z;
+        } else if c.extrusion.z < 0.0 {
+            for v in &mut vertices {
+                v.p.x = -v.p.x;
+                v.bulge = -v.bulge;
+            }
+        }
         EntityKind::LwPolyline(LwPolyline {
-            vertices: pts.iter().map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 }).collect(),
-            closed: flags & 1 != 0,
+            vertices,
+            closed,
             const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
-            elevation: t.p(10).z,
+            elevation,
             plinegen: flags & 128 != 0,
         })
     };
