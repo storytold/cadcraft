@@ -5,6 +5,8 @@
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
+/// XCLIP boundaries as SPATIAL_FILTER objects.
+mod dxf_clip;
 mod dxf_ext;
 mod dxf_image;
 mod dxf_mleader;
@@ -14,6 +16,8 @@ mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
 pub mod plotter;
+/// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
+pub mod raster;
 /// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
 pub mod roundtrip;
 pub mod svg;

@@ -6,7 +6,8 @@
 //! with egui shapes instead of the GPU canvas, `?sample` opens the sample drawing. Saving downloads
 //! the drawing through the browser (`download.rs`). With `?host=parent` (inside an `<iframe>`), a
 //! same-origin parent page sends the drawing to open and stores what CADCraft saves instead
-//! (`host.rs`).
+//! (`host.rs`); a page can also host CADCraft in its own document (no iframe) with
+//! `data-host="page"` on the canvas, talking over DOM `CustomEvent`s on it (`host.rs`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_arch = "wasm32")]
@@ -27,16 +28,11 @@ mod web {
     const LOADING_ID: &str = "cadcraft_loading";
 
     /// The app, the files File > Open… and drag and drop read for it in the background, the
-    /// page embedding it (`?host=parent`), the browser's `prefers-reduced-motion` (it stays
+    /// host page (`?host=parent`, or `data-host="page"` on the canvas), the browser's
+    /// `prefers-reduced-motion` (it stays
     /// live, so View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting follows a change),
     /// and the document title last written to the page.
-    struct Shell(
-        CadApp,
-        crate::upload::Inbox,
-        Option<(crate::host::Bridge, crate::host::DirtyReport)>,
-        Option<web_sys::MediaQueryList>,
-        Option<String>,
-    );
+    struct Shell(CadApp, crate::upload::Inbox, Option<crate::host::Bridge>, Option<web_sys::MediaQueryList>, Option<String>);
 
     impl eframe::App for Shell {
         /// Runs one frame: takes in files dropped on or picked for the page, drains the background
@@ -51,10 +47,10 @@ mod web {
             self.0.logic(ctx);
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
-            // `DirtyReport` suppresses duplicates, so reporting after every logic callback
+            // The crate suppresses duplicates, so reporting after every logic callback
             // (including a hidden tab's) is idempotent and keeps the parent's guard current.
-            if let Some((bridge, reported)) = &self.2 {
-                bridge.report_dirty(&self.0, reported);
+            if let Some(bridge) = &self.2 {
+                bridge.report_dirty(&self.0);
             }
         }
         /// Forward raw input to the web `CadApp` and capture Tab at the command line.
@@ -100,8 +96,10 @@ mod web {
         web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
     }
 
-    fn query_param(key: &str) -> Option<String> {
-        web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+    /// The app's canvas: the one element `index.html` and every embedding page must provide,
+    /// with the id the app looks up.
+    fn app_canvas() -> Option<web_sys::HtmlCanvasElement> {
+        web_sys::window()?.document()?.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
     }
 
     /// No file picker on the web: Save / Save As from the menu (and the close prompt) download the
@@ -119,6 +117,7 @@ mod web {
             write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
             plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
         });
+        cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
         cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
             cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
         });
@@ -129,10 +128,17 @@ mod web {
         });
         // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
         cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+        let Some(canvas) = app_canvas() else {
+            log::error!("missing <canvas id=\"{CANVAS_ID}\">");
+            return;
+        };
         // `?host=parent`: a same-origin page framing CADCraft (such as a Nextcloud app) opens
-        // drawings in it and stores what it saves. Otherwise there is no file system here: saved
-        // files reach the user as browser downloads.
-        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        // drawings in it and stores what it saves. Otherwise `data-host="page"` on the canvas
+        // opts in a page that runs CADCraft in its own document (no iframe) and talks over DOM
+        // `CustomEvent`s on the canvas (`host`). With neither, there is no file system here:
+        // saved files reach the user as browser downloads; an unframed `?host=parent` stays
+        // that normal app.
+        let bridge = crate::host::Bridge::connect(&canvas);
         match &bridge {
             Some(bridge) => {
                 bridge.install();
@@ -143,10 +149,6 @@ mod web {
         let app_bridge = bridge.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
-            let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
-                log::error!("missing <canvas id=\"{CANVAS_ID}\">");
-                return;
-            };
             let mut options = eframe::WebOptions::default();
             if query().contains("webgl")
                 && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -158,7 +160,7 @@ mod web {
                     canvas,
                     options,
                     Box::new(move |cc| {
-                        // Embedded, the parent sends the drawing: start on the Start tab, not Drawing1.
+                        // Embedded, the host sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
                         let mut app = CadApp::new(session, services());
                         app.system_languages =
@@ -193,10 +195,9 @@ mod web {
                             picker.pick();
                             None
                         }));
-                        let host = app_bridge.map(|bridge| {
+                        let host = app_bridge.inspect(|bridge| {
                             bridge.listen(inbox.clone());
                             bridge.post_ready();
-                            (bridge, crate::host::DirtyReport::default())
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
                         Ok(Box::new(Shell(app, inbox, host, reduced_motion, None)))
