@@ -491,6 +491,52 @@ impl Groups {
     }
 }
 
+/// Write a vector PDF of sheets from several drawings, one page per `(drawing, space)` in order
+/// (at most [`MAX_PAGES`]). Each drawing has its own layers, so none become PDF layers.
+pub fn pdf_book(items: &[(&Drawing, Space)], o: &PdfOptions) -> Result<Vec<u8>> {
+    if items.is_empty() {
+        return Err(IoError::Format("there are no sheets to plot".into()));
+    }
+    if items.len() > MAX_PAGES {
+        return Err(IoError::Format(format!("at most {MAX_PAGES} sheets fit in one PDF")));
+    }
+    let mut po = o.clone();
+    po.layers = false;
+    match write_book(items, &po, po.text_as_geometry) {
+        // As for one drawing: a font the writer can't embed plots the text as outlines instead.
+        Err(Failure::Write(e)) if !po.text_as_geometry && font_failure(&e) => write_book(items, &po, true).map_err(Failure::into_io),
+        r => r.map_err(Failure::into_io),
+    }
+}
+
+/// [`write_pdf`] for sheets of several drawings, each with its own links; no PDF layers.
+fn write_book(items: &[(&Drawing, Space)], o: &PdfOptions, text_as_geometry: bool) -> std::result::Result<Vec<u8>, Failure> {
+    write::guard(|| {
+        let title = if o.title.is_empty() { items.first().map(|(_, s)| sheet_name(s)).unwrap_or_default() } else { o.title.clone() };
+        let metadata = Metadata {
+            creator: "CADCraft".into(),
+            producer: "CADCraft".into(),
+            title: Some(title.chars().take(MAX_TEXT).collect()),
+            ..Metadata::default()
+        };
+        let settings = kr::SerializeSettings {
+            compress_content_streams: o.compress,
+            xmp_metadata: false,
+            enable_tagging: false,
+            ..kr::SerializeSettings::default()
+        };
+        let mut writer = Writer::new(settings, metadata);
+        let mut fonts = fonts::Fonts::new(!text_as_geometry);
+        let groups = Groups::default();
+        for (d, s) in items {
+            let links = all_links(d, o);
+            let page = sheet(d, s, o, &links)?;
+            write_page(writer.document_mut(), &page, &groups, &mut fonts)?;
+        }
+        Ok(writer.finish()?)
+    })
+}
+
 /// One plotted sheet, ready to be written as a page.
 struct SheetPage {
     /// Page size in points.

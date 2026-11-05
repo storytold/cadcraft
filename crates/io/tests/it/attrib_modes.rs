@@ -9,6 +9,7 @@ use cadcraft_io::{SaveOptions, Version, read_dxf, write_dxf, write_with};
 
 fn attrib(tag: &str, modes: AttribModes) -> Attrib {
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 1.0,

@@ -20,6 +20,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
+pub mod batchplot;
 pub mod bedit;
 pub mod canvas;
 pub mod capture;
