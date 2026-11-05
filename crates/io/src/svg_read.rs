@@ -606,7 +606,33 @@ fn finite(kind: &EntityKind) -> bool {
         }
         EntityKind::LwPolyline(p) => p.vertices.iter().all(|v| v.p.is_finite() && v.bulge.is_finite()) && bulges_finite(p),
         EntityKind::Spline(s) => s.control.iter().all(|p| p.is_finite()),
-        _ => true,
+        // The SVG reader doesn't make these.
+        EntityKind::Point(_)
+        | EntityKind::Arc(_)
+        | EntityKind::Polyline3d(_)
+        | EntityKind::Helix(_)
+        | EntityKind::Ray(_)
+        | EntityKind::XLine(_)
+        | EntityKind::Text(_)
+        | EntityKind::MText(_)
+        | EntityKind::AttDef(_)
+        | EntityKind::Insert(_)
+        | EntityKind::Dimension(_)
+        | EntityKind::MLine(_)
+        | EntityKind::Leader(_)
+        | EntityKind::MLeader(_)
+        | EntityKind::Hatch(_)
+        | EntityKind::Solid(_)
+        | EntityKind::Trace(_)
+        | EntityKind::Face3d(_)
+        | EntityKind::PolyfaceMesh(_)
+        | EntityKind::Region(_)
+        | EntityKind::Viewport(_)
+        | EntityKind::Image(_)
+        | EntityKind::Wipeout(_)
+        | EntityKind::Table(_)
+        | EntityKind::Tolerance(_)
+        | EntityKind::Unknown(_) => true,
     }
 }
 
