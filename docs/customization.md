@@ -47,7 +47,9 @@ CIRCLE 15,15 6
 ```
 
 Without the empty line, `CIRCLE` would be refused as a point and `15,15` and `6` would become more
-segments of the line. If anything still waits for input when the script ends (a command, or a LISP
+segments of the line. Script text sent as a string (`--script`, the MCP `script` tool) needs the
+empty line's own line end too: `"LINE 0,0 @30,0\n\n"` ends LINE, but a single trailing `\n` adds no
+empty line, and empty text runs nothing. If anything still waits for input when the script ends (a command, or a LISP
 routine in a `get…` function), `cadcraft-cli` notes it with its prompt, and the MCP `script` tool's
 result shows it in `state.prompt`.
 
