@@ -301,12 +301,14 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
+            // The extrusion belongs to the first AcDbText subclass, so `text_tags` writes it
+            // before the second `100 AcDbText` marker.
+            let normal = extrusion_normal(e);
             if e.common.extrusion.z < 0.0 {
-                text_tags(w, d, &unmirror_text(e, t), None, None);
+                text_tags(w, d, &unmirror_text(e, t), None, None, normal);
             } else {
-                text_tags(w, d, t, None, None);
+                text_tags(w, d, t, None, None, normal);
             }
-            extrusion(w, e);
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -326,7 +328,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
         EntityKind::AttDef(a) => {
             w.s(0, "ATTDEF");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt));
+            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt), None);
             if cx.target >= Version::R2007 {
                 multiline_tags(w, a, true);
             }
@@ -406,7 +408,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
                     w.i(60, 1);
                 }
                 w.s(100, "AcDbText");
-                text_tags(w, d, &a.text, Some((a, cx.target)), None);
+                text_tags(w, d, &a.text, Some((a, cx.target)), None, None);
                 if cx.target >= Version::R2007 {
                     multiline_tags(w, a, false);
                 }
@@ -872,14 +874,22 @@ fn unmirror_text(e: &Entity, t: &Text) -> Text {
     let mut r = t.clone();
     r.rotation = cadcraft_geom::norm_angle(-t.rotation);
     let baseline = t.valign == VAlign::Baseline;
+    // For baseline text the start point is `insert`; for the other vertical alignments the
+    // alignment point (`align_pt`, which the reader sets equal to it) is what places the text.
+    let anchor = t.align_pt.unwrap_or(t.insert);
     match t.halign {
         HAlign::Right => {
             r.halign = HAlign::Left;
-            r.align_pt = if baseline { None } else { Some(t.align_pt.unwrap_or(t.insert)) };
+            if baseline {
+                r.insert = anchor;
+                r.align_pt = None;
+            } else {
+                r.align_pt = Some(anchor);
+            }
         }
         HAlign::Left => {
             r.halign = HAlign::Right;
-            r.align_pt = Some(t.insert);
+            r.align_pt = Some(if baseline { t.insert } else { anchor });
         }
         HAlign::Aligned | HAlign::Fit => {
             r.insert = t.align_pt.unwrap_or(t.insert);
@@ -895,10 +905,9 @@ fn unmirror_text(e: &Entity, t: &Text) -> Text {
 /// A model (world) point in the entity's OCS, for the entities whose DXF points are OCS: the
 /// inverse of the reader's OCS → WCS. The frame is orthonormal, so its inverse is its transpose.
 fn to_ocs(e: &Entity, p: Vec3) -> Vec3 {
-    let n = e.common.extrusion;
-    if !n.is_finite() || n == Vec3::ZERO {
-        return p;
-    }
+    // The same normalised direction `extrusion` writes, so a tiny normal is not read as none here
+    // while the file says it points along -Z.
+    let Some(n) = extrusion_normal(e) else { return p };
     let m = cadcraft_geom::Mat4::ocs(n);
     if m == cadcraft_geom::Mat4::IDENTITY {
         return p;
@@ -911,20 +920,24 @@ fn to_ocs(e: &Entity, p: Vec3) -> Vec3 {
     )
 }
 
-/// The extrusion (210) of an entity whose points are world coordinates, when it is not the Z axis.
-fn extrusion(w: &mut W, e: &Entity) {
-    // Zero and non-finite vectors are not a direction: nothing is written. `Vec3::normalized` would
-    // also drop a tiny one (its zero threshold is the drawing tolerance) and turn infinity into NaN.
+/// The unit direction of an entity's extrusion, when it has one: zero and non-finite vectors are
+/// not a direction. `Vec3::normalized` would also drop a tiny one (its zero threshold is the
+/// drawing tolerance) and turn infinity into NaN.
+fn extrusion_normal(e: &Entity) -> Option<Vec3> {
     let v = e.common.extrusion;
     let max = v.x.abs().max(v.y.abs()).max(v.z.abs());
     if !v.is_finite() || max == 0.0 {
-        return;
+        return None;
     }
     // Scaled by the largest component first: the length of a huge one would overflow to infinity.
     let v = Vec3::new(v.x / max, v.y / max, v.z / max);
     let len = v.len();
-    let n = Vec3::new(v.x / len, v.y / len, v.z / len);
-    if n != Vec3::Z {
+    Some(Vec3::new(v.x / len, v.y / len, v.z / len))
+}
+
+/// The extrusion (210) of an entity whose points are world coordinates, when it is not the Z axis.
+fn extrusion(w: &mut W, e: &Entity) {
+    if let Some(n) = extrusion_normal(e).filter(|n| *n != Vec3::Z) {
         w.p(210, n);
     }
 }

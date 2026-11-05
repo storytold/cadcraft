@@ -246,7 +246,9 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
 }
 
 /// `attdef_prompt` is `Some` for an ATTDEF (its prompt, which may be empty) and `None` for an ATTRIB.
-pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
+/// `normal` is the extrusion of a TEXT that is not along Z: group 210 closes the first `AcDbText`
+/// subclass, ahead of the second marker and group 73 (the DXF Reference's order).
+pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>, normal: Option<Vec3>) {
     let attdef = attdef_prompt.is_some();
     // An attribute definition with no default value is drawn as its tag, whatever its prompt: the
     // baseline start AutoCAD stored is judged against the tag's width too. A stored point that is
@@ -309,6 +311,9 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
             }
         }
         None => {
+            if let Some(n) = normal.filter(|n| *n != Vec3::Z) {
+                w.p(210, n);
+            }
             w.s(100, "AcDbText");
             if v != 0 {
                 w.i(73, v);
