@@ -170,6 +170,13 @@ pub fn can_lock_second(text: &str, frame: &Frame) -> bool {
     parse(text, frame).is_some_and(|e| e.split && e.first_locked().is_some() && e.second_value().is_some())
 }
 
+/// Where the separator between the two boxes is in `text` (a byte index), when it is a split
+/// entry.
+pub fn split_at(text: &str, frame: &Frame) -> Option<usize> {
+    parse(text, frame).filter(|e| e.split)?;
+    text.find([',', '<'])
+}
+
 /// Hold the cursor to the locked values: the first one once a separator follows it, and both
 /// when Tab has locked the second one too (`second_locked`), which pins the cursor to the point.
 pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {

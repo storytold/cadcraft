@@ -49,7 +49,7 @@ pub(super) fn rectangle_dims(
     f: &crate::dyninput::Frame,
     e: &crate::dyninput::Entry<'_>,
     cursor: Vec2,
-    second_locked: bool,
+    (second_locked, first_active): (bool, bool),
     (lu, lp): (i64, i64),
 ) {
     let t = Tokens::get();
@@ -72,7 +72,7 @@ pub(super) fn rectangle_dims(
             if e.first.is_empty() { dist(w) } else { e.first.to_owned() },
             !e.first.is_empty(),
             e.first_locked().is_some(),
-            !e.split,
+            first_active,
             0.5,
         ),
         (
@@ -80,7 +80,7 @@ pub(super) fn rectangle_dims(
             if e.second.is_empty() { dist(h) } else { e.second.to_owned() },
             !e.second.is_empty(),
             second_locked,
-            e.split && !second_locked,
+            !first_active,
             if height_x > b.x { 0.0 } else { 1.0 },
         ),
     ];
