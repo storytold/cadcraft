@@ -59,7 +59,6 @@ jobs:
 
   release:
     needs: git-sources
-    environment: release
     permissions:
       # The reusable release workflow tags and uploads the draft release.
       contents: write
@@ -86,3 +85,4 @@ jobs:
       AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
       AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+      LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cadcraft_doc::color::{Color, Rgb};
-use cadcraft_doc::{Block, CellStyle, DimStyle, Drawing, Entity, EntityKind, EntityStore, Group, Handle, MAX_BLOCK_DEPTH, TableStyle};
+use cadcraft_doc::{Block, CellStyle, DimStyle, Drawing, Entity, EntityKind, EntityStore, Group, Handle, Layer, MAX_BLOCK_DEPTH, TableStyle};
 use serde_json::{Value, json};
 
 use super::super::super::{CommandSpec, bad};
@@ -197,6 +197,7 @@ fn snapshot(cur: &Drawing, c: &Comparison, folders: &Folders) -> Snapshot {
     d.skipped_records.clear();
     d.handseed = d.handseed.max(other.handseed);
 
+    use crate::cmd::merge::merge_named as merge;
     merge(&mut d.layers, &other.layers, |t| &t.name);
     merge(&mut d.linetypes, &other.linetypes, |t| &t.name);
     merge(&mut d.text_styles, &other.text_styles, |t| &t.name);
@@ -235,22 +236,17 @@ fn snapshot(cur: &Drawing, c: &Comparison, folders: &Folders) -> Snapshot {
     Snapshot { drawing: d, current, compared, counts: (here.len(), there.len()), truncated: diff.truncated, blocks_left_out, uncolored }
 }
 
-/// Add the entries of `from` whose names `to` lacks (compared without letter case).
-fn merge<T: Clone>(to: &mut Vec<T>, from: &[T], name: impl Fn(&T) -> &String) {
-    for t in from {
-        if !to.iter().any(|x| name(x).eq_ignore_ascii_case(name(t))) {
-            to.push(t.clone());
-        }
-    }
-}
-
 /// Add copies of `objs` to model space with new handles, their block references renamed by
 /// `renames` and their files rebased on `folder`, each painted in its comparison color, and
 /// group them as `name` (or `name_2`… when that group name is taken). Returns the group's name.
 fn add_group(d: &mut Drawing, name: &str, objs: &[(&Entity, Color)], renames: &Renames, folder: Option<&Path>, tinted: &mut Tinted) -> String {
     let mut members = Vec::new();
+    // The layers this drawing has, looked up once per object rather than scanned.
+    let mut layers: HashSet<String> = d.layers.iter().map(|l| l.name.to_ascii_uppercase()).collect();
     for (e, color) in objs {
-        d.ensure_layer(&e.common.layer);
+        if layers.insert(e.common.layer.to_ascii_uppercase()) {
+            d.layers.push(Layer::new(&e.common.layer));
+        }
         let h = d.new_handle();
         let mut copy = Entity { handle: h, ..(*e).clone() };
         detach(&mut copy.kind);
