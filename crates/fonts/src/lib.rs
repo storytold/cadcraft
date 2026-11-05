@@ -874,8 +874,8 @@ mod ttf_tests {
         );
         let (fam_b, style_b, _) = crate::ttf::describe_font("ccagencyb.ttf").unwrap();
         assert_eq!((fam_b.as_str(), style_b.as_str()), ("CADCraft Agency Test", "Bold"));
-        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Regular"), "CADCraft Agency Test");
-        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Bold"), "CADCraft Agency Test Bold");
+        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Regular"), "ccagencyr.ttf");
+        assert_eq!(crate::ttf::compose_font("CADCraft Agency Test", "Bold"), "ccagencyb.ttf");
         assert_eq!(crate::ttf::find("CADCraft Agency Test").unwrap().bytes.as_slice(), reg.as_slice());
         assert_eq!(crate::ttf::find("CADCraft Agency Test Bold").unwrap().bytes.as_slice(), bold.as_slice());
     }

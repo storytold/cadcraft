@@ -30,7 +30,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "battman" => "battman",
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
-        "style" | "st" => "textstyle",
+        "style" | "st" => {
+            STYLE_GEN.fetch_add(1, Ordering::Relaxed);
+            "textstyle"
+        }
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -314,46 +317,25 @@ struct Style {
     fields: Vec<Field>,
 }
 
-fn used_text_styles(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
-    use cadcraft_doc::EntityKind;
-    let mut used = std::collections::HashSet::new();
-    let mut mark = |name: &str| {
-        let lower = name.to_ascii_lowercase();
-        if !lower.is_empty() {
-            used.insert(lower);
-        }
-    };
-    for s in &d.dim_styles {
-        mark(&s.text_style);
+/// Bumped when STYLE opens its dialog or changes the drawing so used text styles are rescanned once.
+static STYLE_GEN: AtomicU32 = AtomicU32::new(0);
+
+fn cached_used_text_styles(ctx: &egui::Context, d: &cadcraft_doc::Drawing) -> std::sync::Arc<std::collections::HashSet<String>> {
+    type Entry = ((u32, usize), std::sync::Arc<std::collections::HashSet<String>>);
+    let key = (STYLE_GEN.load(Ordering::Relaxed), d.text_styles.len());
+    if let Some((k, used)) = temp::<Entry>(ctx, "style_used_cache")
+        && k == key
+    {
+        return used;
     }
-    for s in &d.mleader_styles {
-        mark(&s.text_style);
-    }
-    for s in &d.table_styles {
-        for c in &s.cell_styles {
-            mark(&c.text_style);
-        }
-    }
-    for lt in &d.linetypes {
-        for el in &lt.pattern {
-            if let Some(style) = &el.style {
-                mark(style);
-            }
-        }
-    }
-    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
-    for st in stores {
-        for e in st.iter() {
-            match &e.kind {
-                EntityKind::Text(t) => mark(&t.style),
-                EntityKind::MText(t) => mark(&t.style),
-                EntityKind::AttDef(a) => mark(&a.text.style),
-                EntityKind::Insert(i) => i.attribs.iter().for_each(|a| mark(&a.text.style)),
-                EntityKind::MLeader(m) => m.text.iter().for_each(|t| mark(&t.style)),
-                _ => {}
-            }
-        }
-    }
+    let used = std::sync::Arc::new(
+        cadcraft_engine::cmd::text_styles_in_use(d)
+            .into_iter()
+            .map(|s| s.to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect::<std::collections::HashSet<String>>(),
+    );
+    set_temp(ctx, "style_used_cache", (key, used.clone()));
     used
 }
 
@@ -424,7 +406,7 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         all_styles.push(cadcraft_doc::TextStyle::default());
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
-    let used_styles = used_text_styles(d);
+    let used_styles = cached_used_text_styles(ctx, d);
     let sel_key = "style_sel";
     let new_key = "style_new";
     let filter_key = "style_filter_in_use";
@@ -693,6 +675,9 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
 
     if close {
         *open = false;
+    }
+    if action.is_some() {
+        STYLE_GEN.fetch_add(1, Ordering::Relaxed);
     }
     set_temp(ctx, sel_key, sel);
     set_temp(ctx, new_key, new_name);

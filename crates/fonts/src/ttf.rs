@@ -556,6 +556,19 @@ impl Db {
         Face::new(bytes, index)
     }
 
+    fn stem_file_name(&self, stem: &str) -> String {
+        let ext = match self.paths.get(stem) {
+            Some(Source::File(path)) => path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .filter(|e| matches!(e.as_str(), "ttf" | "otf" | "ttc" | "otc"))
+                .unwrap_or_else(|| "ttf".to_string()),
+            _ => "ttf".to_string(),
+        };
+        format!("{stem}.{ext}")
+    }
+
     fn ensure_families(&mut self) -> &[FamilyEntry] {
         if self.families.is_none() {
             let mut families: Vec<FamilyEntry> = Vec::new();
@@ -856,25 +869,38 @@ pub fn describe_font(name: &str) -> Option<(String, String, Vec<String>)> {
     let entries = g.ensure_families();
     for entry in entries {
         let styles = || entry.styles.iter().map(|s| s.style.clone()).collect::<Vec<_>>();
+        for st in &entry.styles {
+            if norm(&format!("{} {}", entry.family, st.style)) == want || (st.stem.eq_ignore_ascii_case(&k) && st.index == 0) {
+                return Some((entry.family.clone(), st.style.clone(), styles()));
+            }
+        }
         let fam_norm = norm(&entry.family);
         if fam_norm == want || format!("{fam_norm}regular") == want {
             let cur = entry.styles.first().map_or_else(|| "Regular".to_string(), |s| s.style.clone());
             return Some((entry.family.clone(), cur, styles()));
         }
-        for st in &entry.styles {
-            if norm(&format!("{} {}", entry.family, st.style)) == want || st.stem.eq_ignore_ascii_case(&k) {
-                return Some((entry.family.clone(), st.style.clone(), styles()));
-            }
-        }
     }
     None
 }
 
-/// Combine a font family and subfamily style (`"Arial"` + `"Regular"` → `"Arial"`,
-/// `"Arial"` + `"Bold"` → `"Arial Bold"`).
+/// Resolve a font family and subfamily style (`"Arial"` + `"Regular"` → `"arial.ttf"`,
+/// `"Arial"` + `"Bold"` → `"arialbd.ttf"`) to the face's font file name for DXF `STYLE` group 3.
 pub fn compose_font(family: &str, style: &str) -> String {
     let fam = family.trim();
     let st = style.trim();
+    let mut g = lock();
+    g.ensure_families();
+    let target_stem = g.families.as_deref().unwrap_or(&[]).iter().find(|e| e.family.eq_ignore_ascii_case(fam)).and_then(|entry| {
+        let chosen = if st.is_empty() || st.eq_ignore_ascii_case("Regular") {
+            entry.styles.iter().find(|s| s.style.eq_ignore_ascii_case("Regular")).or_else(|| entry.styles.first())
+        } else {
+            entry.styles.iter().find(|s| s.style.eq_ignore_ascii_case(st))
+        }?;
+        (chosen.index == 0).then(|| chosen.stem.clone())
+    });
+    if let Some(stem) = target_stem {
+        return g.stem_file_name(&stem);
+    }
     if st.is_empty() || st.eq_ignore_ascii_case("Regular") { fam.to_string() } else { format!("{fam} {st}") }
 }
 

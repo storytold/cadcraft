@@ -122,18 +122,18 @@ fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
     }
 
     let d = h.state().session.doc().unwrap();
-    assert_eq!(d.text_style("Standard").unwrap().font, test_family);
+    assert_eq!(d.text_style("Standard").unwrap().font, "ccpickertest-r.ttf");
     let combo = h.get_by_role_and_label(Role::ComboBox, "Font Name:");
     assert_eq!(combo.accesskit_node().value().as_deref(), Some(test_family));
 
-    // Selecting a Font Style updates the style's font face.
+    // Selecting a Font Style updates the style's font face file name.
     let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
     assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Regular"));
     style_combo.click();
     h.run_steps(2);
     h.get_by_label("Bold").click();
     h.run_steps(2);
-    assert_eq!(h.state().session.doc().unwrap().text_style("Standard").unwrap().font, format!("{test_family} Bold"));
+    assert_eq!(h.state().session.doc().unwrap().text_style("Standard").unwrap().font, "ccpickertest-b.ttf");
     let style_combo = h.get_by_role_and_label(Role::ComboBox, "Font Style:");
     assert_eq!(style_combo.accesskit_node().value().as_deref(), Some("Bold"));
 
