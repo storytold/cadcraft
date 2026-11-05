@@ -16,9 +16,11 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod raster;
 mod refedit;
 mod store;
 mod tables;
+mod xclip;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,9 +35,11 @@ pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
+pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
 
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
@@ -136,6 +140,8 @@ pub struct Drawing {
     /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
     /// drawing reopens with it. Never set on an open drawing.
     pub portable_fonts: bool,
+    /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
+    pub rasters: Rasters,
 }
 
 impl Default for Drawing {
@@ -196,6 +202,7 @@ impl Drawing {
             refedit: None,
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
+            rasters: Rasters::default(),
         }
     }
 
