@@ -22,6 +22,8 @@ fn references_take_lock_position_from_the_definition() {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     let modes = AttribModes { verify: true, preset: true, lock_position: true };
     let def = Attrib {

@@ -71,6 +71,10 @@ fn text_values() {
     check(cases::text_values());
 }
 #[test]
+fn text_generation() {
+    check(cases::text_generation());
+}
+#[test]
 fn text_literal_escapes() {
     check(cases::text_literal_escapes());
 }

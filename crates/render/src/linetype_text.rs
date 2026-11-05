@@ -295,6 +295,8 @@ mod tests {
             style: "SHX".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         };
         let (sh, bb) = crate::place_text_entity(&d, &t, "AA");
         assert!((sh.width - 6.0).abs() < 1e-9 && (bb.width() - 6.0).abs() < 1e-9);

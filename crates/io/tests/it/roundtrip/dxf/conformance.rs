@@ -40,6 +40,8 @@ pub(super) fn model() -> Drawing {
             style: "Standard".into(),
             halign: HAlign::Left,
             valign: VAlign::Baseline,
+            backwards: false,
+            upside_down: false,
         }),
     )
     .unwrap();

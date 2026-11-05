@@ -248,6 +248,17 @@ fn ro_row(ui: &mut egui::Ui, label: &str, v: String) {
     ui.end_row();
 }
 
+/// The palette's Close button, which turns Quick Properties off.
+fn close_button(ui: &mut egui::Ui, close: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button(crate::tl!("Close")).on_hover_text(crate::tl!("Turn Quick Properties off (QPMODE)")).clicked() {
+                *close = true;
+            }
+        });
+    });
+}
+
 /// The Quick Properties palette, near where the selection was made.
 pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
     let sid = egui::Id::unique("qp_state");
@@ -300,6 +311,10 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
     let mut set: Option<(String, Value)> = None;
     // Rotations show as the drawing measures directions (ANGBASE, ANGDIR).
     let angles = app.session.angle_settings();
+    // Text, mtext and dimensions show the rows the engine flags for Quick Properties, edited as
+    // the Properties palette edits them.
+    let mut edit: Option<crate::palettes::described::Edit> = None;
+    let mut bad: Option<String> = None;
     let mut close = false;
     egui::Window::new(title)
         .id(egui::Id::unique(("quick_properties", &st.sel)))
@@ -309,6 +324,11 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
         .title_bar(true)
         .default_width(250.0)
         .show(ctx, |ui| {
+            let desc = crate::palettes::described::described(ui, app, &sel);
+            if desc.as_ref().is_some_and(|desc| crate::palettes::described::quick_rows(ui, d, desc, &ids, &mut edit, &mut bad)) {
+                close_button(ui, &mut close);
+                return;
+            }
             egui::Grid::new("qp_grid").num_columns(2).spacing(vec2(10.0, 4.0)).min_col_width(80.0).show(ui, |ui| {
                 ui.label(RichText::new(crate::tl!("Color")).color(Tokens::get().text_dim));
                 let cur = color.unwrap_or(cadcraft_color::Color::ByLayer);
@@ -316,17 +336,18 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                     set = Some(("color".into(), json!(c.name())));
                 }
                 ui.end_row();
-                ui.label(RichText::new(crate::tl!("Layer")).color(Tokens::get().text_dim));
-                craft_ui::ComboBox::from_id_salt("qp_layer").width(150.0).selected_text(layer.clone()).show_ui(ui, |ui| {
+                let layer_label = ui.label(RichText::new(crate::tl!("Layer")).color(Tokens::get().text_dim));
+                let layer_combo = craft_ui::ComboBox::from_id_salt("qp_layer").width(150.0).selected_text(layer.clone()).show_ui(ui, |ui| {
                     for l in &layers {
                         if ui.selectable_label(*l == layer, l).clicked() {
                             set = Some(("layer".into(), json!(l)));
                         }
                     }
                 });
+                layer_combo.response.labelled_by(layer_label.id);
                 ui.end_row();
-                ui.label(RichText::new(crate::tl!("Linetype")).color(Tokens::get().text_dim));
-                craft_ui::ComboBox::from_id_salt("qp_lt").width(150.0).selected_text(linetype.clone()).show_ui(ui, |ui| {
+                let linetype_label = ui.label(RichText::new(crate::tl!("Linetype")).color(Tokens::get().text_dim));
+                let linetype_combo = craft_ui::ComboBox::from_id_salt("qp_lt").width(150.0).selected_text(linetype.clone()).show_ui(ui, |ui| {
                     for l in std::iter::once("ByLayer".to_string())
                         .chain(std::iter::once("ByBlock".to_string()))
                         .chain(linetypes.iter().filter(|l| !["ByLayer", "ByBlock"].contains(&l.as_str())).cloned())
@@ -336,6 +357,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         }
                     }
                 });
+                linetype_combo.response.labelled_by(linetype_label.id);
                 ui.end_row();
                 let id = |k: &str| egui::Id::unique(("qp", k, &ids));
                 match &kind {
@@ -371,45 +393,15 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         }
                         num_row(ui, "Global width", id("w"), p.const_width, &mut set, "width");
                     }
-                    Some(EntityKind::Text(tx)) => {
-                        let label = ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("txt"), &tx.value, Some(label.id)) {
-                            set = Some(("text".into(), json!(v)));
-                        }
-                        ui.end_row();
-                        num_row(ui, "Height", id("h"), tx.height, &mut set, "height");
-                        num_row(ui, "Rotation", id("rot"), angles.shown(tx.rotation).to_degrees(), &mut set, "rotation");
-                    }
-                    Some(EntityKind::MText(tx)) => {
-                        let label = ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("mtxt"), &tx.contents, Some(label.id)) {
-                            set = Some(("text".into(), json!(v)));
-                        }
-                        ui.end_row();
-                        num_row(ui, "Text height", id("h"), tx.height, &mut set, "height");
-                    }
                     Some(EntityKind::Insert(i)) => {
                         ro_row(ui, "Name", i.block.clone());
                         num_row(ui, "Rotation", id("rot"), angles.shown(i.rotation).to_degrees(), &mut set, "rotation");
                         num_row(ui, "Scale", id("sc"), i.scale.x, &mut set, "scale");
                     }
-                    Some(EntityKind::Dimension(dm)) => {
-                        let label = ui.label(RichText::new(crate::tl!("Text override")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("dt"), &dm.text, Some(label.id)) {
-                            set = Some(("textOverride".into(), json!(v)));
-                        }
-                        ui.end_row();
-                    }
                     _ => {}
                 }
             });
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button(crate::tl!("Close")).on_hover_text(crate::tl!("Turn Quick Properties off (QPMODE)")).clicked() {
-                        close = true;
-                    }
-                });
-            });
+            close_button(ui, &mut close);
         });
     ctx.data_mut(|dd| dd.insert_temp(sid, st));
     if let Some((k, mut v)) = set {
@@ -420,6 +412,10 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
             v = json!(angles.unshown(f.to_radians()).to_degrees());
         }
         let _ = app.run("properties.set", json!({ "handles": ids, k: v }));
+    }
+    crate::palettes::described::apply(app, edit);
+    if let Some(text) = bad {
+        app.session.echo(crate::tf!("Not a number or distance: {text}", text = text.trim()));
     }
     if close {
         let _ = app.run("qpmode", json!({ "on": false }));

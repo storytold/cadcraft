@@ -40,6 +40,8 @@ fn sample() -> Drawing {
             style: "Standard".into(),
             halign: HAlign::Left,
             valign: VAlign::Baseline,
+            backwards: false,
+            upside_down: false,
         }),
     )
     .unwrap();
@@ -57,6 +59,8 @@ fn sample() -> Drawing {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         }),
     )
     .unwrap();
@@ -270,6 +274,8 @@ fn block_definition_properties_and_constant_attdefs_roundtrip() {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     };
     let attdef = |tag: &str, invisible: bool, constant: bool| Attrib {
         tag: tag.into(),
@@ -1533,6 +1539,8 @@ fn intl_text(value: &str) -> Text {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     }
 }
 
@@ -1557,6 +1565,8 @@ fn intl_sample() -> Drawing {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         }),
     )
     .unwrap();
@@ -1799,6 +1809,8 @@ fn mleader_is_written_as_multileader() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     };
     let m = cadcraft_doc::MLeader {
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
@@ -1833,6 +1845,8 @@ fn attdef_prompt_survives_dxf_roundtrip() {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     };
     let attdef = |prompt: &str| {
         EntityKind::AttDef(Attrib {

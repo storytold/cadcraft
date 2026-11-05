@@ -22,6 +22,8 @@ fn session() -> Session {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     let mtext = MText {
         insert: Vec3::new(10.0, 3.0, 0.0),
@@ -34,6 +36,8 @@ fn session() -> Session {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     };
     let def = Attrib {
         tag: "LABEL".into(),

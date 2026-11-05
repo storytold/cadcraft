@@ -54,6 +54,8 @@ fn justified_text_snaps_and_grips_at_its_alignment_point() {
         style: "Standard".into(),
         halign: HAlign::Right,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     };
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Text(t.clone())).unwrap();
     assert_eq!(snap_at(&s, Vec2::new(10.0, 0.0), mode::INS), Some((Vec2::new(10.0, 0.0), mode::INS)));
