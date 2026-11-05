@@ -91,6 +91,55 @@ fn an_associative_hatch_stays_linked_to_its_own_boundary() {
 }
 
 #[test]
+fn boundaries_keep_the_hatch_elevation() {
+    let mut s = Session::new();
+    let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [r] })).unwrap());
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(Handle::parse_hex(&h).unwrap(), |e| {
+            if let EntityKind::Hatch(x) = &mut e.kind {
+                x.elevation = 300.0;
+            }
+        })
+        .unwrap();
+    let v = s.execute("hatchgenerateboundary", &json!({ "handles": [h] })).unwrap();
+    assert_eq!(poly(&s, &handles(&v)[0]).elevation, 300.0);
+}
+
+#[test]
+fn refuses_a_hatch_in_another_space_and_adds_nothing() {
+    let mut s = Session::new();
+    let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [r] })).unwrap());
+    s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    let before = s.doc().unwrap().entity_count();
+    let e = s.execute("hatchgenerateboundary", &json!({ "handles": [h] })).unwrap_err();
+    assert!(e.to_string().contains("not in the current space"), "{e}");
+    assert_eq!(s.doc().unwrap().entity_count(), before);
+}
+
+#[test]
+fn refuses_more_boundaries_than_the_limit_and_adds_nothing() {
+    let mut s = Session::new();
+    let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [r] })).unwrap());
+    // One hatch with more loops than one call may turn into polylines.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(Handle::parse_hex(&h).unwrap(), |e| {
+            if let EntityKind::Hatch(x) = &mut e.kind {
+                let l = x.loops[0].clone();
+                x.loops = vec![l; 10_001];
+            }
+        })
+        .unwrap();
+    let before = count(&s);
+    assert!(s.execute("hatchgenerateboundary", &json!({ "handles": [h] })).is_err());
+    assert_eq!(count(&s), before);
+}
+
+#[test]
 fn needs_a_hatch() {
     let mut s = Session::new();
     let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);

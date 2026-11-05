@@ -20,16 +20,11 @@ const MAX_EDITED: usize = 10_000;
 const MAX_LOOPS: usize = 2000;
 
 fn hatches(s: &Session, p: &Value) -> Result<Vec<Handle>> {
-    hatches_for(s, p, "hatchedit")
-}
-
-/// The hatches among the targets of command `cmd` (an error names `cmd` when there are none).
-fn hatches_for(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Handle>> {
     let hs = targets(s, p)?;
     let d = s.doc()?;
     let out: Vec<Handle> = hs.into_iter().filter(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(_)))).take(MAX_EDITED).collect();
     if out.is_empty() {
-        return Err(bad(cmd, "select one or more hatches"));
+        return Err(bad("hatchedit", "select one or more hatches"));
     }
     Ok(out)
 }
@@ -38,26 +33,40 @@ fn hatches_for(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Handle>> {
 const MAX_GENERATED: usize = 10_000;
 
 /// HATCHGENERATEBOUNDARY: a closed polyline around every boundary loop (outer and islands) of
-/// the selected hatches. The hatches are not changed: an associative hatch stays linked to its
-/// own boundary objects and is not linked to the new polylines.
+/// the selected hatches, at each hatch's elevation. The hatches are not changed: an associative
+/// hatch stays linked to its own boundary objects and is not linked to the new polylines.
 pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = hatches_for(s, p, "hatchgenerateboundary")?;
+    let selected = targets(s, p)?;
+    // The polylines go to the current space, so every hatch must be there too.
+    let space = s.space();
     let mut loops = Vec::new();
+    let mut found = false;
     {
         let d = s.doc()?;
-        for h in &hs {
-            if let Some(EntityKind::Hatch(x)) = d.entity(*h).map(|e| &e.kind) {
-                loops.extend(x.loops.iter().map(|l| l.vertices.clone()));
+        for h in selected {
+            let Some(EntityKind::Hatch(x)) = d.entity(h).map(|e| &e.kind) else { continue };
+            found = true;
+            if d.space_of(h).as_ref() != Some(&space) {
+                return Err(bad("hatchgenerateboundary", format!("hatch {} is not in the current space; switch to its layout first", h.hex())));
             }
+            // Every selected hatch counts: none is left out of a call that succeeds.
+            if loops.len() + x.loops.len() > MAX_GENERATED {
+                return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
+            }
+            loops.extend(x.loops.iter().map(|l| (l.vertices.clone(), x.elevation)));
         }
     }
-    // Refused before anything is added, so a refused call leaves no partial result behind.
-    if loops.len() > MAX_GENERATED {
-        return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
+    if !found {
+        return Err(bad("hatchgenerateboundary", "select one or more hatches"));
     }
+    // Everything is checked before anything is added, so a refused call leaves nothing behind.
     let mut created = Vec::new();
-    for vs in loops {
-        created.push(s.add_entity(lwpoly(vs, true))?.hex());
+    for (vs, elevation) in loops {
+        let mut kind = lwpoly(vs, true);
+        if let EntityKind::LwPolyline(pl) = &mut kind {
+            pl.elevation = elevation;
+        }
+        created.push(s.add_entity(kind)?.hex());
     }
     let n = created.len();
     Ok(json!({ "handles": created, "message": format!("{n} boundary polyline(s) created.") }))
