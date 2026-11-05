@@ -42,6 +42,10 @@ pub struct Text {
     pub halign: HAlign,
     #[serde(default)]
     pub valign: VAlign,
+    /// The formula the text shows the result of: `=...` (CADCraft text formulas) or an AutoCAD
+    /// field code (`%<\AcVar date \f "dd.MM.yyyy">%`). `value` holds the last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 impl Text {
@@ -83,6 +87,10 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// The formula the text shows the result of (see [`Text::formula`]); `contents` holds the
+    /// last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 fn attach_tl() -> u8 {

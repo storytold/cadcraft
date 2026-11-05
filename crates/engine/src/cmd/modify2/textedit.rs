@@ -6,12 +6,20 @@ use super::{
 // TEXTEDIT
 // =====================================================================================
 
+/// A text formula (`=...`) of an object, which editing shows instead of its result.
+fn formula_of(x: &Option<String>) -> Option<String> {
+    x.clone().filter(|f| crate::textformula::is_formula(f))
+}
+
+/// The text an edit starts from: the formula when the object has one, else its text.
 fn text_of(k: &EntityKind) -> Option<String> {
     match k {
-        EntityKind::Text(t) => Some(t.value.clone()),
-        EntityKind::AttDef(a) => Some(a.text.value.clone()),
-        EntityKind::MText(t) => Some(t.contents.replace("\\P", "\n")),
-        EntityKind::Dimension(d) => Some(if d.text.is_empty() { "<>".into() } else { d.text.clone() }),
+        EntityKind::Text(t) => Some(formula_of(&t.formula).unwrap_or_else(|| t.value.clone())),
+        EntityKind::AttDef(a) => Some(formula_of(&a.text.formula).unwrap_or_else(|| a.text.value.clone())),
+        EntityKind::MText(t) => Some(formula_of(&t.formula).unwrap_or_else(|| t.contents.replace("\\P", "\n"))),
+        EntityKind::Dimension(d) => {
+            Some(formula_of(&d.marks.formula).unwrap_or_else(|| if d.text.is_empty() { "<>".into() } else { d.text.clone() }))
+        }
         _ => None,
     }
 }
@@ -21,6 +29,9 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         return Err(other("The object is on a locked layer."));
     }
     let mut k = curves::entity(s, h)?.kind;
+    // The text as the edit showed it (a formula, else the value): unchanged, it keeps its
+    // formula or AutoCAD field.
+    let unchanged = text_of(&k).is_some_and(|shown| shown == text || shown == text.replace('\n', "\\P"));
     match &mut k {
         EntityKind::Text(t) => t.value = text.to_string(),
         EntityKind::AttDef(a) => a.text.value = text.to_string(),
@@ -31,7 +42,24 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         }
         _ => return Err(other("Select a text, mtext, attribute definition or dimension.")),
     }
+    let mut env = crate::textformula::env(s);
+    if let EntityKind::Dimension(dm) = &k {
+        env.measured = crate::textformula::measured(s.doc()?, dm);
+    }
+    crate::textformula::apply(&mut k, &env, !unchanged);
     set_kind(s, h, k)
+}
+
+pub(super) fn run_updatefield(s: &mut Session, _p: &Value) -> Result<Value> {
+    // Without a formula or field the drawing is left as it is (not marked changed).
+    if !crate::textformula::has_any(s.doc()?) {
+        s.echo("0 field(s) updated");
+        return Ok(json!({ "updated": 0 }));
+    }
+    let env = crate::textformula::env(s);
+    let n = crate::textformula::refresh(s.doc_mut()?, &env);
+    s.echo(format!("{n} field(s) updated"));
+    Ok(json!({ "updated": n }))
 }
 
 pub(super) fn run_textedit(s: &mut Session, p: &Value) -> Result<Value> {
