@@ -309,6 +309,21 @@ fn hostile_files_never_panic() {
     assert!(compile("").is_err());
 }
 
+#[test]
+fn a_doubled_minus_sign_is_not_a_number() {
+    // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
+    // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
+    for src in [
+        "*1,1,X\n--9223372036854775808,0\n",
+        "*BIGFONT 4,--9223372036854775807,081,09F\n*1,1,X\n0\n",
+        "*1,1,X\n-0-8000000000000000,0\n",
+        "*--5,1,X\n0\n",
+        "*1,1,X\n+-5,0\n",
+    ] {
+        assert!(compile(src).is_err(), "{src:?}");
+    }
+}
+
 /// Register a compiled test font under `name` (each test its own names: the table is shared).
 fn reg(name: &str, src: &str) {
     register(name, &compile(src).unwrap()).unwrap();

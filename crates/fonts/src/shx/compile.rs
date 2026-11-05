@@ -44,7 +44,7 @@ fn number(tok: &str, line: usize) -> Result<i64, ShxError> {
     } else {
         digits.parse::<i64>().map_err(|_| err())?
     };
-    if v > 0xFFFF {
+    if !(0..=0xFFFF).contains(&v) {
         return Err(err());
     }
     Ok(if neg { -v } else { v })
