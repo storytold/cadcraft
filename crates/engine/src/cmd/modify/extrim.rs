@@ -369,17 +369,17 @@ fn stretches_of(pts: &[Vec2], closed: bool, edge: &Grid, trace: &Grid) -> Option
         return None;
     }
     let mut out = Vec::new();
-    let mut done: Vec<(Option<usize>, Option<usize>)> = Vec::new();
+    // Each stretch once, however many times the trace meets it.
+    let mut done = std::collections::HashSet::new();
     for tp in hits {
         // The edge crossings either side, as indices into `cuts`.
         let k = cuts.partition_point(|t| *t < tp);
         let lo = k.checked_sub(1);
         let hi = (k < cuts.len()).then_some(k);
         let (lo, hi) = if closed { (lo.or(cuts.len().checked_sub(1)), hi.or(Some(0))) } else { (lo, hi) };
-        if done.contains(&(lo, hi)) {
+        if !done.insert((lo, hi)) {
             continue;
         }
-        done.push((lo, hi));
         let at = |i: Option<usize>| i.and_then(|i| cuts.get(i).copied());
         out.push(match (at(lo), at(hi)) {
             // Across the seam of a closed outline.
