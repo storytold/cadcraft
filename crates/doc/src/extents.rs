@@ -96,7 +96,12 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
     // other header is not ours to rewrite.
     let [x1, y1, x2, y2] = frame;
     let want = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)];
-    let near = |a: f64, b: f64| (a - b).abs() <= (1e-9 * a.abs().max(b.abs()).max(1.0)).min(CORNER_EPS);
+    // The floor is the fixed-ceiling match; above about 8.6e9 one ulp exceeds it, so a few ulps of the
+    // larger value also match.
+    let near = |a: f64, b: f64| {
+        let m = a.abs().max(b.abs());
+        (a - b).abs() <= (1e-9 * m.max(1.0)).min(CORNER_EPS).max(4.0 * f64::EPSILON * m)
+    };
     for (c, (wx, wy)) in want.iter().enumerate() {
         let at = OLE_HEADER + c * 24;
         let rd = |o: usize| bytes.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes);
@@ -117,13 +122,37 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
     let mut pos = 0;
     for (i, n) in spans {
         let (Some(t), Some(chunk)) = (tags.get_mut(i), bytes.get(pos..pos + n)) else { return };
-        let lower = t.value.bytes().any(|b| b.is_ascii_lowercase());
-        let hex: String = chunk.iter().map(|b| if lower { format!("{b:02x}") } else { format!("{b:02X}") }).collect();
         // Leave any padding around the digits, and the digits after the header, as they were.
         let start = t.value.len() - t.value.trim_start().len();
+        let hex = recase(chunk, t.value.get(start..).unwrap_or_default());
         t.value.replace_range(start..start + 2 * n, &hex);
         pos += n;
     }
+}
+
+/// The hex of `chunk`, each digit in the case of the digit at the same place in `old`. A digit that
+/// was a number and becomes a letter takes the case of the nearest letter in `old`, upper when there
+/// is none, so bytes that did not change keep their exact text.
+fn recase(chunk: &[u8], old: &str) -> String {
+    let old = old.as_bytes();
+    let lower_at = |i: usize| -> bool {
+        if let Some(c) = old.get(i).filter(|c| c.is_ascii_alphabetic()) {
+            return c.is_ascii_lowercase();
+        }
+        let nearest = (1..=old.len()).find_map(|d| {
+            let before = i.checked_sub(d).and_then(|j| old.get(j)).filter(|c| c.is_ascii_alphabetic());
+            before.or_else(|| old.get(i + d).filter(|c| c.is_ascii_alphabetic()))
+        });
+        nearest.is_some_and(|c| c.is_ascii_lowercase())
+    };
+    let mut out = String::with_capacity(chunk.len() * 2);
+    for (k, b) in chunk.iter().enumerate() {
+        for (j, d) in [b >> 4, b & 15].into_iter().enumerate() {
+            let digit = char::from_digit(d.into(), 16).unwrap_or('0');
+            out.push(if lower_at(2 * k + j) { digit } else { digit.to_ascii_uppercase() });
+        }
+    }
+    out
 }
 
 /// Ceiling for the tolerance when matching the corners in the OLE data to the frame's. The header
@@ -163,7 +192,7 @@ pub fn ole_frame_accepts(m: &cadcraft_geom::Mat3) -> bool {
     const T: f64 = 1e-12;
     // The tolerance grows with the scale: a matrix built from two angles (ALIGN) leaves rounding noise
     // in b and c of about `scale * 1e-16`.
-    let t = T * m.a.abs().max(1.0);
+    let t = T * m.a.abs();
     m.b.abs() < t && m.c.abs() < t && m.a > 0.0 && (m.a - m.d).abs() <= t
 }
 
@@ -867,5 +896,70 @@ mod tests {
         let after: Vec<String> = tags.iter().skip(5).map(|t| t.value.clone()).collect();
         assert_eq!(after, rest, "every group after the first is string-identical");
         assert_eq!(tags.get(4).map(|t| t.value.len()), Some(254), "the first group keeps its length");
+    }
+
+    /// Above about 8.6e9 one ulp of an f64 is more than the fixed ceiling on the corner match, so a
+    /// text corner one ulp from the header double must still count as the same corner (review on
+    /// #2587).
+    #[test]
+    fn ole_frame_moves_at_2e10_with_a_one_ulp_text_corner() {
+        let mut tags = big_frame(0.0);
+        // Rebuild the frame at 2e10: the header keeps the exact corners, the text is one ulp off.
+        let (x1, y1, x2, y2) = (2e10f64, 2e10f64, 2e10 + 10.0, 2e10 + 5.0);
+        let mut blob = vec![1u8, 0];
+        for (x, y) in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)] {
+            for v in [x, y, 7.0] {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let text_x1 = f64::from_bits(x1.to_bits() + 1);
+        tags[0].value = text_x1.to_string();
+        tags[1].value = y1.to_string();
+        tags[2].value = x2.to_string();
+        tags[3].value = y2.to_string();
+        if let Some(t) = tags.last_mut() {
+            t.value = blob.iter().map(|b| format!("{b:02X}")).collect();
+        }
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(1e4, 1e4)));
+        assert_eq!(header_corners(&tags)[0].0, text_x1 + 1e4, "the header moved with the frame");
+    }
+
+    /// Below scale 1 the rotation bound is still relative to the scale: a small real turn at a tiny
+    /// scale is refused, and so is a non-uniform scale whose two factors differ by more than a
+    /// relative 1e-12 (review on #2587).
+    #[test]
+    fn ole_frame_refuses_a_small_turn_at_a_tiny_scale() {
+        use cadcraft_geom::Mat3;
+        let p = Vec2::new(3.0, -4.0);
+        let turned = Mat3::scale_about(p, 1e-9).then_before(Mat3::rotate_about(p, 0.05f64.to_radians()));
+        assert!(!ole_frame_accepts(&turned));
+        assert!(ole_frame_accepts(&Mat3::scale_about(p, 1e-9)));
+        assert!(!ole_frame_accepts(&Mat3::scale(1e-6, 1e-6 + 5e-13)));
+    }
+
+    /// Hex digits keep the case they had: bytes the transform does not change come back as the
+    /// identical text, also in a group that mixes upper and lower case (review on #2587).
+    #[test]
+    fn moving_an_ole_frame_keeps_each_hex_digits_case() {
+        let mut tags = small_frame();
+        let old = tags.last().map(|t| t.value.clone()).unwrap_or_default();
+        let mixed: String = old.chars().enumerate().map(|(i, c)| if i < 24 { c.to_ascii_lowercase() } else { c }).collect();
+        assert_ne!(mixed, old);
+        if let Some(t) = tags.last_mut() {
+            t.value = mixed.clone();
+        }
+        ole_frame_transform(&mut tags, &cadcraft_geom::Mat3::translate(Vec2::new(10.0, 5.0)));
+        let new = tags.last().map(|t| t.value.clone()).unwrap_or_default();
+        assert_eq!(new.len(), mixed.len());
+        let byte = |s: &str, i: usize| s.get(2 * i..2 * i + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
+        let mut same = 0;
+        for i in 0..mixed.len() / 2 {
+            if byte(&mixed, i) == byte(&new, i) {
+                same += 1;
+                assert_eq!(mixed.get(2 * i..2 * i + 2), new.get(2 * i..2 * i + 2), "byte {i}");
+            }
+        }
+        assert!(same > 40, "most of the header is unchanged: {same}");
+        assert_eq!(header_corners(&tags)[0], (40.0, -14.0));
     }
 }
