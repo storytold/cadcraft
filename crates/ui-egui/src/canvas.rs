@@ -40,6 +40,19 @@ use viewport::viewport_highlight_tolerance;
 use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
 use widgets::{draw_tiles, draw_ucs_icon, draw_viewcube, tile_rects, tile_xf, viewport_label};
 
+/// How lineweights show in the view `xf` of the tab on show (LWDISPLAY): in pixels in model
+/// space, at their width on the paper in a layout (`xf` then in paper units).
+pub(crate) fn lw_scale(app: &CadApp, xf: &Xf) -> crate::gpu::LwScale {
+    let paper_unit_mm =
+        match app.session.layout_space() {
+            cadcraft_doc::Space::Paper(name) => app.session.doc().ok().map(|d| {
+                d.layout(&name).map_or_else(|| cadcraft_render::paper::paper_unit_mm(d), |l| cadcraft_render::paper::page_unit_mm(d, &l.page))
+            }),
+            cadcraft_doc::Space::Model => None,
+        };
+    crate::gpu::LwScale::new(app.session.settings.lwdisplay, xf.scale, paper_unit_mm)
+}
+
 /// World ↔ screen transform for the canvas rect.
 #[derive(Clone, Copy, Debug)]
 pub struct Xf {
@@ -418,18 +431,20 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
                 active_vp.as_ref().zip(active_clip.as_ref()).map(|(vp, c)| c.polygon().iter().map(|q| vp.paper_to_model(*q)).collect::<Vec<_>>());
             app.canvas.only.update(st, &only, scale, outline.as_deref());
         }
-        draw_list(&painter.with_clip_rect(clip), &xf, &app.canvas.only.list, bg, app.session.settings.lwdisplay);
+        draw_list(&painter.with_clip_rect(clip), &xf, &app.canvas.only.list, bg, lw_scale(app, &xf_paper));
     } else {
         if let Some(f) = ensure_vp_content(app, &xf_paper, ui.ctx()) {
             let gpu = app.canvas.gpu.is_some();
             let clipped = painter.with_clip_rect(f.on_screen.intersect(rect));
-            draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, bg, app.session.settings.lwdisplay);
+            let lws = lw_scale(app, &xf_paper);
+            draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, bg, lws);
             masked = gpu && f.outline.is_some();
         }
         if app.canvas.gpu.is_some() {
-            draw_list_gpu(&mut app.canvas, painter, &xf_paper, bg, app.session.settings.lwdisplay);
+            let lws = lw_scale(app, &xf_paper);
+            draw_list_gpu(&mut app.canvas, painter, &xf_paper, bg, lws);
         } else if let Some(list) = &app.canvas.list {
-            draw_list(painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+            draw_list(painter, &xf_paper, list, bg, lw_scale(app, &xf_paper));
         }
     }
     if let Some(vp) = &active_vp {
@@ -1207,7 +1222,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             let transparency = app.session.settings.transparency_display;
             draw_drag_gpu(&mut app.canvas, painter, &xf, &st.doc, &drag, (&app.session.clipboard, serial), bg, transparency);
             let list = rebuilt_preview(&st.doc, extra.iter(), scale);
-            draw_list(painter, &xf, &list, bg, false);
+            draw_list(painter, &xf, &list, bg, crate::gpu::LwScale::Off);
         }
     } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
         let ents = app.session.preview(c);
@@ -1215,7 +1230,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             && let Ok(st) = app.session.state()
         {
             let list = rebuilt_preview(&st.doc, ents.iter(), scale);
-            draw_list(painter, &xf, &list, bg, false);
+            draw_list(painter, &xf, &list, bg, crate::gpu::LwScale::Off);
         }
     }
     // Pending selection window.
