@@ -414,17 +414,36 @@ fn a_stale_ucs_name_copy_is_not_brought_back() {
     assert_eq!(cadcraft_io::read_dxf(same.as_bytes()).unwrap().header.str("UCSNAME", ""), "SITE");
 }
 
-/// UCSICON is a setting of the drawing: icon off (bit 1 clear) comes back off after a DXF save.
+/// The `*ACTIVE` VPORT record's group 74 (UCSICON setting) in DXF text.
+fn active_ucsicon(text: &str) -> Option<String> {
+    let active = records(text, "VPORT").into_iter().find(|r| group(r, "2").is_some_and(|n| n.eq_ignore_ascii_case("*ACTIVE")))?;
+    group(&active, "74").map(str::to_string)
+}
+
+/// UCSICON is a setting of the drawing, kept in the active VPORT's group 74 (bit 1 the icon,
+/// bit 2 at the origin): icon off comes back off after a DXF save, and it is no header variable.
 #[test]
 fn ucsicon_survives_a_dxf_round_trip() {
     let mut d = Drawing::default();
     d.header.set_i64("UCSICON", 0);
     let text = cadcraft_io::write_dxf(&d);
-    assert_eq!(group(&header_var(&text, "UCSICON"), "70"), Some("0"), "written to the header");
+    assert_eq!(active_ucsicon(&text).as_deref(), Some("0"), "written to the active VPORT");
+    assert!(header_var(&text, "UCSICON").is_empty(), "not a header variable");
     let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
     assert_eq!(back.header.i64("UCSICON", 3), 0);
     // And a value with the origin bit only.
     d.header.set_i64("UCSICON", 2);
-    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
-    assert_eq!(back.header.i64("UCSICON", 3), 2);
+    let text = cadcraft_io::write_dxf(&d);
+    assert_eq!(active_ucsicon(&text).as_deref(), Some("2"));
+    assert_eq!(cadcraft_io::read_dxf(text.as_bytes()).unwrap().header.i64("UCSICON", 3), 2);
+}
+
+/// A file whose `*ACTIVE` VPORT says 74 = 0 opens with the icon off.
+#[test]
+fn ucsicon_reads_from_the_active_vport_group_74() {
+    let dxf = "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n70\n1\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n12\n6.0\n22\n4.5\n40\n9.0\n41\n1.6\n74\n0\n0\nENDTAB\n0\nENDSEC\n0\nEOF\n";
+    let d = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    assert_eq!(d.header.i64("UCSICON", 3), 0);
+    let on = dxf.replace("74\n0\n", "74\n3\n");
+    assert_eq!(cadcraft_io::read_dxf(on.as_bytes()).unwrap().header.i64("UCSICON", 3), 3);
 }

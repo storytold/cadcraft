@@ -105,6 +105,11 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
+        // UCSICON: bit 1 shows the icon, bit 2 puts it at the UCS origin. A setting of the shown
+        // configuration (there is no header variable for it).
+        if name == VportConfig::ACTIVE {
+            w.i(74, d.header.i64("UCSICON", 3).clamp(0, 3));
+        }
         // The shown configuration's tiles keep model space's current UCS (UCSVP 1).
         if name == VportConfig::ACTIVE {
             let ucs = model_ucs(d);

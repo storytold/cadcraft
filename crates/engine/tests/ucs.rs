@@ -626,19 +626,20 @@ fn pressing_enter_at_the_origin_prompt_keeps_the_origin() {
     assert!(near3(s.ucs().origin, before.origin));
 }
 
-/// DIST's JSON says what its message says: angle and deltas in the current UCS, the world ones
-/// under `world`.
+/// DIST's JSON keeps world values at the top level, as ID does, and has the numbers its message
+/// shows (angle and deltas in the current UCS) under `ucs`.
 #[test]
-fn dist_json_matches_its_message_in_a_ucs() {
+fn dist_json_keeps_world_values_and_adds_ucs() {
     let mut s = session();
     turned(&mut s);
     // Points are given in the world: UCS (0,0) and (10,0).
     let r = s.execute("dist", &json!({"p1": [100, 50], "p2": [100, 60]})).unwrap();
     let f = |v: &Value, k: &str| v[k].as_f64().unwrap();
-    assert!((f(&r, "dx") - 10.0).abs() < 1e-9 && f(&r, "dy").abs() < 1e-9 && f(&r, "angle").abs() < 1e-9, "{r}");
+    assert!(f(&r, "dx").abs() < 1e-9 && (f(&r, "dy") - 10.0).abs() < 1e-9 && (f(&r, "angle") - 90.0).abs() < 1e-9, "{r}");
+    let u = &r["ucs"];
+    assert!((f(u, "dx") - 10.0).abs() < 1e-9 && f(u, "dy").abs() < 1e-9 && f(u, "angle").abs() < 1e-9, "{r}");
     assert!(r["message"].as_str().unwrap().contains("Delta X = 10"), "{r}");
-    let w = &r["world"];
-    assert!(f(w, "dx").abs() < 1e-9 && (f(w, "dy") - 10.0).abs() < 1e-9 && (f(w, "angle") - 90.0).abs() < 1e-9, "{r}");
+    assert!(r.get("world").is_none(), "{r}");
 }
 
 /// Deleting the current named UCS leaves no trace of its name: UCS Previous goes back to the axes

@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dist", "Distance", run_dist)
             .menu(&["Tools", "Inquiry", "Distance"])
             .alias(&["di"])
-            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (in the current UCS, as the message), world: {angle, angleFromXY, dx, dy, dz}, message}")
+            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (world), ucs: {angle, angleFromXY, dx, dy, dz} (in the current UCS, as the message), message}")
             .noundo()
             .transparent()
             .interactive(|_| Ok(Box::new(DistM::default()))),
@@ -192,13 +192,18 @@ fn angle_from_xy(d: Vec3) -> f64 {
     d.z.atan2(d.xy().len())
 }
 
-/// DIST's report: the distance, the angles and the deltas, measured in the current UCS.
-fn dist_text(s: &Session, a: Vec3, b: Vec3) -> String {
+/// The delta from `a` to `b` along the axes of the current UCS (the World UCS while that is
+/// tilted): what DIST's report shows.
+fn dist_delta(s: &Session, a: Vec3, b: Vec3) -> Vec3 {
     let u = s.input_ucs();
-    let d = u.to_ucs3(b) - u.to_ucs3(a);
+    u.to_ucs3(b) - u.to_ucs3(a)
+}
+
+/// DIST's report: the distance, the angles and the deltas `d`, measured in the current UCS.
+fn dist_text(s: &Session, dist: f64, d: Vec3) -> String {
     format!(
         "Distance = {},  Angle in XY Plane = {},  Angle from XY Plane = {}\nDelta X = {},  Delta Y = {},   Delta Z = {}",
-        fmt_d(s, (b - a).len()),
+        fmt_d(s, dist),
         fmt_a(s, d.xy().angle()),
         fmt_a(s, angle_from_xy(d)),
         fmt_d(s, d.x),
@@ -224,25 +229,23 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.distance = d.len();
     s.last_point = a.xy();
-    // `angle`, `angleFromXY` and the deltas are measured in the current UCS, as the message says
-    // them; `world` has the same numbers along the world axes.
-    let u = s.input_ucs();
-    let du = u.to_ucs3(b) - u.to_ucs3(a);
+    // Top level: the world values, as ID's x, y, z are; `ucs` has what the message shows.
+    let du = dist_delta(s, a, b);
     Ok(json!({
         "distance": d.len(),
-        "angle": du.xy().angle().to_degrees(),
-        "angleFromXY": angle_from_xy(du).to_degrees(),
-        "dx": du.x,
-        "dy": du.y,
-        "dz": du.z,
-        "world": {
-            "angle": d.xy().angle().to_degrees(),
-            "angleFromXY": angle_from_xy(d).to_degrees(),
-            "dx": d.x,
-            "dy": d.y,
-            "dz": d.z,
+        "angle": d.xy().angle().to_degrees(),
+        "angleFromXY": angle_from_xy(d).to_degrees(),
+        "dx": d.x,
+        "dy": d.y,
+        "dz": d.z,
+        "ucs": {
+            "angle": du.xy().angle().to_degrees(),
+            "angleFromXY": angle_from_xy(du).to_degrees(),
+            "dx": du.x,
+            "dy": du.y,
+            "dz": du.z,
         },
-        "message": dist_text(s, a, b),
+        "message": dist_text(s, d.len(), du),
     }))
 }
 
@@ -916,7 +919,7 @@ impl Interactive for DistM {
                     s.last_point = first;
                     return Err(bad("dist", "the distance is too large"));
                 }
-                let t = dist_text(s, a, b);
+                let t = dist_text(s, (b - a).len(), dist_delta(s, a, b));
                 for l in t.lines() {
                     s.echo(l.to_string());
                 }
