@@ -35,7 +35,7 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             && e.format == crate::dyninput::Format::Cartesian
             && let Some(xf) = app.canvas.xf
         {
-            rectangle_dims(p, &xf, &f, &e, c, app.cmd.second_locked(), length_units(&app.session));
+            rectangle_dims(p, &xf, &f, &e, c, (app.cmd.second_locked(), app.cmd.first_active(&e)), length_units(&app.session));
             let r = if show_prompt {
                 let t = Tokens::get();
                 let g = p.layout_no_wrap(message.to_owned(), crate::theme::small(), t.text_dim);
@@ -53,7 +53,8 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             options_menu(app, p, r, hover);
             return;
         }
-        let r = dynamic_input_boxes(p, at, message, &f, &e, c, app.cmd.second_locked(), options, length_units(&app.session));
+        let r =
+            dynamic_input_boxes(p, at, message, &f, &e, c, (app.cmd.second_locked(), app.cmd.first_active(&e)), options, length_units(&app.session));
         options_menu(app, p, r, hover);
         return;
     }
@@ -79,6 +80,12 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             distance_text(&app.session, base.dist(c)),
             (base.angle_to(c).to_degrees() * 10.0).round() / 10.0
         );
+    } else if prompt.accept.number {
+        // A value without a base point (OFFSET's distance): an empty field for it, not the
+        // cursor's coordinates.
+        let r = echo_box(p, at, Some(crate::i18n::t(&prompt.message)), "", options);
+        options_menu(app, p, r, hover);
+        return;
     } else if let Some(c) = app.canvas.cursor {
         text = format!("{}   {}, {}", crate::i18n::t(&prompt.message), distance_text(&app.session, c.x), distance_text(&app.session, c.y));
     }
@@ -195,7 +202,7 @@ fn dynamic_input_boxes(
     f: &crate::dyninput::Frame,
     e: &crate::dyninput::Entry<'_>,
     cursor: Vec2,
-    second_locked: bool,
+    (second_locked, first_active): (bool, bool),
     options: bool,
     (lu, lp): (i64, i64),
 ) -> Rect {
@@ -219,15 +226,9 @@ fn dynamic_input_boxes(
             if e.first.is_empty() { dist(live_first) } else { e.first.to_owned() },
             !e.first.is_empty(),
             e.first_locked().is_some(),
-            !e.split,
+            first_active,
         ),
-        (
-            label_second,
-            if e.second.is_empty() { live_second } else { e.second.to_owned() },
-            !e.second.is_empty(),
-            second_locked,
-            e.split && !second_locked,
-        ),
+        (label_second, if e.second.is_empty() { live_second } else { e.second.to_owned() }, !e.second.is_empty(), second_locked, !first_active),
     ];
 
     let msg = p.layout_no_wrap(message.to_owned(), font.clone(), t.text_dim);

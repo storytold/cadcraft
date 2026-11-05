@@ -29,6 +29,11 @@ pub struct CmdLine {
     pub options: Option<crate::dyninput::OptionsMenu>,
     /// The text whose second Dynamic Input value Tab locked; the lock holds while it is unchanged.
     locked_second: Option<String>,
+    /// Tab went back to the first Dynamic Input box while both are filled in: typing edits the
+    /// first value (Tab moves between the two boxes as often as it is pressed).
+    back_to_first: bool,
+    /// The box Tab just moved to: the next keystroke replaces its value, as in a selected field.
+    fresh_box: bool,
     /// Where the options menu's rows were drawn last frame (screen), for clicks on them.
     pub option_rows: Vec<(Rect, String)>,
     /// Where the Dynamic Input tooltip stays while the options menu is open.
@@ -57,6 +62,11 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         return None;
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
+    // A value asked for without a base point (OFFSET's distance, a scale factor): the box takes
+    // that value, not a point's coordinates.
+    if p.accept.number && p.base.is_none() {
+        return None;
+    }
     // RECTANG's other corner: its width and height, in boxes beside the sides.
     let dims = p.corner && p.base.is_some() && app.session.running.as_ref().is_some_and(|r| r.id == "rectang");
     Some(crate::dyninput::Frame {
@@ -103,17 +113,38 @@ fn tab(app: &mut CadApp) {
     if app.cmd.buffer.is_empty() && app.canvas.snap.is_some() {
         app.canvas.snap_tab = true;
     } else if let Some(f) = dyn_frame(app)
-        && let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f)
+        && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
     {
-        app.cmd.buffer.push(sep);
-    } else if let Some(f) = dyn_frame(app)
-        && crate::dyninput::can_lock_second(&app.cmd.buffer, &f)
-    {
-        // Both values typed: Tab locks the second one as well.
-        app.cmd.locked_second = Some(app.cmd.buffer.clone());
+        // Tab moves between the two boxes, as often as it is pressed: the first value is locked
+        // once the separator follows it, and a typed second value is locked on the way back.
+        if let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f) {
+            app.cmd.buffer.push(sep);
+            app.cmd.back_to_first = false;
+        } else if app.cmd.back_to_first {
+            app.cmd.back_to_first = false;
+        } else {
+            if e.second_value().is_some() {
+                app.cmd.locked_second = Some(app.cmd.buffer.clone());
+            }
+            app.cmd.back_to_first = true;
+        }
+        app.cmd.fresh_box = true;
     } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
+}
+
+/// The command line's text: what is typed, without the separator Tab put after the first
+/// Dynamic Input value while the second box is still empty (the boxes at the cursor show it).
+fn shown_buffer(app: &CadApp) -> String {
+    let b = &app.cmd.buffer;
+    if let Some(f) = dyn_frame(app)
+        && let Some(i) = crate::dyninput::split_at(b, &f)
+        && b.get(i + 1..).is_some_and(|rest| rest.trim().is_empty())
+    {
+        return b.get(..i).unwrap_or_default().trim_end().to_string();
+    }
+    b.clone()
 }
 
 /// An AutoComplete suggestion for the command line.
@@ -202,6 +233,63 @@ impl CmdLine {
     /// Tab locked the second Dynamic Input value and nothing was typed since.
     pub fn second_locked(&self) -> bool {
         self.locked_second.as_deref() == Some(self.buffer.as_str())
+    }
+
+    /// Whether the first Dynamic Input box is the one being typed in: before the separator, or
+    /// after Tab went back to it.
+    pub fn first_active(&self, e: &crate::dyninput::Entry<'_>) -> bool {
+        !e.split || self.back_to_first
+    }
+
+    /// Typing at the command line: into the Dynamic Input box being edited when Tab moved
+    /// between the boxes (replacing its value on the first keystroke there), else at the end.
+    fn type_text(&mut self, frame: Option<&crate::dyninput::Frame>, t: &str) {
+        let fresh = std::mem::take(&mut self.fresh_box);
+        let split = frame.and_then(|f| crate::dyninput::split_at(&self.buffer, f));
+        match split {
+            Some(i) => {
+                let locked = self.second_locked();
+                let (first, rest) = self.buffer.split_at(i);
+                let (sep, second) = rest.split_at(1);
+                let (mut first, sep, mut second) = (first.to_string(), sep.to_string(), second.to_string());
+                if self.back_to_first {
+                    if fresh {
+                        first.clear();
+                    }
+                    first.push_str(t);
+                } else {
+                    if fresh {
+                        second.clear();
+                    }
+                    second.push_str(t);
+                }
+                self.buffer = format!("{first}{sep}{second}");
+                // The second value stays locked while only the first one is edited.
+                self.locked_second = (locked && self.back_to_first).then(|| self.buffer.clone());
+            }
+            None => self.buffer.push_str(t),
+        }
+    }
+
+    /// Backspace at the command line: in the Dynamic Input box being edited, else at the end.
+    fn erase_char(&mut self, frame: Option<&crate::dyninput::Frame>) {
+        self.fresh_box = false;
+        match frame.and_then(|f| crate::dyninput::split_at(&self.buffer, f)) {
+            Some(i) if self.back_to_first => {
+                let locked = self.second_locked();
+                let (first, rest) = self.buffer.split_at(i);
+                let mut first = first.to_string();
+                first.pop();
+                self.buffer = format!("{first}{rest}");
+                self.locked_second = locked.then(|| self.buffer.clone());
+            }
+            _ => {
+                self.buffer.pop();
+                if !self.buffer.contains([',', '<']) {
+                    self.back_to_first = false;
+                }
+            }
+        }
     }
 
     /// The options menu row under `at` (screen), if the menu is open.
@@ -351,7 +439,8 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
-                    app.cmd.buffer.push_str(&t);
+                    let f = dyn_frame(app);
+                    app.cmd.type_text(f.as_ref(), &t);
                 }
             }
             // IME composition: the pre-edit is shown but stays out of the buffer; the commit is
@@ -385,7 +474,8 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     if erase {
                         let _ = app.run("erase.selection", serde_json::json!({}));
                     } else {
-                        app.cmd.buffer.pop();
+                        let f = dyn_frame(app);
+                        app.cmd.erase_char(f.as_ref());
                     }
                 }
                 Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
@@ -438,6 +528,8 @@ pub fn submit(app: &mut CadApp) {
     }
     let text = std::mem::take(&mut app.cmd.buffer);
     app.cmd.locked_second = None;
+    app.cmd.back_to_first = false;
+    app.cmd.fresh_box = false;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
         app.cmd.history.push(text.clone());
@@ -565,7 +657,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
+    let g = p.layout_no_wrap(shown_buffer(app), font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
     let mut caret_x = x + gw;
@@ -754,6 +846,70 @@ mod tests {
             .expect("a rectangle");
         let b = cadcraft_geom::Bounds2::from_points(pl.vertices.iter().map(|v| v.p));
         assert!((b.width() - 100.0).abs() < 1e-9 && (b.height() - 4.0).abs() < 1e-9, "{b:?}");
+    }
+
+    /// OFFSET's "Specify offset distance": Dynamic Input asks for the distance, not for a point's
+    /// coordinates; its second point (after a first one is picked) shows the distance from it.
+    #[test]
+    fn offset_distance_has_no_coordinate_boxes() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("offset");
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Specify offset distance"));
+        assert!(dyn_frame(&app).is_none());
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        assert!(dyn_frame(&app).is_some_and(|f| f.base == Some(cadcraft_geom::Vec2::ZERO)));
+    }
+
+    /// Tab moves between RECTANG's width and height boxes as often as it is pressed: no comma
+    /// piles up in the command line, the box reached takes what is typed next (replacing its
+    /// value), and Enter makes the rectangle of both values.
+    #[test]
+    fn tab_moves_between_the_rectangle_boxes() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("rectang");
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        app.canvas.cursor = Some(cadcraft_geom::Vec2::new(3.0, 4.0));
+        let typed = |app: &mut CadApp, t: &str| {
+            let f = dyn_frame(app);
+            app.cmd.type_text(f.as_ref(), t);
+        };
+        for _ in 0..5 {
+            tab(&mut app);
+        }
+        assert!(app.cmd.buffer.matches(',').count() <= 1, "{:?}", app.cmd.buffer);
+        assert_eq!(shown_buffer(&app), "");
+        // Width 10, Tab, height 20, Tab back to the width: 30 replaces 10.
+        app.cmd.buffer.clear();
+        app.cmd.back_to_first = false;
+        typed(&mut app, "10");
+        tab(&mut app);
+        assert_eq!(shown_buffer(&app), "10");
+        typed(&mut app, "20");
+        tab(&mut app);
+        assert!(app.cmd.second_locked());
+        typed(&mut app, "30");
+        assert_eq!(app.cmd.buffer, "30,20");
+        assert!(app.cmd.second_locked(), "the height stays locked while the width is edited");
+        tab(&mut app);
+        typed(&mut app, "5");
+        assert_eq!(app.cmd.buffer, "30,5");
+        for _ in 0..4 {
+            tab(&mut app);
+        }
+        assert_eq!(app.cmd.buffer, "30,5");
+        submit(&mut app);
+        let d = app.session.doc().unwrap();
+        let pl = d
+            .model
+            .iter()
+            .find_map(|e| if let cadcraft_doc::EntityKind::LwPolyline(p) = &e.kind { Some(p.clone()) } else { None })
+            .expect("a rectangle");
+        let b = cadcraft_geom::Bounds2::from_points(pl.vertices.iter().map(|v| v.p));
+        assert!((b.width() - 30.0).abs() < 1e-9 && (b.height() - 5.0).abs() < 1e-9, "{b:?}");
     }
 
     #[test]
