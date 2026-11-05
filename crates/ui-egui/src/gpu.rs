@@ -164,12 +164,76 @@ fn push_instance(out: &mut Vec<u8>, a: [f32; 2], b: [f32; 2], c: [u8; 4], width:
     out.extend_from_slice(&start.to_le_bytes());
 }
 
-/// Lineweight in screen points for a primitive (as on the CPU path), or `None` for a hairline.
-pub fn wide_width(lw: f32, lwdisplay: bool) -> Option<f32> {
-    if !lwdisplay || lw <= 0.0 {
-        return None;
+/// How lineweights show on screen (LWDISPLAY).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum LwScale {
+    /// Not shown: every line is a hairline.
+    #[default]
+    Off,
+    /// Model space: in pixels, whatever the zoom; 0.25 mm and thinner are one pixel, each
+    /// heavier step a pixel more per 0.2 mm (0.30 and 0.35 mm two, 0.50 mm three, 1.00 mm five).
+    Model,
+    /// A layout: at their width on the paper, so they grow and shrink with the zoom, as plotted
+    /// (screen points per millimetre of paper).
+    Paper(f32),
+}
+
+impl LwScale {
+    /// Screen points per pixel step in model space.
+    const MODEL_POINTS_PER_MM: f32 = 5.0;
+    /// The widest lineweight drawn, in screen points.
+    const MAX_POINTS: f32 = 400.0;
+
+    /// The scale for a view showing `points_per_unit` screen points per drawing unit, in a
+    /// layout whose paper unit is `unit_mm` millimetres (`None` in model space). The paper
+    /// scale is rounded to quarter steps of a doubling, so the GPU vertex data built for it is
+    /// rebuilt a few times per doubling of the zoom, not on every frame of a zoom.
+    pub fn new(on: bool, points_per_unit: f64, paper_unit_mm: Option<f64>) -> LwScale {
+        match (on, paper_unit_mm) {
+            (false, _) => LwScale::Off,
+            (true, None) => LwScale::Model,
+            (true, Some(mm)) => {
+                let ppmm = points_per_unit / mm;
+                if !(ppmm.is_finite() && ppmm > 0.0) {
+                    return LwScale::Model;
+                }
+                let q = 2f64.powf((ppmm.log2() * 4.0).round() / 4.0);
+                LwScale::Paper(q.clamp(1e-6, 1e6) as f32)
+            }
+        }
     }
-    let w = (lw * 3.78).clamp(1.0, 12.0);
+
+    /// Whether lineweights are shown.
+    pub fn on(self) -> bool {
+        self != LwScale::Off
+    }
+
+    /// A key for caches built with this scale.
+    pub fn key(self) -> (u8, u32) {
+        match self {
+            LwScale::Off => (0, 0),
+            LwScale::Model => (1, 0),
+            LwScale::Paper(k) => (2, k.to_bits()),
+        }
+    }
+
+    /// The screen width of lineweight `lw` (mm; 1 for a hairline).
+    pub fn width(self, lw: f32) -> f32 {
+        if !(lw.is_finite() && lw > 0.0) {
+            return 1.0;
+        }
+        match self {
+            LwScale::Off => 1.0,
+            // 0.25 → 1.25 → 1, 0.30 → 1.5 → 2, 0.50 → 2.5 → 3.
+            LwScale::Model => (lw * Self::MODEL_POINTS_PER_MM).round().clamp(1.0, Self::MAX_POINTS),
+            LwScale::Paper(ppmm) => (lw * ppmm).clamp(1.0, Self::MAX_POINTS),
+        }
+    }
+}
+
+/// Lineweight in screen points for a primitive (as on the CPU path), or `None` for a hairline.
+pub fn wide_width(lw: f32, scale: LwScale) -> Option<f32> {
+    let w = scale.width(lw);
     (w > 1.0).then_some(w)
 }
 
@@ -180,7 +244,7 @@ fn premultiplied(c: Rgb, a: u8) -> [u8; 4] {
 }
 
 /// Convert a display list into vertex data relative to `origin`, colours resolved against `bg`.
-pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) -> MeshData {
+pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: LwScale) -> MeshData {
     let mut m = MeshData {
         lines: Vec::with_capacity(list.segment_count().saturating_mul(2 * VERTEX_SIZE)),
         tris: Vec::with_capacity(list.tris.len().saturating_mul(VERTEX_SIZE)),
@@ -898,7 +962,7 @@ mod tests {
     fn mesh_counts_and_precision() {
         let l = list();
         let origin = Vec2::new(1e6, 1e6);
-        let m = build_mesh(&l, origin, Rgb(255, 255, 255), false);
+        let m = build_mesh(&l, origin, Rgb(255, 255, 255), LwScale::Off);
         assert_eq!(m.line_vertices(), 4, "two segments");
         assert_eq!(m.tri_vertices(), 3);
         assert_eq!(m.quad_instances(), 1, "the point marker");
@@ -917,14 +981,14 @@ mod tests {
             p.transparency = 50;
         }
         // Colour 7 on a black background is white: half of it, premultiplied.
-        let m = build_mesh(&l, Vec2::ZERO, Rgb(0, 0, 0), false);
+        let m = build_mesh(&l, Vec2::ZERO, Rgb(0, 0, 0), LwScale::Off);
         assert_eq!(&m.lines[8..12], &[128, 128, 128, 128]);
         assert_eq!(&m.tris[8..12], &[128, 128, 128, 128]);
         // A wipeout's mask stays opaque.
         if let Some(p) = l.prims.get_mut(1) {
             p.kind = Kind::Mask;
         }
-        let m = build_mesh(&l, Vec2::ZERO, Rgb(10, 20, 30), false);
+        let m = build_mesh(&l, Vec2::ZERO, Rgb(10, 20, 30), LwScale::Off);
         assert_eq!(&m.tris[8..12], &[10, 20, 30, 255]);
         assert_eq!(premultiplied(Rgb(255, 0, 0), 255), [255, 0, 0, 255], "opaque colours are unchanged");
     }
@@ -935,11 +999,32 @@ mod tests {
         if let Some(p) = l.prims.first_mut() {
             p.lw = 0.7;
         }
-        let m = build_mesh(&l, Vec2::ZERO, Rgb(0, 0, 0), true);
+        let m = build_mesh(&l, Vec2::ZERO, Rgb(0, 0, 0), LwScale::Model);
         assert_eq!(m.line_vertices(), 0);
         assert_eq!(m.quad_instances(), 3);
-        assert_eq!(wide_width(0.25, true), None, "thin lineweights stay hairlines");
-        assert_eq!(wide_width(0.7, false), None);
+        assert_eq!(wide_width(0.25, LwScale::Model), None, "thin lineweights stay hairlines");
+        assert_eq!(wide_width(0.7, LwScale::Off), None);
+    }
+
+    /// Lineweights in model space step up a pixel at a time, so the common ones look different
+    /// (0.25, 0.30, 0.50, 1.00 mm: 1, 2, 3, 5 points); in a layout they are their width on the
+    /// paper at the zoom, as plotted.
+    #[test]
+    fn lineweights_show_in_pixels_in_model_and_to_scale_on_paper() {
+        let m = LwScale::Model;
+        assert_eq!([0.13, 0.25, 0.30, 0.35, 0.50, 0.70, 1.00, 2.11].map(|w| m.width(w)), [1.0, 1.0, 2.0, 2.0, 3.0, 4.0, 5.0, 11.0]);
+        // A metric layout at 4 points per millimetre: 0.5 mm is 2 points; zoomed in four
+        // times, 8.
+        let p = LwScale::new(true, 4.0, Some(1.0));
+        assert_eq!(p, LwScale::Paper(4.0));
+        assert!((p.width(0.5) - 2.0).abs() < 1e-6);
+        assert!((LwScale::new(true, 16.0, Some(1.0)).width(0.5) - 8.0).abs() < 1e-6);
+        // Inches: 25.4 mm per unit.
+        assert!((LwScale::new(true, 101.6, Some(25.4)).width(0.5) - 2.0).abs() < 1e-5);
+        // Zooming a little doesn't change the scale (the GPU data is kept).
+        assert_eq!(LwScale::new(true, 4.05, Some(1.0)), p);
+        assert_eq!(LwScale::new(false, 4.0, Some(1.0)), LwScale::Off);
+        assert_eq!(LwScale::new(true, f64::NAN, Some(1.0)), LwScale::Model);
     }
 
     #[test]
@@ -977,7 +1062,7 @@ mod tests {
             p.kind = Kind::Mask;
         }
         let bg = Rgb(10, 20, 30);
-        let m = build_mesh(&l, Vec2::ZERO, bg, false);
+        let m = build_mesh(&l, Vec2::ZERO, bg, LwScale::Off);
         // The polyline's two segments come before the mask; the point marker after it.
         assert_eq!(m.breaks, vec![[0, 4, 0]]);
         assert_eq!(m.tri_vertices(), 3);

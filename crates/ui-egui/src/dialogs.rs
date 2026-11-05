@@ -328,7 +328,7 @@ fn about(ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("About CADCraft"))
         .id(egui::Id::unique("About CADCraft"))
         .open(open)
-        .default_size(vec2(640.0, 420.0))
+        .default_size(vec2(820.0, 420.0))
         .collapsible(false)
         .show(ctx, |ui| {
             let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);

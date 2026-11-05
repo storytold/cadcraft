@@ -161,7 +161,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
 /// Draw the active viewport's contents (see [`VpContent`]) as [`ensure_vp_content`] set out;
 /// `p` clips them to the viewport's rectangle, and a clipped viewport's outline is masked with
 /// the stencil buffer first.
-pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f: &VpFrame, xf_paper: &Xf, bg: Rgb, lwdisplay: bool) {
+pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f: &VpFrame, xf_paper: &Xf, bg: Rgb, lwdisplay: crate::gpu::LwScale) {
     let xf = &f.xf;
     if !gpu {
         draw_list(p, xf, &c.list, bg, lwdisplay);
@@ -179,7 +179,7 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.builds, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay).hash(&mut h);
+        (c.builds, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay.key()).hash(&mut h);
         h.finish()
     };
     if c.mesh_key != Some(key) {
@@ -240,7 +240,7 @@ fn draw_vp_mask(c: &mut VpContent, p: &egui::Painter, outline: &[Vec2], xf_paper
         });
         let origin = if fan.bounds.is_empty() { Vec2::ZERO } else { fan.bounds.center() };
         if let Ok(mut slot) = c.mask_slot.lock() {
-            *slot = Some(crate::gpu::build_mesh(&fan, origin, Rgb(0, 0, 0), false));
+            *slot = Some(crate::gpu::build_mesh(&fan, origin, Rgb(0, 0, 0), crate::gpu::LwScale::Off));
         }
         c.mask_key = Some(key);
         c.mask_origin = origin;
@@ -287,7 +287,8 @@ impl VpHighlight {
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles).hash(&mut h);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles, super::list::font_generation())
+                .hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {

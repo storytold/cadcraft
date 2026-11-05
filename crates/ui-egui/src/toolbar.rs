@@ -784,15 +784,88 @@ pub fn left_panels(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The current layer and every layer, for the drop-down.
+/// The current layer and every layer, for the drop-down. While objects are selected the
+/// drop-down shows their layer instead (empty when they are on different layers).
 fn layer_rows(app: &CadApp) -> Option<(String, Vec<crate::palettes::LayerRow>)> {
     let d = app.session.doc().ok()?;
-    let cur = d.header.str("CLAYER", "0").to_string();
+    let cur = match selected_value(app, LAYER_COMBO) {
+        Some(v) => v.unwrap_or_default(),
+        None => d.header.str("CLAYER", "0").to_string(),
+    };
     Some((cur, d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect()))
 }
 
-/// The current name and every name of a style or linetype drop-down.
+/// The selected objects a drop-down's choice applies to: all of them for the layer, linetype
+/// and lineweight; the texts (text, multiline text, multileaders, attribute definitions) for
+/// the text style; the dimensions for the dimension style.
+fn applies_to(app: &CadApp, combo: &str) -> Vec<cadcraft_engine::doc::Handle> {
+    use cadcraft_engine::doc::EntityKind as K;
+    let Ok(d) = app.session.doc() else { return Vec::new() };
+    app.session
+        .selection()
+        .into_iter()
+        .filter(|h| {
+            d.entity(*h).is_some_and(|e| match combo {
+                TEXTSTYLE_COMBO => matches!(&e.kind, K::Text(_) | K::MText(_) | K::AttDef(_)) || matches!(&e.kind, K::MLeader(m) if m.text.is_some()),
+                DIMSTYLE_COMBO => matches!(e.kind, K::Dimension(_)),
+                _ => true,
+            })
+        })
+        .collect()
+}
+
+/// What a drop-down shows while objects are selected: `None` when nothing is selected (the
+/// current setting shows); `Some(None)` (an empty drop-down) when the selected objects differ
+/// in it or some of them don't have it; `Some(Some(name))` when they all have the same.
+fn selected_value(app: &CadApp, combo: &str) -> Option<Option<String>> {
+    use cadcraft_engine::doc::EntityKind as K;
+    let sel = app.session.selection();
+    if sel.is_empty() {
+        return None;
+    }
+    let d = app.session.doc().ok()?;
+    let mut value: Option<String> = None;
+    for h in &sel {
+        let Some(e) = d.entity(*h) else { return Some(None) };
+        let v = match combo {
+            LAYER_COMBO => Some(e.common.layer.clone()),
+            LINETYPE_COMBO => Some(e.common.linetype.clone()),
+            LWEIGHT_COMBO => Some(lweight_name(i64::from(e.common.lineweight.to_dxf()))),
+            TEXTSTYLE_COMBO => match &e.kind {
+                K::Text(t) => Some(t.style.clone()),
+                K::MText(t) => Some(t.style.clone()),
+                K::AttDef(a) => Some(a.text.style.clone()),
+                K::MLeader(m) => m.text.as_ref().map(|t| t.style.clone()),
+                _ => None,
+            },
+            DIMSTYLE_COMBO => match &e.kind {
+                K::Dimension(dim) => Some(dim.style.clone()),
+                _ => None,
+            },
+            _ => return None,
+        };
+        let Some(v) = v else { return Some(None) };
+        match &value {
+            Some(prev) if !prev.eq_ignore_ascii_case(&v) => return Some(None),
+            Some(_) => {}
+            None => value = Some(v),
+        }
+    }
+    Some(value)
+}
+
+/// The current name and every name of a style or linetype drop-down; while objects are
+/// selected, their own name (empty when they differ or don't have one).
 fn combo_names(app: &CadApp, combo: &str) -> Option<(String, Vec<String>)> {
+    let (cur, names) = current_names(app, combo)?;
+    Some(match selected_value(app, combo) {
+        Some(v) => (v.unwrap_or_default(), names),
+        None => (cur, names),
+    })
+}
+
+/// The current setting and every name of a style or linetype drop-down.
+fn current_names(app: &CadApp, combo: &str) -> Option<(String, Vec<String>)> {
     let d = app.session.doc().ok()?;
     Some(match combo {
         TEXTSTYLE_COMBO => (d.header.str("TEXTSTYLE", "Standard").to_string(), d.text_styles.iter().map(|s| s.name.clone()).collect()),
@@ -1289,7 +1362,13 @@ fn run_action(app: &mut CadApp, bar: Bar, items: &mut Vec<String>, action: Optio
         Some(Action::AppMenu) => {}
         Some(Action::AppCommand(command)) => crate::menus::activate(app, command),
         Some(Action::SetLayer(name)) => {
-            let _ = app.run("layer.current", json!({ "name": name }));
+            // Selected objects move to the layer; with nothing selected it becomes current.
+            let hs = applies_to(app, LAYER_COMBO);
+            let _ = if hs.is_empty() {
+                app.run("layer.current", json!({ "name": name }))
+            } else {
+                app.run("properties.set", json!({ "handles": hex(&hs), "layer": name }))
+            };
         }
         Some(Action::LayerToggle(name, key, on)) => {
             let _ = app.run("layer.set", json!({ "name": name, key: on }));
@@ -1302,6 +1381,25 @@ fn run_action(app: &mut CadApp, bar: Bar, items: &mut Vec<String>, action: Optio
             }
         }
         Some(Action::SetCurrent(combo, name)) => {
+            // Selected objects that have the property take the choice; with none of them
+            // selected it becomes the current setting.
+            let hs = applies_to(app, combo);
+            if !hs.is_empty() {
+                let key = match combo {
+                    TEXTSTYLE_COMBO => "textStyle",
+                    DIMSTYLE_COMBO => "dimStyle",
+                    LWEIGHT_COMBO => "lineweight",
+                    _ => "linetype",
+                };
+                let value = match (combo, name.trim_end_matches(" mm").trim().parse::<f64>()) {
+                    (LWEIGHT_COMBO, Ok(mm)) => json!(mm),
+                    _ => json!(name),
+                };
+                let mut p = json!({ "handles": hex(&hs) });
+                p[key] = value;
+                let _ = app.run("properties.set", p);
+                return;
+            }
             let _ = match combo {
                 TEXTSTYLE_COMBO => app.run("style.current", json!({ "name": name })),
                 DIMSTYLE_COMBO => app.run("dimstyle.current", json!({ "name": name })),
@@ -1559,6 +1657,11 @@ fn run_tool(app: &mut CadApp, command: &'static str) {
     } else {
         app.start(command);
     }
+}
+
+/// Handles as the commands take them.
+fn hex(hs: &[cadcraft_engine::doc::Handle]) -> Vec<String> {
+    hs.iter().map(|h| h.hex()).collect()
 }
 
 /// The current-layer drop-down: its state icons, colour and name in a row, a layers icon in a column.
@@ -1895,6 +1998,74 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The drop-downs follow the selection: a selected line shows its layer, linetype and
+    /// lineweight and leaves the text and dimension styles empty; lines that differ leave a
+    /// drop-down empty; a choice goes to the selected objects (the current settings stay), and
+    /// with nothing selected it is the current setting again.
+    #[test]
+    fn the_drop_downs_follow_the_selection() {
+        use cadcraft_engine::doc::{EntityKind, Lineweight};
+        let mut app = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).unwrap();
+        app.run("layer.new", json!({ "name": "Walls" })).unwrap();
+        let line =
+            |app: &mut CadApp, y: f64| app.run("line", json!({ "points": [[0, y], [10, y]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
+        let (a, b) = (line(&mut app, 0.0), line(&mut app, 5.0));
+        app.run("properties.set", json!({ "handles": [&a], "lineweight": 0.5, "layer": "Walls" })).unwrap();
+        app.run("properties.set", json!({ "handles": [&b], "lineweight": 0.3 })).unwrap();
+        let t = app.run("text", json!({ "at": [0, 20], "text": "T", "height": 2.5 })).unwrap();
+        let t = t["handle"].as_str().or_else(|| t["handles"][0].as_str()).unwrap().to_string();
+        let select = |app: &mut CadApp, hs: &[&String]| {
+            let hs = hs.iter().filter_map(|h| cadcraft_engine::doc::Handle::parse_hex(h)).collect();
+            app.session.set_selection(hs);
+        };
+        let shown = |app: &CadApp, combo: &str| combo_names(app, combo).map(|(c, _)| c).unwrap_or_default();
+        let layer = |app: &CadApp| layer_rows(app).map(|(c, _)| c).unwrap_or_default();
+
+        // Nothing selected: the current settings.
+        assert_eq!((layer(&app), shown(&app, TEXTSTYLE_COMBO), shown(&app, LWEIGHT_COMBO)), ("0".into(), "Standard".into(), "ByLayer".into()));
+        // One line.
+        select(&mut app, &[&a]);
+        assert_eq!(layer(&app), "Walls");
+        assert_eq!(shown(&app, LWEIGHT_COMBO), "0.50 mm");
+        assert_eq!(shown(&app, LINETYPE_COMBO), "ByLayer");
+        assert_eq!((shown(&app, TEXTSTYLE_COMBO), shown(&app, DIMSTYLE_COMBO)), (String::new(), String::new()));
+        // Two lines on different layers with different lineweights; a line and a text.
+        select(&mut app, &[&a, &b]);
+        assert_eq!((layer(&app), shown(&app, LWEIGHT_COMBO), shown(&app, LINETYPE_COMBO)), (String::new(), String::new(), "ByLayer".into()));
+        select(&mut app, &[&b, &t]);
+        assert_eq!(shown(&app, TEXTSTYLE_COMBO), "");
+        select(&mut app, &[&t]);
+        assert_eq!(shown(&app, TEXTSTYLE_COMBO), "Standard");
+
+        // A choice goes to the selection.
+        select(&mut app, &[&a, &b]);
+        let mut items = Vec::new();
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetCurrent(LWEIGHT_COMBO, "1.00 mm".into())));
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetLayer("Walls".into())));
+        let d = app.session.doc().unwrap();
+        for h in [&a, &b] {
+            let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(h).unwrap()).unwrap();
+            assert!(matches!(e.kind, EntityKind::Line(_)));
+            assert_eq!((e.common.lineweight, e.common.layer.as_str()), (Lineweight::from_dxf(100), "Walls"));
+        }
+        assert_eq!((d.header.str("CLAYER", "0"), d.header.i64("CELWEIGHT", -1)), ("0".to_string(), -1), "the current settings stay");
+        assert_eq!((layer(&app), shown(&app, LWEIGHT_COMBO)), ("Walls".into(), "1.00 mm".into()));
+        // The text style only goes to texts; with nothing selected it is the current one.
+        app.run("style", json!({ "name": "Notes" })).unwrap();
+        select(&mut app, &[&a]);
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetCurrent(TEXTSTYLE_COMBO, "Notes".into())));
+        assert_eq!(app.session.doc().unwrap().header.str("TEXTSTYLE", "Standard"), "Notes", "no text selected: the current style");
+        select(&mut app, &[&t]);
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetCurrent(TEXTSTYLE_COMBO, "Standard".into())));
+        let d = app.session.doc().unwrap();
+        let EntityKind::Text(text) = &d.entity(cadcraft_engine::doc::Handle::parse_hex(&t).unwrap()).unwrap().kind else { panic!("not a text") };
+        assert_eq!((text.style.as_str(), d.header.str("TEXTSTYLE", "")), ("Standard", "Notes".to_string()));
+        app.session.set_selection(Vec::new());
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetLayer("Walls".into())));
+        assert_eq!(app.session.doc().unwrap().header.str("CLAYER", "0"), "Walls");
     }
 
     #[test]

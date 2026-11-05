@@ -83,7 +83,7 @@ pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash:
 }
 
 /// Draw a display list.
-pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
+pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: crate::gpu::LwScale) {
     let vis = xf.world_bounds();
     super::images::draw(p, xf, list);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
@@ -97,7 +97,7 @@ pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb,
                 if !bb.intersects(&vis) {
                     continue;
                 }
-                let w = if lwdisplay && prim.lw > 0.0 { (prim.lw * 3.78).clamp(1.0, 12.0) } else { 1.0 };
+                let w = lwdisplay.width(prim.lw);
                 // Skip sub-pixel objects except as a dot.
                 if bb.width() < px && bb.height() < px {
                     shapes.push(Shape::rect_filled(Rect::from_center_size(xf.to_screen(bb.center()), vec2(1.0, 1.0)), 0.0, col));
@@ -226,7 +226,7 @@ pub(super) fn draw_drag_gpu(
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -241,7 +241,7 @@ pub(super) fn draw_drag_gpu(
             cadcraft_render::build_entities(doc, drag.handles.iter().filter_map(|h| doc.entity(*h)).map(|e| e.as_ref()), &opts)
         };
         let origin = if list.bounds.is_empty() { Vec2::ZERO } else { list.bounds.center() };
-        let mesh = crate::gpu::build_mesh(&list, origin, bg, false);
+        let mesh = crate::gpu::build_mesh(&list, origin, bg, crate::gpu::LwScale::Off);
         if let Ok(mut slot) = c.drag_slot.lock() {
             *slot = Some(mesh);
         }
@@ -268,16 +268,16 @@ pub(super) fn draw_drag_gpu(
 }
 
 /// Identifies the GPU vertex data of list `key` / `list_gen` converted at `origin` against `bg`.
-pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb, lwdisplay: bool) -> u64 {
+pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb, lwdisplay: crate::gpu::LwScale) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    (key, list_gen, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay).hash(&mut h);
+    (key, list_gen, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay.key()).hash(&mut h);
     h.finish()
 }
 
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
-pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
+pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: crate::gpu::LwScale) {
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
     let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
