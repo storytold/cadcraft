@@ -865,6 +865,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
 
     // A click on the Dynamic Input options menu picks the keyword; elsewhere it closes the menu.
+    // Rows from the previous frame are stale when the menu is hidden, so drop them before this
+    // click lookup (the tooltip's own cleanup runs later in the frame).
+    if !inside || !app.session.settings.dynmode {
+        app.cmd.option_rows.clear();
+    }
     let mut picked = false;
     if pressed_primary && app.cmd.options.is_some() {
         match hover_pos.and_then(|h| app.cmd.option_at(h)) {

@@ -52,14 +52,10 @@ craft-window = { workspace = true }
 muda = { version = "0.21", default-features = false }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.
-<<<<<<< HEAD
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility", "NSCursor"] }
 # The same winit eframe uses (the storytold fork, patched in the workspace): its opt-in that turns
 # AppKit's terminate (Cmd+Q, Dock Quit) into a close request, so unsaved changes are asked about.
 winit = { version = "0.30", default-features = false }
-=======
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility", "NSCursor"] }
->>>>>>> a4693c73 (Hide the system cursor with AppKit on macOS over the drawing area)
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]
