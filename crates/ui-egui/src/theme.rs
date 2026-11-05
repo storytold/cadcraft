@@ -124,6 +124,11 @@ pub struct Tokens {
     pub crosshair: Color32,
     /// The sheet of paper on a layout tab.
     pub paper: Color32,
+    /// 3D UCS triad axes (X, Y, Z) and the 3D Orbit arcball overlay.
+    pub ucs_x: Color32,
+    pub ucs_y: Color32,
+    pub ucs_z: Color32,
+    pub orbit_arcball: Color32,
 }
 
 impl Tokens {
@@ -172,6 +177,10 @@ impl Tokens {
         warn: Color32::from_rgb(0xff, 0xd0, 0x80),
         crosshair: Color32::from_rgb(0xe8, 0xe8, 0xe8),
         paper: Color32::WHITE,
+        ucs_x: Color32::from_rgb(0xe8, 0x45, 0x45),
+        ucs_y: Color32::from_rgb(0x3a, 0xc9, 0x58),
+        ucs_z: Color32::from_rgb(0x42, 0x87, 0xf5),
+        orbit_arcball: Color32::from_rgb(0x35, 0xc4, 0x55),
     };
 
     /// Light grey chrome with dark text. The drawing-area colours (canvas, grid, axes, selection,
@@ -202,6 +211,10 @@ impl Tokens {
         list_bg: Color32::from_rgb(0xfb, 0xfc, 0xfd),
         list_row: Color32::from_rgb(0xe3, 0xe8, 0xef),
         warn: Color32::from_rgb(0x8a, 0x53, 0x00),
+        ucs_x: Color32::from_rgb(0xd4, 0x35, 0x35),
+        ucs_y: Color32::from_rgb(0x28, 0xa8, 0x45),
+        ucs_z: Color32::from_rgb(0x2b, 0x6f, 0xd8),
+        orbit_arcball: Color32::from_rgb(0x28, 0xa8, 0x45),
         ..Tokens::DARK
     };
 
