@@ -1,5 +1,8 @@
 use super::trim::{param_on, sub_polyline};
-use super::*;
+use super::{
+    Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
+    Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
+};
 
 /// Gives a rebuilt arc piece its source centre Z, or a rebuilt polyline piece its source elevation.
 fn with_z(mut k: EntityKind, z: f64) -> EntityKind {
@@ -247,7 +250,7 @@ impl Interactive for BreakM {
             (None, Input::Point(p)) => {
                 let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                 let space = s.space();
-                match crate::select::pick(s.doc()?, &space, p, ap) {
+                match s.pick_object(&space, p, ap)? {
                     Some(h) => {
                         self.obj = Some((h, p));
                         s.set_selection(vec![h]);

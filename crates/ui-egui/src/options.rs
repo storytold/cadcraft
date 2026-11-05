@@ -10,11 +10,12 @@
 //! |---|---|
 //! | `theme` | `"system"`, `"light"` or `"dark"` |
 //! | `animations` | `"system"`, `"on"` or `"off"`: dialog and menu fades and smoothed scrolling |
-//! | `interfaceLanguage` | `"auto"`, `"en"`, `"uk"`, `"pt-BR"`, `"de"`, `"es"`, `"cs"`, `"ru"`, `"fr"`, `"zh"`, `"it"`, `"ko"`, `"sv"`, `"ar"`, `"hu"`, `"tr"` or `"el"` |
+//! | `interfaceLanguage` | `"auto"`, `"en"`, `"uk"`, `"pt-BR"`, `"de"`, `"es"`, `"cs"`, `"ru"`, `"fr"`, `"zh"`, `"it"`, `"ko"`, `"sv"`, `"ar"`, `"hu"`, `"tr"`, `"bs"`, `"vi"` or `"el"` |
 //! | `saveFormat` | `"dxf"` or `"dwg"`: the format Save As suggests for new drawings |
 //! | `saveVersion` | `"2000"` … `"2018"`: the version drawings with no file yet are saved in |
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
+//! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
 //! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
@@ -23,7 +24,7 @@
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
 //! | `interfaceScale` | the interface's size, 0.5–3 (1: the system's own) |
 //!
-//! SAVETIME and SAVEFILEPATH are the engine's autosave settings, kept with the autosave state
+//! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
 //! rather than in the profile.
 //!
 //! The profile variables and the interface preferences survive restarts: the host saves
@@ -147,6 +148,7 @@ struct UiChanges {
     save_version: Option<crate::SaveVersion>,
     savetime: Option<u32>,
     savefilepath: Option<String>,
+    isavebak: Option<bool>,
     time_sensitive_right_click: Option<bool>,
     interface_scale: Option<f32>,
 }
@@ -203,6 +205,10 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             let p = v.as_str().map(str::trim).filter(|p| p.chars().count() <= MAX_PATH_CHARS && !p.chars().any(char::is_control));
             c.savefilepath = Some(p.ok_or("SAVEFILEPATH must be a folder path")?.to_string());
         }
+        k if k.eq_ignore_ascii_case("ISAVEBAK") => {
+            let on = v.as_bool().or_else(|| v.as_i64().filter(|n| matches!(n, 0 | 1)).map(|n| n == 1));
+            c.isavebak = Some(on.ok_or("ISAVEBAK must be 0 or 1")?);
+        }
         _ => return Ok(false),
     }
     Ok(true)
@@ -226,6 +232,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("saveVersion".into(), json!(app.ui.save_version));
     m.insert("SAVETIME".into(), json!(cadcraft_engine::autosave::savetime()));
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
+    m.insert("ISAVEBAK".into(), json!(i32::from(cadcraft_engine::autosave::isavebak())));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
     m
 }
@@ -297,6 +304,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(p) = &ui.savefilepath {
         cadcraft_engine::autosave::set_savefilepath(p);
     }
+    if let Some(b) = ui.isavebak {
+        cadcraft_engine::autosave::set_isavebak(b);
+    }
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
@@ -310,7 +320,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.animations = d.animations;
     app.ui.save_format = d.save_format;
     app.ui.save_version = d.save_version;
-    app.ui.system_cursor = d.system_cursor;
+    app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
 }
@@ -353,7 +363,7 @@ impl CadApp {
                 let _ = parse_ui(key, value, &mut c);
             }
         }
-        // CADCRAFT_SYSTEM_CURSOR=1 turns the system cursor on whatever was saved.
+        // A saved `false` leaves the host's default (`set_system_cursor_default`) in place.
         if c.system_cursor == Some(true) {
             self.ui.system_cursor = true;
         }

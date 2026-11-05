@@ -202,7 +202,7 @@ mod tests {
             s.input(Input::Point(p)).unwrap();
         }
         let ents = s.preview(Vec2::new(0.0, 10.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(5.0, 5.0), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(5.0, 5.0), scale: 10.0, twist: 0.0 };
         let mesh = preview_fill(s.active_command_id(), &ents, &xf).unwrap();
         assert!(!mesh.indices.is_empty());
         assert!(mesh.vertices.iter().all(|v| v.color.a() == 76));
@@ -222,7 +222,7 @@ mod tests {
             s.input(Input::Point(p)).unwrap();
         }
         let ents = s.preview(Vec2::new(0.0, 6.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(3.0, 3.0), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(3.0, 3.0), scale: 10.0, twist: 0.0 };
         let mesh = preview_fill(s.active_command_id(), &ents, &xf).unwrap();
         let drawn_area: f32 = mesh
             .indices
@@ -250,7 +250,7 @@ mod tests {
         s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
         s.input(Input::Point(Vec2::new(2.0, 0.0))).unwrap();
         let ents = s.preview(Vec2::new(4.0, 0.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 0.0), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 0.0), scale: 10.0, twist: 0.0 };
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         s.cancel();
     }
@@ -266,7 +266,7 @@ mod tests {
         }
         let cursor = Vec2::new(0.0, 3.0);
         let ents = s.preview(cursor);
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0, twist: 0.0 };
         let mesh = preview_fill(s.active_command_id(), &ents, &xf).unwrap();
         assert!(!mesh.indices.is_empty());
         assert_eq!(s.doc().unwrap().model.len(), initial);
@@ -283,7 +283,7 @@ mod tests {
         for p in [Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 3.0), Vec2::new(0.0, 3.0)] {
             s.input(Input::Point(p)).unwrap();
         }
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0, twist: 0.0 };
         for cursor in [Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 3.0)] {
             let ents = s.preview(cursor);
             let mesh = preview_fill(s.active_command_id(), &ents, &xf).unwrap();
@@ -302,7 +302,7 @@ mod tests {
             s.input(Input::Point(p)).unwrap();
         }
         let ents = s.preview(Vec2::new(4.0, 0.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0, twist: 0.0 };
         assert!(!ents.is_empty(), "preview outline still exists");
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         s.cancel();
@@ -317,7 +317,7 @@ mod tests {
             s.input(Input::Point(p)).unwrap();
         }
         let ents = s.preview(Vec2::new(0.0, 3.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 1.5), scale: 10.0, twist: 0.0 };
         assert!(!ents.is_empty(), "the outline remains available");
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         s.cancel();
@@ -333,7 +333,7 @@ mod tests {
             s.input(Input::Point(p)).unwrap();
         }
         let ents = s.preview(Vec2::new(0.0, 2.0));
-        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(1.0, 1.0), scale: 10.0 };
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(1.0, 1.0), scale: 10.0, twist: 0.0 };
         assert!(!ents.is_empty(), "the outline is still available");
         assert!(preview_fill(s.active_command_id(), &ents, &xf).is_none());
         assert_eq!(s.doc().unwrap().model.len(), initial);

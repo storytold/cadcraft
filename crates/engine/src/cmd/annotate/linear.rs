@@ -1,5 +1,8 @@
 use super::common::{DimText, add_dim, assoc_enabled, circle_of, dim, linear_kind, pick_at};
-use super::*;
+use super::{
+    Accept, DimKind, Dimension, EngineError, EntityKind, Handle, Input, Interactive, Prim, Prompt, Result, Segment, Session, Step, Value, Vec2, bad,
+    json, point_req, points_param, str_param, v3,
+};
 
 pub(super) fn run_linear(s: &mut Session, p: &Value) -> Result<Value> {
     let (a, b) = match p.get("object").and_then(|v| v.as_str().and_then(Handle::parse_hex).or_else(|| v.as_u64().map(Handle))) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{EngineError, Input, Result, Session, Value, Vec2, cmd, lisp, prompt, snap, units};
 
 impl Session {
     /// Process one line typed at the command line (Enter pressed). Spaces separate inputs as in a
@@ -69,6 +69,13 @@ impl Session {
 
     /// One token typed while a command runs.
     pub(crate) fn typed(&mut self, t: &str) -> Result<()> {
+        self.typed_token(t, true)
+    }
+
+    /// One token typed while a command runs; `lisp` evaluates a LISP expression first. The value
+    /// of that expression is the answer, so it comes back with `lisp` off: re-evaluating it would
+    /// let `(setq q "!q")` evaluate itself forever and overflow the stack (#1920).
+    fn typed_token(&mut self, t: &str, lisp: bool) -> Result<()> {
         let Some(prompt) = self.current_prompt() else { return Ok(()) };
         let tt = t.trim();
         if tt.is_empty() {
@@ -84,7 +91,7 @@ impl Session {
         }
         // A LISP expression typed at a command's prompt: its value is the answer.
         // Not at a free-text prompt: there the text is the answer (CAL takes "(3+4)*2").
-        if lisp_expression(tt) && !prompt.accept.text && self.lisp_prompt().is_none() && !self.lisp_groups_undo() {
+        if lisp && lisp_expression(tt) && !prompt.accept.text && self.lisp_prompt().is_none() && !self.lisp_groups_undo() {
             let src = tt.strip_prefix('!').unwrap_or(tt).to_string();
             let v = match self.lisp_eval(&src, false, true, Vec::new()) {
                 Ok(Some(Ok(v))) => v,
@@ -96,9 +103,9 @@ impl Session {
             };
             return match v {
                 lisp::value::Value::Nil => Ok(()),
-                lisp::value::Value::Int(i) => self.typed(&i.to_string()),
-                lisp::value::Value::Real(r) => self.typed(&format!("{r}")),
-                lisp::value::Value::Str(s) => self.typed(&s),
+                lisp::value::Value::Int(i) => self.typed_token(&i.to_string(), false),
+                lisp::value::Value::Real(r) => self.typed_token(&format!("{r}"), false),
+                lisp::value::Value::Str(s) => self.typed_token(&s, false),
                 other => match other.as_point() {
                     Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
                     None => {

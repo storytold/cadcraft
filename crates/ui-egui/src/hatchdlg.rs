@@ -498,7 +498,7 @@ fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
             }
             ui.end_row();
             ui.label(crate::tl!("Shape"));
-            egui::ComboBox::from_id_salt("hatch_shape").selected_text(shape_label(&f.shape)).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("hatch_shape").selected_text(shape_label(&f.shape)).show_ui(ui, |ui| {
                 for name in SHAPES {
                     ui.selectable_value(&mut f.shape, name.to_string(), shape_label(name));
                 }
@@ -545,7 +545,7 @@ fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
             f.origin = None;
         }
         ui.add_enabled_ui(f.origin.is_none(), |ui| {
-            egui::ComboBox::from_id_salt("hatch_origin_mode").selected_text(origin_label(&f.origin_mode)).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("hatch_origin_mode").selected_text(origin_label(&f.origin_mode)).show_ui(ui, |ui| {
                 for m in ORIGIN_MODES {
                     ui.selectable_value(&mut f.origin_mode, m.to_string(), origin_label(m));
                 }

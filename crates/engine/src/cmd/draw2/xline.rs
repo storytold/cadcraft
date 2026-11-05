@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Handle, Input, Interactive, Polyline, Prompt, RayLine, Result, Session, Step, Value, Vec2, added, bad, bool_or, curves,
+    f64_req, number, other, point_param, point_req, v3,
+};
 
 // =====================================================================================
 // XLINE with Hor/Ver/Ang/Bisect/Offset
@@ -116,7 +119,7 @@ impl Interactive for XlineM2 {
                 Some(b) => Prompt::new("Specify through point", Accept::POINT).base(b),
             },
             XMode::Fixed(_) => Prompt::new("Specify through point", Accept::POINT),
-            XMode::AngAsk => Prompt::new("Enter angle of xline (0) or", Accept::NUMBER).kw(&["Reference"]),
+            XMode::AngAsk => Prompt::new("Enter angle of xline (0)", Accept::NUMBER).kw(&["Reference"]),
             XMode::RefSelect => Prompt::new("Select a line object", Accept::POINT),
             XMode::RefAngle(_) => Prompt::new("Enter angle of xline", Accept::NUMBER).default("0"),
             XMode::Bisect => match self.bis.len() {
@@ -126,7 +129,7 @@ impl Interactive for XlineM2 {
             },
             XMode::OffDist => {
                 let d = s.doc().map(|d| d.header.f64("OFFSETDIST", 1.0)).unwrap_or(1.0);
-                Prompt::new("Specify offset distance or", Accept::NUMBER).kw(&["Through"]).default(if d < 0.0 {
+                Prompt::new("Specify offset distance", Accept::NUMBER).kw(&["Through"]).default(if d < 0.0 {
                     "Through".into()
                 } else {
                     format!("{d:.4}")

@@ -49,7 +49,7 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `cmdline.state` | | Current prompt, keywords, accepted input kinds, history tail. |
 | `engine.execute` | `{command, params}` | Run any command with JSON parameters. Never opens a dialog. `command` is an alias of this method, with the same parameters and result. |
 | `engine.commands` | | Every command: id, label, menu path, shortcut, aliases, params doc, enabled. |
-| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo) and entities with handles and geometry. |
+| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo, and what reading the file left out: `skipped` records by section, `readNotes` in words) and entities with handles and geometry. |
 | `ui.inspect` | | UI state, canvas rect, view, cursor and snap, performance counters (`uiFrames`, `passIndex` included); `closePrompt`: the drawing a "Save changes?" prompt is asking about (null when none); and actual egui keyboard focus (`focus.id`, `focus.label`, `focus.role`). |
 | `ui.elements` | `{label?, role?, focused?}` | Observed toolbar, tab, drafting and layer-palette controls from the latest UI frame. Filters match exactly. Each entry has its real egui `id`, label, role, rectangle `[x,y,width,height]`, enabled/visible/selected state and current focus. |
 | `ui.menu.list` / `ui.menu.invoke` | `{command}` | The menu tree; invoke an item like a click (interactive). |
@@ -124,7 +124,7 @@ height and related chrome choices. It does not store drawings, command buffers, 
 current Start tab. The default directory is `~/Library/Application Support/CADCraft` on macOS,
 `%APPDATA%/CADCraft` on Windows, and `$XDG_CONFIG_HOME/cadcraft` or `~/.config/cadcraft` elsewhere.
 Set `CADCRAFT_CONFIG_DIR` to a private directory for an isolated profile; an explicitly empty
-value disables workspace reads and writes. An invalid, oversized or newer-version file is
+value disables all settings reads and writes (workspace, logs, autosave, plotters). An invalid, oversized or newer-version file is
 reported and left untouched, with persistence disabled for that launch. Repair or move that
 file before restarting to resume saving workspace choices.
 

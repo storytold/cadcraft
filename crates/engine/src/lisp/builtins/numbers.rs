@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, num, real_or_int};
-use super::*;
+use super::{LispError, Ordering, Value, eq};
 
 // ---------------- numbers ----------------
 

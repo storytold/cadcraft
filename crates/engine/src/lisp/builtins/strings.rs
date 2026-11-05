@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, list_arg, string};
-use super::*;
+use super::{LispError, OsStr, Value, check_string_len, read, to_text};
 
 // ---------------- strings ----------------
 
@@ -60,20 +60,43 @@ pub(super) fn atoi(a: &[Value]) -> R {
     Ok(Value::Int(t.get(..end).and_then(|n| n.parse::<i64>().ok()).map(|n| n as i32).unwrap_or(0)))
 }
 
-/// C's `atof`: the longest number at the start; 0.0 when there is none.
+/// C's `atof`: the number token at the start; 0.0 when there is none.
+/// An overflowing token clamps to the largest finite value of its sign.
 pub(super) fn atof(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let s = string(&a[0])?;
-    // The longest prefix (of the first 64 characters) that reads as a finite number.
-    let t: String = s.trim_start().chars().take(64).collect();
-    let ends: Vec<usize> = t.char_indices().map(|(i, _)| i).skip(1).chain(std::iter::once(t.len())).collect();
-    let v = ends.iter().rev().find_map(|&e| t.get(..e).and_then(|p| p.parse::<f64>().ok()).filter(|v| v.is_finite() && !p_is_word(&t[..e])));
-    Ok(Value::Real(v.unwrap_or(0.0)))
-}
-
-/// Words Rust reads as numbers that C's `atof` doesn't ("inf", "nan", "infinity").
-fn p_is_word(p: &str) -> bool {
-    p.chars().any(|c| c.is_ascii_alphabetic() && !matches!(c, 'e' | 'E'))
+    let b = s.trim_start().as_bytes();
+    let digits = |mut i: usize| {
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        i
+    };
+    let mut i = usize::from(matches!(b.first(), Some(b'-' | b'+')));
+    let int_end = digits(i);
+    let mut end = int_end;
+    let mut mantissa = int_end > i;
+    if b.get(end) == Some(&b'.') {
+        let frac_end = digits(end + 1);
+        if mantissa || frac_end > end + 1 {
+            mantissa = true;
+            end = frac_end;
+        }
+    }
+    if mantissa && matches!(b.get(end), Some(b'e' | b'E')) {
+        i = end + 1 + usize::from(matches!(b.get(end + 1), Some(b'-' | b'+')));
+        let exp_end = digits(i);
+        if exp_end > i {
+            end = exp_end;
+        }
+    }
+    let v = if mantissa { b.get(..end).and_then(|t| std::str::from_utf8(t).ok()).and_then(|t| t.parse::<f64>().ok()) } else { None };
+    let v = match v {
+        Some(v) if v.is_finite() => v,
+        Some(v) if v.is_infinite() => f64::MAX.copysign(v),
+        _ => 0.0,
+    };
+    Ok(Value::Real(v))
 }
 
 pub(super) fn chr(a: &[Value]) -> R {

@@ -4,3 +4,4 @@ mod help;
 mod mcp_connect;
 mod skipped_records;
 mod undrawn_entities;
+mod usage;

@@ -1,4 +1,4 @@
-use super::*;
+use super::{CadApp, Handle, Input, Vec2};
 
 /// The vertical wheel scroll this frame that zooms, in points, read from the raw wheel events so
 /// each notch zooms by its whole step at once, as in standard CAD (#660). egui's smoothed delta

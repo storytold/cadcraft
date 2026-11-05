@@ -1,4 +1,4 @@
-use super::*;
+use super::Vec2;
 
 /// The arrowheads drawn in code (DIMBLK names; our own geometry).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
