@@ -339,6 +339,31 @@ fn render_draws_with_the_plot_style_asked_for() {
     assert!(r == g && g == b, "grayscale.ctb draws red grey: {:?}", (r, g, b));
 }
 
+/// Guards #803: a plot style alone plots on white, as on paper, so `monochrome.ctb` doesn't draw
+/// black on the dark canvas; `background` still wins, and `plot_style: "none"` keeps the canvas
+/// and the objects' colours.
+#[test]
+fn render_with_a_plot_style_plots_on_white() {
+    for red in [false, true] {
+        let mut s = line_drawing(red);
+        for table in ["monochrome.ctb", "grayscale.ctb"] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": table}));
+            assert_eq!(rgb(&pm, 0, 0), (255, 255, 255), "{table} without a background plots on white");
+            let (r, g, b) = ink(&pm);
+            assert!(r == g && g == b && r < 128, "{table}, red {red}: drawn dark grey or black on white: {:?}", (r, g, b));
+        }
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": "monochrome.ctb", "background": "dark"}));
+        assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "an explicit background wins");
+        for none in ["none", ""] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": none}));
+            assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "{none:?} keeps the dark canvas");
+            let (r, g, b) = ink(&pm);
+            let light = r > 200 && g > 200 && b > 200;
+            assert!(if red { r > 200 && g < 100 && b < 100 } else { light }, "{none:?}, red {red}: own colour {:?}", (r, g, b));
+        }
+    }
+}
+
 /// Guards #803: an unknown `background` or `plot_style` is refused with what is accepted, not
 /// drawn some other way; a value of the wrong type is invalid params.
 #[test]

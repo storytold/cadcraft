@@ -3,6 +3,14 @@
 //!
 //! Colour 7 (white/black) follows the background, as on a plot: the rasteriser draws it white on
 //! a dark background and black on a light one ([`cadcraft_color::display_rgb`]).
+//!
+//! A render with a plot style table draws on white unless `background` says otherwise, as a plot
+//! prints on paper: the tables that change colours print colour 7 (and, in `monochrome.ctb`,
+//! every colour) black, which can hardly be seen on the dark canvas.
+//!
+//! `plot_style: "none"` (or `""`) draws every object with its own properties, also in a layout
+//! whose page setup has "Display plot styles" on; without `plot_style` such a layout draws with
+//! its own table, as on screen.
 
 use std::sync::Arc;
 
@@ -17,7 +25,11 @@ pub const DARK: Rgb = Rgb(33, 40, 48);
 pub const WHITE: Rgb = Rgb(255, 255, 255);
 
 /// What `background` accepts, for the error message and the docs.
-pub const BACKGROUNDS: &str = "\"dark\" (the default), \"white\", \"paper\" or \"#rrggbb\"";
+pub const BACKGROUNDS: &str = "\"dark\" (the default without a plot style), \"white\" (the default with one), \"paper\" or \"#rrggbb\"";
+
+/// Most table names an unknown `plot_style` error lists from the drawing's own tables (the
+/// built-in ones are always listed).
+const LISTED_TABLES: usize = 10;
 
 /// Longest part of a refused value repeated in its error message.
 const ECHO: usize = 40;
@@ -27,7 +39,8 @@ const ECHO: usize = 40;
 pub struct RenderLook {
     pub background: Rgb,
     /// `None` = draw with the objects' own properties (or, in a layout showing plot styles, its
-    /// page setup's table).
+    /// page setup's table). `plot_style: "none"` is a table that keeps every property, so such a
+    /// layout's table doesn't apply either.
     pub plot_style_table: Option<Arc<PlotStyleTable>>,
 }
 
@@ -47,11 +60,18 @@ impl RenderLook {
             Some(_) => Err(format!("`{key}` must be a string")),
         };
         let mut look = RenderLook::default();
+        if let Some(name) = text("plot_style")? {
+            look.plot_style_table = Some(Arc::new(match plot_style(d, name)? {
+                Some(t) => {
+                    // Plotted on paper, unless `background` says otherwise.
+                    look.background = WHITE;
+                    t
+                }
+                None => object_properties(),
+            }));
+        }
         if let Some(b) = text("background")? {
             look.background = background(b).ok_or_else(|| format!("unknown background `{}`: use {BACKGROUNDS}", echo(b)))?;
-        }
-        if let Some(name) = text("plot_style")? {
-            look.plot_style_table = plot_style(d, name)?.map(Arc::new);
         }
         Ok(look)
     }
@@ -79,10 +99,30 @@ fn plot_style(d: &Drawing, name: &str) -> Result<Option<PlotStyleTable>, String>
     if cadcraft_doc::no_plot_style_table(name) {
         return Ok(None);
     }
-    match cadcraft_doc::plot_style_table(d, name.trim()) {
-        Some(t) => Ok(Some(t)),
-        None => Err(format!("unknown plot style table `{}`: use one of {}", echo(name), cadcraft_doc::plot_style_table_names(d).join(", "))),
+    cadcraft_doc::plot_style_table(d, name.trim())
+        .map(Some)
+        .ok_or_else(|| format!("unknown plot style table `{}`: use none or one of {}", echo(name), table_list(d)))
+}
+
+/// The tables a drawing can use, for an error message: the built-in ones, then at most
+/// [`LISTED_TABLES`] of the drawing's own and how many more there are.
+fn table_list(d: &Drawing) -> String {
+    let builtin = |n: &String| cadcraft_doc::BUILTIN_PLOT_STYLE_TABLES.iter().any(|b| b.eq_ignore_ascii_case(n));
+    let names = cadcraft_doc::plot_style_table_names(d);
+    let own: Vec<String> = names.iter().filter(|n| !builtin(n)).map(|n| echo(n)).collect();
+    let mut list: Vec<String> = cadcraft_doc::BUILTIN_PLOT_STYLE_TABLES.iter().map(|b| (*b).to_string()).collect();
+    list.extend(own.iter().take(LISTED_TABLES).cloned());
+    let mut text = list.join(", ");
+    if own.len() > LISTED_TABLES {
+        text.push_str(&format!(" and {} more of the drawing's", own.len() - LISTED_TABLES));
     }
+    text
+}
+
+/// A table that prints every object with its own properties: what `plot_style: "none"` draws
+/// with, so a layout's own table doesn't apply either.
+fn object_properties() -> PlotStyleTable {
+    PlotStyleTable::color_dependent("None", "Object properties", |_| None)
 }
 
 /// The start of a refused value, to repeat in its error message.
@@ -113,17 +153,44 @@ mod tests {
         let look = RenderLook::from_params(&d, &json!({})).unwrap();
         assert_eq!(look.background, DARK);
         assert!(look.plot_style_table.is_none());
-        let look = RenderLook::from_params(&d, &json!({"background": null, "plot_style": "none"})).unwrap();
-        assert_eq!(look.background, DARK);
-        assert!(look.plot_style_table.is_none());
+        // "none" keeps the dark canvas and draws every object with its own properties, also in a
+        // layout that shows its own plot styles.
+        for none in ["none", "", " None "] {
+            let look = RenderLook::from_params(&d, &json!({"background": null, "plot_style": none})).unwrap();
+            assert_eq!(look.background, DARK, "{none:?}");
+            let t = look.plot_style_table.unwrap();
+            assert!(t.is_color_dependent() && t.styles.iter().all(|s| s.keeps_color() && s.lineweight.is_none()), "{none:?}");
+        }
         let look = RenderLook::from_params(&d, &json!({"background": "white", "plot_style": "Monochrome"})).unwrap();
         assert_eq!(look.raster().background, WHITE);
         assert_eq!(look.plot_style_table.map(|t| t.name.clone()).as_deref(), Some("monochrome.ctb"));
+        // A plot style plots on paper unless `background` says otherwise.
+        for table in ["monochrome.ctb", "grayscale.ctb", "default.stb"] {
+            assert_eq!(RenderLook::from_params(&d, &json!({"plot_style": table})).unwrap().background, WHITE, "{table}");
+            let look = RenderLook::from_params(&d, &json!({"plot_style": table, "background": "dark"})).unwrap();
+            assert_eq!(look.background, DARK, "{table}");
+        }
         let e = RenderLook::from_params(&d, &json!({"plot_style": "nope.ctb"})).unwrap_err();
-        assert!(e.contains("nope.ctb") && e.contains("grayscale.ctb"), "{e}");
+        assert!(e.contains("nope.ctb") && e.contains("grayscale.ctb") && e.contains("none"), "{e}");
         let e = RenderLook::from_params(&d, &json!({"background": "x".repeat(10_000)})).unwrap_err();
         assert!(e.len() < 200 && e.contains("#rrggbb"), "{e}");
         assert!(RenderLook::from_params(&d, &json!({"background": 1})).is_err());
         assert!(RenderLook::from_params(&d, &json!({"plot_style": {}})).is_err());
+    }
+
+    /// An unknown plot style lists the built-in tables and only some of the drawing's own.
+    #[test]
+    fn unknown_plot_style_lists_a_few_tables() {
+        let mut d = Drawing::new_imperial();
+        for i in 0..500 {
+            d.plot_style_tables.push(PlotStyleTable::color_dependent(&format!("{}{i}.ctb", "own".repeat(30)), "", |_| None));
+        }
+        let e = RenderLook::from_params(&d, &json!({"plot_style": "nope.ctb"})).unwrap_err();
+        for b in cadcraft_doc::BUILTIN_PLOT_STYLE_TABLES {
+            assert!(e.contains(b), "{b}: {e}");
+        }
+        assert!(e.contains("and 490 more"), "{e}");
+        assert!(e.len() < 1000, "{} bytes: {e}", e.len());
+        assert!(RenderLook::from_params(&d, &json!({"plot_style": d.plot_style_tables[7].name.clone()})).is_ok());
     }
 }
