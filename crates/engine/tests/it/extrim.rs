@@ -461,3 +461,22 @@ fn a_long_polyline_edge_is_accepted() {
     let v = extrim(&mut s, &edge, [10.2, 3.0]);
     assert_eq!(v["trimmed"], 1);
 }
+
+#[test]
+fn takes_exactly_one_cutting_edge() {
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [0.0, 2.0], [10.0, 2.0]);
+    line(&mut s, [5.0, -5.0], [5.0, 5.0]);
+    let before = lines(&s);
+    let e = s.execute("extrim", &json!({ "handles": [a.clone(), b.clone()], "side": [5, 3] })).unwrap_err();
+    assert!(e.to_string().contains("exactly one"), "{e}");
+    assert_eq!(lines(&s), before);
+    // At the prompt, a window of two objects is refused and the edge is asked for again.
+    s.set_selection(Vec::new());
+    s.start("extrim").unwrap();
+    s.input(Input::Pick(vec![Handle::parse_hex(&a).unwrap(), Handle::parse_hex(&b).unwrap()])).unwrap();
+    assert!(s.prompt_text().contains("cutting edge"), "{}", s.prompt_text());
+    s.input(Input::Pick(vec![Handle::parse_hex(&a).unwrap()])).unwrap();
+    assert!(s.prompt_text().contains("side"), "{}", s.prompt_text());
+}

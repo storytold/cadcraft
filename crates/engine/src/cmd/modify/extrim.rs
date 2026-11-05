@@ -472,7 +472,12 @@ pub(super) fn run_extrim(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::String(t)) => {
             Handle::parse_hex(t).ok_or_else(|| bad("extrim", "`edge` must be an object handle (a hex string such as \"1A2\")"))?
         }
-        None | Some(Value::Null) => targets(s, p)?.first().copied().ok_or_else(|| bad("extrim", "`edge` is required"))?,
+        // One cutting edge: several objects would leave which one cuts to chance.
+        None | Some(Value::Null) => match targets(s, p)?.as_slice() {
+            [] => return Err(bad("extrim", "`edge` is required")),
+            [h] => *h,
+            _ => return Err(bad("extrim", "give exactly one cutting edge")),
+        },
         Some(_) => return Err(bad("extrim", "`edge` must be an object handle (a hex string such as \"1A2\")")),
     };
     let point = point_param(p, "side").ok_or_else(|| bad("extrim", "`side` ([x, y]) is required"))?;
@@ -621,11 +626,12 @@ impl Interactive for ExtrimM {
             (_, Input::Cancel) => Ok(Step::Cancel),
             (_, Input::Enter) => Ok(Step::Done),
             (None, Input::Pick(hs)) => {
-                match hs.first() {
-                    Some(h) => {
+                match hs.as_slice() {
+                    [h] => {
                         self.set_edge(s, *h);
                     }
-                    None => s.echo("No object found."),
+                    [] => s.echo("No object found."),
+                    _ => s.echo("Select exactly one cutting edge."),
                 }
                 Ok(Step::Continue)
             }
