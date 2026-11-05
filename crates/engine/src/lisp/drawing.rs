@@ -1037,7 +1037,7 @@ pub fn tblnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 // CADCraft keeps no handles for table records, layouts, dictionaries and other objects: a save
 // numbers them as it writes them. LISP sees them as a save would write them now, so their handles
 // are the file's and hold while the drawing doesn't change (#1661, #1659). Permanent handles for
-// them are gaps.md FF7.
+// them are not available yet.
 
 /// The drawing's non-graphic records as a save writes them, cached until the drawing changes.
 fn object_records(ctx: &mut Ctx<'_>) -> Result<Arc<super::ObjectRecords>, LispError> {

@@ -98,7 +98,7 @@ a DXF file's OBJECTS section) are listed as a save writes them, with the handles
 `handent` of a handle read from a file CADCraft saved finds the object, and `entget` lists it.
 CADCraft doesn't keep handles for these objects between saves: they are numbered when the drawing
 is written, so they hold while the drawing is unchanged but can move once objects are added
-(permanent handles for them are gaps.md FF7). `entmod` and `entdel` don't change them.
+(permanent handles for them are not available yet). `entmod` and `entdel` don't change them.
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK
 list adds the block (redefining one of the same name) and returns its name. Flag 1 with a `*U`
