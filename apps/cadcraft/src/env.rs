@@ -33,8 +33,8 @@ pub(crate) const VARS: &[(&str, &str)] = &[
 /// `CADCRAFT_CONFIG_DIR`.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Env {
-    /// Portable eframe storage, kept with the other settings instead of the user profile.
-    pub(crate) portable_dir: Option<PathBuf>,
+    /// Portable eframe storage file, kept with the other settings instead of the user profile.
+    pub(crate) portable_storage_file: Option<PathBuf>,
     /// The settings folder (logs, autosave, workspace, plotters): `CADCRAFT_CONFIG_DIR`; else, when
     /// that is unset, the portable directory or the platform's (`cadcraft_engine::settings_dir::platform`). `None`: no
     /// folder, because the variable is empty or blank (the way to run without one) or the
@@ -73,7 +73,7 @@ impl Env {
             match crate::portable::directory_in(exe) {
                 Ok(Some(data)) => {
                     vars.config_dir = Some(data.clone());
-                    vars.portable_dir = Some(data);
+                    vars.portable_storage_file = Some(data.join("app.ron"));
                 }
                 Ok(None) => {}
                 Err(error) => log::warn!("portable settings cannot be written ({error}); using the user profile"),
@@ -87,7 +87,7 @@ impl Env {
         let text = |k: &str| var(k).and_then(|v| v.into_string().ok()).filter(|v| !v.trim().is_empty());
         let switch = |k: &str| Switch::parse(k, var(k).map(|v| v.to_string_lossy().into_owned()).as_deref());
         Env {
-            portable_dir: None,
+            portable_storage_file: None,
             config_dir: match var(CONFIG_DIR) {
                 Some(dir) if dir.to_str().is_some_and(|d| d.trim().is_empty()) => None,
                 Some(dir) => Some(PathBuf::from(dir)),
@@ -119,13 +119,19 @@ mod tests {
     use std::cell::RefCell;
 
     #[test]
-    fn portable_settings_and_eframe_storage_use_the_same_directory() {
+    fn portable_eframe_storage_is_a_file_inside_the_settings_directory() {
         let exe = std::env::temp_dir().join(format!("cadcraft-env-portable-{}", std::process::id()));
         std::fs::create_dir_all(&exe).unwrap();
         std::fs::write(exe.join("portable.txt"), "").unwrap();
         let vars = Env::from_vars_and_exe(env(&[("APPDATA", "/profile")]), Some(&exe));
         assert_eq!(vars.config_dir, Some(exe.join("CADCraftData")));
-        assert_eq!(vars.portable_dir, vars.config_dir);
+        let storage_file = vars.portable_storage_file.unwrap();
+        assert_eq!(storage_file, exe.join("CADCraftData").join("app.ron"));
+        assert_eq!(storage_file.parent(), vars.config_dir.as_deref());
+        std::fs::write(&storage_file, r#"{"window":"saved window state"}"#).unwrap();
+        let restarted = Env::from_vars_and_exe(env(&[("APPDATA", "/profile")]), Some(&exe));
+        assert_eq!(restarted.portable_storage_file.as_ref(), Some(&storage_file));
+        assert_eq!(std::fs::read_to_string(restarted.portable_storage_file.unwrap()).unwrap(), r#"{"window":"saved window state"}"#);
         std::fs::remove_dir_all(exe).unwrap();
     }
 
@@ -137,7 +143,7 @@ mod tests {
         for value in ["/custom", "", "  "] {
             let vars = Env::from_vars_and_exe(env(&[(CONFIG_DIR, value)]), Some(&exe));
             assert_eq!(vars.config_dir, (!value.trim().is_empty()).then(|| PathBuf::from(value)));
-            assert_eq!(vars.portable_dir, None);
+            assert_eq!(vars.portable_storage_file, None);
             assert!(!exe.join("CADCraftData").exists());
         }
         std::fs::remove_dir_all(exe).unwrap();
@@ -186,7 +192,7 @@ mod tests {
         assert_eq!(
             read,
             Env {
-                portable_dir: None,
+                portable_storage_file: None,
                 config_dir: Some(PathBuf::from("/private/cc")),
                 locale: Some("cs-CZ".into()),
                 vsync: Switch::On,

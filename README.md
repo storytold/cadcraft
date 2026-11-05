@@ -187,8 +187,9 @@ point.
 ### Portable Windows ZIP
 
 The Windows portable ZIP includes `portable.txt` beside `cadcraft.exe`. With that
-marker present, settings, logs, autosaves, workspace data, plotter files, and
-eframe preferences/window state stay in `CADCraftData` beside the executable.
+marker present, the desktop app's settings, logs, autosaves, workspace data,
+plotter files, and eframe preferences/window state stay in `CADCraftData` beside
+the executable. eframe saves its preferences and window state in `CADCraftData/app.ron`.
 Keep that directory when replacing the binaries. The MSI does not include the
 marker and continues to use the normal user profile.
 
@@ -196,6 +197,18 @@ marker and continues to use the normal user profile.
 blank value that disables the settings folder. If `CADCraftData` cannot be
 created or written, CADCraft warns and uses the normal profile. Existing profile
 settings are not automatically copied into the portable directory.
+
+Before switching an existing Windows installation to portable mode, close CADCraft,
+back up `%APPDATA%\CADCraft`, and copy the settings you want to retain into
+`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings.
+Updating a portable ZIP, including through the updater, can restore `portable.txt`;
+set `CADCRAFT_CONFIG_DIR` to your existing profile folder to keep using it across updates.
+
+`cadcraft-cli.exe` does not detect the marker. To share the desktop app's portable
+settings, pass `--config-dir` with the full path to `CADCraftData`, or set
+`CADCRAFT_CONFIG_DIR` to that path. The marker is also recognized on other desktop
+platforms, but is intended for a standalone writable installation, not inside a
+signed macOS application bundle.
 
 ### Logs
 
