@@ -63,11 +63,16 @@ pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIt
 /// A rebuild only the view asks for (a new zoom band, a pan out of the built area) runs in the
 /// background while the current list is drawn (see [`rebuild`]); a changed drawing, or no list
 /// yet, is built at once.
+/// The font set text is drawn with: TrueType fonts (font folders, rescans) and SHX fonts
+/// (drawing folders, font folders, the search path) can each change what text looks like. Every
+/// cache of drawn geometry keys on it.
+pub(super) fn font_generation() -> u64 {
+    cadcraft_fonts::ttf::generation().wrapping_add(cadcraft_fonts::shx::generation() << 32)
+}
+
 pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::Context) {
     let px = 1.0 / xf.scale;
-    // TrueType fonts (font folders, rescans) and SHX fonts (drawing folders, font folders,
-    // the search path) can each change what text looks like.
-    let fonts = cadcraft_fonts::ttf::generation().wrapping_add(cadcraft_fonts::shx::generation() << 32);
+    let fonts = font_generation();
     if app.canvas.font_generation != fonts {
         app.canvas.font_generation = fonts;
         app.canvas.list = None;
@@ -189,7 +194,8 @@ impl OnlyList {
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, band, &only.handles, format!("{:?}", only.extra)).hash(&mut h);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, band, &only.handles, format!("{:?}", only.extra), font_generation())
+                .hash(&mut h);
             outline.into_iter().flatten().for_each(|q| (q.x.to_bits(), q.y.to_bits()).hash(&mut h));
             h.finish()
         };
