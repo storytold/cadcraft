@@ -59,6 +59,7 @@ jobs:
 
   release:
     needs: git-sources
+    environment: release
     permissions:
       # The reusable release workflow tags and uploads the draft release.
       contents: write
