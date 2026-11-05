@@ -288,3 +288,31 @@ fn many_objects_in_one_call() {
     assert_eq!(v["trimmed"], 500);
     assert_eq!(lines(&s).len(), 1000, "two outer pieces of each line");
 }
+
+#[test]
+fn refuses_more_objects_than_the_limit_and_changes_nothing() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [0.0, 0.0], [10_002.0, 0.0]);
+    // One more crossing object than one call trims.
+    for i in 0..10_001 {
+        let x = 0.5 + f64::from(i);
+        line(&mut s, [x, -1.0], [x, 1.0]);
+    }
+    let before = lines(&s);
+    let e = s.execute("extrim", &json!({ "edge": edge, "side": [5, 0.5] })).unwrap_err();
+    assert!(e.to_string().contains("objects cross the cutting edge"), "{e}");
+    assert_eq!(lines(&s), before);
+}
+
+#[test]
+fn refuses_an_edge_with_too_many_points_and_changes_nothing() {
+    let mut s = Session::new();
+    // A zigzag polyline whose corners alone are more points than the trace may have.
+    let pts: Vec<[f64; 2]> = (0..10_002).map(|i| [f64::from(i), if i % 2 == 0 { 0.0 } else { 1.0 }]).collect();
+    let edge = h(&s.execute("pline", &json!({ "points": pts })).unwrap());
+    line(&mut s, [5.5, -5.0], [5.5, 5.0]);
+    let before = lines(&s);
+    let e = s.execute("extrim", &json!({ "edge": edge, "side": [5.5, 3.0] })).unwrap_err();
+    assert!(e.to_string().contains("too complex"), "{e}");
+    assert_eq!(lines(&s), before);
+}
