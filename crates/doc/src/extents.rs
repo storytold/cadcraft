@@ -181,9 +181,9 @@ fn recase(chunk: &[u8], old: &str) -> String {
 }
 
 /// The fixed part of the tolerance when matching the corners in the OLE data to the frame's. The
-/// header holds the same f64 the frame groups print, so they agree to a few ulps. Up to about 1e9 a
-/// fixed tolerance of at most this decides, so that distinct geometry does not match; from about
-/// 1.1e9 on, where one ulp is no longer below it, a few ulps of the coordinate decide instead.
+/// header holds the same f64 the frame groups print, so they agree to a few ulps. Up to about 1.1e9
+/// a fixed tolerance of at most this decides, so that distinct geometry does not match; above that,
+/// four ulps of the coordinate (`4 * EPSILON * |x|`) exceed it and decide instead.
 const CORNER_EPS: f64 = 1e-6;
 
 /// Transform an OLE2FRAME by `m`: its two corners are mapped through `m` (a DWG save writes the
