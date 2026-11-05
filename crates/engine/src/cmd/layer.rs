@@ -409,12 +409,24 @@ fn run_state_restore(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.restore", "`name` is required"))?;
     let d = s.doc_mut()?;
     let st = d.layer_states.iter().find(|st| st.name == name).cloned().ok_or_else(|| bad("layerstate.restore", "no such layer state"))?;
-    for saved in st.layers {
-        if let Some(l) = d.layer_mut(&saved.name) {
-            *l = saved;
+    restore_layers(d, st.layers);
+    ok()
+}
+
+/// Put the saved layers back over the drawing's layers of the same name (without regard to case);
+/// saved layers the drawing no longer has are skipped. Both lists can come from a file, so the
+/// drawing's layers are looked up in an index rather than scanned per saved layer.
+pub(crate) fn restore_layers(d: &mut cadcraft_doc::Drawing, saved: Vec<Layer>) {
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::with_capacity(d.layers.len());
+    for (i, l) in d.layers.iter().enumerate() {
+        // The first of names that differ only in case, as `Drawing::layer_mut` finds it.
+        index.entry(l.name.to_ascii_lowercase()).or_insert(i);
+    }
+    for layer in saved {
+        if let Some(l) = index.get(&layer.name.to_ascii_lowercase()).and_then(|&i| d.layers.get_mut(i)) {
+            *l = layer;
         }
     }
-    ok()
 }
 
 fn run_state_list(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -461,6 +473,22 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    /// Restoring many saved layers, most of them missing, takes one pass and matches without case.
+    #[test]
+    fn restore_layers_matches_by_name_in_linear_time() {
+        let mut d = cadcraft_doc::Drawing::new_imperial();
+        d.layers = (0..20_000).map(|i| cadcraft_doc::Layer::new(&format!("L{i}"))).collect();
+        let mut saved: Vec<cadcraft_doc::Layer> = (0..20_000).map(|i| cadcraft_doc::Layer::new(&format!("missing{i}"))).collect();
+        let mut back = cadcraft_doc::Layer::new("l7");
+        back.frozen = true;
+        saved.push(back);
+        let started = std::time::Instant::now();
+        super::restore_layers(&mut d, saved);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(d.layer("L7").is_some_and(|l| l.frozen));
+        assert_eq!(d.layers.len(), 20_000);
+    }
 
     #[test]
     fn layer_states_save_list_restore_delete() {
