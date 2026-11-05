@@ -318,7 +318,7 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> Rect {
     hr
 }
 
-fn swatch(p: &egui::Painter, r: Rect, c: Color) {
+pub(crate) fn swatch(p: &egui::Painter, r: Rect, c: Color) {
     let rgb = c.resolve(Color::Index(7), Color::Index(7));
     p.rect_filled(r, 1.0, Color32::from_rgb(rgb.0, rgb.1, rgb.2));
     p.rect_stroke(r, 1.0, Stroke::new(1.0, Color32::from_gray(30)), egui::StrokeKind::Inside);
@@ -373,6 +373,38 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// A layer for the current-layer drop-downs: name, on, frozen, locked, colour.
+pub(crate) type LayerRow = (String, bool, bool, bool, Color);
+
+/// The current-layer drop-down's list: on/off, freeze/thaw and lock/unlock per layer; picking a
+/// name makes it current. The choice comes back in `set_current` or `toggle` (name, key, value).
+pub(crate) fn layer_list(
+    ui: &mut egui::Ui,
+    layers: &[LayerRow],
+    cur: &str,
+    set_current: &mut Option<String>,
+    toggle: &mut Option<(String, &'static str, bool)>,
+) {
+    for (name, on, frozen, locked, color) in layers {
+        ui.horizontal(|ui| {
+            if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
+                *toggle = Some((name.clone(), "on", !*on));
+            }
+            if icons::button(ui, if *frozen { Icon::Snowflake } else { Icon::Sun }, 18.0, "Freeze/Thaw", false).clicked() {
+                *toggle = Some((name.clone(), "frozen", !*frozen));
+            }
+            if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
+                *toggle = Some((name.clone(), "locked", !*locked));
+            }
+            let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+            swatch(ui.painter(), sr, *color);
+            if ui.selectable_label(name.eq_ignore_ascii_case(cur), name).clicked() {
+                *set_current = Some(name.clone());
+            }
+        });
+    }
+}
+
 pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     section_header(ui, "Layers");
@@ -408,7 +440,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     // Current layer combo.
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
-    let layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    let layers: Vec<LayerRow> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
     let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
@@ -433,24 +465,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
         egui::Popup::from_toggle_button_response(&resp).width(w).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            for (name, on, frozen, locked, color) in &layers {
-                ui.horizontal(|ui| {
-                    if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
-                        toggle = Some((name.clone(), "on", !*on));
-                    }
-                    if icons::button(ui, if *frozen { Icon::Snowflake } else { Icon::Sun }, 18.0, "Freeze/Thaw", false).clicked() {
-                        toggle = Some((name.clone(), "frozen", !*frozen));
-                    }
-                    if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
-                        toggle = Some((name.clone(), "locked", !*locked));
-                    }
-                    let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                    swatch(ui.painter(), sr, *color);
-                    if ui.selectable_label(name.eq_ignore_ascii_case(&cur), name).clicked() {
-                        set_current = Some(name.clone());
-                    }
-                });
-            }
+            scroll_list(ui, "cc_props_layers", |ui| layer_list(ui, &layers, &cur, &mut set_current, &mut toggle));
         });
     });
     ui.add_space(4.0);
@@ -556,7 +571,18 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.clone());
     let w = ui.available_width() - 10.0;
     let te = id.with("te");
-    let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
+    let focused = ui.memory(|m| m.has_focus(te));
+    // Unfocused, a value holding right-to-left letters (a Hebrew text) shows in reading order;
+    // the shaper would otherwise turn it around as a whole, English words and numbers included.
+    let mut reading_order = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+        let job = crate::i18n::job(text.as_str(), crate::theme::body(), ui.visuals().text_color());
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let mut edit = egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body());
+    if !focused && crate::i18n::has_rtl(&value) {
+        edit = edit.layouter(&mut reading_order);
+    }
+    let resp = ui.add_sized([w, 20.0], edit);
     let mut out = None;
     // Keyboard focus from memory: `Response::has_focus` is false while the window itself is
     // unfocused, which dropped the typed text every frame.
@@ -589,12 +615,76 @@ fn report_bad(app: &mut CadApp, bad: Option<String>) {
     }
 }
 
+/// Text justifications: (code, horizontal, vertical, name).
+const TEXT_JUSTIFY: [(&str, cadcraft_doc::HAlign, cadcraft_doc::VAlign, &str); 15] = {
+    use cadcraft_doc::{HAlign as H, VAlign as V};
+    [
+        ("L", H::Left, V::Baseline, "Left"),
+        ("C", H::Center, V::Baseline, "Center"),
+        ("R", H::Right, V::Baseline, "Right"),
+        ("A", H::Aligned, V::Baseline, "Aligned"),
+        ("M", H::Middle, V::Baseline, "Middle"),
+        ("F", H::Fit, V::Baseline, "Fit"),
+        ("TL", H::Left, V::Top, "Top left"),
+        ("TC", H::Center, V::Top, "Top center"),
+        ("TR", H::Right, V::Top, "Top right"),
+        ("ML", H::Left, V::Middle, "Middle left"),
+        ("MC", H::Center, V::Middle, "Middle center"),
+        ("MR", H::Right, V::Middle, "Middle right"),
+        ("BL", H::Left, V::Bottom, "Bottom left"),
+        ("BC", H::Center, V::Bottom, "Bottom center"),
+        ("BR", H::Right, V::Bottom, "Bottom right"),
+    ]
+};
+
+/// Multiline text attachments 1..=9: (code, name).
+const MTEXT_JUSTIFY: [(&str, &str); 9] = [
+    ("TL", "Top left"),
+    ("TC", "Top center"),
+    ("TR", "Top right"),
+    ("ML", "Middle left"),
+    ("MC", "Middle center"),
+    ("MR", "Middle right"),
+    ("BL", "Bottom left"),
+    ("BC", "Bottom center"),
+    ("BR", "Bottom right"),
+];
+
+/// A Yes / No property row setting `key`.
+fn yes_no(ui: &mut egui::Ui, label: &str, key: &str, on: bool, ids: &[String], set: &mut Option<Value>) {
+    prop_row(ui, label, |ui| {
+        let cur = if on { crate::tl!("Yes") } else { crate::tl!("No") };
+        if let Some(n) = pick_menu(ui, cur, [crate::tl!("Yes").to_string(), crate::tl!("No").to_string()]) {
+            *set = Some(json!({ "handles": ids, key: n == crate::tl!("Yes") }));
+        }
+    });
+}
+
+/// Most height a drop-down list of the palettes takes before it scrolls.
+const LIST_H: f32 = 360.0;
+
+/// A list in a drop-down: it scrolls, with a scroll bar always shown, once it is taller than
+/// [`LIST_H`].
+pub(crate) fn scroll_list<R>(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+    egui::ScrollArea::vertical().id_salt(salt).max_height(LIST_H).auto_shrink([true, true]).show(ui, add).inner
+}
+
+/// A menu button whose list scrolls when it is long (layers, linetypes, styles...).
+pub(crate) fn menu_list<R>(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    ui.menu_button(text, |ui| scroll_list(ui, "cc_menu_list", add))
+}
+
 /// A drop-down of `items` showing `current`; returns the item clicked.
 fn pick_menu(ui: &mut egui::Ui, current: &str, items: impl IntoIterator<Item = String>) -> Option<String> {
     // Names are the drawing's own; only the ByLayer/ByBlock keywords are translated.
     let shown = |s: &str| if ["ByLayer", "ByBlock"].contains(&s) { crate::i18n::t(s).to_string() } else { s.to_string() };
     let mut out = None;
-    ui.menu_button(shown(current), |ui| {
+    menu_list(ui, shown(current), |ui| {
         for it in items {
             if ui.button(shown(&it)).clicked() {
                 out = Some(it);
@@ -675,11 +765,13 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
         if count > 0 {
             // Narrow the selection to one object type.
             egui::Popup::from_toggle_button_response(&resp).width(w - 10.0).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
-                for (ty, hs) in &types {
-                    if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
-                        run = Some(("select", json!({ "handles": hs })));
+                scroll_list(ui, "cc_props_types", |ui| {
+                    for (ty, hs) in &types {
+                        if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
+                            run = Some(("select", json!({ "handles": hs })));
+                        }
                     }
-                }
+                });
             });
         }
         let tip = if pickadd {
@@ -744,7 +836,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             });
         }
         prop_row(ui, "Color", |ui| {
-            ui.menu_button(format!("■ {}", crate::i18n::t(&Color::from_aci(h.i64("CECOLOR", 256) as i16).name())), |ui| {
+            menu_list(ui, format!("■ {}", crate::i18n::t(&Color::from_aci(h.i64("CECOLOR", 256) as i16).name())), |ui| {
                 for (n, c) in [
                     ("ByLayer", 256),
                     ("ByBlock", 0),
@@ -783,7 +875,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         });
         prop_row(ui, "Lineweight", |ui| {
-            ui.menu_button(crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()), |ui| {
+            menu_list(ui, crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()), |ui| {
                 for n in ["ByLayer", "ByBlock", "Default"] {
                     if ui.button(crate::i18n::t(n)).clicked() {
                         act("lweight", json!({ "lineweight": n }));
@@ -899,6 +991,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids: Vec<String> = sel.iter().map(|h| h.hex()).collect();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut dim_override: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -932,7 +1025,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     prop_row(ui, "Linetype", |ui| {
-        ui.menu_button(if ["ByLayer", "ByBlock", "*VARIES*"].contains(&linetype.as_str()) { crate::i18n::t(&linetype) } else { &linetype }, |ui| {
+        menu_list(ui, if ["ByLayer", "ByBlock", "*VARIES*"].contains(&linetype.as_str()) { crate::i18n::t(&linetype) } else { &linetype }, |ui| {
             for l in std::iter::once("ByLayer".to_string())
                 .chain(std::iter::once("ByBlock".to_string()))
                 .chain(linetypes.iter().filter(|l| !["ByLayer", "ByBlock"].contains(&l.as_str())).cloned())
@@ -950,7 +1043,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
     prop_row(ui, "Lineweight", |ui| {
-        ui.menu_button(crate::i18n::t(&lw), |ui| {
+        menu_list(ui, crate::i18n::t(&lw), |ui| {
             for n in ["ByLayer", "ByBlock", "Default"] {
                 if ui.button(crate::i18n::t(n)).clicked() {
                     set = Some(json!({ "handles": ids, "lineweight": n }));
@@ -966,7 +1059,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     prop_row(ui, "Transparency", |ui| {
-        ui.menu_button(crate::i18n::t(&tr), |ui| {
+        menu_list(ui, crate::i18n::t(&tr), |ui| {
             for v in ["ByLayer", "ByBlock"] {
                 if ui.button(crate::i18n::t(v)).clicked() {
                     set = Some(json!({ "handles": ids, "transparency": v }));
@@ -993,6 +1086,29 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             });
         });
     });
+    // Text style: for text, multiline text and multileaders with text, one or many at once.
+    let style_of = |e: &cadcraft_doc::Entity| -> Option<String> {
+        match &e.kind {
+            EntityKind::Text(t) => Some(t.style.clone()),
+            EntityKind::MText(t) => Some(t.style.clone()),
+            EntityKind::AttDef(a) => Some(a.text.style.clone()),
+            EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.style.clone()),
+            _ => None,
+        }
+    };
+    let text_styles: Option<Vec<String>> = sel.iter().map(|h| d.entity(*h).and_then(|e| style_of(e))).collect();
+    // One multileader shows it in its own Text group, below the leader properties.
+    let one_mleader = sel.len() == 1 && matches!(e.kind, EntityKind::MLeader(_));
+    if let Some(styles) = text_styles.filter(|v| !v.is_empty() && !one_mleader) {
+        let cur = if styles.iter().all(|s| s.eq_ignore_ascii_case(&styles[0])) { styles[0].clone() } else { "*VARIES*".to_string() };
+        group(ui, "Text");
+        prop_row(ui, "Style", |ui| {
+            let names = d.text_styles.iter().map(|s| s.name.clone());
+            if let Some(n) = pick_menu(ui, if cur == "*VARIES*" { crate::i18n::t(&cur) } else { &cur }, names) {
+                set = Some(json!({ "handles": ids, "textStyle": n }));
+            }
+        });
+    }
     if sel.len() == 1 {
         group(ui, "Geometry");
         let real = |v: f64| format!("{v:.4}");
@@ -1066,6 +1182,16 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Height", "height", len(tx.height), &mut set, &mut bad, &ids);
                 num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, &ids);
                 num(ui, "Width factor", "widthFactor", real(tx.width_factor), &mut set, &mut bad, &ids);
+                prop_row(ui, "Justification", |ui| {
+                    let cur = TEXT_JUSTIFY.iter().find(|(_, h, v, _)| *h == tx.halign && *v == tx.valign).map_or("Left", |j| j.3);
+                    if let Some(n) = pick_menu(ui, crate::i18n::t(cur), TEXT_JUSTIFY.iter().map(|j| crate::i18n::t(j.3).to_string()))
+                        && let Some(j) = TEXT_JUSTIFY.iter().find(|j| crate::i18n::t(j.3) == n)
+                    {
+                        set = Some(json!({ "handles": ids, "justify": j.0 }));
+                    }
+                });
+                yes_no(ui, "Backwards", "backwards", tx.backwards, &ids, &mut set);
+                yes_no(ui, "Upside down", "upsideDown", tx.upside_down, &ids, &mut set);
             }
             EntityKind::MText(tx) => {
                 prop_row(ui, "Contents", |ui| {
@@ -1075,6 +1201,16 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 });
                 num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, &ids);
                 num(ui, "Defined width", "width", len(tx.width), &mut set, &mut bad, &ids);
+                num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, &ids);
+                prop_row(ui, "Justification", |ui| {
+                    let cur = MTEXT_JUSTIFY.get(usize::from(tx.attach.clamp(1, 9) - 1)).map_or("Top left", |j| j.1);
+                    if let Some(n) = pick_menu(ui, crate::i18n::t(cur), MTEXT_JUSTIFY.iter().map(|j| crate::i18n::t(j.1).to_string()))
+                        && let Some(j) = MTEXT_JUSTIFY.iter().find(|j| crate::i18n::t(j.1) == n)
+                    {
+                        set = Some(json!({ "handles": ids, "justify": j.0 }));
+                    }
+                });
+                yes_no(ui, "Text frame", "frame", tx.frame, &ids, &mut set);
             }
             EntityKind::LwPolyline(pl) => {
                 num(ui, "Global width", "width", len(pl.const_width), &mut set, &mut bad, &ids);
@@ -1093,7 +1229,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             EntityKind::Hatch(hh) => {
                 prop_row(ui, "Pattern", |ui| {
-                    ui.menu_button(hh.pattern.clone(), |ui| {
+                    menu_list(ui, hh.pattern.clone(), |ui| {
                         if let Some(name) = patterns::menu(ui, &hh.pattern) {
                             set = Some(json!({ "handles": ids, "pattern": name }));
                             ui.close();
@@ -1104,28 +1240,91 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Angle", "angle", real(hh.angle.to_degrees()), &mut set, &mut bad, &ids);
             }
             EntityKind::Dimension(dm) => {
-                prop_row(ui, "Text override", |ui| {
-                    if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", &ids)), dm.text.clone()) {
-                        set = Some(json!({ "handles": ids, "textOverride": s }));
-                    }
-                });
                 prop_row(ui, "Dim style", |ui| {
                     if let Some(n) = pick_menu(ui, &dm.style, d.dim_styles.iter().map(|st| st.name.clone())) {
                         set = Some(json!({ "handles": ids, "dimStyle": n }));
                     }
                 });
-                // The style's values with this dimension's own overrides; editing one overrides
-                // it for the selected dimensions, as AutoCAD's Properties palette does.
-                let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-                num(ui, "Text height", "textHeight", len(st.text_height), &mut set, &mut bad, &ids);
-                num(ui, "Arrow size", "arrowSize", len(st.arrow_size), &mut set, &mut bad, &ids);
-                num(ui, "Dim scale overall", "dimScale", real(st.scale), &mut set, &mut bad, &ids);
-                prop_row(ui, "Precision", |ui| {
-                    let cur = st.decimals.to_string();
-                    if let Some(n) = pick_menu(ui, &cur, (0..=8).map(|n: u8| n.to_string())).and_then(|n| n.parse::<u8>().ok()) {
-                        set = Some(json!({ "handles": ids, "precision": n }));
+                // The measurement itself; the text that replaces it is the next row.
+                prop_row(ui, "Measurement", |ui| read_only(ui, &cadcraft_render::measurement_text(d, dm)));
+                prop_row(ui, "Text override", |ui| {
+                    if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", &ids)), dm.text.clone()) {
+                        set = Some(json!({ "handles": ids, "textOverride": s }));
                     }
                 });
+                // The dimension's style settings with its own overrides; a change overrides that
+                // setting for the selected dimensions (DIMOVERRIDE).
+                let style = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+                let before = crate::dimstyles::style_map(&style);
+                let mut after = before.clone();
+                let names = crate::dimstyles::Names::of(d);
+                for (title, rows) in crate::dimstyles::PROPERTIES {
+                    group(ui, title);
+                    for (label, kind) in rows.iter() {
+                        prop_row(ui, label, |ui| {
+                            crate::dimstyles::field_row(ui, egui::Id::unique(("cc_dimprop", *title, *label)), &names, &mut after, *kind);
+                        });
+                    }
+                }
+                let changed = crate::dimstyles::changed_fields(&before, &after);
+                if !changed.is_empty() {
+                    let mut p = changed;
+                    p.insert("handles".into(), json!(ids));
+                    dim_override = Some(Value::Object(p));
+                }
+            }
+            EntityKind::MLeader(ml) => {
+                let styles: Vec<String> = if d.mleader_styles.is_empty() {
+                    vec!["Standard".to_string()]
+                } else {
+                    d.mleader_styles.iter().map(|s| s.name.clone()).collect()
+                };
+                prop_row(ui, "Multileader style", |ui| {
+                    if let Some(n) = pick_menu(ui, &ml.style, styles) {
+                        set = Some(json!({ "handles": ids, "mleaderStyle": n }));
+                    }
+                });
+                group(ui, "Leaders");
+                let (straight, spline, none) = (crate::tl!("Straight").to_string(), crate::tl!("Spline").to_string(), crate::tl!("None").to_string());
+                prop_row(ui, "Leader type", |ui| {
+                    let cur = if ml.leaderless() {
+                        &none
+                    } else if ml.spline {
+                        &spline
+                    } else {
+                        &straight
+                    };
+                    // None only hides the leader lines, so a multileader without any can't get them back.
+                    let choices = if ml.leaders.is_empty() { vec![none.clone()] } else { vec![straight.clone(), spline.clone(), none.clone()] };
+                    if let Some(n) = pick_menu(ui, cur, choices) {
+                        let v = if n == spline {
+                            "spline"
+                        } else if n == none {
+                            "none"
+                        } else {
+                            "straight"
+                        };
+                        set = Some(json!({ "handles": ids, "leaderType": v }));
+                    }
+                });
+                // The arrowhead: built-in ones and the drawing's arrowhead blocks, as for dimensions.
+                let names = crate::dimstyles::Names::of(d);
+                prop_row(ui, "Arrowhead", |ui| {
+                    if let Some(v) = crate::dimstyles::arrow_combo(ui, egui::Id::unique(("cc_mlarrow", &ids)), &names, ml.arrow_in(d)) {
+                        set = Some(json!({ "handles": ids, "arrow": v }));
+                    }
+                });
+                num(ui, "Arrowhead size", "arrowSize", real(ml.arrow_size), &mut set, &mut bad, &ids);
+                num(ui, "Landing distance", "dogleg", real(ml.dogleg), &mut set, &mut bad, &ids);
+                if let Some(t) = &ml.text {
+                    group(ui, "Text");
+                    prop_row(ui, "Style", |ui| {
+                        if let Some(n) = pick_menu(ui, &t.style, d.text_styles.iter().map(|s| s.name.clone())) {
+                            set = Some(json!({ "handles": ids, "textStyle": n }));
+                        }
+                    });
+                    num(ui, "Text height", "textHeight", real(t.height), &mut set, &mut bad, &ids);
+                }
             }
             EntityKind::Insert(i) => {
                 // A dynamic block reference shows its dynamic block's name, not its anonymous
@@ -1174,6 +1373,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
     }
+    if let Some(p) = dim_override {
+        let _ = app.run("dimstyle.override", p);
+    }
 }
 
 #[cfg(test)]
@@ -1208,5 +1410,36 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(painted_blue, "a ByLayer entity on a blue layer needs a blue Properties swatch");
+    }
+
+    fn texts(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+
+    /// A multiline text's rotation shows from ANGBASE in the ANGDIR sense, as it is typed back
+    /// (and as TEXT and INSERT rows show it): with ANGBASE 90°, a text along +X shows 270 or -90,
+    /// not 0, which would write 90° back (#2326 review).
+    #[test]
+    fn mtext_rotation_shows_as_the_drawing_measures_angles() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("setvar", json!({ "name": "ANGBASE", "value": 90 })).unwrap();
+        let m = app.run("mtext", json!({ "at": [0, 0], "height": 1, "width": 10, "text": "A" })).unwrap();
+        let h = m["handle"].as_str().map(str::to_string).or_else(|| m["handles"][0].as_str().map(str::to_string)).unwrap();
+        app.run("select", json!({ "handles": [h] })).unwrap();
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1600.0))), ..Default::default() };
+        let mut all = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| properties_section(&mut app, ui));
+            all.clear();
+            output.shapes.iter().for_each(|s| texts(&s.shape, &mut all));
+            output.textures_delta.clear();
+        }
+        assert!(all.iter().any(|t| t == "270.0000" || t == "-90.0000"), "{all:?}");
     }
 }
