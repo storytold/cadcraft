@@ -86,9 +86,9 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
         d.read_notes = notes;
         return Ok((d, Some(dxf)));
     }
-    if bytes.starts_with(b"%PDF-") {
-        return pdf_read::read(bytes, &pdf_read::PdfImportOptions::default()).map(|(d, _)| (d, None));
-    }
+    // A PDF is not read here: INSERT, XREF, COMPARE, RECOVER and templates take drawings, and a
+    // crafted PDF behind an xref path would run the PDF parser. The engine's OPEN, IMPORT and
+    // PDFIMPORT take it through `pdf_read` on purpose.
     let d = match (Format::from_path(name), ext(name).as_str()) {
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),
         (Some(Format::Dxf), _) => dxf_read::read(bytes),

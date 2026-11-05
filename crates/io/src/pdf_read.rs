@@ -48,6 +48,12 @@ pub const MM_PER_PT: f64 = 25.4 / 72.0;
 const FLATTEN_TOL_PT: f64 = 0.02;
 /// Cap height of a typical text face, as a fraction of its em square.
 const CAP_HEIGHT: f64 = 0.72;
+/// A path with a point further than this from the origin, in drawing units, is left out: no real
+/// page reaches it, and the numbers past it overflow into infinity.
+const MAX_COORD: f64 = 1.0e9;
+/// A curve is flattened to no finer than its size over this, so one huge curve cannot grow into
+/// millions of segments (about 500 at most).
+const CURVE_RESOLUTION: f64 = 250_000.0;
 
 const LAYER_GEOMETRY: &str = "PDF_Geometry";
 const LAYER_FILLS: &str = "PDF_Solid Fills";
@@ -174,6 +180,7 @@ enum LeftOut {
     NoUnicode,
     PatternFill,
     WhiteFill,
+    OutOfRange,
 }
 
 impl LeftOut {
@@ -184,6 +191,7 @@ impl LeftOut {
             Self::NoUnicode => ("glyph without a Unicode value", "glyphs without a Unicode value"),
             Self::PatternFill => ("gradient or pattern fill", "gradient or pattern fills"),
             Self::WhiteFill => ("white fill", "white fills"),
+            Self::OutOfRange => ("path with out-of-range coordinates", "paths with out-of-range coordinates"),
         };
         format!("{n} {}", if n == 1 { one } else { many })
     }
@@ -210,6 +218,9 @@ struct Collector {
     verts_left: usize,
     glyphs: usize,
     run: Option<Run>,
+    /// The text last added: where it starts, its string and its size, so the same text drawn again
+    /// at the same place (a fill and then its stroke, render mode 2) is not added twice.
+    last_text: Option<(Vec2, String, f64)>,
     left_out: BTreeMap<LeftOut, usize>,
     failure: Option<String>,
     /// The clips in force, outermost first: a rectangle in page points, or `None` for another shape.
@@ -261,6 +272,7 @@ impl Collector {
             verts_left: MAX_TOTAL_VERTS,
             glyphs: 0,
             run: None,
+            last_text: None,
             left_out: BTreeMap::new(),
             failure: None,
             clips: Vec::new(),
@@ -331,6 +343,10 @@ impl Collector {
     /// whether each is closed.
     fn subpaths(&mut self, path: &BezPath, to_page: Affine) -> Vec<(Vec<PolyVertex>, bool)> {
         let m = Affine::scale(self.opts.unit) * to_page;
+        if !path_in_range(path, m) {
+            self.left_out(LeftOut::OutOfRange);
+            return Vec::new();
+        }
         let tol = FLATTEN_TOL_PT * self.opts.unit;
         let mut out: Vec<(Vec<PolyVertex>, bool)> = Vec::new();
         let mut cur: Vec<PolyVertex> = Vec::new();
@@ -516,6 +532,11 @@ impl Collector {
         let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0)));
 
         if let Some(run) = &mut self.run {
+            // A fill and its stroke (render mode 2) arrive as two calls for one glyph at one origin;
+            // this is tested first, since the gap measured from where the glyph ended is negative.
+            if run.color == color && (origin - run.last).len() <= 1e-9 * em.max(1.0) && run.text.ends_with(&ch) {
+                return;
+            }
             let rel = origin - run.last;
             let along = rel.x * run.dir.x + rel.y * run.dir.y;
             let across = (rel.x * run.dir.y - rel.y * run.dir.x).abs();
@@ -552,6 +573,14 @@ impl Collector {
         if value.trim().is_empty() {
             return;
         }
+        if let Some((at, text, em)) = &self.last_text
+            && *text == value
+            && (*at - run.start).len() <= 1e-9 * run.em.max(1.0)
+            && (*em - run.em).abs() <= 1e-9 * run.em.max(1.0)
+        {
+            return;
+        }
+        self.last_text = Some((run.start, value.clone(), run.em));
         let fit_end = run.end.filter(|e| run.glyphs >= 2 && (*e - run.start).len() > 1e-9);
         let text = Text {
             insert: v3(run.start),
@@ -567,6 +596,21 @@ impl Collector {
         };
         self.add(LAYER_TEXT, run.color, Lineweight::ByLayer, EntityKind::Text(text), 1);
     }
+}
+
+/// Whether every point of the path, taken to drawing units by `m`, is finite and within
+/// [`MAX_COORD`].
+fn path_in_range(path: &BezPath, m: Affine) -> bool {
+    let ok = |p: Point| {
+        let q = m * p;
+        q.x.is_finite() && q.y.is_finite() && q.x.abs() <= MAX_COORD && q.y.abs() <= MAX_COORD
+    };
+    path.elements().iter().all(|el| match *el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
+        PathEl::QuadTo(a, b) => ok(a) && ok(b),
+        PathEl::CurveTo(a, b, c) => ok(a) && ok(b) && ok(c),
+        PathEl::ClosePath => true,
+    })
 }
 
 /// Whether the paint is a colour that lets what is under it show through.
@@ -708,8 +752,17 @@ fn curve(cur: &mut Vec<PolyVertex>, c: [Vec2; 4], tol: f64) {
         PathEl::MoveTo(Point::new(c[0].x, c[0].y)),
         PathEl::CurveTo(Point::new(c[1].x, c[1].y), Point::new(c[2].x, c[2].y), Point::new(c[3].x, c[3].y)),
     ];
-    kurbo::flatten(path, tol.max(1e-9), |el| {
-        if let PathEl::LineTo(p) = el {
+    // The segment count grows with the curve's size over the tolerance: keep the tolerance from
+    // falling below a fixed fraction of the size.
+    let (lo, hi) = c.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), p| {
+        (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
+    });
+    let size = (hi.x - lo.x).max(hi.y - lo.y);
+    kurbo::flatten(path, tol.max(size / CURVE_RESOLUTION).max(1e-9), |el| {
+        // Past the cap the rest is dropped; the caller's next check refuses the path.
+        if let PathEl::LineTo(p) = el
+            && cur.len() <= MAX_POLY_VERTS
+        {
             cur.push(PolyVertex::new(pt(p)));
         }
     });

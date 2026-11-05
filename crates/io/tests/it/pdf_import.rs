@@ -282,9 +282,54 @@ fn a_page_with_a_great_many_objects_is_read_or_refused_not_hung() {
 }
 
 #[test]
-fn open_and_import_by_content_read_a_pdf() {
-    let d = cadcraft_io::read(&page("0 0 m 10 10 l S"), "plan.pdf").unwrap();
-    assert_eq!(d.model.iter().count(), 1);
+fn the_general_reader_does_not_take_a_pdf() {
+    // INSERT, XREF, COMPARE, RECOVER and templates read drawings through `read`; a PDF is taken
+    // only by the engine's OPEN, IMPORT and PDFIMPORT, through `pdf_read`.
+    let e = cadcraft_io::read(&page("0 0 m 10 10 l S"), "plan.pdf").unwrap_err().to_string();
+    assert!(e.contains("unsupported file type"), "{e}");
+}
+
+/// A form that draws itself twice asks for about 2^50 nested interpretations unless the interpreter
+/// limits how often forms nest (craft-libs' patched hayro-interpret does).
+#[test]
+fn a_form_that_draws_itself_twice_is_stopped() {
+    let form = "/X Do /X Do 0 0 m 1 1 l S";
+    let pdf = format!(
+        "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+         2 0 obj << /Type /Pages /Kids [10 0 R] /Count 1 >> endobj\n\
+         10 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 11 0 R /Resources << /XObject << /X 5 0 R >> >> >> endobj\n\
+         11 0 obj << /Length 5 >> stream\n/X Do\nendstream endobj\n\
+         5 0 obj << /Type /XObject /Subtype /Form /BBox [0 0 600 800] /Resources << /XObject << /X 5 0 R >> >> /Length {} >> stream\n{form}\nendstream endobj\n\
+         4 0 obj << /Producer (AutoCAD) >> endobj\n\
+         trailer << /Root 1 0 R /Info 4 0 R >>\n%%EOF\n",
+        form.len()
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(read(pdf.as_bytes(), &PdfImportOptions::default()).is_ok() || true);
+    });
+    assert!(rx.recv_timeout(std::time::Duration::from_secs(20)).is_ok(), "the self-calling form was not stopped");
+}
+
+#[test]
+fn a_huge_curve_is_bounded_and_an_out_of_range_one_is_left_out() {
+    // A million points across: its flattening is capped, not millions of segments.
+    let d = import("1000000 0 0 1000000 0 0 cm 0 0 m 0 1 1 1 1 0 c S");
+    let verts: usize = kinds(&d).iter().map(|e| if let EntityKind::LwPolyline(p) = &e.kind { p.vertices.len() } else { 2 }).sum();
+    assert!(verts < 5_000, "{verts} vertices");
+    // 1e20 points across: out of any drawing's range, named in a read note, and nothing runs away.
+    let d = import("100000000000000000000 0 0 100000000000000000000 0 0 cm 0 0 m 0 1 1 1 1 0 c S");
+    assert_eq!(kinds(&d).len(), 0);
+    assert!(d.read_notes.iter().any(|n| n.contains("out-of-range")), "{:?}", d.read_notes);
+}
+
+#[test]
+fn text_drawn_as_fill_and_stroke_is_one_text() {
+    // Render mode 2 draws each glyph twice at one origin: fill, then stroke.
+    let d = import("BT /F1 12 Tf 100 200 Td 2 Tr (Hello) Tj ET");
+    let texts: Vec<String> =
+        kinds(&d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
+    assert_eq!(texts, ["Hello"]);
 }
 
 #[test]

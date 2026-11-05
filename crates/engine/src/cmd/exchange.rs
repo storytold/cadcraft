@@ -152,6 +152,17 @@ fn is_pdf(bytes: &[u8]) -> bool {
     bytes.starts_with(b"%PDF-")
 }
 
+/// OPEN of a PDF: its first page as a drawing in millimetres. `None` for any other file, or when
+/// this build has no PDF reader (the general file reader never takes a PDF).
+pub(super) fn open_pdf(bytes: &[u8]) -> Option<std::result::Result<Drawing, String>> {
+    if !is_pdf(bytes) {
+        return None;
+    }
+    let read = PDF_IMPORT.get()?;
+    // The first page in millimetres, the PDF's points scaled as PDFIMPORT does for a metric drawing.
+    Some(read(bytes, &json!({ "unit": 25.4 / 72.0 })).map(|(d, _)| d))
+}
+
 /// The file an import command reads: its bytes and name, from `path` or from base64 `data`.
 fn source_file(cmd: &str, p: &Value, default_name: &str) -> Result<(Vec<u8>, String)> {
     if let Some(path) = str_param(p, "path") {
@@ -768,6 +779,15 @@ mod tests {
         assert_eq!(r["pages"], 3);
         let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };
         assert!((l.b.x - (10.0 + 2.0 / 72.0)).abs() < 1e-9, "inches, scaled and moved: {l:?}");
+    }
+
+    #[test]
+    fn open_takes_a_pdf_through_the_pdf_reader() {
+        set_pdf_import(fake_pdf_reader);
+        let mut s = session();
+        let r = s.execute("open", &json!({ "data": base64_encode(b"%PDF-1.7 fake"), "name": "plan.pdf" }));
+        assert!(r.is_ok(), "{r:?}");
+        assert!(s.doc().unwrap().layer("PDF_Geometry").is_some());
     }
 
     #[test]
