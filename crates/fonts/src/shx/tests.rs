@@ -374,6 +374,15 @@ fn a_name_is_looked_for_in_its_first_kilobyte_only() {
 }
 
 #[test]
+fn all_65535_shape_numbers_compile_and_a_repeat_is_found() {
+    // Hostile: each of 65,535 definitions was compared with all before it, 2.8 s for an 821 KB
+    // source.
+    let src: String = (1..=65535u32).map(|n| format!("*{n},1,X\n0\n")).collect();
+    assert_eq!(ShxFont::parse(&compile(&src).unwrap()).unwrap().shape_count(), 65535);
+    assert_eq!(compile("*1,1,X\n0\n*2,1,Y\n0\n*1,1,Z\n0\n").err(), Some(ShxError::Source(5, "shape 1 is defined twice".into())));
+}
+
+#[test]
 fn a_doubled_minus_sign_is_not_a_number() {
     // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
     // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
