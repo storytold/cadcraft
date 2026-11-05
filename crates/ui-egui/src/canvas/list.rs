@@ -145,7 +145,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
             view_height: f64::from(xf.rect.height()) / xf.scale.max(1e-300),
             model_bg: Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()),
             paper_bg: Rgb(t.paper.r(), t.paper.g(), t.paper.b()),
-            lwdisplay,
+            lwdisplay: super::lw_scale(app, xf),
             device: app.canvas.gpu_device.clone(),
         });
         let window = opts.view;
