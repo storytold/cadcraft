@@ -18,7 +18,7 @@ pub(super) const MAX_FILE_BYTES: usize = 32 << 20;
 const MAX_RANGES: usize = 256;
 /// Longest shape name looked for: big font records may overlap, and each one searched to its
 /// end made the work the product of the record count and length.
-const MAX_NAME: usize = 1024;
+pub(super) const MAX_NAME: usize = 1024;
 
 /// A checked little-endian reader.
 struct Rd<'a> {

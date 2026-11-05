@@ -15,7 +15,7 @@
 use std::collections::HashSet;
 
 use super::ShxError;
-use super::parse::{BIGFONT, SHAPES_10, UNIFONT};
+use super::parse::{BIGFONT, MAX_NAME, SHAPES_10, UNIFONT};
 
 /// Largest source compiled.
 const MAX_SOURCE: usize = 8 << 20;
@@ -233,6 +233,9 @@ pub fn compile(source: &str) -> Result<Vec<u8>, ShxError> {
     let mut seen = HashSet::new();
     for (num, name, line, toks) in defs {
         let number = u16::try_from(num).map_err(|_| ShxError::Source(line, format!("shape number {num} out of range")))?;
+        if name.bytes().filter(|b| *b != 0).count() > MAX_NAME {
+            return Err(ShxError::Source(line, format!("the name of shape {number} is longer than {MAX_NAME} bytes")));
+        }
         let program = if number == 0 {
             // The font record: plain bytes.
             toks.iter().map(|x| u8::try_from(*x).map_err(|_| ShxError::Source(line, "bad font record".into()))).collect::<Result<Vec<u8>, _>>()?

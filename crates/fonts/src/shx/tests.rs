@@ -361,9 +361,20 @@ fn the_glyph_cache_is_bounded_by_points() {
 fn a_name_is_looked_for_in_its_first_kilobyte_only() {
     // Hostile: 65,535 big font records over one 64 KB run without a NUL were each searched to
     // the end, 4 G bytes (1.7 s) for a 576 KB file.
-    let (short, long) = ("N".repeat(1024), "N".repeat(1025));
-    let f = font(&format!("*BIGFONT 2,1,081,09F\n*082A0,1,{short}\n010,0\n*082A1,1,{long}\n010,0\n"));
-    assert!(f.has_shape(0x82A0) && !f.has_shape(0x82A1));
+    let mut shp = parse::SHAPES_10.to_vec();
+    shp.extend([1, 0, 2, 0, 2, 0]);
+    for (n, len) in [(1u8, 1024u16), (2, 1025)] {
+        shp.push(n);
+        shp.push(0);
+        shp.extend((len + 2).to_le_bytes());
+    }
+    for len in [1024, 1025] {
+        shp.extend(std::iter::repeat_n(b'N', len));
+        shp.extend([0, 0]);
+    }
+    shp.extend(b"EOF");
+    let f = ShxFont::parse(&shp).unwrap();
+    assert!(f.has_shape(1) && !f.has_shape(2));
     let mut big = parse::BIGFONT.to_vec();
     big.extend([3, 0, 3, 0, 0, 0]);
     for n in 1..=3u8 {
@@ -371,6 +382,21 @@ fn a_name_is_looked_for_in_its_first_kilobyte_only() {
     }
     big.extend([b'N'; 0xFFFF]);
     assert_eq!(ShxFont::parse(&big).err(), Some(ShxError::Empty));
+}
+
+#[test]
+fn a_name_the_reader_would_drop_does_not_compile() {
+    let long = "N".repeat(1025);
+    assert_eq!(
+        compile(&format!("*1,1,X\n0\n*2,1,{long}\n0\n")).err(),
+        Some(ShxError::Source(3, "the name of shape 2 is longer than 1024 bytes".into()))
+    );
+    let nul = format!("{}\0", "N".repeat(1024));
+    let short = "N".repeat(1024);
+    for name in [&short, &nul] {
+        let f = font(&format!("*BIGFONT 1,1,081,09F\n*082A0,1,{name}\n010,0\n"));
+        assert_eq!(f.shape_name(0x82A0).as_deref(), Some(short.as_str()));
+    }
 }
 
 #[test]
