@@ -20,13 +20,47 @@ const MAX_EDITED: usize = 10_000;
 const MAX_LOOPS: usize = 2000;
 
 fn hatches(s: &Session, p: &Value) -> Result<Vec<Handle>> {
+    hatches_for(s, p, "hatchedit")
+}
+
+/// The hatches among the targets of command `cmd` (an error names `cmd` when there are none).
+fn hatches_for(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Handle>> {
     let hs = targets(s, p)?;
     let d = s.doc()?;
     let out: Vec<Handle> = hs.into_iter().filter(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(_)))).take(MAX_EDITED).collect();
     if out.is_empty() {
-        return Err(bad("hatchedit", "select one or more hatches"));
+        return Err(bad(cmd, "select one or more hatches"));
     }
     Ok(out)
+}
+
+/// Most polylines one HATCHGENERATEBOUNDARY call creates.
+const MAX_GENERATED: usize = 10_000;
+
+/// HATCHGENERATEBOUNDARY: a closed polyline around every boundary loop (outer and islands) of
+/// the selected hatches. The hatches are not changed: an associative hatch stays linked to its
+/// own boundary objects and is not linked to the new polylines.
+pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = hatches_for(s, p, "hatchgenerateboundary")?;
+    let mut loops = Vec::new();
+    {
+        let d = s.doc()?;
+        for h in &hs {
+            if let Some(EntityKind::Hatch(x)) = d.entity(*h).map(|e| &e.kind) {
+                loops.extend(x.loops.iter().map(|l| l.vertices.clone()));
+            }
+        }
+    }
+    // Refused before anything is added, so a refused call leaves no partial result behind.
+    if loops.len() > MAX_GENERATED {
+        return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
+    }
+    let mut created = Vec::new();
+    for vs in loops {
+        created.push(s.add_entity(lwpoly(vs, true))?.hex());
+    }
+    let n = created.len();
+    Ok(json!({ "handles": created, "message": format!("{n} boundary polyline(s) created.") }))
 }
 
 fn outline(l: &HatchLoop) -> Vec<Vec2> {
