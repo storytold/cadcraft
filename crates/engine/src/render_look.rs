@@ -20,7 +20,7 @@ use cadcraft_render::raster::RasterOptions;
 use serde_json::Value;
 
 /// The background a render draws on without `background`: the dark canvas.
-pub const DARK: Rgb = Rgb(33, 40, 48);
+pub const DARK: Rgb = RasterOptions::DARK_BACKGROUND;
 /// The background of `"white"` and `"paper"`.
 pub const WHITE: Rgb = Rgb(255, 255, 255);
 
@@ -29,10 +29,10 @@ pub const BACKGROUNDS: &str = "\"dark\" (the default without a plot style), \"wh
 
 /// Most table names an unknown `plot_style` error lists from the drawing's own tables (the
 /// built-in ones are always listed).
-const LISTED_TABLES: usize = 10;
+const MAX_LISTED_TABLES: usize = 10;
 
-/// Longest part of a refused value repeated in its error message.
-const ECHO: usize = 40;
+/// Longest part of a refused value repeated in its error message, in characters.
+const MAX_ECHO_CHARS: usize = 40;
 
 /// The look of a render: what it draws on and with which plot style table.
 #[derive(Clone, Debug)]
@@ -105,16 +105,16 @@ fn plot_style(d: &Drawing, name: &str) -> Result<Option<PlotStyleTable>, String>
 }
 
 /// The tables a drawing can use, for an error message: the built-in ones, then at most
-/// [`LISTED_TABLES`] of the drawing's own and how many more there are.
+/// [`MAX_LISTED_TABLES`] of the drawing's own and how many more there are.
 fn table_list(d: &Drawing) -> String {
     let builtin = |n: &String| cadcraft_doc::BUILTIN_PLOT_STYLE_TABLES.iter().any(|b| b.eq_ignore_ascii_case(n));
     let names = cadcraft_doc::plot_style_table_names(d);
     let own: Vec<String> = names.iter().filter(|n| !builtin(n)).map(|n| echo(n)).collect();
     let mut list: Vec<String> = cadcraft_doc::BUILTIN_PLOT_STYLE_TABLES.iter().map(|b| (*b).to_string()).collect();
-    list.extend(own.iter().take(LISTED_TABLES).cloned());
+    list.extend(own.iter().take(MAX_LISTED_TABLES).cloned());
     let mut text = list.join(", ");
-    if own.len() > LISTED_TABLES {
-        text.push_str(&format!(" and {} more of the drawing's", own.len() - LISTED_TABLES));
+    if own.len() > MAX_LISTED_TABLES {
+        text.push_str(&format!(" and {} more of the drawing's", own.len() - MAX_LISTED_TABLES));
     }
     text
 }
@@ -127,7 +127,7 @@ fn object_properties() -> PlotStyleTable {
 
 /// The start of a refused value, to repeat in its error message.
 fn echo(v: &str) -> String {
-    v.chars().take(ECHO).collect()
+    v.chars().take(MAX_ECHO_CHARS).collect()
 }
 
 #[cfg(test)]
