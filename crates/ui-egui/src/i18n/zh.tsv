@@ -149,6 +149,7 @@
 	Cut with Base Point	带基点剪切
 	Cyan	青色
 	Cylinder	圆柱体
+	DView	动态视图
 	DWG	DWG
 	DXF	DXF
 	Dark	深色
@@ -448,6 +449,7 @@
 	Multiline Text	多行文字
 	Multiline Text...	多行文字...
 	Multiple	多个
+	Multiple Insert	多重插入
 	Multiple Point	多点
 	My	我的
 	My properties: not available yet	我的属性：暂不可用
@@ -592,6 +594,8 @@
 	Quit CADCraft	退出 CADCraft
 	Radius	半径
 	Raster Image	光栅图像
+	Raster Image Reference...	光栅图像参照...
+	Raster Images	光栅图像
 	Ray	射线
 	Read-only	只读
 	Real name	真实姓名
@@ -1378,6 +1382,18 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Find All	查找全部
+	Find what:	查找内容：
+	Match case	区分大小写
+	Replace	替换
+	Replace All	全部替换
+	Replace with:	替换为：
+	Replacement text	替换文本
+	Results	结果
+	Searches the current space.	仅搜索当前空间。
+	Text to find	要查找的文字
+	Whole words	全字匹配
+	Nothing found	未找到
 
 # The strings the report listed as missing for zh.
 	Add…	添加…
@@ -1454,3 +1470,6 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	Clip Xref	剪裁外部参照
+	Xref	外部参照
+	Xref Clip Frame	外部参照剪裁边框
