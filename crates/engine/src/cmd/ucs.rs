@@ -435,8 +435,8 @@ impl Interactive for UcsM {
         match &self.stage {
             Stage::Main => Prompt::new("Specify origin of UCS", Accept::POINT).kw(OPTIONS).default("World"),
             Stage::OriginOnly | Stage::ThreePoint => {
-                let o = s.ucs().origin;
-                Prompt::new("Specify new origin point", Accept::POINT).default(format!("{},{},{}", o.x, o.y, o.z))
+                // Input here is read in the current UCS, where the UCS's own origin is 0,0,0.
+                Prompt::new("Specify new origin point", Accept::POINT).default("0,0,0")
             }
             Stage::XPoint(o) => Prompt::new("Specify point on X-axis", Accept::POINT).default("Accept").base(o.xy()),
             Stage::XyPoint(o, _) => Prompt::new("Specify point on the XY plane", Accept::POINT).default("Accept").base(o.xy()),

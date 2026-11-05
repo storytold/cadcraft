@@ -608,3 +608,35 @@ fn deleting_a_named_ucs_clears_it_in_every_space() {
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(near3(s.ucs().x, Vec3::new(0.0, 1.0, 0.0)));
 }
+
+/// The origin prompt offers the origin in the UCS's own terms (0,0,0), so Enter, or the default
+/// typed back, keeps the origin.
+#[test]
+fn pressing_enter_at_the_origin_prompt_keeps_the_origin() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "origin", "origin": [100, 50]})).unwrap();
+    s.execute("ucs", &json!({"option": "z", "angle": 30})).unwrap();
+    let before = s.ucs();
+    s.start("ucs.origin").unwrap();
+    let shown = s.current_prompt().and_then(|p| p.default).unwrap_or_default();
+    s.cmdline(&shown).unwrap();
+    assert!(near3(s.ucs().origin, before.origin), "typing the default {shown:?} back: {:?}", s.ucs().origin);
+    s.start("ucs.origin").unwrap();
+    s.cmdline("").unwrap();
+    assert!(near3(s.ucs().origin, before.origin));
+}
+
+/// DIST's JSON says what its message says: angle and deltas in the current UCS, the world ones
+/// under `world`.
+#[test]
+fn dist_json_matches_its_message_in_a_ucs() {
+    let mut s = session();
+    turned(&mut s);
+    // Points are given in the world: UCS (0,0) and (10,0).
+    let r = s.execute("dist", &json!({"p1": [100, 50], "p2": [100, 60]})).unwrap();
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap();
+    assert!((f(&r, "dx") - 10.0).abs() < 1e-9 && f(&r, "dy").abs() < 1e-9 && f(&r, "angle").abs() < 1e-9, "{r}");
+    assert!(r["message"].as_str().unwrap().contains("Delta X = 10"), "{r}");
+    let w = &r["world"];
+    assert!(f(w, "dx").abs() < 1e-9 && (f(w, "dy") - 10.0).abs() < 1e-9 && (f(w, "angle") - 90.0).abs() < 1e-9, "{r}");
+}
