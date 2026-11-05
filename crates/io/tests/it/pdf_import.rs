@@ -123,7 +123,17 @@ fn a_filled_shape_is_a_solid_hatch_and_a_white_one_is_left_out() {
     assert!(h.solid && h.loops.len() == 1 && h.loops[0].vertices.len() == 4);
     assert_eq!(all[0].common.color, Color::True(Rgb(0, 0, 255)));
     assert_eq!(all[0].common.layer, "PDF_Solid Fills");
-    assert!(d.read_notes.iter().any(|n| n.contains("1 white fill")), "{:?}", d.read_notes);
+    assert!(d.read_notes.iter().any(|n| n.contains("1 white or near-white fill")), "{:?}", d.read_notes);
+}
+
+#[test]
+fn a_near_white_fill_is_left_out_like_a_white_one() {
+    // 245, 245, 245 table shading is left out; a light grey (230) is a fill.
+    let d = import("0.96 0.96 0.96 rg 0 0 50 50 re f 0.9 0.9 0.9 rg 100 100 50 50 re f");
+    let all = kinds(&d);
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].common.color, Color::True(Rgb(230, 230, 230)));
+    assert!(d.read_notes.iter().any(|n| n.contains("1 white or near-white fill")), "{:?}", d.read_notes);
 }
 
 #[test]
@@ -198,6 +208,24 @@ fn a_rectangular_clip_cuts_a_fill_to_its_corners() {
     assert_eq!(hatches[1].loops[0].vertices.len(), 4);
 }
 
+fn texts(d: &Drawing) -> Vec<String> {
+    kinds(d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect()
+}
+
+#[test]
+fn text_starting_on_a_clip_edge_is_kept() {
+    // A cell clipped to a box whose left side runs a hair right of the text's start, as a plotter
+    // draws it: a viewer shows the whole word.
+    let d = import("q 100.001 200 200 14 re W n BT /F1 10 Tf 100 202 Td (MATERIAL) Tj ET Q");
+    assert_eq!(texts(&d), ["MATERIAL"]);
+    // A label turned to read downwards with its start just off a page clip.
+    let d = import("q 0.12 0.12 599 799 re W n BT /F1 10 Tf 0 -1 1 0 -0.5 300 Tm (B) Tj ET Q");
+    assert_eq!(texts(&d), ["B"]);
+    // Text wholly outside the clip is still left out, and a glyph is cut at the clip.
+    let d = import("q 100 200 200 14 re W n BT /F1 10 Tf 400 202 Td (Gone) Tj ET BT /F1 10 Tf 88 202 Td (XYZ) Tj ET Q");
+    assert_eq!(texts(&d), ["Z"]);
+}
+
 #[test]
 fn a_shape_outside_its_clip_is_left_out() {
     let d = import("q 100 100 50 50 re W n 0 0 m 10 10 l S Q");
@@ -238,17 +266,12 @@ fn a_file_that_is_not_a_pdf_is_an_error_not_a_panic() {
 }
 
 #[test]
-fn only_a_pdf_made_from_a_dwg_is_imported() {
+fn any_pdf_is_imported_whatever_made_it() {
+    // A plot that another program merged or printed again no longer names the CAD program.
     let content = ["0 0 m 10 10 l S"];
-    let err = |producer| read(&pages_by(&content, producer), &PdfImportOptions::default()).unwrap_err().to_string();
-    // A browser's or a word processor's PDF names itself in the refusal.
-    let e = err(Some("(Skia/PDF m120)"));
-    assert!(e.contains("made from a DWG") && e.contains("Skia/PDF m120"), "{e}");
-    // One that doesn't say what made it is refused too.
-    assert!(err(None).contains("doesn't say what made it"));
-    // The names of CAD programs pass, whatever the case; so does a UTF-16 string ("DWG").
-    for ok in ["(AutoCAD PDF \\(General Documentation\\))", "(CADCRAFT)", "(BricsCAD)", "<FEFF004400570047>"] {
-        assert!(read(&pages_by(&content, Some(ok)), &PdfImportOptions::default()).is_ok(), "{ok}");
+    for producer in [Some("(Skia/PDF m120)"), Some("(Example PDF Tool)"), Some("<FEFF004400570047>"), None] {
+        let (d, _) = read(&pages_by(&content, producer), &PdfImportOptions::default()).unwrap();
+        assert_eq!(kinds(&d).len(), 1, "{producer:?}");
     }
 }
 

@@ -7,16 +7,15 @@
 //! `PDF_Solid Fills`, `PDF_Text`) with the colour and line width the PDF used, in millimetres with
 //! the page's lower-left corner at the origin.
 //!
-//! Only a PDF made from a DWG drawing is imported: one whose document information says a CAD
-//! program wrote it (AutoCAD's "DWG To PDF" and its relatives, or CADCraft's own plot). Any other PDF
-//! is refused with the name of the program that made it, since page content drawn by a word
-//! processor or a browser is not a drawing and imports as a mess of text and rectangles.
+//! Any PDF is read; a drawing plotted from a CAD program imports best, since that is what the
+//! mapping above is made for.
 //!
 //! Not imported (each is named in a read note, so it is never left out silently): raster images,
-//! Type 3 glyphs and glyphs without a Unicode value, gradient and pattern fills, and white fills
-//! (they only hide what lies under them on paper). A rectangular clip (the usual page, viewport and
-//! frame clip) cuts the lines and filled shapes it crosses and drops what lies outside it; other
-//! clip shapes, transparency and dash patterns are not applied, and a read note says how often.
+//! Type 3 glyphs and glyphs without a Unicode value, gradient and pattern fills, and white or
+//! near-white fills (they only hide what lies under them on paper). A rectangular clip (the usual
+//! page, viewport and frame clip) cuts the lines and filled shapes it crosses and drops what lies
+//! outside it, and text whose glyphs' middles lie outside it; other clip shapes, transparency and
+//! dash patterns are not applied, and a read note says how often.
 
 use std::collections::BTreeMap;
 
@@ -88,7 +87,6 @@ pub fn read(bytes: &[u8], o: &PdfImportOptions) -> Result<(Drawing, usize)> {
         return Err(IoError::Format("PDF: the unit must be a positive number".into()));
     }
     let pdf = craft_pdf::open_slice(bytes, o.password.as_deref()).map_err(|e| IoError::Format(format!("PDF: {e}")))?;
-    check_made_from_dwg(pdf.metadata())?;
     let pages = pdf.pages();
     let count = pages.len();
     let page = o.page.checked_sub(1).and_then(|i| pages.get(i)).ok_or_else(|| {
@@ -111,43 +109,6 @@ pub fn read(bytes: &[u8], o: &PdfImportOptions) -> Result<(Drawing, usize)> {
     let notes = dev.note();
     dev.drawing.read_notes.extend(notes);
     Ok((dev.drawing, count))
-}
-
-/// Names that, in a PDF's creator, producer, title, subject or author, say a CAD program plotted it
-/// from a drawing (lower case).
-const DWG_PRODUCERS: &[&str] =
-    &["autocad", "autodesk", "dwg", "cadcraft", "bricscad", "draftsight", "zwcad", "gstarcad", "progecad", "intellicad", "teigha", "open design"];
-
-/// A document-information string as text: UTF-16BE when it starts with the byte order mark, else
-/// the bytes as Latin-1 (which is ASCII for the names that matter here).
-fn info_text(raw: &[u8]) -> String {
-    if let Some(rest) = raw.strip_prefix(&[0xFE, 0xFF]) {
-        let units: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes(*c)).collect();
-        return String::from_utf16_lossy(&units);
-    }
-    raw.iter().map(|b| char::from(*b)).collect()
-}
-
-/// Refuse a PDF its document information doesn't show was made from a DWG drawing.
-fn check_made_from_dwg(meta: &craft_pdf::syntax::metadata::Metadata) -> Result<()> {
-    let fields = [&meta.creator, &meta.producer, &meta.title, &meta.subject, &meta.author];
-    let texts: Vec<String> = fields.into_iter().flatten().map(|raw| info_text(raw)).collect();
-    if texts.iter().any(|t| {
-        let t = t.to_lowercase();
-        DWG_PRODUCERS.iter().any(|name| t.contains(name))
-    }) {
-        return Ok(());
-    }
-    let maker = [&meta.producer, &meta.creator]
-        .into_iter()
-        .flatten()
-        .map(|raw| info_text(raw))
-        .map(|t| t.chars().filter(|c| !c.is_control()).take(60).collect::<String>())
-        .find(|t| !t.trim().is_empty());
-    Err(IoError::Format(match maker {
-        Some(m) => format!("PDF: only a PDF made from a DWG drawing can be imported; this one was made by {}", m.trim()),
-        None => "PDF: only a PDF made from a DWG drawing can be imported; this one doesn't say what made it".into(),
-    }))
 }
 
 /// [`read`] with options as JSON, the form the engine's PDFIMPORT passes:
@@ -190,7 +151,7 @@ impl LeftOut {
             Self::Type3 => ("Type 3 glyph", "Type 3 glyphs"),
             Self::NoUnicode => ("glyph without a Unicode value", "glyphs without a Unicode value"),
             Self::PatternFill => ("gradient or pattern fill", "gradient or pattern fills"),
-            Self::WhiteFill => ("white fill", "white fills"),
+            Self::WhiteFill => ("white or near-white fill", "white or near-white fills"),
             Self::OutOfRange => ("path with out-of-range coordinates", "paths with out-of-range coordinates"),
         };
         format!("{n} {}", if n == 1 { one } else { many })
@@ -251,8 +212,13 @@ fn color_of(paint: &Paint<'_>) -> Option<Color> {
     })
 }
 
+/// A fill this light (each of red, green and blue at least this, out of 255) counts as white: table
+/// shading such as 245, 245, 245 is barely visible on paper, but as a solid hatch on a dark screen
+/// it hides the text drawn over it (which turns white there).
+const NEAR_WHITE: u8 = 240;
+
 fn is_white(paint: &Paint<'_>) -> bool {
-    matches!(paint, Paint::Color(c) if { let [r, g, b, a] = c.to_rgba().to_rgba8(); a > 0 && r == 255 && g == 255 && b == 255 })
+    matches!(paint, Paint::Color(c) if { let [r, g, b, a] = c.to_rgba().to_rgba8(); a > 0 && r.min(g).min(b) >= NEAR_WHITE })
 }
 
 /// The nearest standard lineweight to a width in millimetres.
@@ -523,13 +489,18 @@ impl Collector {
         if !(origin.x.is_finite() && origin.y.is_finite() && lx > 0.0 && em > 0.0 && em.is_finite()) {
             return;
         }
+        let dir = ex * (1.0 / lx);
+        let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0)));
+        // A glyph is kept when its middle (half its advance along, half the cap height up) lies in
+        // the clip. Its origin is no test: a plotter often clips each text to a box drawn through
+        // that origin (or ends the page clip there), and rounding then puts it a hair outside.
+        let half = end.map_or(dir * (0.25 * em), |e| (e - origin) * 0.5);
+        let middle = origin + half + ey * (0.5 * CAP_HEIGHT);
         if let Some((lo, hi)) = self.clip()
-            && !((lo.x - 1e-9..=hi.x + 1e-9).contains(&origin.x) && (lo.y - 1e-9..=hi.y + 1e-9).contains(&origin.y))
+            && !((lo.x..=hi.x).contains(&middle.x) && (lo.y..=hi.y).contains(&middle.y))
         {
             return;
         }
-        let dir = ex * (1.0 / lx);
-        let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0)));
 
         if let Some(run) = &mut self.run {
             // A fill and its stroke (render mode 2) arrive as two calls for one glyph at one origin;
