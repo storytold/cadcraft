@@ -83,14 +83,14 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
-    /// The family name, as the font gives it.
+    /// The family name, as the font gives it (the typographic family, else the family when that
+    /// is missing or blank).
     pub fn family_name(&self) -> Option<String> {
         let f = self.font()?;
-        [skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FAMILY_NAME]
-            .into_iter()
-            .find_map(|id| f.localized_strings(id).next().map(|s| s.to_string()))
-            .map(|s| s.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
-            .filter(|s| !s.trim().is_empty())
+        [skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FAMILY_NAME].into_iter().find_map(|id| {
+            let s = f.localized_strings(id).next()?.to_string();
+            Some(s.chars().filter(|c| !c.is_control()).take(80).collect::<String>()).filter(|s| !s.trim().is_empty())
+        })
     }
 
     /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
