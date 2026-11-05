@@ -2384,6 +2384,20 @@ fn svg_sheared_circle_has_the_axes_of_its_image() {
 }
 
 #[test]
+fn svg_tiny_sheared_circle_has_the_axes_of_its_image() {
+    // Columns (1, 0.5)·1e-6 and (1, -0.5)·1e-6: far from orthogonal, though their dot product is tiny.
+    let svg = format!("{SVG_PAGE}<circle r=\"1\" transform=\"matrix(1e-6 0.5e-6 1e-6 -0.5e-6 0 0)\"/></svg>");
+    let d = read(svg.as_bytes(), "tiny.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    assert!(major.y.abs() <= 1e-9 * major.x.abs(), "{e:?}");
+    let want = 2f64.sqrt() * 1e-6;
+    assert!((major.len() - want).abs() < 1e-9 * want, "{e:?}");
+    assert!((e.ratio - 0.5).abs() < 1e-9, "{e:?}");
+}
+
+#[test]
 fn svg_path_lines_curves_and_arcs() {
     let svg = format!("{SVG_PAGE}<path d=\"M1 1 L5 1 C6 1 7 2 8 3\"/><path d=\"M0 0 A5 5 0 0 1 10 0 Z\"/></svg>");
     let d = read(svg.as_bytes(), "paths.svg").unwrap();

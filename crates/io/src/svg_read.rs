@@ -441,15 +441,12 @@ impl Parser {
         if s_max <= f64::EPSILON {
             return Ok(());
         }
-        let axis = if xy.abs() <= 1e-12 * trace.max(1.0) {
+        let axis = if xy.abs() <= 1e-12 * trace {
             if yy > xx { Vec2::new(0.0, 1.0) } else { Vec2::new(1.0, 0.0) }
         } else {
             let v = Vec2::new(xy, l_max - xx);
-            let l = len(v);
-            if l <= f64::EPSILON {
-                return Ok(());
-            }
-            v / l
+            // |v| ≥ |xy| > 1e-12·trace ≥ 0 here, so the division is never by zero.
+            v / len(v)
         };
         let ratio = (l_min.max(0.0).sqrt() / s_max).clamp(1e-9, 1.0);
         let major = bx * axis.x + by * axis.y;
