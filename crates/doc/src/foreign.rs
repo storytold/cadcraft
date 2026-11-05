@@ -55,6 +55,8 @@ impl ForeignExtra {
 pub struct Foreign {
     /// CLASS records (groups after `0 CLASS`) of the kept objects' and entities' types.
     pub classes: Vec<Vec<RawTag>>,
+    /// Classes retain every source position, including duplicate names.
+    pub complete_class_table: bool,
     /// Kept objects, in file order.
     pub objects: Vec<ForeignObject>,
     /// Entries of the named object dictionary that CADCraft doesn't write itself: (key, object).
@@ -78,6 +80,28 @@ pub struct Foreign {
 }
 
 impl Foreign {
+    /// a standard proxy entity whose exact source CLASS can be written back.
+    pub fn preserves_proxy_entity(&self, tags: &[RawTag]) -> bool {
+        if !self.complete_class_table {
+            return false;
+        }
+        let mut depth = 0usize;
+        for tag in tags.iter().take_while(|t| t.code < 1000) {
+            if tag.code == 102 {
+                let value = tag.value.trim();
+                if value.starts_with('{') {
+                    depth = depth.saturating_add(1);
+                } else if value == "}" {
+                    depth = depth.saturating_sub(1);
+                }
+            } else if tag.code == 91 && depth == 0 {
+                let class = tag.value.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(500)).and_then(|i| self.classes.get(i));
+                return class.is_some_and(|c| c.iter().any(|t| t.code == 281 && t.value.trim() == "1"));
+            }
+        }
+        false
+    }
+
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
             && self.dictionary.is_empty()
