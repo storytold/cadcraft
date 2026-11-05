@@ -190,9 +190,14 @@ impl Session {
         };
         // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is looked up as its
         // Latin keys. Only the lookup is: text that is no selection word (a block name at BEDIT's prompt,
-        // which also takes a selection) reaches the command as typed.
+        // which also takes a selection) reaches the command as typed. So does the name of an existing
+        // block at a prompt that takes a name: a block called Μ is that block there, not Multiple.
+        let takes_name = prompt.accept.text;
         let word = match &input {
-            Input::Text(t) => Some(crate::keyboard::latin_keys(t.trim()).unwrap_or_else(|| t.clone())),
+            Input::Text(t) => {
+                let is_block = takes_name && self.doc().is_ok_and(|d| d.block(t.trim()).is_some());
+                Some(crate::keyboard::latin_keys(t.trim()).filter(|_| !is_block).unwrap_or_else(|| t.clone()))
+            }
             Input::Keyword(k) => Some(k.clone()),
             _ => None,
         };

@@ -95,3 +95,23 @@ fn a_greek_block_name_typed_at_a_name_or_select_prompt_reaches_the_command_as_ty
     let open = s.state().unwrap().block_editor().map(str::to_string);
     assert_eq!(open.as_deref(), Some("ΠΟΡΤΑ"), "{}", s.prompt_text());
 }
+
+#[test]
+fn a_block_named_like_a_greek_selection_word_opens_at_a_name_or_select_prompt() {
+    // The Greek capital Mu (U+039C) is the M key: Multiple at a selection prompt.
+    let mu = "\u{39c}";
+    let mut s = Session::new();
+    let l = s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap()["handles"][0].clone();
+    // With no block of that name it stays the selection word, which BEDIT's prompt waits through.
+    s.start("BEDIT").unwrap();
+    s.cmdline(mu).unwrap();
+    assert!(s.running.is_some(), "Multiple keeps the prompt: {}", s.prompt_text());
+    assert!(s.state().unwrap().block_editor().is_none());
+    s.cancel();
+    // Once a block has that name, typing it opens that block.
+    s.execute("block", &json!({ "name": mu, "base": [0, 0], "handles": [l] })).unwrap();
+    s.start("BEDIT").unwrap();
+    s.cmdline(mu).unwrap();
+    let open = s.state().unwrap().block_editor().map(str::to_string);
+    assert_eq!(open.as_deref(), Some(mu), "{}", s.prompt_text());
+}
