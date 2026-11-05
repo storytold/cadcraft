@@ -143,8 +143,8 @@ fn foreign_groups(site: &str, base_ucs: &str, style: &str) -> Vec<(i32, String)>
     g
 }
 
-/// The codes of the unmodelled groups, in file order.
-const EXTRA: &[i32] = &[13, 23, 14, 24, 15, 25, 42, 43, 44, 50, 72, 1, 281, 74, 170, 61, 348, 292, 282, 141, 142, 63];
+/// The non-default unmodelled groups, in file order; default-valued settings are canonical absence.
+const EXTRA: &[i32] = &[13, 23, 14, 24, 1, 74, 170, 348, 292, 282, 141, 142, 63];
 
 fn the_viewport(d: &Drawing) -> (Handle, Viewport) {
     d.layouts
@@ -220,7 +220,8 @@ fn viewport_ucs_and_settings_survive_a_dxf_save() {
     for code in EXTRA.iter().chain(&[71, 110, 345, 346]) {
         assert_eq!(rec.iter().filter(|(c, _)| *c == code.to_string()).count(), 1, "group {code} in {rec:?}");
     }
-    for code in ["51", "16", "17"] {
+    assert!((num(group(&rec, "51").unwrap()).unwrap() - 6.0).abs() < 1e-12);
+    for code in ["16", "17"] {
         assert!(group(&rec, code).is_none(), "{code} in {rec:?}");
     }
     // And it reads back the same.
@@ -391,4 +392,37 @@ fn hostile_viewport_ucs_groups_do_not_panic() {
     let u = the_viewport(&back).1.ucs.unwrap();
     assert_eq!((u.ortho, u.elevation, u.named, u.base), (0, 0.0, None, None));
     assert_eq!((u.x_axis, u.y_axis), (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_default_viewport_reads_back_without_ucs_or_extras() {
+    for version in [cadcraft_io::Version::R2000, cadcraft_io::Version::R2010] {
+        let (d, _) = base();
+        let bytes = cadcraft_io::write_with(&d, "viewport.dwg", &cadcraft_io::SaveOptions { version: Some(version), binary: false }).unwrap();
+        let back = cadcraft_io::read(&bytes, "viewport.dwg").unwrap();
+        let (_, viewport) = the_viewport(&back);
+        assert!(viewport.ucs.is_none(), "{version}: {:?}", viewport.ucs);
+        assert!(!viewport.ucs_per_viewport, "{version}");
+        assert!(viewport.extra.is_empty(), "{version}: {:?}", viewport.extra);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_viewport_with_non_default_snap_keeps_it() {
+    for version in [cadcraft_io::Version::R2000, cadcraft_io::Version::R2010] {
+        let (mut d, h) = base();
+        d.modify_entity(h, |e| {
+            let EntityKind::Viewport(v) = &mut e.kind else { return };
+            v.extra = vec![RawTag { code: 14, value: "2.0".into() }, RawTag { code: 24, value: "2.0".into() }];
+        }).unwrap();
+        let bytes = cadcraft_io::write_with(&d, "viewport.dwg", &cadcraft_io::SaveOptions { version: Some(version), binary: false }).unwrap();
+        let back = cadcraft_io::read(&bytes, "viewport.dwg").unwrap();
+        let (_, viewport) = the_viewport(&back);
+        for code in [14, 24] {
+            assert_eq!(viewport.extra.iter().find(|t| t.code == code).and_then(|t| num(&t.value)), Some(2.0), "{version}");
+        }
+        assert_eq!(viewport.extra.len(), 2, "only the non-default snap spacing remains: {version}: {:?}", viewport.extra);
+    }
 }
