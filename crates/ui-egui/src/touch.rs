@@ -18,7 +18,8 @@
 //! `pointerup`), each delivered alone in a frame of its own, plus any mouse events the browser
 //! emulates after the touch. [`NativeGate`] decides which browser events reach the backend at
 //! all: the browser's pointer events for touches, a stylus's touch events (a stylus points where
-//! it is, through its own pointer events), and emulated mouse events right after a touch, do not. [`TouchMouse::filter`] then drops the synthesized pointer events of canvas touch
+//! it is, through its own pointer events), and emulated mouse events right after a touch, do
+//! not. [`TouchMouse::filter`] then drops the synthesized pointer events of canvas touch
 //! sequences, drops lone pointer events that arrive during or just after one, and appends its
 //! own pointer events at the crosshair instead.
 //!
