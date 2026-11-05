@@ -62,6 +62,7 @@ pub mod quick;
 pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
+pub mod touch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod updates_ui;
 pub mod viewcube;
@@ -260,6 +261,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// The virtual mouse that turns canvas touches into pointer events ([`touch`]).
+    pub touch: touch::TouchMouse,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -347,6 +350,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            touch: touch::TouchMouse::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -738,6 +742,23 @@ impl CadApp {
         self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
     }
 
+    /// Turn touches that start on the drawing canvas into virtual-mouse pointer events
+    /// ([`touch`]). Touches elsewhere and mouse input pass through.
+    pub fn touch_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let canvas = self.canvas.rect;
+        let now = raw.time.unwrap_or_else(|| now_ms() / 1000.0);
+        let mut touch = std::mem::take(&mut self.touch);
+        // The menus painted on the canvas itself (selection cycling, Dynamic Input options) share
+        // its layer: a touch on one of their rows is a touch on that row.
+        let on_canvas = |p: egui::Pos2| {
+            canvas.is_some_and(|r| r.contains(p))
+                && ctx.layer_id_at(p).is_none_or(|l| l.order == egui::Order::Background)
+                && !canvas::over_canvas_menu(self, p)
+        };
+        touch.filter(&mut raw.events, now, canvas, &on_canvas);
+        self.touch = touch;
+    }
+
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
     /// OS windows, and release at most one synthetic batch.
     ///
@@ -878,7 +899,7 @@ impl CadApp {
                 }
             }
         }
-        if !self.synthetic.is_empty() {
+        if !self.synthetic.is_empty() || self.touch.busy() {
             ctx.request_repaint();
         }
     }
