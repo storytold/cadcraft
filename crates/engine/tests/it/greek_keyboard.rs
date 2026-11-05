@@ -115,3 +115,24 @@ fn a_block_named_like_a_greek_selection_word_opens_at_a_name_or_select_prompt() 
     let open = s.state().unwrap().block_editor().map(str::to_string);
     assert_eq!(open.as_deref(), Some(mu), "{}", s.prompt_text());
 }
+
+#[test]
+fn a_loaded_pattern_named_like_the_greek_keys_of_solid_is_that_pattern_at_the_pattern_prompt() {
+    // ΣΟΛΙΔ is the keys S-O-L-I-D: Solid at HATCH's pattern prompt, which takes no scale or angle.
+    let mut s = Session::new();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    s.start("hatch").unwrap();
+    s.input(cadcraft_engine::Input::Keyword("Pattern".into())).unwrap();
+    s.cmdline("ΣΟΛΙΔ").unwrap();
+    assert!(!s.prompt_text().contains("scale"), "Solid: {}", s.prompt_text());
+    s.cancel();
+    // A pattern file that defines a pattern of that name: typing the name chooses that pattern, which asks its scale.
+    s.execute("hatch.patterns", &json!({ "text": "*ΣΟΛΙΔ, test\n0,0,0,0,1\n" })).unwrap();
+    s.start("hatch").unwrap();
+    s.input(cadcraft_engine::Input::Keyword("Pattern".into())).unwrap();
+    s.cmdline("ΣΟΛΙΔ").unwrap();
+    let asked = s.prompt_text();
+    s.cancel();
+    s.execute("hatch.patterns", &json!({ "clear": true })).unwrap();
+    assert!(asked.contains("scale"), "the loaded pattern: {asked}");
+}
