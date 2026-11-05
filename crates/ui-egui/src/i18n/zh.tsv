@@ -1381,6 +1381,13 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Text Formulas	文字公式
+	Update Fields	更新字段
+	Edit Table Cells	编辑表格单元格
+	Edit Text	编辑文字
+	List Fonts	列出字体
+	Look for Fonts Again	重新查找字体
+	Missing Fonts	缺失的字体
 	Find All	查找全部
 	Find what:	查找内容：
 	Match case	区分大小写
@@ -1469,6 +1476,19 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	Add to Tool Bar	添加到工具栏
+	Black	黑色
+	Customize Tool Bar...	自定义工具栏...
+	Dock Tool Bar	停靠工具栏
+	Layers Tool Bar	图层工具栏
+	Light Blue	浅蓝色
+	Move Tool Bar Button	移动工具栏按钮
+	Place Tool Sets	放置工具集
+	Remove from Tool Bar	从工具栏中删除
+	Reset Tool Bar	重置工具栏
+	Tool Bar Position	工具栏位置
+	Tool Sets Tool Bar	工具集工具栏
+	Top	顶部
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框

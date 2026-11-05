@@ -217,7 +217,10 @@ fn common(expected: &Common, actual: &Common, context: &str) {
 }
 
 fn text(expected: &Text, actual: &Text, context: &str) {
-    let Text { insert, align_pt, height, value, rotation, width_factor, oblique, style, halign, valign } = expected;
+    let Text { formula, insert, align_pt, height, value, rotation, width_factor, oblique, style, backwards, upside_down, halign, valign } = expected;
+    equal(backwards, &actual.backwards, context, "backwards");
+    equal(upside_down, &actual.upside_down, context, "upside_down");
+    equal(formula, &actual.formula, context, "formula");
     equal(insert, &actual.insert, context, "insert");
     equal(align_pt, &actual.align_pt, context, "align_pt");
     equal(height, &actual.height, context, "height");
@@ -231,7 +234,9 @@ fn text(expected: &Text, actual: &Text, context: &str) {
 }
 
 fn mtext(expected: &MText, actual: &MText, context: &str) {
-    let MText { insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns } = expected;
+    let MText { formula, insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns, frame } = expected;
+    equal(frame, &actual.frame, context, "mtext.frame");
+    equal(formula, &actual.formula, context, "mtext.formula");
     equal(insert, &actual.insert, context, "mtext.insert");
     equal(height, &actual.height, context, "mtext.height");
     equal(width, &actual.width, context, "mtext.width");

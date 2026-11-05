@@ -492,7 +492,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
             }
             if !library.is_empty() {
                 ui.separator();
-                ui.menu_button("Load...", |ui| {
+                crate::palettes::menu_list(ui, "Load...", |ui| {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                         for n in library {
                             if ui.button(n).clicked() {
