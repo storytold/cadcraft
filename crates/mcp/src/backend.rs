@@ -302,7 +302,7 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
     ("engine.execute", "{command, params}", "Run any command with JSON parameters. Never opens a dialog."),
     ("engine.commands", "", "Every command: id, label, menu path, shortcut, aliases, params doc, enabled."),
     ("drawing.inspect", "{entities?, limit?}", "Drawing summary and entities with handles and geometry."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Render the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?, window?, background?, plot_style?}", "Render the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("control.methods", "", "This list."),
@@ -408,7 +408,14 @@ impl Headless {
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
                 let window = render_window(p);
-                let opts = cadcraft_render::Options { view: window, transparency: s.settings.transparency_display, ..Default::default() };
+                // `background` and `plot_style` (#803), read as the app reads them.
+                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p)?;
+                let opts = cadcraft_render::Options {
+                    view: window,
+                    transparency: s.settings.transparency_display,
+                    plot_style_table: look.plot_style_table.clone(),
+                    ..Default::default()
+                };
                 let list = cadcraft_render::build(&st.doc, &st.space, &opts);
                 let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
                 let side = |k: &str| p.get(k).and_then(Value::as_f64).map(|x| x as u32);
@@ -421,8 +428,7 @@ impl Headless {
                     cadcraft_render::raster::View { center: v.center, scale: f64::from(h) / v.height.max(1e-12), width: w, height: h }
                 };
                 let (w, h) = (view.width, view.height);
-                let png =
-                    cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
+                let png = cadcraft_render::raster::render_png(&list, &view, &look.raster()).ok_or("render failed")?;
                 let mut r =
                     json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
