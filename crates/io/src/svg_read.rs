@@ -356,19 +356,20 @@ impl Parser {
         if self.elements > MAX_ELEMENTS {
             return Err(IoError::Format(format!("SVG: more than {MAX_ELEMENTS} elements")));
         }
-        // Finite numbers can still overflow through transforms and relative steps (`l1e308 0` twice).
-        if !finite(&kind) {
-            self.left_out(LeftOut::TooLarge);
-            return Ok(());
-        }
         // Charge the vertices this entity retains against the shared document budget, so repeated
         // flattened arcs/curves cannot amplify a compact path into unbounded geometry (CWE-400).
+        // A shape left out below was generated all the same, so it is charged too.
         let verts = match &kind {
             EntityKind::LwPolyline(p) => p.vertices.len(),
             EntityKind::Spline(s) => s.control.len(),
             _ => 1,
         };
         self.verts_left = self.verts_left.checked_sub(verts).ok_or_else(|| IoError::Format("SVG: too much generated geometry".into()))?;
+        // Finite numbers can still overflow through transforms and relative steps (`l1e308 0` twice).
+        if !finite(&kind) {
+            self.left_out(LeftOut::TooLarge);
+            return Ok(());
+        }
         let common = Common { layer: self.layer.clone(), ..Common::default() };
         self.drawing.add(&Space::Model, common, kind).map(|_| ()).map_err(parse_err)
     }

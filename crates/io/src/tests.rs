@@ -2543,6 +2543,17 @@ fn svg_coordinates_that_overflow_are_left_out() {
 }
 
 #[test]
+fn svg_shapes_left_out_still_count_against_the_vertex_budget() {
+    // Each arc flattens to 10,000 chords under the non-uniform scale, and the doubled translation
+    // overflows to infinity, so each is left out; 820 of them make more than the 8,000,000 vertices
+    // a file may generate.
+    let arcs = "A1e9 1e9 0 0 1 2e9 0 A1e9 1e9 0 0 1 0 0 ".repeat(410);
+    let svg = format!("{SVG_PAGE}<g transform=\"translate(1e308 0) translate(1e308 0) scale(2 1)\"><path d=\"M0 0 {arcs}\"/></g></svg>");
+    let err = read(svg.as_bytes(), "huge.svg").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("SVG: too much generated geometry"), "{err}");
+}
+
+#[test]
 fn svg_no_geometry_yields_an_empty_drawing() {
     let svg = format!("{SVG_PAGE}</svg>");
     let d = read(svg.as_bytes(), "empty.svg").unwrap();
