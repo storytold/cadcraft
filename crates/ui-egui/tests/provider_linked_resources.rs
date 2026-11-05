@@ -456,12 +456,19 @@ fn linked_absolute_mappings_and_xopen_never_follow_native_paths() -> Result<(), 
     input.main_hash = main.hash().into();
     input.main = Some(main);
     let expected = input.files.iter().find(|file| file.key == "parts/child.dxf").ok_or("child bytes missing")?.bytes.clone();
+    let log_before = app.session.log.len();
     let uid = open_input(&mut app, &c, input)?;
+    assert!(!app.session.log.iter().skip(log_before).any(|line| line.starts_with("Image ")), "provider OPEN must not invoke the native image loader");
     assert!(state(&app, uid)?.path.is_none());
     let list = app.run("-xref", json!({"option":"?"}))?;
     assert!(list["xrefs"].as_array().ok_or("list missing")?.iter().all(|row| row["foundAt"].is_null()));
     assert!(app.run("-xref", json!({"option":"reload"})).is_err());
+    let log_before = app.session.log.len();
     app.run("xopen", json!({"name":"Child"}))?;
+    assert!(
+        !app.session.log.iter().skip(log_before).any(|line| line.starts_with("Image ")),
+        "provider XOPEN must not invoke the native image loader"
+    );
     let sub = app.session.state().map_err(|e| e.to_string())?;
     assert_ne!(sub.uid, uid);
     assert!(sub.path.is_none());
