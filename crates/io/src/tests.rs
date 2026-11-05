@@ -2543,6 +2543,18 @@ fn svg_coordinates_that_overflow_are_left_out() {
 }
 
 #[test]
+fn svg_shapes_whose_extents_overflow_are_left_out() {
+    // A finite centre and radius whose sum overflows; the same scale on smaller values stays
+    // representable.
+    let svg = format!("{SVG_PAGE}<g transform=\"scale(1e308)\"><circle cx=\"1\" cy=\"0\" r=\"1\"/><circle cx=\"0.5\" cy=\"0\" r=\"0.5\"/></g></svg>");
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Circle"]);
+    let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
+    assert!((c.radius - 5e307).abs() < 1e293, "{}", c.radius);
+    assert_eq!(d.read_notes, ["SVG: CADCraft doesn't read these yet, so they were left out: 1 shape with coordinates too large to represent"]);
+}
+
+#[test]
 fn svg_shapes_left_out_still_count_against_the_vertex_budget() {
     // Each arc flattens to 10,000 chords under the non-uniform scale, and the doubled translation
     // overflows to infinity, so each is left out; 820 of them make more than the 8,000,000 vertices

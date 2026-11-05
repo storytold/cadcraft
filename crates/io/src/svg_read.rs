@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Circle, Common, Drawing, Ellipse, EntityKind, Layer, Line, LwPolyline, Space};
-use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3};
+use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3, bulge_to_arc};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
@@ -589,16 +589,51 @@ impl Parser {
     }
 }
 
-/// Every coordinate of an entity the reader makes is finite.
+/// Every coordinate of an entity the reader makes is finite, and so are its extents: a finite
+/// centre and radius can still reach past the largest number.
 fn finite(kind: &EntityKind) -> bool {
     match kind {
         EntityKind::Line(l) => l.a.is_finite() && l.b.is_finite(),
-        EntityKind::Circle(c) => c.center.is_finite() && c.radius.is_finite(),
-        EntityKind::Ellipse(e) => e.center.is_finite() && e.major.is_finite() && e.ratio.is_finite(),
-        EntityKind::LwPolyline(p) => p.vertices.iter().all(|v| v.p.is_finite() && v.bulge.is_finite()),
+        EntityKind::Circle(c) => {
+            c.center.is_finite()
+                && c.radius.is_finite()
+                && cadcraft_geom::Circle::new(c.center.xy(), c.radius).bounds().corners().iter().all(|p| p.is_finite())
+        }
+        EntityKind::Ellipse(e) => {
+            // Half the box is `hypot` of the major axis and the minor axis (`ratio` times it, turned).
+            let (m, r) = (e.major.xy(), e.ratio);
+            e.center.is_finite() && e.major.is_finite() && e.ratio.is_finite() && box_finite(e.center.xy(), m.x.hypot(r * m.y), m.y.hypot(r * m.x))
+        }
+        EntityKind::LwPolyline(p) => p.vertices.iter().all(|v| v.p.is_finite() && v.bulge.is_finite()) && bulges_finite(p),
         EntityKind::Spline(s) => s.control.iter().all(|p| p.is_finite()),
         _ => true,
     }
+}
+
+/// The box `centre ± (hx, hy)` is finite.
+fn box_finite(c: Vec2, hx: f64, hy: f64) -> bool {
+    [c.x - hx, c.x + hx, c.y - hy, c.y + hy].iter().all(|v| v.is_finite())
+}
+
+/// Every arc segment of the polyline (a bulge between finite vertices) has a finite centre and
+/// radius, and the quadrant points it passes through are finite.
+fn bulges_finite(p: &LwPolyline) -> bool {
+    let n = p.vertices.len();
+    p.vertices.iter().enumerate().all(|(i, v)| {
+        let next = if i + 1 < n {
+            p.vertices.get(i + 1)
+        } else if p.closed {
+            p.vertices.first()
+        } else {
+            None
+        };
+        let Some((arc, _)) = next.and_then(|w| bulge_to_arc(v.p, w.p, v.bulge)) else { return true };
+        arc.center.is_finite()
+            && arc.radius.is_finite()
+            && (0..4)
+                .map(|k| f64::from(k) * std::f64::consts::FRAC_PI_2)
+                .all(|a| !arc.contains_angle(a) || Vec2::polar(arc.center, arc.radius, a).is_finite())
+    })
 }
 
 /// The element is not rendered (`display="none"`, or a style that says so).
@@ -1117,5 +1152,23 @@ mod tests {
         assert_eq!(arc_of("M10 10 a20 20 0 0120 20"), spaced);
         assert_eq!(arc_of("M10 10 a20 20 0 1 0 20 20"), (true, false, spaced.2));
         assert!(arc_of("M10 10 a20 20 0 10-20 20").0);
+    }
+
+    #[test]
+    fn extents_past_the_largest_number_are_not_finite() {
+        let ellipse = |c: Vec2, major: Vec2| EntityKind::Ellipse(Ellipse { center: v3(c), major: v3(major), ratio: 1.0, start: 0.0, end: 0.0 });
+        assert!(!finite(&ellipse(Vec2::new(1e308, 0.0), Vec2::new(1e308, 0.0))));
+        assert!(finite(&ellipse(Vec2::new(5e307, 0.0), Vec2::new(5e307, 0.0))));
+        // Turned, its box is wider than its axis: `centre ± major` is finite, the box isn't.
+        assert!(!finite(&ellipse(Vec2::new(6e307, 0.0), Vec2::new(9e307, 9e307))));
+        assert!(finite(&ellipse(Vec2::ZERO, Vec2::new(9e307, 9e307))));
+        // Half circles between the same finite points: bulging up passes 1.8e308, down doesn't.
+        let half = |bulge: f64| {
+            let (a, b) = (Vec2::new(0.0, 1.5e308), Vec2::new(1e308, 1.5e308));
+            let vertices = vec![PolyVertex::with_bulge(a, bulge), PolyVertex::new(b)];
+            EntityKind::LwPolyline(LwPolyline { vertices, closed: false, const_width: 0.0, elevation: 0.0, plinegen: false })
+        };
+        assert!(!finite(&half(-1.0)));
+        assert!(finite(&half(1.0)));
     }
 }
