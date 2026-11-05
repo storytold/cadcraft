@@ -262,6 +262,18 @@ pub fn render_png_of(d: &cadcraft_doc::Drawing, v: View3d, width: u32, height: u
 }
 
 pub fn render_png_of_with_options(d: &cadcraft_doc::Drawing, v: View3d, options: Render3dOptions, width: u32, height: u32) -> Result<Render3d> {
+    render_png_on(d, v, options, width, height, &raster::RasterOptions::default())
+}
+
+/// [`render_png_of_with_options`] on the background of `look`.
+pub fn render_png_on(
+    d: &cadcraft_doc::Drawing,
+    v: View3d,
+    options: Render3dOptions,
+    width: u32,
+    height: u32,
+    look: &raster::RasterOptions,
+) -> Result<Render3d> {
     let (w, h) = fit_size(width, height)?;
     let camera = Camera3d { azimuth: v.azimuth, elevation: v.elevation };
     if !options.is_valid() {
@@ -274,8 +286,8 @@ pub fn render_png_of_with_options(d: &cadcraft_doc::Drawing, v: View3d, options:
     let view = raster::View::fit(&list.bounds, w, h, 0.05);
     let image = Scene::new_with_options(d, camera, options).render(&view).ok_or_else(|| bad("render", "the 3D picture could not be drawn"))?;
     // The background comes from drawing nothing; the depth picture goes over it where it has pixels.
-    let mut pixmap = raster::render(&cadcraft_render::DisplayList::default(), &view, &raster::RasterOptions::default())
-        .ok_or_else(|| bad("render", "the 3D picture could not be drawn"))?;
+    let mut pixmap =
+        raster::render(&cadcraft_render::DisplayList::default(), &view, look).ok_or_else(|| bad("render", "the 3D picture could not be drawn"))?;
     for (dst, src) in pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(image.rgba.as_chunks::<4>().0) {
         if src[3] == 255 {
             *dst = *src;
