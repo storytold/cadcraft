@@ -342,6 +342,22 @@ fn subshape_fan_out_past_the_point_and_step_bounds_is_cut_off() {
 }
 
 #[test]
+fn the_glyph_cache_is_bounded_by_points() {
+    // Hostile: every glyph at the point bound, so 16,384 cached glyphs would hold 2 GB.
+    let mut src = format!("*2,1,HUNDRED\n{}0\n*3,3,V\n011,019,0\n", "7,3,".repeat(100));
+    for n in 10..=200 {
+        src.push_str(&format!("*{n},1,HEAVY\n{}0\n", "7,2,".repeat(40)));
+    }
+    let f = font(&src);
+    for n in 10..=200 {
+        assert!(f.glyph(n, false).is_some());
+    }
+    let c = f.cache.read().unwrap();
+    let cached: usize = c.glyphs.values().flatten().map(|g| g.strokes.iter().map(Vec::len).sum::<usize>()).sum();
+    assert!(cached <= MAX_CACHED_POINTS && cached == c.points, "{cached}");
+}
+
+#[test]
 fn a_doubled_minus_sign_is_not_a_number() {
     // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
     // font's range count the magnitude pushed ranges until 8 GB failed to allocate.

@@ -103,11 +103,17 @@ pub(crate) struct Record {
     program: (usize, usize),
 }
 
-/// Glyphs cached per font, keyed by (shape, vertical).
-type GlyphCache = HashMap<(u16, bool), Option<Arc<ShxGlyph>>>;
+/// Glyphs cached per font, keyed by (shape, vertical), and their points in all.
+#[derive(Default)]
+struct GlyphCache {
+    glyphs: HashMap<(u16, bool), Option<Arc<ShxGlyph>>>,
+    points: usize,
+}
 
 /// Most glyphs cached per font (a big font has thousands; text uses a few hundred).
 const MAX_CACHED_GLYPHS: usize = 16_384;
+/// Most points cached per font (16 MB; one glyph may have 8,192).
+const MAX_CACHED_POINTS: usize = 1 << 20;
 
 /// A parsed SHX file.
 pub struct ShxFont {
@@ -250,15 +256,18 @@ impl ShxFont {
         }
         let vertical = vertical && self.dual;
         let key = (number, vertical);
-        if let Some(g) = self.cache.read().unwrap_or_else(PoisonError::into_inner).get(&key) {
+        if let Some(g) = self.cache.read().unwrap_or_else(PoisonError::into_inner).glyphs.get(&key) {
             return g.clone();
         }
         let g = program::outline(self, number, vertical).ok().map(Arc::new);
+        let points = g.as_ref().map_or(0, |g| g.strokes.iter().map(Vec::len).sum::<usize>());
         let mut c = self.cache.write().unwrap_or_else(PoisonError::into_inner);
-        if c.len() >= MAX_CACHED_GLYPHS {
-            c.clear();
+        if c.glyphs.len() >= MAX_CACHED_GLYPHS || c.points.saturating_add(points) > MAX_CACHED_POINTS {
+            c.glyphs.clear();
+            c.points = 0;
         }
-        c.insert(key, g.clone());
+        c.points = c.points.saturating_add(points);
+        c.glyphs.insert(key, g.clone());
         g
     }
 }
