@@ -73,6 +73,16 @@ fn double_clicked_text_takes_ime_composition_and_commit() {
     let mut h = harness();
     double_click(&mut h, Vec2::new(4.0, 1.2));
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Enter new text");
+    // Without a CJK font (none installed, no craft-fonts) the command line draws 中文 as boxes,
+    // which the harness takes for a bug. The IME path below is the same either way.
+    let drawable = h.ctx.fonts_mut(|view| {
+        [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
+            .into_iter()
+            .all(|family| view.has_glyphs(&egui::FontId::new(12.0, family), "中文"))
+    });
+    if !drawable {
+        h.ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+    }
     // Composition is shown, not saved; the commit is inserted exactly once (#1761).
     h.event(Event::Ime(ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None }));
     h.run_steps(1);
