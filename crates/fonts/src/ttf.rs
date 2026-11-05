@@ -1324,7 +1324,7 @@ mod family_tests {
         let _ = std::os::unix::fs::symlink(&root, real.join("up"));
         let found = scan_dirs(&[root.join("link")], true);
         assert!(found.contains_key("linkedface"), "{found:?}");
-        assert_eq!(shx_dirs(&[root.clone()]).len(), 1, "the folder with the SHX file, once");
+        assert_eq!(shx_dirs(std::slice::from_ref(&root)).len(), 1, "the folder with the SHX file, once");
         let _ = std::fs::remove_dir_all(&root);
     }
 
