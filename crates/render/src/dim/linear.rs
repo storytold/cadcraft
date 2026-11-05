@@ -77,7 +77,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
         let axis = Vec2::from_angle(angle);
         (text_width * axis.dot(u).abs() + text_height * axis.perp().dot(u).abs()) / 2.0
     };
-    let inside_angle = if st.text_inside_horizontal { 0.0 } else { along_angle };
+    let inside_angle = text_angle(config, st.text_inside_horizontal, along_angle);
     let tvp = if st.text_above == 0 && st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 };
     let centred = st.text_above == 0 && tvp.abs() < 0.7;
     let text_need = if centred { 2.0 * (extent(inside_angle) + config.gap) } else { 2.0 * extent(inside_angle) };
@@ -129,6 +129,20 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     }
 }
 
+/// The text's angle: an explicit text rotation (DIMTEDIT Angle, the Properties palette's Text
+/// rotation) turns it, so the dimension line leaves room for the text as turned; otherwise
+/// horizontal (DIMTIH inside, DIMTOH outside) or `along` the line.
+fn text_angle(config: &DimConfig<'_>, horizontal: bool, along: f64) -> f64 {
+    let rotation = config.dimension.text_rotation;
+    if rotation != 0.0 && rotation.is_finite() {
+        rotation
+    } else if horizontal {
+        0.0
+    } else {
+        along
+    }
+}
+
 fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
     let st = config.style;
     let along_angle = readable(state.u.angle());
@@ -136,8 +150,8 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
         let axis = Vec2::from_angle(angle);
         (state.text_width * axis.dot(state.u).abs() + state.text_height * axis.perp().dot(state.u).abs()) / 2.0
     };
-    let inside_angle = if st.text_inside_horizontal { 0.0 } else { along_angle };
-    state.angle = if state.text_outside { if st.text_outside_horizontal { 0.0 } else { along_angle } } else { inside_angle };
+    let inside_angle = text_angle(config, st.text_inside_horizontal, along_angle);
+    state.angle = if state.text_outside { text_angle(config, st.text_outside_horizontal, along_angle) } else { inside_angle };
     state.half_extent = extent(state.angle);
     state.along_center = if state.text_outside {
         state.f2 + state.u * (2.0 * config.arrow_size.max(config.tick_size) + config.gap + state.half_extent)
