@@ -43,9 +43,9 @@ pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
-pub mod lisp_ide;
 pub mod xdedit;
 pub mod xrefs;
+pub mod lisp_ide;
 
 pub mod dyngrips;
 pub mod dyninput;
@@ -306,7 +306,6 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
-    pub lock_prompt: Option<closing::LockPrompt>,
     /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
     pub save_loss: Option<save_loss::Pending>,
     /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
@@ -378,7 +377,6 @@ impl CadApp {
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
-            lock_prompt: None,
             save_loss: None,
             save_loss_accepted: None,
             autosave: None,
@@ -575,7 +573,12 @@ impl CadApp {
             self.ui.last_lisp_dir = Some(dir.to_string());
         }
         if let Some(plugins) = v.get("startupPlugins").and_then(Value::as_array) {
-            self.ui.startup_plugins = plugins.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).map(str::to_string).collect();
+            self.ui.startup_plugins = plugins
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string)
+                .collect();
         }
     }
 
@@ -717,48 +720,27 @@ impl CadApp {
     }
 
     fn opened(&mut self, r: Result<Value, String>) {
-        let lang = self.language();
-        i18n::with_language(lang, || {
-            match r {
-                Err(e) => self.set_status(e),
-                Ok(v) => {
-                    self.ui.start_tab = false;
-                    // A drawing that opened on the view it was saved at keeps it (#1626).
-                    self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
-                    let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
-                    if let Some(path) = doc.and_then(|d| d.path.clone()) {
-                        self.remember_recent(path);
-                    }
-                    // A partial read (DWG records left out) shows in the status bar too, not only on
-                    // the command line.
-                    if let Some(w) = v.get("warnings").and_then(Value::as_array).and_then(|w| w.first()).and_then(Value::as_str) {
-                        self.set_status(w.to_string());
-                    }
-                    if v.get("read_only").and_then(Value::as_bool) == Some(true) {
-                        let doc_idx = v.get("index").and_then(Value::as_u64).map(|i| i as usize).unwrap_or(self.session.active);
-                        let doc_state = self.session.docs.get(doc_idx);
-                        let title = doc_state.map(|d| d.title.clone()).unwrap_or_default();
-                        let doc_uid = doc_state.map(|d| d.uid).unwrap_or_default();
-                        let raw_info = v.get("lock_info").and_then(Value::as_str).unwrap_or("").to_string();
-                        let holder = v.get("lock_holder");
-                        let user = holder.and_then(|h| h.get("user")).and_then(Value::as_str).unwrap_or("").to_string();
-                        let machine = holder.and_then(|h| h.get("machine")).and_then(Value::as_str).unwrap_or("").to_string();
-                        let date_time = holder.and_then(|h| h.get("date_time")).and_then(Value::as_str).unwrap_or("").to_string();
-
-                        let prompt = closing::LockPrompt { doc_uid, title, user, machine, date_time, raw_info };
-
-                        let echo_msg = crate::tf!("Drawing file is write-protected ({info}). Opened read-only.", info = prompt.description());
-                        self.session.echo(echo_msg);
-
-                        self.lock_prompt = Some(prompt);
-                    }
-                    // A dynamic block's own drawing: ask whether to open it in the Block Editor.
-                    if self.session.state().is_ok_and(|st| cadcraft_engine::blockedit::has_authoring_elements(&st.doc)) {
-                        self.ui.dialog = Some("authoring".into());
-                    }
+        match r {
+            Err(e) => self.set_status(e),
+            Ok(v) => {
+                self.ui.start_tab = false;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
+                let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
+                if let Some(path) = doc.and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+                // A partial read (DWG records left out) shows in the status bar too, not only on
+                // the command line.
+                if let Some(w) = v.get("warnings").and_then(Value::as_array).and_then(|w| w.first()).and_then(Value::as_str) {
+                    self.set_status(w.to_string());
+                }
+                // A dynamic block's own drawing: ask whether to open it in the Block Editor.
+                if self.session.state().is_ok_and(|st| cadcraft_engine::blockedit::has_authoring_elements(&st.doc)) {
+                    self.ui.dialog = Some("authoring".into());
                 }
             }
-        });
+        }
     }
 
     /// Put `path` first in File ▸ Open Recent and on the Start page.
@@ -1047,7 +1029,6 @@ impl CadApp {
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
-        closing::lock_prompt(self, ui.ctx());
         save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());

@@ -1632,13 +1632,6 @@ menu	View	Exibir
 	cannot read file	não é possível ler o arquivo
 	e.g. (+ 1 2) or + 1 2	ex.: (+ 1 2) ou + 1 2
 	no [CommandMethod] found	nenhum [CommandMethod] encontrado
-	Drawing File is Write-Protected	O arquivo de desenho está protegido contra gravação
-	The drawing file '{name}' is currently in use by:	O arquivo de desenho '{name}' está em uso atualmente por:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	O desenho será aberto no modo somente leitura. As alterações não podem ser salvas no arquivo original.
-	Open (Read-Only)	Abrir (somente leitura)
-	Drawing file is write-protected ({info}). Opened read-only.	O arquivo de desenho está protegido contra gravação ({info}). Aberto como somente leitura.
-	in use by {user} on {machine} ({time})	em uso por {user} em {machine} ({time})
-	in use by {user} ({time})	em uso por {user} ({time})
 	New AppID (e.g. CAD_XDATA)	Novo AppID (ex. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Criar aplicativo CAD_XDATA
 	Change	Alterar

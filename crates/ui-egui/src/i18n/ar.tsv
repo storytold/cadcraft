@@ -1630,13 +1630,6 @@ menu	View	عرض
 	cannot read file	لا يمكن قراءة الملف
 	e.g. (+ 1 2) or + 1 2	مثال: (+ 1 2) أو + 1 2
 	no [CommandMethod] found	لم يتم العثور على [CommandMethod]
-	Drawing File is Write-Protected	ملف الرسم محمي ضد الكتابة
-	The drawing file '{name}' is currently in use by:	ملف الرسم '{name}' قيد الاستخدام حاليًا بواسطة:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	سيتم فتح الرسم في وضع القراءة فقط. لا يمكن حفظ التغييرات في الملف الأصلي.
-	Open (Read-Only)	فتح (للقراءة فقط)
-	Drawing file is write-protected ({info}). Opened read-only.	ملف الرسم محمي ضد الكتابة ({info}). تم فتحه للقراءة فقط.
-	in use by {user} on {machine} ({time})	قيد الاستخدام بواسطة {user} على {machine} ({time})
-	in use by {user} ({time})	قيد الاستخدام بواسطة {user} ({time})
 	New AppID (e.g. CAD_XDATA)	AppID جديد (مثل CAD_XDATA)
 	+ Create CAD_XDATA Application	+ إنشاء تطبيق CAD_XDATA
 	Change	تغيير

@@ -1638,13 +1638,6 @@ menu	View	Nézet
 	no [CommandMethod] found	nem található [CommandMethod]
 	Font	Betűtípus
 	Save Layout as Template	Elrendezés mentése sablonként
-	Drawing File is Write-Protected	A rajzfájl írásvédett
-	The drawing file '{name}' is currently in use by:	A(z) '{name}' rajzfájlt jelenleg a következő használja:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	A rajz csak olvasható módban nyílik meg. A módosítások nem menthetők az eredeti fájlba.
-	Open (Read-Only)	Megnyitás (csak olvasható)
-	Drawing file is write-protected ({info}). Opened read-only.	A rajzfájl írásvédett ({info}). Csak olvasható módban megnyitva.
-	in use by {user} on {machine} ({time})	használja: {user} ezen: {machine} ({time})
-	in use by {user} ({time})	használja: {user} ({time})
 	Save changes to block "{name}"?	Menti a módosításokat a(z) „{name}” blokkba?
 	New AppID (e.g. CAD_XDATA)	Új AppID (pl. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ CAD_XDATA alkalmazás létrehozása

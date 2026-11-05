@@ -1611,14 +1611,7 @@ menu	Modify	Wijzigen
 	Font	Lettertype
 	Save Layout as Template	Lay-out opslaan als sjabloon
 
-	Drawing File is Write-Protected	Tekeningbestand is beveiligd tegen schrijven
-	The drawing file '{name}' is currently in use by:	Het tekeningbestand '{name}' is momenteel in gebruik door:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	De tekening wordt geopend in de modus Alleen-lezen. Wijzigingen kunnen niet worden opgeslagen in het originele bestand.
-	Open (Read-Only)	Openen (alleen-lezen)
 
-	Drawing file is write-protected ({info}). Opened read-only.	Tekeningbestand is beveiligd tegen schrijven ({info}). Geopend als alleen-lezen.
-	in use by {user} on {machine} ({time})	in gebruik door {user} op {machine} ({time})
-	in use by {user} ({time})	in gebruik door {user} ({time})
 	Save changes to block "{name}"?	Wijzigingen opslaan in blok "{name}"?
 	Backup copy	Reservekopie
 	Create backup copy with each save	Maak een reservekopie bij elk opslaan

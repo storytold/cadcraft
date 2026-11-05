@@ -1650,13 +1650,6 @@ menu	Modify	Ändra
 	cannot read file	kan inte läsa filen
 	e.g. (+ 1 2) or + 1 2	t.ex. (+ 1 2) eller + 1 2
 	no [CommandMethod] found	ingen [CommandMethod] hittades
-	Drawing File is Write-Protected	Ritningsfilen är skrivskyddad
-	The drawing file '{name}' is currently in use by:	Ritningsfilen '{name}' används för närvarande av:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Ritningen öppnas i skrivskyddat läge. Ändringar kan inte sparas i originalfilen.
-	Open (Read-Only)	Öppna (skrivskyddad)
-	Drawing file is write-protected ({info}). Opened read-only.	Ritningsfilen är skrivskyddad ({info}). Öppnad i skrivskyddat läge.
-	in use by {user} on {machine} ({time})	används av {user} på {machine} ({time})
-	in use by {user} ({time})	används av {user} ({time})
 	New AppID (e.g. CAD_XDATA)	Nytt AppID (t.ex. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Skapa CAD_XDATA-program
 	Clip Xref	Klipp Xref

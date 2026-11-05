@@ -1637,13 +1637,6 @@ menu	View	Görünüm
 	no [CommandMethod] found	[CommandMethod] bulunamadı
 	Font	Yazı Tipi
 	Save Layout as Template	Düzeni Şablon Olarak Kaydet
-	Drawing File is Write-Protected	Çizim dosyası yazmaya karşı korumalı
-	The drawing file '{name}' is currently in use by:	'{name}' çizim dosyası şu anda kullanımda:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Çizim salt okunur modda açılacaktır. Değişiklikler orijinal dosyaya kaydedilemez.
-	Open (Read-Only)	Aç (Salt Okunur)
-	Drawing file is write-protected ({info}). Opened read-only.	Çizim dosyası yazmaya karşı korumalı ({info}). Salt okunur olarak açıldı.
-	in use by {user} on {machine} ({time})	kullanımda: {user} / {machine} ({time})
-	in use by {user} ({time})	kullanımda: {user} ({time})
 	Save changes to block "{name}"?	"{name}" bloğundaki değişiklikler kaydedilsin mi?
 	New AppID (e.g. CAD_XDATA)	Yeni AppID (örn. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ CAD_XDATA Uygulaması Oluştur

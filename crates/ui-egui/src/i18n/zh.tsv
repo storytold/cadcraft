@@ -1641,12 +1641,5 @@ menu	View	视图
 	cannot read file	无法读取文件
 	e.g. (+ 1 2) or + 1 2	例如 (+ 1 2) 或 + 1 2
 	no [CommandMethod] found	未找到 [CommandMethod]
-	Drawing File is Write-Protected	图形文件受写保护
-	The drawing file '{name}' is currently in use by:	图形文件 '{name}' 当前正在被使用：
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	图形将以只读模式打开。所做的更改无法保存到原始文件中。
-	Open (Read-Only)	打开（只读）
-	Drawing file is write-protected ({info}). Opened read-only.	图形文件受写保护（{info}）。以只读方式打开。
-	in use by {user} on {machine} ({time})	正由 {user} 在 {machine} 上使用（{time}）
-	in use by {user} ({time})	正由 {user} 使用（{time}）
 	New AppID (e.g. CAD_XDATA)	新 AppID (例如 CAD_XDATA)
 	+ Create CAD_XDATA Application	+ 创建 CAD_XDATA 应用程序

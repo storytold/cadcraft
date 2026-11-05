@@ -1625,13 +1625,6 @@
 	no [CommandMethod] found	no se encontró ningún [CommandMethod]
 	Font	Fuente
 	Save Layout as Template	Guardar presentación como plantilla
-	Drawing File is Write-Protected	El archivo de dibujo está protegido contra escritura
-	The drawing file '{name}' is currently in use by:	El archivo de dibujo '{name}' está actualmente en uso por:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	El dibujo se abrirá en modo de solo lectura. Los cambios no se pueden guardar en el archivo original.
-	Open (Read-Only)	Abrir (solo lectura)
-	Drawing file is write-protected ({info}). Opened read-only.	El archivo de dibujo está protegido contra escritura ({info}). Abierto como solo lectura.
-	in use by {user} on {machine} ({time})	en uso por {user} en {machine} ({time})
-	in use by {user} ({time})	en uso por {user} ({time})
 	Save changes to block "{name}"?	¿Guardar cambios en el bloque "{name}"?
 	New AppID (e.g. CAD_XDATA)	Nuevo AppID (ej. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Crear aplicación CAD_XDATA

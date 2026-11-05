@@ -1607,14 +1607,7 @@
 	Font	Tipo de letra
 	Save Layout as Template	Guardar apresentação como modelo
 
-	Drawing File is Write-Protected	O ficheiro de desenho está protegido contra escrita
-	The drawing file '{name}' is currently in use by:	O ficheiro de desenho '{name}' está atualmente a ser utilizado por:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	O desenho será aberto em modo de apenas leitura. As alterações não podem ser guardadas no ficheiro original.
-	Open (Read-Only)	Abrir (apenas leitura)
 
-	Drawing file is write-protected ({info}). Opened read-only.	O ficheiro de desenho está protegido contra escrita ({info}). Aberto como apenas leitura.
-	in use by {user} on {machine} ({time})	em uso por {user} em {machine} ({time})
-	in use by {user} ({time})	em uso por {user} ({time})
 	Save changes to block "{name}"?	Guardar alterações no bloco "{name}"?
 menu	View	Ver
 menu	Draw	Desenhar

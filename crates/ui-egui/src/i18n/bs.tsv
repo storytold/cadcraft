@@ -1629,13 +1629,6 @@ menu	Modify	Izmijeni
 	Error	Greška
 	Font	Font
 	Save Layout as Template	Sačuvaj raspored kao predložak
-	Drawing File is Write-Protected	Datoteka crteža je zaštićena od pisanja
-	The drawing file '{name}' is currently in use by:	Datoteka crteža '{name}' se trenutno koristi:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Crtež će biti otvoren u režimu samo za čitanje. Izmjene se ne mogu sačuvati u originalnu datoteku.
-	Open (Read-Only)	Otvori (Samo za čitanje)
-	Drawing file is write-protected ({info}). Opened read-only.	Datoteka crteža je zaštićena od pisanja ({info}). Otvoreno samo za čitanje.
-	in use by {user} on {machine} ({time})	koristi {user} na {machine} ({time})
-	in use by {user} ({time})	koristi {user} ({time})
 	New AppID (e.g. CAD_XDATA)	Novi AppID (npr. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Kreiraj CAD_XDATA aplikaciju
 	Backup copy	Sigurnosna kopija

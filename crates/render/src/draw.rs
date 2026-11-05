@@ -240,25 +240,14 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw),
-        EntityKind::Point(p) => {
-            // Relative sizes follow the view: undo the block / viewport scale.
-            let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
-            let size = point::size(ctx.d.header.f64("PDSIZE", 0.0), view);
-            let fig = point::figure(ctx.d.header.i64("PDMODE", 0), size, p.p.xy(), p.angle, tol);
-            if fig.dot {
-                b.point(ctx, rgb, p.p.xy());
-            }
-            for l in &fig.lines {
-                b.polyline(ctx, rgb, lw, l);
-            }
-        }
+        EntityKind::Point(p) => draw_point(b, ctx, p, rgb, lw, tol),
         // An OLE object's content is not drawn; its frame, from its two corner points, is.
         EntityKind::Unknown(u) if u.is_ole_frame() => {
             if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
-        EntityKind::Line(_) | EntityKind::Polyline3d(_) | EntityKind::Face3d(_) if !orbit.is_top() && draw_3d_wire(b, ctx, &e.kind, rgb, lw) => {}
+        kind if draw_3d_wire(b, ctx, kind, rgb, lw) => {}
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -290,7 +279,23 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+fn draw_point(b: &mut Builder, ctx: &Ctx, p: &cadcraft_doc::Point, rgb: Ink, lw: f32, tol: f64) {
+    // Relative sizes follow the view: undo the block / viewport scale.
+    let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
+    let size = point::size(ctx.d.header.f64("PDSIZE", 0.0), view);
+    let fig = point::figure(ctx.d.header.i64("PDMODE", 0), size, p.p.xy(), p.angle, tol);
+    if fig.dot {
+        b.point(ctx, rgb, p.p.xy());
+    }
+    for l in &fig.lines {
+        b.polyline(ctx, rgb, lw, l);
+    }
+}
+
 fn draw_3d_wire(b: &mut Builder, ctx: &Ctx, kind: &EntityKind, rgb: Ink, lw: f32) -> bool {
+    if b.active_orbit(ctx).is_top() {
+        return false;
+    }
     match kind {
         EntityKind::Line(l) if (l.a.z - l.b.z).abs() > 1e-12 => {
             b.polyline_3d(ctx, rgb, lw, &[l.a, l.b]);

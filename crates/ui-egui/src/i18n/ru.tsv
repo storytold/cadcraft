@@ -1623,13 +1623,6 @@
 	Font	Шрифт
 	Save Layout as Template	Сохранить лист как шаблон
 	Export Comparison	Экспорт сравнения
-	Drawing File is Write-Protected	Файл чертежа защищен от записи
-	The drawing file '{name}' is currently in use by:	Файл чертежа '{name}' в настоящее время используется:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Чертеж будет открыт в режиме «только для чтения». Изменения не могут быть сохранены в исходный файл.
-	Open (Read-Only)	Открыть (только чтение)
-	Drawing file is write-protected ({info}). Opened read-only.	Файл чертежа защищен от записи ({info}). Открыт только для чтения.
-	in use by {user} on {machine} ({time})	используется {user} на {machine} ({time})
-	in use by {user} ({time})	используется {user} ({time})
 	Save changes to block "{name}"?	Сохранить изменения в блоке «{name}»?
 	New AppID (e.g. CAD_XDATA)	Новый AppID (напр. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Создать приложение CAD_XDATA

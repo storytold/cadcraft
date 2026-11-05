@@ -1634,13 +1634,6 @@
 	Save Layout as Template	Зберегти аркуш як шаблон
 	📋 Copy All	📋 Копіювати все
 	🗑 Clear	🗑 Очистити
-	Drawing File is Write-Protected	Файл креслення захищено від запису
-	The drawing file '{name}' is currently in use by:	Файл креслення '{name}' зараз використовується:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Креслення буде відкрито в режимі «лише для читання». Зміни неможливо зберегти у вихідний файл.
-	Open (Read-Only)	Відкрити (лише читання)
-	Drawing file is write-protected ({info}). Opened read-only.	Файл креслення захищено від запису ({info}). Відкрито лише для читання.
-	in use by {user} on {machine} ({time})	використовується {user} на {machine} ({time})
-	in use by {user} ({time})	використовується {user} ({time})
 	New AppID (e.g. CAD_XDATA)	Новий AppID (напр. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Створити застосунок CAD_XDATA
 	Change	Змінити

@@ -1626,13 +1626,6 @@ menu	Modify	Modifikace
 	no [CommandMethod] found	nebyla nalezena žádná metoda [CommandMethod]
 	Font	Písmo
 	Save Layout as Template	Uložit rozvržení jako šablonu
-	Drawing File is Write-Protected	Soubor výkresu je chráněn proti zápisu
-	The drawing file '{name}' is currently in use by:	Soubor výkresu '{name}' právě používá:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Výkres bude otevřen v režimu pouze pro čtení. Změny nelze uložit do původního souboru.
-	Open (Read-Only)	Otevřít (pouze pro čtení)
-	Drawing file is write-protected ({info}). Opened read-only.	Soubor výkresu je chráněn proti zápisu ({info}). Otevřeno pouze pro čtení.
-	in use by {user} on {machine} ({time})	používá {user} na {machine} ({time})
-	in use by {user} ({time})	používá {user} ({time})
 	Save changes to block "{name}"?	Uložit změny v bloku „{name}“?
 	New AppID (e.g. CAD_XDATA)	Nové AppID (např. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Vytvořit aplikaci CAD_XDATA

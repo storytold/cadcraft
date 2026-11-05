@@ -1623,13 +1623,6 @@ menu	View	Προβολή
 	no [CommandMethod] found	δεν βρέθηκε [CommandMethod]
 	Font	Γραμματοσειρά
 	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο
-	Drawing File is Write-Protected	Το αρχείο σχεδίου προστατεύεται από εγγραφή
-	The drawing file '{name}' is currently in use by:	Το αρχείο σχεδίου '{name}' χρησιμοποιείται αυτήν τη στιγμή από:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Το σχέδιο θα ανοίξει σε λειτουργία μόνο για ανάγνωση. Οι αλλαγές δεν μπορούν να αποθηκευτούν στο αρχικό αρχείο.
-	Open (Read-Only)	Άνοιγμα (μόνο για ανάγνωση)
-	Drawing file is write-protected ({info}). Opened read-only.	Το αρχείο σχεδίου προστατεύεται από εγγραφή ({info}). Άνοιξε μόνο για ανάγνωση.
-	in use by {user} on {machine} ({time})	σε χρήση από {user} σε {machine} ({time})
-	in use by {user} ({time})	σε χρήση από {user} ({time})
 	Save changes to block "{name}"?	Αποθήκευση αλλαγών στο μπλοκ «{name}»;
 	New AppID (e.g. CAD_XDATA)	Νέο AppID (π.χ. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Δημιουργία εφαρμογής CAD_XDATA

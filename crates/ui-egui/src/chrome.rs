@@ -72,10 +72,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             // The empty row moves the window; it goes first so later widgets take their own clicks.
             craft_window::title_bar::empty_area(ui, Rect::from_min_size(r.min, vec2(r.width(), title_h)));
             let title = match app.session.state() {
-                Ok(st) if !app.ui.start_tab => {
-                    let ro = if st.read_only { " [Read-Only]" } else { "" };
-                    format!("CADCraft      {}{}{ro}", st.title, if st.title.contains('.') { "" } else { ".dwg" })
-                }
+                Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
                 _ => format!("CADCraft      {}", crate::tl!("Start")),
             };
             // Centred on the traffic lights' centre line (the row's middle): with the system font
@@ -240,16 +237,8 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         let mut switch_to = None;
         let mut close = None;
-        let titles: Vec<(usize, String, bool, bool)> = app
-            .session
-            .docs
-            .iter()
-            .enumerate()
-            .map(|(i, d)| {
-                let label = if d.read_only { format!("{} [RO]", d.title) } else { d.title.clone() };
-                (i, label, d.is_dirty(), i == app.session.active)
-            })
-            .collect();
+        let titles: Vec<(usize, String, bool, bool)> =
+            app.session.docs.iter().enumerate().map(|(i, d)| (i, d.title.clone(), d.is_dirty(), i == app.session.active)).collect();
         for (i, title, dirty, active) in titles {
             let (c, x, resp) = tab(ui, &title, dirty, active && !app.ui.start_tab, true, 170.0, ui.scope_id().with(("tab", i)));
             crate::shortcut_menus::attach(app, &resp, |app| crate::shortcut_menus::drawing_tab_entries(app, i));

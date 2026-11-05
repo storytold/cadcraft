@@ -1631,13 +1631,6 @@ menu	Modify	Hiệu chỉnh
 	cannot read file	không thể đọc tệp
 	e.g. (+ 1 2) or + 1 2	ví dụ: (+ 1 2) hoặc + 1 2
 	no [CommandMethod] found	không tìm thấy [CommandMethod]
-	Drawing File is Write-Protected	Tệp bản vẽ được bảo vệ chống ghi
-	The drawing file '{name}' is currently in use by:	Tệp bản vẽ '{name}' hiện đang được sử dụng bởi:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Bản vẽ sẽ được mở ở chế độ chỉ đọc. Không thể lưu các thay đổi vào tệp gốc.
-	Open (Read-Only)	Mở (Chỉ đọc)
-	Drawing file is write-protected ({info}). Opened read-only.	Tệp bản vẽ được bảo vệ chống ghi ({info}). Đã mở ở chế độ chỉ đọc.
-	in use by {user} on {machine} ({time})	đang được dùng bởi {user} trên {machine} ({time})
-	in use by {user} ({time})	đang được dùng bởi {user} ({time})
 	New AppID (e.g. CAD_XDATA)	AppID mới (ví dụ: CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Tạo ứng dụng CAD_XDATA
 	Change	Thay đổi

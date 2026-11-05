@@ -1623,13 +1623,6 @@
 	Font	Police
 	Save Layout as Template	Enregistrer la présentation comme gabarit
 	Export Comparison	Exporter la comparaison
-	Drawing File is Write-Protected	Le fichier dessin est protégé en écriture
-	The drawing file '{name}' is currently in use by:	Le fichier dessin '{name}' est actuellement utilisé par :
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Le dessin sera ouvert en lecture seule. Les modifications ne peuvent pas être enregistrées dans le fichier d'origine.
-	Open (Read-Only)	Ouvrir (lecture seule)
-	Drawing file is write-protected ({info}). Opened read-only.	Le fichier dessin est protégé en écriture ({info}). Ouvert en lecture seule.
-	in use by {user} on {machine} ({time})	utilisé par {user} sur {machine} ({time})
-	in use by {user} ({time})	utilisé par {user} ({time})
 	Save changes to block "{name}"?	Enregistrer les modifications apportées au bloc « {name} » ?
 	New AppID (e.g. CAD_XDATA)	Nouvel AppID (ex. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Créer l'application CAD_XDATA

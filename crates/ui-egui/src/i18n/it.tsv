@@ -1630,13 +1630,6 @@ menu	Modify	Edita
 	no [CommandMethod] found	nessun [CommandMethod] trovato
 	Font	Carattere
 	Save Layout as Template	Salva layout come modello
-	Drawing File is Write-Protected	Il file di disegno è protetto da scrittura
-	The drawing file '{name}' is currently in use by:	Il file di disegno '{name}' è attualmente in uso da:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Il disegno verrà aperto in modalità di sola lettura. Le modifiche non possono essere salvate nel file originale.
-	Open (Read-Only)	Apri (sola lettura)
-	Drawing file is write-protected ({info}). Opened read-only.	Il file di disegno è protetto da scrittura ({info}). Aperto in sola lettura.
-	in use by {user} on {machine} ({time})	in uso da {user} su {machine} ({time})
-	in use by {user} ({time})	in uso da {user} ({time})
 	Save changes to block "{name}"?	Salvare le modifiche al blocco "{name}"?
 	New AppID (e.g. CAD_XDATA)	Nuovo AppID (es. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Crea applicazione CAD_XDATA

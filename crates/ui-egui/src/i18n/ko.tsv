@@ -1626,13 +1626,6 @@ menu	Modify	수정
 	no [CommandMethod] found	[CommandMethod]를 찾을 수 없음
 	Font	글꼴
 	Save Layout as Template	배치를 템플릿으로 저장
-	Drawing File is Write-Protected	도면 파일이 쓰기 금지되어 있습니다
-	The drawing file '{name}' is currently in use by:	도면 파일 '{name}'이(가) 현재 다음에 의해 사용 중입니다:
-	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	도면이 읽기 전용 모드로 열립니다. 변경 사항을 원본 파일에 저장할 수 없습니다.
-	Open (Read-Only)	열기(읽기 전용)
-	Drawing file is write-protected ({info}). Opened read-only.	도면 파일이 쓰기 금지되어 있습니다({info}). 읽기 전용으로 열렸습니다.
-	in use by {user} on {machine} ({time})	{machine}의 {user} 사용 중({time})
-	in use by {user} ({time})	{user} 사용 중({time})
 	Save changes to block "{name}"?	블록 "{name}"의 변경 사항을 저장하시겠습니까?
 	New AppID (e.g. CAD_XDATA)	새 AppID (예: CAD_XDATA)
 	+ Create CAD_XDATA Application	+ CAD_XDATA 작성

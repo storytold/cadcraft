@@ -44,7 +44,6 @@ craft-ui = { workspace = true, features = ["native-windows"] }
 craft-update = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
-raw-window-handle = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # `title_bar::sync_movable`: AppKit's title-band drag leaves the window still under the row's
