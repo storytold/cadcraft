@@ -18,6 +18,7 @@ path = "src/main.rs"
 cadcraft-engine = { workspace = true }
 cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
+cadcraft-fonts = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
