@@ -1,19 +1,48 @@
-//! Raster images: IMAGEATTACH, IMAGECLIP, IMAGEADJUST and IMAGEFRAME.
+//! Raster images (IMAGEATTACH, IMAGE, IMAGEADJUST, IMAGECLIP, IMAGEFRAME). An IMAGE entity names
+//! its file; the pixels are decoded when the drawing opens or the image is attached and kept with
+//! the open drawing ([`Drawing::rasters`]), never in the file. An image whose file can't be found
+//! or read stays in the drawing as a crossed-out frame.
 
-use cadcraft_doc::{Entity, EntityKind, Handle, Image};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+use cadcraft_doc::{Drawing, EntityKind, Handle, Image, Raster};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
-use crate::cmd::{CommandSpec, bad, f64_or, point_param, point_value, str_param};
+use super::file::base64_decode;
+use super::{CommandSpec, bad, f64_or, point_param, point_value, str_param};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
-pub(super) fn specs() -> Vec<CommandSpec> {
+/// Most image files loaded per drawing.
+const MAX_IMAGE_FILES: usize = 1000;
+/// Largest image file read (bytes).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_IMAGE_BYTES: u64 = 256 << 20;
+/// Most decoded pixel bytes kept per drawing; images past it stay unloaded.
+const MAX_LOADED_BYTES: u64 = 2 << 30;
+/// Most image files decoded at the same time when a drawing opens.
+const MAX_LOADERS: usize = 4;
+/// Longest image path taken from a caller.
+const MAX_PATH: usize = 4096;
+
+pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("imageattach", "Attach Image...", run_imageattach)
+        CommandSpec::new("imageattach", "Raster Image Reference...", run_imageattach)
             .menu(&["Insert", "Raster Image Reference..."])
-            .alias(&["iat", "image"])
-            .params("{path: image file (.png, .jpg, .bmp, etc.), at?: [x,y] (default 0,0), scale?: number (default 1.0), rotation?: degrees (default 0.0), size?: [w,h]} → {handle, path, name}")
+            .alias(&["iat"])
+            .params(
+                "{path: PNG/JPEG/BMP/TIFF file (saved as given; a relative path is relative to this drawing's folder), data?: base64 file contents \
+                 (instead of reading `path`), at?: [x,y] lower-left corner (default 0,0), scale?: number (default 1: the image is one drawing unit \
+                 wide), width?: width in drawing units (instead of `scale`), rotation? (degrees), name? (default: the file name)} → {name, handle, \
+                 path, pixels: [w, h], size: [w, h]}",
+            )
             .interactive(|_| Ok(Box::new(ImageAttachM::default()))),
+        CommandSpec::new("image", "Raster Images", run_image)
+            .alias(&["im"])
+            .params("{} → {images: [{name, path, foundAt, status: Loaded|Not Found|Not loaded, references, pixels?: [w, h]}]}")
+            .noundo(),
         CommandSpec::new("imageadjust", "Adjust Image...", run_imageadjust)
             .menu(&["Modify", "Object", "Image", "Adjust..."])
             .alias(&["iad"])
@@ -28,6 +57,11 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .alias(&["iframe"])
             .params("{mode?: 0|1|2 (0: hide, 1: display & plot, 2: display only)}"),
     ]
+}
+
+/// Whether `ext` (lower case, no dot) is an image file type IMAGEATTACH reads.
+pub(crate) fn is_image_ext(ext: &str) -> bool {
+    matches!(ext, "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff")
 }
 
 /// Normalize an image path, resolving Windows paths on Linux/WSL if applicable.
@@ -48,14 +82,11 @@ pub fn normalize_path(p: &str) -> String {
     s.to_string()
 }
 
-fn def_name_from_path(p: &str) -> String {
-    let file = p.rsplit(['/', '\\']).next().unwrap_or(p);
-    let stem = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file).trim();
-    if stem.is_empty() { "Image".to_string() } else { stem.to_string() }
-}
-
 /// Find an image file on disk using drawing-relative and system paths.
 pub fn find_image_file(path_str: &str, doc_path: Option<&str>) -> Option<std::path::PathBuf> {
+    if let Some(found) = super::blocks::xref::find_file(path_str, doc_path) {
+        return Some(found);
+    }
     let s = path_str.trim().trim_matches('"').trim_matches('\'').trim();
     if s.is_empty() {
         return None;
@@ -65,21 +96,17 @@ pub fn find_image_file(path_str: &str, doc_path: Option<&str>) -> Option<std::pa
     if p_norm.is_file() {
         return Some(p_norm.to_path_buf());
     }
-
     let p_raw = std::path::Path::new(s);
     if p_raw.is_file() {
         return Some(p_raw.to_path_buf());
     }
-
     let file_name = s.rsplit(['/', '\\']).next().unwrap_or(s).trim();
     let clean_rel = s.replace('\\', "/");
     let clean_rel = clean_rel.trim_start_matches("./").trim_start_matches('/');
-
     let doc_dir = doc_path.and_then(|dp| {
         let p = std::path::Path::new(dp).parent()?;
         Some(if p.as_os_str().is_empty() { std::path::PathBuf::from(".") } else { p.to_path_buf() })
     });
-
     if let Some(dir) = &doc_dir {
         let candidates = [
             dir.join(clean_rel),
@@ -93,7 +120,6 @@ pub fn find_image_file(path_str: &str, doc_path: Option<&str>) -> Option<std::pa
             return Some(found);
         }
     }
-
     let cwd_candidates = [
         std::path::PathBuf::from(clean_rel),
         std::path::PathBuf::from(file_name),
@@ -104,7 +130,7 @@ pub fn find_image_file(path_str: &str, doc_path: Option<&str>) -> Option<std::pa
 }
 
 /// Resolve image bytes from in-memory assets or disk.
-pub fn resolve_image_bytes(doc: &cadcraft_doc::Drawing, img: &cadcraft_doc::Image, _doc_path: Option<&str>) -> Option<Vec<u8>> {
+pub fn resolve_image_bytes(doc: &Drawing, img: &Image, _doc_path: Option<&str>) -> Option<Vec<u8>> {
     let file_name = img.path.rsplit(['/', '\\']).next().unwrap_or(&img.path).trim();
     if let Some(b) = doc.get_image_asset(&img.path).or_else(|| doc.get_image_asset(&img.name)).or_else(|| doc.get_image_asset(file_name)) {
         return Some(b.to_vec());
@@ -126,12 +152,12 @@ pub fn resolve_image_bytes(doc: &cadcraft_doc::Drawing, img: &cadcraft_doc::Imag
     None
 }
 
-/// Preload image assets into `d.image_assets` for all Image entities in drawing.
-pub fn preload_images(d: &mut cadcraft_doc::Drawing, doc_path: Option<&str>) {
-    let mut to_load: Vec<(String, cadcraft_doc::Image)> = Vec::new();
-    let collect = |store: &cadcraft_doc::EntityStore, list: &mut Vec<(String, cadcraft_doc::Image)>| {
+/// Preload image assets into `d.image_assets` and `d.rasters` for all Image entities in drawing.
+pub fn preload_images(d: &mut Drawing, doc_path: Option<&str>) {
+    let mut to_load: Vec<(String, Image)> = Vec::new();
+    let collect = |store: &cadcraft_doc::EntityStore, list: &mut Vec<(String, Image)>| {
         for e in store.iter() {
-            if let cadcraft_doc::EntityKind::Image(img) = &e.kind
+            if let EntityKind::Image(img) = &e.kind
                 && !img.path.is_empty()
                 && !d.image_assets.contains_key(&img.path)
             {
@@ -149,155 +175,322 @@ pub fn preload_images(d: &mut cadcraft_doc::Drawing, doc_path: Option<&str>) {
 
     for (path, img) in to_load {
         if let Some(bytes) = resolve_image_bytes(d, &img, doc_path) {
-            d.image_assets.insert(path, std::sync::Arc::new(bytes));
+            if d.rasters.get(&path).is_none()
+                && let Ok(r) = decode(&bytes)
+            {
+                d.rasters.insert(&path, Arc::new(r));
+            }
+            d.image_assets.insert(path, Arc::new(bytes));
         }
     }
 }
 
-/// Attach a raster image file to the drawing.
-pub fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
-    let raw_path = str_param(p, "path").or_else(|| str_param(p, "file")).ok_or_else(|| bad("imageattach", "`path` is required"))?;
-    let path = normalize_path(raw_path);
-    let at = point_param(p, "at").unwrap_or(Vec2::ZERO);
-    let scale = f64_or(p, "scale", 1.0).max(1e-9);
-    let rotation = f64_or(p, "rotation", 0.0).to_radians();
+/// Every IMAGE entity of `d`: in model space, on the layouts and in the blocks.
+fn images(d: &Drawing) -> impl Iterator<Item = &Image> {
+    let model = std::iter::once(&d.model);
+    let layouts = d.layouts.iter().map(|l| &l.entities);
+    let blocks = d.blocks.values().map(|b| &b.entities);
+    model.chain(layouts).chain(blocks).flat_map(|store| store.iter()).filter_map(|e| match &e.kind {
+        EntityKind::Image(i) => Some(i),
+        _ => None,
+    })
+}
 
-    let _doc_path = s.drawing_path();
-    let asset_bytes = {
-        let d = s.doc()?;
-        d.get_image_asset(&path).or_else(|| d.get_image_asset(raw_path)).map(|b| b.to_vec())
-    };
+/// The image files `d` names, each once, in the order they are first used.
+fn paths(d: &Drawing) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut paths = Vec::new();
+    for i in images(d) {
+        if !i.path.trim().is_empty() && seen.insert(i.path.as_str()) {
+            paths.push(i.path.clone());
+        }
+    }
+    paths
+}
+
+/// The contents of the image file saved as `path` in a drawing at `host`.
+fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
-    let disk_bytes = if asset_bytes.is_none() {
-        if let Some(f) = find_image_file(&path, _doc_path.as_deref()) {
-            std::fs::read(f).ok()
-        } else {
-            std::fs::read(&path).ok().or_else(|| std::fs::read(raw_path).ok())
+    {
+        let file = super::blocks::xref::find_file(path, host).or_else(|| find_image_file(path, host)).ok_or("file not found")?;
+        let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+        if len > MAX_IMAGE_BYTES {
+            return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
         }
-    } else {
-        None
-    };
+        // Read no more than the limit: the file can grow or change after the check above.
+        let limit = usize::try_from(MAX_IMAGE_BYTES).unwrap_or(usize::MAX);
+        crate::capped_read::read_capped(&file, limit).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData { format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20) } else { e.to_string() }
+        })
+    }
     #[cfg(target_arch = "wasm32")]
-    let disk_bytes: Option<Vec<u8>> = None;
-
-    if let Some(bytes) = &disk_bytes
-        && let Ok(d) = s.doc_mut()
     {
-        d.image_assets.insert(path.clone(), std::sync::Arc::new(bytes.clone()));
+        let _ = (path, host);
+        Err("files are not available on the web".into())
     }
-
-    let has_bytes = asset_bytes.is_some() || disk_bytes.is_some();
-    if !has_bytes && p.get("size").is_none() {
-        s.echo(format!("Image file not found: {raw_path}"));
-    }
-
-    let size = if let Some(arr) = p.get("size").and_then(Value::as_array)
-        && arr.len() >= 2
-        && let (Some(w), Some(h)) = (arr[0].as_f64(), arr[1].as_f64())
-    {
-        Vec2::new(w.max(1.0), h.max(1.0))
-    } else if let Some(bytes) = asset_bytes.as_deref().or(disk_bytes.as_deref()) {
-        probe_image_size_from_bytes(bytes).unwrap_or(Vec2::new(100.0, 100.0))
-    } else {
-        Vec2::new(100.0, 100.0)
-    };
-
-    let name = str_param(p, "name").map(ToString::to_string).unwrap_or_else(|| def_name_from_path(&path));
-
-    let cos = rotation.cos() * scale;
-    let sin = rotation.sin() * scale;
-    let u = Vec3::new(cos, sin, 0.0);
-    let v = Vec3::new(-sin, cos, 0.0);
-
-    let img = Image { insert: at.to3(0.0), u, v, size, path: path.clone(), name: name.clone(), ..Image::default() };
-
-    let space = s.space();
-    let d = s.doc_mut()?;
-    if let Some(bytes) = disk_bytes {
-        d.store_image_asset(&path, bytes.clone());
-        if raw_path != path {
-            d.store_image_asset(raw_path, bytes);
-        }
-    }
-    let h = d.new_handle();
-    let e = Entity::new(h, EntityKind::Image(img));
-    d.ensure_layer(&e.common.layer);
-    if let Some(st) = d.space_mut(&space) {
-        st.push(e);
-    }
-    s.set_selection(vec![h]);
-
-    Ok(json!({ "handle": h.hex(), "path": path, "name": name, "size": [size.x, size.y] }))
 }
 
-fn probe_image_size_from_bytes(bytes: &[u8]) -> Option<Vec2> {
-    // PNG header: width at 16..20, height at 20..24
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24 {
-        let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-        let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-        if w > 0 && h > 0 {
-            return Some(Vec2::new(w as f64, h as f64));
+/// Decode an image file. A decoder that panics on a damaged file fails this image only: the
+/// drawing it belongs to must still open.
+fn decode(bytes: &[u8]) -> std::result::Result<Raster, String> {
+    let hook = super::file::image_decoder().ok_or("image files can't be read in this build")?;
+    match std::panic::catch_unwind(|| hook(bytes)) {
+        Ok(r) => r,
+        Err(_) => Err("the file is damaged and can't be read".into()),
+    }
+}
+
+fn bytes_of(r: &Raster) -> u64 {
+    u64::try_from(r.rgba().len()).unwrap_or(u64::MAX)
+}
+
+/// Load the images of drawing `i`, just opened. Those that can't be loaded are reported and
+/// stay crossed-out frames; opening never fails over an image.
+pub(crate) fn after_open(s: &mut Session, i: usize) {
+    let Some(st) = s.docs.get_mut(i) else { return };
+    let paths = paths(&st.doc);
+    if paths.is_empty() {
+        return;
+    }
+    let mut rasters = st.doc.rasters.clone();
+    let notes = load_missing(&paths, st.path.as_deref(), &mut rasters);
+    if !rasters.is_empty() {
+        // Loading pixels is not a change to the drawing. A drawing counts as unchanged while
+        // it is the very one that was saved, so the saved one follows.
+        let unchanged = Arc::ptr_eq(&st.doc, &st.saved);
+        Arc::make_mut(&mut st.doc).rasters = rasters;
+        if unchanged {
+            st.saved = st.doc.clone();
         }
     }
-    // JPEG header: scan SOF0 / SOF2 markers
-    if bytes.starts_with(&[0xFF, 0xD8]) {
-        let mut idx = 2;
-        while idx + 4 < bytes.len() {
-            if bytes[idx] != 0xFF {
-                break;
-            }
-            let marker = bytes[idx + 1];
-            let len = u16::from_be_bytes([bytes[idx + 2], bytes[idx + 3]]) as usize;
-            if matches!(marker, 0xC0..=0xC2) && idx + 9 < bytes.len() {
-                let h = u16::from_be_bytes([bytes[idx + 5], bytes[idx + 6]]);
-                let w = u16::from_be_bytes([bytes[idx + 7], bytes[idx + 8]]);
-                if w > 0 && h > 0 {
-                    return Some(Vec2::new(w as f64, h as f64));
+    for n in notes {
+        s.echo(n);
+    }
+}
+
+/// Read and decode into `rasters` the files of `paths` that are not in it yet, for a drawing at
+/// `host`. Returns one message per file that could not be loaded.
+fn load_missing(paths: &[String], host: Option<&str>, rasters: &mut cadcraft_doc::Rasters) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut missing: Vec<&str> = paths.iter().map(String::as_str).filter(|p| rasters.get(p).is_none()).collect();
+    if missing.len() > MAX_IMAGE_FILES {
+        missing.truncate(MAX_IMAGE_FILES);
+        notes.push(format!("Images: only the first {MAX_IMAGE_FILES} image files are loaded"));
+    }
+    let decoded = decode_files(&missing, host);
+    // Kept in the order the drawing uses them, up to the memory limit.
+    let mut kept_bytes = 0u64;
+    for (path, result) in missing.iter().zip(decoded) {
+        match result {
+            Ok(r) => {
+                kept_bytes = kept_bytes.saturating_add(bytes_of(&r));
+                if kept_bytes > MAX_LOADED_BYTES {
+                    notes.push(over_limit(path));
+                    break;
                 }
+                rasters.insert(path, Arc::new(r));
             }
-            if len < 2 {
-                break;
-            }
-            idx += 2 + len;
+            Err(e) => notes.push(format!("Image {path}: {e}")),
         }
     }
-    // BMP header: 'BM' followed by DIB header at offset 14 (width at 18..22, height at 22..26)
-    if bytes.starts_with(b"BM") && bytes.len() >= 26 {
-        let w = i32::from_le_bytes([bytes[18], bytes[19], bytes[20], bytes[21]]).unsigned_abs();
-        let h = i32::from_le_bytes([bytes[22], bytes[23], bytes[24], bytes[25]]).unsigned_abs();
-        if w > 0 && h > 0 {
-            return Some(Vec2::new(w as f64, h as f64));
+    notes
+}
+
+fn over_limit(path: &str) -> String {
+    format!("Image {path}: not loaded (more than {} MB of images)", MAX_LOADED_BYTES >> 20)
+}
+
+/// Read and decode the image files `paths` of a drawing at `host`, a few at a time (decoding is
+/// what opening a drawing with large images waits for). The results are in the order of `paths`.
+fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<Raster, String>> {
+    // Decoded bytes so far, shared by the loaders: past the limit no further file is started.
+    let decoded_bytes = AtomicU64::new(0);
+    let load = |path: &str| -> std::result::Result<Raster, String> {
+        if decoded_bytes.load(Ordering::Relaxed) > MAX_LOADED_BYTES {
+            return Err(format!("not loaded (more than {} MB of images)", MAX_LOADED_BYTES >> 20));
         }
-    }
-    // GIF header: 'GIF87a' or 'GIF89a' (width at 6..8, height at 8..10)
-    if bytes.starts_with(b"GIF") && bytes.len() >= 10 {
-        let w = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
-        let h = u16::from_le_bytes([bytes[8], bytes[9]]) as u32;
-        if w > 0 && h > 0 {
-            return Some(Vec2::new(w as f64, h as f64));
-        }
-    }
-    // WEBP header: 'RIFF....WEBPVP8'
-    if bytes.starts_with(b"RIFF") && bytes.len() >= 30 && &bytes[8..12] == b"WEBP" {
-        if &bytes[12..16] == b"VP8 " && bytes.len() >= 30 {
-            let w = u16::from_le_bytes([bytes[26], bytes[27]]) & 0x3FFF;
-            let h = u16::from_le_bytes([bytes[28], bytes[29]]) & 0x3FFF;
-            if w > 0 && h > 0 {
-                return Some(Vec2::new(w as f64, h as f64));
+        let r = read_file(path, host).and_then(|bytes| decode(&bytes))?;
+        decoded_bytes.fetch_add(bytes_of(&r), Ordering::Relaxed);
+        Ok(r)
+    };
+    let mut results: Vec<Option<std::result::Result<Raster, String>>> = paths.iter().map(|_| None).collect();
+    let loaders = loader_count(paths.len());
+    if loaders > 1 {
+        // Each loader takes the next file nobody has started.
+        let next = AtomicUsize::new(0);
+        let work = || {
+            let mut done = Vec::new();
+            loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(path) = paths.get(index) else { break };
+                done.push((index, load(path)));
             }
-        } else if &bytes[12..16] == b"VP8L" && bytes.len() >= 25 {
-            let b0 = bytes[21] as u32;
-            let b1 = bytes[22] as u32;
-            let b2 = bytes[23] as u32;
-            let b3 = bytes[24] as u32;
-            let w = 1 + (b0 | ((b1 & 0x3F) << 8));
-            let h = 1 + ((b1 >> 6) | (b2 << 2) | ((b3 & 0xF) << 10));
-            if w > 0 && h > 0 {
-                return Some(Vec2::new(w as f64, h as f64));
+            done
+        };
+        let finished: Vec<_> = std::thread::scope(|scope| {
+            let started: Vec<_> = (0..loaders).filter_map(|_| std::thread::Builder::new().spawn_scoped(scope, work).ok()).collect();
+            started.into_iter().filter_map(|loader| loader.join().ok()).flatten().collect()
+        });
+        for (index, result) in finished {
+            if let Some(slot) = results.get_mut(index) {
+                *slot = Some(result);
             }
         }
     }
-    None
+    // One loader, or files a loader that could not start or finish left behind.
+    results.into_iter().zip(paths).map(|(result, path)| result.unwrap_or_else(|| load(path))).collect()
+}
+
+/// How many files are decoded at once: one per processor, at most [`MAX_LOADERS`] (each large
+/// image needs several hundred megabytes while it is decoded) and no more than there are files.
+fn loader_count(files: usize) -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    let processors = std::thread::available_parallelism().map(std::num::NonZero::get).unwrap_or(1);
+    #[cfg(target_arch = "wasm32")]
+    let processors = 1;
+    processors.min(MAX_LOADERS).min(files)
+}
+
+/// The file name without folders and extension (either separator).
+fn stem(path: &str) -> String {
+    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    match file.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem.to_string(),
+        _ => file.to_string(),
+    }
+}
+
+/// The definition name for a new image of `path`: the name that file already has in `d`, else
+/// `wanted`, numbered (`wanted_2`, `wanted_3`, …) when another file has taken it.
+fn def_name(d: &Drawing, path: &str, wanted: &str) -> String {
+    if let Some(i) = images(d).find(|i| i.path == path && !i.name.is_empty()) {
+        return i.name.clone();
+    }
+    // The names other files have, compared without regard to case.
+    let taken: BTreeSet<String> = images(d).filter(|i| i.path != path).map(|i| i.name.to_ascii_lowercase()).collect();
+    let free = |name: &str| !taken.contains(&name.to_ascii_lowercase());
+    if free(wanted) {
+        return wanted.to_string();
+    }
+    // One of these is free: there are more candidates than names taken.
+    let candidates = 2..taken.len().saturating_add(3);
+    candidates.map(|n| format!("{wanted}_{n}")).find(|name| free(name)).unwrap_or_else(|| wanted.to_string())
+}
+
+const ID: &str = "imageattach";
+
+pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad(ID, "`path` is required"))?.to_string();
+    if path.len() > MAX_PATH {
+        return Err(bad(ID, "`path` is too long"));
+    }
+    let place = placement(p)?;
+    let raster = pixels(s, p, &path)?;
+    let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
+    // One pixel in drawing units, along the image's bottom edge (`u`) and its left edge (`v`).
+    let pixel = place.width / w;
+    let u = Vec2::from_angle(place.rotation) * pixel;
+    let v = u.perp();
+    if !(pixel.is_normal() && (pixel * h).is_normal() && u.x.is_finite() && u.y.is_finite()) {
+        return Err(bad(ID, "the image would be too small or too large to draw"));
+    }
+    let wanted = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| stem(&path));
+    let name = def_name(s.doc()?, &path, &wanted);
+    let image = Image {
+        insert: place.at.to3(0.0),
+        u: u.to3(0.0),
+        v: v.to3(0.0),
+        size: Vec2::new(w, h),
+        path: path.clone(),
+        name: name.clone(),
+        ..Image::default()
+    };
+    s.doc_mut()?.rasters.insert(&path, raster);
+    let handle = s.add_entity(EntityKind::Image(image))?;
+    Ok(json!({ "name": name, "handle": handle.hex(), "path": path, "pixels": [w, h], "size": [place.width, pixel * h] }))
+}
+
+/// Where and how large IMAGEATTACH puts the image.
+struct Placement {
+    /// The lower-left corner.
+    at: Vec2,
+    /// Radians, counter-clockwise.
+    rotation: f64,
+    /// The image's width in drawing units.
+    width: f64,
+}
+
+/// `at`, `rotation` and the width (`width`, else `scale`: an image is one unit wide at scale 1).
+fn placement(p: &Value) -> Result<Placement> {
+    let at = point_param(p, "at").unwrap_or(Vec2::ZERO);
+    if !(at.x.is_finite() && at.y.is_finite()) {
+        return Err(bad(ID, "`at` must be a point"));
+    }
+    let width = match p.get("width") {
+        Some(v) => v.as_f64().filter(|w| w.is_finite()).ok_or_else(|| bad(ID, "`width` must be a number"))?,
+        None => f64_or(p, "scale", 1.0),
+    };
+    if !(width.is_finite() && width > 0.0) {
+        return Err(bad(ID, "`scale` and `width` must be greater than zero"));
+    }
+    Ok(Placement { at, rotation: f64_or(p, "rotation", 0.0).to_radians(), width })
+}
+
+/// The pixels of the image at `path`: decoded from `data` when the caller hands the file over,
+/// else the ones already loaded for that path, else read from the file.
+fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
+    let bytes = match p.get("data") {
+        Some(data) => {
+            let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
+            base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
+        }
+        None => {
+            if let Some(loaded) = s.doc()?.rasters.get(path) {
+                return Ok(loaded.clone());
+            }
+            if let Some(asset) = s.doc()?.get_image_asset(path) {
+                return Ok(Arc::new(decode(&asset).map_err(|e| bad(ID, format!("{path}: {e}")))?));
+            }
+            let host = s.state()?.path.clone();
+            read_file(path, host.as_deref()).map_err(|e| bad(ID, format!("{path}: {e}")))?
+        }
+    };
+    Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
+}
+
+fn run_image(s: &mut Session, _p: &Value) -> Result<Value> {
+    let host = s.state()?.path.clone();
+    let d = s.doc()?;
+    // Per file: its definition name and how many images show it.
+    let mut uses: BTreeMap<&str, (&str, usize)> = BTreeMap::new();
+    for i in images(d) {
+        uses.entry(i.path.as_str()).or_insert((i.name.as_str(), 0)).1 += 1;
+    }
+    let rows: Vec<Value> = paths(d)
+        .iter()
+        .map(|path| {
+            let (name, references) = uses.get(path.as_str()).copied().unwrap_or_default();
+            let mut row = describe(d, path, host.as_deref());
+            row["name"] = json!(name);
+            row["references"] = json!(references);
+            row
+        })
+        .collect();
+    Ok(json!({ "images": rows }))
+}
+
+/// The state of image file `path` of drawing `d` (saved at `host`): where it is and whether its
+/// pixels are loaded.
+fn describe(d: &Drawing, path: &str, host: Option<&str>) -> Value {
+    let loaded = d.rasters.get(path);
+    let found_at = super::blocks::xref::find_file(path, host).map(|f| f.to_string_lossy().into_owned());
+    let status = match (loaded, &found_at) {
+        (Some(_), _) => "Loaded",
+        (None, None) => "Not Found",
+        // The file is there but could not be read as an image.
+        (None, Some(_)) => "Not loaded",
+    };
+    json!({ "path": path, "foundAt": found_at, "status": status, "pixels": loaded.map(|r| json!([r.width(), r.height()])) })
 }
 
 /// Modify image brightness, contrast, and fade.
@@ -382,8 +575,6 @@ fn run_imageframe(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "mode": mode }))
 }
 
-// ---------------- Interactive Prompts ----------------
-
 #[derive(Default)]
 enum AttachStage {
     #[default]
@@ -422,13 +613,19 @@ impl ImageAttachM {
             }
         });
         if let Some(b) = bytes {
-            self.size = probe_image_size_from_bytes(&b).unwrap_or(Vec2::new(100.0, 100.0));
+            if let Ok(r) = decode(&b) {
+                self.size = Vec2::new(f64::from(r.width()), f64::from(r.height()));
+                if let Ok(d) = s.doc_mut() {
+                    d.rasters.insert(&self.path, Arc::new(r));
+                    d.store_image_asset(&self.path, b);
+                }
+                return;
+            }
             if let Ok(d) = s.doc_mut() {
                 d.store_image_asset(&self.path, b);
             }
-        } else {
-            self.size = Vec2::new(100.0, 100.0);
         }
+        self.size = Vec2::new(100.0, 100.0);
     }
 
     fn default_scale(&self, s: &Session) -> f64 {
@@ -520,12 +717,13 @@ impl Interactive for ImageAttachM {
                     }
                     _ => return Ok(Step::Continue),
                 }
+                let width = (self.size.x.max(1.0) * self.scale).max(1e-6);
                 run_imageattach(
                     s,
                     &json!({
                         "path": self.path,
                         "at": [self.at.x, self.at.y],
-                        "scale": self.scale,
+                        "width": width,
                         "rotation": self.rotation,
                     }),
                 )?;

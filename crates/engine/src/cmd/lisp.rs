@@ -610,6 +610,7 @@ fn run_dotnet_bridge(s: &mut Session, p: &Value) -> Result<Value> {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 }),
             );
             ent.common.layer = layer;

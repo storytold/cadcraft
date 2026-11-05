@@ -677,8 +677,13 @@ pub fn submit(app: &mut CadApp) {
     }
     // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
     let completion = if app.session.prompting() { None } else { suggestions_with_plugins(app, text.trim()).into_iter().next() };
+    let typed_list = !app.session.prompting() && {
+        let candidate = completion.as_ref().map(|s| s.id.as_str()).unwrap_or(text.trim());
+        let id = cadcraft_engine::cmd::resolve_alias(&candidate.trim_start_matches(['_', '.', '-']).to_ascii_lowercase());
+        matches!(id.as_str(), "list" | "li" | "ls")
+    };
     app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
-    if was_inquiry && !app.session.prompting() {
+    if (was_inquiry || typed_list) && !app.session.prompting() {
         app.cmd.expanded = true;
     }
 }
@@ -729,7 +734,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                // As the engine's prompt text says it; only " or [" has words to translate.
+                let lead = match pr.keyword_lead() {
+                    " or [" => crate::tl!(" or ["),
+                    lead => lead,
+                };
+                let g = p.layout_no_wrap(lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -745,7 +755,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.cmd_keyword);
                     x += gw;
                     if resp.clicked() {
+                        let was_inquiry = app.session.running.as_ref().is_some_and(|r| r.id == "xdlist" || r.id == "list");
                         let _ = app.session.input(Input::Keyword(k.clone()));
+                        if was_inquiry && !app.session.prompting() {
+                            app.cmd.expanded = true;
+                        }
                     }
                     if i + 1 < kws.len() {
                         let g = p.layout_no_wrap("/".into(), font.clone(), t.text);

@@ -67,6 +67,9 @@ const SESSION_VARS: &[&str] = &[
     "ZOOMFACTOR",
     "MEASUREINIT",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "FONTALT",
     "FONTFALLBACK",
     "SAVETIME",
@@ -145,6 +148,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
+        "AREA" => json!(s.area),
+        "PERIMETER" => json!(s.perimeter),
+        "DISTANCE" => json!(s.distance),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
@@ -197,6 +203,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The view twist (DVIEW TWist), in degrees counterclockwise.
+        "VIEWTWIST" => json!(s.state().ok()?.view().twist.to_degrees()),
         "EXTMIN" | "EXTMAX" => {
             let d = s.doc().ok()?;
             let e = d.extents(&s.space());
@@ -274,8 +282,29 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
 }
 
 /// Variables `get` reports from session or drawing state that `set` can't change.
-const READ_ONLY: &[&str] =
-    &["CMDNAMES", "DWGNAME", "DWGPREFIX", "DBMOD", "BLOCKEDITOR", "LASTPOINT", "VIEWCTR", "VIEWSIZE", "EXTMIN", "EXTMAX", "UNDOCTL", "UNDOMARKS"];
+const READ_ONLY: &[&str] = &[
+    "CMDNAMES",
+    "DWGNAME",
+    "DWGPREFIX",
+    "DWGTITLED",
+    "CMDACTIVE",
+    "TILEMODE",
+    "PLATFORM",
+    "DBMOD",
+    "BLOCKEDITOR",
+    "CTAB",
+    "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
+    "VIEWCTR",
+    "VIEWSIZE",
+    "VIEWTWIST",
+    "EXTMIN",
+    "EXTMAX",
+    "UNDOCTL",
+    "UNDOMARKS",
+];
 
 pub fn is_read_only(name: &str) -> bool {
     READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim())) || table::is_read_only(&name.trim().to_ascii_uppercase())
@@ -529,11 +558,6 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
 
 pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
-    for n in SESSION_VARS {
-        if let Some(v) = get(s, n) {
-            m.insert((*n).to_string(), v);
-        }
-    }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
             if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
@@ -541,6 +565,13 @@ pub fn list(s: &Session) -> Value {
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
             }
+        }
+    }
+    // The session's values last: a drawing's header can carry the same names (ORTHOMODE,
+    // LWDISPLAY, an AREA), and `get` reads the session's.
+    for n in SESSION_VARS {
+        if let Some(v) = get(s, n) {
+            m.insert((*n).to_string(), v);
         }
     }
     table::list(s, &mut m);

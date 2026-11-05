@@ -132,7 +132,7 @@ menu	Modify	Edita
 	Center, Start, Angle	Centro, inizio, angolo
 	Center, Start, End	Centro, inizio, fine
 	Center, Start, Length	Centro, inizio, lunghezza
-	Chamfer	Cima
+	Chamfer	Smusso
 	Change Space	Cambia spazio
 	Change to Current Layer	Cambia al layer corrente
 	Changed: {n}	Modificati: {n}
@@ -142,6 +142,8 @@ menu	Modify	Edita
 	Clear	Cancella
 	Clip	Delimita
 	Clip Viewport	Delimita finestra
+	Clip Xref	Ritaglia xrif
+	Xref Clip Frame	Cornice ritaglio xrif
 	Clipboard	Appunti
 	Close	Chiudi
 	Close All	Chiudi tutto
@@ -288,7 +290,7 @@ menu	Modify	Edita
 	Enter a vertex editing option	Digitare un'opzione di modifica dei vertici
 	Enter an option	Digitare un'opzione
 	Enter angle of xline	Digitare l'angolo della linea di costruzione
-	Enter angle of xline (0) or	Digitare l'angolo della linea di costruzione (0) o
+	Enter angle of xline (0)	Digitare l'angolo della linea di costruzione (0)
 	Enter area of rectangle in current units	Digitare l'area del rettangolo nelle unità correnti
 	Enter attribute prompt	Digitare il messaggio dell'attributo
 	Enter attribute tag name	Digitare il nome dell'etichetta dell'attributo
@@ -299,7 +301,7 @@ menu	Modify	Edita
 	Enter default attribute value	Digitare il valore predefinito dell'attributo
 	Enter degree of spline	Digitare il grado della spline
 	Enter delta angle	Digitare la variazione dell'angolo
-	Enter delta length or	Digitare la variazione di lunghezza o
+	Enter delta length	Digitare la variazione di lunghezza
 	Enter dimension text	Digitare il testo della quota
 	Enter dimension text (<> = measurement)	Digitare il testo della quota (<> = misura)
 	Enter dimension value or [name=expression]	Digitare il valore della quota o [nome=espressione]
@@ -797,8 +799,8 @@ menu	Modify	Edita
 	Select an arc or circle	Selezionare un arco o un cerchio
 	Select an arc.	Selezionare un arco.
 	Select an object	Selezionare un oggetto
-	Select an object to change or	Selezionare l'oggetto da modificare o
-	Select an object to measure or	Selezionare l'oggetto da misurare o
+	Select an object to change	Selezionare l'oggetto da modificare
+	Select an object to measure	Selezionare l'oggetto da misurare
 	Select an object.	Selezionare un oggetto.
 	Select an open curve.	Selezionare una curva aperta.
 	Select an open line, arc, polyline, ellipse arc or spline.	Selezionare una linea, un arco, una polilinea, un arco ellittico o una spline aperti.
@@ -811,9 +813,8 @@ menu	Modify	Edita
 	Select first line	Selezionare la prima linea
 	Select first line or arc	Selezionare la prima linea o il primo arco
 	Select first object	Selezionare il primo oggetto
-	Select first object or	Selezionare il primo oggetto o
 	Select first point	Selezionare il primo punto
-	Select nested objects to copy or	Selezionare gli oggetti nidificati da copiare o
+	Select nested objects to copy	Selezionare gli oggetti nidificati da copiare
 	Select object	Selezionare l'oggetto
 	Select object to dimension	Selezionare l'oggetto da quotare
 	Select object to divide	Selezionare l'oggetto da dividere
@@ -829,7 +830,7 @@ menu	Modify	Edita
 	Select one polyline (Multiple is available through the JSON form).	Selezionare una polilinea (Multiple è disponibile tramite il modulo JSON).
 	Select path curve	Selezionare la curva della traiettoria
 	Select point or object	Selezionare un punto o un oggetto
-	Select polyline or	Selezionare la polilinea o
+	Select polyline	Selezionare la polilinea
 	Select second line	Selezionare la seconda linea
 	Select second line or shift-select to apply corner	Selezionare la seconda linea o selezionare con Maiusc per applicare l'angolo
 	Select second object	Selezionare il secondo oggetto
@@ -889,9 +890,8 @@ menu	Modify	Edita
 	Specify axis endpoint of ellipse	Specificare l'estremo dell'asse dell'ellisse
 	Specify base diameter	Specificare il diametro di base
 	Specify base point	Specificare il punto base
-	Specify base point or	Specificare il punto base o
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Specificare il punto base o lo spostamento (trascinare con il tasto centrale del mouse per il pan in tempo reale)
-	Specify base radius or	Specificare il raggio di base o
+	Specify base radius	Specificare il raggio di base
 	Specify center of donut	Specificare il centro dell'anello
 	Specify center of ellipse	Specificare il centro dell'ellisse
 	Specify center of polygon	Specificare il centro del poligono
@@ -918,8 +918,8 @@ menu	Modify	Edita
 	Specify fillet radius	Specificare il raggio di raccordo
 	Specify fillet radius for rectangles	Specificare il raggio di raccordo dei rettangoli
 	Specify first angle endpoint	Specificare il primo estremo dell'angolo
-	Specify first chamfer distance	Specificare la prima distanza di cimatura
-	Specify first chamfer distance for rectangles	Specificare la prima distanza di cimatura dei rettangoli
+	Specify first chamfer distance	Specificare la prima distanza di smusso
+	Specify first chamfer distance for rectangles	Specificare la prima distanza di smusso dei rettangoli
 	Specify first constraint point	Specificare il primo punto del vincolo
 	Specify first corner	Specificare il primo angolo
 	Specify first corner point	Specificare il primo angolo
@@ -933,7 +933,7 @@ menu	Modify	Edita
 	Specify first point on circle: _tan to	Specificare il primo punto sul cerchio: _tan a
 	Specify first source point	Specificare il primo punto di origine
 	Specify height	Specificare l'altezza
-	Specify helix height or	Specificare l'altezza dell'elica o
+	Specify helix height	Specificare l'altezza dell'elica
 	Specify included angle	Specificare l'angolo compreso
 	Specify insertion base point	Specificare il punto base di inserimento
 	Specify insertion point	Specificare il punto di inserimento
@@ -987,7 +987,6 @@ menu	Modify	Edita
 	Specify new width for all segments	Specificare la nuova larghezza di tutti i segmenti
 	Specify next point	Specificare il punto successivo
 	Specify offset distance	Specificare la distanza di offset
-	Specify offset distance or	Specificare la distanza di offset o
 	Specify opposite corner	Specificare l'angolo opposto
 	Specify other corner point	Specificare l'altro angolo
 	Specify other endpoint of axis	Specificare l'altro estremo dell'asse
@@ -1000,11 +999,10 @@ menu	Modify	Edita
 	Specify radius of circle	Specificare il raggio del cerchio
 	Specify rotation angle	Specificare l'angolo di rotazione
 	Specify rotation angle of text	Specificare l'angolo di rotazione del testo
-	Specify rotation angle or	Specificare l'angolo di rotazione o
 	Specify scale factor	Specificare il fattore di scala
 	Specify second angle endpoint	Specificare il secondo estremo dell'angolo
 	Specify second break point	Specificare il secondo punto di interruzione
-	Specify second chamfer distance for rectangles	Specificare la seconda distanza di cimatura dei rettangoli
+	Specify second chamfer distance for rectangles	Specificare la seconda distanza di smusso dei rettangoli
 	Specify second constraint point	Specificare il secondo punto del vincolo
 	Specify second destination point	Specificare il secondo punto di destinazione
 	Specify second end point of circle's diameter	Specificare il secondo estremo del diametro del cerchio
@@ -1033,9 +1031,9 @@ menu	Modify	Edita
 	Specify third source point or <continue>	Specificare il terzo punto di origine o <continua>
 	Specify through point	Specificare il punto di passaggio
 	Specify top diameter	Specificare il diametro superiore
-	Specify top radius or	Specificare il raggio superiore o
+	Specify top radius	Specificare il raggio superiore
 	Specify total angle	Specificare l'angolo totale
-	Specify total length or	Specificare la lunghezza totale o
+	Specify total length	Specificare la lunghezza totale
 	Specify width for rectangles	Specificare la larghezza dei rettangoli
 	Sphere	Sfera
 	Spline	Spline
@@ -1368,6 +1366,18 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Find All	Find All
+	Find what:	Find what:
+	Match case	Match case
+	Replace	Replace
+	Replace All	Replace All
+	Replace with:	Replace with:
+	Replacement text	Replacement text
+	Results	Results
+	Searches the current space.	Searches the current space.
+	Text to find	Text to find
+	Whole words	Whole words
+	Nothing found	Nothing found
 	Copy All	Copia tutto
 	Copy history output to clipboard	Copia cronologia negli appunti
 	Close History Window (F2)	Chiudi finestra cronologia (F2)
@@ -1617,15 +1627,21 @@ menu	Modify	Edita
 	no [CommandMethod] found	nessun [CommandMethod] trovato
 	Font	Carattere
 	Save Layout as Template	Salva layout come modello
-
 	Drawing File is Write-Protected	Il file di disegno è protetto da scrittura
 	The drawing file '{name}' is currently in use by:	Il file di disegno '{name}' è attualmente in uso da:
 	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Il disegno verrà aperto in modalità di sola lettura. Le modifiche non possono essere salvate nel file originale.
 	Open (Read-Only)	Apri (sola lettura)
-
 	Drawing file is write-protected ({info}). Opened read-only.	Il file di disegno è protetto da scrittura ({info}). Aperto in sola lettura.
 	in use by {user} on {machine} ({time})	in uso da {user} su {machine} ({time})
 	in use by {user} ({time})	in uso da {user} ({time})
 	Save changes to block "{name}"?	Salvare le modifiche al blocco "{name}"?
 	New AppID (e.g. CAD_XDATA)	Nuovo AppID (es. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Crea applicazione CAD_XDATA
+	Backup copy	Copia di backup
+	Create backup copy with each save	Crea copia di backup a ogni salvataggio
+	Change	Cambia
+	DView	VistaD
+	Multiple Insert	Inserimento multiplo
+	Raster Images	Immagini raster
+	Units	Unità
+	Xref	RifEst

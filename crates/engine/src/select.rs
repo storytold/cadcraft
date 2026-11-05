@@ -117,11 +117,15 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
-            Some(blk) => blk.entities.iter().any(|be| match &be.kind {
-                EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
-                EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
-                _ => false,
-            }),
+            // The block draws translated by the insertion point (group 12): test there (#2634).
+            Some(blk) => {
+                let p = p - dm.insertion_point.xy();
+                blk.entities.iter().any(|be| match &be.kind {
+                    EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                    EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
+                    _ => false,
+                })
+            }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
@@ -378,6 +382,7 @@ fn display_list_distance(list: &cadcraft_render::DisplayList, p: Vec2) -> f64 {
                 }
                 d_tri
             }
+            cadcraft_render::Kind::Image { .. } => f64::INFINITY,
         };
         best = best.min(dist);
         if best == 0.0 {
@@ -536,6 +541,7 @@ fn in_orbit_window(ent: &OrbitEnt, bx: &Bounds2, crossing: bool) -> bool {
                     || seg_hits_box(tri[2], tri[0], bx)
                     || bx.corners().iter().any(|&c| point_in_polygon(tri, c))
             }),
+            cadcraft_render::Kind::Image { .. } => false,
         };
         if hit {
             return true;
@@ -625,6 +631,7 @@ fn orbit_ent_polylines(ent: &OrbitEnt) -> Vec<Vec<Vec2>> {
                     polys.push(vec![tri[0], tri[1], tri[2], tri[0]]);
                 }
             }
+            cadcraft_render::Kind::Image { .. } => {}
         }
     }
     polys
@@ -935,6 +942,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
         (d, h)

@@ -283,7 +283,7 @@ fn mspace_edits_model_through_viewport() {
     s.cmdline("circle 10,10 3").unwrap();
     assert_eq!(s.doc().unwrap().model.len(), before + 1);
     // Zooming changes the viewport's model view, not the sheet.
-    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0 });
+    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0, twist: v.twist });
     let vp2 = viewports(&s, "L").into_iter().find(|(x, _)| *x == h).unwrap().1;
     assert!((vp2.view_height - vp.view_height / 2.0).abs() < 1e-9);
     assert_eq!(s.state().unwrap().paper_view(), pv);
@@ -292,4 +292,18 @@ fn mspace_edits_model_through_viewport() {
     s.execute("mspace", &json!({})).unwrap();
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
+}
+
+/// PLOT and EXPORTPDF help name the `device` parameter, and PLOT's help every built-in device (#2557).
+#[test]
+fn plot_help_names_the_device_and_the_built_in_devices() {
+    for id in ["plot", "exportpdf"] {
+        let help = crate::find_command(id).map(|c| c.params).unwrap_or_default();
+        assert!(help.contains("device?"), "{id}: {help}");
+    }
+    let help = crate::find_command("plot").map(|c| c.params).unwrap_or_default();
+    for name in ["CADCraft PDF", "CADCraft PNG", "CADCraft SVG"] {
+        assert!(super::super::plotters::find_device(name).is_some(), "{name} is not a device");
+        assert!(help.contains(name), "plot help lacks {name}");
+    }
 }

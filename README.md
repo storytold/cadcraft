@@ -230,6 +230,11 @@ How image exports (PNG 2400×1600, SVG, PDF) are framed: `convert` fits the mode
 rectangle, centred and scaled without distortion; `--view extents` or `--view current` forces
 either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
 
+When reading a file leaves something out (records a DXF reader can't place, object records of a
+damaged DWG), `info` reports it (`skipped`, `readNotes`), `convert` warns on stderr and `run`
+prints the DWG notes with its log; the exit code stays 0. MCP `open` replies with the notes as
+`warnings`.
+
 MCP tools include `command_line` (type at the prompt), `execute` (any command with JSON),
 `inspect_drawing`, `query_entities`, `render` (returns a PNG) and, when connected to the app,
 `screenshot` and `ui_click`. The desktop app's JSON control channel is documented in

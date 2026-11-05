@@ -4,7 +4,7 @@ use cadcraft_color::Rgb;
 use cadcraft_geom::{Bounds2, Vec2};
 use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-use crate::{DisplayList, Kind};
+use crate::{DImage, DisplayList, Kind};
 
 /// A 2D view: world point at the image centre and pixels per drawing unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,43 +78,6 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     let mut pm = Pixmap::new(view.width, view.height)?;
     pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
     let vis = view.world_bounds();
-    for img in &list.images {
-        let mut ib = Bounds2::EMPTY;
-        for q in [img.origin, img.origin + img.u, img.origin + img.u + img.v, img.origin + img.v] {
-            ib.add(q);
-        }
-        if !ib.intersects(&vis) {
-            continue;
-        }
-        let Ok(dyn_img) = image::load_from_memory(&img.bytes) else { continue };
-        let (iw, ih) = (dyn_img.width(), dyn_img.height());
-        if iw == 0 || ih == 0 || iw > 16384 || ih > 16384 {
-            continue;
-        }
-        let Some(mut src_pm) = Pixmap::new(iw, ih) else { continue };
-        let rgba = dyn_img.to_rgba8();
-        for (dst, px) in src_pm.pixels_mut().iter_mut().zip(rgba.pixels()) {
-            if let Some(c) = tiny_skia::PremultipliedColorU8::from_rgba(
-                (u16::from(px[0]) * u16::from(px[3]) / 255) as u8,
-                (u16::from(px[1]) * u16::from(px[3]) / 255) as u8,
-                (u16::from(px[2]) * u16::from(px[3]) / 255) as u8,
-                px[3],
-            ) {
-                *dst = c;
-            }
-        }
-        let (tl_x, tl_y) = view.to_screen(img.origin + img.v);
-        let (tr_x, tr_y) = view.to_screen(img.origin + img.u + img.v);
-        let (bl_x, bl_y) = view.to_screen(img.origin);
-        let sx = (tr_x - tl_x) / (iw as f32);
-        let ky = (tr_y - tl_y) / (iw as f32);
-        let kx = (bl_x - tl_x) / (ih as f32);
-        let sy = (bl_y - tl_y) / (ih as f32);
-        let xf = Transform::from_row(sx, ky, kx, sy, tl_x, tl_y);
-        let opacity = (100u32.saturating_sub(u32::from(img.fade)) as f32 / 100.0).clamp(0.0, 1.0);
-        let paint = tiny_skia::PixmapPaint { opacity, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, src_pm.as_ref(), &paint, xf, None);
-    }
     let mut hairlines = Hairlines::default();
     let mut screen: Vec<(f32, f32)> = Vec::new();
     for p in &list.prims {
@@ -182,6 +145,13 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
                     if let Some(r) = tiny_skia::Rect::from_xywh(x - 0.5, y - 0.5, 1.5, 1.5) {
                         pm.fill_path(&PathBuilder::from_rect(r), &paint, FillRule::Winding, Transform::identity(), None);
                     }
+                }
+            }
+            Kind::Image { index } => {
+                if let Some(img) = list.images.get(index as usize)
+                    && Bounds2::from_points(pts.iter().copied()).intersects(&vis)
+                {
+                    image(&mut pm, img, view, p.alpha(), o.antialias);
                 }
             }
             Kind::Infinite { ray } => {
@@ -288,6 +258,95 @@ pub fn blank_outside_pixels(pm: &mut Pixmap, top_left: (f64, f64), bottom_right:
             }
         }
     }
+}
+
+/// Draw `img` with the object opacity `alpha`, cut to its clip outlines.
+fn image(pm: &mut Pixmap, img: &DImage, view: &View, alpha: u8, antialias: bool) {
+    let r = &img.raster;
+    let Some(to_screen) = grid_to_screen(img, view) else { return };
+    let Ok(mask) = clip_mask(pm, img, view, antialias) else { return };
+    // tiny-skia wants premultiplied pixels; opaque ones already are.
+    let owned;
+    let pixels = if r.opaque() {
+        tiny_skia::PixmapRef::from_bytes(r.rgba(), r.width(), r.height())
+    } else {
+        owned = premultiplied(r);
+        owned.as_ref().map(Pixmap::as_ref)
+    };
+    let Some(pixels) = pixels else { return };
+    let paint = Paint {
+        shader: tiny_skia::Pattern::new(
+            pixels,
+            tiny_skia::SpreadMode::Pad,
+            tiny_skia::FilterQuality::Bilinear,
+            img.opacity(alpha),
+            Transform::identity(),
+        ),
+        anti_alias: antialias,
+        ..Paint::default()
+    };
+    // The picture's own rectangle in its pixel grid, carried to the screen by `to_screen`.
+    // Filled as a path: tiny-skia's anti-aliased `fill_rect` trips a debug assertion on narrow
+    // rects (see the points above), which a one-pixel image drawn at its own size would be.
+    if let Some(rect) = tiny_skia::Rect::from_xywh(0.0, 0.0, r.width() as f32, r.height() as f32) {
+        pm.fill_path(&PathBuilder::from_rect(rect), &paint, FillRule::Winding, to_screen, mask.as_ref());
+    }
+}
+
+/// The transform from `img`'s pixel grid (x right, y down) to screen pixels; `None` when the
+/// image has no area on screen or lies out of number range.
+fn grid_to_screen(img: &DImage, view: &View) -> Option<Transform> {
+    let s = view.scale;
+    let (x, y) = view.to_screen(img.origin);
+    // Screen y runs down, world y up.
+    let ts = Transform::from_row((img.right.x * s) as f32, (-img.right.y * s) as f32, (img.down.x * s) as f32, (-img.down.y * s) as f32, x, y);
+    (ts.is_finite() && ts.invert().is_some()).then_some(ts)
+}
+
+/// The image has a clip outline without area: nothing of it shows.
+struct Hidden;
+
+/// The part of the picture `img`'s clip outlines leave visible: `None` for all of it.
+fn clip_mask(pm: &Pixmap, img: &DImage, view: &View, antialias: bool) -> Result<Option<tiny_skia::Mask>, Hidden> {
+    let mut mask: Option<tiny_skia::Mask> = None;
+    for outline in &img.clips {
+        let path = outline_path(outline, view).ok_or(Hidden)?;
+        match &mut mask {
+            // The first outline starts the mask; each further one narrows it.
+            None => {
+                let mut m = tiny_skia::Mask::new(pm.width(), pm.height()).ok_or(Hidden)?;
+                m.fill_path(&path, FillRule::EvenOdd, antialias, Transform::identity());
+                mask = Some(m);
+            }
+            Some(m) => m.intersect_path(&path, FillRule::EvenOdd, antialias, Transform::identity()),
+        }
+    }
+    Ok(mask)
+}
+
+/// A closed world-space outline as a screen path.
+fn outline_path(outline: &[Vec2], view: &View) -> Option<tiny_skia::Path> {
+    let mut pb = PathBuilder::new();
+    for (i, q) in outline.iter().enumerate() {
+        let (x, y) = view.to_screen(*q);
+        if i == 0 {
+            pb.move_to(x, y);
+        } else {
+            pb.line_to(x, y);
+        }
+    }
+    pb.close();
+    pb.finish()
+}
+
+/// The pixels of `r` with each colour multiplied by its alpha.
+fn premultiplied(r: &cadcraft_doc::Raster) -> Option<Pixmap> {
+    let mut data = Vec::with_capacity(r.rgba().len());
+    for [red, green, blue, a] in r.rgba().as_chunks::<4>().0 {
+        let m = |c: &u8| ((u16::from(*c) * u16::from(*a) + 127) / 255) as u8;
+        data.extend_from_slice(&[m(red), m(green), m(blue), *a]);
+    }
+    Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(r.width(), r.height())?)
 }
 
 /// Render and encode as PNG.

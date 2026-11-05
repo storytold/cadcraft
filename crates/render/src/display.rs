@@ -22,6 +22,51 @@ pub enum Kind {
     Point,
     /// An infinite line or ray: `verts[start]` = base, `verts[start+1]` = unit direction.
     Infinite { ray: bool },
+    /// A raster image, [`DisplayList::images`]`[index]`; `verts[start..start+4]` are its corners
+    /// (top left, top right, bottom right, bottom left of the pixel grid).
+    Image { index: u32 },
+}
+
+/// A raster image placed in the world.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DImage {
+    pub raster: std::sync::Arc<cadcraft_doc::Raster>,
+    /// Where the top-left corner of the top-left pixel is.
+    pub origin: Vec2,
+    /// One pixel to the right and one pixel down, in world units.
+    pub right: Vec2,
+    pub down: Vec2,
+    /// Closed outlines the image is cut to (all of them: its own clip boundary, then the
+    /// viewports it is seen through). Empty: the whole image.
+    pub clips: Vec<Vec<Vec2>>,
+    /// Fade towards the background, percent (0..=100).
+    pub fade: u8,
+}
+
+impl DImage {
+    /// The world position of pixel-grid point (`x`, `y`), `y` down from the top.
+    pub fn at(&self, x: f64, y: f64) -> Vec2 {
+        self.origin + self.right * x + self.down * y
+    }
+    /// The pixel-grid point at world position `q` (the inverse of [`DImage::at`]); `None` for an
+    /// image squashed to a line or a point.
+    pub fn pixel_of(&self, q: Vec2) -> Option<Vec2> {
+        let det = self.right.x * self.down.y - self.right.y * self.down.x;
+        if !(det.is_finite() && det.abs() > 0.0) {
+            return None;
+        }
+        let d = q - self.origin;
+        Some(Vec2::new((d.x * self.down.y - d.y * self.down.x) / det, (self.right.x * d.y - self.right.y * d.x) / det))
+    }
+    /// How opaque the image is drawn, 0..=1: the object's opacity `alpha` (0..=255) less the fade.
+    pub fn opacity(&self, alpha: u8) -> f32 {
+        f32::from(alpha) / 255.0 * (1.0 - f32::from(self.fade.min(100)) / 100.0)
+    }
+    /// The corners: top left, top right, bottom right, bottom left.
+    pub fn corners(&self) -> [Vec2; 4] {
+        let (w, h) = (f64::from(self.raster.width()), f64::from(self.raster.height()));
+        [self.at(0.0, 0.0), self.at(w, 0.0), self.at(w, h), self.at(0.0, h)]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,6 +91,8 @@ pub struct DisplayList {
     pub prims: Vec<DPrim>,
     pub verts: Vec<Vec2>,
     pub tris: Vec<Vec2>,
+    /// The raster images drawn by [`Kind::Image`] primitives.
+    pub images: Vec<DImage>,
     /// Plots ([`build_plot`]): for each primitive, the index in [`Drawing::layers`] of the layer
     /// it is drawn on (block contents on layer 0: the block reference's; [`NO_LAYER`] when the
     /// layer isn't in the table), for PDF layers. Empty for other lists.
@@ -59,28 +106,13 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
+    /// The expansion budget was spent: block contents past it are not in the list. The screen,
+    /// plots and exports draw what is here; the CLI and the control channel report this, so an
+    /// output that leaves contents out is never silent (#1070).
+    pub truncated: bool,
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
-    /// Raster images placed in the display list's coordinate space (for PDF plotting and CPU rasterisation).
-    pub images: Vec<PlotImage>,
-}
-
-/// A raster image placed in world/paper coordinates.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlotImage {
-    /// Bottom-left corner in world/paper coordinates.
-    pub origin: Vec2,
-    /// Bottom edge vector (`u * size.x`) in world/paper coordinates.
-    pub u: Vec2,
-    /// Left edge vector (`v * size.y`) in world/paper coordinates.
-    pub v: Vec2,
-    /// Raw encoded image bytes (PNG/JPEG).
-    pub bytes: std::sync::Arc<[u8]>,
-    /// Fade percentage (0..=100).
-    pub fade: u8,
-    /// Optional clip rectangle (e.g. when inside a viewport).
-    pub clip: Option<Bounds2>,
 }
 
 /// A glyph of plotted text: the font glyph and, in world coordinates, where it sits. It is
@@ -150,14 +182,19 @@ impl DisplayList {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     let (verts, tris, prims) = (dst.verts.len() as u32, dst.tris.len() as u32, dst.prims.len() as u32);
+    let images = dst.images.len() as u32;
     // Pens are parallel to the primitives, with missing entries meaning "use object".
     if !src.pens.is_empty() {
         dst.pens.resize(dst.prims.len(), Pen::default());
     }
     dst.prims.extend(src.prims.into_iter().map(|mut p| {
         p.start += if matches!(p.kind, Kind::Tris | Kind::Mask) { tris } else { verts };
+        if let Kind::Image { index } = &mut p.kind {
+            *index = index.saturating_add(images);
+        }
         p
     }));
+    dst.images.extend(src.images);
     dst.verts.extend(src.verts);
     dst.tris.extend(src.tris);
     dst.prim_layers.extend(src.prim_layers);
@@ -168,7 +205,6 @@ pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
         t
     }));
     dst.pens.extend(src.pens);
-    dst.images.extend(src.images);
     dst.bounds = dst.bounds.union(&src.bounds);
     dst.expanded = dst.expanded.saturating_add(src.expanded);
 }

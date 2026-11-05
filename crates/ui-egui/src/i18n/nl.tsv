@@ -1624,3 +1624,33 @@ menu	Modify	Wijzigen
 	Create backup copy with each save	Maak een reservekopie bij elk opslaan
 	New AppID (e.g. CAD_XDATA)	Nieuwe AppID (bijv. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ CAD_XDATA applicatie aanmaken
+	Enter angle of xline (0)	Voer hoek van constructielijn in (0)
+	Enter delta length	Voer deltalengte in
+	Multiple Insert	Meervoudig invoegen
+	Select an object to change	Selecteer een object om te wijzigen
+	Select an object to measure	Selecteer een object om op te meten
+	Select nested objects to copy	Selecteer geneste objecten om te kopiëren
+	Select polyline	Selecteer polylijn
+	Specify base radius	Geef basisstraal op
+	Specify helix height	Geef spiraalhoogte op
+	Specify top radius	Geef bovenstraal op
+	Specify total length	Geef totale lengte op
+	Find All	Alles zoeken
+	Find what:	Zoeken naar:
+	Match case	Hoofdlettergevoelig
+	Replace	Vervangen
+	Replace All	Alles vervangen
+	Replace with:	Vervangen door:
+	Replacement text	Vervangende tekst
+	Results	Resultaten
+	Searches the current space.	Doorzoekt de huidige ruimte.
+	Text to find	Te zoeken tekst
+	Whole words	Hele woorden
+	Nothing found	Niets gevonden
+	Change	Wijzigen
+	Clip Xref	Xref bijsnijden
+	DView	DWeergave
+	Raster Images	Rasterafbeeldingen
+	Units	Eenheden
+	Xref	Externe referentie
+	Xref Clip Frame	Xref-bijsnijdkader

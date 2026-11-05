@@ -1624,3 +1624,33 @@ menu	Modify	Modificar
 	Create backup copy with each save	Criar cópia de segurança ao guardar
 	New AppID (e.g. CAD_XDATA)	Novo AppID (ex. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Criar aplicação CAD_XDATA
+	Enter angle of xline (0)	Introduza o ângulo da linha de construção (0)
+	Enter delta length	Introduza o comprimento delta
+	Multiple Insert	Inserção múltipla
+	Select an object to change	Selecione um objeto a alterar
+	Select an object to measure	Selecione um objeto a medir
+	Select nested objects to copy	Selecione objetos aninhados a copiar
+	Select polyline	Selecione a polilinha
+	Specify base radius	Especifique o raio da base
+	Specify helix height	Especifique a altura da hélice
+	Specify top radius	Especifique o raio superior
+	Specify total length	Especifique o comprimento total
+	Find All	Localizar tudo
+	Find what:	Localizar:
+	Match case	Maiúsculas/minúsculas
+	Replace	Substituir
+	Replace All	Substituir tudo
+	Replace with:	Substituir por:
+	Replacement text	Texto de substituição
+	Results	Resultados
+	Searches the current space.	Procura no espaço atual.
+	Text to find	Texto a localizar
+	Whole words	Palavras inteiras
+	Nothing found	Nada encontrado
+	Change	Alterar
+	Clip Xref	Recortar refex
+	DView	Vista dinâmica
+	Raster Images	Imagens raster
+	Units	Unidades
+	Xref	Refex
+	Xref Clip Frame	Moldura de recorte de refex

@@ -25,6 +25,9 @@ use cadcraft_geom::Vec2;
 /// Upper bound on the texts and shapes drawn along one run (hostile scales; `apply` caps the
 /// dashes).
 const MAX_TEXTS: usize = 10_000;
+/// Most points all the placed texts and shapes of one polyline hold together (a large shape
+/// repeated many times).
+const MAX_POINTS: usize = 2_000_000;
 
 /// One text or shape element of the pattern, shaped once at the origin.
 struct Element {
@@ -56,10 +59,12 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     }
     let mut walk = Walk { pts, i: 0, start: 0.0 };
     let mut base = 0.0;
+    let mut points = 0usize;
     'repeats: while base <= len {
         for el in &elements {
             let s = base + el.at;
-            if s > len + 1e-9 || out.len() >= MAX_TEXTS {
+            points = points.saturating_add(point_count(&el.local));
+            if s > len + 1e-9 || out.len() >= MAX_TEXTS || points > MAX_POINTS {
                 break 'repeats;
             }
             let Some((p, dir)) = walk.at(s) else { break 'repeats };
@@ -72,6 +77,10 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
         base += total;
     }
     out
+}
+
+fn point_count(s: &Shaped) -> usize {
+    s.strokes.iter().map(Vec::len).chain(s.glyphs.iter().flatten().map(Vec::len)).fold(0, usize::saturating_add)
 }
 
 /// The shape element `el` at the origin (scaled by the element's and the linetype's scale), if
@@ -251,6 +260,21 @@ mod tests {
         let mut lt = fence("cadcraft-render-lt.shx");
         lt.pattern[1].shape = Some(131);
         assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &lt, 1.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn a_large_shape_repeated_many_times_is_bounded() {
+        // A shape of 1,000 one-unit vectors there and back: about 1,000 points each time.
+        let body: Vec<&str> = (0..500).flat_map(|_| ["010", "018"]).collect();
+        let src = format!("*131,1002,ZIGZAG\n1,{},0\n", body.join(","));
+        cadcraft_fonts::shx::register("cadcraft-render-big.shx", &cadcraft_fonts::shx::compile(&src).unwrap()).unwrap();
+        let d = Drawing::new_imperial();
+        let mut lt = fence("cadcraft-render-big.shx");
+        lt.pattern[1].shape = Some(131);
+        // 3,000 repeats would hold about 3 million points.
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2850.0, 0.0)], &lt, 1.0, 0.0);
+        let points: usize = t.iter().map(point_count).sum();
+        assert!(!t.is_empty() && t.len() < 3000 && points <= MAX_POINTS, "{} shapes, {points} points", t.len());
     }
 
     #[test]

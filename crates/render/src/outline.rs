@@ -106,10 +106,12 @@ fn chain(mut segs: Vec<(Vec2, Vec2)>) -> Vec<Vec<Vec2>> {
         }
     }
     segs.sort_unstable_by(|(a, b), (c, d)| cmp(*a, *c).then_with(|| cmp(*b, *d)));
-    let mut at: HashMap<Key, Vec<usize>> = HashMap::new();
+    // Segments at each vertex with a cursor past the used ones, so many segments meeting at one
+    // vertex are each examined once rather than from the start on every visit.
+    let mut at: HashMap<Key, (Vec<usize>, usize)> = HashMap::new();
     for (i, (a, b)) in segs.iter().enumerate() {
-        at.entry(key(*a)).or_default().push(i);
-        at.entry(key(*b)).or_default().push(i);
+        at.entry(key(*a)).or_default().0.push(i);
+        at.entry(key(*b)).or_default().0.push(i);
     }
     let mut used = vec![false; segs.len()];
     let mut out = Vec::new();
@@ -125,7 +127,15 @@ fn chain(mut segs: Vec<(Vec2, Vec2)>) -> Vec<Vec<Vec2>> {
         let mut end = b;
         // Each step uses one segment, so the walk ends within `segs.len()` steps.
         loop {
-            let next = at.get(&key(end)).and_then(|ids| ids.iter().copied().find(|&i| !used.get(i).copied().unwrap_or(true)));
+            let next = at.get_mut(&key(end)).and_then(|(ids, cursor)| {
+                while let Some(&i) = ids.get(*cursor) {
+                    if !used.get(i).copied().unwrap_or(true) {
+                        return Some(i);
+                    }
+                    *cursor += 1;
+                }
+                None
+            });
             let Some(i) = next else { break };
             let Some(&(p, q)) = segs.get(i) else { break };
             if let Some(u) = used.get_mut(i) {
@@ -145,6 +155,20 @@ mod tests {
 
     fn total_len(lines: &[Vec<Vec2>]) -> f64 {
         lines.iter().flat_map(|l| l.windows(2).map(|w| w[0].dist(w[1]))).sum()
+    }
+
+    /// Thousands of lobes meeting at one vertex chain in one pass over that vertex's segments.
+    #[test]
+    fn many_lobes_at_one_vertex_chain_quickly() {
+        let mut tris = Vec::new();
+        for i in 0..20_000 {
+            let x = f64::from(i + 1);
+            tris.extend_from_slice(&[Vec2::ZERO, Vec2::new(x, 1.0), Vec2::new(x + 0.5, 2.0)]);
+        }
+        // No wall-clock bound (flaky on loaded runners): a quadratic scan would make this test crawl
+        // rather than fail, so check the output is complete instead.
+        let lines = fill_outlines(&tris);
+        assert_eq!(lines.iter().map(|l| l.len() - 1).sum::<usize>(), 60_000, "every triangle edge is emitted once");
     }
 
     #[test]

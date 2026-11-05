@@ -16,6 +16,13 @@ impl Session {
         true
     }
 
+    /// Whether a selection window from `corner` to `p` is a crossing window: it was dragged
+    /// leftwards on screen (in a twisted view, not along the drawing's X axis).
+    pub fn window_is_crossing(&self, corner: Vec2, p: Vec2) -> bool {
+        let twist = self.state().map_or(0.0, |st| st.view().twist);
+        (p - corner).rotate(twist).x < 0.0
+    }
+
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///
     /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
@@ -25,7 +32,7 @@ impl Session {
         let pickadd = self.settings.pickadd;
         let orbit = self.edit_orbit();
         if let Some(pw) = self.pending_window.take() {
-            let crossing = p.x < pw.corner.x;
+            let crossing = self.window_is_crossing(pw.corner, p);
             let hs = select::select_window_in_orbit(self.doc()?, &space, orbit, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };

@@ -55,6 +55,13 @@ pub fn plain_mtext(s: &str) -> String {
                         i = j + 1;
                     }
                     'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
+                    // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
+                    'U' if crate::unicode_escape(&chars, i).is_some() => {
+                        if let Some(u) = crate::unicode_escape(&chars, i) {
+                            out.push(u);
+                        }
+                        i += 7;
+                    }
                     // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
                     _ => {
                         let mut j = i + 2;
@@ -792,6 +799,8 @@ mod tests {
         assert_eq!(plain_mtext("a\\~b\\\\c"), "a b\\c");
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
+        assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
+        assert_eq!(plain_mtext("\\U+12"), "", "a short escape is a code with an argument");
     }
 
     #[test]

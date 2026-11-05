@@ -1,5 +1,5 @@
 use super::list::preview_options;
-use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, pos2, vec2};
+use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Mat3, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, vec2};
 
 fn color32(c: Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
@@ -17,167 +17,6 @@ fn clip_infinite(xf: &Xf, base: Vec2, dir: Vec2, ray: bool) -> Option<[Pos2; 2]>
     let a = if ray { base } else { base - dir * far };
     let b = base + dir * far;
     Some([xf.to_screen(a), xf.to_screen(b)])
-}
-
-fn load_texture_from_bytes(ctx: &egui::Context, bytes: &[u8], name: &str) -> Option<egui::TextureHandle> {
-    let dyn_img = image::load_from_memory(bytes).ok()?;
-    let (w, h) = (dyn_img.width(), dyn_img.height());
-    if w == 0 || h == 0 || w > 16384 || h > 16384 {
-        return None;
-    }
-    let rgba = dyn_img.to_rgba8();
-    let size = [w as usize, h as usize];
-    let pixels = rgba.into_raw();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-    Some(ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_image_entity(
-    canvas: &mut CanvasState,
-    doc: &cadcraft_doc::Drawing,
-    img: &cadcraft_doc::Image,
-    doc_path: Option<&str>,
-    painter: &egui::Painter,
-    xf: &Xf,
-    ctx: &egui::Context,
-    opacity: f32,
-) {
-    let texture = match canvas.image_textures.get(&img.path) {
-        Some(tex) => tex.clone(),
-        None => {
-            let bytes = cadcraft_engine::cmd::image::resolve_image_bytes(doc, img, doc_path);
-            let Some(bytes) = bytes else { return };
-            let Some(tex) = load_texture_from_bytes(ctx, &bytes, &img.path) else { return };
-            canvas.image_textures.insert(img.path.clone(), tex.clone());
-            tex
-        }
-    };
-
-    let corners = img.corners();
-    let p_bl = xf.to_screen(corners[0]);
-    let p_br = xf.to_screen(corners[1]);
-    let p_tr = xf.to_screen(corners[2]);
-    let p_tl = xf.to_screen(corners[3]);
-
-    if !p_bl.is_finite() || !p_br.is_finite() || !p_tr.is_finite() || !p_tl.is_finite() {
-        return;
-    }
-
-    let fade_alpha = (100u32.saturating_sub(img.fade as u32) * 255 / 100).clamp(0, 255) as f32;
-    let alpha = (fade_alpha * opacity).clamp(0.0, 255.0) as u8;
-    let tint = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
-
-    let mut mesh = egui::Mesh::with_texture(texture.id());
-    let i0 = mesh.vertices.len() as u32;
-    mesh.vertices.push(egui::epaint::Vertex { pos: p_bl, uv: pos2(0.0, 1.0), color: tint });
-    mesh.vertices.push(egui::epaint::Vertex { pos: p_br, uv: pos2(1.0, 1.0), color: tint });
-    mesh.vertices.push(egui::epaint::Vertex { pos: p_tr, uv: pos2(1.0, 0.0), color: tint });
-    mesh.vertices.push(egui::epaint::Vertex { pos: p_tl, uv: pos2(0.0, 0.0), color: tint });
-    mesh.indices.extend([i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
-    painter.add(egui::Shape::mesh(mesh));
-}
-
-pub(super) fn paint_images(
-    canvas: &mut CanvasState,
-    session: &cadcraft_engine::Session,
-    painter: &egui::Painter,
-    xf_model: &Xf,
-    xf_paper: &Xf,
-    ctx: &egui::Context,
-) {
-    let Ok(st) = session.state() else { return };
-    let doc_path = st.path.as_deref();
-    let space = &st.space;
-    let xf = match space {
-        cadcraft_doc::Space::Model => xf_model,
-        cadcraft_doc::Space::Paper(_) => xf_paper,
-    };
-    let Some(store) = st.doc.space(space) else { return };
-    for e in store.iter() {
-        if let cadcraft_doc::EntityKind::Image(img) = &e.kind {
-            if let Some(layer) = st.doc.layer(&e.common.layer)
-                && (layer.frozen || !layer.on)
-            {
-                continue;
-            }
-            if img.display & 1 == 0 {
-                continue;
-            }
-            paint_image_entity(canvas, &st.doc, img, doc_path, painter, xf, ctx, 1.0);
-        } else if let cadcraft_doc::EntityKind::Insert(ins) = &e.kind
-            && let Some(b) = st.doc.block(&ins.block)
-        {
-            let m = ins.transform(b.base.xy());
-            for be in b.entities.iter() {
-                if let cadcraft_doc::EntityKind::Image(bimg) = &be.kind {
-                    let mut ximg = bimg.clone();
-                    ximg.transform(&m);
-                    paint_image_entity(canvas, &st.doc, &ximg, doc_path, painter, xf, ctx, 1.0);
-                }
-            }
-        }
-    }
-}
-
-pub(super) fn paint_preview_images(
-    canvas: &mut CanvasState,
-    session: &cadcraft_engine::Session,
-    ents: &[cadcraft_doc::Entity],
-    painter: &egui::Painter,
-    xf: &Xf,
-    ctx: &egui::Context,
-) {
-    for ent in ents {
-        if let cadcraft_doc::EntityKind::Image(img) = &ent.kind {
-            let tex = if img.path == "preview" {
-                let Some(clip_img) = &session.clipboard_image else { continue };
-                let hash = {
-                    use std::hash::{DefaultHasher, Hasher};
-                    let mut h = DefaultHasher::new();
-                    h.write(&clip_img.bytes);
-                    h.finish()
-                };
-                if canvas.preview_hash != Some(hash)
-                    && let Some(t) = load_texture_from_bytes(ctx, &clip_img.bytes, "__preview__")
-                {
-                    canvas.image_textures.insert("__preview__".to_string(), t);
-                    canvas.preview_hash = Some(hash);
-                }
-                canvas.image_textures.get("__preview__").cloned()
-            } else {
-                canvas.image_textures.get(&img.path).cloned().or_else(|| {
-                    let doc = session.doc().ok()?;
-                    let doc_path = session.drawing_path();
-                    let bytes = cadcraft_engine::cmd::image::resolve_image_bytes(doc, img, doc_path.as_deref())?;
-                    let t = load_texture_from_bytes(ctx, &bytes, &img.path)?;
-                    canvas.image_textures.insert(img.path.clone(), t.clone());
-                    Some(t)
-                })
-            };
-
-            let Some(texture) = tex else { continue };
-            let corners = img.corners();
-            let p_bl = xf.to_screen(corners[0]);
-            let p_br = xf.to_screen(corners[1]);
-            let p_tr = xf.to_screen(corners[2]);
-            let p_tl = xf.to_screen(corners[3]);
-
-            if !p_bl.is_finite() || !p_br.is_finite() || !p_tr.is_finite() || !p_tl.is_finite() {
-                continue;
-            }
-
-            let tint = Color32::from_rgba_unmultiplied(255, 255, 255, 160);
-            let mut mesh = egui::Mesh::with_texture(texture.id());
-            let i0 = mesh.vertices.len() as u32;
-            mesh.vertices.push(egui::epaint::Vertex { pos: p_bl, uv: pos2(0.0, 1.0), color: tint });
-            mesh.vertices.push(egui::epaint::Vertex { pos: p_br, uv: pos2(1.0, 1.0), color: tint });
-            mesh.vertices.push(egui::epaint::Vertex { pos: p_tr, uv: pos2(1.0, 0.0), color: tint });
-            mesh.vertices.push(egui::epaint::Vertex { pos: p_tl, uv: pos2(0.0, 0.0), color: tint });
-            mesh.indices.extend([i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
-            painter.add(egui::Shape::mesh(mesh));
-        }
-    }
 }
 
 /// Points past the view's edge that a dashed outline is still drawn to: more than one dash
@@ -223,12 +62,17 @@ fn dashes(run: &[Pos2], along: f64, stroke: Stroke, dash: f32, gap: f32, out: &m
 /// show (#2299). Each edge keeps its direction and its dashes start where they would on the whole
 /// edge, so they don't crawl as the rectangle or the view moves.
 pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_polygon(clip, &[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()], stroke, dash, gap)
+}
+
+/// [`dashed_rect`] for any closed outline (a selection window turned in a twisted view): each
+/// edge from one corner to the next, the last back to the first.
+pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges =
-        [(r.left_top(), r.right_top()), (r.right_top(), r.right_bottom()), (r.right_bottom(), r.left_bottom()), (r.left_bottom(), r.left_top())];
+    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1));
     for (a, b) in edges {
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
@@ -241,6 +85,7 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
     let vis = xf.world_bounds();
+    super::images::draw(p, xf, list);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
     for prim in &list.prims {
@@ -298,6 +143,8 @@ pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb,
                     shapes.push(Shape::line_segment(seg, Stroke::new(1.0, col)));
                 }
             }
+            // Drawn first, under the lines (`images::draw`).
+            Kind::Image { .. } => {}
         }
     }
     p.extend(shapes);
@@ -349,7 +196,7 @@ pub(super) fn draw_highlight_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_HIGHLIGHT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(*hl_origin, Mat3::IDENTITY),
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
         },
@@ -383,7 +230,7 @@ pub(super) fn draw_drag_gpu(
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, orbit.hash_key()).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation(), orbit.hash_key()).hash(&mut h);
         if pre_transform {
             [raw_m.a, raw_m.b, raw_m.c, raw_m.d, raw_m.e, raw_m.f].map(f64::to_bits).hash(&mut h);
         }
@@ -431,14 +278,16 @@ pub(super) fn draw_drag_gpu(
         c.drag_key = Some(key);
         c.drag_origin = origin;
     }
-    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o).
+    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o), turned with the view.
     let o = c.drag_origin;
     let xform = if pre_transform {
         crate::gpu::IDENTITY_XFORM
-    } else {
+    } else if !orbit.is_top() {
         let m = orbit.project_mat3(raw_m);
         let t = m.apply(o) - o;
         [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32]
+    } else {
+        xf.gpu_xform(o, drag.matrix)
     };
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
@@ -482,6 +331,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_origin = origin;
         c.mesh_ms = crate::now_ms() - t0;
     }
+    super::images::draw(p, xf, list);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -492,7 +342,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAWING,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
@@ -577,6 +427,7 @@ pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, pri
                     line(&outline, &mut shapes);
                 }
             }
+            Kind::Image { .. } => line(&pts.iter().chain(pts.first()).copied().collect::<Vec<_>>(), &mut shapes),
         }
     }
     if !fill.is_empty() {
@@ -603,7 +454,7 @@ mod highlight_stability_tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
         let input = egui::RawInput { screen_rect: Some(rect), events: vec![egui::Event::PointerMoved(pointer)], ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
-            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0 }, list, &[0], Color32::LIGHT_BLUE, look);
+            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, twist: 0.0 }, list, &[0], Color32::LIGHT_BLUE, look);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.textures_delta.clear();
@@ -660,7 +511,7 @@ mod highlight_stability_tests {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
-                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0 };
+                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0 };
                 draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
             });
             h.run_steps(3);
@@ -730,7 +581,7 @@ mod zoomed_highlight_tests {
         let list = line(Vec2::new(-1000.0, 0.0), Vec2::new(1000.0, 0.0));
         // The smaller zoom first, so a regression fails here instead of filling memory at 1e9.
         for scale in [1e3, 1e9] {
-            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale }).len();
+            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, twist: 0.0 }).len();
             assert!((50..=70).contains(&n), "scale {scale}: {n} dashes for 600 points of line");
         }
     }
@@ -741,7 +592,7 @@ mod zoomed_highlight_tests {
     fn clipped_dashes_stay_where_the_whole_line_puts_them() {
         let list = line(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 0.0));
         for x in [500.3, 512.9, 731.0] {
-            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0 };
+            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, twist: 0.0 };
             let whole = Shape::dashed_line(
                 &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(1000.0, 0.0))],
                 Stroke::new(1.0, Color32::LIGHT_BLUE),

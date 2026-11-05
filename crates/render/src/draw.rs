@@ -1,6 +1,6 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
-use super::display::{Kind, NO_LAYER, PlotImage, VIEWPORT_CONTENT};
+use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
@@ -284,31 +284,6 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
-    let o = i.insert.xy();
-    let u = i.u.xy() * i.size.x;
-    let v = i.v.xy() * i.size.y;
-    for q in [o, o + u, o + u + v, o + v] {
-        b.list.bounds.add(ctx.xf.apply(q));
-    }
-    if b.opts.fill
-        && let Some(bytes) = resolve_image_bytes(ctx.d, i)
-    {
-        let world_o = ctx.xf.apply(o);
-        let world_u = ctx.xf.apply(o + u) - world_o;
-        let world_v = ctx.xf.apply(o + v) - world_o;
-        b.list.images.push(PlotImage { origin: world_o, u: world_u, v: world_v, bytes, fade: i.fade.clamp(0, 100), clip: None });
-    }
-    let frame = match ctx.d.header.get("IMAGEFRAME").and_then(cadcraft_doc::HVal::as_i64).unwrap_or(1) {
-        0 => false,
-        2 => !b.plotting,
-        _ => !i.path.starts_with("clipboard_paste_"),
-    };
-    if frame {
-        b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-    }
-}
-
 fn draw_3d_wire(b: &mut Builder, ctx: &Ctx, kind: &EntityKind, rgb: Ink, lw: f32) -> bool {
     match kind {
         EntityKind::Line(l) if (l.a.z - l.b.z).abs() > 1e-12 => {
@@ -334,24 +309,6 @@ fn draw_3d_wire(b: &mut Builder, ctx: &Ctx, kind: &EntityKind, rgb: Ink, lw: f32
     }
 }
 
-/// Resolve image bytes from in-memory drawing assets or disk.
-fn resolve_image_bytes(d: &Drawing, i: &cadcraft_doc::Image) -> Option<std::sync::Arc<[u8]>> {
-    let file_name = i.path.rsplit(['/', '\\']).next().unwrap_or(&i.path).trim();
-    if let Some(b) = d.get_image_asset(&i.path).or_else(|| d.get_image_asset(&i.name)).or_else(|| d.get_image_asset(file_name)) {
-        return Some(std::sync::Arc::from(b.as_slice()));
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let s = i.path.trim().trim_matches('"').trim_matches('\'').trim();
-        if !s.is_empty()
-            && let Ok(bytes) = std::fs::read(s)
-        {
-            return Some(std::sync::Arc::from(bytes));
-        }
-    }
-    None
-}
-
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
     // Straight or spline leader lines; block content draws like a block reference.
     for pts in m.leader_paths() {
@@ -373,6 +330,23 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
         insert(b, ctx, e, ins, rgb);
+    }
+}
+
+fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
+    let o = i.insert.xy();
+    let u = i.u.xy() * i.size.x;
+    let v = i.v.xy() * i.size.y;
+    // Display flag 1: show the image. Without pixels (file not found, not loaded yet, hidden)
+    // the rectangle is crossed out.
+    let raster = if i.display & 1 != 0 { ctx.d.rasters.get(&i.path) } else { None };
+    if let Some(r) = raster {
+        b.image(ctx, rgb, i, r);
+    }
+    b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+    if raster.is_none() {
+        b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+        b.polyline(ctx, rgb, lw, &[o + u, o + v]);
     }
 }
 
@@ -400,7 +374,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
+        // the insertion point, so the block draws translated by it (#2634).
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -420,6 +397,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();

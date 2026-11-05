@@ -1,3 +1,5 @@
+use crate::DisplayOnly;
+
 use super::{
     Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Space, Step, Value,
     Vec2, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
@@ -203,7 +205,7 @@ impl Session {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 let orbit = self.edit_orbit();
                 if let Some(pw) = self.pending_window.take() {
-                    let crossing = p.x < pw.corner.x;
+                    let crossing = self.window_is_crossing(pw.corner, p);
                     let hs = select::select_window_in_orbit(self.doc()?, &space, orbit, Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
@@ -290,7 +292,10 @@ impl Session {
         let wants_work = self.prompt_wants_work_point();
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
-            Some(Input::Cancel) => Ok(Step::Cancel),
+            Some(Input::Cancel) => {
+                run.machine.cancelled(self);
+                Ok(Step::Cancel)
+            }
             Some(i) => {
                 if let Input::Point(p) = &i {
                     if wants_work {
@@ -454,7 +459,8 @@ impl Session {
         }
         if self.running.is_some() {
             if self.suspended.is_some() {
-                if let Some(nested) = self.running.take() {
+                if let Some(mut nested) = self.running.take() {
+                    nested.machine.cancelled(self);
                     self.finish(nested, true);
                 }
                 self.running = self.suspended.take();
@@ -564,6 +570,13 @@ impl Session {
         }
         out.extend(kinds.into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }));
         out
+    }
+
+    /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
+    /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
+    /// `None`: the drawing.
+    pub fn display_only(&self) -> Option<DisplayOnly> {
+        [&self.running, &self.suspended].into_iter().flatten().find_map(|r| r.machine.display_only(self))
     }
 
     /// The active command's preview as a transform of existing objects (see

@@ -23,6 +23,7 @@ mod inquiry;
 mod layer;
 mod layout;
 mod lisp;
+mod merge;
 mod mleader_content;
 mod mleader_edit;
 mod modify;
@@ -201,6 +202,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(layer::specs());
         v.extend(layout::specs());
         v.extend(exchange::specs());
+        v.extend(image::specs());
         v.extend(props::specs());
         v.extend(inquiry::specs());
         v.extend(settings::specs());

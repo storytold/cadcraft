@@ -5,8 +5,8 @@
 //! Order: the font map ([`set_font_map`]) renames the file; then fonts registered by the app
 //! ([`register`]: the web build's files opened alongside a drawing, tests); then the app's
 //! [`FontProvider`]; then, natively, the folders of opened drawings ([`add_drawing_dir`], most
-//! recent first) and the support search path ([`set_search_path`], from `CADCRAFT_SHXPATH` at
-//! start). Results, found or not, are cached until one of these changes ([`generation`]
+//! recent first), the user's font folders ([`set_font_dirs`], from Options) and the support
+//! search path ([`set_search_path`], from `CADCRAFT_SHXPATH` at start). Results, found or not, are cached until one of these changes ([`generation`]
 //! counts the changes, so a viewer knows to regenerate).
 
 use std::collections::HashMap;
@@ -38,6 +38,7 @@ struct Table {
     loaded_bytes: usize,
     provider: Option<Arc<dyn FontProvider>>,
     drawing_dirs: Vec<PathBuf>,
+    font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
     generation: u64,
@@ -56,22 +57,9 @@ fn table() -> MutexGuard<'static, Table> {
     static T: OnceLock<Mutex<Table>> = OnceLock::new();
     T.get_or_init(|| {
         #[cfg(not(target_arch = "wasm32"))]
-        let search_path = {
-            let mut dirs: Vec<PathBuf> = std::env::var_os("CADCRAFT_SHXPATH")
-                .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).take(MAX_DIRS).collect())
-                .unwrap_or_default();
-            if let Ok(exe) = std::env::current_exe()
-                && let Some(parent) = exe.parent()
-            {
-                for sub in [parent.join("fonts"), parent.join("Fonts"), parent.to_path_buf()] {
-                    if sub.is_dir() && !dirs.contains(&sub) {
-                        dirs.push(sub);
-                    }
-                }
-            }
-            dirs.truncate(MAX_DIRS);
-            dirs
-        };
+        let search_path = std::env::var_os("CADCRAFT_SHXPATH")
+            .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).take(MAX_DIRS).collect())
+            .unwrap_or_default();
         #[cfg(target_arch = "wasm32")]
         let search_path = Vec::new();
         Mutex::new(Table { search_path, ..Table::default() })
@@ -148,12 +136,21 @@ pub fn drawing_dirs() -> Vec<PathBuf> {
     table().drawing_dirs.clone()
 }
 
+/// Search the user's font folders (and the folders under them that hold SHX files, as the
+/// font list finds them) after the drawings' folders. Looks again even when the folders are the
+/// same: files may have been added.
+pub fn set_font_dirs(dirs: Vec<PathBuf>) {
+    let mut t = table();
+    t.font_dirs = dirs.into_iter().filter(|d| !d.as_os_str().is_empty()).take(MAX_DIRS).collect();
+    t.changed();
+}
+
 /// Set the support search path for SHX files: folders separated by `;` (or the platform's
 /// path separator). Empty clears it.
 pub fn set_search_path(list: &str) {
     let dirs: Vec<PathBuf> = list
         .split(';')
-        .flat_map(|p| if cfg!(windows) { vec![PathBuf::from(p)] } else { std::env::split_paths(p).collect() })
+        .flat_map(|p| if cfg!(any(windows, target_arch = "wasm32")) { vec![PathBuf::from(p)] } else { std::env::split_paths(p).collect() })
         .filter(|d| !d.as_os_str().is_empty() && !d.to_string_lossy().trim().is_empty())
         .take(MAX_DIRS)
         .collect();
@@ -197,7 +194,7 @@ pub fn generation() -> u64 {
 /// The SHX font file a style or linetype names, if CADCraft can find and read it.
 pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     let mut k = key(name)?;
-    let (provider, dirs) = {
+    let (provider, dirs, generation) = {
         let t = table();
         // The font map renames once (a map can't loop).
         if let Some(to) = t.map.iter().find(|(from, _)| *from == k).and_then(|(_, to)| key(to)) {
@@ -209,10 +206,16 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.search_path.iter()).cloned().collect();
-        (t.provider.clone(), dirs)
+        let dirs: Vec<PathBuf> = t
+            .drawing_dirs
+            .iter()
+            .chain(t.font_dirs.iter())
+            .chain(t.search_path.iter())
+            .cloned()
+            .chain(portable_exe_font_dirs())
+            .collect();
+        (t.provider.clone(), dirs, t.generation)
     };
-    let generation = generation();
     let font = provider
         .and_then(|p| p.load(&k))
         .or_else(|| read_from(&dirs, &k))
@@ -238,21 +241,76 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     font
 }
 
-/// The file `name` in the first of `dirs` that has it (as named, then lower-case).
+/// Most directory entries looked at for a font file whose name differs only in case.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_DIR_ENTRIES: usize = 10_000;
+
+/// Portable `<exe_dir>/fonts`, `<exe_dir>/Fonts` and `<exe_dir>` directories next to the executable.
+fn portable_exe_font_dirs() -> Vec<PathBuf> {
+    #[cfg(not(any(target_arch = "wasm32", test)))]
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        return vec![parent.join("fonts"), parent.join("Fonts"), parent.to_path_buf()];
+    }
+    Vec::new()
+}
+
+/// The SHX fonts in the user's font folders ([`set_font_dirs`]) and the registered ones, by file
+/// stem, sorted without repeats (for font lists). Not read: only their names are listed.
+pub fn installed() -> Vec<String> {
+    let (mut dirs, mut out): (Vec<PathBuf>, Vec<String>) = {
+        let t = table();
+        (t.font_dirs.clone(), t.registered.keys().map(|k| k.trim_end_matches(".shx").to_string()).collect())
+    };
+    dirs.extend(portable_exe_font_dirs());
+    #[cfg(not(target_arch = "wasm32"))]
+    for d in &dirs {
+        let Ok(entries) = std::fs::read_dir(d) else { continue };
+        for e in entries.take(MAX_DIR_ENTRIES).filter_map(Result::ok) {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("shx"))
+                && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+            {
+                out.push(stem.to_string());
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = dirs;
+    out.sort_by_key(|n| n.to_lowercase());
+    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    out
+}
+
+/// The file `name` (a lower-case key) in the first of `dirs` that has it, whatever the case of
+/// its name: lower-case, upper-case, else any other case found in the directory (`Simplex.shx`
+/// on a case-sensitive file system).
 #[cfg(not(target_arch = "wasm32"))]
 fn read_from(dirs: &[PathBuf], name: &str) -> Option<Vec<u8>> {
     use std::io::Read as _;
+    let read = |file: &Path| -> Option<Vec<u8>> {
+        let meta = std::fs::metadata(file).ok()?;
+        if !meta.is_file() || meta.len() > MAX_FILE_BYTES as u64 {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        let limit = u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX).saturating_add(1);
+        std::fs::File::open(file).and_then(|f| f.take(limit).read_to_end(&mut bytes)).ok()?;
+        Some(bytes)
+    };
     for d in dirs {
-        for file in [d.join(name), d.join(name.to_ascii_uppercase())] {
-            let Ok(meta) = std::fs::metadata(&file) else { continue };
-            if !meta.is_file() || meta.len() > MAX_FILE_BYTES as u64 {
-                continue;
-            }
-            let mut bytes = Vec::new();
-            let limit = u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX).saturating_add(1);
-            if std::fs::File::open(&file).and_then(|f| f.take(limit).read_to_end(&mut bytes)).is_ok() {
-                return Some(bytes);
-            }
+        if let Some(b) = [d.join(name), d.join(name.to_ascii_uppercase())].iter().find_map(|f| read(f)) {
+            return Some(b);
+        }
+        let Ok(entries) = std::fs::read_dir(d) else { continue };
+        let found = entries
+            .take(MAX_DIR_ENTRIES)
+            .filter_map(Result::ok)
+            .find(|e| e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+            .and_then(|e| read(&e.path()));
+        if found.is_some() {
+            return found;
         }
     }
     None
