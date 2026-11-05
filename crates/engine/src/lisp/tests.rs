@@ -245,21 +245,27 @@ fn synchronous_callback_loop_is_an_error_not_a_hang() {
     assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
 }
 
-/// A step that walks a long list counts its work: an endless loop over one gives frames.
+/// A step that walks a long list counts its work: one `length` of 32768 cells is past a 1000-step
+/// slice, so the slice yields after it.
 #[test]
 fn walking_a_long_list_counts_against_the_slice() {
+    use super::eval::{Ctx, Machine, Need, Outcome};
     let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = session();
-    // Each `length` is one step walking 131072 cells: a 400000-step slice was 5e10 cells, no frame.
-    let r = s.lisp_eval("(setq l '(1)) (repeat 17 (setq l (append l l))) (while t (length l))", false, false, Vec::new()).unwrap();
-    assert!(r.is_none(), "the routine gave the interface a frame");
-    for _ in 0..20 {
-        assert!(s.lisp_busy());
-        s.lisp_tick();
+    let mut env = super::Env::default();
+    let mut ctx = Ctx { s: &mut s, env: &mut env, depth: 0 };
+    // Built before the measured run, so only the `length` is counted.
+    let mut build = Machine::forms(super::read::read_all("(setq l '(1)) (repeat 15 (setq l (append l l)))").unwrap());
+    assert!(matches!(build.run(&mut ctx, u64::MAX), Outcome::Done(_)));
+    let mut m = Machine::forms(super::read::read_all("(length l)").unwrap());
+    // Counted as one step, the walk left the few steps of `(length l)` well inside the slice.
+    assert!(matches!(m.run(&mut ctx, 1_000), Outcome::Wait(Need::Yield)), "the walk was not charged");
+    assert!(m.used > 32_768, "{}", m.used);
+    match m.run(&mut ctx, u64::MAX) {
+        Outcome::Done(v) => assert_eq!(to_text(&v, true), "32768"),
+        _ => panic!("the length did not finish"),
     }
-    s.lisp_abort("Function cancelled");
-    assert!(!s.lisp_running());
-    assert_eq!(ok(&mut s, "(setq l nil) (+ 1 2)"), "3");
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
 }
 
 /// A run's last step walking a long list is charged to that run, not left for the next one: here
