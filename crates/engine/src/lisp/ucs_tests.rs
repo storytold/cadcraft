@@ -227,19 +227,26 @@ fn angtof_ignores_the_ucs() {
     assert_eq!(ok(&mut s, "(angtos (angtof \"45\"))"), "\"45\"");
 }
 
-/// A window in a UCS turned 45 degrees is a turned rectangle in the world, not the box around
-/// its two corners.
+/// A selection window is the world box around its corners whatever the UCS: `ssget` and a SELECT
+/// window typed with the same corners pick the same objects.
 #[test]
-fn ssget_window_in_a_45_degree_ucs() {
+fn ssget_window_matches_select_in_a_turned_ucs() {
     let mut s = session();
     s.execute("ucs", &json!({"option": "z", "angle": 45})).unwrap();
-    // UCS (5, 5) is on the world Y axis, inside the window.
-    s.execute("circle", &json!({"center": [0.0, 5.0 * std::f64::consts::SQRT_2], "radius": 1})).unwrap();
-    // World (5, 3) is UCS (5.66, -1.41): in the world box of the window, below the UCS window.
-    s.execute("circle", &json!({"center": [5.0, 3.0], "radius": 0.5})).unwrap();
-    assert_eq!(ok(&mut s, "(sslength (ssget \"W\" '(0 0) '(10 10)))"), "1");
-    let found = ok(&mut s, "(cdr (assoc 10 (entget (ssname (ssget \"W\" '(0 0) '(10 10)) 0))))");
-    let f = pt(&found);
-    assert!(f[0].abs() < 1e-4 && (f[1] - 5.0 * std::f64::consts::SQRT_2).abs() < 1e-4, "{found}");
-    assert_eq!(ok(&mut s, "(sslength (ssget \"C\" '(0 0) '(10 10)))"), "1");
+    // The window's corners (UCS 0,0 and 10,4) are world (0,0) and (4.2,9.9): its world box.
+    for c in [[3.0, 8.0], [1.0, 2.0], [0.0, 7.0], [5.0, 3.0], [40.0, 40.0]] {
+        s.execute("circle", &json!({"center": c, "radius": 0.5})).unwrap();
+    }
+    let count = |s: &mut Session, w: &str| ok(s, &format!("(if (setq ss (ssget \"{w}\" '(0 0) '(10 4))) (sslength ss) 0)"));
+    let (w, c) = (count(&mut s, "W"), count(&mut s, "C"));
+    for (key, ssget) in [("w", w), ("c", c)] {
+        s.cancel();
+        s.cmdline("select").unwrap();
+        s.cmdline(key).unwrap();
+        s.cmdline("0,0").unwrap();
+        s.cmdline("10,4").unwrap();
+        s.cmdline("").unwrap();
+        assert_ne!(ssget, "0", "window {key} finds something");
+        assert_eq!(s.selection().len().to_string(), ssget, "window {key}");
+    }
 }

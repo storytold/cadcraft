@@ -52,6 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
 // ---------------- CAL ----------------
 
 mod calc;
+pub(super) use calc::num_text;
 
 /// What QuickCalc's "get from the drawing" picks put on the command line before the value (the
 /// palette reads it back from there).

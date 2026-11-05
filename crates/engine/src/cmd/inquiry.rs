@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dist", "Distance", run_dist)
             .menu(&["Tools", "Inquiry", "Distance"])
             .alias(&["di"])
-            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (world), ucs: {angle, angleFromXY, dx, dy, dz} (in the current UCS, as the message), message}")
+            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (world), ucs: {angle, angleFromXY, dx, dy, dz} (in the frame typed points are read in: the current UCS, or the World UCS while the UCS is tilted; as the message), message}")
             .noundo()
             .transparent()
             .interactive(|_| Ok(Box::new(DistM::default()))),
