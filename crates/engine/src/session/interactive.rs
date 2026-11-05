@@ -4,6 +4,7 @@ use super::{
     Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
     assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
+use crate::TextEditor;
 
 impl Session {
     // ---------------- interactive commands ----------------
@@ -377,6 +378,11 @@ impl Session {
         }
         self.pending_window = None;
         self.select_mode = None;
+        // HATCH keeps its boundary objects selected (highlighted) while it runs; they stay
+        // selected no longer than the command, however it ends.
+        if matches!(run.id.as_str(), "hatch" | "gradient" | "hatchpick") {
+            self.set_selection(Vec::new());
+        }
         let label = find_command(&run.id).map(|c| c.label).unwrap_or("Command");
         let _ = cancelled;
         if let Some(m) = cmd::blocks::refedit::after_command(self, &run.before, &run.id) {
@@ -460,6 +466,11 @@ impl Session {
     /// ([`Interactive::editing_mtext`]).
     pub fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
+    }
+
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
     }
 
     pub fn current_prompt(&self) -> Option<Prompt> {
