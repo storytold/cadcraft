@@ -10,6 +10,7 @@ use cadcraft_doc::{Drawing, EntityKind, Ucs};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
+use super::utility::num_text;
 use super::{CommandSpec, bad, str_param};
 use crate::prompt::{Accept, Input, Interactive, Prompt, Step};
 use crate::ucs::{UcsFrame, named};
@@ -343,6 +344,10 @@ fn delete(s: &mut Session, patterns: &str) -> Result<usize> {
     d.ucs_previous.iter_mut().for_each(unname);
     for l in &mut d.layouts {
         l.ucs.iter_mut().for_each(unname);
+        // A layout whose UCS is the World UCS again holds none, as `set_current` leaves it.
+        if l.ucs.as_ref().is_some_and(|u| u.name.is_empty() && UcsFrame::of(u).is_some_and(|f| f.is_world())) {
+            l.ucs = None;
+        }
         l.ucs_previous.iter_mut().for_each(unname);
     }
     Ok(gone.len())
@@ -439,8 +444,8 @@ impl Interactive for UcsM {
                 // The origin as input is read: in the UCS where that is the current one (so 0,0,0),
                 // in the world while the current UCS is tilted out of the XY plane.
                 let o = s.ucs().origin;
-                let (p, z) = if s.input_ucs().is_planar() { (s.input_ucs().to_ucs(o.xy()), 0.0) } else { (o.xy(), o.z) };
-                Prompt::new("Specify new origin point", Accept::POINT).default(format!("{},{},{}", p.x, p.y, z))
+                let (p, z) = if s.ucs().is_planar() { (s.input_ucs().to_ucs(o.xy()), 0.0) } else { (o.xy(), o.z) };
+                Prompt::new("Specify new origin point", Accept::POINT).default(format!("{},{},{}", num_text(p.x), num_text(p.y), num_text(z)))
             }
             Stage::XPoint(o) => Prompt::new("Specify point on X-axis", Accept::POINT).default("Accept").base(o.xy()),
             Stage::XyPoint(o, _) => Prompt::new("Specify point on the XY plane", Accept::POINT).default("Accept").base(o.xy()),

@@ -681,17 +681,42 @@ fn tilted_ucs_origin_default_keeps_the_origin() {
     let mut s = session();
     {
         let h = &mut s.doc_mut().unwrap().header;
-        h.set("UCSORG", HVal::Point(Vec3::new(50.0, 20.0, 0.0)));
+        h.set("UCSORG", HVal::Point(Vec3::new(50.0, 20.0, 7.0)));
         h.set("UCSXDIR", HVal::Point(Vec3::new(1.0, 0.0, 0.0)));
         h.set("UCSYDIR", HVal::Point(Vec3::new(0.0, 0.0, 1.0)));
     }
     let before = s.ucs().origin;
     s.start("ucs.origin").unwrap();
     let shown = s.current_prompt().and_then(|p| p.default).unwrap_or_default();
-    assert_eq!(shown, "50,20,0");
+    assert_eq!(shown, "50,20,7");
     s.cmdline(&shown).unwrap();
     assert!(near3(s.ucs().origin, before), "typed {shown:?}: {:?}", s.ucs().origin);
     s.start("ucs.origin").unwrap();
     s.cmdline("").unwrap();
     assert!(near3(s.ucs().origin, before));
+}
+
+/// The origin prompt's default is a clean number: no negative zero, no 16-digit noise.
+#[test]
+fn origin_default_prints_no_negative_zero() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "origin", "origin": [100, 50]})).unwrap();
+    s.execute("ucs", &json!({"option": "z", "angle": 200})).unwrap();
+    s.start("ucs.origin").unwrap();
+    let shown = s.current_prompt().and_then(|p| p.default).unwrap_or_default();
+    assert_eq!(shown, "0,0,0");
+}
+
+/// Deleting the named World UCS of a layout leaves the layout with no UCS, as setting the World
+/// UCS does.
+#[test]
+fn deleting_a_named_world_ucs_in_a_layout_leaves_no_ucs() {
+    let mut s = session();
+    let layout = s.doc().unwrap().layouts[0].name.clone();
+    s.execute("layout.set", &json!({"name": layout})).unwrap();
+    s.execute("ucs", &json!({"option": "named", "action": "save", "name": "HOME"})).unwrap();
+    s.execute("ucs", &json!({"option": "named", "action": "restore", "name": "HOME"})).unwrap();
+    assert_eq!(s.ucs_named().1, "HOME");
+    s.execute("ucs", &json!({"option": "named", "action": "delete", "name": "HOME"})).unwrap();
+    assert!(s.doc().unwrap().layouts.iter().all(|l| l.ucs.is_none()), "{:?}", s.doc().unwrap().layouts.iter().map(|l| &l.ucs).collect::<Vec<_>>());
 }
