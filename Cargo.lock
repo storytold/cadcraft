@@ -776,6 +776,7 @@ dependencies = [
  "getrandom 0.4.3",
  "log",
  "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]
