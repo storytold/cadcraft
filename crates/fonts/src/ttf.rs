@@ -353,7 +353,11 @@ fn scan_dirs(dirs: &[PathBuf], in_order: bool) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let mut stack: Vec<PathBuf> = if in_order { dirs.iter().rev().cloned().collect() } else { dirs.to_vec() };
     let mut seen = 0usize;
+    let mut visited = std::collections::HashSet::new();
     while let Some(d) = stack.pop() {
+        if !first_visit(&mut visited, &d) {
+            continue;
+        }
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
             seen += 1;
@@ -361,13 +365,10 @@ fn scan_dirs(dirs: &[PathBuf], in_order: bool) -> HashMap<String, PathBuf> {
                 return out;
             }
             let p = e.path();
-            // Real folders only: a link to a folder could lead in a circle.
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
+            // Linked folders are followed (font folders often are links); `first_visit` keeps a
+            // circle of links from reading a folder twice.
+            if p.is_dir() {
                 stack.push(p);
-                continue;
-            }
-            if ft.is_symlink() && p.is_dir() {
                 continue;
             }
             let ext = p.extension().map(|x| x.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
@@ -468,6 +469,13 @@ pub fn rescan() {
     crate::shx::set_font_dirs(shx_dirs(&user_dirs()));
 }
 
+/// Whether folder `d` is read for the first time (by its real path: a link to a folder already
+/// read, or a circle of links, is not read again).
+#[cfg(not(target_arch = "wasm32"))]
+fn first_visit(visited: &mut std::collections::HashSet<PathBuf>, d: &std::path::Path) -> bool {
+    visited.insert(std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf()))
+}
+
 /// The folders under `dirs` (them included) that hold SHX files, in order, bounded like the
 /// font scan.
 #[cfg(not(target_arch = "wasm32"))]
@@ -475,7 +483,11 @@ fn shx_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
     let mut seen = 0usize;
+    let mut visited = std::collections::HashSet::new();
     while let Some(d) = stack.pop() {
+        if !first_visit(&mut visited, &d) {
+            continue;
+        }
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         let mut subs = Vec::new();
         let mut has_shx = false;
@@ -484,8 +496,7 @@ fn shx_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
             if seen > 20_000 {
                 return out;
             }
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
+            if e.path().is_dir() {
                 subs.push(e.path());
             } else if e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("shx")) {
                 has_shx = true;
@@ -632,10 +643,10 @@ impl Db {
         for stem in stems.into_iter().take(200) {
             let Some(names) = self.face_names(&stem) else { continue };
             let Some(i) = names.faces.iter().position(|f| f.iter().any(|n| *n == want || format!("{n}regular") == want)) else { continue };
-            // Only the file that has the face is kept (and charged to the load budget).
-            // A file that cannot be read now (deleted, too large, budget used) does not end the
-            // search: another file in the folders may hold the same family.
-            let Some(bytes) = self.file(&stem).or_else(|| self.peek(&stem)) else { continue };
+            // Only the file that has the face is kept, charged to the load budget like any other
+            // (once it is used up, no more faces are loaded). A file that cannot be read now
+            // (deleted, too large) does not end the search: another file may hold the family.
+            let Some(bytes) = self.file(&stem) else { continue };
             return faces(&bytes).into_iter().nth(i);
         }
         None
@@ -1257,31 +1268,17 @@ mod family_tests {
         assert!(available(crate::BUILTIN_FONT));
     }
 
+    /// Reading a user font's names for a list keeps none of its bytes and uses none of the load
+    /// budget. (Font folders themselves are process-wide: `tests/ttf_font_folders.rs`.)
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn a_font_in_a_user_folder_is_found_listed_and_dropped_with_the_folder() {
+    fn reading_a_user_fonts_names_keeps_no_font_bytes() {
         let Some(src) = scan().into_values().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ttf"))) else { return };
-        let dir = std::env::temp_dir().join(format!("cadcraft-fontdir-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let Ok(_) = std::fs::copy(&src, dir.join("CadcraftTestFace.ttf")) else { return };
-        let before = generation();
-        set_font_dirs(&[dir.to_string_lossy().to_string()]);
-        assert!(generation() > before);
-        // Listing reads the family name without keeping the file (or using up the load budget).
-        let early = installed();
-        assert!(early.iter().any(|f| f.name == "CadcraftTestFace.ttf" && f.family.is_some()));
-        assert!(!lock().files.contains_key("cadcrafttestface"), "listing keeps no font bytes");
-        assert!(find("CadcraftTestFace.ttf").is_some());
-        let listed = installed();
-        let entry = listed.iter().find(|f| f.name == "CadcraftTestFace.ttf");
-        assert!(entry.is_some_and(|f| f.user && f.family.is_some()), "{entry:?}");
-        assert!(listed.first().is_some_and(|f| f.user), "the user's fonts come first");
-        if let Some(family) = entry.and_then(|f| f.family.clone()) {
-            assert!(find(&family).is_some(), "found by its family name: {family}");
-        }
-        set_font_dirs::<&str>(&[]);
-        assert!(find("CadcraftTestFace.ttf").is_none());
-        let _ = std::fs::remove_dir_all(&dir);
+        let mut db = Db::default();
+        db.user.insert("face".into());
+        db.paths.insert("face".into(), Source::File(src));
+        assert!(db.face_names("face").is_some_and(|n| n.family.is_some()));
+        assert!(db.files.is_empty() && db.loaded_bytes == 0);
     }
 
     /// One unreadable user font file with the family does not stop the search: the next file
@@ -1298,6 +1295,37 @@ mod family_tests {
         db.paths.insert("b".into(), Source::Static(b"not a font"));
         let _ = db.user_family("Foo");
         assert!(db.files.contains_key("b"), "the second file with the family was tried");
+    }
+
+    /// A face found by family name is loaded within the font-byte budget: once it is used up,
+    /// none is read past it (#2316 review).
+    #[test]
+    fn a_family_search_keeps_to_the_load_budget() {
+        let mut db = Db::default();
+        db.user.insert("b".into());
+        db.face_names.insert("b".into(), Arc::new(FaceNames { family: Some("Foo".into()), faces: vec![vec!["foo".into()]] }));
+        db.paths.insert("b".into(), Source::Static(b"not a font"));
+        db.loaded_bytes = MAX_LOADED_BYTES;
+        assert!(db.user_family("Foo").is_none());
+        assert!(db.files.is_empty(), "nothing read past the budget");
+    }
+
+    /// Linked font folders are followed, and a circle of links reads each folder once.
+    #[cfg(unix)]
+    #[test]
+    fn linked_font_folders_are_followed_once() {
+        let root = std::env::temp_dir().join(format!("cadcraft-fontlinks-{}", std::process::id()));
+        let real = root.join("real");
+        let _ = std::fs::create_dir_all(&real);
+        let Ok(()) = std::fs::write(real.join("LinkedFace.ttf"), b"x") else { return };
+        let _ = std::fs::write(real.join("linked.shx"), b"x");
+        let _ = std::os::unix::fs::symlink(&real, root.join("link"));
+        // A link back up: a circle.
+        let _ = std::os::unix::fs::symlink(&root, real.join("up"));
+        let found = scan_dirs(&[root.join("link")], true);
+        assert!(found.contains_key("linkedface"), "{found:?}");
+        assert_eq!(shx_dirs(&[root.clone()]).len(), 1, "the folder with the SHX file, once");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
