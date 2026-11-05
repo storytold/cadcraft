@@ -296,6 +296,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// What the command would place for `typed`, the line being typed at its text prompt, so the
+    /// UI can draw it in place (TEXT); empty when nothing is placed from typing.
+    fn typing(&self, _s: &Session, _typed: &str) -> Vec<EntityKind> {
+        Vec::new()
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
