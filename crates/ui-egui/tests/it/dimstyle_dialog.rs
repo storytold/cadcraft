@@ -136,6 +136,52 @@ fn deviation_can_be_picked_with_equal_values() {
     assert_eq!((st.tol_plus, st.tol_minus), (0.1, 0.0), "Upper value leaves the lower one");
 }
 
+fn shown_method(h: &Harness<'static, CadApp>) -> String {
+    h.get_by_role_and_label(Role::ComboBox, "Method").accesskit_node().value().unwrap_or_default().to_string()
+}
+
+#[test]
+fn deviation_stays_when_its_values_become_equal() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("dimstyle", json!({ "name": "Dev", "tolerance": true, "tolPlus": 0.1, "tolMinus": 0.2, "current": false })).unwrap();
+    menus::activate(&mut app, "dimstyle");
+    let mut h = harness(app);
+    h.get_by_label("Dev").click();
+    h.run_steps(3);
+    h.get_by_label("Tolerances").click();
+    h.run_steps(3);
+    assert_eq!(shown_method(&h), "Deviation");
+    enter(&mut h, "Lower value", "0.1");
+    assert_eq!(h.state().session.doc().unwrap().dim_style("Dev").map(|s| s.tol_minus), Some(0.1));
+    assert_eq!(shown_method(&h), "Deviation", "equal values do not turn it into Symmetrical");
+    enter(&mut h, "Upper value", "0.3");
+    let st = h.state().session.doc().unwrap().dim_style("Dev").cloned().unwrap();
+    assert_eq!((st.tol_plus, st.tol_minus), (0.3, 0.1), "Upper value leaves the lower one");
+}
+
+#[test]
+fn a_remembered_deviation_is_forgotten_once_tolerances_are_off() {
+    let mut h = opened();
+    h.get_by_label("Tolerances").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::ComboBox, "Method").click();
+    h.run_steps(3);
+    h.get_by_label("Deviation").click();
+    h.run_steps(4);
+    assert_eq!(shown_method(&h), "Deviation");
+    // Undone while another tab is shown: the style has no tolerances, and the pick is forgotten.
+    h.get_by_label("Text").click();
+    h.run_steps(3);
+    h.state_mut().run("u", json!({})).unwrap();
+    h.run_steps(3);
+    assert!(!h.state().session.doc().unwrap().dim_style("Standard").unwrap().tolerance);
+    // Equal values turned on again read as Symmetrical.
+    h.state_mut().run("dimstyle", json!({ "name": "Standard", "tolerance": true, "current": false })).unwrap();
+    h.get_by_label("Tolerances").click();
+    h.run_steps(3);
+    assert_eq!(shown_method(&h), "Symmetrical");
+}
+
 #[test]
 fn new_copies_the_selected_style() {
     let mut app = CadApp::new(Session::new(), Services::default());

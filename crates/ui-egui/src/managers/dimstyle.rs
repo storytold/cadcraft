@@ -87,7 +87,8 @@ impl<'a> Rows<'a> {
         if let Some(x) = num_field(ui, (self.salt, key), v, Some(id)) {
             if x >= min {
                 self.out.insert(key.into(), json!(x));
-            } else {
+            } else if min > f64::MIN {
+                // Only a real minimum (0 or more, above 0) has a message.
                 self.rejected = Some(range_message(label, min));
             }
         }
@@ -288,19 +289,23 @@ fn shown_method(s: &DimStyle, picked: Option<usize>) -> usize {
     }
 }
 
+/// Where the dialog remembers the tolerance method shown for style `name`.
+fn tol_method_id(name: &str) -> egui::Id {
+    egui::Id::unique(("dimstyle_tol_method", name))
+}
+
 fn tolerances_tab(rows: &mut Rows<'_>, ui: &mut egui::Ui, s: &DimStyle) {
     Rows::heading(ui, crate::tl!("Tolerance format"));
     let methods = numbered(&[crate::tl!("None"), crate::tl!("Symmetrical"), crate::tl!("Deviation"), crate::tl!("Limits")], 0);
-    // The method picked for this style, kept across frames (DIMTOL alone can't tell Deviation
+    // The method shown for this style, kept across frames (DIMTOL alone can't tell Deviation
     // with equal values from Symmetrical).
-    let kept_id = egui::Id::unique((rows.salt, "tolMethod"));
+    let kept_id = tol_method_id(&s.name);
     let mut method = shown_method(s, ui.data(|d| d.get_temp::<usize>(kept_id)));
     let mut picked = Rows::new(rows.salt);
     picked.choice(ui, crate::tl!("Method"), "DIMTOL / DIMLIM", "method", Some(method), &methods);
     if let Some(m) = picked.out.get("method").and_then(Value::as_u64) {
         // The rows below follow the new method this frame.
         method = usize::try_from(m).unwrap_or(0);
-        ui.data_mut(|d| d.insert_temp(kept_id, method));
         let (tol, lim) = match m {
             1 | 2 => (true, false),
             3 => (false, true),
@@ -312,6 +317,15 @@ fn tolerances_tab(rows: &mut Rows<'_>, ui: &mut egui::Ui, s: &DimStyle) {
             rows.out.insert("tolMinus".into(), json!(s.tol_plus));
         }
     }
+    // Remember Symmetrical or Deviation whenever it is shown, so Deviation stays when its values
+    // become equal; None and Limits need no memory.
+    ui.data_mut(|d| {
+        if matches!(method, 1 | 2) {
+            d.insert_temp(kept_id, method);
+        } else {
+            d.remove::<usize>(kept_id);
+        }
+    });
     let precisions = precisions();
     rows.choice(ui, crate::tl!("Precision"), "DIMTDEC", "tolDecimals", index_of(&precisions, &json!(s.tol_decimals)), &precisions);
     rows.num(ui, crate::tl!("Upper value"), "DIMTP", "tolPlus", s.tol_plus, f64::MIN);
@@ -355,7 +369,23 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
     let mut warning = temp::<Option<(String, String)>>(ctx, "dimstyle_warning").flatten();
     // A New style copies the selected one; the drawing has no styles when it shows the default.
     let base_exists = d.dim_styles.iter().any(|s| s.name == sel);
-    let in_use = !sel.eq_ignore_ascii_case("Standard") && !sel.eq_ignore_ascii_case(&current) && style_in_use(d, &sel);
+    let in_use = !sel.eq_ignore_ascii_case("Standard") && !sel.eq_ignore_ascii_case(&current) && {
+        // Scanned once per drawing revision and selection, not every frame.
+        let key = app.session.state().ok().map(|st| (st.uid, st.revision, sel.clone()));
+        match temp::<(Option<(u64, u64, String)>, bool)>(ctx, "dimstyle_in_use") {
+            Some((k, used)) if k.is_some() && k == key => used,
+            _ => {
+                let used = style_in_use(d, &sel);
+                set_temp(ctx, "dimstyle_in_use", (key, used));
+                used
+            }
+        }
+    };
+    // A remembered tolerance method is dropped once the style has no tolerances (turned off
+    // elsewhere, or undone), whichever tab is shown.
+    if styles.iter().find(|s| s.name == sel).is_some_and(|s| !s.tolerance || s.limits) {
+        ctx.data_mut(|m| m.remove::<usize>(tol_method_id(&sel)));
+    }
     let mut action: Action = None;
     let taken = |n: &str| styles.iter().any(|s| s.name.eq_ignore_ascii_case(n));
     egui::Window::new(title).id(egui::Id::unique("dimstyle_manager")).open(open).default_size(vec2(720.0, 460.0)).resizable(true).show(ctx, |ui| {
@@ -395,6 +425,8 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                         .clicked()
                     {
                         action = Some(("dimstyle.delete", json!({ "name": sel })));
+                        // A later style of the same name starts without this one's memory.
+                        ui.data_mut(|m| m.remove::<usize>(tol_method_id(&sel)));
                     }
                 });
                 ui.horizontal(|ui| {
@@ -413,6 +445,7 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                             o.insert("base".into(), json!(sel));
                         }
                         action = Some(("dimstyle", p));
+                        ui.data_mut(|m| m.remove::<usize>(tol_method_id(&name)));
                         sel = name;
                         new_name.clear();
                     }
@@ -428,6 +461,19 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                     let ok = !standard && !to.is_empty() && !taken(&to);
                     if (ui.add_enabled(ok, egui::Button::new(crate::tl!("Rename"))).clicked() || entered) && ok {
                         action = Some(("dimstyle.rename", json!({ "from": sel, "to": to })));
+                        // The remembered tolerance method goes with the style.
+                        ui.data_mut(|m| {
+                            let kept = m.get_temp::<usize>(tol_method_id(&sel));
+                            m.remove::<usize>(tol_method_id(&sel));
+                            match kept {
+                                Some(k) => {
+                                    m.insert_temp(tol_method_id(&to), k);
+                                }
+                                None => {
+                                    m.remove::<usize>(tol_method_id(&to));
+                                }
+                            }
+                        });
                         sel = to;
                         rename.clear();
                     }
