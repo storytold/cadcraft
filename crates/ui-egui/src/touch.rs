@@ -17,8 +17,8 @@
 //! gone on end, at the finger), and the browser's own pointer events for the touch (`pointerdown`,
 //! `pointerup`), each delivered alone in a frame of its own, plus any mouse events the browser
 //! emulates after the touch. [`NativeGate`] decides which browser events reach the backend at
-//! all: the browser's pointer events for touches, and emulated mouse events right after a touch,
-//! do not. [`TouchMouse::filter`] then drops the synthesized pointer events of canvas touch
+//! all: the browser's pointer events for touches, a stylus's touch events (a stylus points where
+//! it is, through its own pointer events), and emulated mouse events right after a touch, do not. [`TouchMouse::filter`] then drops the synthesized pointer events of canvas touch
 //! sequences, drops lone pointer events that arrive during or just after one, and appends its
 //! own pointer events at the crosshair instead.
 //!
@@ -49,6 +49,8 @@ pub const COMPAT_TIME: f64 = 1.0;
 pub enum DomEvent {
     /// `touchstart`, `touchmove`, `touchend`, `touchcancel`.
     Touch,
+    /// A touch event whose changed touches all come from a stylus (`touchType` `"stylus"`).
+    StylusTouch,
     /// `pointerdown`, `pointerup`, `pointermove`, `pointercancel`; `touch` when the pointer is a
     /// finger.
     Pointer { touch: bool },
@@ -56,9 +58,9 @@ pub enum DomEvent {
     Mouse,
 }
 
-/// Which browser events on the canvas reach the web backend. Touches reach it as touch events
+/// Which browser events on the canvas reach the web backend. Fingers reach it as touch events
 /// only: the browser's pointer events for a finger, and mouse events it emulates after a touch,
-/// are stopped.
+/// are stopped. A stylus reaches it as pointer events only: its touch events are stopped.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeGate {
     last_touch: Option<f64>,
@@ -72,6 +74,7 @@ impl NativeGate {
                 self.last_touch = Some(now);
                 e == DomEvent::Touch
             }
+            DomEvent::StylusTouch => false,
             DomEvent::Pointer { touch: false } => true,
             DomEvent::Mouse => self.last_touch.is_none_or(|t| now - t > COMPAT_TIME),
         }
@@ -161,6 +164,11 @@ impl TouchMouse {
     /// whatever they landed on (a panel, a menu) and never navigate the drawing.
     pub fn passing(&self) -> bool {
         self.mode == Mode::Pass
+    }
+
+    /// Whether two or more fingers on the canvas are making a gesture (pinch, two-finger pan).
+    pub fn gesturing(&self) -> bool {
+        self.mode == Mode::Canvas && self.seq.is_some_and(|s| s.class == Class::Gesture)
     }
 
     /// Whether frames must keep coming without input (a click waiting out the double-tap
@@ -887,5 +895,15 @@ mod tests {
         assert!(!g.admit(DomEvent::Mouse, 2.5), "emulated after a touch");
         assert!(g.admit(DomEvent::Pointer { touch: false }, 2.5), "a real mouse's pointer events pass");
         assert!(g.admit(DomEvent::Mouse, 3.5));
+    }
+
+    #[test]
+    fn gate_leaves_a_stylus_to_its_pointer_events() {
+        let mut g = NativeGate::default();
+        assert!(g.admit(DomEvent::Pointer { touch: false }, 1.0), "the pen's pointerdown");
+        assert!(!g.admit(DomEvent::StylusTouch, 1.0), "the pen's touchstart");
+        assert!(!g.admit(DomEvent::StylusTouch, 1.05), "the pen's touchend");
+        assert!(g.admit(DomEvent::Pointer { touch: false }, 1.05), "the pen's pointerup");
+        assert!(g.admit(DomEvent::Mouse, 1.1), "a stylus touch is not a finger's, so mouse events still pass");
     }
 }

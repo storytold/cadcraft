@@ -335,18 +335,15 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         let _ = app.session.zoom_about(f64::from(pinch), nav.xf.to_world(at));
     }
     // Two fingers pan with their midpoint; one finger drives the crosshair ([`crate::touch`]).
-    if !touch_elsewhere
+    // Only under the virtual mouse: elsewhere the first finger is already a left drag.
+    if app.touch.gesturing()
         && let Some(touch) = ui.input(|i| i.multi_touch())
         && nav.rect.contains(touch.center_pos)
         && touch.translation_delta != egui::Vec2::ZERO
         && let Ok(st) = app.session.state_mut()
     {
         let view = st.view();
-        st.set_view_quiet(cadcraft_engine::View {
-            center: view.center
-                - Vec2::new(f64::from(touch.translation_delta.x) / nav.xf.scale, -f64::from(touch.translation_delta.y) / nav.xf.scale),
-            height: view.height,
-        });
+        st.set_view_quiet(cadcraft_engine::View { center: view.center - nav.xf.screen_delta_to_world(touch.translation_delta), ..view });
     }
 }
 

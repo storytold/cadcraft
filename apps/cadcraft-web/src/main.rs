@@ -113,6 +113,16 @@ mod web {
         Services { pick_save: Some(Box::new(|name: &str| Some(name.to_string()))), no_file_system: true, ..Services::default() }
     }
 
+    /// Whether every touch this touch event changed comes from a stylus. `touchType` is WebKit's
+    /// (a stylus on iPadOS) and has no `web_sys` binding; other browsers report only `pointerType`.
+    fn is_stylus_touch(event: &web_sys::Event) -> bool {
+        use web_sys::js_sys::Reflect;
+        let Some(touches) = event.dyn_ref::<web_sys::TouchEvent>().map(web_sys::TouchEvent::changed_touches) else { return false };
+        let stylus =
+            |i| touches.get(i).and_then(|t| Reflect::get(&t, &"touchType".into()).ok()).and_then(|v| v.as_string()).as_deref() == Some("stylus");
+        touches.length() > 0 && (0..touches.length()).all(stylus)
+    }
+
     /// Stop the browser events that would reach eframe as pointer events at a finger: the
     /// browser's own pointer events for canvas touches, and the mouse events it emulates right
     /// after a touch. Canvas touches then reach the app only as touch events, which
@@ -133,12 +143,12 @@ mod web {
                 let dom = if kind.starts_with("pointer") {
                     DomEvent::Pointer { touch: event.dyn_ref::<web_sys::PointerEvent>().is_some_and(|p| p.pointer_type() == "touch") }
                 } else if kind.starts_with("touch") {
-                    DomEvent::Touch
+                    if is_stylus_touch(&event) { DomEvent::StylusTouch } else { DomEvent::Touch }
                 } else {
                     DomEvent::Mouse
                 };
                 let mut g = gate.get();
-                let admit = g.admit(dom, js_sys::Date::now() / 1000.0);
+                let admit = g.admit(dom, web_sys::js_sys::Date::now() / 1000.0);
                 gate.set(g);
                 if !admit {
                     event.stop_immediate_propagation();
