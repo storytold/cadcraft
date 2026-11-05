@@ -226,7 +226,7 @@ pub(super) fn draw_drag_gpu(
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }

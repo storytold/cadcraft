@@ -114,6 +114,9 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    /// The font set the list was drawn with ([`cadcraft_fonts::ttf::generation`] and
+    /// [`cadcraft_fonts::shx::generation`]): a new font folder redraws the text.
+    font_generation: u64,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
