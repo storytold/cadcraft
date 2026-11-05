@@ -5,8 +5,8 @@
 //! Order: the font map ([`set_font_map`]) renames the file; then fonts registered by the app
 //! ([`register`]: the web build's files opened alongside a drawing, tests); then the app's
 //! [`FontProvider`]; then, natively, the folders of opened drawings ([`add_drawing_dir`], most
-//! recent first) and the support search path ([`set_search_path`], from `CADCRAFT_SHXPATH` at
-//! start). Results, found or not, are cached until one of these changes ([`generation`]
+//! recent first), the user's font folders ([`set_font_dirs`], from Options) and the support
+//! search path ([`set_search_path`], from `CADCRAFT_SHXPATH` at start). Results, found or not, are cached until one of these changes ([`generation`]
 //! counts the changes, so a viewer knows to regenerate).
 
 use std::collections::HashMap;
@@ -38,6 +38,7 @@ struct Table {
     loaded_bytes: usize,
     provider: Option<Arc<dyn FontProvider>>,
     drawing_dirs: Vec<PathBuf>,
+    font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
     generation: u64,
@@ -135,6 +136,15 @@ pub fn drawing_dirs() -> Vec<PathBuf> {
     table().drawing_dirs.clone()
 }
 
+/// Search the user's font folders (and the folders under them that hold SHX files, as the
+/// font list finds them) after the drawings' folders. Looks again even when the folders are the
+/// same: files may have been added.
+pub fn set_font_dirs(dirs: Vec<PathBuf>) {
+    let mut t = table();
+    t.font_dirs = dirs.into_iter().filter(|d| !d.as_os_str().is_empty()).take(MAX_DIRS).collect();
+    t.changed();
+}
+
 /// Set the support search path for SHX files: folders separated by `;` (or the platform's
 /// path separator). Empty clears it.
 pub fn set_search_path(list: &str) {
@@ -196,7 +206,7 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.search_path.iter()).cloned().collect();
+        let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
         (t.provider.clone(), dirs, t.generation)
     };
     let font = provider
@@ -227,6 +237,32 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
 /// Most directory entries looked at for a font file whose name differs only in case.
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_DIR_ENTRIES: usize = 10_000;
+
+/// The SHX fonts in the user's font folders ([`set_font_dirs`]) and the registered ones, by file
+/// stem, sorted without repeats (for font lists). Not read: only their names are listed.
+pub fn installed() -> Vec<String> {
+    let (dirs, mut out): (Vec<PathBuf>, Vec<String>) = {
+        let t = table();
+        (t.font_dirs.clone(), t.registered.keys().map(|k| k.trim_end_matches(".shx").to_string()).collect())
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    for d in &dirs {
+        let Ok(entries) = std::fs::read_dir(d) else { continue };
+        for e in entries.take(MAX_DIR_ENTRIES).filter_map(Result::ok) {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("shx"))
+                && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+            {
+                out.push(stem.to_string());
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = dirs;
+    out.sort_by_key(|n| n.to_lowercase());
+    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    out
+}
 
 /// The file `name` (a lower-case key) in the first of `dirs` that has it, whatever the case of
 /// its name: lower-case, upper-case, else any other case found in the directory (`Simplex.shx`
