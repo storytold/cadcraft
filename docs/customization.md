@@ -32,11 +32,13 @@ in the app, or headless:
 cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 ```
 
-As in AutoCAD, a line end ends an input, and so does a space, except at a command's free-text prompt
-(TEXT or MTEXT contents take the rest of the line; a LISP routine's text prompt still splits at
-spaces). An empty input (an empty line, two spaces in a row, a space at the end of a line) is Enter. A command that keeps prompting after its last input,
-such as LINE or PLINE, needs that Enter before the next command, or the next line answers its
-prompt:
+As in AutoCAD, a line end ends an input, and so does a space. Three things keep their spaces: a
+command's free-text prompt (TEXT or MTEXT contents) takes the rest of the line, a
+`command {json}` call takes the rest of its line, and a LISP expression keeps the spaces inside
+its parentheses. A LISP routine's text prompt still splits at spaces. An empty input (an empty
+line, two spaces in a row, a space at the end of a line) is Enter. A command that keeps prompting
+after its last input, such as LINE or PLINE, needs that Enter once it's done, or the next line
+answers its prompt:
 
 ```
 LINE 0,0 @30,0

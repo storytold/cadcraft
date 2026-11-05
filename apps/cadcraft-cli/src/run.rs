@@ -222,7 +222,9 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
         if s.lisp_waiting_for_input() {
             io.errln(format_args!("note: a LISP routine is waiting for this value; give it on the next line of the script"));
         } else {
-            io.errln(format_args!("note: an empty line is Enter in a script; put one after a command that keeps prompting, such as LINE or PLINE"));
+            io.errln(format_args!(
+                "note: give the input this prompt asks for on the next line; if the command is done, an empty line (Enter) ends it, as LINE and PLINE need"
+            ));
         }
     }
     if let Some(p) = save {

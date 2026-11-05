@@ -14,7 +14,7 @@ fn a_command_left_waiting_at_the_end_is_reported() {
     let (code, err) = run(&["run", "--metric", "--script", "line 0,0 @30,0"]);
     assert_eq!(code, 0, "{err}");
     assert!(err.contains("note: the script ended while waiting for input: LINE"), "{err}");
-    assert!(err.contains("an empty line is Enter in a script"), "{err}");
+    assert!(err.contains("if the command is done, an empty line (Enter) ends it"), "{err}");
 }
 
 /// A LISP routine waiting in `getpoint` has a prompt but no command running: it is reported too,
@@ -25,7 +25,7 @@ fn a_lisp_routine_left_waiting_at_the_end_is_reported() {
     assert_eq!(code, 0, "{err}");
     assert!(err.contains("note: the script ended while waiting for input: Pick a corner:"), "{err}");
     assert!(err.contains("a LISP routine is waiting for this value"), "{err}");
-    assert!(!err.contains("an empty line is Enter"), "{err}");
+    assert!(!err.contains("an empty line (Enter)"), "{err}");
 }
 
 /// A routine that started LINE and then waits in `getpoint`: its prompt is the active one, so the
