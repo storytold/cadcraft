@@ -187,10 +187,15 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                     b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
                 }
                 if ins.cols > 1 || ins.rows > 1 {
-                    let off =
-                        Vec2::new(ins.col_spacing * f64::from(ins.cols.saturating_sub(1)), ins.row_spacing * f64::from(ins.rows.saturating_sub(1)))
-                            .rotate(ins.rotation);
-                    b = b.union(&Bounds2::from_points(b.corners().map(|c| c + off)));
+                    // The grid's four corner copies (as many as are drawn): turned, the far corner
+                    // alone misses the side ones.
+                    let (cols, rows) =
+                        (f64::from(ins.cols.clamp(1, 10_000).saturating_sub(1)), f64::from(ins.rows.clamp(1, 10_000).saturating_sub(1)));
+                    let one = b;
+                    for (c, r) in [(cols, 0.0), (0.0, rows), (cols, rows)] {
+                        let off = Vec2::new(ins.col_spacing * c, ins.row_spacing * r).rotate(ins.rotation);
+                        b = b.union(&Bounds2::from_points(one.corners().map(|p| p + off)));
+                    }
                 }
             }
             for a in &ins.attribs {
@@ -521,5 +526,36 @@ mod tests {
             assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
             assert!(extents.width() > drawn.width());
         }
+    }
+
+    /// A turned array of references reaches its side copies, not only the first and the last;
+    /// a hostile count measures only the copies that are drawn.
+    #[test]
+    fn a_rotated_array_counts_every_corner_copy() {
+        let mut d = Drawing::new_metric();
+        let mut b = crate::Block::new("B");
+        b.entities.push(Entity::new(crate::Handle(1), EntityKind::Line(crate::Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })));
+        d.blocks.insert("B".into(), std::sync::Arc::new(b));
+        let array = |cols: u32, rows: u32, rotation: f64| {
+            let ins = crate::Insert {
+                block: "B".into(),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation,
+                cols,
+                rows,
+                col_spacing: 10.0,
+                row_spacing: 10.0,
+                ..crate::Insert::default()
+            };
+            Entity::new(crate::Handle(2), EntityKind::Insert(ins))
+        };
+        // Turned 45°: the copies sit at (0, 0), (7.07, 7.07), (-7.07, 7.07) and (0, 14.14).
+        let b = entity_bounds(&d, &array(2, 2, std::f64::consts::FRAC_PI_4), 0);
+        let side = 10.0 * std::f64::consts::FRAC_1_SQRT_2;
+        assert!((b.min.x + side).abs() < 1e-9 && b.max.x >= side, "{b:?}");
+        assert!((b.max.y - 2.0 * side - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9, "{b:?}");
+        // The renderer draws at most 10,000 columns.
+        let b = entity_bounds(&d, &array(u32::MAX, 1, 0.0), 0);
+        assert!((b.max.x - (10.0 * 9_999.0 + 1.0)).abs() < 1e-6, "{b:?}");
     }
 }

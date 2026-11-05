@@ -77,7 +77,7 @@ Provider Save/Save As captures one native DXF. DXF stores external image/drawing
 Single-file transfers inherit the existing [DXF codec limits](file-format-parity.md). Font files, including SHX/bigfonts, and other dependencies are not collected or packaged. The bridge does not certify arbitrary foreign DXF as lossless or scan unmodeled records for dependencies. It adds no linked-file negotiation, resource-set checkpoints, attachment bundle or atomic multi-file save. The host receives the one DXF produced by the native writer and remains responsible for its durable storage.
 Use the existing local Copy/Export commands for interchange formats. The host must preserve the native
 extension; changing a suffix cannot turn native bytes into PDF, SVG or another interchange format.
-Native capture uses the existing IoHooks / write_as DXF encoder. The legacy ?host=parent bridge is preserved; the new capability is installed only outside that mode so two hosts do not compete for Save. DWG and interchange outputs remain in the original local flow.
+Native capture uses the existing IoHooks / write_as DXF encoder. The existing ?host=parent and data-host="page" host modes are preserved. The optional provider capability is installed only when neither mode connects, so two hosts do not compete for Save. DWG and interchange outputs remain in the original local flow.
 
 Normal close/revert actions wait or refuse while provider work is unresolved. The browser can still
 force-close/reload a tab; the host should provide an unsaved-work warning and must not acknowledge a
