@@ -301,3 +301,22 @@ fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
     s.execute("oops", &json!({})).unwrap();
     assert!(alive(&s, c));
 }
+
+/// Outside the automation roots the prompt doesn't say whether a file is there.
+#[test]
+fn the_replace_prompt_says_nothing_about_a_file_outside_the_roots() {
+    let (mut s, ..) = drawing();
+    let dir = TempDir::new("dash-wblock-roots");
+    for d in ["in", "out", "outside"] {
+        std::fs::create_dir(dir.join(d)).unwrap();
+    }
+    let there = dir.join("outside/there.dwg");
+    std::fs::write(&there, "old").unwrap();
+    let write = dir.join("out");
+    let roots = cadcraft_engine::file_access::AutomationRoots::new(Some(&dir.join("in")), Some(&write)).unwrap();
+    cadcraft_engine::file_access::confine(roots.as_ref(), || {
+        s.cmdline("-wblock").unwrap();
+        s.cmdline(&there.display().to_string()).unwrap();
+        assert!(!s.prompt_text().contains("already exists"), "{}", s.prompt_text());
+    });
+}

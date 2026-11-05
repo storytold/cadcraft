@@ -90,6 +90,8 @@ pub const NO_FILES: &[&str] = &[
     "isolateobjects",
     "hideobjects",
     "unisolateobjects",
+    "xclip",
+    "xclipframe",
     "zoom",
     "zoom.realtime",
     "zoom.dynamic",

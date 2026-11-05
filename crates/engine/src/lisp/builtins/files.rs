@@ -77,7 +77,7 @@ pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
     // Read through a byte-limited, regular-file-only reader so a path naming an endless device
     // cannot exhaust memory before the 64 MiB cap is enforced (CWE-400).
     const MAX: usize = 64 * 1024 * 1024;
-    crate::file_access::check_read(&path.as_ref().to_string_lossy()).ok()?;
+    crate::file_access::check_read(path.as_ref()).ok()?;
     let bytes = crate::capped_read::read_capped(path.as_ref(), MAX).ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }

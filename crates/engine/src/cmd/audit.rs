@@ -143,7 +143,7 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     // An unsaved drawing has no folder of its own to hold the log.
     let Some(path) = &path_str else { return };
     let adt_path = std::path::PathBuf::from(path).with_extension("adt");
-    if let Err(e) = crate::file_access::check_write(&adt_path.to_string_lossy()) {
+    if let Err(e) = crate::file_access::check_write(&adt_path) {
         log::warn!("AUDITCTL: not writing audit log {}: {e}", adt_path.display());
         return;
     }

@@ -215,7 +215,7 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     let (files, refused) = candidates(path, host, chosen);
     // Outside the automation roots a place isn't even looked at, so the answer can't tell whether a
     // file is there. A match found by ignoring case is checked again: it can be a link leading out.
-    let allowed = |p: &PathBuf| crate::file_access::check_read(&p.to_string_lossy()).is_ok();
+    let allowed = |p: &PathBuf| crate::file_access::check_read(p).is_ok();
     let looked_for = files.len();
     let files: Vec<PathBuf> = files.into_iter().filter(allowed).collect();
     let outside = files.len() < looked_for;
@@ -269,7 +269,7 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
-        crate::file_access::check_read(&file.to_string_lossy())?;
+        crate::file_access::check_read(file)?;
         let left = MAX_XREF_TOTAL_BYTES.saturating_sub(cx.bytes);
         let limit = MAX_XREF_BYTES.min(left);
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;

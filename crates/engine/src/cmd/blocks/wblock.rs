@@ -172,7 +172,9 @@ fn output_path(typed: &str) -> String {
 fn exists(path: &str) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::path::Path::new(path).exists()
+        // Outside the automation roots the answer would say whether a file is there; the write
+        // that follows is refused anyway.
+        crate::file_access::check_write(path).is_ok() && std::path::Path::new(path).exists()
     }
     #[cfg(target_arch = "wasm32")]
     {

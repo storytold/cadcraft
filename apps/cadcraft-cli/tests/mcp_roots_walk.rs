@@ -157,6 +157,12 @@ impl Fixture {
         std::fs::write(o.join("second.png"), PNG).unwrap();
         let device = cadcraft_engine::doc::PlotterConfig { name: "Office".into(), ..Default::default() };
         std::fs::write(o.join("config/plotters/Office.plotter.json"), device.to_file_text()).unwrap();
+        self.watch();
+    }
+
+    /// Start watching what is under `outside` now.
+    fn watch(&mut self) {
+        let o = self.outside.clone();
         self.baseline.clear();
         for p in tree(&o) {
             age_access_time(&p);
@@ -532,4 +538,74 @@ fn a_drawing_cannot_reach_files_it_names_outside_the_roots() {
     assert!(images.contains("canary.png") && !images.contains("\"Loaded\""), "the image stays unloaded: {images}");
     assert!(images.contains("\"foundAt\": null") || images.contains("\"foundAt\":null"), "and it isn't said to exist: {images}");
     assert!(!xrefs.contains("\"Loaded\""), "the xref stays unloaded: {xrefs}");
+}
+
+/// A font linked into the drawing's folder isn't read from where the link leads.
+#[test]
+fn a_font_linked_beside_a_drawing_is_not_followed_out() {
+    let mut f = Fixture::new("font");
+    let host = f.base.join("in/host.dxf");
+    {
+        let mut free = Server::start(&[], &f.outside.join("cwd"), &f.outside.join("config"));
+        free.execute("new", json!({})).unwrap();
+        free.execute("style", json!({"name": "Walk", "font": "walkfont.shx"})).unwrap();
+        free.execute("style.current", json!({"name": "Walk"})).unwrap();
+        let text = free.execute("text", json!({"at": [0, 0], "height": 5, "text": "walk"})).unwrap();
+        assert!(text.contains("handle"), "the text is drawn: {text}");
+        free.execute("saveas", json!({"path": s(&host)})).unwrap();
+    }
+    let saved = std::fs::read_to_string(&host).unwrap();
+    assert!(saved.to_ascii_lowercase().contains("walkfont.shx"), "the drawing names the font");
+    std::fs::write(f.outside.join("walkfont.shx"), b"AutoCAD-86 shapes 1.0").unwrap();
+    std::os::unix::fs::symlink(f.outside.join("walkfont.shx"), f.base.join("in/walkfont.shx")).unwrap();
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    f.reset();
+    std::fs::write(f.outside.join("walkfont.shx"), b"AutoCAD-86 shapes 1.0").unwrap();
+    f.watch();
+    server.tool("open", json!({"path": s(&host)})).unwrap();
+    server.tool("render", json!({})).unwrap();
+    let touched = f.touched();
+    assert!(touched.is_empty(), "{touched:?}");
+}
+
+/// Saving through a link that stands outside the roots and points in doesn't leave a backup
+/// beside the link.
+#[test]
+fn a_backup_stays_inside_the_roots() {
+    let f = Fixture::new("backup");
+    let target = f.base.join("out/t.dxf");
+    std::fs::write(&target, cadcraft_io::write(&cadcraft_engine::doc::Drawing::new_imperial(), "x.dxf").unwrap()).unwrap();
+    let link = f.outside.join("link.dxf");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    server.tool("new_drawing", json!({})).unwrap();
+    let saved = server.tool("save", json!({"path": s(&link)})).unwrap();
+    assert!(saved.contains("outside the write root"), "{saved}");
+    assert!(!f.outside.join("link.dxf.bak").exists() && !f.outside.join("link.bak").exists(), "{saved}");
+}
+
+/// Deleting a plotter acts on the entry in the settings folder, whatever it points at.
+#[test]
+fn a_plotter_link_outside_the_roots_is_not_removed() {
+    let f = Fixture::new("plotter");
+    let inside = f.base.join("out/kept.plotter.json");
+    std::fs::write(&inside, cadcraft_engine::doc::PlotterConfig { name: "Kept".into(), ..Default::default() }.to_file_text()).unwrap();
+    let entry = f.outside.join("config/plotters/Kept.plotter.json");
+    std::os::unix::fs::symlink(&inside, &entry).unwrap();
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    let reply = server.execute("plottermanager", json!({"action": "delete", "name": "Kept"})).unwrap();
+    assert!(std::fs::symlink_metadata(&entry).is_ok(), "the link is still there: {reply}");
+}
+
+/// Without roots, a settings folder that can't be read leaves the built-in devices listed.
+#[test]
+fn without_roots_an_unreadable_settings_folder_still_lists_devices() {
+    let f = Fixture::new("devices");
+    let not_a_folder = f.outside.join("canary.txt");
+    let mut server = Server::start(&[], &f.outside.join("cwd"), &not_a_folder);
+    let list = server.execute("plottermanager", json!({"action": "list"})).unwrap();
+    assert!(list.contains("devices"), "{list}");
 }

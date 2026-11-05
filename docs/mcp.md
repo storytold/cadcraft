@@ -58,9 +58,12 @@ configuration works across the suite) keep the agent to the folders you give it:
   file or folder link that leads out of a root is outside it. For a file that doesn't exist yet,
   its nearest existing folder's links are followed and the rest must be plain names, so `..` below
   a folder that doesn't exist is refused, as is a link that leads nowhere. The result is compared
-  with the root by whole folder names: `/work2/x` is not inside `/work`. On Windows case is ignored,
-  UNC paths are resolved like drive-letter ones, and device names (`CON`, `NUL`, `COM1`…) are
-  refused.
+  with the root by whole folder names, exactly: `/work2/x` is not inside `/work`, and on Windows
+  a folder's own case comes from the file system, so a case-sensitive folder's `Root` is not
+  `root`. On Windows UNC paths are resolved like drive-letter ones, and device names (`CON`, `NUL`,
+  `COM1`, `LPT¹`…) are refused.
+- A path you write must also stand under the write root: a link outside it pointing in is refused,
+  because a drawing's `.bak` goes beside the link and a delete removes the link.
 - A refused path is an ordinary tool error with `isError: true` that the agent can read and
   correct, for example `automation path rejected: outside the write root
   /work/project/out: /etc/x.png`, `automation path rejected: outside the read root (or the write
@@ -72,6 +75,8 @@ configuration works across the suite) keep the agent to the folders you give it:
 - A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):
   one nobody classified is refused, whatever it does. `drawingrecovery` is refused, and SAVEFILEPATH
   can't be changed, because both work on the server's autosave folder.
+- SHX fonts beside an opened drawing aren't searched under the roots, since one could be a link
+  leading out. Set `CADCRAFT_SHXPATH` for the server to supply fonts.
 - The server itself still reads the system's fonts, from the system font folders and
   `CADCRAFT_SHXPATH`. Their paths come from the server's setup, never from the agent, but a font file
   named by a drawing can decide which of them is read.

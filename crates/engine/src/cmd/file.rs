@@ -337,7 +337,9 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
     // The SHX fonts its text styles name are looked for beside the drawing too.
-    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+    // Not under the automation roots: the font folders hold no record of the roots, and a font's
+    // name there can be a link leading out of them.
+    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()).filter(|_| crate::file_access::current().is_none()) {
         // A bare file name is in the current folder.
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
         cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
