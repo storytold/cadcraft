@@ -1107,7 +1107,7 @@ pub fn grid_frame(d: &Drawing) -> (Vec2, f64) {
 /// UCS (in the World UCS while it is tilted out of the XY plane).
 pub fn grid_frame_in(d: &Drawing, space: &Space) -> (Vec2, f64) {
     let (base, angle) = grid_frame(d);
-    let (ucs, _) = crate::ucs::current(d, space);
+    let ucs = crate::ucs::current_frame(d, space);
     if !ucs.is_planar() {
         return (base, angle);
     }
