@@ -93,22 +93,13 @@ impl Page {
     // Function::call0. Restore the exact own descriptor (or remove our inherited-method shadow)
     // BEFORE assertions, even when an uncaught production exception returns Err from call0.
     fn with_replacement(&self, target: &JsValue, key: &str, replacement: &JsValue) -> Result<Result<JsValue, JsValue>, JsValue> {
-        let host = self.host.clone();
-        let operation = Closure::<dyn FnMut()>::new(move || super::publish(&host));
-        self.with_operation(target, key, replacement, || operation.as_ref().unchecked_ref::<Function>().call0(&JsValue::UNDEFINED))
-    }
-    fn with_operation(
-        &self,
-        target: &JsValue,
-        key: &str,
-        replacement: &JsValue,
-        operation: impl FnOnce() -> Result<JsValue, JsValue>,
-    ) -> Result<Result<JsValue, JsValue>, JsValue> {
         let object = field(&js_sys::global(), "Object")?;
         let descriptor = call(&object, "getOwnPropertyDescriptor", &[target.clone(), key.into()])?;
         let original = field(target, key)?;
+        let host = self.host.clone();
+        let operation = Closure::<dyn FnMut()>::new(move || super::publish(&host));
         let outcome = match Reflect::set(target, &key.into(), replacement) {
-            Ok(true) => operation(),
+            Ok(true) => operation.as_ref().unchecked_ref::<Function>().call0(&JsValue::UNDEFINED),
             Ok(false) => Err(error("injected method is not writable")),
             Err(error) => Err(error),
         };
@@ -278,6 +269,3 @@ fn real_window_delivery_recovery_preserves_dxf_and_consumes_actual_cad_actions()
     page.api("unregisterProvider", &[])?;
     Ok(())
 }
-
-#[path = "linked_browser_tests.rs"]
-mod linked;

@@ -54,10 +54,6 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 pub(crate) fn after_open(s: &mut Session, i: usize) {
     let px = s.viewport_px;
     let Some(st) = s.docs.get_mut(i) else { return };
-    // Provided sets preserve verified reference bytes/metadata; they never follow native paths.
-    if st.resources.is_some() {
-        return;
-    }
     if !st.doc.blocks.values().any(|b| b.xref_path.is_some()) {
         return;
     }
@@ -114,14 +110,11 @@ fn reference_count(d: &Drawing, key: &str) -> usize {
 }
 
 /// One xref as `?` and the palette list it.
-fn describe(d: &Drawing, b: &Block, host: Option<&str>, provided: bool) -> Value {
+fn describe(d: &Drawing, b: &Block, host: Option<&str>) -> Value {
     let refs = reference_count(d, &b.name);
     let status = if refs == 0 && b.xref_status == XrefStatus::Loaded { "Unreferenced" } else { b.xref_status.label() };
-    let found = if provided {
-        None
-    } else {
-        b.xref_path.as_deref().and_then(|p| load::find(p, host.map(std::path::Path::new), false).ok()).map(|f| f.to_string_lossy().into_owned())
-    };
+    let found =
+        b.xref_path.as_deref().and_then(|p| load::find(p, host.map(std::path::Path::new), false).ok()).map(|f| f.to_string_lossy().into_owned());
     json!({
         "name": b.name,
         "path": b.xref_path,
@@ -142,9 +135,6 @@ fn echo_all(s: &mut Session, out: &[Outcome]) {
 /// Attach the drawing at `path` as xref `name` (defined and loaded; nothing changes when it can't
 /// be loaded). An xref of that name attached from the same file is used again. Returns its name.
 fn attach(s: &mut Session, name: &str, path: &str, overlay: bool) -> Result<String> {
-    if s.state()?.resources.is_some() {
-        return Err(bad("xattach", "provided drawings authorize xref bytes through Refresh linked files, never native path loading"));
-    }
     let path = path.trim();
     if path.is_empty() {
         return Err(bad("xattach", "`path` is required"));
@@ -205,7 +195,7 @@ fn run_xattach(s: &mut Session, p: &Value) -> Result<Value> {
     let h = insert_with(s, &key, at, scale, rotation, None, &serde_json::Map::new())?;
     let host = host(s);
     let d = s.doc()?;
-    let info = d.block(&key).map(|b| describe(d, b, host.as_deref(), s.state().is_ok_and(|st| st.resources.is_some())));
+    let info = d.block(&key).map(|b| describe(d, b, host.as_deref()));
     Ok(json!({ "name": key, "handle": h.hex(), "xref": info }))
 }
 
@@ -236,22 +226,12 @@ fn run_xref(s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
     let option = str_param(p, "option").unwrap_or("?").trim().to_ascii_lowercase();
     let host = host(s);
-    if s.state()?.resources.is_some() && matches!(option.as_str(), "reload" | "r" | "path" | "p" | "bind" | "b" | "attach" | "a" | "overlay" | "o") {
-        return Err(bad(
-            "-xref",
-            "provided xref bytes are preserved without native loading or binding; use Refresh linked files for authorized replacement",
-        ));
-    }
     match option.as_str() {
         "?" | "list" => {
             let pattern = str_param(p, "names").unwrap_or("*");
             let d = s.doc()?;
             let names = matching(d, pattern);
-            let list: Vec<Value> = names
-                .iter()
-                .filter_map(|n| d.block(n))
-                .map(|b| describe(d, b, host.as_deref(), s.state().is_ok_and(|st| st.resources.is_some())))
-                .collect();
+            let list: Vec<Value> = names.iter().filter_map(|n| d.block(n)).map(|b| describe(d, b, host.as_deref())).collect();
             Ok(json!({ "xrefs": list }))
         }
         "reload" | "r" => {
@@ -353,9 +333,6 @@ fn dependents(d: &Drawing, sym: Sym, pattern: &str) -> Vec<String> {
 }
 
 fn run_xbind(s: &mut Session, p: &Value) -> Result<Value> {
-    if s.state()?.resources.is_some() {
-        return Err(bad("xbind", "provided xrefs retain their native bytes and cannot be bound without geometry loading"));
-    }
     let sym = str_param(p, "type").and_then(sym_type).ok_or_else(|| bad("xbind", "`type` must be block, dimstyle, layer, linetype or style"))?;
     let pattern = match p.get("names") {
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","),
@@ -394,16 +371,6 @@ fn run_xopen(s: &mut Session, p: &Value) -> Result<Value> {
     let b = d.block(&name).ok_or_else(|| bad("xopen", format!("no xref \"{name}\"")))?;
     let path = b.xref_path.clone().ok_or_else(|| bad("xopen", format!("\"{name}\" is not an xref")))?;
     let host = host(s);
-    if let Some(set) = s.state()?.resources.clone() {
-        let edge = set
-            .edges
-            .iter()
-            .find(|edge| edge.from_key == set.main.key && edge.raw_reference == path && edge.role == "xref")
-            .ok_or_else(|| bad("xopen", "xref has no authorized logical mapping; refresh linked files first"))?;
-        let subset = set.subdrawing(&edge.target_key).map_err(|e| bad("xopen", e))?;
-        let decoded = crate::cmd::file::read_resource_set(subset).map_err(|e| bad("xopen", e))?;
-        return s.finish_open(decoded);
-    }
     let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|m| match m {
         load::Missing::NotFound => bad("xopen", format!("{path}: file not found")),
         load::Missing::Refused(r) => bad("xopen", format!("{path}: not opened, {r}")),

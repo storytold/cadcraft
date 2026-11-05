@@ -64,6 +64,7 @@ craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs",
 craft-window = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
 egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_kittest = "0.37"
+wasm-bindgen-test = "0.3.79"
 eframe = { version = "0.37", default-features = false }
 egui-wgpu = "0.37"
 # Monotonic time on native and web (performance.now on wasm).

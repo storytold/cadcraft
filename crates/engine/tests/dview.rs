@@ -249,58 +249,6 @@ fn inside_an_active_viewport_it_twists_that_viewport_as_one_undo_step() {
     assert_eq!(s.cmdline("dview").unwrap_err().to_string(), PAPER);
 }
 
-/// A viewport edit must retain the provider snapshot through both undo and redo, regardless
-/// of whether it came from JSON, view.set, or an interactive DVIEW that ends or is cancelled.
-#[test]
-fn viewport_twist_undo_and_redo_preserve_linked_resources() {
-    use cadcraft_engine::linked_files::{Bytes, Input as ResourceInput, ResourceSet};
-    use std::sync::Arc;
-
-    for mode in ["json", "view.set", "interactive", "cancel"] {
-        let (mut s, h) = layout_session();
-        s.execute("mspace", &json!({ "handle": h.hex() })).unwrap();
-        let main = Bytes::new(cadcraft_io::write(s.doc().unwrap(), "Viewport.dxf").unwrap()).unwrap();
-        let input = ResourceInput {
-            main_key: "main".into(),
-            name: "Viewport.dxf".into(),
-            main: Some(main.clone()),
-            main_hash: main.hash().into(),
-            files: Vec::new(),
-            edges: Vec::new(),
-            version: "viewport-resource-v1".into(),
-        };
-        let resources = ResourceSet::new(input, main).unwrap();
-        s.state_mut().unwrap().resources = Some(resources.clone());
-        let undo = s.state().unwrap().undo.len();
-        match mode {
-            "json" => {
-                s.execute("dview", &json!({ "twist": 30 })).unwrap();
-            }
-            "view.set" => {
-                let v = view(&s);
-                s.execute("view.set", &json!({ "center": [v.center.x, v.center.y], "height": v.height, "twist": 30 })).unwrap();
-            }
-            _ => {
-                for line in ["dview", "", "tw", "30"] {
-                    s.cmdline(line).unwrap();
-                }
-                if mode == "cancel" {
-                    s.input(Input::Cancel).unwrap();
-                } else {
-                    s.cmdline("").unwrap();
-                }
-            }
-        }
-        assert_eq!(s.state().unwrap().undo.len(), undo + 1, "{mode}");
-        assert!(near(vp(&s, h).twist.to_degrees(), 30.0), "{mode}");
-        for (command, angle) in [("undo", 0.0), ("redo", 30.0)] {
-            s.execute(command, &json!({})).unwrap();
-            assert!(near(vp(&s, h).twist.to_degrees(), angle), "{mode}: {command}");
-            assert!(Arc::ptr_eq(s.state().unwrap().resources.as_ref().unwrap(), &resources), "{mode}: {command}");
-        }
-    }
-}
-
 #[test]
 fn a_locked_viewport_keeps_its_twist() {
     let (mut s, h) = layout_session();

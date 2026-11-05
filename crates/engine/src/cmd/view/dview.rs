@@ -125,7 +125,7 @@ pub(super) fn record_viewport_edit(s: &mut Session, before: (Arc<cadcraft_doc::D
     }
     let st = s.state_mut()?;
     if !Arc::ptr_eq(&before.0, &st.doc) {
-        st.push_undo(Snapshot { label: "DView".into(), doc: before.0, selection: before.1, resources: st.resources.clone() });
+        st.push_undo(Snapshot { label: "DView".into(), doc: before.0, selection: before.1 });
         st.revision += 1;
     }
     Ok(())

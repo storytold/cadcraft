@@ -310,9 +310,6 @@ fn failed_save_delivery_has_a_bounded_inbox_and_keeps_all_captured_aliases() {
                 h.finish_save(&owned, &capture, &status, &resource, true);
             }
             Action::Open { request, resource, name, .. } => h.finish_open(&request, &resource, &name, Err("fixture complete".into())),
-            Action::Linked { .. } | Action::ResourceFailed { .. } | Action::LinkedOpenFailed { .. } => {
-                panic!("unnegotiated fixture must not receive linked actions")
-            }
         }
     }
     assert!(!h.publish_events_with(|_, _| Ok::<(), &str>(()), |_| {}));

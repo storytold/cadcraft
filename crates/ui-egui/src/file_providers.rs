@@ -8,10 +8,6 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-mod linked;
-use cadcraft_engine::linked_files::{Bytes, Input, ResourceSet};
-pub(crate) use linked::Kind as LinkedKind;
-pub use linked::LinkedPayload;
 const MAX_BYTES: usize = 80 * 1024 * 1024;
 const MAX_PENDING: usize = 16;
 const MAX_EVENTS: usize = 64;
@@ -29,24 +25,12 @@ pub struct Resource {
 pub struct Event {
     pub metadata: Value,
     pub bytes: Option<Vec<u8>>,
-    pub linked: Option<LinkedPayload>,
 }
 impl Event {
     fn terminal(&self) -> bool {
         matches!(
             self.metadata.get("type").and_then(Value::as_str),
-            Some(
-                "saved"
-                    | "downloaded"
-                    | "saveCancelled"
-                    | "saveFailed"
-                    | "opened"
-                    | "openFailed"
-                    | "openCancelled"
-                    | "resourcesUpdated"
-                    | "resourcesFailed"
-                    | "resourcesCancelled"
-            )
+            Some("saved" | "downloaded" | "saveCancelled" | "saveFailed" | "opened" | "openFailed" | "openCancelled")
         )
     }
 }
@@ -65,15 +49,8 @@ pub(crate) struct Capture {
     intent: String,
     destination: String,
     bytes: Option<Vec<u8>>,
-    linked_main: Option<Arc<Bytes>>,
-    linked_key: String,
-    pub(crate) linked_set: Option<Arc<ResourceSet>>,
-    pub(crate) ack_version: Option<String>,
 }
 pub(crate) enum Action {
-    Linked { request: String, input: Input },
-    ResourceFailed { request: String, capture: Capture, error: String },
-    LinkedOpenFailed { request: String, resource: String, error: String },
     Save { request: String, capture: Capture, status: String, resource: String },
     Open { request: String, resource: String, name: String, bytes: Vec<u8> },
 }
@@ -91,11 +68,6 @@ struct Terminal {
 #[derive(Default)]
 struct State {
     provider: Option<Identity>,
-    linked_enabled: bool,
-    updates: HashMap<String, Capture>,
-    queued_sets: HashSet<String>,
-    ready_sets: HashMap<String, Arc<ResourceSet>>,
-    versions: HashMap<u64, String>,
     enabled: bool,
     nonce: String,
     serial: u64,
@@ -110,21 +82,17 @@ struct State {
     opens: HashMap<String, String>,
     queued_opens: HashSet<String>,
     actions: Vec<Action>,
-    // Only already admitted owners enter this inbox: at most16 saves/refreshes plus16 reads, no transfer bytes.
+    // Only captures already admitted in dialogs/pending enter this inbox: at most 16, no bytes.
     delivery_failures: Vec<Action>,
     events: Vec<Event>,
     // At most MAX_PENDING saves plus MAX_PENDING reads; never stores transfer bytes.
     finished: VecDeque<Terminal>,
     publishing_terminals: usize,
-    publishing_bytes: usize,
     documents: Value,
 }
 impl State {
     fn busy(&self) -> bool {
-        !self.updates.is_empty()
-            || !self.queued_sets.is_empty()
-            || !self.ready_sets.is_empty()
-            || !self.dialogs.is_empty()
+        !self.dialogs.is_empty()
             || !self.pending.is_empty()
             || !self.finishing_saves.is_empty()
             || !self.opens.is_empty()
@@ -147,7 +115,7 @@ impl State {
             fields.insert("namespace".into(), provider.namespace.clone().into());
             fields.insert("connectionId".into(), self.connection.clone().into());
         }
-        self.events.push(Event { metadata, bytes, linked: None });
+        self.events.push(Event { metadata, bytes });
     }
     fn retained_bytes(&self) -> usize {
         let captures = self.dialogs.values().chain(self.pending.values()).map(|p| p.bytes.as_ref().map_or(0, Vec::len));
@@ -156,10 +124,10 @@ impl State {
             Action::Open { bytes, .. } => bytes.len(),
             _ => 0,
         });
-        captures.chain(events).chain(actions).fold(0, usize::saturating_add).saturating_add(Bytes::retained()).saturating_add(self.publishing_bytes)
+        captures.chain(events).chain(actions).fold(0, usize::saturating_add)
     }
     fn pending_for(&self, doc: u64) -> bool {
-        self.dialogs.values().chain(self.pending.values()).chain(self.updates.values()).any(|c| c.snapshots.iter().any(|d| d.uid == doc))
+        self.dialogs.values().chain(self.pending.values()).any(|c| c.snapshots.iter().any(|d| d.uid == doc))
             || self.finishing_saves.values().any(|aliases| aliases.contains(&doc))
             || self.actions.iter().any(|a| matches!(a, Action::Save { capture, .. } if capture.snapshots.iter().any(|d| d.uid == doc)))
     }
@@ -185,21 +153,11 @@ impl State {
     }
     fn fail_delivery(&mut self, metadata: &Value) {
         let Some(request) = metadata.get("requestId").and_then(Value::as_str) else { return };
-        // A synchronous completeResourceSet already owns the reply, even if dispatch later throws.
-        if metadata.get("type").and_then(Value::as_str) == Some("resourceSetNeeded") && self.queued_sets.contains(request) {
-            return;
-        }
-        if metadata.get("type").and_then(Value::as_str) == Some("resourceSetNeeded") && self.updates.contains_key(request) {
-            self.fail_update(request, "linked resource event delivery failed".into());
-            return;
-        }
         match metadata.get("type").and_then(Value::as_str) {
-            Some(kind @ ("save" | "saveDialog" | "resourceSetNeeded")) => {
-                let capture = if kind == "saveDialog" { self.dialogs.remove(request) } else { self.pending.remove(request) };
+            Some(kind @ ("save" | "saveDialog")) => {
+                let capture = if kind == "save" { self.pending.remove(request) } else { self.dialogs.remove(request) };
                 if let Some(mut capture) = capture {
                     capture.bytes = None;
-                    capture.linked_main = None;
-                    capture.linked_set = None;
                     self.finishing_saves.insert(request.into(), capture.snapshots.iter().map(|doc| doc.uid).collect());
                     self.delivery_failures.push(Action::Save { request: request.into(), capture, status: "failed".into(), resource: String::new() });
                 }
@@ -226,13 +184,11 @@ pub struct Host(Arc<Mutex<State>>);
 struct PublishingBatch {
     host: Host,
     terminals: usize,
-    bytes: usize,
 }
 impl Drop for PublishingBatch {
     fn drop(&mut self) {
         let mut state = self.host.state();
         state.publishing_terminals = state.publishing_terminals.saturating_sub(self.terminals);
-        state.publishing_bytes = state.publishing_bytes.saturating_sub(self.bytes);
     }
 }
 impl Host {
@@ -272,8 +228,6 @@ impl Host {
         s.resources.clear();
         s.bindings.clear();
         s.names.clear();
-        s.versions.clear();
-        s.linked_enabled = false;
         s.events.clear();
         s.documents = Value::Null;
         Ok(())
@@ -323,7 +277,7 @@ impl Host {
             || bytes.len() > MAX_BYTES
             || s.retained_bytes().saturating_add(bytes.len()) > MAX_BYTES
             || s.pending_for(doc)
-            || s.dialogs.len() + s.pending.len() + s.finishing_saves.len() + s.updates.len() >= MAX_PENDING
+            || s.dialogs.len() + s.pending.len() + s.finishing_saves.len() >= MAX_PENDING
             || s.events.len() >= MAX_EVENTS
             || !snapshots.iter().any(|snapshot| snapshot.uid == doc)
         {
@@ -332,28 +286,10 @@ impl Host {
         let request = s.next("dialog")?;
         let intent = if save_as { "saveAs" } else { "save" }.to_string();
         s.event(json!({"type":"saveDialog","requestId":request,"documentId":doc.to_string(),"revision":revision.to_string(),"intent":intent,"filename":name}), None);
-        s.dialogs.insert(
-            request.clone(),
-            Capture {
-                doc,
-                revision,
-                snapshots,
-                name,
-                intent,
-                destination: String::new(),
-                bytes: Some(bytes),
-                linked_main: None,
-                linked_key: String::new(),
-                linked_set: None,
-                ack_version: None,
-            },
-        );
+        s.dialogs.insert(request.clone(), Capture { doc, revision, snapshots, name, intent, destination: String::new(), bytes: Some(bytes) });
         Ok(request)
     }
     pub fn resolve_dialog(&self, request: &str, destination: &str, name: &str) -> Result<(), String> {
-        if self.state().dialogs.get(request).is_some_and(|c| c.linked_main.is_some()) {
-            return self.resolve_linked_dialog(request, destination, name);
-        }
         if !matches!(destination, "provider" | "device" | "cancel") || (destination != "cancel" && !valid_native_name(name)) {
             return Err("choose provider, device or cancel and a native project filename".into());
         }
@@ -377,24 +313,11 @@ impl Host {
         Ok(())
     }
     pub fn result(&self, request: String, status: String, resource: String) -> Result<(), String> {
-        self.result_inner(request, status, resource, None)
-    }
-    fn result_inner(&self, request: String, status: String, resource: String, receipt: Option<(String, String)>) -> Result<(), String> {
         if !matches!(status.as_str(), "saved" | "download" | "failed" | "cancel") || (!resource.is_empty() && !valid_id(&resource)) {
             return Err("invalid provider result".into());
         }
         let mut s = self.state();
-        if s.queued_sets.contains(&request) {
-            return Err("resource reply already queued".into());
-        }
         let capture = s.pending.get(&request).ok_or("unknown or completed save request")?;
-        if capture.linked_main.is_some() && matches!(status.as_str(), "saved" | "download") {
-            let set = capture.linked_set.as_ref().ok_or("complete linked resources before reporting success")?;
-            let (digest, version) = receipt.as_ref().ok_or("linked save requires saveResourceSetResult")?;
-            if digest != set.digest() || (status == "saved" && (!valid_id(version))) {
-                return Err("linked set digest/version receipt differs".into());
-            }
-        }
         if (status == "saved" && (capture.destination != "provider" || !valid_id(&resource)))
             || (status == "download" && capture.destination != "device")
         {
@@ -409,8 +332,7 @@ impl Host {
         if s.actions.len() >= MAX_PENDING {
             return Err("provider command queue is full".into());
         }
-        let mut capture = s.pending.remove(&request).ok_or("unknown save request")?;
-        capture.ack_version = receipt.map(|(_, version)| version);
+        let capture = s.pending.remove(&request).ok_or("unknown save request")?;
         s.finishing_saves.insert(request.clone(), capture.snapshots.iter().map(|doc| doc.uid).collect());
         s.actions.push(Action::Save { request, capture, status, resource });
         Ok(())
@@ -445,9 +367,6 @@ impl Host {
         Ok(request)
     }
     pub fn open(&self, request: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
-        if self.linked_enabled() {
-            return Err("linkedFilesV1 reads require completeResourceSet".into());
-        }
         if !valid_native_name(&name) || bytes.is_empty() || bytes.len() > MAX_BYTES {
             return Err("invalid native project resource".into());
         }
@@ -490,45 +409,24 @@ impl Host {
     /// Failed publication consumes only a still-owned request, never an accepted callback.
     /// Recovery actions retain captured aliases until the real application produces a terminal.
     /// Returns whether the platform must request a repaint for failure consumption.
-    pub fn publish_events_with<E>(&self, mut dispatch: impl FnMut(&Value, Option<Vec<u8>>) -> Result<(), E>, on_error: impl FnMut(E)) -> bool {
-        self.publish_owned_events_with(
-            |event| {
-                if event.linked.is_some() { Err(None) } else { dispatch(&event.metadata, event.bytes).map_err(Some) }
-            },
-            on_error,
-        )
-    }
-    /// The complete-set publisher keeps the same atomic publication/terminal ownership guards.
-    pub fn publish_linked_events_with<E>(
-        &self,
-        mut dispatch: impl FnMut(&Value, Option<Vec<u8>>, Option<LinkedPayload>) -> Result<(), E>,
-        on_error: impl FnMut(E),
-    ) -> bool {
-        self.publish_owned_events_with(|event| dispatch(&event.metadata, event.bytes, event.linked).map_err(Some), on_error)
-    }
-    fn publish_owned_events_with<E>(&self, mut dispatch: impl FnMut(Event) -> Result<(), Option<E>>, mut on_error: impl FnMut(E)) -> bool {
+    pub fn publish_events_with<E>(&self, mut dispatch: impl FnMut(&Value, Option<Vec<u8>>) -> Result<(), E>, mut on_error: impl FnMut(E)) -> bool {
         let mut failed = false;
         for _ in 0..2 {
             let (events, _publishing) = {
                 let mut state = self.state();
                 let events = state.take_events();
                 let terminals = events.iter().filter(|event| event.terminal()).count();
-                let bytes = events.iter().map(|event| event.bytes.as_ref().map_or(0, Vec::len)).fold(0usize, usize::saturating_add);
                 state.publishing_terminals = state.publishing_terminals.saturating_add(terminals);
-                state.publishing_bytes = state.publishing_bytes.saturating_add(bytes);
-                (events, PublishingBatch { host: self.clone(), terminals, bytes })
+                (events, PublishingBatch { host: self.clone(), terminals })
             };
             if events.is_empty() {
                 break;
             }
             for event in events {
-                let metadata = event.metadata.clone();
-                if let Err(error) = dispatch(event) {
+                if let Err(error) = dispatch(&event.metadata, event.bytes) {
                     failed = true;
-                    self.state().fail_delivery(&metadata);
-                    if let Some(error) = error {
-                        on_error(error);
-                    }
+                    self.state().fail_delivery(&event.metadata);
+                    on_error(error);
                 }
             }
         }
@@ -543,7 +441,6 @@ impl Host {
         let live: HashSet<_> = docs.iter().map(|d| d.0).collect();
         s.bindings.retain(|id, _| live.contains(id));
         s.names.retain(|id, _| live.contains(id));
-        s.versions.retain(|id, _| live.contains(id));
         s.documents = json!(docs.into_iter().map(|(id,rev,name,dirty)|json!({"id":id.to_string(),"revision":rev.to_string(),"name":name,"dirty":dirty,"resourceId":s.bindings.get(&id)})).collect::<Vec<_>>());
     }
     pub(crate) fn finish_save(&self, request: &str, capture: &Capture, status: &str, resource: &str, alive: bool) {
@@ -557,19 +454,12 @@ impl Host {
             if alive {
                 s.bindings.insert(capture.doc, resource.into());
                 s.names.insert(capture.doc, capture.name.clone());
-                if let Some(version) = &capture.ack_version {
-                    s.versions.insert(capture.doc, version.clone());
-                }
             }
             s.resources.retain(|r| r.id != resource);
             s.resources.insert(0, Resource { id: resource.into(), name: capture.name.clone(), updated_at: String::new() });
             s.resources.truncate(MAX_RESOURCES);
         }
-        let mut metadata = json!({"type":match status { "saved"=>"saved", "download"=>"downloaded", "cancel"=>"saveCancelled", _=>"saveFailed" },"requestId":request,"documentId":capture.doc.to_string(),"revision":capture.revision.to_string(),"resourceId":resource,"filename":capture.name,"documentOpen":alive});
-        if let Some(set) = &capture.linked_set {
-            metadata["setDigest"] = set.digest().into();
-            metadata["versionToken"] = capture.ack_version.clone().into();
-        }
+        let metadata = json!({"type":match status { "saved"=>"saved", "download"=>"downloaded", "cancel"=>"saveCancelled", _=>"saveFailed" },"requestId":request,"documentId":capture.doc.to_string(),"revision":capture.revision.to_string(),"resourceId":resource,"filename":capture.name,"documentOpen":alive});
         s.finished.push_back(Terminal { request: request.into(), metadata, owner: TerminalOwner::Save });
         s.flush_finished();
     }

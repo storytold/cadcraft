@@ -107,16 +107,12 @@ impl Linetype {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TextStyle {
     pub name: String,
     /// Font file or family name (TTF family or a stroke-font name).
     pub font: String,
-    /// Inert native source metadata: (decoded family, original file). Ordinary writers ignore it;
-    /// an explicit linked-set capture can preserve the file while this family remains unchanged.
-    #[serde(skip)]
-    pub source_font_file: Option<(String, String)>,
     pub big_font: String,
     /// 0 = not fixed.
     pub height: f64,
@@ -128,28 +124,11 @@ pub struct TextStyle {
     pub annotative: bool,
 }
 
-// Source provenance does not change the pre-existing semantic equality/JSON contract.
-impl PartialEq for TextStyle {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.font == other.font
-            && self.big_font == other.big_font
-            && self.height == other.height
-            && self.width_factor == other.width_factor
-            && self.oblique == other.oblique
-            && self.backwards == other.backwards
-            && self.upside_down == other.upside_down
-            && self.vertical == other.vertical
-            && self.annotative == other.annotative
-    }
-}
-
 impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             name: "Standard".into(),
             font: "CADCraft Stroke".into(),
-            source_font_file: None,
             big_font: String::new(),
             height: 0.0,
             width_factor: 1.0,

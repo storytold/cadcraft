@@ -19,9 +19,6 @@ pub const PROVIDER_RECENT_OPEN: &str = "ui.provider.open";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
-    ("ui.provider.openSet", "Open linked provider drawing", &[], None),
-    ("ui.provider.applyResources", "Apply linked file reply", &[], None),
-    ("ui.provider.refreshResources", "Refresh linked files", &["File", "Refresh linked files"], None),
     ("ui.spacemouse", "3D Mouse...", &["Tools", "3D Mouse..."], None),
     ("ui.spacemouse.calibrate", "Calibrate 3D Mouse", &[], None),
     ("ui.spacemouse.navigate", "3D Mouse Navigation", &[], None),
@@ -146,9 +143,6 @@ fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, S
 fn run_provider_file_command(app: &mut CadApp, id: &str, params: &Value, no_path: bool) -> Option<Result<Value, String>> {
     let result = match id {
         PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
-        "ui.provider.openSet" => crate::file_provider_app::open_set(app, params),
-        "ui.provider.applyResources" => crate::file_provider_app::apply_resources(app, params),
-        "ui.provider.refreshResources" => crate::file_provider_app::refresh_resources(app),
         "ui.saveas" | "saveas" if no_path && app.file_providers.enabled() => crate::file_provider_app::save(app, true),
         _ => return None,
     };
@@ -654,7 +648,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
-        if !menu.is_empty() && (*id != "ui.provider.refreshResources" || (app.file_providers.enabled() && app.file_providers.linked_enabled())) {
+        if !menu.is_empty() {
             add(menu, label, id, *sc, true);
         }
     }

@@ -721,7 +721,6 @@ dependencies = [
  "rstar",
  "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.21",
 ]
 
@@ -830,7 +829,6 @@ dependencies = [
  "cadcraft-ui-egui",
  "eframe",
  "egui",
- "image",
  "js-sys",
  "log",
  "serde_json",

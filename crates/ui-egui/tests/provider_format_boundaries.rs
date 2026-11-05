@@ -210,6 +210,39 @@ fn provider_save_and_save_as_refuse_external_xrefs_before_encoding_or_admission(
     Ok(())
 }
 
+#[test]
+fn provider_open_refuses_external_images_and_xrefs_before_native_path_loading() -> Result<(), String> {
+    for image_space in [Some(ImageSpace::Model), Some(ImageSpace::Layout), Some(ImageSpace::Block), None] {
+        let mut incoming = app_with_real_formats(Services::default())?;
+        if let Some(space) = image_space {
+            insert_external_image(&mut incoming, space)?;
+        } else {
+            insert_external_xref(&mut incoming)?;
+        }
+        let bytes =
+            cadcraft_io::write(incoming.session.doc().map_err(|error| error.to_string())?, "External.dxf").map_err(|error| error.to_string())?;
+        let mut app = app_with_real_formats(Services::default())?;
+        connect(&mut app)?;
+        let before = before(&app)?;
+        let value = app.run("ui.provider.open", json!({"resource":"existing-provider-resource"}))?;
+        let request = value["requestId"].as_str().ok_or("provider Open omitted its request ID")?;
+        only_event(&app, "openRequested", request)?;
+        app.file_providers.open(request.into(), "External.dxf".into(), bytes)?;
+        logic(&mut app);
+        assert_document_unchanged(&app, &before)?;
+        assert!(app.file_providers.bound_document("existing-provider-resource").is_none());
+        let terminal = only_event(&app, "openFailed", request)?;
+        assert_eq!(terminal.metadata["resourceId"], "existing-provider-resource");
+        assert_eq!(
+            terminal.metadata["error"],
+            "DXF references external images or drawings; open a self-contained drawing with the file provider (external files are not loaded)"
+        );
+        assert!(!app.file_providers.busy());
+        assert!(app.file_providers.request_open("existing-provider-resource").is_ok(), "a refused Open must release its owner for retry");
+    }
+    Ok(())
+}
+
 fn only_event(app: &CadApp, event_type: &str, request: &str) -> Result<Event, String> {
     let events = app.file_providers.take_events();
     assert_eq!(events.len(), 1, "expected exactly one {event_type}");

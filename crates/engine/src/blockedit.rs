@@ -315,7 +315,7 @@ impl DocState {
         let Some(be) = &mut self.block_edit else { return Ok(()) };
         let before = be.host.doc.clone();
         let selection = be.host.selection.clone();
-        be.host.push_undo(Snapshot { label: UNDO_LABEL.into(), doc: before, selection, resources: be.host.resources.clone() });
+        be.host.push_undo(Snapshot { label: UNDO_LABEL.into(), doc: before, selection });
         be.host.doc = Arc::new(d);
         be.host.revision += 1;
         be.original = original;
