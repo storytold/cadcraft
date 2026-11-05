@@ -650,10 +650,23 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Some("P") => ctx.s.state().map(|st| st.previous_selection.clone()).unwrap_or_default(),
         Some("I") => ctx.s.selection(),
         Some("W") | Some("C") => {
-            let (p1, p2) = (point(0)?, point(1)?);
+            let corner = |i: usize| -> Result<[f64; 3], LispError> {
+                let v = pts.get(i).ok_or_else(|| args_err(true))?;
+                v.as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", v))
+            };
+            let (u1, u2) = (corner(0)?, corner(1)?);
+            let crossing = mode.as_deref() == Some("C");
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-            crate::select::select_window(d, &space, cadcraft_geom::Bounds2::from_points([p1, p2]), mode.as_deref() == Some("C"))
+            if frame.rotation() == 0.0 {
+                let (p1, p2) = (frame.to_wcs(Vec2::new(u1[0], u1[1])), frame.to_wcs(Vec2::new(u2[0], u2[1])));
+                crate::select::select_window(d, &space, cadcraft_geom::Bounds2::from_points([p1, p2]), crossing)
+            } else {
+                // A window drawn in a turned UCS is a turned rectangle in the world: all four
+                // corners, not the box around two of them.
+                let corners = [(u1[0], u1[1]), (u2[0], u1[1]), (u2[0], u2[1]), (u1[0], u2[1])].map(|(x, y)| frame.to_wcs(Vec2::new(x, y)));
+                crate::select::select_polygon(d, &space, &corners, crossing)
+            }
         }
         Some("F") | Some("WP") | Some("CP") => {
             let poly: Vec<Vec2> =

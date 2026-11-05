@@ -253,3 +253,20 @@ fn angtof_ignores_the_ucs() {
     assert_eq!(ok(&mut s, "(angtof \"0\")"), "0.0");
     assert_eq!(ok(&mut s, "(angtos (angtof \"45\"))"), "\"45\"");
 }
+
+/// A window in a UCS turned 45 degrees is a turned rectangle in the world, not the box around
+/// its two corners.
+#[test]
+fn ssget_window_in_a_45_degree_ucs() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "z", "angle": 45})).unwrap();
+    // UCS (5, 5) is on the world Y axis, inside the window.
+    s.execute("circle", &json!({"center": [0.0, 5.0 * std::f64::consts::SQRT_2], "radius": 1})).unwrap();
+    // World (5, 3) is UCS (5.66, -1.41): in the world box of the window, below the UCS window.
+    s.execute("circle", &json!({"center": [5.0, 3.0], "radius": 0.5})).unwrap();
+    assert_eq!(ok(&mut s, "(sslength (ssget \"W\" '(0 0) '(10 10)))"), "1");
+    let found = ok(&mut s, "(cdr (assoc 10 (entget (ssname (ssget \"W\" '(0 0) '(10 10)) 0))))");
+    let f = pt(&found);
+    assert!(f[0].abs() < 1e-4 && (f[1] - 5.0 * std::f64::consts::SQRT_2).abs() < 1e-4, "{found}");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"C\" '(0 0) '(10 10)))"), "1");
+}

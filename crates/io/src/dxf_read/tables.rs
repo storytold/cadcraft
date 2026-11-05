@@ -207,6 +207,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 {
                     d.header.set("SNAPBASE", HVal::Point(Vec3::new(x, y, 0.0)));
                 }
+                if let Some(v) = t.i(74) {
+                    d.header.set_i64("UCSICON", v.clamp(0, 3));
+                }
                 if let Some(a) = t.f(50).filter(|a| a.is_finite()) {
                     d.header.set_f64("SNAPANG", a);
                 }

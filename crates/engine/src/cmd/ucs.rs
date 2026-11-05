@@ -6,7 +6,7 @@
 //! UCS out of the XY plane, which CADCraft doesn't draw in yet; they say so. A UCS change is part
 //! of the command's undo step, as an edit is.
 
-use cadcraft_doc::{Drawing, EntityKind};
+use cadcraft_doc::{Drawing, EntityKind, Ucs};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
@@ -327,22 +327,23 @@ fn delete(s: &mut Session, patterns: &str) -> Result<usize> {
     if gone.is_empty() {
         return Ok(0);
     }
-    let (frame, current) = s.ucs_named();
     s.doc_mut()?.ucss.retain(|u| !gone.iter().any(|g| g == &u.name));
-    if gone.iter().any(|g| g.eq_ignore_ascii_case(&current)) {
-        s.set_ucs(frame, "")?;
-    }
-    // The other spaces whose current UCS carries a deleted name keep their axes and lose the name
-    // too (model space's UCSNAME, every layout's UCS).
+    // Wherever a deleted name is current (model space's UCSNAME, every layout's UCS) the UCS keeps
+    // its axes and loses the name; the UCS Previous histories keep their frames the same way.
     let d = s.doc_mut()?;
     let is_gone = |n: &str| gone.iter().any(|g| g.eq_ignore_ascii_case(n.trim()));
     if is_gone(&d.header.str("UCSNAME", "")) {
         d.header.set_str("UCSNAME", "");
     }
-    for l in &mut d.layouts {
-        if let Some(u) = l.ucs.as_mut().filter(|u| is_gone(&u.name)) {
+    let unname = |u: &mut Ucs| {
+        if is_gone(&u.name) {
             u.name.clear();
         }
+    };
+    d.ucs_previous.iter_mut().for_each(unname);
+    for l in &mut d.layouts {
+        l.ucs.iter_mut().for_each(unname);
+        l.ucs_previous.iter_mut().for_each(unname);
     }
     Ok(gone.len())
 }
@@ -435,8 +436,11 @@ impl Interactive for UcsM {
         match &self.stage {
             Stage::Main => Prompt::new("Specify origin of UCS", Accept::POINT).kw(OPTIONS).default("World"),
             Stage::OriginOnly | Stage::ThreePoint => {
-                // Input here is read in the current UCS, where the UCS's own origin is 0,0,0.
-                Prompt::new("Specify new origin point", Accept::POINT).default("0,0,0")
+                // The origin as input is read: in the UCS where that is the current one (so 0,0,0),
+                // in the world while the current UCS is tilted out of the XY plane.
+                let o = s.ucs().origin;
+                let (p, z) = if s.input_ucs().is_planar() { (s.input_ucs().to_ucs(o.xy()), 0.0) } else { (o.xy(), o.z) };
+                Prompt::new("Specify new origin point", Accept::POINT).default(format!("{},{},{}", p.x, p.y, z))
             }
             Stage::XPoint(o) => Prompt::new("Specify point on X-axis", Accept::POINT).default("Accept").base(o.xy()),
             Stage::XyPoint(o, _) => Prompt::new("Specify point on the XY plane", Accept::POINT).default("Accept").base(o.xy()),
@@ -502,7 +506,12 @@ impl Interactive for UcsM {
                 s.set_ucs(f, "")?;
                 Ok(Step::Done)
             }
-            (Stage::OriginOnly | Stage::ThreePoint, Input::Enter) => Ok(Step::Done),
+            (Stage::OriginOnly, Input::Enter) => Ok(Step::Done),
+            // Enter keeps the origin and goes on to the axes, as a typed point would.
+            (Stage::ThreePoint, Input::Enter) => {
+                self.stage = Stage::XPoint(s.ucs().origin);
+                Ok(Step::Continue)
+            }
             (Stage::XPoint(o), Input::Enter) => {
                 set_by_points(s, o, None, None)?;
                 Ok(Step::Done)
