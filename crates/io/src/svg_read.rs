@@ -137,6 +137,8 @@ struct Parser {
     skip: usize,
     /// What was left out, by kind ([`LeftOut`]).
     left_out: BTreeMap<LeftOut, usize>,
+    /// Shapes left out because their coordinates or extents overflow: invalid, not unsupported.
+    too_large: usize,
 }
 
 /// Drawn content the reader leaves out, named in the drawing's read note.
@@ -147,7 +149,6 @@ enum LeftOut {
     Use,
     Style,
     RoundedCorners,
-    TooLarge,
 }
 
 impl LeftOut {
@@ -167,7 +168,6 @@ impl LeftOut {
             Self::Use => ("`<use>` copy", "`<use>` copies"),
             Self::Style => ("`<style>` sheet (its class rules aren't applied)", "`<style>` sheets (their class rules aren't applied)"),
             Self::RoundedCorners => ("rectangle with rounded corners (drawn square)", "rectangles with rounded corners (drawn square)"),
-            Self::TooLarge => ("shape with coordinates too large to represent", "shapes with coordinates too large to represent"),
         };
         format!("{n} {}", if n == 1 { one } else { many })
     }
@@ -186,6 +186,7 @@ impl Parser {
             verts_left: MAX_TOTAL_VERTS,
             skip: 0,
             left_out: BTreeMap::new(),
+            too_large: 0,
         }
     }
 
@@ -193,13 +194,19 @@ impl Parser {
         *self.left_out.entry(kind).or_default() += 1;
     }
 
-    /// The read note on what was left out, if anything was.
-    fn note(&self) -> Option<String> {
-        if self.left_out.is_empty() {
-            return None;
+    /// The read notes on what was left out: what isn't read yet, then what is invalid.
+    fn notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        if !self.left_out.is_empty() {
+            let list: Vec<String> = self.left_out.iter().map(|(k, n)| k.describe(*n)).collect();
+            notes.push(format!("SVG: CADCraft doesn't read these yet, so they were left out: {}", list.join(", ")));
         }
-        let list: Vec<String> = self.left_out.iter().map(|(k, n)| k.describe(*n)).collect();
-        Some(format!("SVG: CADCraft doesn't read these yet, so they were left out: {}", list.join(", ")))
+        match self.too_large {
+            0 => {}
+            1 => notes.push("SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent".into()),
+            n => notes.push(format!("SVG: {n} shapes were left out as invalid: their coordinates or size are too large to represent")),
+        }
+        notes
     }
 
     fn parse(&mut self, text: &str) -> Result<()> {
@@ -223,7 +230,7 @@ impl Parser {
                 _ => {}
             }
         }
-        self.drawing.read_notes.extend(self.note());
+        self.drawing.read_notes.extend(self.notes());
         Ok(())
     }
 
@@ -367,7 +374,7 @@ impl Parser {
         self.verts_left = self.verts_left.checked_sub(verts).ok_or_else(|| IoError::Format("SVG: too much generated geometry".into()))?;
         // Finite numbers can still overflow through transforms and relative steps (`l1e308 0` twice).
         if !finite(&kind) {
-            self.left_out(LeftOut::TooLarge);
+            self.too_large += 1;
             return Ok(());
         }
         let common = Common { layer: self.layer.clone(), ..Common::default() };

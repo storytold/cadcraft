@@ -2539,7 +2539,7 @@ fn svg_coordinates_that_overflow_are_left_out() {
     );
     let d = read(svg.as_bytes(), "huge.svg").unwrap();
     assert_eq!(kinds(&d), ["Line"]);
-    assert_eq!(d.read_notes, ["SVG: CADCraft doesn't read these yet, so they were left out: 6 shapes with coordinates too large to represent"]);
+    assert_eq!(d.read_notes, ["SVG: 6 shapes were left out as invalid: their coordinates or size are too large to represent"]);
 }
 
 #[test]
@@ -2551,7 +2551,23 @@ fn svg_shapes_whose_extents_overflow_are_left_out() {
     assert_eq!(kinds(&d), ["Circle"]);
     let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
     assert!((c.radius - 5e307).abs() < 1e293, "{}", c.radius);
-    assert_eq!(d.read_notes, ["SVG: CADCraft doesn't read these yet, so they were left out: 1 shape with coordinates too large to represent"]);
+    assert_eq!(d.read_notes, ["SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent"]);
+}
+
+/// A shape too large to represent is invalid, not something CADCraft doesn't read yet: it gets a
+/// note of its own.
+#[test]
+fn svg_too_large_shapes_are_noted_apart_from_unread_content() {
+    let svg = format!("{SVG_PAGE}<text x=\"0\" y=\"5\">one</text><path d=\"M1e308 0 l1e308 0\"/><line x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Line"]);
+    assert_eq!(
+        d.read_notes,
+        [
+            "SVG: CADCraft doesn't read these yet, so they were left out: 1 text",
+            "SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent"
+        ]
+    );
 }
 
 #[test]
