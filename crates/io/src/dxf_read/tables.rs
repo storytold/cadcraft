@@ -297,6 +297,7 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
         match kind.as_str() {
             "STYLE" => {
+                rx.proxy_tables.styles.push((name.clone(), table.s(3).unwrap_or_default()));
                 rx.styles.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "BLOCK_RECORD" => {
@@ -308,9 +309,13 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
                 rx.brs.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "LTYPE" => {
+                if !name.eq_ignore_ascii_case("ByBlock") && !name.eq_ignore_ascii_case("ByLayer") {
+                    rx.proxy_tables.linetypes.push(name.clone());
+                }
                 rx.ltypes.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "LAYER" => {
+                rx.proxy_tables.layers.push(name.clone());
                 rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
             }
             _ => {}

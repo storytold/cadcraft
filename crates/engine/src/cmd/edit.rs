@@ -559,7 +559,9 @@ fn run_selectall(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let hs: Vec<Handle> = d
         .space(&space)
-        .map(|st| st.iter().filter(|e| d.is_visible(e) && d.layer(&e.common.layer).is_none_or(|l| !l.locked)).map(|e| e.handle).collect())
+        .map(|st| {
+            st.iter().filter(|e| crate::select::selectable(d, e) && d.layer(&e.common.layer).is_none_or(|l| !l.locked)).map(|e| e.handle).collect()
+        })
         .unwrap_or_default();
     let n = hs.len();
     s.set_selection(hs);
@@ -587,7 +589,9 @@ fn run_select(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(f) = points_param(p, "fence") {
         crate::select::select_fence(s.doc()?, &space, &f)
     } else {
-        targets(s, p)?
+        // Handles named outright, less the proxies: no selection takes one in.
+        let d = s.doc()?;
+        targets(s, p)?.into_iter().filter(|h| !d.entity(*h).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_)))).collect()
     };
     let mut sel = if add { s.selection() } else { Vec::new() };
     sel.extend(picked);

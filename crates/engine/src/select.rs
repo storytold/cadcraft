@@ -145,8 +145,11 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether a selection may take `e` in: a visible object that commands can edit. A proxy (or
+/// another record CADCraft keeps as it was read) is drawn and snapped to, but never selected:
+/// commands can't edit it, and saving writes its record as it was read.
+pub(crate) fn selectable(d: &Drawing, e: &Entity) -> bool {
+    d.is_visible(e) && !matches!(e.kind, EntityKind::Unknown(_))
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -373,7 +376,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.

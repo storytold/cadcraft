@@ -61,6 +61,29 @@ struct Rx {
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
     /// LAYER record handle (upper case) → layer name (VIEWPORT group 331/341 frozen layers).
     layers: HashMap<String, String>,
+    /// Layer, linetype and text style names in the order of the file's tables, which proxy
+    /// graphics refer to by index (the drawing's own tables are ordered differently).
+    proxy_tables: cadcraft_doc::ProxyTables,
+}
+
+/// Order `items` as the file's table lists them (`order`, names in any case), after the `pinned`
+/// names: records the file doesn't have keep their order after the file's own. A file without
+/// that table changes nothing.
+fn keep_file_order<T>(items: &mut [T], name: impl Fn(&T) -> &str, order: &[String], pinned: &[&str]) {
+    if order.is_empty() {
+        return;
+    }
+    let mut place: HashMap<String, usize> = HashMap::new();
+    for (i, n) in order.iter().enumerate() {
+        place.entry(n.to_ascii_lowercase()).or_insert(i);
+    }
+    items.sort_by_key(|it| {
+        let n = name(it);
+        match pinned.iter().position(|p| p.eq_ignore_ascii_case(n)) {
+            Some(i) => (0, i),
+            None => place.get(&n.to_ascii_lowercase()).map_or((2, 0), |&i| (1, i)),
+        }
+    });
 }
 
 /// Read a DXF file into a drawing.
@@ -120,6 +143,13 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
             _ => {}
         }
     }
+    // Proxy graphics name layers and linetypes by their place in the file's tables, and saving
+    // writes them unchanged: the tables keep the file's order, with what CADCraft adds after it.
+    keep_file_order(&mut d.layers, |l| &l.name, &rx.proxy_tables.layers, &[]);
+    keep_file_order(&mut d.linetypes, |l| &l.name, &rx.proxy_tables.linetypes, &["ByBlock", "ByLayer"]);
+    // A proxy text takes the first style on its font, so the styles keep the file's order too.
+    let styles: Vec<String> = rx.proxy_tables.styles.iter().map(|(n, _)| n.clone()).collect();
+    keep_file_order(&mut d.text_styles, |s| &s.name, &styles, &[]);
     // A file CADCraft wrote names its own next handle (#495): its table records and objects
     // are numbered above it and rebuilt on save, so following $HANDSEED would drift every save.
     let own_seed = objs.xrecord_text(crate::dxf_ext::HANDSEED_KEY).and_then(|t| Handle::parse_hex(t.trim()));
