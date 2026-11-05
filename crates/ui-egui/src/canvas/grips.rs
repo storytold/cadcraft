@@ -88,7 +88,7 @@ pub(super) fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Han
         if st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
         }
-        let grips = e.kind.grips();
+        let grips = cadcraft_engine::grips::grip_points(&st.doc, &e.kind);
         let count = grips.len();
         for (i, g) in grips.into_iter().enumerate() {
             let sp = xf.to_screen(g);
