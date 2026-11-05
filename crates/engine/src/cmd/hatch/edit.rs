@@ -54,8 +54,9 @@ pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Va
             if d.space_of(h).as_ref() != Some(&space) {
                 return Err(bad("hatchgenerateboundary", format!("hatch {} is not in the current space; switch to its layout first", h.hex())));
             }
-            // Every selected hatch counts: none is left out of a call that succeeds.
-            if loops.len() + x.loops.len() > MAX_GENERATED {
+            // Every selected hatch counts: none is left out of a call that succeeds. Compared
+            // against the room left, so a hostile loop count can't overflow the sum.
+            if x.loops.len() > MAX_GENERATED.saturating_sub(loops.len()) {
                 return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
             }
             loops.extend(x.loops.iter().map(|l| (l.vertices.clone(), x.elevation)));
