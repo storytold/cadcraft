@@ -575,3 +575,31 @@ fn linetype_rename_updates_references() {
     assert!(s.execute("rename", &json!({ "table": "linetype", "from": "ByLayer", "to": "X" })).is_err());
     assert_eq!(s.doc().unwrap().entity(by_layer).unwrap().common.linetype, "ByLayer");
 }
+
+#[test]
+fn editing_a_dimstyle_redraws_its_dimensions_from_the_style() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Edit", "current": true })).unwrap();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap());
+    s.execute("dimstyle", &json!({ "name": "Other", "current": true })).unwrap();
+    let other = h(&s.execute("dimlinear", &json!({ "p1": [0, 5], "p2": [10, 5], "at": [5, 8] })).unwrap());
+    // As read from a file: each dimension keeps a saved `*D` block.
+    for hd in [d, other] {
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(hd, |e| {
+                if let EntityKind::Dimension(dm) = &mut e.kind {
+                    dm.block = Some("*D9".into())
+                }
+            })
+            .unwrap();
+    }
+    s.execute("dimstyle", &json!({ "name": "Edit", "current": false, "DIMTXT": 0.5, "DIMDEC": 1 })).unwrap();
+    assert_eq!(dim(&s, d).block, None, "the edited style's dimension is redrawn from the style");
+    assert_eq!(dim(&s, other).block.as_deref(), Some("*D9"), "another style's dimension keeps its block");
+    let g = cadcraft_render::dimension_in(s.doc().unwrap(), &dim(&s, d));
+    assert_eq!(g.value, "10.0");
+    // A call that changes nothing leaves the blocks alone.
+    s.execute("dimstyle", &json!({ "name": "Other", "current": false })).unwrap();
+    assert_eq!(dim(&s, other).block.as_deref(), Some("*D9"));
+}

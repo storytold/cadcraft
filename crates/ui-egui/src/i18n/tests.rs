@@ -114,6 +114,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "vpscale",
         "options/dialog",
         "finddlg",
+        "managers/dimstyle",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();

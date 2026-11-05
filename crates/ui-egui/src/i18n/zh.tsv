@@ -1465,6 +1465,87 @@
 	overrides built-in	覆盖内置
 	{alias} is already defined; select it and use Edit.	{alias} 已定义；请选择它并使用编辑。
 	{command} is an unknown command.	{command} 是未知命令。
+	' ' (Space)	' '（空格）
+	',' (Comma)	','（逗号）
+	'.' (Period)	'.'（句点）
+	Above	上方
+	Angular dimensions	角度标注
+	Angular precision	角度精度
+	Architectural tick	建筑标记
+	Arrowhead	箭头
+	Arrowheads	箭头
+	At extension line 1	第一条尺寸界线
+	At extension line 2	第二条尺寸界线
+	Baseline spacing	基线间距
+	Below	下方
+	Bottom	下
+	Box filled	实心方框
+	Center mark size	圆心标记大小
+	Closed blank	空心闭合
+	Closed filled	实心闭合
+	Current dimension style: {name}	当前标注样式：{name}
+	Datum triangle	基准三角形
+	Datum triangle filled	实心基准三角形
+	Decimal separator	小数分隔符
+	Degrees Minutes Seconds	度/分/秒
+	Deviation	极限偏差
+	Dimension Style Manager	标注样式管理器
+	Dimension lines	尺寸线
+	Dot	点
+	Dot blank	空心点
+	Dot small	小点
+	Extend beyond dimension lines	超出尺寸线
+	Extend beyond ticks	超出标记
+	Extension lines	尺寸界线
+	Gradians	百分度
+	Horizontal inside extension lines	尺寸界线内文字水平
+	Horizontal outside extension lines	尺寸界线外文字水平
+	Integral	积分
+	Linear dimensions	线性标注
+	Lines & Arrows	线和箭头
+	Lower value	下偏差
+	Measurement scale factor	测量单位比例因子
+	Method	方式
+	Middle	中
+	New style name	新样式名
+	Offset from dimension line	从尺寸线偏移
+	Offset from origin	起点偏移量
+	Open 30	30 度角
+	Origin indicator	原点标记
+	Outside	外部
+	Over extension line 1	第一条尺寸界线上方
+	Over extension line 2	第二条尺寸界线上方
+	Overall scale	全局比例
+	Prefix and suffix (<> = measurement)	前缀和后缀（<> = 测量值）
+	Primary Units	主单位
+	Properties of {name}	{name} 的特性
+	Rename	重命名
+	Rename to	重命名为
+	Right angle	直角
+	Round off	舍入
+	Scale for dimension features	标注特征比例
+	Scaling for height	高度比例
+	Small	小
+	Styles	样式
+	Suppress dimension line 1	隐藏尺寸线 1
+	Suppress dimension line 2	隐藏尺寸线 2
+	Suppress extension line 1	隐藏尺寸界线 1
+	Suppress extension line 2	隐藏尺寸界线 2
+	Suppress leading zeros	消除前导零
+	Suppress trailing zeros	消除后续零
+	Symmetrical	对称
+	Text alignment	文字对齐
+	Text appearance	文字外观
+	Text placement	文字位置
+	Tick size	标记大小
+	Tolerance format	公差格式
+	Tolerances	公差
+	Top	上
+	Unit format	单位格式
+	Units format	单位格式
+	Upper value	上偏差
+	Vertical position	垂直位置
+	Windows Desktop	Windows 桌面
 menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改

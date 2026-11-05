@@ -884,10 +884,34 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let mut rejected = Vec::new();
+    let mut changed = false;
     if let (Some(st), Some(src)) = (d.dim_styles.get_mut(idx), p.as_object()) {
         let fields: serde_json::Map<String, Value> =
             src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let before = st.clone();
         rejected = st.apply_fields(&fields);
+        changed = *st != before;
+    }
+    // Dimensions of an edited style are redrawn from it: their saved `*D` blocks are dropped, as
+    // DIMSTYLE.UPDATE and DIMOVERRIDE do.
+    if changed {
+        let style_name = d.dim_styles.get(idx).map(|t| t.name.clone()).unwrap_or_else(|| name.clone());
+        for (_, h) in dims_using(d, &style_name) {
+            d.modify_entity(h, |e| {
+                if let EntityKind::Dimension(dm) = &mut e.kind {
+                    dm.block = None;
+                }
+            })?;
+        }
+        for (bname, h) in block_dims_using(d, &style_name) {
+            if let Some(b) = d.blocks.get_mut(&bname) {
+                std::sync::Arc::make_mut(b).entities.modify(h, |e| {
+                    if let EntityKind::Dimension(dm) = &mut e.kind {
+                        dm.block = None;
+                    }
+                });
+            }
+        }
     }
     if bool_or(p, "current", true) {
         d.header.set_str("DIMSTYLE", &name);
