@@ -260,6 +260,42 @@ fn dimstyle_rename_updates_block_dimensions() {
 }
 
 #[test]
+fn editing_a_style_keeps_a_dimensions_overrides() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "DS", "DIMDEC": 2 })).unwrap();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMDEC": 1 })).unwrap();
+    // The style editor's form: changes the style, not the dimension's own override.
+    s.execute("dimstyle", &json!({ "name": "DS", "decimals": 3, "post": "<> mm", "current": false })).unwrap();
+    let dm = dim(&s, d);
+    assert_eq!(dm.overrides.get("decimals"), Some(&json!(1)));
+    assert!(dm.block.is_none());
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "10.0 mm");
+}
+
+#[test]
+fn a_style_in_use_cannot_be_deleted() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "DS" })).unwrap();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());
+    s.execute("dimstyle.current", &json!({ "name": "Standard" })).unwrap();
+    let e = s.execute("dimstyle.delete", &json!({ "name": "DS" })).unwrap_err();
+    assert!(e.to_string().contains("in use"), "{e}");
+    // Nothing changed: the style and the dimension's use of it remain.
+    assert!(s.doc().unwrap().dim_style("DS").is_some());
+    assert_eq!(dim(&s, d).style, "DS");
+}
+
+#[test]
+fn dimstyle_keeps_prefix_suffix_text_exactly() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "DS", "post": "  <> mm" })).unwrap();
+    assert_eq!(s.doc().unwrap().dim_style("DS").unwrap().post, "  <> mm");
+    s.execute("dimstyle", &json!({ "name": "DS", "post": "" })).unwrap();
+    assert_eq!(s.doc().unwrap().dim_style("DS").unwrap().post, "");
+}
+
+#[test]
 fn dimension_overrides() {
     let mut s = Session::new();
     let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());

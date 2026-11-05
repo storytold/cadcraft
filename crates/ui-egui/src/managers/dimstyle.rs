@@ -10,7 +10,6 @@ use serde_json::{Map, Value, json};
 
 use super::{Action, no_drawing, num_field, set_temp, temp};
 use crate::CadApp;
-use crate::parametric::expr_field;
 use crate::theme::Tokens;
 
 /// The tabs of the dialog, in order.
@@ -121,9 +120,10 @@ impl Rows<'_> {
         ui.end_row();
     }
 
+    /// Text kept exactly as typed (DIMPOST's leading spaces matter) and allowed to be empty.
     fn text(&mut self, ui: &mut egui::Ui, label: &str, var: &str, key: &str, v: &str) {
         let id = Self::label(ui, label, var);
-        if let Some(t) = expr_field(ui, ui.make_persistent_id((self.salt, key)), v, Some(id)) {
+        if let Some(t) = text_field(ui, ui.make_persistent_id((self.salt, key)), v, id) {
             self.out.insert(key.into(), json!(t));
         }
         ui.end_row();
@@ -133,6 +133,25 @@ impl Rows<'_> {
         ui.label(RichText::new(text).strong());
         ui.end_row();
     }
+}
+
+/// The text a field commits: on focus loss, when it differs from the stored value. Never trimmed,
+/// and empty is a value (it clears DIMPOST).
+fn committed(lost_focus: bool, buf: &str, value: &str) -> Option<String> {
+    (lost_focus && buf != value).then(|| buf.to_string())
+}
+
+/// A single-line field committing its exact text on Enter / focus loss.
+fn text_field(ui: &mut egui::Ui, id: egui::Id, value: &str, label: egui::Id) -> Option<String> {
+    let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string());
+    let resp = ui.add(egui::TextEdit::singleline(&mut buf).id(id.with("te")).desired_width(150.0)).labelled_by(label);
+    // Focus from memory, as `expr_field` does: `has_focus` is false while the OS window is unfocused.
+    if ui.memory(|m| m.has_focus(id.with("te"))) {
+        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    } else {
+        ui.data_mut(|d| d.remove::<String>(id));
+    }
+    committed(resp.lost_focus(), &buf, value)
 }
 
 fn index_of(options: &[(Value, String)], v: &Value) -> Option<usize> {
@@ -284,7 +303,8 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
         .filter(|s| styles.iter().any(|x| x.name == *s))
         .unwrap_or_else(|| styles.iter().find(|s| s.name.eq_ignore_ascii_case(&current)).map_or_else(|| current.clone(), |s| s.name.clone()));
     let mut new_name = temp::<String>(ctx, "dimstyle_new").unwrap_or_default();
-    let mut rename = temp::<String>(ctx, "dimstyle_rename").unwrap_or_default();
+    // The Rename text belongs to the style it was typed for: another selection starts it empty.
+    let mut rename = temp::<(String, String)>(ctx, "dimstyle_rename").filter(|(of, _)| *of == sel).map(|(_, r)| r).unwrap_or_default();
     let mut tab = temp::<Tab>(ctx, "dimstyle_tab").unwrap_or_default();
     let mut action: Action = None;
     let taken = |n: &str| styles.iter().any(|s| s.name.eq_ignore_ascii_case(n));
@@ -378,9 +398,9 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
             });
         });
     });
+    set_temp(ctx, "dimstyle_rename", (sel.clone(), rename));
     set_temp(ctx, "dimstyle_sel", sel);
     set_temp(ctx, "dimstyle_new", new_name);
-    set_temp(ctx, "dimstyle_rename", rename);
     set_temp(ctx, "dimstyle_tab", tab);
     action
 }
@@ -401,6 +421,39 @@ mod tests {
         assert_eq!(tolerance_method(&s), 2);
         s.limits = true;
         assert_eq!(tolerance_method(&s), 3);
+    }
+
+    #[test]
+    fn prefix_suffix_text_is_committed_exactly_and_may_be_empty() {
+        assert_eq!(committed(true, "  <> mm", "<> mm"), Some("  <> mm".to_string()));
+        assert_eq!(committed(true, "", "<> mm"), Some(String::new()));
+        assert_eq!(committed(true, "<> mm ", "<> mm"), Some("<> mm ".to_string()));
+        assert_eq!(committed(true, "<> mm", "<> mm"), None);
+        assert_eq!(committed(false, "x", "<> mm"), None);
+    }
+
+    #[test]
+    fn rename_text_is_cleared_when_another_style_is_selected() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        for n in ["A", "B"] {
+            app.session.execute("dimstyle", &json!({ "name": n, "current": false })).unwrap();
+        }
+        let ctx = egui::Context::default();
+        let frame = |app: &mut CadApp| {
+            let mut open = true;
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                dialog(app, ui.ctx(), &mut open);
+            })
+            .drop_without_applying_deltas();
+        };
+        set_temp(&ctx, "dimstyle_sel", "A".to_string());
+        set_temp(&ctx, "dimstyle_rename", ("A".to_string(), "Typed".to_string()));
+        frame(&mut app);
+        // Same selection: the typed text stays.
+        assert_eq!(temp::<(String, String)>(&ctx, "dimstyle_rename"), Some(("A".to_string(), "Typed".to_string())));
+        set_temp(&ctx, "dimstyle_sel", "B".to_string());
+        frame(&mut app);
+        assert_eq!(temp::<(String, String)>(&ctx, "dimstyle_rename"), Some(("B".to_string(), String::new())));
     }
 
     #[test]
