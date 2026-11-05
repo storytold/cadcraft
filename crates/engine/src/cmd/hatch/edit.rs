@@ -41,10 +41,15 @@ pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Va
     let space = s.space();
     let mut loops = Vec::new();
     let mut found = false;
+    // A hatch named twice gets its boundary once.
+    let mut seen = std::collections::HashSet::new();
     {
         let d = s.doc()?;
         for h in selected {
             let Some(EntityKind::Hatch(x)) = d.entity(h).map(|e| &e.kind) else { continue };
+            if !seen.insert(h) {
+                continue;
+            }
             found = true;
             if d.space_of(h).as_ref() != Some(&space) {
                 return Err(bad("hatchgenerateboundary", format!("hatch {} is not in the current space; switch to its layout first", h.hex())));

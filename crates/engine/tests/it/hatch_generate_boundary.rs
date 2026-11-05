@@ -75,6 +75,15 @@ fn every_selected_hatch_gets_its_boundary() {
 }
 
 #[test]
+fn a_hatch_named_twice_gets_one_boundary() {
+    let mut s = Session::new();
+    let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [r] })).unwrap());
+    let v = s.execute("hatchgenerateboundary", &json!({ "handles": [h.clone(), h] })).unwrap();
+    assert_eq!(handles(&v).len(), 1);
+}
+
+#[test]
 fn an_associative_hatch_stays_linked_to_its_own_boundary() {
     let mut s = Session::new();
     let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
