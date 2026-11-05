@@ -75,6 +75,10 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// The `$ACADVER` the file declared ("AC1032"), if any: the kept data is in that version's
+    /// form, whatever the drawing's `$ACADVER` says later (SAVEAS changes it). Saving into another
+    /// version converts what differs by version (render settings' class version).
+    pub acadver: Option<String>,
 }
 
 impl Foreign {
