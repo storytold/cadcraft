@@ -448,3 +448,35 @@ fn arcs_follow_the_circle() {
     assert!(close(g.advance, (dir(135.0 + 180.0) - dir(135.0)) * 5.0));
     let _ = PI;
 }
+
+/// A one-byte font with Hebrew letters at `codes`, each shape advancing by a different amount
+/// (its code's low byte in units), and a font record 6 units high.
+fn hebrew_font(codes: impl Iterator<Item = u16>) -> ShxFont {
+    let mut src = String::from("*0,4,hebrew\n6,2,0,0\n");
+    for c in codes {
+        src.push_str(&format!("*0{c:X},3,h\n8,({},0),0\n", c & 0x1F));
+    }
+    font(&src)
+}
+
+/// Israeli SHX fonts keep Hebrew letters at their Windows-1255 (0xE0..0xFA) or DOS 862
+/// (0x80..0x9A) places: Hebrew text draws from them, while a Cyrillic font with letters at the
+/// same places is not taken for Hebrew (#2316, rebuilt on #1944).
+#[test]
+fn hebrew_letters_draw_from_their_one_byte_places() {
+    let draws = |f: ShxFont, c: char| {
+        let t = ShxText::new(Some(std::sync::Arc::new(f)), None, "", false);
+        super::text::width(&t, &c.to_string(), 6.0, 1.0)
+    };
+    // Windows-1255: alef at 0xE0 advances 0xE0 & 0x1F = 0 units; bet at 0xE1 one unit.
+    assert!((draws(hebrew_font(0xE0..=0xFA), 'ב') - 1.0).abs() < 1e-9);
+    // DOS 862: bet at 0x81 advances one unit.
+    assert!((draws(hebrew_font(0x80..=0x9A), 'ב') - 1.0).abs() < 1e-9);
+    assert_eq!(hebrew_font(0x80..=0x9A).hebrew_places(), (false, true));
+    // A Cyrillic-style font (0xC0..0xFF all drawn) is not read as Hebrew: the letter comes
+    // from the built-in stroke font instead of a Cyrillic shape.
+    let cyr = hebrew_font(0xC0..=0xFF);
+    assert_eq!(cyr.hebrew_places(), (false, false));
+    let stroke = crate::stroke_advance('ב', 6.0, 1.0);
+    assert!((draws(cyr, 'ב') - stroke).abs() < 1e-9);
+}
