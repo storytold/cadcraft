@@ -507,6 +507,21 @@ mod tests {
         assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
     }
 
+    /// An OLE2FRAME draws as its frame, so a click on an edge picks it (review on #2587); a click in
+    /// the middle of the frame, or on a frame without both corners, does not.
+    #[test]
+    fn clicking_an_ole_frame_edge_selects_it() {
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+        d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -19.0), 0.2), Some(h), "top edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(35.0, -20.5), 0.2), Some(h), "right edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
+    }
+
     /// A block holding a diagonal dashed line, inserted at `scale`.
     fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
         let mut d = Drawing::new_imperial();
