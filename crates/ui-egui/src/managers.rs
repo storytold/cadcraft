@@ -32,6 +32,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
         "tablestyle" | "ts" => "tablestyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
@@ -54,6 +55,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
@@ -364,6 +366,34 @@ fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
     }
     let current = d.header.str("CTABLESTYLE", "Standard");
     style_manager(ctx, open, "Table Style", "tablestyle", &current, &styles)
+}
+
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style", open);
+        return None;
+    };
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| Style {
+            name: s.name.clone(),
+            fields: vec![
+                Field::Num("scale", "Overall scale", s.scale),
+                Field::Num("arrowSize", "Arrow size", s.arrow_size),
+                Field::Num("textHeight", "Text height", s.text_height),
+                Field::Num("textGap", "Text gap", s.text_gap),
+                Field::Num("extOffset", "Extension offset", s.ext_offset),
+                Field::Num("extExtend", "Extension beyond line", s.ext_extend),
+            ],
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
 }
 
 fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
@@ -1265,5 +1295,21 @@ mod plot_dialog_tests {
         plot_window_resume(&mut app, &ctx);
         assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
         assert_eq!(temp::<PlotState>(&ctx, "plot_state").unwrap().window, [2.0, 3.0, 12.0, 9.0]);
+    }
+}
+
+#[cfg(test)]
+mod style_dialog_tests {
+    use super::*;
+    use cadcraft_engine::Session;
+
+    #[test]
+    fn dimension_style_menu_opens_its_dialog() {
+        for id in ["dimstyle", "dimstyle.dimension"] {
+            let mut app = CadApp::new(Session::new(), crate::Services::default());
+            let r = route(&mut app, id, &Value::Null);
+            assert!(matches!(r, Some(Ok(_))), "{id} is routed to a dialog: {r:?}");
+            assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"), "{id}");
+        }
     }
 }
