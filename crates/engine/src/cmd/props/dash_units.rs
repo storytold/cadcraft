@@ -66,17 +66,10 @@ impl Units {
     }
 
     /// A typed direction of angle 0, in radians counterclockwise from +X: an amount in the angle
-    /// format, or with its own unit (`45d`, `0.5r`, `100g`, a bearing `N45dE`, and in surveyor's
-    /// units N, E, S or W), measured from +X as the drawing measures angles.
+    /// format, or with its own unit (`45d`, `0.5r`, `100g`, a bearing `N45dE`, `N`), measured
+    /// from +X as the drawing measures angles.
     fn direction(&self, t: &str) -> Option<f64> {
-        let cardinal = match t.trim().to_ascii_lowercase().as_str() {
-            "e" if self.aunits == 4 => Some(0.0),
-            "n" if self.aunits == 4 => Some(90f64.to_radians()),
-            "w" if self.aunits == 4 => Some(180f64.to_radians()),
-            "s" if self.aunits == 4 => Some(270f64.to_radians()),
-            _ => None,
-        };
-        let a = cardinal.or_else(|| AngleSettings { aunits: self.aunits, ..AngleSettings::default() }.amount(t))?;
+        let a = AngleSettings { aunits: self.aunits, ..AngleSettings::default() }.amount(t)?;
         let a = if self.clockwise { -a } else { a };
         a.is_finite().then(|| a.rem_euclid(TAU))
     }

@@ -159,6 +159,7 @@ pub(crate) fn make_assoc(s: &mut Session, objs: &[Handle], base: Vec2, mut p: Ar
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }))
 }
 
@@ -374,10 +375,14 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
     let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
     let row_spacing = f64_or(p, "rowSpacing", 1.0);
+    let fill = f64_or(p, "angle", 360.0);
+    if !(fill.abs() >= 1e-9 && fill.abs() <= 360.0 + 1e-9) {
+        return Err(other("Requires a fill angle between -360 and 360 degrees (not 0)."));
+    }
     let kind = ArrayKind::Polar(PolarArray {
         center: c - base,
         items: count32(n),
-        fill: f64_or(p, "angle", 360.0),
+        fill: fill.clamp(-360.0, 360.0),
         rotate: bool_or(p, "rotate", true),
         rows: count32(rows),
         row_spacing,
