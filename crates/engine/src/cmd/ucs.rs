@@ -332,6 +332,18 @@ fn delete(s: &mut Session, patterns: &str) -> Result<usize> {
     if gone.iter().any(|g| g.eq_ignore_ascii_case(&current)) {
         s.set_ucs(frame, "")?;
     }
+    // The other spaces whose current UCS carries a deleted name keep their axes and lose the name
+    // too (model space's UCSNAME, every layout's UCS).
+    let d = s.doc_mut()?;
+    let is_gone = |n: &str| gone.iter().any(|g| g.eq_ignore_ascii_case(n.trim()));
+    if is_gone(&d.header.str("UCSNAME", "")) {
+        d.header.set_str("UCSNAME", "");
+    }
+    for l in &mut d.layouts {
+        if let Some(u) = l.ucs.as_mut().filter(|u| is_gone(&u.name)) {
+            u.name.clear();
+        }
+    }
     Ok(gone.len())
 }
 

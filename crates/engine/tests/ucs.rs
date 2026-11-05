@@ -587,3 +587,24 @@ fn deferred_line_polar_follows_the_ucs() {
     let (a, b) = last_line(&s);
     assert!((b - a).len() > 9.999 && (b.x - a.x).abs() < 1e-9 && (b.y - a.y - 10.0).abs() < 1e-9, "{a:?} {b:?}");
 }
+
+/// Deleting a named UCS clears its name wherever it is the current UCS: model space and every
+/// layout, not only the space deleted from.
+#[test]
+fn deleting_a_named_ucs_clears_it_in_every_space() {
+    let mut s = session();
+    turned(&mut s);
+    s.execute("ucs", &json!({"option": "named", "action": "save", "name": "SITE"})).unwrap();
+    let layout = s.doc().unwrap().layouts[0].name.clone();
+    s.execute("layout.set", &json!({"name": layout})).unwrap();
+    s.execute("ucs", &json!({"option": "named", "action": "restore", "name": "SITE"})).unwrap();
+    assert_eq!(s.ucs_named().1, "SITE");
+    // Delete from paper space: model space is still named SITE.
+    s.execute("ucs", &json!({"option": "named", "action": "delete", "name": "SITE"})).unwrap();
+    assert_eq!(s.ucs_named().1, "", "the current space");
+    assert_eq!(s.doc().unwrap().header.str("UCSNAME", ""), "", "model space");
+    assert!(s.doc().unwrap().layouts.iter().all(|l| l.ucs.as_ref().is_none_or(|u| u.name.is_empty())), "every layout");
+    // The axes stay.
+    s.execute("layout.set", &json!({"name": "Model"})).unwrap();
+    assert!(near3(s.ucs().x, Vec3::new(0.0, 1.0, 0.0)));
+}

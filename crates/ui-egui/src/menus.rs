@@ -242,6 +242,10 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
         }
         // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
         "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            // The icon is a setting of the drawing: with none open there is nothing to toggle.
+            if app.session.doc().is_err() {
+                return Some(Err("No drawing open.".into()));
+            }
             let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
             let mut on = app.session.ucsicon_bits() & bit != 0;
             toggle(&mut on, params);
@@ -620,7 +624,9 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
+            let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
+            add(menu, label, id, *sc, enabled);
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
