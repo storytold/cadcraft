@@ -193,22 +193,67 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
     pick_with(d, space, &ix, p, aperture)
 }
 
+/// Candidates [`pick_with`] takes from the tree and sorts; with more, it reads the index topmost
+/// first instead (see [`SpatialIndex::top_down`]).
+const PICK_SORTED_MAX: usize = 1024;
+/// Entities [`pick_with`] reads topmost first before it sorts the tree's candidates after all: a
+/// few microseconds when none of them is a hit.
+const PICK_TOP_SCAN: usize = 4096;
+
 pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
+    pick_scanning(d, space, ix, p, aperture, PICK_SORTED_MAX, PICK_TOP_SCAN)
+}
+
+/// [`pick_with`] with its limits: up to `sorted_max` candidates are sorted, more are read topmost
+/// first, up to `budget` of them, before the rest are sorted.
+pub(crate) fn pick_scanning(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    p: Vec2,
+    aperture: f64,
+    sorted_max: usize,
+    budget: usize,
+) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
+    let query = probe.expand(aperture);
+    let hit = |e: &Entity, known: Option<Bounds2>| {
+        selectable(d, e)
+            && (is_infinite(e) || bounds_of(d, e, known).expand(aperture).intersects(&probe))
+            && entity_distance(d, e, p, aperture / 4.0) <= aperture
+    };
     // Candidates come topmost first: the first within the aperture is the one.
-    for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
-        if !selectable(d, e) {
-            continue;
-        }
-        let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
-            continue;
-        }
-        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
-            return Some(e.handle);
+    let topmost = |ix: &SpatialIndex, cands: Vec<u32>, below: u32| {
+        cands
+            .into_iter()
+            .rev()
+            .filter(|i| *i < below)
+            .filter_map(|i| ix.entity(i).map(|e| (e, ix.bounds(i))))
+            .find(|(e, b)| hit(e, Some(*b)))
+            .map(|(e, _)| e.handle)
+    };
+    if let Some(ix) = ix {
+        match ix.query_at_most(&query, true, sorted_max) {
+            Some(Some(cands)) => return topmost(ix, cands, u32::MAX),
+            // Many candidates: the drawing is shown small and the aperture covers much of it. The
+            // topmost hit is usually near the top of the draw order: look there first, and sort
+            // the tree's candidates only to test the ones below those already examined.
+            Some(None) => {
+                if let Some(mut top) = ix.top_down(&query, true, budget) {
+                    if let Some((_, e, _)) = top.by_ref().find(|(_, e, b)| hit(e, Some(*b))) {
+                        return Some(e.handle);
+                    }
+                    let floor = top.floor();
+                    if floor == 0 {
+                        return None;
+                    }
+                    return topmost(ix, ix.query(&query, true)?, floor);
+                }
+            }
+            None => {}
         }
     }
-    None
+    candidates(d, space, ix, &query, true, true)?.find(|(e, known)| hit(e, *known)).map(|(e, _)| e.handle)
 }
 
 /// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds_cached};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
-use rstar::{AABB, RTree};
+use rstar::{AABB, Envelope, RTree, RTreeObject};
 
 /// Spaces with fewer entities than this are scanned directly (building an index costs more).
 pub const MIN_INDEXED: usize = 256;
@@ -39,6 +39,21 @@ struct ChunkIx {
     bounds: Vec<Bounds2>,
     /// Local indices of xlines and rays (unbounded; always candidates for pick and crossing).
     infinite: Vec<u32>,
+    /// The union of the chunk's tree items (`None` when none is bounded): [`TopDown`] skips a
+    /// chunk whose union misses the query.
+    envelope: Option<AABB<[f64; 2]>>,
+}
+
+/// The tree envelope of an entity's bounds, as [`ChunkIx::items`] stores it (`None` when empty).
+fn rect(b: &Bounds2) -> Option<AABB<[f64; 2]>> {
+    (!b.is_empty()).then(|| Rectangle::from_corners([b.min.x, b.min.y], [b.max.x, b.max.y]).envelope())
+}
+
+/// Whether the tree item for bounds `b` touches `env`, by the tree's own (closed) intersection
+/// test, without building the item.
+fn touches(b: &Bounds2, env: &AABB<[f64; 2]>) -> bool {
+    let (lo, hi) = (env.lower(), env.upper());
+    !b.is_empty() && b.min.x <= hi[0] && b.max.x >= lo[0] && b.min.y <= hi[1] && b.max.y >= lo[1]
 }
 
 impl ChunkIx {
@@ -55,9 +70,10 @@ impl ChunkIx {
                 }
                 entity_bounds_cached(d, e, 0, &mut cache)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let envelope = bounds.iter().filter_map(rect).reduce(|a, b| a.merged(&b));
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ChunkIx { serial, key, ents: items.to_vec(), bounds, infinite }
+        ChunkIx { serial, key, ents: items.to_vec(), bounds, infinite, envelope }
     }
     fn items(&self) -> impl Iterator<Item = Item> + '_ {
         self.bounds.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| {
@@ -210,23 +226,120 @@ impl SpatialIndex {
     /// Draw indices (ascending) of entities whose bounds touch `b`, optionally with the infinite
     /// lines. Returns `None` for a non-finite query box (callers fall back to a full scan).
     pub fn query(&self, b: &Bounds2, with_infinite: bool) -> Option<Vec<u32>> {
+        self.query_at_most(b, with_infinite, usize::MAX).map(Option::unwrap_or_default)
+    }
+
+    /// [`Self::query`], giving up (`Some(None)`) as soon as more than `cap` tree items touch `b`,
+    /// so a caller can choose another way to read a large result.
+    pub fn query_at_most(&self, b: &Bounds2, with_infinite: bool, cap: usize) -> Option<Option<Vec<u32>>> {
         if b.is_empty() {
-            return Some(if with_infinite { self.infinite.clone() } else { Vec::new() });
+            return Some(Some(if with_infinite { self.infinite.clone() } else { Vec::new() }));
         }
-        if !(b.min.is_finite() && b.max.is_finite()) {
-            return None;
+        let env = query_envelope(b)?;
+        let mut out: Vec<u32> = Vec::new();
+        for it in self.tree.locate_in_envelope_intersecting(env) {
+            if out.len() >= cap {
+                return Some(None);
+            }
+            if let Some(off) = self.offsets.get(&it.data.0) {
+                out.push(off + it.data.1);
+            }
         }
-        // Pad a little so rounding in the callers' own predicates never loses a candidate.
-        let pad = (b.width() + b.height()) * 1e-9 + (b.min.x.abs() + b.min.y.abs() + b.max.x.abs() + b.max.y.abs()) * 1e-12 + 1e-300;
-        let env = AABB::from_corners([b.min.x - pad, b.min.y - pad], [b.max.x + pad, b.max.y + pad]);
-        let mut out: Vec<u32> =
-            self.tree.locate_in_envelope_intersecting(env).filter_map(|it| self.offsets.get(&it.data.0).map(|off| off + it.data.1)).collect();
         if with_infinite {
             out.extend_from_slice(&self.infinite);
         }
         out.sort_unstable();
         out.dedup();
-        Some(out)
+        Some(Some(out))
+    }
+
+    /// The entities [`Self::query`] finds for `b`, topmost (highest draw index) first, read from
+    /// the chunks from the last one down instead of collected from the tree and sorted, examining
+    /// at most `budget` entities. A pick wants only the topmost hit: when the drawing is shown
+    /// small, its aperture covers most of it and the tree returns nearly every entity on each
+    /// pointer move, while the topmost hit is usually among the first few examined here. `None`
+    /// for an empty or non-finite box (callers use `query`'s own handling of those).
+    pub fn top_down(&self, b: &Bounds2, with_infinite: bool, budget: usize) -> Option<TopDown<'_>> {
+        if b.is_empty() {
+            return None;
+        }
+        let env = query_envelope(b)?;
+        let len = u32::try_from(self.len).unwrap_or(u32::MAX);
+        Some(TopDown { ix: self, env, infinite: with_infinite, next_chunk: self.chunks.len(), cur: None, floor: len, budget })
+    }
+}
+
+/// The padded tree envelope [`SpatialIndex::query`] searches for `b`; `None` when `b` isn't finite.
+fn query_envelope(b: &Bounds2) -> Option<AABB<[f64; 2]>> {
+    if !(b.min.is_finite() && b.max.is_finite()) {
+        return None;
+    }
+    // Pad a little so rounding in the callers' own predicates never loses a candidate.
+    let pad = (b.width() + b.height()) * 1e-9 + (b.min.x.abs() + b.min.y.abs() + b.max.x.abs() + b.max.y.abs()) * 1e-12 + 1e-300;
+    Some(AABB::from_corners([b.min.x - pad, b.min.y - pad], [b.max.x + pad, b.max.y + pad]))
+}
+
+/// Candidates of a query box, topmost first, with their draw index and bounds (see
+/// [`SpatialIndex::top_down`]). It stops when every entity is examined or the budget runs out;
+/// [`TopDown::floor`] then says where the rest of the candidates begin.
+pub struct TopDown<'a> {
+    ix: &'a SpatialIndex,
+    env: AABB<[f64; 2]>,
+    infinite: bool,
+    /// Chunks not entered yet: `chunks[..next_chunk]`.
+    next_chunk: usize,
+    /// The chunk being read and how many of its entities are left to examine.
+    cur: Option<(usize, usize)>,
+    /// Every entity at or above this draw index has been examined.
+    floor: u32,
+    budget: usize,
+}
+
+impl TopDown<'_> {
+    /// The draw index below which nothing has been examined: candidates still to test are the
+    /// ones [`SpatialIndex::query`] returns below it. 0 once every entity has been examined.
+    pub fn floor(&self) -> u32 {
+        self.floor
+    }
+}
+
+impl<'a> Iterator for TopDown<'a> {
+    type Item = (u32, &'a Arc<Entity>, Bounds2);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ix = self.ix;
+        loop {
+            if let Some((c, left)) = self.cur
+                && left > 0
+            {
+                if self.budget == 0 {
+                    return None;
+                }
+                self.budget -= 1;
+                let local = left - 1;
+                self.cur = Some((c, local));
+                let (off, chunk) = ix.chunks.get(c)?;
+                let i = off.saturating_add(u32::try_from(local).unwrap_or(u32::MAX));
+                self.floor = i;
+                let e = chunk.ents.get(local)?;
+                let b = chunk.bounds.get(local).copied().unwrap_or(Bounds2::EMPTY);
+                let touches = touches(&b, &self.env);
+                if touches || (self.infinite && matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_))) {
+                    return Some((i, e, b));
+                }
+                continue;
+            }
+            let c = self.next_chunk.checked_sub(1)?;
+            self.next_chunk = c;
+            let (off, chunk) = ix.chunks.get(c)?;
+            let touches = chunk.envelope.is_some_and(|r| r.intersects(&self.env)) || (self.infinite && !chunk.infinite.is_empty());
+            if touches {
+                self.cur = Some((c, chunk.ents.len()));
+            } else {
+                self.cur = None;
+                self.floor = *off;
+            }
+        }
     }
 }
 
@@ -430,6 +543,65 @@ mod tests {
                 hits += usize::from(a.is_some());
             }
             assert!(hits > 20, "test should exercise hits ({hits})");
+        }
+    }
+
+    /// A drawing added in spatial order (rows of short lines), so most chunks cover a small area.
+    fn rows(n: usize) -> Drawing {
+        let mut d = Drawing::new_imperial();
+        for i in 0..n {
+            let (x, y) = ((i % 100) as f64, (i / 100) as f64);
+            d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: v3(x, y), b: v3(x + 0.6, y + 0.3) })).unwrap();
+        }
+        d
+    }
+
+    /// Reading candidates topmost first from the chunks finds exactly what the tree finds, in
+    /// reverse draw order, and `floor` marks where an interrupted read stopped.
+    #[test]
+    fn top_down_matches_query_in_reverse() {
+        for d in [drawing(13, 3000), rows(5000)] {
+            let ix = SpatialIndex::build(&d, &d.model);
+            assert!(ix.chunks.len() > 2, "test needs several chunks ({})", ix.chunks.len());
+            let mut r = Rng(77);
+            for k in 0..60 {
+                let c = Vec2::new(r.r(-10.0, 110.0), r.r(-10.0, 110.0));
+                let half = [0.2, 3.0, 40.0, 500.0][k % 4];
+                let b = Bounds2::new(c, c).expand(half);
+                let all: Vec<u32> = ix.query(&b, true).unwrap().into_iter().rev().collect();
+                let got: Vec<u32> = ix.top_down(&b, true, usize::MAX).unwrap().map(|(i, _, _)| i).collect();
+                assert_eq!(got, all, "box {b:?}");
+                for budget in [0, 1, 37, 1500] {
+                    let mut top = ix.top_down(&b, true, budget).unwrap();
+                    let seen: Vec<u32> = top.by_ref().map(|(i, _, _)| i).collect();
+                    let floor = top.floor();
+                    let mut joined = seen;
+                    joined.extend(all.iter().copied().filter(|i| *i < floor));
+                    assert_eq!(joined, all, "box {b:?} budget {budget}");
+                }
+            }
+        }
+    }
+
+    /// Picks with any sorting limit and top-down budget, including apertures covering most of the drawing (a
+    /// drawing shown small), match the scan without an index.
+    #[test]
+    fn pick_parity_with_scan_at_every_budget() {
+        for d in [drawing(29, 3000), rows(5000)] {
+            let ix = forced(&d);
+            let mut r = Rng(31);
+            let mut hits = 0;
+            for k in 0..240 {
+                let p = Vec2::new(r.r(-5.0, 105.0), r.r(-5.0, 105.0));
+                let ap = [0.05, 0.3, 1.5, 30.0][k % 4];
+                let want = select::pick_with(&d, &Space::Model, &None, p, ap);
+                for (sorted_max, budget) in [(0, 0), (0, 1), (0, 50), (0, usize::MAX), (3, 7), (1024, 4096), (usize::MAX, 0)] {
+                    let got = select::pick_scanning(&d, &Space::Model, &ix, p, ap, sorted_max, budget);
+                    assert_eq!(got, want, "p {p:?} ap {ap} sorted_max {sorted_max} budget {budget}");
+                }
+                hits += usize::from(want.is_some());
+            }
+            assert!(hits > 40, "test should exercise hits ({hits})");
         }
     }
 
