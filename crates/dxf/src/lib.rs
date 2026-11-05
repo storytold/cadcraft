@@ -310,16 +310,17 @@ fn parse_ascii_counted(text: &str, max_tags: usize, expected: usize) -> Result<V
         }
         let code: i32 = ct.parse().map_err(|_| DxfError::BadCode { line: ln + 1, text: ct.chars().take(40).collect() })?;
         let Some((_, val)) = lines.next() else { return Err(DxfError::Eof) };
-        let v = typed(code, val);
-        let v = match v {
-            Value::Str(s) => Value::Str(unescape_unicode(&s)),
+        let v = match typed(code, val) {
+            // Only text with a backslash can hold an escape; the rest moves in as it is.
+            Value::Str(s) if s.contains('\\') => Value::Str(unescape_unicode(&s)),
             o => o,
         };
+        let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
         tags.push(Tag { code, value: v });
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
-        if code == 0 && tags.last().is_some_and(|t| t.str() == "EOF") {
+        if eof {
             break;
         }
     }
