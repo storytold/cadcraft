@@ -88,9 +88,10 @@ fn candidates(c: char, font: &ShxFont) -> [Option<u16>; 4] {
         _ => None,
     };
     if let Some((s, latin, old)) = special {
-        // In a DOS 862 Hebrew font 127–129 are letters and 0xB0.. box drawing: shape 256–258 only.
+        // In a DOS 862 Hebrew font 128–129 are letters and 0xB0.. box drawing: shape 256–258,
+        // and the old degree sign 127 (not a letter there).
         if !unicode && font.kind() == ShxKind::Shapes && font.hebrew_places().1 {
-            return [Some(s), None, None, None];
+            return [Some(s), (old == 127).then_some(old), None, None];
         }
         return if unicode {
             [code(u), code(if c == '⌀' { 0x2205 } else { latin }), Some(s), Some(old)]
