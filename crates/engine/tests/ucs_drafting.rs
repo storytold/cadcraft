@@ -221,3 +221,19 @@ fn dimlinear_horizontal_and_vertical_follow_the_ucs() {
     s.cmdline("dimlinear 0,0 0,10 5,5").unwrap();
     assert!(ang_eq(last_dim_rotation(&s), 90.0 * DEG));
 }
+
+/// A point filter takes its coordinates in the UCS: `.X` of one point and `YZ` of another make
+/// the point with the first's UCS X and the second's UCS Y.
+#[test]
+fn point_filters_and_ortho_follow_the_ucs() {
+    let mut s = session();
+    turned(&mut s, 90.0);
+    s.cmdline("line 0,0").unwrap();
+    s.cmdline(".x").unwrap();
+    s.cmdline("3,4").unwrap();
+    s.cmdline("7,9").unwrap();
+    s.cmdline("").unwrap();
+    let l = s.doc().unwrap().model.iter().find_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).unwrap();
+    // UCS (3, 9): the UCS at (5, 5) turned 90° puts it at world (5 - 9, 5 + 3).
+    assert!(near(l.b.xy(), -4.0, 8.0), "{l:?}");
+}

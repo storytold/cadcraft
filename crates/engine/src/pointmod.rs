@@ -61,6 +61,13 @@ impl Axes {
     pub fn combine(self, first: Vec2, second: Vec2) -> Vec2 {
         Vec2::new(if self.x { first.x } else { second.x }, if self.y { first.y } else { second.y })
     }
+
+    /// [`Axes::combine`] with the coordinates read in the UCS `ucs`, where the user typed and saw
+    /// the points: `.X` takes the first point's X along the UCS X axis, not the world's.
+    pub fn combine_in(self, ucs: &crate::ucs::UcsFrame, first: Vec2, second: Vec2) -> Vec2 {
+        let r = ucs.to_wcs(self.combine(ucs.to_ucs(first), ucs.to_ucs(second)));
+        if r.is_finite() { r } else { self.combine(first, second) }
+    }
 }
 
 /// A pending point modifier.
@@ -336,7 +343,7 @@ impl Session {
                 // The offset point is already measured from the base (`@` reads the last point).
                 Frame::From { base: Some(_) } => {}
                 Frame::Mid { first: Some(f) } => p = (f + p) * 0.5,
-                Frame::Filter { keep, first: Some(f) } => p = keep.combine(f, p),
+                Frame::Filter { keep, first: Some(f) } => p = keep.combine_in(&self.input_ucs(), f, p),
                 Frame::Angle { base, dir } => p = base + dir * (p - base).dot(dir),
                 Frame::Snap { mode: 0 } => {}
                 Frame::Snap { mode } => {
