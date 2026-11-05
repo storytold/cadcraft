@@ -36,7 +36,7 @@ fn fan(outline: &[Vec2]) -> DisplayList {
 /// A callback drawing `list` on `layer`, one world unit per pixel, world (32, 32) at the centre.
 fn callback(list: &DisplayList, layer: usize, key: u64, stencil: Stencil) -> CanvasCallback {
     let slot: MeshSlot = Arc::default();
-    *slot.lock().unwrap() = Some(gpu::build_mesh(list, Vec2::ZERO, cadcraft_color::Rgb(255, 255, 255), false));
+    *slot.lock().unwrap() = Some(gpu::build_mesh(list, Vec2::ZERO, cadcraft_color::Rgb(255, 255, 255), gpu::LwScale::Off));
     CanvasCallback { key, slot, offset: [-32.0, -32.0], scale: 1.0, center: [32.0, 32.0], layer, xform: gpu::IDENTITY_XFORM, dash: 0.0, stencil }
 }
 

@@ -48,32 +48,61 @@ pub struct Frame {
     pub cartesian: bool,
     /// DYNPICOORDS = 1: second and next points are absolute instead of relative.
     pub absolute: bool,
+    /// The other corner of a rectangle: the boxes are its width and height (lengths beside its
+    /// sides, Tab between them), applied in the direction of the cursor from the first corner.
+    pub dims: bool,
+    /// [`Frame::dims`]: the rectangle is turned by this angle (radians), its width and height
+    /// running along its turned sides.
+    pub rotation: f64,
+    /// [`Frame::dims`]: the base is the rectangle's centre, the other corner half its width and
+    /// height away.
+    pub center: bool,
 }
 
 impl Frame {
     /// The format the boxes show before a separator is typed.
     pub fn default_format(&self) -> Format {
-        if self.base.is_some() && !self.cartesian { Format::Polar } else { Format::Cartesian }
+        if self.base.is_some() && !self.cartesian && !self.dims { Format::Polar } else { Format::Cartesian }
     }
     /// Where the typed values are measured from.
     pub fn origin(&self) -> Vec2 {
         match self.base {
-            Some(b) if !self.absolute => b,
+            Some(b) if !self.absolute || self.dims => b,
             _ => Vec2::ZERO,
         }
     }
     /// Whether values are offsets from the last point.
     pub fn relative(&self) -> bool {
-        self.base.is_some() && !self.absolute
+        self.base.is_some() && (!self.absolute || self.dims)
     }
 
-    /// The live (X, Y) or (distance, angle in radians) of `cursor`.
+    /// An offset from the origin along a rectangle's own sides (turned back by its rotation),
+    /// as its full width and height (doubled from the centre).
+    fn sides(&self, d: Vec2) -> Vec2 {
+        d.rotate(-self.rotation) * if self.center { 2.0 } else { 1.0 }
+    }
+    /// A rectangle's signed full width and height as the offset of its other corner.
+    fn corner_offset(&self, w: f64, h: f64) -> Vec2 {
+        (Vec2::new(w, h) * if self.center { 0.5 } else { 1.0 }).rotate(self.rotation)
+    }
+
+    /// The live (X, Y) or (distance, angle in radians) of `cursor`; a rectangle's width and
+    /// height (lengths) in [`Frame::dims`].
     pub fn live(&self, format: Format, cursor: Vec2) -> (f64, f64) {
         let d = cursor - self.origin();
         match format {
+            Format::Cartesian if self.dims => {
+                let l = self.sides(d);
+                (l.x.abs(), l.y.abs())
+            }
             Format::Cartesian => (d.x, d.y),
             Format::Polar => (d.len(), d.y.atan2(d.x)),
         }
+    }
+
+    /// A typed width or height as an offset: its length, toward the cursor's side.
+    fn toward(&self, v: f64, cursor_offset: f64) -> f64 {
+        if self.dims { if cursor_offset < 0.0 { -v.abs() } else { v.abs() } } else { v }
     }
 }
 
@@ -141,14 +170,31 @@ pub fn can_lock_second(text: &str, frame: &Frame) -> bool {
     parse(text, frame).is_some_and(|e| e.split && e.first_locked().is_some() && e.second_value().is_some())
 }
 
+/// Where the separator between the two boxes is in `text` (a byte index), when it is a split
+/// entry.
+pub fn split_at(text: &str, frame: &Frame) -> Option<usize> {
+    parse(text, frame).filter(|e| e.split)?;
+    text.find([',', '<'])
+}
+
 /// Hold the cursor to the locked values: the first one once a separator follows it, and both
 /// when Tab has locked the second one too (`second_locked`), which pins the cursor to the point.
 pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {
     let Some(v) = entry.first_locked() else { return p };
     let o = frame.origin();
+    if frame.dims && entry.format == Format::Cartesian {
+        // Along the rectangle's own sides.
+        let l = frame.sides(p - o);
+        let h = match entry.second_value() {
+            Some(w) if second_locked => frame.toward(w, l.y),
+            _ => l.y,
+        };
+        let q = o + frame.corner_offset(frame.toward(v, l.x), h);
+        return if q.is_finite() { q } else { p };
+    }
     if second_locked && let Some(w) = entry.second_value() {
         let q = match entry.format {
-            Format::Cartesian => o + Vec2::new(v, w),
+            Format::Cartesian => o + Vec2::new(frame.toward(v, p.x - o.x), frame.toward(w, p.y - o.y)),
             Format::Polar => o + Vec2::from_angle(w) * v,
         };
         if q.is_finite() {
@@ -156,7 +202,7 @@ pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool)
         }
     }
     match entry.format {
-        Format::Cartesian => Vec2::new(o.x + v, p.y),
+        Format::Cartesian => Vec2::new(o.x + frame.toward(v, p.x - o.x), p.y),
         Format::Polar => {
             let d = p - o;
             let l = d.len();
@@ -173,11 +219,30 @@ pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool)
 /// the finished point is sent as `#x,y`, so what was previewed is exactly what is placed.
 pub fn complete(entry: &Entry<'_>, frame: &Frame, cursor: Vec2, last: Vec2) -> Option<String> {
     if !entry.split {
+        // A rectangle's width typed alone is that width (the height follows the cursor), as the
+        // width box shows, not a distance along the cursor's diagonal.
+        if frame.dims && entry.format == Format::Cartesian && cadcraft_engine::units::parse_distance(entry.first).is_some() {
+            return complete(&Entry { split: true, second: "", ..entry.clone() }, frame, cursor, last);
+        }
         return None;
     }
     let (live_first, live_second) = frame.live(entry.format, constrain(entry, frame, cursor, false));
     let first = entry.first_locked().unwrap_or(live_first);
     let second = entry.second_value().unwrap_or(live_second);
+    // A rectangle's width and height go toward the cursor's side of the first corner, along its
+    // turned sides, and half of each from its centre.
+    if frame.dims && entry.format == Format::Cartesian {
+        let l = frame.sides(cursor - frame.origin());
+        let off = frame.corner_offset(frame.toward(first, l.x), frame.toward(second, l.y));
+        if !off.is_finite() {
+            return None;
+        }
+        if frame.relative() && frame.base == Some(last) {
+            return Some(format!("@{},{}", off.x, off.y));
+        }
+        let p = frame.origin() + off;
+        return Some(format!("#{},{}", p.x, p.y));
+    }
     if frame.relative() && frame.base == Some(last) {
         return Some(match entry.format {
             Format::Cartesian => format!("@{first},{second}"),
@@ -230,7 +295,33 @@ mod tests {
     use super::*;
 
     fn second_point(base: Vec2) -> Frame {
-        Frame { base: Some(base), cartesian: false, absolute: false }
+        Frame { base: Some(base), cartesian: false, absolute: false, dims: false, ..Frame::default() }
+    }
+
+    /// FredApps on #2325: a rectangle's width and height typed in the boxes run along its turned
+    /// sides (Rotation) and are its full size about its centre (CEnter).
+    #[test]
+    fn rectangle_boxes_follow_its_rotation_and_centre() {
+        let base = Vec2::new(10.0, 10.0);
+        let turned = Frame { base: Some(base), dims: true, rotation: std::f64::consts::FRAC_PI_2, ..Frame::default() };
+        // The cursor on the rectangle's +x, +y side: up and to the left once turned a quarter.
+        let cursor = base + Vec2::new(-1.0, 2.0);
+        let p = sent("4,3", &turned, cursor, base).unwrap();
+        let local = (p - base).rotate(-std::f64::consts::FRAC_PI_2);
+        assert!((local.x - 4.0).abs() < 1e-9 && (local.y - 3.0).abs() < 1e-9, "{local:?}");
+        // The live boxes show the size along the sides.
+        let (w, h) = turned.live(Format::Cartesian, base + Vec2::new(-3.0, 4.0));
+        assert!((w - 4.0).abs() < 1e-9 && (h - 3.0).abs() < 1e-9, "{w} {h}");
+
+        let centred = Frame { base: Some(base), dims: true, center: true, ..Frame::default() };
+        let p = sent("4,3", &centred, base + Vec2::new(5.0, 5.0), base).unwrap();
+        assert!(close(Some(p), base + Vec2::new(2.0, 1.5)), "{p:?}");
+        let (w, h) = centred.live(Format::Cartesian, base + Vec2::new(2.0, 1.5));
+        assert!((w - 4.0).abs() < 1e-9 && (h - 3.0).abs() < 1e-9, "{w} {h}");
+        // The width alone: half of it from the centre, the height following the cursor.
+        let e = parse("4,", &centred).unwrap();
+        let held = constrain(&e, &centred, base + Vec2::new(7.0, 1.0), false);
+        assert!(close(Some(held), base + Vec2::new(2.0, 1.0)), "{held:?}");
     }
 
     fn sent(text: &str, frame: &Frame, cursor: Vec2, last: Vec2) -> Option<Vec2> {
@@ -241,6 +332,26 @@ mod tests {
 
     fn close(a: Option<Vec2>, b: Vec2) -> bool {
         a.is_some_and(|a| a.dist(b) < 1e-9)
+    }
+
+    #[test]
+    fn rectangle_dimensions_go_toward_the_cursor() {
+        let f = Frame { base: Some(Vec2::new(10.0, 10.0)), cartesian: false, absolute: true, dims: true, ..Frame::default() };
+        // Width and height boxes (Cartesian), whatever DYNPIFORMAT / DYNPICOORDS say.
+        assert_eq!(f.default_format(), Format::Cartesian);
+        assert_eq!(f.live(Format::Cartesian, Vec2::new(4.0, 13.0)), (6.0, 3.0));
+        assert_eq!(tab_separator("100", &f), Some(','));
+        // Cursor down-left of the first corner: the rectangle goes that way.
+        let p = sent("100,50", &f, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0)).unwrap();
+        assert!(close(Some(p), Vec2::new(-90.0, -40.0)), "{p:?}");
+        let p = sent("100,50", &f, Vec2::new(20.0, 30.0), Vec2::new(10.0, 10.0)).unwrap();
+        assert!(close(Some(p), Vec2::new(110.0, 60.0)), "{p:?}");
+        // A typed width holds the cursor on its side.
+        let e = parse("100,", &f).unwrap();
+        assert!(close(Some(constrain(&e, &f, Vec2::new(0.0, 3.0), false)), Vec2::new(-90.0, 3.0)));
+        // Only the width typed: the height comes from the cursor.
+        let p = sent("100,", &f, Vec2::new(20.0, 4.0), Vec2::new(10.0, 10.0)).unwrap();
+        assert!(close(Some(p), Vec2::new(110.0, 4.0)), "{p:?}");
     }
 
     #[test]
@@ -276,7 +387,7 @@ mod tests {
 
     #[test]
     fn absolute_setting_measures_from_the_origin() {
-        let f = Frame { base: Some(Vec2::new(5.0, 5.0)), cartesian: true, absolute: true };
+        let f = Frame { base: Some(Vec2::new(5.0, 5.0)), cartesian: true, absolute: true, dims: false, ..Frame::default() };
         assert!(close(sent("40,100", &f, Vec2::ZERO, Vec2::new(5.0, 5.0)), Vec2::new(40.0, 100.0)));
     }
 

@@ -29,10 +29,18 @@ pub struct CmdLine {
     pub options: Option<crate::dyninput::OptionsMenu>,
     /// The text whose second Dynamic Input value Tab locked; the lock holds while it is unchanged.
     locked_second: Option<String>,
+    /// Tab went back to the first Dynamic Input box while both are filled in: typing edits the
+    /// first value (Tab moves between the two boxes as often as it is pressed).
+    back_to_first: bool,
+    /// The box Tab just moved to: the next keystroke replaces its value, as in a selected field.
+    fresh_box: bool,
     /// Where the options menu's rows were drawn last frame (screen), for clicks on them.
     pub option_rows: Vec<(Rect, String)>,
     /// Where the Dynamic Input tooltip stays while the options menu is open.
     pub options_anchor: Option<Pos2>,
+    /// The prompt (message and keywords) the options menu last opened by itself for: it opens
+    /// once per prompt, so closing it (Escape, typing) keeps it closed.
+    options_auto: Option<(String, Vec<String>)>,
     /// The IME's composition (pre-edit) text: shown after the buffer while composing, never saved.
     pub preedit: String,
     /// The command line's editing rectangle and caret (screen) from the last frame, for the IME's
@@ -57,7 +65,21 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         return None;
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
-    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
+    // A value asked for without a base point (OFFSET's distance, a scale factor): the box takes
+    // that value, not a point's coordinates.
+    if p.accept.number && p.base.is_none() {
+        return None;
+    }
+    // RECTANG's other corner: its width and height, in boxes beside the sides.
+    let dims = p.corner && p.base.is_some() && app.session.running.as_ref().is_some_and(|r| r.id == "rectang");
+    Some(crate::dyninput::Frame {
+        base: p.base,
+        cartesian: st.dynpi_cartesian,
+        absolute: st.dynpi_absolute,
+        dims,
+        rotation: if dims { p.corner_rotation } else { 0.0 },
+        center: dims && p.corner_center,
+    })
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -94,17 +116,38 @@ fn tab(app: &mut CadApp) {
     if app.cmd.buffer.is_empty() && app.canvas.snap.is_some() {
         app.canvas.snap_tab = true;
     } else if let Some(f) = dyn_frame(app)
-        && let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f)
+        && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
     {
-        app.cmd.buffer.push(sep);
-    } else if let Some(f) = dyn_frame(app)
-        && crate::dyninput::can_lock_second(&app.cmd.buffer, &f)
-    {
-        // Both values typed: Tab locks the second one as well.
-        app.cmd.locked_second = Some(app.cmd.buffer.clone());
+        // Tab moves between the two boxes, as often as it is pressed: the first value is locked
+        // once the separator follows it, and a typed second value is locked on the way back.
+        if let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f) {
+            app.cmd.buffer.push(sep);
+            app.cmd.back_to_first = false;
+        } else if app.cmd.back_to_first {
+            app.cmd.back_to_first = false;
+        } else {
+            if e.second_value().is_some() {
+                app.cmd.locked_second = Some(app.cmd.buffer.clone());
+            }
+            app.cmd.back_to_first = true;
+        }
+        app.cmd.fresh_box = true;
     } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
+}
+
+/// The command line's text: what is typed, without the separator Tab put after the first
+/// Dynamic Input value while the second box is still empty (the boxes at the cursor show it).
+fn shown_buffer(app: &CadApp) -> String {
+    let b = &app.cmd.buffer;
+    if let Some(f) = dyn_frame(app)
+        && let Some(i) = crate::dyninput::split_at(b, &f)
+        && b.get(i + 1..).is_some_and(|rest| rest.trim().is_empty())
+    {
+        return b.get(..i).unwrap_or_default().trim_end().to_string();
+    }
+    b.clone()
 }
 
 /// An AutoComplete suggestion for the command line.
@@ -195,6 +238,63 @@ impl CmdLine {
         self.locked_second.as_deref() == Some(self.buffer.as_str())
     }
 
+    /// Whether the first Dynamic Input box is the one being typed in: before the separator, or
+    /// after Tab went back to it.
+    pub fn first_active(&self, e: &crate::dyninput::Entry<'_>) -> bool {
+        !e.split || self.back_to_first
+    }
+
+    /// Typing at the command line: into the Dynamic Input box being edited when Tab moved
+    /// between the boxes (replacing its value on the first keystroke there), else at the end.
+    fn type_text(&mut self, frame: Option<&crate::dyninput::Frame>, t: &str) {
+        let fresh = std::mem::take(&mut self.fresh_box);
+        let split = frame.and_then(|f| crate::dyninput::split_at(&self.buffer, f));
+        match split {
+            Some(i) => {
+                let locked = self.second_locked();
+                let (first, rest) = self.buffer.split_at(i);
+                let (sep, second) = rest.split_at(1);
+                let (mut first, sep, mut second) = (first.to_string(), sep.to_string(), second.to_string());
+                if self.back_to_first {
+                    if fresh {
+                        first.clear();
+                    }
+                    first.push_str(t);
+                } else {
+                    if fresh {
+                        second.clear();
+                    }
+                    second.push_str(t);
+                }
+                self.buffer = format!("{first}{sep}{second}");
+                // The second value stays locked while only the first one is edited.
+                self.locked_second = (locked && self.back_to_first).then(|| self.buffer.clone());
+            }
+            None => self.buffer.push_str(t),
+        }
+    }
+
+    /// Backspace at the command line: in the Dynamic Input box being edited, else at the end.
+    fn erase_char(&mut self, frame: Option<&crate::dyninput::Frame>) {
+        self.fresh_box = false;
+        match frame.and_then(|f| crate::dyninput::split_at(&self.buffer, f)) {
+            Some(i) if self.back_to_first => {
+                let locked = self.second_locked();
+                let (first, rest) = self.buffer.split_at(i);
+                let mut first = first.to_string();
+                first.pop();
+                self.buffer = format!("{first}{rest}");
+                self.locked_second = locked.then(|| self.buffer.clone());
+            }
+            _ => {
+                self.buffer.pop();
+                if !self.buffer.contains([',', '<']) {
+                    self.back_to_first = false;
+                }
+            }
+        }
+    }
+
     /// The options menu row under `at` (screen), if the menu is open.
     pub fn option_at(&self, at: Pos2) -> Option<String> {
         self.options.as_ref()?;
@@ -209,6 +309,33 @@ fn options_still_fit(app: &mut CadApp) {
     let kws = app.session.current_prompt().map(|p| p.keywords).unwrap_or_default();
     if app.cmd.options.as_ref().is_some_and(|m| !on || !m.fits(&kws)) {
         app.cmd.options = None;
+    }
+    // A prompt that only asks to choose (Yes/No, an option list) shows its options by the
+    // cursor at once: click one, or move with the arrows and press Enter.
+    let Some(prompt) = app.session.current_prompt() else {
+        app.cmd.options_auto = None;
+        return;
+    };
+    let key = (prompt.message.clone(), prompt.keywords.clone());
+    // Only when Enter means one of the options (its default is one, Yes/No <No>): with the menu
+    // open Enter takes the highlighted option, so a prompt where Enter means something else (a
+    // number, a default that is no option, or none: PEDIT's Enter ends it) keeps Enter as it is.
+    let default_kw = prompt.default.as_ref().is_some_and(|d| prompt.keywords.iter().any(|k| k.eq_ignore_ascii_case(d)));
+    let choose = !prompt.keywords.is_empty() && !prompt.accept.point && !prompt.accept.select && !prompt.accept.number && default_kw;
+    if on
+        && choose
+        && app.cmd.options.is_none()
+        && app.cmd.buffer.is_empty()
+        && app.cmd.history_pos.is_none()
+        && app.cmd.options_auto.as_ref() != Some(&key)
+    {
+        if let Some(mut m) = crate::dyninput::OptionsMenu::open(&prompt.keywords) {
+            if let Some(i) = prompt.default.as_ref().and_then(|d| prompt.keywords.iter().position(|k| k.eq_ignore_ascii_case(d))) {
+                m.index = i;
+            }
+            app.cmd.options = Some(m);
+        }
+        app.cmd.options_auto = Some(key);
     }
 }
 
@@ -284,7 +411,8 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
 
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    // A modal window (Batch Plot) has the keyboard.
+    if ctx.egui_wants_keyboard_input() || app.ui.dialog.as_deref() == Some("publish") {
         app.cmd.preedit.clear();
         app.cmd.ime_on = false;
         return;
@@ -338,11 +466,13 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
             egui::Event::Text(t) => {
                 if t == "\t" {
                     tab(app);
-                } else if t == " " && !text_prompt {
+                } else if t == " " && !text_prompt && !app.cmd.buffer.trim_start().starts_with('=') {
+                    // Space is Enter, except inside a formula (`=1200 + 350`).
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
-                    app.cmd.buffer.push_str(&t);
+                    let f = dyn_frame(app);
+                    app.cmd.type_text(f.as_ref(), &t);
                 }
             }
             // IME composition: the pre-edit is shown but stays out of the buffer; the commit is
@@ -376,7 +506,8 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     if erase {
                         let _ = app.run("erase.selection", serde_json::json!({}));
                     } else {
-                        app.cmd.buffer.pop();
+                        let f = dyn_frame(app);
+                        app.cmd.erase_char(f.as_ref());
                     }
                 }
                 Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
@@ -429,6 +560,8 @@ pub fn submit(app: &mut CadApp) {
     }
     let text = std::mem::take(&mut app.cmd.buffer);
     app.cmd.locked_second = None;
+    app.cmd.back_to_first = false;
+    app.cmd.fresh_box = false;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
         app.cmd.history.push(text.clone());
@@ -453,6 +586,32 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
     app.ui.history_lines.min(MAX_LINES).min(available)
 }
 
+/// One line of command-line text laid out in reading order: text holding right-to-left letters
+/// (a Hebrew text or layer name in a prompt, history line or typed value) would otherwise be
+/// turned around as a whole by the shaper, English words and numbers included.
+fn lay(p: &egui::Painter, s: String, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    p.layout_job(crate::i18n::job_ltr(&s, font, color))
+}
+
+/// The text shown left of the caret when it is not the whole of `buffer`: a buffer ending in a
+/// right-to-left run (Hebrew) takes its next letter at the left of that run, so the caret goes
+/// there rather than after the line's last glyph. `None` when the caret is at the line's end.
+fn caret_prefix(buffer: &str) -> Option<String> {
+    if !crate::i18n::has_rtl(buffer) {
+        return None;
+    }
+    let chars: Vec<char> = buffer.chars().collect();
+    let last = chars.len().checked_sub(1)?;
+    let runs = cadcraft_fonts::bidi::visual_runs(&chars, Some(false));
+    let at = runs.iter().position(|(r, _)| r.contains(&last))?;
+    let (_, rtl) = runs.get(at)?;
+    let upto = if *rtl { at } else { at + 1 };
+    if upto >= runs.len() {
+        return None;
+    }
+    Some(runs.iter().take(upto).filter_map(|(r, _)| chars.get(r.clone())).flatten().collect())
+}
+
 /// Draw the floating command bar and its history over the bottom-centre of `canvas`; the bar is 48 % of the canvas width, clamped to 360–760 points and never wider than the canvas minus 8 points.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
@@ -461,15 +620,43 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let bar = Rect::from_min_size(pos2(canvas.center().x - w / 2.0, canvas.bottom() - h - 10.0), vec2(w, h));
     let p = ui.painter_at(canvas);
     history(app, ui, canvas, bar);
-    // History lines above the bar (the expanded window replaces them).
+    // History lines above the bar (the expanded window replaces them), shown while the pointer is
+    // over the bar or over them.
     let n = if app.cmd.expanded { 0 } else { visible_lines(app, canvas, bar) };
+    let shown = n.min(app.session.log.len());
+    let over = {
+        let lines_h = 16.0 * shown as f32 + 6.0;
+        let zone = Rect::from_min_max(pos2(bar.left(), bar.top() - lines_h), bar.max).expand(2.0);
+        let now = ui.input(|i| i.time);
+        let hover_id = egui::Id::unique("cc_cmd_history_hover");
+        if ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| zone.contains(p)) {
+            ui.data_mut(|d| d.insert_temp(hover_id, now));
+            true
+        } else {
+            // A moment's grace, so the lines don't flicker at the edge.
+            let last: f64 = ui.data(|d| d.get_temp(hover_id)).unwrap_or(f64::NEG_INFINITY);
+            let left = now - last < 0.3;
+            if left {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            left
+        }
+    };
+    let n = if over { n } else { 0 };
     let lines: Vec<String> = app.session.log.iter().rev().take(n).rev().cloned().collect();
     if !lines.is_empty() {
         let lh = 16.0;
         let hr = Rect::from_min_size(pos2(bar.left(), bar.top() - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
         p.rect_filled(hr, 3.0, t.cmd_history);
         for (i, l) in lines.iter().enumerate() {
-            p.text(pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, l, crate::theme::small(), t.text_dim);
+            crate::i18n::paint(
+                &p,
+                pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32),
+                egui::Align2::LEFT_TOP,
+                l,
+                crate::theme::small(),
+                t.text_dim,
+            );
         }
     }
     p.rect_filled(bar, 3.0, t.cmd_bg);
@@ -483,13 +670,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         Some(pr) => {
             // The grip modes name themselves ("** STRETCH **…").
             let name = app.session.running.as_ref().filter(|r| r.id != "grip").map(|r| r.id.to_ascii_uppercase() + " ").unwrap_or_default();
-            let g = p.layout_no_wrap(name, font.clone(), t.text_faint);
+            let g = lay(&p, name, font.clone(), t.text_faint);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text_faint);
             x += gw;
             // A LISP `get…` prompt shows as the routine wrote it (no keywords, default or colon added).
             let message = if pr.raw { pr.display() } else { crate::i18n::t(&pr.message).to_string() };
-            let g = p.layout_no_wrap(message, font.clone(), t.text);
+            let g = lay(&p, message, font.clone(), t.text);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
@@ -499,13 +686,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                     " or [" => crate::tl!(" or ["),
                     lead => lead,
                 };
-                let g = p.layout_no_wrap(lead.into(), font.clone(), t.text);
+                let g = lay(&p, lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
                 let kws = pr.keywords.clone();
                 for (i, k) in kws.iter().enumerate() {
-                    let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
+                    let g = lay(&p, k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
                     let resp = ui.interact(r, ui.scope_id().with(("kw", i)), Sense::click());
                     if resp.hovered() {
@@ -518,25 +705,25 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                         let _ = app.session.input(Input::Keyword(k.clone()));
                     }
                     if i + 1 < kws.len() {
-                        let g = p.layout_no_wrap("/".into(), font.clone(), t.text);
+                        let g = lay(&p, "/".into(), font.clone(), t.text);
                         let gw = g.size().x;
                         p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                         x += gw;
                     }
                 }
-                let g = p.layout_no_wrap("]".into(), font.clone(), t.text);
+                let g = lay(&p, "]".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if let Some(d) = pr.default.as_ref().filter(|_| !pr.raw) {
-                let g = p.layout_no_wrap(format!(" <{d}>"), font.clone(), t.text);
+                let g = lay(&p, format!(" <{d}>"), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if !pr.raw {
-                let g = p.layout_no_wrap(": ".into(), font.clone(), t.text);
+                let g = lay(&p, ": ".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -556,10 +743,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
+    let shown = shown_buffer(app);
+    let g = lay(&p, shown.clone(), font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
-    let mut caret_x = x + gw;
+    // The caret is where the next letter goes: the end of the buffer in reading order, which is
+    // the left edge of a right-to-left run the buffer ends with.
+    let mut caret_x = x + caret_prefix(&shown).map_or(gw, |pre| lay(&p, pre, font.clone(), t.text).size().x);
     // The IME's composition text sits after the buffer (underlined) until it is committed.
     if !app.cmd.preedit.is_empty() {
         let pg = p.layout_no_wrap(app.cmd.preedit.clone(), font, t.text);
@@ -713,7 +903,7 @@ fn history_window(app: &CadApp, ui: &mut egui::Ui, r: Rect) {
             for l in log.get(rows).into_iter().flatten() {
                 let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_H), Sense::hover());
                 let p = ui.painter().with_clip_rect(row.intersect(ui.clip_rect()));
-                p.text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
+                crate::i18n::paint(&p, pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
             }
         },
     );
@@ -724,6 +914,92 @@ mod tests {
     use super::*;
     use cadcraft_engine::Session;
     use egui::{Event, PointerButton};
+
+    /// RECTANG's other corner: a width typed alone and Enter makes a rectangle that wide (the
+    /// height from the cursor), not a corner along the cursor's diagonal (#2325 review).
+    #[test]
+    fn a_rectangle_width_typed_alone_is_its_width() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("rectang");
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        app.canvas.cursor = Some(cadcraft_geom::Vec2::new(3.0, 4.0));
+        app.cmd.buffer = "100".into();
+        submit(&mut app);
+        let d = app.session.doc().unwrap();
+        let pl = d
+            .model
+            .iter()
+            .find_map(|e| if let cadcraft_doc::EntityKind::LwPolyline(p) = &e.kind { Some(p.clone()) } else { None })
+            .expect("a rectangle");
+        let b = cadcraft_geom::Bounds2::from_points(pl.vertices.iter().map(|v| v.p));
+        assert!((b.width() - 100.0).abs() < 1e-9 && (b.height() - 4.0).abs() < 1e-9, "{b:?}");
+    }
+
+    /// OFFSET's "Specify offset distance": Dynamic Input asks for the distance, not for a point's
+    /// coordinates; its second point (after a first one is picked) shows the distance from it.
+    #[test]
+    fn offset_distance_has_no_coordinate_boxes() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("offset");
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Specify offset distance"));
+        assert!(dyn_frame(&app).is_none());
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        assert!(dyn_frame(&app).is_some_and(|f| f.base == Some(cadcraft_geom::Vec2::ZERO)));
+    }
+
+    /// Tab moves between RECTANG's width and height boxes as often as it is pressed: no comma
+    /// piles up in the command line, the box reached takes what is typed next (replacing its
+    /// value), and Enter makes the rectangle of both values.
+    #[test]
+    fn tab_moves_between_the_rectangle_boxes() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        app.start("rectang");
+        app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
+        app.canvas.cursor = Some(cadcraft_geom::Vec2::new(3.0, 4.0));
+        let typed = |app: &mut CadApp, t: &str| {
+            let f = dyn_frame(app);
+            app.cmd.type_text(f.as_ref(), t);
+        };
+        for _ in 0..5 {
+            tab(&mut app);
+        }
+        assert!(app.cmd.buffer.matches(',').count() <= 1, "{:?}", app.cmd.buffer);
+        assert_eq!(shown_buffer(&app), "");
+        // Width 10, Tab, height 20, Tab back to the width: 30 replaces 10.
+        app.cmd.buffer.clear();
+        app.cmd.back_to_first = false;
+        typed(&mut app, "10");
+        tab(&mut app);
+        assert_eq!(shown_buffer(&app), "10");
+        typed(&mut app, "20");
+        tab(&mut app);
+        assert!(app.cmd.second_locked());
+        typed(&mut app, "30");
+        assert_eq!(app.cmd.buffer, "30,20");
+        assert!(app.cmd.second_locked(), "the height stays locked while the width is edited");
+        tab(&mut app);
+        typed(&mut app, "5");
+        assert_eq!(app.cmd.buffer, "30,5");
+        for _ in 0..4 {
+            tab(&mut app);
+        }
+        assert_eq!(app.cmd.buffer, "30,5");
+        submit(&mut app);
+        let d = app.session.doc().unwrap();
+        let pl = d
+            .model
+            .iter()
+            .find_map(|e| if let cadcraft_doc::EntityKind::LwPolyline(p) = &e.kind { Some(p.clone()) } else { None })
+            .expect("a rectangle");
+        let b = cadcraft_geom::Bounds2::from_points(pl.vertices.iter().map(|v| v.p));
+        assert!((b.width() - 30.0).abs() < 1e-9 && (b.height() - 5.0).abs() < 1e-9, "{b:?}");
+    }
 
     #[test]
     fn compact_canvas_contains_history_controls_without_changing_line_preference() {
@@ -758,7 +1034,18 @@ mod tests {
     }
 
     #[test]
+    /// The command line's own IME, at a text prompt it collects (here without the in-place
+    /// editor, which takes the keyboard when it is shown and has its own composition).
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
+        fn keys(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) -> egui::FullOutput {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                keyboard(app, ui.ctx());
+            });
+            out.textures_delta.clear();
+            out
+        }
         use cadcraft_engine::geom::Vec2;
         let mut app = CadApp::new(Session::new(), crate::Services::default());
         app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
@@ -766,26 +1053,26 @@ mod tests {
         app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
         assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
         let ctx = egui::Context::default();
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
         assert!(out.platform_output.ime.is_some());
         // Composition is shown at the command line but is not part of the text being edited.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
         assert_eq!(app.cmd.preedit, "zhong");
         assert!(app.cmd.buffer.is_empty());
         // The committed text replaces the pre-edit, exactly once.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
         assert!(app.cmd.preedit.is_empty());
         assert_eq!(app.cmd.buffer, "中文");
         let enter = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
-        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        keys(&mut app, &ctx, vec![enter(true), enter(false)]);
         let text = app.session.doc().unwrap().model.iter().next().map(|e| match &e.kind {
             cadcraft_engine::doc::EntityKind::Text(t) => t.value.clone(),
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
         // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
 
@@ -965,5 +1252,21 @@ mod autocomplete_tests {
         submit(&mut app);
         assert!(app.session.running.is_none());
         assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::caret_prefix;
+
+    /// A buffer ending in Hebrew puts the caret at the left of that run, where the next Hebrew
+    /// letter appears (#2317 review); otherwise it stays at the end of the line.
+    #[test]
+    fn the_caret_goes_where_the_next_letter_appears() {
+        assert_eq!(caret_prefix("layer שלום").as_deref(), Some("layer "));
+        assert_eq!(caret_prefix("שלום"), Some(String::new()));
+        assert_eq!(caret_prefix("שלום plan"), None);
+        assert_eq!(caret_prefix("line 0,0"), None);
+        assert_eq!(caret_prefix(""), None);
     }
 }
