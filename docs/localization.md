@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), or **Polski** (Polish).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,7 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. Unsupported languages fall back to English.
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `pl-PL` and `pl_PL.UTF-8` → `pl`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
 
@@ -22,7 +22,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `el`, and `pl`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -74,6 +74,25 @@ Turkish desktop-CAD vocabulary (Katman, Tarama, Yuvarlatma, Pah, Öteleme, Nesne
 Görünüm Penceresi); the running app was reviewed by a native speaker, and line-by-line
 proofreading is still to do. The bundled
 egui fonts cover `Ç Ğ İ Ö Ş Ü ç ğ ı ö ş ü`.
+
+## Polish (`pl`) interface
+
+Polish has **1,483 rows**: 1,477 ordinary labels, four contextual menu headings (**Rysuj**,
+**Zmiana**, **Widok**, and **Wymiary** for the Dimension menu, **Wymiar** for the object) and two count templates. It covers the union of the
+existing catalogs, including Options, prompts, dialogs and tooltips. Polish integer plurals
+follow CLDR `pl` with three forms, `one|few|many`: 1; 2–4, 22–24, 32–34 … (but not 12–14);
+everything else, including 0, 5–21 and 25–31 (*1 commit*, *2 commity*, *5 commitów*, *22 commity*).
+
+The terminology follows common Polish desktop-CAD vocabulary: **Warstwa** (Layer),
+**Kreskowanie** (Hatch), **Zaokrąglij** / **Fazuj** (Fillet / Chamfer), **Odsunięcie** (Offset),
+**Szyk** (Array), **Rzutnia** (Viewport), **Arkusz** (Layout), **Przyciąganie do obiektów**
+(Object Snap), **Skok** (Snap), **Więzy** (Constraints), **Odnośnik** (Leader) and **GUW/LUW**
+(WCS/UCS). Prompts read "Określ …" for Specify, "Podaj …" for Enter and "Wybierz …" for Select;
+clickable keywords (`Top`, `Zero`, `Bottom`, `_tan`, `nX`/`nXP`) keep the spelling the engine
+accepts, and the ViewCube compass keeps the international letters N, S, E, W. The bundled egui
+fonts cover `Ą Ć Ę Ł Ń Ó Ś Ź Ż ą ć ę ł ń ó ś ź ż`. The translation is original AI-assisted work,
+written from the meaning of CADCraft's English strings; no other product's localization was used
+as a source. Native proofreading and a layout check of long labels remain follow-up work.
 
 Drawing titles, layer/layout/block/style names, parameter names and expressions, text in a
 drawing, and command-line input are user data and retain their original spelling. Clickable
@@ -131,7 +150,8 @@ The implementation follows the display-time catalog pattern used by
   without one, the ordinary translation is used.
 - `@plural` entries hold the language's forms for integer counts: Ukrainian `one|few|many`,
   German and Spanish `one|other`, Brazilian Portuguese `one|other` (0 and 1 are `one`),
-  Czech `one|few|other` (1; 2–4; everything else, including 0, 11, 21 and 22).
+  Czech `one|few|other` (1; 2–4; everything else, including 0, 11, 21 and 22),
+  Polish `one|few|many` (1; 2–4, 22–24 but not 12–14; everything else).
   Korean and Hungarian have one form (`other`) for all integer counts.
   The API takes `u64`, so fractional counts are not accepted.
 - Register a new catalog in `i18n::LANGUAGES`, add its preference variant and code/name,
