@@ -96,8 +96,8 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
     // other header is not ours to rewrite.
     let [x1, y1, x2, y2] = frame;
     let want = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)];
-    // The floor is the fixed-ceiling match; above about 8.6e9 one ulp exceeds it, so a few ulps of the
-    // larger value also match.
+    // Two corners match within a fixed tolerance for ordinary coordinates (CORNER_EPS at most), or
+    // within a few ulps of the coordinate where that is larger, which is from about 1.1e9 up.
     let near = |a: f64, b: f64| {
         let m = a.abs().max(b.abs());
         (a - b).abs() <= (1e-9 * m.max(1.0)).min(CORNER_EPS).max(4.0 * f64::EPSILON * m)
@@ -135,30 +135,55 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
 /// is none, so bytes that did not change keep their exact text.
 fn recase(chunk: &[u8], old: &str) -> String {
     let old = old.as_bytes();
-    let lower_at = |i: usize| -> bool {
-        if let Some(c) = old.get(i).filter(|c| c.is_ascii_alphabetic()) {
-            return c.is_ascii_lowercase();
+    // For each place, whether the letter nearest to it (the one at it, else the closest before or
+    // after; the one before on a tie) is lower case: one pass for the next letter at or after each
+    // place, one for the previous, then the nearer of the two.
+    let mut next: Vec<Option<(usize, bool)>> = vec![None; old.len()];
+    let mut seen: Option<(usize, bool)> = None;
+    for (i, c) in old.iter().enumerate().rev() {
+        if c.is_ascii_alphabetic() {
+            seen = Some((i, c.is_ascii_lowercase()));
         }
-        let nearest = (1..=old.len()).find_map(|d| {
-            let before = i.checked_sub(d).and_then(|j| old.get(j)).filter(|c| c.is_ascii_alphabetic());
-            before.or_else(|| old.get(i + d).filter(|c| c.is_ascii_alphabetic()))
-        });
-        nearest.is_some_and(|c| c.is_ascii_lowercase())
-    };
+        if let Some(slot) = next.get_mut(i) {
+            *slot = seen;
+        }
+    }
+    let mut lower_at = vec![false; old.len()];
+    let mut prev: Option<(usize, bool)> = None;
+    for (i, c) in old.iter().enumerate() {
+        if c.is_ascii_alphabetic() {
+            prev = Some((i, c.is_ascii_lowercase()));
+        }
+        let after = next.get(i).copied().flatten();
+        let lower = match (prev, after) {
+            (Some((p, lp)), Some((q, lq))) => {
+                if i - p <= q - i {
+                    lp
+                } else {
+                    lq
+                }
+            }
+            (Some((_, l)), None) | (None, Some((_, l))) => l,
+            (None, None) => false,
+        };
+        if let Some(slot) = lower_at.get_mut(i) {
+            *slot = lower;
+        }
+    }
     let mut out = String::with_capacity(chunk.len() * 2);
     for (k, b) in chunk.iter().enumerate() {
         for (j, d) in [b >> 4, b & 15].into_iter().enumerate() {
             let digit = char::from_digit(d.into(), 16).unwrap_or('0');
-            out.push(if lower_at(2 * k + j) { digit } else { digit.to_ascii_uppercase() });
+            out.push(if lower_at.get(2 * k + j).copied().unwrap_or(false) { digit } else { digit.to_ascii_uppercase() });
         }
     }
     out
 }
 
-/// Ceiling for the tolerance when matching the corners in the OLE data to the frame's. The header
-/// holds the same f64 the frame groups print, so they agree to a few ulps; a fixed ceiling keeps
-/// distinct geometry from matching at large coordinates, where a relative tolerance would grow to
-/// whole units.
+/// The fixed part of the tolerance when matching the corners in the OLE data to the frame's. The
+/// header holds the same f64 the frame groups print, so they agree to a few ulps. Up to about 1e9 a
+/// fixed tolerance of at most this decides, so that distinct geometry does not match; from about
+/// 1.1e9 on, where one ulp is no longer below it, a few ulps of the coordinate decide instead.
 const CORNER_EPS: f64 = 1e-6;
 
 /// Transform an OLE2FRAME by `m`: its two corners are mapped through `m` (a DWG save writes the
