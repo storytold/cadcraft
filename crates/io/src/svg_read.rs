@@ -418,7 +418,9 @@ impl Parser {
     /// A circle or ellipse through a transform. A circle stays a `CIRCLE` under rotations,
     /// uniform scales and reflections; anything else becomes an `ELLIPSE` holding the axes
     /// of the transformed shape — a linear map sends the unit circle to an ellipse whose
-    /// semi-axes are the square roots of the eigenvalues of `A·Aᵀ`.
+    /// semi-axes are the square roots of the eigenvalues of `A·Aᵀ`. With `B = [bx by]` the
+    /// ellipse is `center + B·(cos t, sin t)`; the leading eigenvector `v` of `Bᵀ·B` is a
+    /// parameter-space direction, and the major axis is its image `B·v`.
     fn add_rounded(&mut self, center_user: Vec2, rx: f64, ry: f64) -> Result<()> {
         let center = self.map(center_user);
         let bx = self.map_vec(Vec2::new(rx, 0.0));
@@ -450,7 +452,7 @@ impl Parser {
             v / l
         };
         let ratio = (l_min.max(0.0).sqrt() / s_max).clamp(1e-9, 1.0);
-        let major = axis * s_max;
+        let major = bx * axis.x + by * axis.y;
         self.add(EntityKind::Ellipse(Ellipse { center: v3(center), major: v3(major), ratio, start: 0.0, end: std::f64::consts::TAU }))
     }
 

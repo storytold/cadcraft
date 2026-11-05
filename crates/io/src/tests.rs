@@ -2349,6 +2349,41 @@ fn svg_ellipse_major_axis_is_relative_to_its_centre() {
 }
 
 #[test]
+fn svg_rotated_ellipse_keeps_its_turn() {
+    // The page maps SVG (x, y) to (x, 10 - y); undo that, then rotate by -30°, to get back to the ellipse's own frame.
+    let svg = format!("{SVG_PAGE}<ellipse cx=\"0\" cy=\"0\" rx=\"20\" ry=\"10\" transform=\"rotate(30)\"/></svg>");
+    let d = read(svg.as_bytes(), "rotated.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    assert!((major.len() - 20.0).abs() < 1e-9 && (e.ratio - 0.5).abs() < 1e-9, "{e:?}");
+    let (s, c) = 30f64.to_radians().sin_cos();
+    let want = Vec2::new(20.0 * c, -20.0 * s);
+    assert!((major - want).len() < 1e-9 || (major + want).len() < 1e-9, "{e:?}");
+    let (ux, uy) = (e.center.x + major.x, 10.0 - (e.center.y + major.y));
+    let (x, y) = (c * ux + s * uy, -s * ux + c * uy);
+    assert!(((x / 20.0).powi(2) + (y / 10.0).powi(2) - 1.0).abs() < 1e-9, "{e:?}");
+}
+
+#[test]
+fn svg_sheared_circle_has_the_axes_of_its_image() {
+    // matrix(1 0 1 1 0 0) is B = [[1, 1], [0, 1]]; the page then flips Y at one millimetre per unit.
+    let svg = format!("{SVG_PAGE}<circle r=\"1\" transform=\"matrix(1 0 1 1 0 0)\"/></svg>");
+    let d = read(svg.as_bytes(), "sheared.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    let s_max = ((3.0 + 5f64.sqrt()) / 2.0).sqrt();
+    let s_min = ((3.0 - 5f64.sqrt()) / 2.0).sqrt();
+    assert!((major.len() - s_max).abs() < 1e-9 * s_max, "{e:?}");
+    assert!((e.ratio - s_min / s_max).abs() < 1e-9, "{e:?}");
+    let (ux, uy) = (major.x, -major.y);
+    let pre = Vec2::new(ux - uy, uy);
+    assert!((pre.len() - 1.0).abs() < 1e-9, "B⁻¹·major = {pre:?}, {e:?}");
+    assert!(major.x.abs() > 1e-3 && major.y.abs() > 1e-3, "{e:?}");
+}
+
+#[test]
 fn svg_path_lines_curves_and_arcs() {
     let svg = format!("{SVG_PAGE}<path d=\"M1 1 L5 1 C6 1 7 2 8 3\"/><path d=\"M0 0 A5 5 0 0 1 10 0 Z\"/></svg>");
     let d = read(svg.as_bytes(), "paths.svg").unwrap();
