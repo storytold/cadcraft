@@ -77,6 +77,7 @@ fn far_block_contents_leave_a_window_page_unchanged() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
         window_pdf(&d)

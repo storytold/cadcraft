@@ -1,7 +1,7 @@
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
-use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, cull};
+use super::{Builder, Clip, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, append_clipped_keep, clip, cull};
 
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
@@ -62,24 +62,88 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                     Some(cull::CopyReach::Some(s)) => Some(s),
                     Some(cull::CopyReach::All) | None => None,
                 };
+                // XCLIP: the copy is drawn on its own, then cut to the boundary.
+                let clip = xclip_region(ins, &sub.xf);
+                let mut part = clip.as_ref().map(|_| b.part());
+                let target = part.as_mut().unwrap_or(&mut *b);
+                let mut stop = false;
                 for (k, be) in blk.entities.iter().enumerate() {
+                    // Every visit is charged, drawn or not, so a block of definitions can't make
+                    // the copies loop free.
+                    if !target.expand() {
+                        stop = true;
+                        break;
+                    }
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) || shown.as_ref().is_some_and(|s| s.get(k) == Some(&false)) {
                         continue;
                     }
-                    if !b.expand() {
-                        break 'copies;
-                    }
-                    entity(b, &sub, be);
+                    entity(target, &sub, be);
+                }
+                if let (Some(part), Some((region, inverted))) = (part, &clip) {
+                    b.list.expanded = part.list.expanded;
+                    b.list.truncated |= part.list.truncated;
+                    append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+                    xclip_frame(b, ctx, region, rgb);
+                }
+                if stop {
+                    break 'copies;
                 }
             }
         }
     }
+    // Attributes are cut by the reference's clip too.
+    let attr_clip = ctx.d.block(&ins.block).and_then(|blk| xclip_region(ins, &ctx.xf.then_before(ins.transform(blk.base.xy()))));
+    let mut part = attr_clip.as_ref().map(|_| b.part());
+    attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, rgb);
+    if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
+        append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+    }
+}
+
+/// The XCLIP region of reference `ins` drawn through `xf` (block to drawing coordinates), and
+/// whether it is inverted. `None` when the reference isn't clipped (no boundary, clipping off, a
+/// degenerate outline).
+fn xclip_region(ins: &cadcraft_doc::Insert, xf: &Mat3) -> Option<(clip::PolyClip, bool)> {
+    let c = ins.clip.as_ref().filter(|c| c.active())?;
+    let world: Vec<Vec2> = c.polygon().into_iter().map(|p| xf.apply(p)).collect();
+    Some((clip::PolyClip::new(&world)?, c.inverted))
+}
+
+/// The clipping boundary's frame as XCLIPFRAME says: 0 hidden, 1 shown and plotted, 2 shown but
+/// not plotted (the default).
+fn xclip_frame(b: &mut Builder, ctx: &Ctx, region: &clip::PolyClip, rgb: Ink) {
+    let mode = ctx.d.header.i64("XCLIPFRAME", 2);
+    if mode == 0 || (b.plotting && mode != 1) {
+        return;
+    }
+    let mut frame = region.polygon().to_vec();
+    if let Some(first) = frame.first().copied() {
+        frame.push(first);
+    }
+    // The outline is in drawing coordinates already.
+    let top = Ctx { xf: Mat3::IDENTITY, ..ctx.clone() };
+    b.polyline(&top, rgb, 0.0, &frame);
+}
+
+/// The attributes of block reference `e` (`ins`).
+fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
     if b.opts.text {
         // ATTMODE (ATTDISP): 0 shows no attributes, 1 the visible ones, 2 all of them.
         let attmode = ctx.d.header.i64("ATTMODE", 1);
         // The reference's transparency; each attribute draws with its own.
         let reference = b.transparency;
+        // The block's first definition per tag (without case), built once for all the attributes.
+        let mut defs: std::collections::HashMap<String, &Entity> = std::collections::HashMap::new();
+        if !ins.attribs.is_empty()
+            && let Some(blk) = ctx.d.block(&ins.block)
+        {
+            for be in blk.entities.iter() {
+                if let EntityKind::AttDef(d) = &be.kind {
+                    defs.entry(d.tag.to_ascii_lowercase()).or_insert(be.as_ref());
+                }
+            }
+        }
         for a in &ins.attribs {
             if attmode == 0 || (a.invisible && attmode != 2) {
                 continue;
@@ -90,7 +154,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
-            let def = ctx.d.block(&ins.block).and_then(|blk| blk.entities.iter().find(|be| attdef_tag(be, &a.tag)));
+            let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
             let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
@@ -123,9 +187,4 @@ fn by_block() -> cadcraft_doc::Common {
         transparency: cadcraft_doc::Transparency::ByBlock,
         ..cadcraft_doc::Common::default()
     }
-}
-
-/// The attribute definition with tag `tag` (any case).
-fn attdef_tag(e: &Entity, tag: &str) -> bool {
-    matches!(&e.kind, EntityKind::AttDef(d) if d.tag.eq_ignore_ascii_case(tag))
 }
