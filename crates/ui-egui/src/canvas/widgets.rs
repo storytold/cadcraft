@@ -22,6 +22,7 @@ pub(super) fn tile_xf(r: Rect, tile: &cadcraft_engine::ModelTile) -> Xf {
 pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_engine::ModelTile)]) {
     let t = Tokens::get();
     let bg = Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b());
+    let orbit = app.session.state().map(|s| s.orbit).unwrap_or_default();
     for (r, tile) in tiles.iter().filter(|(r, tile)| !tile.active && r.width() >= 1.0 && r.height() >= 1.0) {
         let p = ui.painter_at(*r);
         let xf = tile_xf(*r, tile);
@@ -30,7 +31,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }
-        viewport_label(&p, *r);
+        viewport_label(&p, *r, orbit);
     }
     let p = ui.painter();
     for (r, tile) in tiles {
@@ -48,22 +49,76 @@ pub(super) fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
     ));
 }
 
-pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
+/// Draw the UCS coordinate icon in the bottom-left corner of the viewport (2D XY or 3D RGB triad).
+pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect, orbit: cadcraft_render::Orbit3d) {
     let t = Tokens::get();
     let o = pos2(rect.left() + 36.0, rect.bottom() - 34.0);
-    let st = Stroke::new(1.0, t.canvas_ink);
-    p.line_segment([o, o + vec2(60.0, 0.0)], st);
-    p.line_segment([o, o + vec2(0.0, -60.0)], st);
-    p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
     let f = egui::FontId::proportional(13.0);
-    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
-    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+    if orbit.is_top() {
+        let st = Stroke::new(1.0, t.canvas_ink);
+        p.line_segment([o, o + vec2(60.0, 0.0)], st);
+        p.line_segment([o, o + vec2(0.0, -60.0)], st);
+        p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
+        p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
+        p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+        return;
+    }
+    // 3D UCS Triad: X (Red), Y (Green), Z (Blue).
+    let len = 56.0_f64;
+    let to_scr = |v: cadcraft_geom::Vec3| -> Pos2 {
+        let pr = orbit.project_vec(v);
+        pos2(o.x + pr.x as f32, o.y - pr.y as f32)
+    };
+    let px = to_scr(cadcraft_geom::Vec3::new(len, 0.0, 0.0));
+    let py = to_scr(cadcraft_geom::Vec3::new(0.0, len, 0.0));
+    let pz = to_scr(cadcraft_geom::Vec3::new(0.0, 0.0, len));
+    let col_x = t.ucs_x;
+    let col_y = t.ucs_y;
+    let col_z = t.ucs_z;
+    p.line_segment([o, px], Stroke::new(2.0, col_x));
+    p.line_segment([o, py], Stroke::new(2.0, col_y));
+    p.line_segment([o, pz], Stroke::new(2.0, col_z));
+    p.text(px + (px - o).normalized() * 10.0, egui::Align2::CENTER_CENTER, "X", f.clone(), col_x);
+    p.text(py + (py - o).normalized() * 10.0, egui::Align2::CENTER_CENTER, "Y", f.clone(), col_y);
+    p.text(pz + (pz - o).normalized() * 10.0, egui::Align2::CENTER_CENTER, "Z", f, col_z);
 }
 
-pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
+/// Draw the green 3D Orbit arcball overlay and pivot triad while `3DORBIT` is active.
+pub(super) fn draw_orbit_arcball(p: &egui::Painter, rect: Rect, orbit: cadcraft_render::Orbit3d) {
+    let t = Tokens::get();
+    let c = rect.center();
+    let r = (rect.width().min(rect.height()) * 0.34).clamp(90.0, 260.0);
+    let green = t.orbit_arcball;
+    p.circle_stroke(c, r, Stroke::new(1.8, green));
+    for d in [vec2(0.0, -r), vec2(0.0, r), vec2(-r, 0.0), vec2(r, 0.0)] {
+        p.circle_stroke(c + d, 6.5, Stroke::new(1.4, green));
+    }
+    // Pivot crosshair + 3D mini triad at center.
+    let len = 28.0_f64;
+    let to_scr = |v: cadcraft_geom::Vec3| -> Pos2 {
+        let pr = orbit.project_vec(v);
+        pos2(c.x + pr.x as f32, c.y - pr.y as f32)
+    };
+    p.line_segment([c, to_scr(cadcraft_geom::Vec3::new(len, 0.0, 0.0))], Stroke::new(1.8, t.ucs_x));
+    p.line_segment([c, to_scr(cadcraft_geom::Vec3::new(0.0, len, 0.0))], Stroke::new(1.8, t.ucs_y));
+    p.line_segment([c, to_scr(cadcraft_geom::Vec3::new(0.0, 0.0, len))], Stroke::new(1.8, t.ucs_z));
+}
+
+/// Draw the top-left viewport controls label showing current view orientation and visual style.
+pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, orbit: cadcraft_render::Orbit3d) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
+    if orbit.is_top() {
+        p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
+    } else {
+        let txt = crate::tf!(
+            "+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe",
+            view = crate::i18n::t(orbit.label()),
+            yaw = format!("{:.0}", orbit.yaw.to_degrees().rem_euclid(360.0)),
+            pitch = format!("{:.0}", orbit.pitch.to_degrees())
+        );
+        p.text(at, egui::Align2::LEFT_TOP, txt, crate::theme::small(), t.canvas_ink);
+    }
 }
 
 pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
