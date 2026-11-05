@@ -310,6 +310,20 @@ fn hostile_files_never_panic() {
 }
 
 #[test]
+fn a_far_extended_subshape_cell_is_cut_off() {
+    // Hostile: nested cells 255 units out put the pen 255^4 units away; a location pushed there
+    // and popped at the top became the advance.
+    let mut src = String::from("*BIGFONT 6,1,081,09F\n*0,5,far\n1,0,0,1,0\n");
+    for k in 1..=3 {
+        src.push_str(&format!("*08F0{k},10,L\n7,0,08F0{},255,0,255,255,0\n", k + 1));
+    }
+    src.push_str("*08F04,2,PUSH\n5,0\n*082A0,10,T\n7,0,08F01,255,0,255,255,6,0\n*082A1,10,NEAR\n7,0,08F04,255,0,255,255,6,0\n");
+    let f = font(&src);
+    assert!(f.glyph(0x82A0, false).is_none());
+    assert!(close(f.glyph(0x82A1, false).unwrap().advance, Vec2::new(255.0, 0.0)));
+}
+
+#[test]
 fn a_doubled_minus_sign_is_not_a_number() {
     // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
     // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
