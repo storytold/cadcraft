@@ -268,6 +268,28 @@ fn walking_a_long_list_counts_against_the_slice() {
     assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
 }
 
+/// A routine is charged the work its slice did, not the slice's length: one `length` of 2^19
+/// cells is far past a 400000-step slice.
+#[test]
+fn a_routine_is_charged_the_work_of_its_slice() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    ok(&mut s, "(setq l '(1)) (repeat 19 (setq l (append l l))) nil");
+    let r = s.lisp_eval("(length l) (repeat 10 (setq x 1))", false, false, Vec::new()).unwrap();
+    assert!(r.is_none(), "the routine gave the interface a frame");
+    assert!(s.lisp_busy());
+    let steps = s.lisp.run.as_ref().map(|r| r.steps).unwrap_or(0);
+    assert!(steps >= 1 << 19, "{steps}");
+    for _ in 0..100 {
+        if !s.lisp_busy() {
+            break;
+        }
+        s.lisp_tick();
+    }
+    assert!(!s.lisp_running());
+    ok(&mut s, "(setq l nil)");
+}
+
 /// A run's last step walking a long list is charged to that run, not left for the next one: here
 /// it fails after the walk (a list of numbers isn't a list of strings), so no step follows it.
 #[test]
