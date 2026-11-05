@@ -567,3 +567,23 @@ fn hostile_ucs_input_never_panics() {
         typed(&mut s, &["line 0,0 1,0 "]);
     }
 }
+
+// ---------------- review fixes ----------------
+
+/// A deferred TAN first point followed by a typed `@d<a`: the angle is read in the UCS (and with
+/// ANGBASE), like every other typed direction.
+#[test]
+fn deferred_line_polar_follows_the_ucs() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::snap::{Deferred, SnapCurve, mode};
+    let mut s = session();
+    turned(&mut s);
+    s.start("line").unwrap();
+    let d = Deferred { mode: mode::TAN, curve: SnapCurve::Circle { center: Vec2::new(500.0, 500.0), radius: 5.0 }, at: Vec2::new(505.0, 500.0) };
+    s.input(Input::Deferred(d)).unwrap();
+    // UCS angle 0 is world +Y: the tangent to the circle in that direction, then 10 along it.
+    s.cmdline("@10<0").unwrap();
+    s.cancel();
+    let (a, b) = last_line(&s);
+    assert!((b - a).len() > 9.999 && (b.x - a.x).abs() < 1e-9 && (b.y - a.y - 10.0).abs() < 1e-9, "{a:?} {b:?}");
+}

@@ -119,7 +119,9 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                     feed(ctx.s, Input::Point(w));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
-                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| Vec2::new(p[0], p[1])));
+                    // The pick point is what `entsel` gave: a UCS point, like the ones above.
+                    let frame = ctx.s.input_ucs();
+                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| frame.to_wcs(Vec2::new(p[0], p[1]))));
                 } else {
                     return Err(LispError::bad_arg("command argument", arg));
                 }
@@ -617,10 +619,13 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         _ => (rest, None),
     };
+    // The points are UCS points, as `getpoint` and `getcorner` give them: the selection runs in
+    // the world.
+    let frame = ctx.s.input_ucs();
     let point = |i: usize| -> Result<Vec2, LispError> {
         let v = pts.get(i).ok_or_else(|| args_err(true))?;
         let p = v.as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", v))?;
-        Ok(Vec2::new(p[0], p[1]))
+        Ok(frame.to_wcs(Vec2::new(p[0], p[1])))
     };
     let s = &mut *ctx.s;
     let all = |s: &Session, all_spaces: bool| -> Vec<Handle> {
@@ -652,7 +657,7 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Some("F") | Some("WP") | Some("CP") => {
             let poly: Vec<Vec2> =
-                pts.first().map(|l| l.iter().filter_map(|p| p.as_point().map(|q| Vec2::new(q[0], q[1]))).collect()).unwrap_or_default();
+                pts.first().map(|l| l.iter().filter_map(|p| p.as_point().map(|q| frame.to_wcs(Vec2::new(q[0], q[1])))).collect()).unwrap_or_default();
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
             match mode.as_deref() {
@@ -1097,7 +1102,8 @@ pub fn distof(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let s = string(&a[0])?;
-    let mut settings = ctx.s.angle_settings();
+    // A pure string-to-angle conversion: ANGBASE and ANGDIR apply, the UCS does not.
+    let mut settings = ctx.s.angle_settings().world();
     // AUNITS 0..=4; any other units argument is an error in AutoCAD, nil here.
     match a.get(1) {
         None | Some(Value::Nil) => {}

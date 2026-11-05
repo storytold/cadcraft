@@ -109,7 +109,10 @@ pub fn parse_polar_text(text: &str, angles: &crate::units::AngleSettings) -> Opt
     let body = text.trim().strip_prefix('@')?; // relative form only
     let (d, a) = body.split_once('<')?;
     let dist = d.trim().parse::<f64>().ok()?;
-    let angle = angles.amount(a.trim())?;
+    // The direction `@d<a` draws along, as `parse_point_in` reads it (ANGBASE, ANGDIR and the
+    // UCS applied): a world angle.
+    let a = a.trim();
+    let angle = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
     (dist.is_finite() && angle.is_finite()).then_some((dist, angle))
 }
 

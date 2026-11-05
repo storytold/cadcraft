@@ -176,3 +176,53 @@ fn getangle_and_getdist_measure_in_the_ucs() {
     assert!(close(pt(&ok(&mut s, "(getvar \"UCSXDIR\")")), [0.0, 1.0, 0.0]));
     assert_eq!(ok(&mut s, "(getvar \"WORLDUCS\")"), "0");
 }
+
+fn model_lines(s: &Session) -> Vec<(Vec2, Vec2)> {
+    s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| if let cadcraft_doc::EntityKind::Line(l) = &e.kind { Some((l.a.xy(), l.b.xy())) } else { None })
+        .collect()
+}
+
+/// The pick point of an `entsel` result handed to `command` is a UCS point, like the others.
+#[test]
+fn command_with_entsel_converts_the_pick_point_to_world() {
+    let mut s = session();
+    turned(&mut s);
+    // World (100, 50) to (100, 150): UCS (0, 0) to (100, 0).
+    s.execute("line", &json!({"points": [[100, 50], [100, 150]]})).unwrap();
+    ok(&mut s, "(setq e (entlast))");
+    // Break it from UCS (30, 0) to UCS (60, 0), picked the way `entsel` answers: (ename point).
+    ok(&mut s, "(command \"_.BREAK\" (list e '(30 0)) '(60 0))");
+    let mut l = model_lines(&s);
+    l.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+    assert_eq!(l.len(), 2, "{l:?}");
+    assert!(l[0].0.dist(Vec2::new(100.0, 50.0)) < 1e-9 && l[0].1.dist(Vec2::new(100.0, 80.0)) < 1e-9, "{l:?}");
+    assert!(l[1].0.dist(Vec2::new(100.0, 110.0)) < 1e-9 && l[1].1.dist(Vec2::new(100.0, 150.0)) < 1e-9, "{l:?}");
+}
+
+/// `ssget` windows, fences, polygons and single picks take UCS points, as `getpoint` gives them.
+#[test]
+fn ssget_window_takes_ucs_points() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "origin", "origin": [1000, 1000]})).unwrap();
+    s.execute("circle", &json!({"center": [1005, 1005], "radius": 1})).unwrap();
+    s.execute("circle", &json!({"center": [5, 5], "radius": 1})).unwrap();
+    assert_eq!(ok(&mut s, "(sslength (ssget \"W\" '(0 0) '(10 10)))"), "1");
+    let found = ok(&mut s, "(cdr (assoc 10 (entget (ssname (ssget \"W\" '(0 0) '(10 10)) 0))))");
+    assert!(close(pt(&found), [1005.0, 1005.0, 0.0]), "{found}");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"C\" '(-1 -1) '(11 11)))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"WP\" '((0 0) (10 0) (10 10) (0 10))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"F\" '((0 0) (10 10))))"), "1");
+}
+
+/// `angtof` converts text to radians: ANGBASE and ANGDIR apply, the UCS does not.
+#[test]
+fn angtof_ignores_the_ucs() {
+    let mut s = session();
+    turned(&mut s);
+    assert_eq!(ok(&mut s, "(angtof \"0\")"), "0.0");
+    assert_eq!(ok(&mut s, "(angtos (angtof \"45\"))"), "\"45\"");
+}
