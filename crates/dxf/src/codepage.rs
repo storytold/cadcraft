@@ -144,15 +144,21 @@ fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// Decode a whole ASCII DXF file. Valid UTF-8 is read as UTF-8: R2007+ files, pure-ASCII files,
-/// and older files from writers that ignored the code page. Anything else is decoded from the
-/// file's `$DWGCODEPAGE`, or from Windows-1252 (the usual `ANSI_1252`) when the header has none
-/// or names a code page CADCraft doesn't know, which is logged as a warning.
+/// Decode a whole ASCII DXF file. R2007+ files and pure-ASCII files are UTF-8. Older files
+/// with a declared code page use it even when their bytes also form valid UTF-8; other older
+/// files are read as UTF-8 when valid, or decoded from the declared page / Windows-1252 fallback.
 pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
-    if let Ok(s) = std::str::from_utf8(bytes) {
+    let valid_utf8 = std::str::from_utf8(bytes).ok();
+    if valid_utf8.is_some_and(str::is_ascii) || (valid_utf8.is_some() && ascii_acad_version(bytes).is_some_and(is_utf8_version)) {
+        return Cow::Borrowed(valid_utf8.unwrap_or_default());
+    }
+    let code_page = ascii_code_page(bytes);
+    if let Some(s) = valid_utf8
+        && code_page.is_none()
+    {
         return Cow::Borrowed(s);
     }
-    let d = match ascii_code_page(bytes) {
+    let d = match code_page {
         Some(name) => {
             let name = String::from_utf8_lossy(name);
             decoder(&name).unwrap_or_else(|| {
@@ -163,6 +169,22 @@ pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
         None => Decoder::Utf8,
     };
     decode(bytes, d)
+}
+
+fn ascii_acad_version(bytes: &[u8]) -> Option<&str> {
+    let mut lines = bytes.split(|&b| b == b'\n').map(<[u8]>::trim_ascii);
+    while let Some(line) = lines.next() {
+        if line == b"ENDSEC" {
+            return None;
+        }
+        if line == b"$ACADVER" {
+            return match (lines.next(), lines.next()) {
+                (Some(b"1"), Some(value)) => std::str::from_utf8(value).ok(),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// The text state of a binary DXF file, learnt from its header as the tags go by: `$ACADVER`
@@ -302,6 +324,12 @@ mod tests {
         assert_eq!(decode_code_page(b"\x90\n1\n", "ANSI_932").as_deref(), Some("\u{FFFD}\n1\n"));
         assert_eq!(decode_code_page(b"\x90", "ANSI_932").as_deref(), Some("\u{FFFD}"));
         assert_eq!(decode_code_page(b"\xFF\xFF", "ANSI_936").as_deref(), Some("\u{FFFD}\u{FFFD}"));
+    }
+
+    #[test]
+    fn ansi_1252_utf8_valid_byte_pair_uses_declared_code_page() {
+        let bytes = b"0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DWGCODEPAGE\n3\nANSI_1252\n0\nENDSEC\n1\n\xC3\xA9\n";
+        assert_eq!(decode_ascii_file(bytes), "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DWGCODEPAGE\n3\nANSI_1252\n0\nENDSEC\n1\nÃ©\n");
     }
 
     #[test]

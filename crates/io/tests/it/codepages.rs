@@ -83,13 +83,11 @@ fn shift_jis_backslash_trail_byte_is_not_an_escape() {
     assert_eq!(text_of(&d), "表U+0041 é 件");
 }
 
-/// R2007+ files and files whose bytes are valid UTF-8 are UTF-8, whatever code page they declare
-/// (the DWG bridge writes UTF-8 with the DWG's code page name); invalid UTF-8 in a 2007+ file
-/// falls back to the declared code page.
+/// R2007+ files are UTF-8; pre-2007 files use their declared code page when non-ASCII text occurs.
 #[test]
 fn utf8_wins_when_valid() {
     let d = cadcraft_io::read_dxf(&ascii_dxf("AC1015", "ANSI_1251", "Слой".as_bytes(), b"B", "Привет".as_bytes())).unwrap();
-    assert_eq!(names(&d), ("Слой".into(), "B".into(), "Привет".into()));
+    assert_eq!(names(&d), ("РЎР»РѕР№".into(), "B".into(), "РџСЂРёРІРµС‚".into()));
     let d = cadcraft_io::read_dxf(&ascii_dxf("AC1032", "ANSI_1252", "图层".as_bytes(), b"B", "Café".as_bytes())).unwrap();
     assert_eq!(names(&d), ("图层".into(), "B".into(), "Café".into()));
     let d = cadcraft_io::read_dxf(&ascii_dxf("AC1021", "ANSI_1251", b"\xD1\xEB\xEE\xE9", b"B", b"x")).unwrap();
