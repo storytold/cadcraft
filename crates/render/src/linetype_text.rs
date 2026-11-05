@@ -285,6 +285,7 @@ mod tests {
         let mut d = Drawing::new_imperial();
         d.text_styles.push(cadcraft_doc::TextStyle { name: "SHX".into(), font: "cadcraft-render-text.shx".into(), ..Default::default() });
         let t = cadcraft_doc::Text {
+            formula: None,
             insert: cadcraft_geom::Vec3::new(0.0, 0.0, 0.0),
             align_pt: None,
             height: 3.0,

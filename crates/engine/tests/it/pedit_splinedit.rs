@@ -369,3 +369,25 @@ fn edit_vertex_add_and_elevate_order_keep_the_shape() {
     }
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexadd" })).is_err());
 }
+
+/// SPLINEDIT Fit data Add: after picking an existing fit point, the marker and the rubber band
+/// start at that fit point, not at the control point with the same number (#2325, reported by
+/// butzzi-art).
+#[test]
+fn fit_add_marks_the_picked_fit_point() {
+    let mut s = Session::new();
+    let sp = fit_spline(&mut s);
+    s.cmdline("splinedit 0,0 f a 2,2").unwrap();
+    let picked = Vec2::new(2.0, 2.0);
+    assert!(spline(&s, &sp).control.iter().all(|c| !c.near(picked, 1e-6)), "a control point would be marked elsewhere");
+    let shown = s.preview(Vec2::new(3.0, 1.0));
+    let rubber = shown.iter().find_map(|e| match &e.kind {
+        EntityKind::Line(l) if l.b.xy().near(Vec2::new(3.0, 1.0), 1e-9) => Some(l.a.xy()),
+        _ => None,
+    });
+    assert_eq!(rubber, Some(picked), "the rubber band starts at the picked fit point");
+    // The fit points stay shown as grip squares while they are picked.
+    let squares = shown.iter().filter(|e| matches!(&e.kind, EntityKind::LwPolyline(p) if p.closed && p.vertices.len() == 4)).count();
+    assert_eq!(squares, spline(&s, &sp).fit.len());
+    s.cmdline("x x x").ok();
+}
