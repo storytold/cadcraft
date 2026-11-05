@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0 };
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
@@ -271,7 +271,7 @@ fn depth_pick_keeps_solids_whole_and_honors_selection_settings() {
         r["handles"].as_array().unwrap().iter().map(|h| Handle::parse_hex(h.as_str().unwrap()).unwrap()).collect()
     };
     let (a, b) = (members(&a), members(&b));
-    app.canvas.xf = Some(Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(20.0, 10.0)), center: Vec2::ZERO, scale: 1.0 });
+    app.canvas.xf = Some(Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(20.0, 10.0)), center: Vec2::ZERO, scale: 1.0, twist: 0.0 });
     app.canvas.depth_image = Some(cadcraft_render::depth3d::Image { width: 2, height: 1, rgba: vec![255; 8], handles: vec![Some(a[0]), Some(b[0])] });
     let (pa, pb) = (Some(pos2(5.0, 5.0)), Some(pos2(15.0, 5.0)));
     select_depth(&mut app, pa, false);
@@ -310,7 +310,7 @@ fn projection_changes_refit_without_resetting_zoom_for_material_edits() {
     app.session.execute("box", &json!({"p1": [10,20,30], "p2": [14,23,32]})).unwrap();
     app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
     let ctx = egui::Context::default();
-    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0 };
+    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0, twist: 0.0 };
     ensure_list(&mut app, &xf, &[], &ctx);
     let orthographic = app.session.state().unwrap().view();
     app.session.execute("view3d", &json!({"projection": "perspective"})).unwrap();
@@ -323,6 +323,48 @@ fn projection_changes_refit_without_resetting_zoom_for_material_edits() {
     app.session.execute("view3d", &json!({"materialColor": [110,170,215]})).unwrap();
     ensure_list(&mut app, &xf, &[], &ctx);
     assert_eq!(app.session.state().unwrap().view(), zoomed, "appearance controls preserve navigation");
+}
+
+/// A new font folder drops the list. In a 3D view its key hasn't changed, so the list has to come
+/// back anyway, without the zoom a first build would fit.
+#[test]
+fn font_change_rebuilds_the_3d_view_and_keeps_its_zoom() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [10,20,30], "p2": [14,23,32]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    let ctx = egui::Context::default();
+    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0, twist: 0.0 };
+    ensure_list(&mut app, &xf, &[], &ctx);
+    let fitted = app.session.state().unwrap().view();
+    app.session.zoom_about(2.0, fitted.center).unwrap();
+    let zoomed = app.session.state().unwrap().view();
+    app.canvas.font_generation = app.canvas.font_generation.wrapping_add(1);
+    ensure_list(&mut app, &xf, &[], &ctx);
+    assert!(app.canvas.list.is_some(), "the 3D list is rebuilt");
+    assert_eq!(app.session.state().unwrap().view(), zoomed);
+}
+
+/// The depth image fills the canvas upright, so a twisted plan view must not turn the canvas
+/// transform in 3D, and leaving 3D brings the twist back.
+#[test]
+fn twist_is_plan_only_and_survives_a_3d_round_trip() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [0,0,0], "p2": [4,3,2]})).unwrap();
+    let plan = cadcraft_engine::View { twist: 0.5, ..app.session.state().unwrap().view() };
+    app.session.state_mut().unwrap().set_view_quiet(plan);
+    assert_eq!(screen_twist(&app, &plan), 0.5);
+    let ctx = egui::Context::default();
+    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0, twist: 0.0 };
+    ensure_list(&mut app, &xf, &[], &ctx);
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    assert_eq!(screen_twist(&app, &plan), 0.0, "a stale twisted view stays upright in 3D");
+    assert_eq!(app.session.state().unwrap().view().twist, 0.0, "the fit is upright");
+    app.session.execute("plan", &json!({})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    assert_eq!(app.session.state().unwrap().view(), plan, "leaving 3D restores the plan view");
 }
 
 #[test]

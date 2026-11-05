@@ -1,5 +1,5 @@
 use super::viewport::{split_viewport, stencil_clip};
-use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Xf, rebuild, same_content};
+use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Vec2, Xf, rebuild, same_content};
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
 /// rebuild. Highlighting the hovered entity used to scan every primitive on every frame: ~2.5 ms
@@ -63,10 +63,25 @@ pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIt
 /// A rebuild only the view asks for (a new zoom band, a pan out of the built area) runs in the
 /// background while the current list is drawn (see [`rebuild`]); a changed drawing, or no list
 /// yet, is built at once.
+/// The font set text is drawn with: TrueType fonts (font folders, rescans) and SHX fonts
+/// (drawing folders, font folders, the search path) can each change what text looks like. Every
+/// cache of drawn geometry keys on it.
+pub(super) fn font_generation() -> u64 {
+    cadcraft_fonts::ttf::generation().wrapping_add(cadcraft_fonts::shx::generation() << 32)
+}
+
 pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::Context) {
     let px = 1.0 / xf.scale;
     let camera = app.session.view3d;
     let render3d = app.session.render3d;
+    let fonts = font_generation();
+    if app.canvas.font_generation != fonts {
+        app.canvas.font_generation = fonts;
+        app.canvas.list = None;
+        app.canvas.job = None;
+        // The model space seen through a layout's active viewport is drawn apart: rebuilt too.
+        app.canvas.vp.key = None;
+    }
     let Ok(st) = app.session.state() else { return };
     if let Some(camera) = camera.filter(|_| !st.space.is_paper()) {
         let options = preview_options(xf.scale);
@@ -79,7 +94,8 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
             options.tolerance.to_bits(),
             options.min_dash.to_bits(),
         );
-        if app.canvas.view3d_key != Some(key) {
+        // No list means the 3D drawing is gone (a new font folder dropped it), whatever the key.
+        if app.canvas.view3d_key != Some(key) || app.canvas.list.is_none() {
             let first = app.canvas.view3d_key.is_none();
             // Fit on entry, projection changes and command-driven camera turns. Geometry,
             // appearance edits and canvas drags keep the current zoom.
@@ -114,7 +130,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
             if refit && !bounds.is_empty() {
                 let height = bounds.height().max(bounds.width() * f64::from(xf.rect.height()) / f64::from(xf.rect.width().max(1.0))).max(1e-6) * 1.2;
                 if let Ok(st) = app.session.state_mut() {
-                    st.set_view_quiet(cadcraft_engine::View { center: bounds.center(), height });
+                    st.set_view_quiet(cadcraft_engine::View { center: bounds.center(), height, twist: 0.0 });
                 }
                 ctx.request_repaint();
             }
@@ -233,6 +249,39 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     app.canvas.window = opts.view;
     app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
     app.canvas.build_ms = crate::now_ms() - t0;
+}
+
+/// The display list of what a running command shows in place of the drawing
+/// ([`cadcraft_engine::Session::display_only`]: DVIEW's preview set), rebuilt when the drawing,
+/// the set or the 2x zoom band changes.
+#[derive(Default)]
+pub(super) struct OnlyList {
+    key: Option<u64>,
+    pub(super) list: DisplayList,
+}
+
+impl OnlyList {
+    /// `outline`: a clipped viewport's outline (model units) the preview is clipped to.
+    pub(super) fn update(&mut self, st: &cadcraft_engine::DocState, only: &cadcraft_engine::DisplayOnly, scale: f64, outline: Option<&[Vec2]>) {
+        let band = (1.0 / scale.max(1e-300)).log2().floor() as i32;
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, band, &only.handles, format!("{:?}", only.extra), font_generation())
+                .hash(&mut h);
+            outline.into_iter().flatten().for_each(|q| (q.x.to_bits(), q.y.to_bits()).hash(&mut h));
+            h.finish()
+        };
+        if self.key != Some(key) {
+            let ents = only.handles.iter().filter_map(|h| st.doc.entity(*h)).map(|e| e.as_ref()).chain(only.extra.iter());
+            let list = rebuilt_preview(&st.doc, ents, 2f64.powi(-band));
+            self.list = match outline.and_then(cadcraft_render::clip::PolyClip::new) {
+                Some(c) => cadcraft_render::clip_list(&list, &c),
+                None => list,
+            };
+            self.key = Some(key);
+        }
+    }
 }
 
 /// The area a display list is built for: each view with half its larger side of margin all

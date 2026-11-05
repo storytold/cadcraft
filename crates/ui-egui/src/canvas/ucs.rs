@@ -265,7 +265,7 @@ mod tests {
         let a = Vec3::new(0.0, 0.0, 12.0);
         let b = Vec3::new(10.0, 0.0, 22.0);
         drawing.add(&space, Common::default(), EntityKind::Line(Line { a, b })).unwrap();
-        let xf = Xf { rect: egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(200.0, 200.0)), center: Vec2::ZERO, scale: 10.0 };
+        let xf = Xf { rect: egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(200.0, 200.0)), center: Vec2::ZERO, scale: 10.0, twist: 0.0 };
         let view = View3d { azimuth: -std::f64::consts::FRAC_PI_2, elevation: std::f64::consts::FRAC_PI_2, orbiting: false };
         let projector = cadcraft_render::view3d::Projector3d::new(
             &drawing,

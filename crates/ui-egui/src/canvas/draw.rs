@@ -1,5 +1,5 @@
 use super::list::preview_options;
-use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, vec2};
+use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Mat3, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, vec2};
 
 fn color32(c: Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
@@ -62,12 +62,17 @@ fn dashes(run: &[Pos2], along: f64, stroke: Stroke, dash: f32, gap: f32, out: &m
 /// show (#2299). Each edge keeps its direction and its dashes start where they would on the whole
 /// edge, so they don't crawl as the rectangle or the view moves.
 pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_polygon(clip, &[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()], stroke, dash, gap)
+}
+
+/// [`dashed_rect`] for any closed outline (a selection window turned in a twisted view): each
+/// edge from one corner to the next, the last back to the first.
+pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges =
-        [(r.left_top(), r.right_top()), (r.right_top(), r.right_bottom()), (r.right_bottom(), r.left_bottom()), (r.left_bottom(), r.left_top())];
+    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1));
     for (a, b) in edges {
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
@@ -191,7 +196,7 @@ pub(super) fn draw_highlight_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_HIGHLIGHT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(*hl_origin, Mat3::IDENTITY),
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
         },
@@ -221,7 +226,7 @@ pub(super) fn draw_drag_gpu(
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -243,10 +248,8 @@ pub(super) fn draw_drag_gpu(
         c.drag_key = Some(key);
         c.drag_origin = origin;
     }
-    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o).
-    let m = drag.matrix;
+    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o), turned with the view.
     let o = c.drag_origin;
-    let t = m.apply(o) - o;
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -257,7 +260,7 @@ pub(super) fn draw_drag_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
-            xform: [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32],
+            xform: xf.gpu_xform(o, drag.matrix),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
@@ -300,7 +303,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAWING,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
@@ -412,7 +415,7 @@ mod highlight_stability_tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
         let input = egui::RawInput { screen_rect: Some(rect), events: vec![egui::Event::PointerMoved(pointer)], ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
-            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0 }, list, &[0], Color32::LIGHT_BLUE, look);
+            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, twist: 0.0 }, list, &[0], Color32::LIGHT_BLUE, look);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.textures_delta.clear();
@@ -469,7 +472,7 @@ mod highlight_stability_tests {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
-                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0 };
+                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0 };
                 draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
             });
             h.run_steps(3);
@@ -539,7 +542,7 @@ mod zoomed_highlight_tests {
         let list = line(Vec2::new(-1000.0, 0.0), Vec2::new(1000.0, 0.0));
         // The smaller zoom first, so a regression fails here instead of filling memory at 1e9.
         for scale in [1e3, 1e9] {
-            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale }).len();
+            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, twist: 0.0 }).len();
             assert!((50..=70).contains(&n), "scale {scale}: {n} dashes for 600 points of line");
         }
     }
@@ -550,7 +553,7 @@ mod zoomed_highlight_tests {
     fn clipped_dashes_stay_where_the_whole_line_puts_them() {
         let list = line(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 0.0));
         for x in [500.3, 512.9, 731.0] {
-            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0 };
+            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, twist: 0.0 };
             let whole = Shape::dashed_line(
                 &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(1000.0, 0.0))],
                 Stroke::new(1.0, Color32::LIGHT_BLUE),

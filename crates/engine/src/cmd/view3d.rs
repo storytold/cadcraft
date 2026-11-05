@@ -532,6 +532,7 @@ mod tests {
             rows: 1_500,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(insert)).unwrap();
         assert!(render_png_of(&d, v, 32, 32).unwrap().truncated);
