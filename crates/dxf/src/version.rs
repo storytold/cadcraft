@@ -1,20 +1,20 @@
 //! The DXF/DWG file versions CADCraft writes (DXF Reference, HEADER `$ACADVER`).
 
-/// A file version CADCraft can save: the AutoCAD release that introduced the format. Each format
-/// also serves the releases after it (2018 is still AutoCAD's current format).
+/// A file version CADCraft can save: the `AutoCAD` release that introduced the format. Each format
+/// also serves the releases after it (2018 is still `AutoCAD`'s current format).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Version {
-    /// AutoCAD 2000/2002 (AC1015).
+    /// `AutoCAD` 2000/2002 (AC1015).
     R2000,
-    /// AutoCAD 2004–2006 (AC1018).
+    /// `AutoCAD` 2004–2006 (AC1018).
     R2004,
-    /// AutoCAD 2007–2009 (AC1021): the first version whose DXF text is UTF-8.
+    /// `AutoCAD` 2007–2009 (AC1021): the first version whose DXF text is UTF-8.
     R2007,
-    /// AutoCAD 2010–2012 (AC1024).
+    /// `AutoCAD` 2010–2012 (AC1024).
     R2010,
-    /// AutoCAD 2013–2017 (AC1027).
+    /// `AutoCAD` 2013–2017 (AC1027).
     R2013,
-    /// AutoCAD 2018 and later (AC1032), the default.
+    /// `AutoCAD` 2018 and later (AC1032), the default.
     #[default]
     R2018,
 }

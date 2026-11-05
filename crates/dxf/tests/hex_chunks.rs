@@ -4,8 +4,10 @@
 //! code and following-record framing. Oversized binary read fixtures test tolerance only.
 //! Pending writer regressions extend the chunk-size finding in issue #1025.
 //! Public DXF Reference, Group Codes in Numerical Order and Binary DXF Files:
-//! https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-3F0380A5-1C15-464D-BC66-2C5F094BCFB9.htm
-//! https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-FC1C3C69-DBC2-49E4-893A-000D6538C0FE.htm
+//! <https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-3F0380A5-1C15-464D-BC66-2C5F094BCFB9.htm>
+//! <https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-FC1C3C69-DBC2-49E4-893A-000D6538C0FE.htm>
+
+use std::fmt::Write as _;
 
 use cadcraft_dxf::{Tag, Value, parse, write_ascii_as, write_binary};
 
@@ -17,7 +19,10 @@ fn payload(length: usize) -> Vec<u8> {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
+    bytes.iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02X}");
+        out
+    })
 }
 
 fn input(code: i32, bytes: &[u8]) -> [Tag; 2] {
