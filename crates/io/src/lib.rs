@@ -82,8 +82,14 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if cadcraft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
-        let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
+        // The rendition may take what the machine's free memory holds (`Limits::for_machine`),
+        // and its size is checked as it is written; its group codes can't outnumber a quarter of
+        // its bytes (a code and a value take two lines of at least two bytes), so the DXF
+        // reader's group-code limit, meant for files of unknown origin, gives way to that.
+        let limits = cadcraft_dwg::Limits::for_machine();
+        let (dxf, notes) = cadcraft_dwg::decode(bytes, limits).map_err(IoError::Format)?;
+        let max_tags = cadcraft_dxf::max_tags().max(dxf.len() / 4);
+        let mut d = dxf_read::read_with_limit(&dxf, max_tags).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes;
         return Ok((d, Some(dxf)));
     }
@@ -141,9 +147,11 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 }
 
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
-/// there is one.
+/// there is one. The DXF may be as large as the machine's memory allows, counting what the open
+/// drawing holds (`Limits::for_saving`), so a drawing that opened can be saved.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    cadcraft_dwg::encode_noted(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
+    let limits = cadcraft_dwg::Limits::for_saving();
+    cadcraft_dwg::encode_noted_with(dxf_write::dwg_bridge(d, version).as_bytes(), version.code(), limits).map_err(IoError::Format)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
