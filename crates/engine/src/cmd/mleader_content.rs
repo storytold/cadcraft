@@ -54,6 +54,7 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         if *center {
             // Move the block so the centre of its extents lands on the anchor.

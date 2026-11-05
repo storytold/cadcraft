@@ -194,7 +194,7 @@ fn a_drawing_opens_on_the_view_it_was_saved_at() {
 
     let mut s = Session::new();
     s.open_drawing(d.clone(), "saved-view.dxf", None);
-    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0 });
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
 
     // No stored view: the extents, as before. They are what makes this drawing unusable without
     // the stored one -- the fit is more than a hundred thousand times taller than the detail.
@@ -219,7 +219,7 @@ fn move_with_pickfirst_and_window_selection() {
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
