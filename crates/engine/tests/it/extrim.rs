@@ -45,6 +45,25 @@ fn seg(a: [f64; 2], b: [f64; 2]) -> [[i64; 2]; 2] {
     if a <= b { [a, b] } else { [b, a] }
 }
 
+/// A two-point preview polyline as a [`seg`].
+fn preview_segment(k: &EntityKind) -> [[i64; 2]; 2] {
+    let EntityKind::LwPolyline(p) = k else { panic!("{k:?}") };
+    let [a, b] = &p.vertices[..] else { panic!("{p:?}") };
+    seg([a.p.x, a.p.y], [b.p.x, b.p.y])
+}
+
+/// Every point of every object but `edge`, as drawn.
+fn points_but(s: &Session, edge: &str) -> Vec<Vec2> {
+    let d = s.doc().unwrap();
+    let skip = Handle::parse_hex(edge).unwrap();
+    d.model.iter().filter(|e| e.handle != skip).flat_map(|e| cadcraft_engine::select::hit_polylines(d, e, 1e-4).into_iter().flatten()).collect()
+}
+
+/// The highest point of every object but `edge`.
+fn top_but(s: &Session, edge: &str) -> f64 {
+    points_but(s, edge).iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
+}
+
 fn extrim(s: &mut Session, edge: &str, side: [f64; 2]) -> Value {
     s.execute("extrim", &json!({ "edge": edge, "side": side })).unwrap()
 }
@@ -327,7 +346,9 @@ fn a_circle_crossed_once_is_reported_not_trimmed() {
     s.set_selection(vec![Handle::parse_hex(&edge).unwrap()]);
     s.start("extrim").unwrap();
     // The preview shows only what will go: the upper half of the vertical line.
-    assert_eq!(s.preview(Vec2::new(5.0, 3.0)).len(), 1);
+    let shown = s.preview(Vec2::new(5.0, 3.0));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(preview_segment(&shown[0].kind), seg([5.0, 0.0], [5.0, 5.0]));
     s.cancel();
     let v = extrim(&mut s, &edge, [5.0, 3.0]);
     assert_eq!(v["trimmed"], 1);
@@ -335,4 +356,108 @@ fn a_circle_crossed_once_is_reported_not_trimmed() {
     assert!(v["message"].as_str().unwrap().contains("could not be cut"), "{v}");
     assert!(exists(&s, &c), "the circle stays whole");
     assert!(!exists(&s, &crossing));
+}
+
+#[test]
+fn an_open_polyline_drawn_back_to_its_start_loses_both_ends() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [-5.0, 0.0], [10.0, 0.0]);
+    // Open, though its last point lands on its first.
+    h(&s.execute("pline", &json!({ "points": [[0, 2], [0, -2], [4, -2], [4, 2], [0, 2]] })).unwrap());
+    let v = extrim(&mut s, &edge, [2.0, 3.0]);
+    assert_eq!(v["trimmed"], 1);
+    assert!(top_but(&s, &edge) <= 1e-6, "nothing left above the edge: {:?}", points_but(&s, &edge));
+}
+
+#[test]
+fn an_object_that_only_touches_the_edge_stays_and_is_not_previewed() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let touching = line(&mut s, [5.0, 0.0], [5.0, 5.0]);
+    line(&mut s, [2.0, -5.0], [2.0, 5.0]);
+    s.set_selection(vec![Handle::parse_hex(&edge).unwrap()]);
+    s.start("extrim").unwrap();
+    let shown = s.preview(Vec2::new(5.0, 3.0));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(preview_segment(&shown[0].kind), seg([2.0, 0.0], [2.0, 5.0]));
+    s.cancel();
+    let v = extrim(&mut s, &edge, [5.0, 3.0]);
+    assert_eq!(v["trimmed"], 1);
+    assert_eq!(v["skipped"]["uncut"], 0, "{v}");
+    assert!(exists(&s, &touching), "touching is not crossing");
+}
+
+#[test]
+fn a_circle_crossed_at_its_seam_is_cut_in_half() {
+    let mut s = Session::new();
+    // The edge meets the circle at (5, 0), where its outline starts and ends.
+    let edge = line(&mut s, [-10.0, 0.0], [10.0, 0.0]);
+    s.execute("circle", &json!({ "center": [0, 0], "radius": 5 })).unwrap();
+    let v = extrim(&mut s, &edge, [0.0, 8.0]);
+    assert_eq!(v["trimmed"], 1);
+    assert!(top_but(&s, &edge) <= 1e-6);
+    assert!(s.doc().unwrap().model.iter().any(|e| matches!(e.kind, EntityKind::Arc(_))), "the lower half stays as an arc");
+}
+
+#[test]
+fn trims_arcs_ellipses_splines_and_bulged_polylines() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [-30.0, 0.0], [40.0, 0.0]);
+    s.execute("arc", &json!({ "center": [-20, -2], "radius": 5, "start": 0, "end": 180 })).unwrap();
+    s.execute("ellipse", &json!({ "center": [-5, 0], "major": [4, 0], "ratio": 0.5 })).unwrap();
+    s.execute("spline", &json!({ "control": [[4, -2], [7, 4], [10, -4], [13, 2]] })).unwrap();
+    s.execute("pline", &json!({ "vertices": [{ "p": [20, -1], "bulge": -1 }, [28, -1]] })).unwrap();
+    assert!(top_but(&s, &edge) > 1.0);
+    let v = extrim(&mut s, &edge, [0.0, 3.0]);
+    assert_eq!(v["trimmed"], 4, "{v}");
+    // Curves are cut where TRIM cuts them, on their flattened outlines.
+    assert!(top_but(&s, &edge) <= 1e-3, "{}", top_but(&s, &edge));
+}
+
+#[test]
+fn an_object_with_two_stretches_on_the_side_loses_both() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [-5.0, 0.0], [10.0, 0.0]);
+    s.execute("pline", &json!({ "points": [[0, -1], [1, 1], [2, -1], [3, 1], [4, -1]] })).unwrap();
+    let v = extrim(&mut s, &edge, [2.0, 3.0]);
+    assert_eq!(v["trimmed"], 1);
+    assert!(top_but(&s, &edge) <= 1e-6);
+    let pieces = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::LwPolyline(_))).count();
+    assert_eq!(pieces, 3, "the three dips below the edge stay");
+}
+
+#[test]
+fn past_an_arcs_ends_the_side_is_inside_or_outside_its_circle() {
+    let mut s = Session::new();
+    let arc = h(&s.execute("arc", &json!({ "center": [0, 0], "radius": 5, "start": 0, "end": 90 })).unwrap());
+    line(&mut s, [1.0, 1.0], [6.0, 6.0]);
+    // Outside the circle, though left of the arc's direction at its nearer end.
+    extrim(&mut s, &arc, [4.0, -4.0]);
+    let r = 5.0 / 2f64.sqrt();
+    let [[a, b]] = lines(&s)[..] else { panic!("{:?}", lines(&s)) };
+    assert_eq!(a, [1_000_000, 1_000_000], "the inner part stays");
+    assert!((b[0] as f64 / 1e6 - r).abs() < 1e-3 && (b[1] as f64 / 1e6 - r).abs() < 1e-3, "{b:?}");
+}
+
+#[test]
+fn refuses_more_stretches_than_the_limit_and_changes_nothing() {
+    let mut s = Session::new();
+    let edge = line(&mut s, [-1.0, 0.0], [10_003.0, 0.0]);
+    // One object dipping across the edge more times than one call trims.
+    let pts: Vec<[f64; 2]> = (0..20_004).map(|i| [f64::from(i) / 2.0, if i % 2 == 0 { -1.0 } else { 1.0 }]).collect();
+    let z = h(&s.execute("pline", &json!({ "points": pts })).unwrap());
+    let e = s.execute("extrim", &json!({ "edge": edge, "side": [5, 3] })).unwrap_err();
+    assert!(e.to_string().contains("stretches"), "{e}");
+    assert!(exists(&s, &z));
+}
+
+#[test]
+fn a_long_polyline_edge_is_accepted() {
+    let mut s = Session::new();
+    // 6,000 straight segments: its corners fit the trace once its pieces are joined.
+    let pts: Vec<[f64; 2]> = (0..6_001).map(|i| [f64::from(i), if i % 2 == 0 { 0.0 } else { 0.5 }]).collect();
+    let edge = h(&s.execute("pline", &json!({ "points": pts })).unwrap());
+    line(&mut s, [10.2, -5.0], [10.2, 5.0]);
+    let v = extrim(&mut s, &edge, [10.2, 3.0]);
+    assert_eq!(v["trimmed"], 1);
 }

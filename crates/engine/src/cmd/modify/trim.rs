@@ -20,14 +20,17 @@ fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segme
     let d = s.doc()?;
     let space = s.space();
     let store = d.space(&space).ok_or(EngineError::NoDocument)?;
-    let mut out = Vec::new();
-    for e in store.iter() {
-        if e.handle == exclude || !d.is_visible(e) {
-            continue;
+    // Only the given edges: look them up rather than scan the whole space for them.
+    let given: Vec<&Entity> = match edges.only {
+        Some(es) => {
+            let mut seen = std::collections::HashSet::new();
+            es.iter().filter(|h| seen.insert(**h) && store.contains(**h)).filter_map(|h| d.entity(*h).map(|e| &**e)).collect()
         }
-        if let Some(es) = edges.only
-            && !es.contains(&e.handle)
-        {
+        None => store.iter().map(|e| &**e).collect(),
+    };
+    let mut out = Vec::new();
+    for e in given {
+        if e.handle == exclude || !d.is_visible(e) {
             continue;
         }
         if edges.implied

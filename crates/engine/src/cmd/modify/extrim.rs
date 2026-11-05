@@ -20,15 +20,17 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 const MAX_FENCE: usize = 10_000;
 /// Most objects one call trims.
 const MAX_OBJECTS: usize = 10_000;
+/// Most stretches one call removes (an object can lose several).
+const MAX_STRETCHES: usize = 10_000;
 /// Most objects the preview draws (beyond that it shows nothing, to keep the cursor smooth).
 const MAX_PREVIEW: usize = 2000;
 /// The traced line's distance from the edge, as a fraction of the edge's size.
-const OFFSET: f64 = 1e-5;
+const TRACE_GAP: f64 = 1e-5;
 
 pub(super) fn spec() -> CommandSpec {
     CommandSpec::new("extrim", "Extended Trim", run_extrim)
         .menu(&["Tools", "Express Tools", "Extended Trim"])
-        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, one side of an open one)} → trimmed, handles, skipped: {locked, other, uncut}")
+        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, an arc's circle or an elliptical arc's ellipse; one side of an open edge)} → trimmed, handles, skipped: {locked, other, uncut}")
         .interactive(|s| Ok(Box::new(ExtrimM::new(s))))
 }
 
@@ -45,9 +47,22 @@ fn trimmable(k: &EntityKind) -> bool {
     edge_kind(k)
 }
 
-/// Consecutive polylines joined end to end (an object's primitives come in drawing order), each
-/// with whether it closes on itself.
-fn chains(polys: Vec<Vec<Vec2>>, tol: f64) -> Vec<(Vec<Vec2>, bool)> {
+/// Whether the object closes on itself, from what it is rather than from where its ends lie: an
+/// open polyline drawn back to its start is still open.
+fn closed_kind(k: &EntityKind) -> bool {
+    match k {
+        EntityKind::Circle(_) => true,
+        EntityKind::LwPolyline(p) => p.closed,
+        EntityKind::Ellipse(e) => {
+            cadcraft_geom::Ellipse { center: e.center.xy(), major: e.major.xy(), ratio: e.ratio, start: e.start, end: e.end }.is_full()
+        }
+        EntityKind::Spline(sp) => sp.closed,
+        _ => false,
+    }
+}
+
+/// Consecutive polylines joined end to end (an object's primitives come in drawing order).
+fn chains(polys: Vec<Vec<Vec2>>, tol: f64) -> Vec<Vec<Vec2>> {
     let mut out: Vec<Vec<Vec2>> = Vec::new();
     for p in polys.into_iter().filter(|p| p.len() >= 2) {
         match out.last_mut() {
@@ -55,17 +70,65 @@ fn chains(polys: Vec<Vec<Vec2>>, tol: f64) -> Vec<(Vec<Vec2>, bool)> {
             _ => out.push(p),
         }
     }
-    out.into_iter()
-        .map(|c| {
-            let closed = c.len() > 3 && c.first().zip(c.last()).is_some_and(|(a, b)| a.near(*b, tol));
-            (c, closed)
-        })
-        .collect()
+    out
 }
 
 /// Twice the signed area of a closed polyline (positive: counter-clockwise).
 fn signed_area(pts: &[Vec2]) -> f64 {
     pts.windows(2).filter_map(|w| Some(w.first()?.cross(*w.get(1)?))).sum()
+}
+
+/// Which side of the edge's direction the trace runs on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    /// The trace's offset sign along the edge's left normal.
+    fn factor(self) -> f64 {
+        match self {
+            Side::Left => 1.0,
+            Side::Right => -1.0,
+        }
+    }
+}
+
+/// The full circle or ellipse an arc or elliptical arc lies on: inside and outside it, as OFFSET
+/// takes them, decide the side even for a pick past the arc's ends.
+#[derive(Clone, Copy)]
+enum Round {
+    Circle { center: Vec2, radius: f64 },
+    Ellipse { center: Vec2, major: Vec2, ratio: f64 },
+}
+
+impl Round {
+    fn of(k: &EntityKind) -> Option<Round> {
+        match k {
+            EntityKind::Arc(a) => Some(Round::Circle { center: a.center.xy(), radius: a.radius }),
+            EntityKind::Ellipse(e) => Some(Round::Ellipse { center: e.center.xy(), major: e.major.xy(), ratio: e.ratio }),
+            _ => None,
+        }
+    }
+    fn center(self) -> Vec2 {
+        match self {
+            Round::Circle { center, .. } | Round::Ellipse { center, .. } => center,
+        }
+    }
+    fn inside(self, p: Vec2) -> bool {
+        match self {
+            Round::Circle { center, radius } => p.dist(center) < radius,
+            Round::Ellipse { center, major, ratio } => {
+                let a = major.len();
+                let b = a * ratio.abs();
+                let u = major.normalized();
+                let d = p - center;
+                let (x, y) = (d.dot(u) * b, d.dot(u.perp()) * a);
+                x * x + y * y < (a * b) * (a * b)
+            }
+        }
+    }
 }
 
 /// The cutting edge traced along, with the scale of the trim.
@@ -74,8 +137,11 @@ struct Edge {
     handle: Handle,
     pts: Vec<Vec2>,
     closed: bool,
+    /// An arc's circle (an elliptical arc's ellipse), and whether its inside is to the left of
+    /// the edge's direction.
+    round: Option<(Round, bool)>,
     /// Distance of the traced line from the edge.
-    offset: f64,
+    gap: f64,
 }
 
 impl Edge {
@@ -94,44 +160,52 @@ impl Edge {
         if !size.is_finite() || size <= 0.0 {
             return Err(bad("extrim", "the cutting edge has no length"));
         }
+        let closed = closed_kind(&e.kind);
         // A finer trace for a small edge; a coarser one when a long or curved edge would need too
-        // many points. The trace stays within a twentieth of the offset of the true edge, so the
-        // offset line never strays to the other side.
-        let mut offset = (size * OFFSET).max(1e-9);
+        // many points. The trace stays within a twentieth of the gap of the true edge, so the
+        // traced line never strays to the other side.
+        let mut gap = (size * TRACE_GAP).max(1e-9);
         for _ in 0..6 {
-            let polys = crate::select::hit_polylines(d, e, offset / 20.0);
-            if polys.iter().map(Vec::len).sum::<usize>() <= MAX_FENCE {
-                let Some((pts, closed)) = chains(polys, offset / 20.0).into_iter().next() else { break };
-                return Ok(Edge { handle: h, pts, closed, offset });
+            let Some(pts) = chains(crate::select::hit_polylines(d, e, gap / 20.0), gap / 20.0).into_iter().next() else { break };
+            if pts.len() <= MAX_FENCE {
+                // The centre lies on the inside of the arc's bend.
+                let mid = (pts.len() / 2).max(1);
+                let inside_left = |r: Round| match (pts.get(mid - 1), pts.get(mid)) {
+                    (Some(a), Some(b)) => (*b - *a).cross(r.center() - *a) > 0.0,
+                    _ => true,
+                };
+                let round = if closed { None } else { Round::of(&e.kind) }.map(|r| (r, inside_left(r)));
+                return Ok(Edge { handle: h, pts, closed, round, gap });
             }
-            offset *= 4.0;
+            gap *= 4.0;
         }
         Err(bad("extrim", "the cutting edge is too complex"))
     }
 
-    /// Which way the trace goes for a pick at `side`: `Some(1.0)` to the left of the edge's
-    /// direction, `Some(-1.0)` to the right; `None` for a point on the edge.
-    fn sign(&self, side: Vec2) -> Option<f64> {
-        if !side.is_finite() {
+    /// Which side the trace runs on for a pick at `p`; `None` for a point on the edge.
+    fn side(&self, p: Vec2) -> Option<Side> {
+        if !p.is_finite() {
             return None;
         }
         let segs = || self.pts.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?)));
-        let (near, dist) = segs().map(|l| (l, l.dist(side))).min_by(|a, b| a.1.total_cmp(&b.1))?;
-        if dist <= self.offset {
+        let (near, dist) = segs().map(|l| (l, l.dist(p))).min_by(|a, b| a.1.total_cmp(&b.1))?;
+        if dist <= self.gap {
             return None;
         }
-        let left = if self.closed {
-            // Inside a counter-clockwise outline is to its left.
-            point_in_polygon(&self.pts, side) == (signed_area(&self.pts) > 0.0)
-        } else {
-            (near.b - near.a).cross(side - near.closest(side)) > 0.0
+        let left = match self.round {
+            _ if self.closed => {
+                // Inside a counter-clockwise outline is to its left.
+                point_in_polygon(&self.pts, p) == (signed_area(&self.pts) > 0.0)
+            }
+            Some((round, inside_left)) => round.inside(p) == inside_left,
+            None => (near.b - near.a).cross(p - near.closest(p)) > 0.0,
         };
-        Some(if left { 1.0 } else { -1.0 })
+        Some(if left { Side::Left } else { Side::Right })
     }
 
-    /// The line traced beside the edge on the `sign` side.
-    fn trace(&self, sign: f64) -> Vec<Vec2> {
-        offset_points(&self.pts, self.offset * sign, self.closed)
+    /// The line traced beside the edge on `side`.
+    fn trace(&self, side: Side) -> Vec<Vec2> {
+        offset_points(&self.pts, self.gap * side.factor(), self.closed)
     }
 }
 
@@ -189,15 +263,14 @@ impl Grid {
         let (c0, c1, r0, r1) = (col(b.min.x), col(b.max.x), row(b.min.y), row(b.max.y));
         (r0..=r1).flat_map(|r| (c0..=c1).map(move |c| r * n + c)).collect()
     }
-    /// Where segment `l` crosses the grid's segments, in order along `l`.
+    /// Where segment `l` crosses the grid's segments.
     fn crossings(&self, l: &Line) -> Vec<Vec2> {
         let lb = Bounds2::from_points([l.a, l.b]);
         if !lb.intersects(&self.bounds) {
             return Vec::new();
         }
         let mut seen = std::collections::HashSet::new();
-        let mut out: Vec<Vec2> = self
-            .cells_of(&lb)
+        self.cells_of(&lb)
             .into_iter()
             .filter_map(|c| self.cells.get(c))
             .flatten()
@@ -205,19 +278,129 @@ impl Grid {
             .filter_map(|i| self.segs.get(*i))
             .filter(|(_, b)| b.intersects(&lb))
             .filter_map(|(s, _)| line_line(l, s))
-            .collect();
-        out.sort_by(|x, y| x.dist(l.a).total_cmp(&y.dist(l.a)));
+            .collect()
+    }
+}
+
+/// An object outline measured along its length, for cutting stretches out of it.
+struct Outline<'a> {
+    pts: &'a [Vec2],
+    /// Distance along the outline to each point.
+    at: Vec<f64>,
+}
+
+impl<'a> Outline<'a> {
+    fn new(pts: &'a [Vec2]) -> Outline<'a> {
+        let mut at = Vec::with_capacity(pts.len());
+        let mut t = 0.0;
+        at.push(t);
+        for w in pts.windows(2) {
+            if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+                t += a.dist(*b);
+            }
+            at.push(t);
+        }
+        Outline { pts, at }
+    }
+    fn total(&self) -> f64 {
+        self.at.last().copied().unwrap_or(0.0)
+    }
+    /// The distances along the outline where it crosses `grid`, sorted, each once.
+    fn crossings(&self, grid: &Grid) -> Vec<f64> {
+        let mut out = Vec::new();
+        for (i, w) in self.pts.windows(2).enumerate() {
+            let (Some(a), Some(b), Some(t0)) = (w.first(), w.get(1), self.at.get(i)) else { continue };
+            out.extend(grid.crossings(&Line::new(*a, *b)).into_iter().map(|c| t0 + a.dist(c)));
+        }
+        out.sort_by(f64::total_cmp);
+        // A crossing at a vertex shows up on both segments that meet there.
+        let eps = self.total() * 1e-9;
+        out.dedup_by(|a, b| (*a - *b).abs() <= eps);
+        out
+    }
+    /// The part of the outline between distances `from` and `to`.
+    fn part(&self, from: f64, to: f64) -> Vec<Vec2> {
+        let mut out = Vec::new();
+        let first = self.at.partition_point(|t| *t < from).saturating_sub(1);
+        for i in first..self.pts.len().saturating_sub(1) {
+            let (Some(a), Some(b), Some(t0), Some(t1)) = (self.pts.get(i), self.pts.get(i + 1), self.at.get(i), self.at.get(i + 1)) else { break };
+            if *t0 > to {
+                break;
+            }
+            if *t1 < from || t1 <= t0 {
+                continue;
+            }
+            let p = |t: f64| *a + (*b - *a) * ((t.clamp(*t0, *t1) - t0) / (t1 - t0));
+            if out.is_empty() {
+                out.push(p(from));
+            }
+            out.push(p(to.min(*t1)));
+        }
         out
     }
 }
 
-/// The trim of everything crossing `edge` on the `sign` side, worked out without changing anything.
-fn plan(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, sign: f64) -> Result<Plan> {
-    let trace = edge.trace(sign);
+/// The stretches of one object outline the trim removes on the traced side: between the edge
+/// crossings either side of each place the trace meets the outline. Every crossing is found once.
+/// `None` for a closed outline the edge crosses only once, which no trim can open.
+fn stretches_of(pts: &[Vec2], closed: bool, edge: &Grid, trace: &Grid) -> Option<Vec<Vec<Vec<Vec2>>>> {
+    let o = Outline::new(pts);
+    let total = o.total();
+    let eps = total * 1e-9;
+    let mut cuts = o.crossings(edge);
+    if closed {
+        // The seam: the outline's start and end are one point, so a crossing there is one cut.
+        for t in &mut cuts {
+            if *t >= total - eps {
+                *t = 0.0;
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup_by(|a, b| (*a - *b).abs() <= eps);
+    } else {
+        // An object that only touches the edge with an end isn't cut there, as TRIM has it.
+        cuts.retain(|t| *t > eps && *t < total - eps);
+    }
+    let hits = o.crossings(trace);
+    if cuts.is_empty() || hits.is_empty() {
+        return Some(Vec::new());
+    }
+    if closed && cuts.len() < 2 {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut done: Vec<(Option<usize>, Option<usize>)> = Vec::new();
+    for tp in hits {
+        // The edge crossings either side, as indices into `cuts`.
+        let k = cuts.partition_point(|t| *t < tp);
+        let lo = k.checked_sub(1);
+        let hi = (k < cuts.len()).then_some(k);
+        let (lo, hi) = if closed { (lo.or(cuts.len().checked_sub(1)), hi.or(Some(0))) } else { (lo, hi) };
+        if done.contains(&(lo, hi)) {
+            continue;
+        }
+        done.push((lo, hi));
+        let at = |i: Option<usize>| i.and_then(|i| cuts.get(i).copied());
+        out.push(match (at(lo), at(hi)) {
+            // Across the seam of a closed outline.
+            (Some(a), Some(b)) if closed && a >= b => vec![o.part(a, total), o.part(0.0, b)],
+            (Some(a), Some(b)) => vec![o.part(a, b)],
+            (None, Some(b)) => vec![o.part(0.0, b)],
+            (Some(a), None) => vec![o.part(a, total)],
+            (None, None) => continue,
+        });
+    }
+    Some(out)
+}
+
+/// The trim of everything crossing `edge` on `side`, worked out without changing anything.
+fn plan(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, side: Side) -> Result<Plan> {
+    let trace = edge.trace(side);
     let trace_grid = Grid::new(&trace);
     let edge_grid = Grid::new(&edge.pts);
-    let tol = edge.offset / 20.0;
+    let tol = edge.gap / 20.0;
     let mut p = Plan::default();
+    let mut stretches_total = 0;
     for h in crate::select::select_fence(d, space, &trace) {
         if h == edge.handle {
             continue;
@@ -231,34 +414,31 @@ fn plan(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, sign: f64) -> Res
             p.locked += 1;
             continue;
         }
+        let outlines = chains(crate::select::hit_polylines(d, e, tol), tol);
+        // A closed object is one closed outline.
+        let closed = closed_kind(&e.kind) && outlines.len() == 1;
         let mut stretches: Vec<Stretch> = Vec::new();
-        for (chain, closed) in chains(crate::select::hit_polylines(d, e, tol), tol) {
-            for w in chain.windows(2) {
-                let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
-                for x in trace_grid.crossings(&Line::new(*a, *b)) {
-                    // The stretch between the edge crossings either side of where the trace
-                    // meets the object; none when it meets the trace but not the edge (past an
-                    // open edge's end).
-                    let Some(parts) = removed_part(&chain, closed, &edge_grid, x) else {
-                        if !p.uncut.contains(&h) {
-                            p.uncut.push(h);
-                        }
-                        continue;
-                    };
-                    // Trimmed at the middle of the stretch, well clear of the edge, so the cut
-                    // doesn't depend on how closely the trim follows a curved edge.
-                    let Some(pick) = parts.iter().max_by(|a, b| arc_length(a).total_cmp(&arc_length(b))).and_then(|q| midpoint(q)) else { continue };
-                    if !stretches.iter().any(|s| s.pick.near(pick, tol)) {
-                        stretches.push(Stretch { pick, parts });
-                    }
-                }
+        for pts in &outlines {
+            let Some(parts) = stretches_of(pts, closed, &edge_grid, &trace_grid) else {
+                p.uncut.push(h);
+                continue;
+            };
+            for parts in parts {
+                // Trimmed at the middle of the stretch, well clear of the edge, so the cut
+                // doesn't depend on how closely the trim follows a curved edge.
+                let Some(pick) = parts.iter().max_by(|a, b| arc_length(a).total_cmp(&arc_length(b))).and_then(|q| midpoint(q)) else { continue };
+                stretches.push(Stretch { pick, parts });
             }
         }
+        stretches_total += stretches.len();
         if !stretches.is_empty() {
             p.work.push((h, stretches));
         }
         if p.work.len() > MAX_OBJECTS {
             return Err(bad("extrim", format!("more than {MAX_OBJECTS} objects cross the cutting edge; trim a smaller area")));
+        }
+        if stretches_total > MAX_STRETCHES {
+            return Err(bad("extrim", format!("more than {MAX_STRETCHES} stretches would be trimmed; trim a smaller area")));
         }
     }
     Ok(p)
@@ -295,18 +475,18 @@ pub(super) fn run_extrim(s: &mut Session, p: &Value) -> Result<Value> {
         None | Some(Value::Null) => targets(s, p)?.first().copied().ok_or_else(|| bad("extrim", "`edge` is required"))?,
         Some(_) => return Err(bad("extrim", "`edge` must be an object handle (a hex string such as \"1A2\")")),
     };
-    let side = point_param(p, "side").ok_or_else(|| bad("extrim", "`side` ([x, y]) is required"))?;
+    let point = point_param(p, "side").ok_or_else(|| bad("extrim", "`side` ([x, y]) is required"))?;
     let edge = Edge::new(s, h)?;
-    let sign = edge.sign(side).ok_or_else(|| bad("extrim", "pick the side away from the cutting edge"))?;
-    trim_side(s, &edge, sign)
+    let side = edge.side(point).ok_or_else(|| bad("extrim", "pick the side away from the cutting edge"))?;
+    trim_side(s, &edge, side)
 }
 
-/// Trim every object crossing `edge` on the `sign` side: one undo step, everything checked first.
-fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
+/// Trim every object crossing `edge` on `side`: one undo step, everything checked first.
+fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
     let space = s.space();
-    let plan = plan(s.doc()?, &space, edge, sign)?;
+    let plan = plan(s.doc()?, &space, edge, side)?;
     let edges = Edges { only: Some(std::slice::from_ref(&edge.handle)), implied: false };
-    let tol = edge.offset / 20.0;
+    let tol = edge.gap / 20.0;
     let mut trimmed = 0;
     let mut created = Vec::new();
     // Objects some planned cut failed on, reported rather than counted as done.
@@ -316,7 +496,9 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
         let mut cut = false;
         for x in stretches.into_iter().map(|st| st.pick) {
             // A trim replaces the object with pieces: the pick goes to the piece it lies on (none:
-            // that part is already gone).
+            // that part is already gone). The pick is on the outline traced within `tol`, so 3 tol
+            // allows for that and for rounding, and is far less than the distance to any other
+            // piece, since a stretch's middle is well away from the edge where pieces meet.
             let target = {
                 let d = s.doc()?;
                 live.iter()
@@ -357,7 +539,7 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
         message.push_str(&format!(" {} that can't be trimmed (blocks, hatches, text…) left as they are.", plan.other));
     }
     if !uncut.is_empty() {
-        message.push_str(&format!(" {} could not be cut there (a closed object needs two crossings).", uncut.len()));
+        message.push_str(&format!(" {} could not be cut there and left as they are.", uncut.len()));
     }
     Ok(json!({
         "trimmed": trimmed,
@@ -367,71 +549,9 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
     }))
 }
 
-/// What a trim at the crossing `x` of an object outline removes: the stretch of `chain` between
-/// the edge crossings either side of `x` (none when the edge doesn't cross it). `None` for a
-/// closed outline the edge crosses only once, which no trim can open.
-fn removed_part(chain: &[Vec2], closed: bool, edge: &Grid, x: Vec2) -> Option<Vec<Vec<Vec2>>> {
-    // Distance along the chain to each vertex, each edge crossing, and the pick.
-    let mut at = vec![0.0];
-    for w in chain.windows(2) {
-        let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
-        at.push(at.last().copied().unwrap_or(0.0) + a.dist(*b));
-    }
-    let total = at.last().copied().unwrap_or(0.0);
-    let mut cuts = Vec::new();
-    let mut pick = None;
-    let mut best = f64::INFINITY;
-    for (i, w) in chain.windows(2).enumerate() {
-        let (Some(a), Some(b), Some(t0)) = (w.first(), w.get(1), at.get(i)) else { continue };
-        let seg = Line::new(*a, *b);
-        cuts.extend(edge.crossings(&seg).into_iter().map(|c| t0 + a.dist(c)));
-        let dist = seg.dist(x);
-        if dist < best {
-            best = dist;
-            pick = Some(t0 + a.dist(seg.closest(x)));
-        }
-    }
-    let Some(tp) = pick else { return Some(Vec::new()) };
-    cuts.sort_by(f64::total_cmp);
-    // A crossing at a vertex shows up on both segments that meet there.
-    cuts.dedup_by(|a, b| (*a - *b).abs() <= total * 1e-9);
-    if cuts.is_empty() {
-        return Some(Vec::new());
-    }
-    if closed && cuts.len() < 2 {
-        return None;
-    }
-    let lo = cuts.iter().copied().rfind(|t| *t < tp);
-    let hi = cuts.iter().copied().find(|t| *t > tp);
-    // The part of the chain between distances `from` and `to`.
-    let part = |from: f64, to: f64| -> Vec<Vec2> {
-        let mut out = Vec::new();
-        for (i, w) in chain.windows(2).enumerate() {
-            let (Some(a), Some(b), Some(t0), Some(t1)) = (w.first(), w.get(1), at.get(i), at.get(i + 1)) else { continue };
-            if *t1 < from || *t0 > to || t1 <= t0 {
-                continue;
-            }
-            let p = |t: f64| *a + (*b - *a) * ((t.clamp(*t0, *t1) - t0) / (t1 - t0));
-            if out.is_empty() {
-                out.push(p(from));
-            }
-            out.push(p(to.min(*t1)));
-        }
-        out
-    };
-    Some(match (lo, hi) {
-        (Some(lo), Some(hi)) => vec![part(lo, hi)],
-        (None, Some(hi)) if closed => vec![part(cuts.last().copied().unwrap_or(total), total), part(0.0, hi)],
-        (Some(lo), None) if closed => vec![part(lo, total), part(0.0, cuts.first().copied().unwrap_or(0.0))],
-        (None, Some(hi)) => vec![part(0.0, hi)],
-        (Some(lo), None) => vec![part(lo, total)],
-        (None, None) => Vec::new(),
-    })
-}
-
 /// The parts the trim would remove, drawn red.
-fn preview(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, sign: f64) -> Vec<Entity> {
-    let Ok(plan) = plan(d, space, edge, sign) else { return Vec::new() };
+fn preview(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, side: Side) -> Vec<Entity> {
+    let Ok(plan) = plan(d, space, edge, side) else { return Vec::new() };
     if plan.work.len() > MAX_PREVIEW {
         return Vec::new();
     }
@@ -510,13 +630,13 @@ impl Interactive for ExtrimM {
                 Ok(Step::Continue)
             }
             (Some(edge), Input::Point(p)) => {
-                let Some(sign) = edge.sign(p) else {
+                let Some(side) = edge.side(p) else {
                     s.echo("Pick the side away from the cutting edge.");
                     return Ok(Step::Continue);
                 };
                 let edge = edge.clone();
                 s.set_selection(Vec::new());
-                match trim_side(s, &edge, sign) {
+                match trim_side(s, &edge, side) {
                     Ok(v) => s.echo(v.get("message").and_then(Value::as_str).unwrap_or_default().to_string()),
                     Err(e) => s.echo(e.to_string()),
                 }
@@ -527,14 +647,14 @@ impl Interactive for ExtrimM {
     }
     fn preview_objects(&self, s: &Session, cursor: Vec2) -> Vec<Entity> {
         let Some(edge) = &self.edge else { return Vec::new() };
-        let Some(sign) = edge.sign(cursor) else { return Vec::new() };
-        let slot = usize::from(sign < 0.0);
+        let Some(side) = edge.side(cursor) else { return Vec::new() };
+        let slot = usize::from(side == Side::Right);
         let cached = self.previews.borrow().get(slot).cloned().flatten();
         let mut v = match cached {
             Some(v) => v,
             None => {
                 let Ok(d) = s.doc() else { return Vec::new() };
-                let v = preview(d, &s.space(), edge, sign);
+                let v = preview(d, &s.space(), edge, side);
                 if let Some(c) = self.previews.borrow_mut().get_mut(slot) {
                     *c = Some(v.clone());
                 }
