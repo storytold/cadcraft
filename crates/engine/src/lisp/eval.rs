@@ -657,6 +657,9 @@ impl Ctx<'_> {
             return Ok(v);
         }
         let cap = self.s.lisp.limits.callback_steps;
+        // Work the caller queued before this call (its list walks, earlier callbacks of the same
+        // step) is not this callback's: set it aside and hand it back with this callback's.
+        let pending = super::value::take_work();
         let mut m = Machine::calling(f.clone(), args);
         let mut sub = Ctx { s: &mut *self.s, env: &mut *self.env, depth: self.depth + 1 };
         // Drive the callback in bounded slices instead of granting it `u64::MAX` fuel. A `Yield`
@@ -685,7 +688,7 @@ impl Ctx<'_> {
         };
         // Its steps, nested callbacks' included, are work done inside the caller's one step: they
         // count against every enclosing callback's cap and slice.
-        super::value::charge_work(spent);
+        super::value::charge_work(pending.saturating_add(spent));
         result
     }
 }

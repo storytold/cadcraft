@@ -302,6 +302,27 @@ fn nested_callback_steps_count_against_the_outer_callback() {
     assert!(counts[1] * 10 >= counts[0] * 29, "{counts:?}");
 }
 
+/// The callback cap holds for each callback: a sort's comparisons together take more steps than
+/// it, and all their work still reaches the enclosing run.
+#[test]
+fn each_callback_has_its_own_cap_and_its_work_reaches_the_caller() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list((0..300).rev().map(Value::Int)));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(vl-sort l (function (lambda (a b) (< a b))))").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    let v = match m.run(&mut ctx, u64::MAX) {
+        super::eval::Outcome::Done(v) => v,
+        super::eval::Outcome::Error(e) => panic!("the sort failed: {e:?}"),
+        super::eval::Outcome::Wait(_) => panic!("the sort waited"),
+    };
+    assert_eq!(to_text(&v, true), to_text(&Value::list((0..300).map(Value::Int)), true));
+    // Over a thousand comparisons of several steps each, together well past the cap.
+    assert!(m.used > 3_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
 /// A zero-step callback limit prevents even the first callback side effect.
 #[test]
 fn a_zero_callback_budget_does_not_run_the_callback() {
