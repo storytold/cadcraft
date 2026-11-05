@@ -110,5 +110,8 @@ real_name = "Andrea Brandi"
 [people.qinshah]
 sync_github_name = true
 
+[people.helenkwok]
+real_name = "Helen Kwok"
+
 [people.V1dalTheAbidal]
 sync_github_name = true
