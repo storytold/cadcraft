@@ -60,6 +60,7 @@ fn dimension(overrides: serde_json::Value) -> EntityKind {
         overrides: overrides.as_object().cloned().unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 

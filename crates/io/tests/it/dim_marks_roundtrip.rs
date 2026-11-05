@@ -24,6 +24,7 @@ fn dim(kind: DimKind, marks: DimMarks) -> EntityKind {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks,
+        insertion_point: Vec3::ZERO,
     })
 }
 

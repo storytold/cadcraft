@@ -1,5 +1,5 @@
 use super::draw::draw_list;
-use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Rect, Rgb, Vec2, Xf};
+use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Mat3, Rect, Rgb, Vec2, Xf};
 
 /// The active MSPACE viewport when its contents are drawn apart from the layout's list (see
 /// [`VpContent`]), with its clip outline when it is clipped. A clipped viewport is clipped with
@@ -35,6 +35,8 @@ pub(super) struct VpContent {
     pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool)>,
     /// The viewport's view (centre, height) the list was built for, and the paper area it covers.
     view: (Vec2, f64),
+    /// The view twist it was built for: [`vp_motion`] moves and scales a list, it can't turn it.
+    twist: f64,
     area: Bounds2,
     /// The view on the previous frame and when it last changed (ms).
     last_view: (Vec2, f64),
@@ -61,12 +63,12 @@ impl VpContent {
 }
 
 /// How a list built for view `built` (centre, height) of viewport `vp` maps to its current
-/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 (m − c0) in the list and
-/// belongs at p = c + s (m − vc), with c the viewport's centre and s, s0 paper units per model
-/// unit, so k = s / s0 and b = c (1 − k) + s (c0 − vc).
+/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 R(m − c0) in the list and
+/// belongs at p = c + s R(m − vc), with c the viewport's centre, R its view twist and s, s0 paper
+/// units per model unit, so k = s / s0 and b = c (1 − k) + s R(c0 − vc).
 fn vp_motion(vp: &cadcraft_doc::Viewport, built: (Vec2, f64)) -> Option<(f64, Vec2)> {
     let (s, k) = (vp.height / vp.view_height, built.1 / vp.view_height);
-    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center) * s;
+    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center).rotate(vp.view_twist()) * s;
     (k.is_finite() && k > 0.0 && b.is_finite()).then_some((k, b))
 }
 
@@ -106,7 +108,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.last_view = view;
         c.moved_at = now;
     }
-    let rebuild = match vp_motion(&vp, c.view).filter(|_| c.key == Some(key)) {
+    let rebuild = match vp_motion(&vp, c.view).filter(|_| c.key == Some(key) && c.twist == vp.view_twist()) {
         Some((k, b)) => {
             // The viewport in the list's own coordinates.
             let visible = Bounds2::new((rect.min - b) / k, (rect.max - b) / k);
@@ -128,6 +130,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             tolerance: 2f64.powi(band) * 0.5,
             min_dash: 2f64.powi(band) * 2.0,
             text: true,
+            linetypes: true,
             fill: true,
             lineweights: lwdisplay,
             view_height: st.paper_view().height,
@@ -140,6 +143,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
         c.view = view;
+        c.twist = vp.view_twist();
         c.area = area;
         c.builds = c.builds.wrapping_add(1);
         app.canvas.build_ms = crate::now_ms() - t0;
@@ -148,7 +152,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
     let (k, b) = vp_motion(&vp, c.view)?;
     c.motion = Some((k, b));
     // Paper p = k·p0 + b, so the list is drawn by the paper transform scaled by k about b.
-    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k };
+    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k, twist: xf_paper.twist };
     let on_screen = Rect::from_two_pos(xf_paper.to_screen(Vec2::new(rect.min.x, rect.max.y)), xf_paper.to_screen(Vec2::new(rect.max.x, rect.min.y)));
     Some(VpFrame { xf, on_screen, outline: clip.map(|p| p.polygon().to_vec()) })
 }
@@ -162,6 +166,9 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
         draw_list(p, xf, &c.list, bg, lwdisplay);
         return;
     }
+    // Images first, under the lines, as in `draw_list_gpu` (`p` clips them to the viewport's
+    // rectangle; a clipped viewport's outline masks the GPU geometry only).
+    super::images::draw(p, xf, &c.list);
     let mut stencil = crate::gpu::Stencil::Off;
     if let Some(outline) = &f.outline {
         draw_vp_mask(c, p, outline, xf_paper);
@@ -192,7 +199,7 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_VIEWPORT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil,
         },
@@ -247,7 +254,7 @@ fn draw_vp_mask(c: &mut VpContent, p: &egui::Painter, outline: &[Vec2], xf_paper
             scale: xf_paper.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_MASK,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf_paper.gpu_xform(c.mask_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Mask,
         },
