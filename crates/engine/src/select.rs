@@ -36,6 +36,13 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             }
             v
         }
+        // An OLE object's frame is drawn, so it is picked on its outline (the corners the extents and
+        // the renderer use); a frame with no area has nothing to hit. It stays out of prims(), which
+        // TRIM, object snap and the dimension commands read.
+        EntityKind::Unknown(u) if u.is_ole_frame() => match cadcraft_doc::ole_frame(&u.tags) {
+            Some(q) if q.first().zip(q.get(2)).is_some_and(|(a, c)| a.x != c.x && a.y != c.y) => vec![q.to_vec()],
+            _ => Vec::new(),
+        },
         kind => {
             let mut out = Vec::new();
             for p in kind.prims() {
@@ -516,10 +523,12 @@ mod tests {
         let mut d = Drawing::new_metric();
         let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
         d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();
+        d.add(&Space::Model, Common::default(), frame(vec![tag(10, "60"), tag(20, "-19"), tag(11, "60"), tag(21, "-22")])).unwrap();
         assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -19.0), 0.2), Some(h), "top edge");
         assert_eq!(pick(&d, &Space::Model, Vec2::new(35.0, -20.5), 0.2), Some(h), "right edge");
         assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
         assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(60.0, -20.0), 0.2), None, "a frame with no width");
     }
 
     /// A block holding a diagonal dashed line, inserted at `scale`.

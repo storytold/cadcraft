@@ -458,6 +458,8 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
+        // An OLE object's content is not drawn, but its frame is, so the frame counts (#2422).
+        EntityKind::Unknown(u) if u.is_ole_frame() => ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points),
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {

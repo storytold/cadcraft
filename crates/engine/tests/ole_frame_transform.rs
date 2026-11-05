@@ -265,3 +265,21 @@ fn classic_polar_array_refuses_a_turned_frame_but_not_an_upright_one() {
     s.execute("-array", &upright).unwrap();
     assert_eq!(s.doc().unwrap().model.len(), 4);
 }
+
+/// The frame is picked by its outline but is not geometry for other commands: a line across it is
+/// not cut at its edges by TRIM, and object snap near its corner offers no frame point (review on
+/// #2587).
+#[test]
+fn ole_frame_is_not_a_trim_edge_or_snap_target() {
+    use cadcraft_engine::snap::{mode, osnap};
+    let (mut s, _frame) = session();
+    let ln = s.execute("line", &json!({ "points": [[28, -20.5], [37, -20.5]] })).unwrap();
+    let ln = ln["handle"].as_str().or_else(|| ln["handles"][0].as_str()).unwrap().to_string();
+    // No cutting edge is named, so every object but the line itself is one.
+    let _ = s.execute("trim", &json!({ "handle": ln.clone(), "pick": [32, -20.5] }));
+    assert_eq!(line_ends(&s, &ln), ((28.0, -20.5), (37.0, -20.5)), "the line is not cut at the frame");
+    assert_eq!(s.doc().unwrap().model.len(), 2);
+    let all = mode::END | mode::MID | mode::INT | mode::PER | mode::CEN | mode::QUA | mode::NOD;
+    let hit = osnap(s.doc().unwrap(), &Space::Model, cadcraft_engine::geom::Vec2::new(30.0, -19.0), 0.5, all, None, false);
+    assert!(hit.is_none(), "no snap point on the frame: {hit:?}");
+}

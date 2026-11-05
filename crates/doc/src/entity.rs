@@ -264,10 +264,6 @@ impl EntityKind {
             EntityKind::Image(i) => vec![Prim::Point(i.insert.xy())],
             EntityKind::Table(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Tolerance(t) => vec![Prim::Point(t.insert.xy())],
-            // An OLE object's content is not drawn, but its frame is: the edges between its corners.
-            EntityKind::Unknown(u) if u.is_ole_frame() => crate::ole_frame(&u.tags)
-                .map(|q| q.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect())
-                .unwrap_or_default(),
             EntityKind::Unknown(_) => Vec::new(),
         }
     }
