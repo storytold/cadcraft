@@ -32,8 +32,9 @@ in the app, or headless:
 cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 ```
 
-As in AutoCAD, a space or a line end ends an input, and an empty input (an empty line, two spaces in
-a row, a space at the end of a line) is Enter. A command that keeps prompting after its last input,
+As in AutoCAD, a line end ends an input, and so does a space, except at a free-text prompt (TEXT or
+MTEXT contents take the rest of the line). An empty input (an empty line, two spaces in a row, a
+space at the end of a line) is Enter. A command that keeps prompting after its last input,
 such as LINE or PLINE, needs that Enter before the next command, or the next line answers its
 prompt:
 
@@ -44,8 +45,9 @@ CIRCLE 15,15 6
 ```
 
 Without the empty line, `CIRCLE` would be refused as a point and `15,15` and `6` would become more
-segments of the line. `cadcraft-cli` notes a command still waiting when the script ends, and the MCP
-`script` tool's result names it in `state.running`.
+segments of the line. If anything still waits for input when the script ends (a command, or a LISP
+routine in a `get…` function), `cadcraft-cli` notes it with its prompt, and the MCP `script` tool's
+result shows it in `state.prompt`.
 
 ## Command aliases
 

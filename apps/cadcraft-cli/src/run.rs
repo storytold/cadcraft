@@ -214,10 +214,15 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
     }
     // In a script, as in AutoCAD's, a command that keeps prompting after its last input (LINE,
     // PLINE) ends only at an empty input. Without one the next script line answered its prompt,
-    // which gives a different drawing with no error, so say that a command was left open (#2711).
-    if s.running.is_some() {
-        io.errln(format_args!("note: the script ended with a command still waiting for input: {}", s.prompt_text()));
-        io.errln(format_args!("note: an empty line is Enter in a script; put one after a command that keeps prompting, such as LINE or PLINE"));
+    // which gives a different drawing with no error, so say that input was still awaited (#2711).
+    // A LISP routine waiting in a `get…` function counts too: it has a prompt but no command.
+    if s.prompting() {
+        io.errln(format_args!("note: the script ended while waiting for input: {}", s.prompt_text()));
+        if s.running.is_some() {
+            io.errln(format_args!("note: an empty line is Enter in a script; put one after a command that keeps prompting, such as LINE or PLINE"));
+        } else {
+            io.errln(format_args!("note: a LISP routine is waiting for this value; give it on the next line of the script"));
+        }
     }
     if let Some(p) = save {
         export(&s, p, io)?;
