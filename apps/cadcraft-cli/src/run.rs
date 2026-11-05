@@ -212,6 +212,13 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
     for l in &s.log {
         io.errln(format_args!("{l}"));
     }
+    // In a script, as in AutoCAD's, a command that keeps prompting after its last input (LINE,
+    // PLINE) ends only at an empty input. Without one the next script line answered its prompt,
+    // which gives a different drawing with no error, so say that a command was left open (#2711).
+    if s.running.is_some() {
+        io.errln(format_args!("note: the script ended with a command still waiting for input: {}", s.prompt_text()));
+        io.errln(format_args!("note: an empty line is Enter in a script; put one after a command that keeps prompting, such as LINE or PLINE"));
+    }
     if let Some(p) = save {
         export(&s, p, io)?;
     }
