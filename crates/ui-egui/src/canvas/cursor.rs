@@ -75,6 +75,7 @@ pub(super) fn tooltip_angle(from: Vec2, to: Vec2, ucs: f64) -> i64 {
 pub(super) fn draw_tracking(
     p: &egui::Painter,
     xf: &Xf,
+    orbit: cadcraft_render::Orbit3d,
     acquired: &[snap::tracking::Acquired],
     track: Option<&snap::tracking::Track>,
     far: f64,
@@ -83,8 +84,9 @@ pub(super) fn draw_tracking(
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
     let st = Stroke::new(1.0, t.snap);
+    let to_screen = |w: Vec2| xf.to_screen(orbit.project(w.to3(0.0)));
     for a in acquired {
-        let c = xf.to_screen(a.at());
+        let c = to_screen(a.at());
         if let Acquired::Parallel { .. } = a {
             p.line_segment([c + vec2(-5.0, 3.0), c + vec2(-1.0, -5.0)], st);
             p.line_segment([c + vec2(1.0, 3.0), c + vec2(5.0, -5.0)], st);
@@ -100,17 +102,17 @@ pub(super) fn draw_tracking(
         let pts: Vec<Pos2> = match path.shape {
             PathShape::Ray { origin, dir } => {
                 let back = (tr.point - origin).dot(dir).clamp(0.0, far);
-                vec![xf.to_screen(tr.point - dir * back), xf.to_screen(tr.point + dir * far)]
+                vec![to_screen(tr.point - dir * back), to_screen(tr.point + dir * far)]
             }
-            PathShape::Line { dir, .. } => vec![xf.to_screen(tr.point - dir * far), xf.to_screen(tr.point + dir * far)],
+            PathShape::Line { dir, .. } => vec![to_screen(tr.point - dir * far), to_screen(tr.point + dir * far)],
             PathShape::Circle { center, radius, .. } => {
                 let (a0, span) = (center.angle_to(tr.point), (far / radius).min(std::f64::consts::PI));
-                (0..=96).map(|i| xf.to_screen(Vec2::polar(center, radius, a0 - span + span * f64::from(i) / 48.0))).collect()
+                (0..=96).map(|i| to_screen(Vec2::polar(center, radius, a0 - span + span * f64::from(i) / 48.0))).collect()
             }
             PathShape::Ellipse { center, major, ratio, .. } => {
                 let e = cadcraft_geom::Ellipse::full(center, major, ratio);
                 let (t0, span) = (e.param_of(tr.point), (far / (major.len() * ratio.min(1.0))).min(std::f64::consts::PI));
-                (0..=96).map(|i| xf.to_screen(e.at_param(t0 - span + span * f64::from(i) / 48.0))).collect()
+                (0..=96).map(|i| to_screen(e.at_param(t0 - span + span * f64::from(i) / 48.0))).collect()
             }
         };
         p.extend(Shape::dotted_line(&pts, t.snap, 6.0, 1.0));
@@ -124,7 +126,7 @@ pub(super) fn draw_tracking(
     if let Some(o) = tr.object {
         tips.push(crate::i18n::t(o).to_string());
     }
-    let at = xf.to_screen(tr.point);
+    let at = to_screen(tr.point);
     if tr.paths.len() > 1 || tr.object.is_some() {
         p.line_segment([at + vec2(-4.0, -4.0), at + vec2(4.0, 4.0)], st);
         p.line_segment([at + vec2(4.0, -4.0), at + vec2(-4.0, 4.0)], st);
@@ -134,24 +136,46 @@ pub(super) fn draw_tracking(
 
 /// The rubber-band and snap-adjusted cursor point for the current prompt (the engine's
 /// `Session::snap_cursor`: object snaps, acquiring tracking points, grid, tracking paths, ortho).
-pub(super) fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, ctx: &egui::Context) -> Vec2 {
+pub(super) fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, orbit: cadcraft_render::Orbit3d, ctx: &egui::Context) -> Vec2 {
     let prompt = app.session.current_prompt();
-    let wants_point = prompt.as_ref().is_some_and(cadcraft_engine::pointmod::accepts);
+    let wants_point = app.session.accepts_work_point();
     let base = prompt.as_ref().and_then(|p| p.base);
     let deferred = prompt.as_ref().is_some_and(|p| p.deferred);
     let corner = prompt.as_ref().is_some_and(|p| p.corner);
     app.canvas.snap = None;
     app.canvas.track = None;
-    if !wants_point || app.session.pending_window.is_some() {
-        if !wants_point {
+    if !wants_point {
+        if prompt.as_ref().is_none_or(|p| !cadcraft_engine::pointmod::accepts(p)) {
             app.session.tracking.clear();
+        }
+        if orbit.is_edge_on() && app.session.prompt_wants_work_point() {
+            let ap = app.session.settings.aperture / xf.scale;
+            let s = &app.session.settings;
+            let osmode = app.session.snap_override().unwrap_or(s.osmode) | if s.osnaphatch { snap::mode::HATCH } else { 0 };
+            if let Ok(st) = app.session.state()
+                && let Some(hit) = snap::osnap_in_orbit(&st.doc, &st.edit_space(), orbit, raw, ap, osmode, base, deferred)
+                    .filter(|h| orbit.project(h.point.to3(0.0)).dist(raw) <= ap + 1e-6)
+            {
+                let pt = hit.point;
+                app.canvas.snap = Some(hit);
+                app.canvas.cursor = Some(pt);
+                app.session.cursor = pt;
+                app.session.cursor_deferred = hit.deferred;
+                return pt;
+            }
+        }
+        if app.session.running.as_ref().is_some_and(|r| r.id == "stretch") {
+            return raw;
         }
         return raw;
     }
+    let Some(work_raw) = orbit.unproject_xy(raw) else {
+        return raw;
+    };
     let (now, shift) = ctx.input(|i| (i.time, i.modifiers.shift));
     let q =
         snap::tracking::CursorQuery { base, deferred, corner, aperture: app.session.settings.aperture / xf.scale, tol: 6.0 / xf.scale, now, shift };
-    let r = app.session.snap_cursor(raw, &q);
+    let r = app.session.snap_cursor(work_raw, &q);
     if r.wait {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(snap::tracking::DWELL / 4.0));
     }
@@ -186,15 +210,16 @@ fn snap_cycle(app: &mut CadApp, raw: Vec2, ap: f64) -> Option<usize> {
 /// The cursor under a one-pick object snap override (`Session::snap_override`: END, NON…) or
 /// while Tab cycles the candidates: the snap of that mode (or the cycled candidate) replaces
 /// what the running snaps found; with none, a running snap no longer holds the cursor.
-pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
+pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf, orbit: cadcraft_render::Orbit3d) {
     let over = app.session.snap_override();
     let ap = app.session.settings.aperture / xf.scale;
     let cycle = snap_cycle(app, raw, ap);
     let prompt = app.session.current_prompt();
-    let wants_point = prompt.as_ref().is_some_and(cadcraft_engine::pointmod::accepts);
-    if (over.is_none() && cycle.is_none()) || !wants_point || app.session.pending_window.is_some() {
+    let wants_point = app.session.prompt_wants_work_point();
+    if (over.is_none() && cycle.is_none()) || !wants_point {
         return;
     }
+    let work_raw = orbit.unproject_xy(raw);
     let base = prompt.as_ref().and_then(|p| p.base);
     let deferred = prompt.as_ref().is_some_and(|p| p.deferred);
     let s = &app.session.settings;
@@ -202,21 +227,28 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     let Ok(st) = app.session.state() else { return };
     let hit = match cycle {
         Some(i) => {
-            let cands = cadcraft_engine::pointmod::snap_candidates(&st.doc, &st.edit_space(), raw, ap, osmode, base, deferred);
+            let cands = cadcraft_engine::pointmod::snap_candidates_in_orbit(&st.doc, &st.edit_space(), orbit, raw, ap, osmode, base, deferred);
             cands.get(i % cands.len().max(1)).copied()
         }
-        None => snap::osnap(&st.doc, &st.edit_space(), raw, ap, osmode, base, deferred),
-    };
-    let p = match (hit, app.canvas.snap) {
-        (Some(h), _) => {
+        None => snap::osnap_in_orbit(&st.doc, &st.edit_space(), orbit, raw, ap, osmode, base, deferred),
+    }
+    .filter(|h| !orbit.is_edge_on() || orbit.project(h.point.to3(0.0)).dist(raw) <= ap + 1e-6);
+    let p = match (hit, app.canvas.snap, work_raw) {
+        (Some(h), _, _) => {
             app.canvas.snap = Some(h);
             h.point
         }
-        (None, Some(_)) => {
+        (None, Some(_), Some(w)) => {
             app.canvas.snap = None;
-            raw
+            w
         }
-        (None, None) => return,
+        (None, Some(_), None) => {
+            app.canvas.snap = None;
+            app.canvas.cursor = None;
+            app.session.cursor_deferred = None;
+            return;
+        }
+        (None, None, _) => return,
     };
     app.canvas.cursor = Some(p);
     app.session.cursor = p;

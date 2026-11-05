@@ -39,7 +39,7 @@ use pick::{edit_text_at, hatch_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
 use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
-use widgets::{draw_tiles, draw_ucs_icon, draw_viewcube, tile_rects, tile_xf, viewport_label};
+use widgets::{draw_orbit_arcball, draw_tiles, draw_ucs_icon, draw_ucs_icon_3d, draw_viewcube, tile_rects, tile_xf, viewport_label};
 
 /// World ↔ screen transform for the canvas rect.
 #[derive(Clone, Copy, Debug)]
@@ -91,8 +91,8 @@ impl Xf {
 }
 
 /// What a display list was built from: drawing uid, revision, tessellation band, hatch level of
-/// detail band, lineweight display, document and active viewport view (see [`ensure_list`]).
-type ListKey = (u64, u64, i32, i32, bool, bool, usize, u64);
+/// detail band, lineweight display, document, active viewport view and 3D orbit (see [`ensure_list`]).
+type ListKey = (u64, u64, i32, i32, bool, bool, usize, u64, u64);
 
 /// Whether two list keys are for the same drawing content (they may differ only in the view).
 fn same_content(a: &ListKey, b: &ListKey) -> bool {
@@ -293,6 +293,11 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
+    // 3DORBIT: dragging with the primary button rotates the 3D view.
+    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.orbit_active() {
+        let d = nav.response.drag_delta();
+        let _ = app.session.orbit_drag(f64::from(d.x), f64::from(d.y));
+    }
     if p.pressed_primary
         && let Some(at) = p.hover_pos
         && !nav.rect.contains(at)
@@ -344,6 +349,12 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
 fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool) {
     let p = nav.pointer;
     let middle_pressed = nav.response.ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle));
+    if (p.pressed_primary || p.pressed_secondary || middle_pressed)
+        && inside
+        && let Some(id) = nav.response.ctx.memory(|m| m.focused())
+    {
+        nav.response.ctx.memory_mut(|m| m.surrender_focus(id));
+    }
     let focused = nav.response.ctx.input(|i| i.focused);
     if p.middle_down
         && focused
@@ -352,7 +363,9 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
     {
         if let Some(last) = app.canvas.pan_last {
             let delta = at - last;
-            if let Ok(st) = app.session.state_mut() {
+            if p.mods.shift && app.session.state().ok().is_some_and(|st| matches!(st.edit_space(), cadcraft_doc::Space::Model)) {
+                let _ = app.session.orbit_drag(f64::from(delta.x), f64::from(delta.y));
+            } else if let Ok(st) = app.session.state_mut() {
                 let view = st.view();
                 st.set_view_quiet(cadcraft_engine::View {
                     center: view.center - nav.xf.screen_delta_to_world(delta),
@@ -387,6 +400,7 @@ struct CanvasPaint<'a> {
     on_menu: bool,
     hover_pos: Option<Pos2>,
     raw_world: Option<Vec2>,
+    current_orbit: cadcraft_render::Orbit3d,
 }
 
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
@@ -527,28 +541,38 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     let on_menu = frame.on_menu;
     let hover_pos = frame.hover_pos;
     let view = frame.view;
+    let current_orbit = frame.current_orbit;
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0, app.session.input_ucs().rotation());
+        draw_tracking(painter, &xf, current_orbit, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0, app.session.input_ucs().rotation());
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
-        draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
+        draw_snap_marker(painter, xf.to_screen(current_orbit.project(hit.point.to3(0.0))), &hit);
     }
     draw_tiles(app, ui, tiles);
     // UCS icon, ViewCube and viewport label.
     if app.session.ucsicon_bits() & 1 != 0 {
-        let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
-        draw_ucs_icon(painter, &place);
+        let place = if current_orbit.is_top() {
+            let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
+            draw_ucs_icon(painter, &place);
+            place
+        } else {
+            draw_ucs_icon_3d(painter, rect, current_orbit);
+            crate::viewcube::IconPlace::corner(rect)
+        };
         // Clickable only at the Command prompt: while a command runs, a pick or a snap at the UCS
         // origin (where the icon may sit) reaches the drawing.
         if app.session.running.is_none() && app.session.pending_window.is_none() {
             crate::viewcube::ucs_icon(app, ui, rect, &place);
         }
     }
+    if app.session.orbit_active() {
+        draw_orbit_arcball(painter, rect, current_orbit);
+    }
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    viewport_label(painter, rect, current_orbit);
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
@@ -562,8 +586,8 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
         if let Some(hp) = hover_pos {
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
-            let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
             let picking = app.session.picking_objects() && app.session.pending_window.is_none();
+            let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
             draw_crosshair(app, painter, rect, hp, picking, ink);
             if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
                 cycle_badge(painter, hp);
@@ -655,10 +679,11 @@ fn update_canvas_cursor(
     xf: &Xf,
     inside: bool,
     hover: Option<Pos2>,
+    current_orbit: cadcraft_render::Orbit3d,
 ) -> (Option<Vec2>, Option<crate::dyninput::Frame>) {
     let raw_world = hover.filter(|_| inside).map(|p| xf.to_world(p));
     let dyn_frame = crate::cmdline::dyn_frame(app);
-    track_cursor(app, raw_world, xf, ui.ctx(), dyn_frame);
+    track_cursor(app, raw_world, xf, current_orbit, ui.ctx(), dyn_frame);
 
     (raw_world, dyn_frame)
 }
@@ -682,8 +707,11 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         {
             let filter = app.session.settings.previewfilter;
             let ap = app.session.settings.pickbox.max(1.0) * 1.5 / scale;
-            app.canvas.hover = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, ap)
-                .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
+            let edit_space = st.edit_space();
+            let pick_orbit = if matches!(edit_space, cadcraft_doc::Space::Model) { st.orbit } else { cadcraft_render::Orbit3d::default() };
+            app.canvas.hover =
+                cadcraft_engine::select::pick_in_orbit(&st.doc, &edit_space, st.viewport_frozen(), pick_orbit, w, ap)
+                    .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
             app.canvas.hover_at = hover_pos;
         }
     } else {
@@ -718,6 +746,7 @@ struct PressContext {
     /// double-click with no command running: that one opened the Hatch Edit dialog or did nothing,
     /// and must not also start a grip edit.
     grip_clicks: bool,
+    current_orbit: cadcraft_render::Orbit3d,
 }
 
 /// Clicks count when the button goes down, where it went down, however fast the mouse moves
@@ -729,7 +758,7 @@ struct PressContext {
 /// Presses while ZOOM Realtime runs are left to the clicks in [`show`]. Returns whether a press
 /// handled here was released this frame (its click must not count again).
 fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bool {
-    let PressContext { rect, xf, inside, middle_down, mods, grip_clicks } = *context;
+    let PressContext { rect, xf, inside, middle_down, mods, grip_clicks, current_orbit } = *context;
     let (steps, now, primary_down) = ui.input(|i| (press::steps(&i.events), i.time, i.pointer.primary_down()));
     let mut click_used = false;
     for step in steps {
@@ -754,9 +783,9 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                     continue;
                 }
                 if press_takes(app, &xf, pos) {
-                    let opened = press_at(app, &xf, ui.ctx(), pos, m);
+                    let opened = press_at(app, &xf, current_orbit, ui.ctx(), pos, m);
                     app.canvas.press = Some(press::Press::new(pos, opened));
-                } else if !app.session.realtime_zoom_active() {
+                } else if !app.session.realtime_zoom_active() && !app.session.orbit_active() {
                     // A grip with no command running: clicked when the button comes up. egui
                     // calls a press held longer than 0.8 s a drag, and a slow drawing's frames
                     // can make an ordinary click that long (#2813).
@@ -884,6 +913,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
+    let current_orbit = app
+        .session
+        .state()
+        .map(|s| if matches!(s.space, cadcraft_doc::Space::Paper(_)) && s.mspace.is_none() { cadcraft_render::Orbit3d::default() } else { s.orbit })
+        .unwrap_or_default();
+
     // Selection cycling's list closes when the prompt, the drawing or the view changes.
     let key: CycleKey = (
         app.session.running.as_ref().map(|r| r.id.clone()),
@@ -900,9 +935,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     let idle_double = dbl_primary && app.session.running.is_none();
     let grip_clicks = !hatch_dialog && !idle_double;
-    let click_used = handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods, grip_clicks });
+    let click_used = handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods, grip_clicks, current_orbit });
 
-    let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
+    let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos, current_orbit);
 
     // A click on the Dynamic Input options menu picks the keyword; elsewhere it closes the menu.
     let mut picked = false;
@@ -1006,14 +1041,27 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         on_menu,
         hover_pos,
         raw_world,
+        current_orbit,
     });
 }
 
 /// Put the cursor at `raw` (world, `None` off the canvas): snaps, ortho and polar, a locked
 /// Dynamic Input value and typed grip dimensions applied (`app.canvas.cursor`, `.snap`, `.track`).
-fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Context, dyn_frame: Option<crate::dyninput::Frame>) {
-    if let Some(w) = raw {
-        let mut eff = effective_point(app, w, xf, ctx);
+fn track_cursor(
+    app: &mut CadApp,
+    raw: Option<Vec2>,
+    xf: &Xf,
+    current_orbit: cadcraft_render::Orbit3d,
+    ctx: &egui::Context,
+    dyn_frame: Option<crate::dyninput::Frame>,
+) {
+    let edge_on_work_point = current_orbit.is_edge_on()
+        && app.session.current_prompt().as_ref().is_some_and(cadcraft_engine::pointmod::accepts)
+        && app.session.pending_window.is_none()
+        && app.session.select_mode.is_none()
+        && !app.session.running.as_ref().is_some_and(|r| r.id.starts_with("zoom"));
+    if let Some(w) = raw.filter(|_| !edge_on_work_point) {
+        let mut eff = effective_point(app, w, xf, current_orbit, ctx);
         // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
@@ -1035,7 +1083,7 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
         if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
-            override_cursor(app, w, xf);
+            override_cursor(app, w, xf, current_orbit);
         }
         // Typed grip dimensions win over snap overrides too.
         if let Some(q) = grip_held {
@@ -1048,14 +1096,19 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
         app.canvas.cursor = None;
         app.canvas.snap = None;
         app.session.cursor_deferred = None;
+        if let Some(w) = raw
+            && dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none())
+        {
+            override_cursor(app, w, xf, current_orbit);
+        }
     }
 }
 
 /// Whether the press at `pos` is acted on when the button goes down ([`press_at`]): at any prompt
-/// and on the drawing with no command running. Grips (with no command running) and ZOOM Realtime
-/// keep their clicks.
+/// and on the drawing with no command running. Grips (with no command running), ZOOM Realtime and
+/// 3DORBIT keep their clicks.
 fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
-    if app.session.realtime_zoom_active() {
+    if app.session.realtime_zoom_active() || app.session.orbit_active() {
         return false;
     }
     if app.session.prompting() {
@@ -1067,11 +1120,11 @@ fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
 /// Act on a press at `pos`: at a prompt the point goes in (snapped as the cursor would be there);
 /// with no command running it picks the object there or sets a selection window's corner.
 /// Returns whether the press opened a selection window.
-fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egui::Modifiers) -> bool {
+fn press_at(app: &mut CadApp, xf: &Xf, current_orbit: cadcraft_render::Orbit3d, ctx: &egui::Context, pos: Pos2, mods: egui::Modifiers) -> bool {
     let had_window = app.session.pending_window.is_some();
     let raw = xf.to_world(pos);
     let dyn_frame = crate::cmdline::dyn_frame(app);
-    track_cursor(app, Some(raw), xf, ctx, dyn_frame);
+    track_cursor(app, Some(raw), xf, current_orbit, ctx, dyn_frame);
     let Some(p) = app.canvas.cursor else { return false };
     if app.session.prompting() {
         // Ctrl held while picking the point of a grip edit makes copies (the Copy option).
@@ -1116,6 +1169,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         on_menu,
         hover_pos,
         raw_world,
+        current_orbit,
     } = frame;
     let scale = xf.scale;
     painter.rect_filled(rect, 0.0, t.canvas);
@@ -1172,6 +1226,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             on_menu,
             hover_pos,
             raw_world,
+            current_orbit,
         },
         bg,
         &sel,
@@ -1206,6 +1261,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     if (!app.session.prompting() || grip_edit)
         && app.session.shows_grips(sel.len())
         && let Ok(st) = app.session.state()
+        && (!matches!(st.edit_space(), cadcraft_doc::Space::Model) || st.orbit.is_top())
     {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
@@ -1240,6 +1296,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
+    let preview_orbit =
+        if app.session.running.as_ref().is_some_and(|r| r.id.starts_with("zoom")) { cadcraft_render::Orbit3d::default() } else { current_orbit };
     let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
         (Some(c), true) => app.session.drag(c),
         _ => None,
@@ -1248,8 +1306,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if let Ok(st) = app.session.state() {
             let serial = app.session.clipboard_source.as_ref().map_or(0, |c| c.serial);
             let transparency = app.session.settings.transparency_display;
-            draw_drag_gpu(&mut app.canvas, painter, &xf, &st.doc, &drag, (&app.session.clipboard, serial), bg, transparency);
-            let list = rebuilt_preview(&st.doc, extra.iter(), scale);
+            draw_drag_gpu(&mut app.canvas, painter, &xf, &st.doc, &drag, (&app.session.clipboard, serial), bg, transparency, preview_orbit);
+            let list = rebuilt_preview(&st.doc, extra.iter(), scale, preview_orbit);
             draw_list(painter, &xf, &list, bg, false);
         }
     } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
@@ -1257,7 +1315,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
-            let list = rebuilt_preview(&st.doc, ents.iter(), scale);
+            let list = rebuilt_preview(&st.doc, ents.iter(), scale, preview_orbit);
             draw_list(painter, &xf, &list, bg, false);
         }
     }
@@ -1296,6 +1354,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             on_menu,
             hover_pos,
             raw_world,
+            current_orbit,
         },
         paper_rect,
         surround,

@@ -31,10 +31,10 @@ pub(crate) fn viewport(b: &mut Builder, d: &Drawing, e: &Entity, vp: &cadcraft_d
     }
     let unit_mm = paper::unit_mm_of(d, e.handle);
     match &poly {
-        Some(p) => contents(b, d, vp, p.bounds(), &Clip::Poly(p), unit_mm),
+        Some(p) => contents(b, d, e.handle, vp, p.bounds(), &Clip::Poly(p), unit_mm),
         None => {
             if let Some(rect) = viewport_rect(vp) {
-                contents(b, d, vp, rect, &Clip::Rect(rect), unit_mm);
+                contents(b, d, e.handle, vp, rect, &Clip::Rect(rect), unit_mm);
             }
         }
     }
@@ -75,6 +75,7 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         list: DisplayList::default(),
         opts,
         plotting: false,
+        paper: false,
         styles: styler.as_ref(),
         named: None,
         shared_budget: None,
@@ -82,13 +83,13 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
     };
-    contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
+    contents(&mut b, d, handle, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }
 
 /// Model space seen through `vp`, in paper units, appended to `b`'s list clipped to `clip`;
 /// `area` (the clip's bounds on paper) picks the model objects to draw.
-fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bounds2, clip: &Clip, unit_mm: f64) {
+fn contents(b: &mut Builder, d: &Drawing, handle: Handle, vp: &cadcraft_doc::Viewport, area: Bounds2, clip: &Clip, unit_mm: f64) {
     if b.list.expanded >= MAX_BLOCK_EXPANSION || !vp.on {
         return;
     }
@@ -110,12 +111,17 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
+    let mut vp_opts = b.opts.clone();
+    if vp_opts.orbit_viewport.is_some_and(|h| h != handle) {
+        vp_opts.orbit = super::Orbit3d::default();
+    }
+    let vp_opts = &vp_opts;
     let ctx = || Ctx { lt_factor, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
     let seen = |me: &Entity| {
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;
         }
-        if matches!(me.kind, EntityKind::Ray(_) | EntityKind::XLine(_)) {
+        if matches!(me.kind, EntityKind::Ray(_) | EntityKind::XLine(_)) || !vp_opts.orbit.is_top() {
             return true;
         }
         let eb = cadcraft_doc::entity_bounds(d, me, 0);
@@ -127,8 +133,9 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     let budget = std::sync::atomic::AtomicUsize::new(b.list.expanded);
     let mut sub = Builder {
         list: DisplayList::default(),
-        opts: b.opts,
+        opts: vp_opts,
         plotting: b.plotting,
+        paper: false,
         styles: b.styles,
         named: None,
         shared_budget: Some(&budget),
@@ -146,7 +153,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
             // As `build_parallel`: chunks built side by side, joined in drawing order.
             use rayon::prelude::*;
             let ents: Vec<&std::sync::Arc<Entity>> = d.model.iter().collect();
-            let (opts, points, max_points) = (b.opts, b.points, b.max_points);
+            let (opts, points, max_points) = (vp_opts, b.points, b.max_points);
             let parts: Vec<DisplayList> = ents
                 .par_chunks(PARALLEL_CHUNK)
                 .map(|chunk| {
@@ -154,6 +161,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         list: DisplayList::default(),
                         opts,
                         plotting: false,
+                        paper: false,
                         styles: None,
                         named: None,
                         shared_budget: Some(&budget),
