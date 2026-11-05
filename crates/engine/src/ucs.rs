@@ -155,27 +155,36 @@ impl UcsFrame {
     }
 }
 
-/// The current UCS of `space` in `d` and its name (empty when it isn't a named UCS). A missing
-/// or unusable one is the World UCS.
-pub fn current(d: &Drawing, space: &Space) -> (UcsFrame, String) {
+/// The usable current UCS of `space` in `d`, if it has one.
+fn frame_of(d: &Drawing, space: &Space) -> Option<UcsFrame> {
     match space {
         Space::Model => {
             let h = &d.header;
-            let frame = match (h.point("UCSORG"), h.point("UCSXDIR"), h.point("UCSYDIR")) {
+            match (h.point("UCSORG"), h.point("UCSXDIR"), h.point("UCSYDIR")) {
                 (Some(o), Some(x), Some(y)) => UcsFrame::new(o, x, y),
                 (o, None, None) => o.filter(|o| o.is_finite()).map(|o| UcsFrame::WORLD.with_origin(o)),
                 _ => None,
-            };
-            match frame {
-                Some(f) => (f, h.str("UCSNAME", "").trim().to_string()),
-                None => (UcsFrame::WORLD, String::new()),
             }
         }
-        Space::Paper(name) => match d.layout(name).and_then(|l| l.ucs.as_ref()).and_then(|u| Some((UcsFrame::of(u)?, u.name.trim().to_string()))) {
-            Some(x) => x,
-            None => (UcsFrame::WORLD, String::new()),
-        },
+        Space::Paper(name) => d.layout(name).and_then(|l| l.ucs.as_ref()).and_then(UcsFrame::of),
     }
+}
+
+/// The current UCS of `space` in `d` without its name, so nothing is allocated: what the
+/// per-point and per-angle paths need. A missing or unusable one is the World UCS.
+pub fn current_frame(d: &Drawing, space: &Space) -> UcsFrame {
+    frame_of(d, space).unwrap_or(UcsFrame::WORLD)
+}
+
+/// The current UCS of `space` in `d` and its name (empty when it isn't a named UCS). A missing
+/// or unusable one is the World UCS.
+pub fn current(d: &Drawing, space: &Space) -> (UcsFrame, String) {
+    let Some(frame) = frame_of(d, space) else { return (UcsFrame::WORLD, String::new()) };
+    let name = match space {
+        Space::Model => d.header.str("UCSNAME", "").trim().to_string(),
+        Space::Paper(name) => d.layout(name).and_then(|l| l.ucs.as_ref()).map(|u| u.name.trim().to_string()).unwrap_or_default(),
+    };
+    (frame, name)
 }
 
 /// Make `frame` (named `name`, empty for an unnamed one) the current UCS of `space`.
@@ -219,7 +228,7 @@ impl Session {
 
     /// The current UCS of the space commands act on.
     pub fn ucs(&self) -> UcsFrame {
-        self.ucs_named().0
+        self.doc().map(|d| current_frame(d, &self.space())).unwrap_or_default()
     }
 
     /// The UCS points are typed in and shown in: the current one, or the World UCS while the

@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dist", "Distance", run_dist)
             .menu(&["Tools", "Inquiry", "Distance"])
             .alias(&["di"])
-            .params("{p1, p2}")
+            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (in the current UCS, as the message), world: {angle, angleFromXY, dx, dy, dz}, message}")
             .noundo()
             .transparent()
             .interactive(|_| Ok(Box::new(DistM::default()))),
@@ -224,13 +224,24 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.distance = d.len();
     s.last_point = a.xy();
+    // `angle`, `angleFromXY` and the deltas are measured in the current UCS, as the message says
+    // them; `world` has the same numbers along the world axes.
+    let u = s.input_ucs();
+    let du = u.to_ucs3(b) - u.to_ucs3(a);
     Ok(json!({
         "distance": d.len(),
-        "angle": d.xy().angle().to_degrees(),
-        "angleFromXY": angle_from_xy(d).to_degrees(),
-        "dx": d.x,
-        "dy": d.y,
-        "dz": d.z,
+        "angle": du.xy().angle().to_degrees(),
+        "angleFromXY": angle_from_xy(du).to_degrees(),
+        "dx": du.x,
+        "dy": du.y,
+        "dz": du.z,
+        "world": {
+            "angle": d.xy().angle().to_degrees(),
+            "angleFromXY": angle_from_xy(d).to_degrees(),
+            "dx": d.x,
+            "dy": d.y,
+            "dz": d.z,
+        },
         "message": dist_text(s, a, b),
     }))
 }

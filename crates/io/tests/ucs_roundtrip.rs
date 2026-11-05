@@ -436,3 +436,18 @@ fn a_far_layout_ucs_keeps_its_name_only_where_it_is() {
     let u = cadcraft_io::read_dxf(stale.as_bytes()).unwrap().layouts[0].ucs.clone().unwrap();
     assert!(u.name.is_empty(), "{u:?}");
 }
+
+/// UCSICON is a setting of the drawing: icon off (bit 1 clear) comes back off after a DXF save.
+#[test]
+fn ucsicon_survives_a_dxf_round_trip() {
+    let mut d = Drawing::default();
+    d.header.set_i64("UCSICON", 0);
+    let text = cadcraft_io::write_dxf(&d);
+    assert_eq!(group(&header_var(&text, "UCSICON"), "70"), Some("0"), "written to the header");
+    let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.header.i64("UCSICON", 3), 0);
+    // And a value with the origin bit only.
+    d.header.set_i64("UCSICON", 2);
+    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(back.header.i64("UCSICON", 3), 2);
+}

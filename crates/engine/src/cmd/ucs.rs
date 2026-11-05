@@ -332,6 +332,18 @@ fn delete(s: &mut Session, patterns: &str) -> Result<usize> {
     if gone.iter().any(|g| g.eq_ignore_ascii_case(&current)) {
         s.set_ucs(frame, "")?;
     }
+    // The other spaces whose current UCS carries a deleted name keep their axes and lose the name
+    // too (model space's UCSNAME, every layout's UCS).
+    let d = s.doc_mut()?;
+    let is_gone = |n: &str| gone.iter().any(|g| g.eq_ignore_ascii_case(n.trim()));
+    if is_gone(&d.header.str("UCSNAME", "")) {
+        d.header.set_str("UCSNAME", "");
+    }
+    for l in &mut d.layouts {
+        if let Some(u) = l.ucs.as_mut().filter(|u| is_gone(&u.name)) {
+            u.name.clear();
+        }
+    }
     Ok(gone.len())
 }
 
@@ -423,8 +435,8 @@ impl Interactive for UcsM {
         match &self.stage {
             Stage::Main => Prompt::new("Specify origin of UCS", Accept::POINT).kw(OPTIONS).default("World"),
             Stage::OriginOnly | Stage::ThreePoint => {
-                let o = s.ucs().origin;
-                Prompt::new("Specify new origin point", Accept::POINT).default(format!("{},{},{}", o.x, o.y, o.z))
+                // Input here is read in the current UCS, where the UCS's own origin is 0,0,0.
+                Prompt::new("Specify new origin point", Accept::POINT).default("0,0,0")
             }
             Stage::XPoint(o) => Prompt::new("Specify point on X-axis", Accept::POINT).default("Accept").base(o.xy()),
             Stage::XyPoint(o, _) => Prompt::new("Specify point on the XY plane", Accept::POINT).default("Accept").base(o.xy()),

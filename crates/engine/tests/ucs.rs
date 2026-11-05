@@ -567,3 +567,76 @@ fn hostile_ucs_input_never_panics() {
         typed(&mut s, &["line 0,0 1,0 "]);
     }
 }
+
+// ---------------- review fixes ----------------
+
+/// A deferred TAN first point followed by a typed `@d<a`: the angle is read in the UCS (and with
+/// ANGBASE), like every other typed direction.
+#[test]
+fn deferred_line_polar_follows_the_ucs() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::snap::{Deferred, SnapCurve, mode};
+    let mut s = session();
+    turned(&mut s);
+    s.start("line").unwrap();
+    let d = Deferred { mode: mode::TAN, curve: SnapCurve::Circle { center: Vec2::new(500.0, 500.0), radius: 5.0 }, at: Vec2::new(505.0, 500.0) };
+    s.input(Input::Deferred(d)).unwrap();
+    // UCS angle 0 is world +Y: the tangent to the circle in that direction, then 10 along it.
+    s.cmdline("@10<0").unwrap();
+    s.cancel();
+    let (a, b) = last_line(&s);
+    assert!((b - a).len() > 9.999 && (b.x - a.x).abs() < 1e-9 && (b.y - a.y - 10.0).abs() < 1e-9, "{a:?} {b:?}");
+}
+
+/// Deleting a named UCS clears its name wherever it is the current UCS: model space and every
+/// layout, not only the space deleted from.
+#[test]
+fn deleting_a_named_ucs_clears_it_in_every_space() {
+    let mut s = session();
+    turned(&mut s);
+    s.execute("ucs", &json!({"option": "named", "action": "save", "name": "SITE"})).unwrap();
+    let layout = s.doc().unwrap().layouts[0].name.clone();
+    s.execute("layout.set", &json!({"name": layout})).unwrap();
+    s.execute("ucs", &json!({"option": "named", "action": "restore", "name": "SITE"})).unwrap();
+    assert_eq!(s.ucs_named().1, "SITE");
+    // Delete from paper space: model space is still named SITE.
+    s.execute("ucs", &json!({"option": "named", "action": "delete", "name": "SITE"})).unwrap();
+    assert_eq!(s.ucs_named().1, "", "the current space");
+    assert_eq!(s.doc().unwrap().header.str("UCSNAME", ""), "", "model space");
+    assert!(s.doc().unwrap().layouts.iter().all(|l| l.ucs.as_ref().is_none_or(|u| u.name.is_empty())), "every layout");
+    // The axes stay.
+    s.execute("layout.set", &json!({"name": "Model"})).unwrap();
+    assert!(near3(s.ucs().x, Vec3::new(0.0, 1.0, 0.0)));
+}
+
+/// The origin prompt offers the origin in the UCS's own terms (0,0,0), so Enter, or the default
+/// typed back, keeps the origin.
+#[test]
+fn pressing_enter_at_the_origin_prompt_keeps_the_origin() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "origin", "origin": [100, 50]})).unwrap();
+    s.execute("ucs", &json!({"option": "z", "angle": 30})).unwrap();
+    let before = s.ucs();
+    s.start("ucs.origin").unwrap();
+    let shown = s.current_prompt().and_then(|p| p.default).unwrap_or_default();
+    s.cmdline(&shown).unwrap();
+    assert!(near3(s.ucs().origin, before.origin), "typing the default {shown:?} back: {:?}", s.ucs().origin);
+    s.start("ucs.origin").unwrap();
+    s.cmdline("").unwrap();
+    assert!(near3(s.ucs().origin, before.origin));
+}
+
+/// DIST's JSON says what its message says: angle and deltas in the current UCS, the world ones
+/// under `world`.
+#[test]
+fn dist_json_matches_its_message_in_a_ucs() {
+    let mut s = session();
+    turned(&mut s);
+    // Points are given in the world: UCS (0,0) and (10,0).
+    let r = s.execute("dist", &json!({"p1": [100, 50], "p2": [100, 60]})).unwrap();
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap();
+    assert!((f(&r, "dx") - 10.0).abs() < 1e-9 && f(&r, "dy").abs() < 1e-9 && f(&r, "angle").abs() < 1e-9, "{r}");
+    assert!(r["message"].as_str().unwrap().contains("Delta X = 10"), "{r}");
+    let w = &r["world"];
+    assert!(f(w, "dx").abs() < 1e-9 && (f(w, "dy") - 10.0).abs() < 1e-9 && (f(w, "angle") - 90.0).abs() < 1e-9, "{r}");
+}

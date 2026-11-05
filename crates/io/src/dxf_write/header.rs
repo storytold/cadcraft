@@ -42,6 +42,8 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("UCSORG", -3),
     ("UCSXDIR", -3),
     ("UCSYDIR", -3),
+    // Whether the UCS icon is shown (bit 1) and at the UCS origin (bit 2).
+    ("UCSICON", 70),
     ("PDMODE", 70),
     ("PDSIZE", 40),
     ("PLINEWID", 40),
