@@ -28,6 +28,7 @@ fn drawing(psltscale: i64) -> Drawing {
         ucs: None,
         ucs_per_viewport: false,
         extra: Vec::new(),
+        twist: 0.0,
     };
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
     d

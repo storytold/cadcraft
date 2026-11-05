@@ -24,6 +24,7 @@ fn drawing() -> Drawing {
         ucs: None,
         ucs_per_viewport: false,
         extra: Vec::new(),
+        twist: 0.0,
     };
     d.add(&Space::Paper("Layout1".into()), Common { layer: "VPORTS".into(), ..Default::default() }, EntityKind::Viewport(vp)).unwrap();
     d

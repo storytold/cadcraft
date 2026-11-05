@@ -66,6 +66,7 @@ fn dimensions_take_the_viewport_layer_colour() {
         ucs: None,
         ucs_per_viewport: false,
         extra: Vec::new(),
+        twist: 0.0,
     };
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
     let l = build(&d, &Space::Paper("Layout1".into()), &Options::default());
@@ -173,6 +174,7 @@ fn attributes_draw_with_their_own_properties() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let common = Common { color: Color::Index(1), lineweight: Lineweight::Mm100(35), ..on("INS") };
     d.add(&Space::Model, common, EntityKind::Insert(ins)).unwrap();

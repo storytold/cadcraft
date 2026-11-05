@@ -170,6 +170,7 @@ fn viewport_contents_get_their_pens() {
         ucs: None,
         ucs_per_viewport: false,
         extra: Vec::new(),
+        twist: 0.0,
     };
     let space = Space::Paper("Layout1".into());
     d.add(&space, Common::default(), EntityKind::Viewport(vp)).unwrap();

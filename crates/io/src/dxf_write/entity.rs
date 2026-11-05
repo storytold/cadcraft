@@ -600,6 +600,9 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
     }
 }
 
+/// Writes a HATCH: its pattern name, solid and associative flags, its boundary loops, and the
+/// pattern angle, scale and double flag (written for solid hatches too). Pattern lines are written
+/// only for non-solid hatches.
 fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
     if let EntityKind::Hatch(h) = &e.kind {
         w.s(0, "HATCH");
@@ -634,10 +637,12 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         }
         w.i(75, i64::from(h.style));
         w.i(76, 1);
+        // Angle, scale and double flag are written for solid fills too, as read (AutoCAD and
+        // other writers keep them on SOLID hatches; readers ignore them there).
+        w.f(52, h.angle.to_degrees());
+        w.f(41, h.scale);
+        w.i(77, 0);
         if !h.solid {
-            w.f(52, h.angle.to_degrees());
-            w.f(41, h.scale);
-            w.i(77, 0);
             // The lines read from the file, else the library's pattern of that name.
             let lines = if h.pattern_lines.is_empty() {
                 cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
@@ -679,8 +684,15 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // Within one turn, so a hostile twist (from JSON or MCP) writes a sane angle.
+        let twist = cadcraft_geom::norm_angle(v.view_twist());
+        // The view centre in display coordinates (turned by the twist).
+        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, twist));
         w.f(45, v.view_height);
+        // View twist (degrees), when the viewport has one.
+        if twist != 0.0 {
+            w.f(51, twist.to_degrees());
+        }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());

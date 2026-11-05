@@ -240,6 +240,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {
@@ -316,23 +317,28 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             k
         }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
-        "VIEWPORT" => EntityKind::Viewport(Viewport {
-            center: t.p(10),
-            width: t.fd(40, 1.0),
-            height: t.fd(41, 1.0),
-            // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
-            view_center: t.view_center(12, 17),
-            view_height: t.fd(45, 1.0),
-            id: t.i(69).unwrap_or(0) as u32,
-            locked: t.i(90).unwrap_or(0) & 16384 != 0,
-            frozen_layers: crate::dxf_ext::read_frozen(tags),
-            layer_colors: crate::dxf_ext::read_layer_colors(tags),
-            // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
-            clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
-            on: t.i(90).unwrap_or(0) & 131072 == 0,
-            ucs: viewport_ucs(tags),
-            ucs_per_viewport: t.i(71) == Some(1),
-            extra: viewport_extra(tags),
+        "VIEWPORT" => EntityKind::Viewport({
+            // View twist (group 51, degrees).
+            let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
+            Viewport {
+                center: t.p(10),
+                width: t.fd(40, 1.0),
+                height: t.fd(41, 1.0),
+                // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+                view_center: t.view_center(12, 17, twist),
+                view_height: t.fd(45, 1.0),
+                id: t.i(69).unwrap_or(0) as u32,
+                locked: t.i(90).unwrap_or(0) & 16384 != 0,
+                frozen_layers: crate::dxf_ext::read_frozen(tags),
+                layer_colors: crate::dxf_ext::read_layer_colors(tags),
+                // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
+                on: t.i(90).unwrap_or(0) & 131072 == 0,
+                twist,
+                ucs: viewport_ucs(tags),
+                ucs_per_viewport: t.i(71) == Some(1),
+                extra: viewport_extra(tags),
+            }
         }),
         "WIPEOUT" => {
             let o = t.p(10);
@@ -375,7 +381,9 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
     // Large declared sizes must be backed by cell records (no allocation from a bare count).
     let n_cells = tail.iter().filter(|x| x.code == 171).count();
     let declared = rows.saturating_mul(cols);
-    if declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
+    // A table with no rows or no columns has no cells: keep neither dimension, so its row heights
+    // and column widths (allocated per dimension, outside the cell budget) are not allocated.
+    if declared == 0 || declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
         rows = 0;
         cols = 0;
     }

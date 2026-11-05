@@ -109,7 +109,7 @@ fn parse_color(t: &str) -> Result<Color> {
 fn viewport_at(s: &Session, p: Vec2) -> Option<Handle> {
     let st = s.state().ok()?;
     let at = match st.active_viewport() {
-        Some((_, vp)) => vp.center.xy() + (p - vp.view_center) * (vp.height / vp.view_height),
+        Some((_, vp)) => vp.model_to_paper(p),
         None => p,
     };
     super::viewports::viewport_at(s, at)

@@ -33,6 +33,7 @@ fn harness(paper: bool, render: bool) -> Harness<'static, CadApp> {
             ucs: None,
             ucs_per_viewport: false,
             extra: Vec::new(),
+            twist: 0.0,
         }),
     )
     .unwrap();

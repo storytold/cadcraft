@@ -103,6 +103,7 @@ fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
         rows: 1_000,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
     let viewport = |center: Vec3, view_center: Vec2, frozen_layers| Viewport {
@@ -120,6 +121,7 @@ fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
         ucs: None,
         ucs_per_viewport: false,
         extra: Vec::new(),
+        twist: 0.0,
     };
     let paper = Space::Paper("Layout1".into());
     d.add(&paper, Common::default(), EntityKind::Viewport(viewport(Vec3::new(50.0, 50.0, 0.0), Vec2::ZERO, vec!["FROZEN".into()]))).unwrap();

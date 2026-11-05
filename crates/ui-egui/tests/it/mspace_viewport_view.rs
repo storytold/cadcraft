@@ -40,6 +40,7 @@ fn harness(clipped: bool) -> Harness<'static, CadApp> {
             ucs: None,
             ucs_per_viewport: false,
             extra: Vec::new(),
+            twist: 0.0,
         }),
     )
     .unwrap();
@@ -91,7 +92,7 @@ fn revision(h: &Harness<'_, CadApp>) -> u64 {
 fn pan(h: &mut Harness<'_, CadApp>, dx: f64) {
     let st = h.state_mut().session.state_mut().unwrap();
     let v = st.view();
-    st.set_view_quiet(cadcraft_engine::View { center: v.center - Vec2::new(dx, 0.0), height: v.height });
+    st.set_view_quiet(cadcraft_engine::View { center: v.center - Vec2::new(dx, 0.0), height: v.height, twist: v.twist });
 }
 
 /// A wheel step zooming in by `f` about the viewport's view centre.
