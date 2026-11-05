@@ -286,7 +286,8 @@ impl VpHighlight {
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles).hash(&mut h);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles, super::list::font_generation())
+                .hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {

@@ -473,6 +473,9 @@ fn hebrew_letters_draw_from_their_one_byte_places() {
     // DOS 862: bet at 0x81 advances one unit.
     assert!((draws(hebrew_font(0x80..=0x9A), 'ב') - 1.0).abs() < 1e-9);
     assert_eq!(hebrew_font(0x80..=0x9A).hebrew_places(), (false, true));
+    // The old degree sign at 127 isn't a letter in DOS 862: `%%d` still draws from it
+    // (127 & 0x1F = 31 units).
+    assert!((draws(hebrew_font((0x80..=0x9A).chain([127])), '°') - 31.0).abs() < 1e-9);
     // A Cyrillic-style font (0xC0..0xFF all drawn) is not read as Hebrew: the letter comes
     // from the built-in stroke font instead of a Cyrillic shape.
     let cyr = hebrew_font(0xC0..=0xFF);
