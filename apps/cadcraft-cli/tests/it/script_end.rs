@@ -28,6 +28,16 @@ fn a_lisp_routine_left_waiting_at_the_end_is_reported() {
     assert!(!err.contains("an empty line is Enter"), "{err}");
 }
 
+/// A routine that started LINE and then waits in `getpoint`: its prompt is the active one, so the
+/// advice is the LISP one even though a command is running (CodeRabbit on #2828).
+#[test]
+fn a_lisp_prompt_over_a_running_command_gets_the_lisp_advice() {
+    let (code, err) = run(&["run", "--metric", "--script", "(progn (command \"line\" \"0,0\") (getpoint \"Pick: \"))"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("note: the script ended while waiting for input: Pick:"), "{err}");
+    assert!(err.contains("a LISP routine is waiting for this value"), "{err}");
+}
+
 #[test]
 fn a_script_that_ends_its_commands_gives_no_note() {
     // An empty line, or a space at the end of the line, is the Enter that ends LINE.
