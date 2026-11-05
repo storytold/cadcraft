@@ -262,6 +262,10 @@ impl ShxFont {
         let g = program::outline(self, number, vertical).ok().map(Arc::new);
         let points = g.as_ref().map_or(0, |g| g.strokes.iter().map(Vec::len).sum::<usize>());
         let mut c = self.cache.write().unwrap_or_else(PoisonError::into_inner);
+        // Another thread may have outlined it in the meantime: its points are counted already.
+        if let Some(g) = c.glyphs.get(&key) {
+            return g.clone();
+        }
         if c.glyphs.len() >= MAX_CACHED_GLYPHS || c.points.saturating_add(points) > MAX_CACHED_POINTS {
             c.glyphs.clear();
             c.points = 0;
