@@ -1196,3 +1196,66 @@ fn objects_facing_the_other_way_from_the_source_stay_apart() {
     let objs = objects(&s);
     assert!(objs.len() == 1 && vertices(&objs[0].1).len() == 3, "{objs:?}");
 }
+
+#[test]
+fn a_new_polyline_stays_at_the_source_height() {
+    // Not measured: the core console's JOIN takes only collinear lines onto a line and arcs on one
+    // circle onto an arc, so it makes no new polyline. The new polyline stays at the source's
+    // height, as a polyline source keeps its elevation (measured), instead of moving to Z 0.
+    let elevation = |s: &Session| {
+        let objs = objects(s);
+        let EntityKind::LwPolyline(p) = &objs[0].1 else { panic!("{objs:?}") };
+        assert_eq!((objs.len(), p.vertices.len()), (1, 3), "{objs:?}");
+        p.elevation
+    };
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    raise(&mut s, a, 5.0);
+    raise(&mut s, b, 5.0);
+    join(&mut s, &[a, b]);
+    assert_eq!(elevation(&s), 5.0);
+    // An arc whose centre is at Z 5 as the source, with a line at 5 from its end.
+    let mut s = Session::new();
+    let a = arc(&mut s, [10.0, 5.0], 5.0, 270.0, 0.0);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(a, |e| {
+            if let EntityKind::Arc(o) = &mut e.kind {
+                o.center.z = 5.0;
+            }
+        })
+        .unwrap();
+    let l = line(&mut s, [15.0, 5.0], [15.0, 10.0]);
+    raise(&mut s, l, 5.0);
+    join(&mut s, &[a, l]);
+    assert_eq!(elevation(&s), 5.0);
+    // A sloped line that joins before the source, from (0,5,0) to the source's start (10,0,5): the
+    // polyline stays at the source's height, as a polyline source keeps its elevation with a
+    // sloped line on it (measured).
+    let mut s = Session::new();
+    let a = line(&mut s, [10.0, 0.0], [20.0, 0.0]);
+    raise(&mut s, a, 5.0);
+    let sloped = line(&mut s, [0.0, 5.0], [10.0, 0.0]);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(sloped, |e| {
+            if let EntityKind::Line(l) = &mut e.kind {
+                l.b.z = 5.0;
+            }
+        })
+        .unwrap();
+    join(&mut s, &[a, sloped]);
+    assert_eq!(elevation(&s), 5.0);
+    // A line source whose normal is 0,0,-1 gives that normal to the new polyline, as before, and
+    // the elevation runs along it: at Z 5 the elevation is -5.
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [10.0, 0.0], [10.0, 5.0]);
+    raise(&mut s, a, 5.0);
+    raise(&mut s, b, 5.0);
+    s.doc_mut().unwrap().modify_entity(a, |e| e.common.extrusion = cadcraft_engine::geom::Vec3::new(0.0, 0.0, -1.0)).unwrap();
+    join(&mut s, &[a, b]);
+    assert_eq!(elevation(&s), -5.0);
+    assert!(s.doc().unwrap().model.iter().all(|e| e.common.extrusion.z < 0.0));
+}

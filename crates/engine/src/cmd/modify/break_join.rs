@@ -238,9 +238,15 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     for h in hs.iter().filter(|h| used(h)) {
         doc.remove_entity(*h);
     }
+    // A new polyline stays at the source's height, as a polyline source keeps its elevation. The
+    // elevation runs along its normal: negated for one facing down. Not measured: the core
+    // console's JOIN makes no new polyline.
+    let height = links.iter().find(|l| Some(l.owner) == first).map_or(0.0, |l| l.heights.0);
+    let common = common.unwrap_or_default();
+    let elevation = if common.extrusion.z < 0.0 { -height } else { height };
     let nh = doc.new_handle();
     if let Some(st) = doc.space_mut(&space) {
-        st.push(Entity { handle: nh, common: common.unwrap_or_default(), kind: lwpoly(vs, closed) });
+        st.push(Entity { handle: nh, common, kind: with_z(lwpoly(vs, closed), elevation) });
     }
     s.set_selection(Vec::new());
     Ok(Some(nh))
