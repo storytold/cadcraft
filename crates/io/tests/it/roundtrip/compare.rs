@@ -29,6 +29,7 @@ pub(super) fn model(expected: &Drawing, actual: &Drawing, context: &str) {
         let Block {
             name,
             annotative,
+            scale_uniformly,
             base,
             entities: contents,
             description,
@@ -42,6 +43,7 @@ pub(super) fn model(expected: &Drawing, actual: &Drawing, context: &str) {
         } = block.as_ref();
         equal(name, &back.name, &path, "name");
         equal(annotative, &back.annotative, &path, "annotative");
+        equal(scale_uniformly, &back.scale_uniformly, &path, "scale_uniformly");
         equal(base, &back.base, &path, "base");
         equal(description, &back.description, &path, "description");
         equal(xref_overlay, &back.xref_overlay, &path, "xref_overlay");
