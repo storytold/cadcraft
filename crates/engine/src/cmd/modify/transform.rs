@@ -24,23 +24,29 @@ pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64,
 /// An OLE2FRAME only translates or scales uniformly (its corners stay axis aligned): refuse any other `m` before anything
 /// changes, instead of reporting success and leaving the frame where it was.
 pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<()> {
-    if cadcraft_doc::ole_frame_accepts(m) {
+    if cadcraft_doc::ole_frame_accepts(m) || !holds_ole_frame(s, hs, copy)? {
         return Ok(());
     }
+    Err(ole_refusal())
+}
+
+/// The refusal for a transform an OLE2FRAME cannot take.
+pub(crate) fn ole_refusal() -> crate::EngineError {
+    crate::EngineError::Other(
+        "An OLE object can only be moved, copied or scaled uniformly; other transforms (rotation, mirroring, non-uniform scale, alignment) are not supported.".into(),
+    )
+}
+
+/// Whether `hs` holds an OLE2FRAME a transform would touch. An in-place edit (`copy` false) skips
+/// an object on a locked layer (see edit_entities), so such a frame cannot be refused.
+pub(crate) fn holds_ole_frame(s: &Session, hs: &[Handle], copy: bool) -> Result<bool> {
     let d = s.doc()?;
-    let ole = |h: &Handle| {
+    Ok(hs.iter().any(|h| {
         d.entity(*h).is_some_and(|e| {
-            // An in-place edit skips an object on a locked layer (see edit_entities), so it cannot be refused.
             let locked = !copy && d.layer(&e.common.layer).is_some_and(|l| l.locked);
             !locked && matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.is_ole_frame())
         })
-    };
-    if hs.iter().any(ole) {
-        return Err(crate::EngineError::Other(
-            "An OLE object can only be moved, copied or scaled uniformly; other transforms (rotation, mirroring, non-uniform scale, alignment) are not supported.".into(),
-        ));
-    }
-    Ok(())
+    }))
 }
 
 /// `p` at the current elevation (ELEVATION), the Z AutoCAD gives a point entered without one.

@@ -250,8 +250,9 @@ fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) ->
     // Every copy is checked before the first is made: a refusal part way would leave the copies
     // already added in the drawing (a failed command is not rolled back).
     let mats: Vec<Mat3> = mats.collect();
-    for m in &mats {
-        super::modify::refuse_ole_frames(s, hs, m, true)?;
+    // The objects are looked at once; then a matrix only needs its own check.
+    if super::modify::holds_ole_frame(s, hs, true)? && mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) {
+        return Err(super::modify::ole_refusal());
     }
     let mut n = 0;
     for m in &mats {
