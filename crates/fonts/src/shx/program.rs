@@ -25,10 +25,10 @@ use super::{ShxFont, ShxGlyph, ShxKind};
 const MAX_DEPTH: usize = 16;
 /// Location stack (the format promises four).
 const MAX_STACK: usize = 64;
-/// Bytes run per glyph, subshapes included.
-const MAX_STEPS: usize = 200_000;
-/// Points per glyph.
-const MAX_POINTS: usize = 50_000;
+/// Bytes run per glyph, subshapes included (16 shapes of the format's 2,000 bytes).
+const MAX_STEPS: usize = 32_768;
+/// Points per glyph (128 full circles): every character of a text may draw this many.
+const MAX_POINTS: usize = 8_192;
 /// Coordinates in font units.
 const MAX_COORD: f64 = 1.0e7;
 /// Arc segments per full turn.

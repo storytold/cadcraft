@@ -324,6 +324,24 @@ fn a_far_extended_subshape_cell_is_cut_off() {
 }
 
 #[test]
+fn subshape_fan_out_past_the_point_and_step_bounds_is_cut_off() {
+    // Hostile: a few hundred bytes of fan-out drew 48,000 points per character (1.7 GB for a
+    // 1,000-character text) or ran 200,000 steps per character with the pen up.
+    let src = format!(
+        "*1,1,TOO_MANY_POINTS\n{a}0\n*2,1,HUNDRED\n{b}0\n*3,3,V\n011,019,0\n*4,1,ENOUGH\n{c}0\n*5,1,TOO_MANY_STEPS\n{d}0\n*6,1,UP\n{e}0\n*7,3,U\n2,010,0\n",
+        a = "7,2,".repeat(41),
+        b = "7,3,".repeat(100),
+        c = "7,2,".repeat(40),
+        d = "7,6,".repeat(100),
+        e = "7,7,".repeat(100),
+    );
+    let f = font(&src);
+    assert!(f.glyph(1, false).is_none() && f.glyph(5, false).is_none());
+    assert_eq!(f.glyph(4, false).unwrap().strokes.iter().map(Vec::len).sum::<usize>(), 8001);
+    assert!(f.glyph(6, false).is_some());
+}
+
+#[test]
 fn a_doubled_minus_sign_is_not_a_number() {
     // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
     // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
