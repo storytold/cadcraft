@@ -46,8 +46,8 @@ pub(crate) fn arraypath(
     }
     // Every copy is checked before the first is made: a refusal part way would leave the copies
     // already added in the drawing (a failed command is not rolled back).
-    for m in &mats {
-        crate::cmd::modify::refuse_ole_frames(s, &objs, m, true)?;
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && crate::cmd::modify::holds_ole_frame(s, &objs, true)? {
+        return Err(crate::cmd::modify::ole_refusal());
     }
     let mut out = Vec::new();
     for m in &mats {
