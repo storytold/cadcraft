@@ -49,10 +49,12 @@ pub enum Preference {
     Bosnian,
     #[serde(rename = "vi")]
     Vietnamese,
+    #[serde(rename = "nl")]
+    Dutch,
 }
 
 impl Preference {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -72,6 +74,7 @@ impl Preference {
         Self::Turkish,
         Self::Bosnian,
         Self::Vietnamese,
+        Self::Dutch,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -121,6 +124,7 @@ impl Preference {
             Self::Turkish => "tr",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Dutch => "nl",
         }
     }
 
@@ -158,6 +162,7 @@ impl Preference {
                     "Vietnamese"
                 }
             }
+            Self::Dutch => "Nederlands",
         }
     }
 
@@ -190,6 +195,7 @@ impl Preference {
             Self::Turkish => "tr",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Dutch => "nl",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -206,7 +212,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 18] = [
+pub static LANGUAGES: [Language; 19] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -260,6 +266,8 @@ pub static LANGUAGES: [Language; 18] = [
     Language {
         code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
     },
+    // Dutch integer plurals (CLDR `nl`) follow the English rule: one (1), other.
+    Language { code: "nl", name: "Nederlands", source: include_str!("i18n/nl.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.

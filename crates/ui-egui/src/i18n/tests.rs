@@ -203,6 +203,7 @@ fn assert_additional_locale_aliases() {
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("nl", &["nl", "nl-NL", "nl_NL.UTF-8", "NL-be", " nl-BE ", "nl_BE@euro"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
