@@ -1,6 +1,6 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{AnnoDraw, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_scaled, entity_bounds};
+use cadcraft_doc::{AnnoDraw, BlockBoundsCache, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_scaled, entity_bounds, entity_bounds_cached};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -239,8 +239,9 @@ pub(crate) fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds
     Bounds2::from_points(lines.into_iter().flat_map(|b| b.corners().map(unturn)))
 }
 
-/// Tight selection bounds for `e` (using laid-out line boxes for `MText`).
-pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+/// Tight selection bounds for e (using laid-out line boxes for MText),
+/// reusing cache to measure referenced block definitions once.
+pub(crate) fn select_bounds_cached<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
     match &e.kind {
         EntityKind::MText(t) => match d.anno_draw(e) {
             AnnoDraw::Hidden => Bounds2::EMPTY,
@@ -254,7 +255,7 @@ pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> 
             AnnoDraw::Plain => mtext_world_bounds(d, t),
         },
         EntityKind::MLeader(m) => {
-            let mut b = bounds_of(d, e, known);
+            let mut b = bounds_of(d, e, known, cache);
             if b.is_empty() {
                 return Bounds2::EMPTY;
             }
@@ -277,12 +278,14 @@ pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> 
                 }
             }
         }
-        _ => bounds_of(d, e, known),
+        _ => bounds_of(d, e, known, cache),
     }
 }
 
-/// Bounds of `e` used for snap candidate pre-filtering and spatial indexing.
-/// Includes the insertion point for MText and MLeader so that snapping to INS
+/// Tight selection bounds for e (using laid-out line boxes for MText).
+pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    select_bounds_cached(d, e, known, &mut BlockBoundsCache::default())
+}
 /// on text with an empty first line or at the anchor is not filtered out.
 pub(crate) fn snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
     if d.anno_draw(e) == AnnoDraw::Hidden {
@@ -346,8 +349,8 @@ fn selectable(d: &Drawing, e: &Entity) -> bool {
 /// Entities to test, in the order to test them, each with its bounds when already known.
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
-pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| entity_bounds(d, e, 0))
+pub(crate) fn bounds_of<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
+    known.unwrap_or_else(|| entity_bounds_cached(d, e, 0, cache))
 }
 
 pub(crate) fn is_infinite(e: &Entity) -> bool {

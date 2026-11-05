@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, TextStyle};
+use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, TextStyle};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{AABB, RTree};
@@ -47,13 +47,15 @@ struct ChunkIx {
 impl ChunkIx {
     fn build(d: &Drawing, key: usize, items: &[Arc<Entity>]) -> ChunkIx {
         let mut infinite = Vec::new();
+        // One block-bounds cache for the chunk: references to the same block measure it once.
+        let mut cache = BlockBoundsCache::default();
         let mut bounds = Vec::with_capacity(items.len());
         let mut tree_bounds = Vec::with_capacity(items.len());
         for (i, e) in items.iter().enumerate() {
             if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                 infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
             }
-            let sel_b = crate::select::select_bounds(d, e, None);
+            let sel_b = crate::select::select_bounds_cached(d, e, None, &mut cache);
             let snap_b = crate::select::snap_bounds(d, e, Some(sel_b));
             bounds.push(sel_b);
             tree_bounds.push(snap_b);
