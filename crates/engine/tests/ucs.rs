@@ -640,3 +640,57 @@ fn dist_json_matches_its_message_in_a_ucs() {
     let w = &r["world"];
     assert!(f(w, "dx").abs() < 1e-9 && (f(w, "dy") - 10.0).abs() < 1e-9 && (f(w, "angle") - 90.0).abs() < 1e-9, "{r}");
 }
+
+/// Deleting the current named UCS leaves no trace of its name: UCS Previous goes back to the axes
+/// before it, unnamed, and does not bring the deleted name back.
+#[test]
+fn ucs_previous_after_deleting_the_current_named_ucs() {
+    let mut s = session();
+    typed(&mut s, &["ucs na s SITE"]);
+    turned(&mut s);
+    typed(&mut s, &["ucs na r SITE"]);
+    typed(&mut s, &["ucs na d SITE"]);
+    assert_eq!(s.ucs_named().1, "");
+    assert!(s.doc().unwrap().ucs_previous.iter().all(|u| u.name.is_empty()), "{:?}", s.doc().unwrap().ucs_previous);
+    typed(&mut s, &["ucs p"]);
+    assert_eq!(s.ucs_named().1, "", "the deleted name does not come back");
+    assert!(near3(s.ucs().x, Vec3::new(0.0, 1.0, 0.0)), "back to the axes before SITE: {:?}", s.ucs());
+    assert_eq!(s.doc().unwrap().header.str("UCSNAME", ""), "");
+}
+
+/// Enter at the 3 Point origin prompt keeps the origin and asks for the X axis point.
+#[test]
+fn three_point_ucs_enter_keeps_the_origin() {
+    let mut s = session();
+    turned(&mut s);
+    let before = s.ucs();
+    s.start("ucs.3point").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.current_prompt().is_some_and(|p| p.message.contains("X-axis")), "{:?}", s.current_prompt().map(|p| p.message));
+    // A point 10 along the UCS X axis, then Enter for the XY point: the origin is kept.
+    s.cmdline("10,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(near3(s.ucs().origin, before.origin) && near3(s.ucs().x, before.x), "{:?}", s.ucs());
+}
+
+/// With the current UCS tilted, points are read in the World UCS: the origin prompt shows the
+/// origin there, so Enter, or the default typed back, keeps it.
+#[test]
+fn tilted_ucs_origin_default_keeps_the_origin() {
+    let mut s = session();
+    {
+        let h = &mut s.doc_mut().unwrap().header;
+        h.set("UCSORG", HVal::Point(Vec3::new(50.0, 20.0, 0.0)));
+        h.set("UCSXDIR", HVal::Point(Vec3::new(1.0, 0.0, 0.0)));
+        h.set("UCSYDIR", HVal::Point(Vec3::new(0.0, 0.0, 1.0)));
+    }
+    let before = s.ucs().origin;
+    s.start("ucs.origin").unwrap();
+    let shown = s.current_prompt().and_then(|p| p.default).unwrap_or_default();
+    assert_eq!(shown, "50,20,0");
+    s.cmdline(&shown).unwrap();
+    assert!(near3(s.ucs().origin, before), "typed {shown:?}: {:?}", s.ucs().origin);
+    s.start("ucs.origin").unwrap();
+    s.cmdline("").unwrap();
+    assert!(near3(s.ucs().origin, before));
+}
