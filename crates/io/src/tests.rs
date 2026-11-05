@@ -2328,10 +2328,24 @@ fn svg_shapes_become_entities_in_millimetres() {
     let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
     assert!((c.radius - 2.0).abs() < 1e-9 && (c.center.x - 10.0).abs() < 1e-9 && (c.center.y - 5.0).abs() < 1e-9, "{c:?}");
     let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
-    let major = Vec2::new(e.major.x - e.center.x, e.major.y - e.center.y);
+    let major = Vec2::new(e.major.x, e.major.y);
     assert!((major.len() - 4.0).abs() < 1e-9 && (e.ratio - 0.5).abs() < 1e-9, "{e:?}");
     let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
     assert!((l.a.y - 10.0).abs() < 1e-9 && (l.b.y).abs() < 1e-9, "{l:?}");
+}
+
+#[test]
+fn svg_ellipse_major_axis_is_relative_to_its_centre() {
+    // Away from the origin: the major axis was stored as the absolute point centre + axis.
+    let svg = format!("{SVG_PAGE}<ellipse cx=\"15\" cy=\"2\" rx=\"2\" ry=\"1\"/><circle cx=\"15\" cy=\"2\" r=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "ellipse.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse", "Circle"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    assert!((e.center - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{e:?}");
+    assert!((e.major.x.abs() - 2.0).abs() < 1e-9 && e.major.y.abs() < 1e-9 && e.major.z == 0.0, "{e:?}");
+    assert!((e.ratio - 0.5).abs() < 1e-9, "{e:?}");
+    let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
+    assert!((c.center - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9 && (c.radius - 1.0).abs() < 1e-9, "{c:?}");
 }
 
 #[test]
