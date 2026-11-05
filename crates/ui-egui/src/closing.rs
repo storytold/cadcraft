@@ -208,7 +208,7 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.set_width(360.0);
         ui.label(RichText::new(crate::tl!("CADCraft")).strong());
         ui.add_space(4.0);
-        ui.label(crate::tf!("Save changes to {name}?", name = title));
+        ui.label(crate::i18n::widget(ui, &crate::tf!("Save changes to {name}?", name = title), egui::TextStyle::Body));
         ui.label(RichText::new(crate::tl!("Your changes will be lost if you don't save them.")).color(t.text_dim));
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

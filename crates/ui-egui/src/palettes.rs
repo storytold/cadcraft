@@ -556,7 +556,18 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.clone());
     let w = ui.available_width() - 10.0;
     let te = id.with("te");
-    let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
+    let focused = ui.memory(|m| m.has_focus(te));
+    // Unfocused, a value holding right-to-left letters (a Hebrew text) shows in reading order;
+    // the shaper would otherwise turn it around as a whole, English words and numbers included.
+    let mut reading_order = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+        let job = crate::i18n::job(text.as_str(), crate::theme::body(), ui.visuals().text_color());
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let mut edit = egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body());
+    if !focused && crate::i18n::has_rtl(&value) {
+        edit = edit.layouter(&mut reading_order);
+    }
+    let resp = ui.add_sized([w, 20.0], edit);
     let mut out = None;
     // Keyboard focus from memory: `Response::has_focus` is false while the window itself is
     // unfocused, which dropped the typed text every frame.
@@ -899,6 +910,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids: Vec<String> = sel.iter().map(|h| h.hex()).collect();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut dim_override: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1104,28 +1116,38 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Angle", "angle", real(hh.angle.to_degrees()), &mut set, &mut bad, &ids);
             }
             EntityKind::Dimension(dm) => {
-                prop_row(ui, "Text override", |ui| {
-                    if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", &ids)), dm.text.clone()) {
-                        set = Some(json!({ "handles": ids, "textOverride": s }));
-                    }
-                });
                 prop_row(ui, "Dim style", |ui| {
                     if let Some(n) = pick_menu(ui, &dm.style, d.dim_styles.iter().map(|st| st.name.clone())) {
                         set = Some(json!({ "handles": ids, "dimStyle": n }));
                     }
                 });
-                // The style's values with this dimension's own overrides; editing one overrides
-                // it for the selected dimensions, as AutoCAD's Properties palette does.
-                let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-                num(ui, "Text height", "textHeight", len(st.text_height), &mut set, &mut bad, &ids);
-                num(ui, "Arrow size", "arrowSize", len(st.arrow_size), &mut set, &mut bad, &ids);
-                num(ui, "Dim scale overall", "dimScale", real(st.scale), &mut set, &mut bad, &ids);
-                prop_row(ui, "Precision", |ui| {
-                    let cur = st.decimals.to_string();
-                    if let Some(n) = pick_menu(ui, &cur, (0..=8).map(|n: u8| n.to_string())).and_then(|n| n.parse::<u8>().ok()) {
-                        set = Some(json!({ "handles": ids, "precision": n }));
+                // The measurement itself; the text that replaces it is the next row.
+                prop_row(ui, "Measurement", |ui| read_only(ui, &cadcraft_render::measurement_text(d, dm)));
+                prop_row(ui, "Text override", |ui| {
+                    if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", &ids)), dm.text.clone()) {
+                        set = Some(json!({ "handles": ids, "textOverride": s }));
                     }
                 });
+                // The dimension's style settings with its own overrides; a change overrides that
+                // setting for the selected dimensions (DIMOVERRIDE).
+                let style = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+                let before = crate::dimstyles::style_map(&style);
+                let mut after = before.clone();
+                let names = crate::dimstyles::Names::of(d);
+                for (title, rows) in crate::dimstyles::PROPERTIES {
+                    group(ui, title);
+                    for (label, kind) in rows.iter() {
+                        prop_row(ui, label, |ui| {
+                            crate::dimstyles::field_row(ui, egui::Id::unique(("cc_dimprop", *title, *label)), &names, &mut after, *kind);
+                        });
+                    }
+                }
+                let changed = crate::dimstyles::changed_fields(&before, &after);
+                if !changed.is_empty() {
+                    let mut p = changed;
+                    p.insert("handles".into(), json!(ids));
+                    dim_override = Some(Value::Object(p));
+                }
             }
             EntityKind::Insert(i) => {
                 // A dynamic block reference shows its dynamic block's name, not its anonymous
@@ -1173,6 +1195,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+    if let Some(p) = dim_override {
+        let _ = app.run("dimstyle.override", p);
     }
 }
 
