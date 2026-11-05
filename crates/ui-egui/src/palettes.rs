@@ -556,7 +556,18 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.clone());
     let w = ui.available_width() - 10.0;
     let te = id.with("te");
-    let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
+    let focused = ui.memory(|m| m.has_focus(te));
+    // Unfocused, a value holding right-to-left letters (a Hebrew text) shows in reading order;
+    // the shaper would otherwise turn it around as a whole, English words and numbers included.
+    let mut reading_order = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+        let job = crate::i18n::job(text.as_str(), crate::theme::body(), ui.visuals().text_color());
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let mut edit = egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body());
+    if !focused && crate::i18n::has_rtl(&value) {
+        edit = edit.layouter(&mut reading_order);
+    }
+    let resp = ui.add_sized([w, 20.0], edit);
     let mut out = None;
     // Keyboard focus from memory: `Response::has_focus` is false while the window itself is
     // unfocused, which dropped the typed text every frame.

@@ -106,6 +106,7 @@ impl AttdefM {
         s.add_entity(EntityKind::AttDef(Attrib {
             tag: self.tag.to_uppercase(),
             text: Text {
+                formula: None,
                 insert: v3(self.at),
                 align_pt: if left { None } else { Some(v3(self.at)) },
                 height: self.height,
