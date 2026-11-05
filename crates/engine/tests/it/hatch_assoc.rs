@@ -194,3 +194,19 @@ fn interactive_stretch_at_the_command_line_refills() {
     assert!(hh.associative);
     assert!(close(area(&hh), 150.0), "area {}", area(&hh));
 }
+
+/// FredApps on #2323: HATCH's Select objects on a block reference whose block holds a closed
+/// outline hatches the outline, as picking inside it does.
+#[test]
+fn a_block_reference_with_a_closed_outline_bounds_a_hatch() {
+    let mut s = Session::new();
+    let r = s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 5] })).unwrap();
+    let hs = vec![r["handle"].as_str().or_else(|| r["handles"][0].as_str()).unwrap().to_string()];
+    s.execute("block", &json!({ "name": "FRAME", "base": [0, 0], "handles": hs, "keep": "delete" })).unwrap();
+    let ins = s.execute("insert", &json!({ "name": "FRAME", "at": [100, 0] })).unwrap();
+    let ins = ins["handle"].as_str().unwrap().to_string();
+    let h = Handle::parse_hex(&handle(&s.execute("hatch", &json!({ "handles": [ins] })).unwrap())).unwrap();
+    let EntityKind::Hatch(hatch) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not a hatch") };
+    let b = Bounds2::from_points(hatch.loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)));
+    assert!((b.min.x - 100.0).abs() < 1e-6 && (b.max.x - 110.0).abs() < 1e-6 && (b.max.y - 5.0).abs() < 1e-6, "{b:?}");
+}
