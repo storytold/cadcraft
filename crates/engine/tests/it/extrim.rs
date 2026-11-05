@@ -316,3 +316,23 @@ fn refuses_an_edge_with_too_many_points_and_changes_nothing() {
     assert!(e.to_string().contains("too complex"), "{e}");
     assert_eq!(lines(&s), before);
 }
+
+#[test]
+fn a_circle_crossed_once_is_reported_not_trimmed() {
+    let mut s = Session::new();
+    // The edge ends inside the circle, so it crosses it only once: no trim can open it.
+    let edge = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let c = h(&s.execute("circle", &json!({ "center": [10, 0], "radius": 2 })).unwrap());
+    let crossing = line(&mut s, [5.0, -5.0], [5.0, 5.0]);
+    s.set_selection(vec![Handle::parse_hex(&edge).unwrap()]);
+    s.start("extrim").unwrap();
+    // The preview shows only what will go: the upper half of the vertical line.
+    assert_eq!(s.preview(Vec2::new(5.0, 3.0)).len(), 1);
+    s.cancel();
+    let v = extrim(&mut s, &edge, [5.0, 3.0]);
+    assert_eq!(v["trimmed"], 1);
+    assert_eq!(v["skipped"]["uncut"], 1, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("could not be cut"), "{v}");
+    assert!(exists(&s, &c), "the circle stays whole");
+    assert!(!exists(&s, &crossing));
+}

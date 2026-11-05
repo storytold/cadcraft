@@ -28,7 +28,7 @@ const OFFSET: f64 = 1e-5;
 pub(super) fn spec() -> CommandSpec {
     CommandSpec::new("extrim", "Extended Trim", run_extrim)
         .menu(&["Tools", "Express Tools", "Extended Trim"])
-        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, one side of an open one)} → trimmed, handles, skipped: {locked, other}")
+        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, one side of an open one)} → trimmed, handles, skipped: {locked, other, uncut}")
         .interactive(|s| Ok(Box::new(ExtrimM::new(s))))
 }
 
@@ -148,6 +148,8 @@ struct Plan {
     work: Vec<(Handle, Vec<Stretch>)>,
     locked: usize,
     other: usize,
+    /// Objects the edge crosses but no trim can cut there (a circle crossed once).
+    uncut: Vec<Handle>,
 }
 
 /// Segments of `pts` with their bounds, bucketed in a grid so crossings are found without
@@ -237,7 +239,12 @@ fn plan(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, sign: f64) -> Res
                     // The stretch between the edge crossings either side of where the trace
                     // meets the object; none when it meets the trace but not the edge (past an
                     // open edge's end).
-                    let parts = removed_part(&chain, closed, &edge_grid, x);
+                    let Some(parts) = removed_part(&chain, closed, &edge_grid, x) else {
+                        if !p.uncut.contains(&h) {
+                            p.uncut.push(h);
+                        }
+                        continue;
+                    };
                     // Trimmed at the middle of the stretch, well clear of the edge, so the cut
                     // doesn't depend on how closely the trim follows a curved edge.
                     let Some(pick) = parts.iter().max_by(|a, b| arc_length(a).total_cmp(&arc_length(b))).and_then(|q| midpoint(q)) else { continue };
@@ -302,6 +309,8 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
     let tol = edge.offset / 20.0;
     let mut trimmed = 0;
     let mut created = Vec::new();
+    // Objects some planned cut failed on, reported rather than counted as done.
+    let mut uncut = plan.uncut;
     for (h, stretches) in plan.work {
         let mut live = vec![h];
         let mut cut = false;
@@ -317,7 +326,12 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
                     .map(|(l, _)| l)
             };
             let Some(t) = target else { continue };
-            let Ok(pieces) = trim(s, t, x, edges) else { continue };
+            let Ok(pieces) = trim(s, t, x, edges) else {
+                if !uncut.contains(&h) {
+                    uncut.push(h);
+                }
+                continue;
+            };
             cut = true;
             live.retain(|l| *l != t);
             for n in pieces {
@@ -342,17 +356,21 @@ fn trim_side(s: &mut Session, edge: &Edge, sign: f64) -> Result<Value> {
     if plan.other > 0 {
         message.push_str(&format!(" {} that can't be trimmed (blocks, hatches, text…) left as they are.", plan.other));
     }
+    if !uncut.is_empty() {
+        message.push_str(&format!(" {} could not be cut there (a closed object needs two crossings).", uncut.len()));
+    }
     Ok(json!({
         "trimmed": trimmed,
         "handles": created.iter().map(|h| h.hex()).collect::<Vec<_>>(),
-        "skipped": { "locked": plan.locked, "other": plan.other },
+        "skipped": { "locked": plan.locked, "other": plan.other, "uncut": uncut.len() },
         "message": message,
     }))
 }
 
 /// What a trim at the crossing `x` of an object outline removes: the stretch of `chain` between
-/// the edge crossings either side of `x`.
-fn removed_part(chain: &[Vec2], closed: bool, edge: &Grid, x: Vec2) -> Vec<Vec<Vec2>> {
+/// the edge crossings either side of `x` (none when the edge doesn't cross it). `None` for a
+/// closed outline the edge crosses only once, which no trim can open.
+fn removed_part(chain: &[Vec2], closed: bool, edge: &Grid, x: Vec2) -> Option<Vec<Vec<Vec2>>> {
     // Distance along the chain to each vertex, each edge crossing, and the pick.
     let mut at = vec![0.0];
     for w in chain.windows(2) {
@@ -373,11 +391,16 @@ fn removed_part(chain: &[Vec2], closed: bool, edge: &Grid, x: Vec2) -> Vec<Vec<V
             pick = Some(t0 + a.dist(seg.closest(x)));
         }
     }
-    let Some(tp) = pick else { return Vec::new() };
-    if cuts.is_empty() {
-        return Vec::new();
-    }
+    let Some(tp) = pick else { return Some(Vec::new()) };
     cuts.sort_by(f64::total_cmp);
+    // A crossing at a vertex shows up on both segments that meet there.
+    cuts.dedup_by(|a, b| (*a - *b).abs() <= total * 1e-9);
+    if cuts.is_empty() {
+        return Some(Vec::new());
+    }
+    if closed && cuts.len() < 2 {
+        return None;
+    }
     let lo = cuts.iter().copied().rfind(|t| *t < tp);
     let hi = cuts.iter().copied().find(|t| *t > tp);
     // The part of the chain between distances `from` and `to`.
@@ -396,14 +419,14 @@ fn removed_part(chain: &[Vec2], closed: bool, edge: &Grid, x: Vec2) -> Vec<Vec<V
         }
         out
     };
-    match (lo, hi) {
+    Some(match (lo, hi) {
         (Some(lo), Some(hi)) => vec![part(lo, hi)],
         (None, Some(hi)) if closed => vec![part(cuts.last().copied().unwrap_or(total), total), part(0.0, hi)],
         (Some(lo), None) if closed => vec![part(lo, total), part(0.0, cuts.first().copied().unwrap_or(0.0))],
         (None, Some(hi)) => vec![part(0.0, hi)],
         (Some(lo), None) => vec![part(lo, total)],
         (None, None) => Vec::new(),
-    }
+    })
 }
 
 /// The parts the trim would remove, drawn red.
