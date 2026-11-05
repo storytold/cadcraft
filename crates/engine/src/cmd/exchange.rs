@@ -213,8 +213,8 @@ fn units_per_mm(d: &Drawing) -> f64 {
         5 => 0.1,
         6 => 0.001,
         7 => 1e-6,
-        8 => 39.370_078_74,
-        9 => 39_370.078_74,
+        8 => 39_370.078_74,
+        9 => 39.370_078_74,
         10 => 1.0 / 914.4,
         14 => 0.01,
         15 => 1e-4,
@@ -779,6 +779,14 @@ mod tests {
         assert_eq!(r["pages"], 3);
         let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };
         assert!((l.b.x - (10.0 + 2.0 / 72.0)).abs() < 1e-9, "inches, scaled and moved: {l:?}");
+
+        // 8 is microinches and 9 is mils: a point is 1e6/72 and 1000/72 of them.
+        for (units, per_point) in [(8, 1e6 / 72.0), (9, 1000.0 / 72.0)] {
+            s.doc_mut().unwrap().header.set_i64("INSUNITS", units);
+            s.execute("pdfimport", &json!({ "data": data, "name": "plan.pdf" })).unwrap();
+            let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };
+            assert!((l.b.x / per_point - 1.0).abs() < 1e-9, "INSUNITS {units}: {l:?}");
+        }
     }
 
     #[test]
