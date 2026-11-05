@@ -245,6 +245,9 @@ struct Db {
     paths: HashMap<String, Source>,
     /// Loaded or registered font file bytes, by lower-case file stem.
     files: HashMap<String, Arc<Vec<u8>>>,
+    /// The keys of `files` given by [`register`]: kept over a file of the same stem, and by a
+    /// rescan.
+    registered: std::collections::HashSet<String>,
     /// Name lookups already answered, found or not.
     resolved: HashMap<String, Option<Face>>,
     fallback: Fallback,
@@ -454,9 +457,11 @@ pub fn set_font_dirs<S: AsRef<str>>(dirs: &[S]) {
 /// Forget what was found and look for fonts again (files added to a font folder).
 pub fn rescan() {
     let mut g = lock();
-    // Fonts registered by name (no file behind them) stay.
+    // Fonts registered by name stay, also where a found file has the same stem; bytes read
+    // from found files go.
     let paths = std::mem::take(&mut g.paths);
-    g.files.retain(|k, _| !paths.contains_key(k));
+    let Db { files, registered, .. } = &mut *g;
+    files.retain(|k, _| registered.contains(k) || !paths.contains_key(k));
     g.scanned = false;
     g.resolved.clear();
     g.fallback = Fallback::default();
@@ -797,7 +802,9 @@ pub(crate) fn rank_fallback(stems: &[String]) -> Vec<String> {
 /// Register font bytes under a name (web builds and tests).
 pub fn register(name: &str, bytes: Vec<u8>) {
     let mut g = lock();
-    g.files.insert(key(name), Arc::new(bytes));
+    let k = key(name);
+    g.files.insert(k.clone(), Arc::new(bytes));
+    g.registered.insert(k);
     g.resolved.clear();
     g.fallback = Fallback::default();
 }
@@ -809,6 +816,7 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     let mut g = lock();
     let k = key(name);
     g.files.remove(&k);
+    g.registered.remove(&k);
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();

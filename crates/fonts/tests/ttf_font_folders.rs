@@ -42,6 +42,11 @@ fn a_font_in_a_user_folder_is_found_listed_and_dropped_with_the_folder() {
     if !copy_into(&src, &dir) {
         return;
     }
+    // A font registered by name, with a file of the same stem in the folder: looking for fonts
+    // again (twice, as the folder comes and goes) keeps the registered bytes.
+    let Ok(bytes) = std::fs::read(&src) else { return };
+    let _ = std::fs::copy(&src, dir.join("CadcraftRegistered.ttf"));
+    ttf::register("CadcraftRegistered.ttf", bytes);
     let before = ttf::generation();
     ttf::set_font_dirs(&[dir.to_string_lossy().to_string()]);
     assert!(ttf::generation() > before);
@@ -55,5 +60,6 @@ fn a_font_in_a_user_folder_is_found_listed_and_dropped_with_the_folder() {
     }
     ttf::set_font_dirs::<&str>(&[]);
     assert!(ttf::find("CadcraftTestFace.ttf").is_none());
+    assert!(ttf::find("CadcraftRegistered.ttf").is_some(), "a registered font outlives a rescan");
     let _ = std::fs::remove_dir_all(&dir);
 }
