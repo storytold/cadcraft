@@ -175,17 +175,19 @@ pub struct Machine {
     stack: Vec<Frame>,
     state: State,
     need: Option<Need>,
+    /// Steps the last [`Machine::run`] took, with the work done inside them.
+    pub(crate) used: u64,
 }
 
 impl Machine {
     /// A machine evaluating `forms` in turn.
     pub fn forms(forms: Vec<Value>) -> Machine {
-        Machine { stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }], state: State::Ret(Value::Nil), need: None }
+        Machine { stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }], state: State::Ret(Value::Nil), need: None, used: 0 }
     }
 
     /// A machine calling `f` with `args`.
     pub fn calling(f: Value, args: Vec<Value>) -> Machine {
-        Machine { stack: Vec::new(), state: State::Call(f, args), need: None }
+        Machine { stack: Vec::new(), state: State::Call(f, args), need: None, used: 0 }
     }
 
     /// Give the value a [`Need`] waited for, and carry on.
@@ -193,12 +195,20 @@ impl Machine {
         self.state = State::Ret(v);
     }
 
-    /// Run until done, waiting, or `budget` steps.
+    /// Run until done, waiting, or `budget` steps. A step that walks a long list (`length`) or
+    /// runs a synchronous callback counts that work too, so one slice stays short.
     pub fn run(&mut self, ctx: &mut Ctx<'_>, budget: u64) -> Outcome {
         let mut n = 0u64;
+        let outcome = self.run_counted(ctx, budget, &mut n);
+        // The last step's work too, so nothing is left for the next run.
+        self.used = n.saturating_add(super::value::take_work());
+        outcome
+    }
+
+    fn run_counted(&mut self, ctx: &mut Ctx<'_>, budget: u64, n: &mut u64) -> Outcome {
         loop {
-            n += 1;
-            if n > budget {
+            *n = n.saturating_add(1).saturating_add(super::value::take_work());
+            if *n > budget {
                 return Outcome::Wait(Need::Yield);
             }
             let r = match std::mem::replace(&mut self.state, State::Ret(Value::Nil)) {
@@ -654,23 +664,28 @@ impl Ctx<'_> {
         // loop inside a comparator or predicate terminates with an error rather than hanging the
         // thread and bypassing the blocking execution cap (CWE-400).
         let mut spent: u64 = 0;
-        loop {
+        let result = loop {
             let remaining = cap.saturating_sub(spent);
             if remaining == 0 {
-                return Err(LispError::new(format!("callback stopped after {cap} steps")));
+                break Err(LispError::new(format!("callback stopped after {cap} steps")));
             }
             let slice = remaining.min(SYNC_SLICE);
-            match m.run(&mut sub, slice) {
-                Outcome::Done(v) => return Ok(v),
-                Outcome::Error(e) => return Err(e),
+            let outcome = m.run(&mut sub, slice);
+            spent = spent.saturating_add(m.used);
+            match outcome {
+                Outcome::Done(v) => break Ok(v),
+                Outcome::Error(e) => break Err(e),
                 Outcome::Wait(Need::Yield) => {
-                    spent = spent.saturating_add(slice);
                     if spent >= cap {
-                        return Err(LispError::new(format!("callback stopped after {cap} steps")));
+                        break Err(LispError::new(format!("callback stopped after {cap} steps")));
                     }
                 }
-                Outcome::Wait(_) => return Err(LispError::new("this function can't ask for input here")),
+                Outcome::Wait(_) => break Err(LispError::new("this function can't ask for input here")),
             }
-        }
+        };
+        // Its steps, nested callbacks' included, are work done inside the caller's one step: they
+        // count against every enclosing callback's cap and slice.
+        super::value::charge_work(spent);
+        result
     }
 }

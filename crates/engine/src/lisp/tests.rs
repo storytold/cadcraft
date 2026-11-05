@@ -245,6 +245,63 @@ fn synchronous_callback_loop_is_an_error_not_a_hang() {
     assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
 }
 
+/// A step that walks a long list counts its work: an endless loop over one gives frames.
+#[test]
+fn walking_a_long_list_counts_against_the_slice() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    // Each `length` is one step walking 131072 cells: a 400000-step slice was 5e10 cells, no frame.
+    let r = s.lisp_eval("(setq l '(1)) (repeat 17 (setq l (append l l))) (while t (length l))", false, false, Vec::new()).unwrap();
+    assert!(r.is_none(), "the routine gave the interface a frame");
+    for _ in 0..20 {
+        assert!(s.lisp_busy());
+        s.lisp_tick();
+    }
+    s.lisp_abort("Function cancelled");
+    assert!(!s.lisp_running());
+    assert_eq!(ok(&mut s, "(setq l nil) (+ 1 2)"), "3");
+}
+
+/// A run's last step walking a long list is charged to that run, not left for the next one: here
+/// it fails after the walk (a list of numbers isn't a list of strings), so no step follows it.
+#[test]
+fn the_last_steps_list_walk_is_charged_to_its_run() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list(vec![Value::Int(1); 100_000]));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(acad_strlsort l)").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    assert!(matches!(m.run(&mut ctx, u64::MAX), super::eval::Outcome::Error(_)));
+    assert!(m.used > 100_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
+/// Nested callbacks share one cap: an inner endless callback retried by an outer one stops.
+#[test]
+fn nested_callback_steps_count_against_the_outer_callback() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 10_000;
+    // Each level retried the endless level inside it with a fresh cap: 10000^3 steps, a hang.
+    let code = "(defun g (a b) (while t)) \
+                (defun f (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'g)))) \
+                (defun h (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'f)))) \
+                (vl-sort '(1 2) 'h)";
+    assert_eq!(eval(&mut s, code), Err("callback stopped after 10000 steps".into()));
+    // A callback's own steps count once, however many slices it runs in: three slices do three
+    // times the work of one.
+    let counts: Vec<u64> = [400_000, 1_200_000]
+        .into_iter()
+        .map(|cap| {
+            s.lisp.limits.callback_steps = cap;
+            ok(&mut s, "(setq n 0)");
+            assert!(eval(&mut s, "(vl-remove-if '(lambda (x) (while t (setq n (1+ n)))) '(1))").is_err());
+            ok(&mut s, "n").parse().unwrap()
+        })
+        .collect();
+    assert!(counts[1] * 10 >= counts[0] * 29, "{counts:?}");
+}
+
 /// A zero-step callback limit prevents even the first callback side effect.
 #[test]
 fn a_zero_callback_budget_does_not_run_the_callback() {
