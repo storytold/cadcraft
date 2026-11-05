@@ -236,3 +236,32 @@ fn arraypath_refuses_before_adding_any_copy() {
     assert_eq!(s.doc().unwrap().model.len(), count, "no copy was added");
     assert_eq!(corners(&s), before);
 }
+
+/// A refused command leaves the drawing and its undo history alone: UNDO afterwards takes back the
+/// earlier MOVE, not a phantom step (review on #2587).
+#[test]
+fn a_refused_rotation_adds_no_undo_step() {
+    let (mut s, h) = session();
+    let original = corners(&s);
+    s.execute("move", &json!({ "handles": [h.clone()], "delta": [10, 5] })).unwrap();
+    let undo = s.state().unwrap().undo.len();
+    s.execute("rotate", &json!({ "handles": [h], "base": [0, 0], "angle": 30 })).expect_err("rotate");
+    assert_eq!(s.state().unwrap().undo.len(), undo);
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(corners(&s), original);
+}
+
+/// The classic -ARRAY makes separate copies: a polar array that turns its items refuses an OLE
+/// frame before the first copy, and one that keeps the items upright carries it.
+#[test]
+fn classic_polar_array_refuses_a_turned_frame_but_not_an_upright_one() {
+    let (mut s, h) = session();
+    let before = corners(&s);
+    let turned = json!({ "handles": [h.clone()], "type": "polar", "center": [0, 0], "count": 4, "rotate": true });
+    let e = s.execute("-array", &turned).expect_err("turned items");
+    assert!(e.to_string().contains("OLE object"), "{e}");
+    assert_eq!((s.doc().unwrap().model.len(), corners(&s)), (1, before));
+    let upright = json!({ "handles": [h], "type": "polar", "center": [0, 0], "count": 4, "rotate": false });
+    s.execute("-array", &upright).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), 4);
+}

@@ -161,7 +161,10 @@ pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) 
 /// upper-left.
 pub fn ole_frame_accepts(m: &cadcraft_geom::Mat3) -> bool {
     const T: f64 = 1e-12;
-    m.b.abs() < T && m.c.abs() < T && m.a > 0.0 && (m.a - m.d).abs() <= T * m.a.abs().max(1.0)
+    // The tolerance grows with the scale: a matrix built from two angles (ALIGN) leaves rounding noise
+    // in b and c of about `scale * 1e-16`.
+    let t = T * m.a.abs().max(1.0);
+    m.b.abs() < t && m.c.abs() < t && m.a > 0.0 && (m.a - m.d).abs() <= t
 }
 
 /// Bounds of a single-line TEXT / ATTDEF / ATTRIB of `len` characters, following its justification
@@ -767,6 +770,20 @@ mod tests {
         assert!(!ole_frame_accepts(&Mat3::rotate_about(p, 0.5)));
         assert!(!ole_frame_accepts(&Mat3::mirror(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0))));
     }
+    /// ALIGN with a scale builds its matrix from two angles that agree only to rounding, so a large
+    /// scale leaves a rotation part of about `scale * 1e-16`. That is a scale, not a turn: the
+    /// tolerance for it grows with the scale, while a real turn is still refused (review on #2587).
+    #[test]
+    fn ole_frame_accepts_a_large_scale_with_rounding_noise_in_its_rotation() {
+        use cadcraft_geom::Mat3;
+        let p = Vec2::new(3.0, -4.0);
+        let noisy = Mat3::scale_about(p, 1e6).then_before(Mat3::rotate_about(p, 2e-16));
+        assert!(noisy.b.abs() > 1e-12, "the setup must exceed an absolute tolerance: {}", noisy.b);
+        assert!(ole_frame_accepts(&noisy));
+        let turned = Mat3::scale_about(p, 1e6).then_before(Mat3::rotate_about(p, 1e-6));
+        assert!(!ole_frame_accepts(&turned));
+    }
+
     /// The corners (x, y) in the OLE data header of a frame built by [`big_frame`]-style tags.
     fn header_corners(tags: &[crate::RawTag]) -> Vec<(f64, f64)> {
         let hex: String = tags.iter().filter(|t| t.code == 310).map(|t| t.value.as_str()).collect();
