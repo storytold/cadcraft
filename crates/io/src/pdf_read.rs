@@ -39,6 +39,10 @@ const MAX_TOTAL_VERTS: usize = 8_000_000;
 const MAX_POLY_VERTS: usize = 100_001;
 /// Glyphs read from one page.
 const MAX_GLYPHS: usize = 2_000_000;
+/// Characters one glyph may stand for (a ToUnicode entry may map a code to a string of any length).
+const MAX_GLYPH_CHARS: usize = 32;
+/// Characters of text read from one page.
+const MAX_TEXT_CHARS: usize = 4_000_000;
 /// A page is refused when its sides, in points, are not between these.
 const MAX_PAGE_PT: f64 = 200_000.0;
 /// Millimetres in a PDF point (1/72 inch).
@@ -83,6 +87,11 @@ impl Default for PdfImportOptions {
 
 /// Read one page of a PDF. Returns the drawing and the number of pages in the file.
 pub fn read(bytes: &[u8], o: &PdfImportOptions) -> Result<(Drawing, usize)> {
+    read_within(bytes, o, MAX_TOTAL_VERTS)
+}
+
+/// [`read`] with the page's vertex budget given (the tests use a small one).
+fn read_within(bytes: &[u8], o: &PdfImportOptions, verts: usize) -> Result<(Drawing, usize)> {
     if !o.unit.is_finite() || o.unit <= 0.0 {
         return Err(IoError::Format("PDF: the unit must be a positive number".into()));
     }
@@ -101,6 +110,7 @@ pub fn read(bytes: &[u8], o: &PdfImportOptions) -> Result<(Drawing, usize)> {
     let mut context =
         Context::new(page.initial_transform(false).to_kurbo(), Rect::new(0.0, 0.0, w, h), &cache, page.xref(), InterpreterSettings::default());
     let mut dev = Collector::new(o);
+    dev.verts_left = verts;
     craft_pdf::interpret_page(page, &mut context, &mut dev).map_err(|e| IoError::Format(format!("PDF: {e}")))?;
     dev.flush_text();
     if let Some(e) = dev.failure.take() {
@@ -178,6 +188,8 @@ struct Collector {
     entities: usize,
     verts_left: usize,
     glyphs: usize,
+    /// Characters of text the page may still add.
+    text_left: usize,
     run: Option<Run>,
     /// The text last added: where it starts, its string and its size, so the same text drawn again
     /// at the same place (a fill and then its stroke, render mode 2) is not added twice.
@@ -237,6 +249,7 @@ impl Collector {
             entities: 0,
             verts_left: MAX_TOTAL_VERTS,
             glyphs: 0,
+            text_left: MAX_TEXT_CHARS,
             run: None,
             last_text: None,
             left_out: BTreeMap::new(),
@@ -317,34 +330,47 @@ impl Collector {
         let mut out: Vec<(Vec<PolyVertex>, bool)> = Vec::new();
         let mut cur: Vec<PolyVertex> = Vec::new();
         let mut start = Vec2::ZERO;
-        let finish = |cur: &mut Vec<PolyVertex>, closed: bool, out: &mut Vec<(Vec<PolyVertex>, bool)>| {
+        // The vertices in `out` so far: with those in `cur` they are held against what is left of
+        // the page's budget here, before the objects are added, so that one path of many curves
+        // can't build more than the page may hold.
+        let mut kept = 0usize;
+        let finish = |cur: &mut Vec<PolyVertex>, closed: bool, out: &mut Vec<(Vec<PolyVertex>, bool)>, kept: &mut usize| {
             let mut v = std::mem::take(cur);
             if closed && v.len() > 1 && v.first().zip(v.last()).is_some_and(|(a, b)| (a.p - b.p).len() < 1e-9) {
                 v.pop();
             }
             if v.len() >= 2 {
+                *kept = kept.saturating_add(v.len());
                 out.push((v, closed));
             }
         };
         for el in path.elements() {
             if cur.len() > MAX_POLY_VERTS {
                 self.fail("one path has too many vertices");
-                break;
+                return Vec::new();
+            }
+            if kept.saturating_add(cur.len()) > self.verts_left {
+                self.fail("too much geometry on the page");
+                return Vec::new();
             }
             match *el {
                 PathEl::MoveTo(p) => {
-                    finish(&mut cur, false, &mut out);
+                    finish(&mut cur, false, &mut out, &mut kept);
                     start = pt(m * p);
                     cur.push(PolyVertex::new(start));
                 }
                 PathEl::LineTo(p) => {
+                    // After a close the current point is where the subpath started.
                     if cur.is_empty() {
                         cur.push(PolyVertex::new(start));
                     }
                     cur.push(PolyVertex::new(pt(m * p)));
                 }
                 PathEl::QuadTo(c, p) => {
-                    let Some(p0) = cur.last().map(|v| v.p) else { continue };
+                    if cur.is_empty() {
+                        cur.push(PolyVertex::new(start));
+                    }
+                    let p0 = cur.last().map_or(start, |v| v.p);
                     let q = pt(m * c);
                     let p3 = pt(m * p);
                     let c1 = p0 + (q - p0) * (2.0 / 3.0);
@@ -352,16 +378,27 @@ impl Collector {
                     curve(&mut cur, [p0, c1, c2, p3], tol);
                 }
                 PathEl::CurveTo(a, b, p) => {
-                    let Some(p0) = cur.last().map(|v| v.p) else { continue };
+                    if cur.is_empty() {
+                        cur.push(PolyVertex::new(start));
+                    }
+                    let p0 = cur.last().map_or(start, |v| v.p);
                     curve(&mut cur, [p0, pt(m * a), pt(m * b), pt(m * p)], tol);
                 }
                 PathEl::ClosePath => {
-                    finish(&mut cur, true, &mut out);
+                    finish(&mut cur, true, &mut out, &mut kept);
                     // A path may go on from the point it closed to.
                 }
             }
         }
-        finish(&mut cur, false, &mut out);
+        if cur.len() > MAX_POLY_VERTS {
+            self.fail("one path has too many vertices");
+            return Vec::new();
+        }
+        if kept.saturating_add(cur.len()) > self.verts_left {
+            self.fail("too much geometry on the page");
+            return Vec::new();
+        }
+        finish(&mut cur, false, &mut out, &mut kept);
         out
     }
 
@@ -476,7 +513,9 @@ impl Collector {
             Some(BfString::String(s)) => s,
             None => return self.left_out(LeftOut::NoUnicode),
         };
-        let ch: String = ch.chars().filter(|c| !c.is_control() && *c != '\u{FFFD}').collect();
+        // A ToUnicode entry may map one code to a string of any length: one glyph gives at most
+        // MAX_GLYPH_CHARS characters.
+        let ch: String = ch.chars().filter(|c| !c.is_control() && *c != '\u{FFFD}').take(MAX_GLYPH_CHARS).collect();
         if ch.is_empty() {
             return;
         }
@@ -486,11 +525,14 @@ impl Collector {
         let ex = pt(m * Point::new(1000.0, 0.0)) - origin;
         let ey = pt(m * Point::new(0.0, 1000.0)) - origin;
         let (lx, em) = (ex.len(), ey.len());
-        if !(origin.x.is_finite() && origin.y.is_finite() && lx > 0.0 && em > 0.0 && em.is_finite()) {
+        if !(origin.x.is_finite() && origin.y.is_finite() && lx > 0.0 && lx.is_finite() && em > 0.0 && em.is_finite()) {
             return;
         }
         let dir = ex * (1.0 / lx);
-        let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0)));
+        if !(dir.x.is_finite() && dir.y.is_finite()) {
+            return;
+        }
+        let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0))).filter(|e| e.x.is_finite() && e.y.is_finite());
         // A glyph is kept when its middle (half its advance along, half the cap height up) lies in
         // the clip. Its origin is no test: a plotter often clips each text to a box drawn through
         // that origin (or ends the page clip there), and rounding then puts it a hair outside.
@@ -501,6 +543,11 @@ impl Collector {
         {
             return;
         }
+        // The characters this glyph adds, and a space before them, against the page's text budget.
+        let Some(left) = self.text_left.checked_sub(ch.chars().count().saturating_add(1)) else {
+            return self.fail(&format!("more than {MAX_TEXT_CHARS} characters of text on the page"));
+        };
+        self.text_left = left;
 
         if let Some(run) = &mut self.run {
             // A fill and its stroke (render mode 2) arrive as two calls for one glyph at one origin;
@@ -819,4 +866,40 @@ impl<'a> Device<'a> for Collector {
         self.clips.pop();
     }
     fn pop_transparency_group(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-page PDF, 600 x 800 points, drawing `content`.
+    fn page(content: &str) -> Vec<u8> {
+        format!(
+            "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+             2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
+             3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R >> endobj\n\
+             4 0 obj << /Length {} >> stream\n{content}\nendstream endobj\n\
+             trailer << /Root 1 0 R >>\n%%EOF\n",
+            content.len()
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn many_curves_in_one_path_stop_at_the_vertex_budget() {
+        // About 500 vertices a curve and 200 curves in one path: some 100 000 vertices against a
+        // budget of 10 000. The path is refused while its subpaths are built, also when a clip
+        // would have left all of it out.
+        let curves = "0 0 m 0 1 1 1 1 0 c ".repeat(200);
+        let o = PdfImportOptions::default();
+        let whole = format!("1000000 0 0 1000000 0 0 cm {curves}S");
+        let clipped = format!("q 0 0 1 1 re W n 1000000 0 0 1000000 5000000 5000000 cm {curves}S Q");
+        for content in [&whole, &clipped] {
+            let e = read_within(&page(content), &o, 10_000).unwrap_err().to_string();
+            assert!(e.contains("too much geometry on the page"), "{e}");
+        }
+        // Within the budget the same path is read.
+        let (d, _) = read_within(&page(&whole), &o, MAX_TOTAL_VERTS).unwrap();
+        assert_eq!(d.model.iter().count(), 200);
+    }
 }

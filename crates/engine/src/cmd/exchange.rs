@@ -216,8 +216,18 @@ fn units_per_mm(d: &Drawing) -> f64 {
         8 => 39_370.078_74,
         9 => 39.370_078_74,
         10 => 1.0 / 914.4,
+        11 => 1e7,
+        12 => 1e6,
+        13 => 1e3,
         14 => 0.01,
         15 => 1e-4,
+        16 => 1e-5,
+        17 => 1e-12,
+        // An astronomical unit is 149 597 870 700 m, a light year 9 460 730 472 580 800 m and a
+        // parsec 648 000 / pi astronomical units.
+        18 => 1.0 / 1.495_978_707e14,
+        19 => 1.0 / 9.460_730_472_580_8e18,
+        20 => std::f64::consts::PI / (648_000.0 * 1.495_978_707e14),
         _ => 1.0,
     }
 }
@@ -781,7 +791,22 @@ mod tests {
         assert!((l.b.x - (10.0 + 2.0 / 72.0)).abs() < 1e-9, "inches, scaled and moved: {l:?}");
 
         // 8 is microinches and 9 is mils: a point is 1e6/72 and 1000/72 of them.
-        for (units, per_point) in [(8, 1e6 / 72.0), (9, 1000.0 / 72.0)] {
+        // 11 to 13 are angstroms, nanometres and microns; 16 to 20 hectometres, gigametres,
+        // astronomical units, light years and parsecs.
+        let mm_per_point = 25.4 / 72.0;
+        let parsec_mm = 648_000.0 / std::f64::consts::PI * 1.495_978_707e14;
+        for (units, per_point) in [
+            (8, 1e6 / 72.0),
+            (9, 1000.0 / 72.0),
+            (11, mm_per_point * 1e7),
+            (12, mm_per_point * 1e6),
+            (13, mm_per_point * 1e3),
+            (16, mm_per_point * 1e-5),
+            (17, mm_per_point * 1e-12),
+            (18, mm_per_point / 1.495_978_707e14),
+            (19, mm_per_point / 9.460_730_472_580_8e18),
+            (20, mm_per_point / parsec_mm),
+        ] {
             s.doc_mut().unwrap().header.set_i64("INSUNITS", units);
             s.execute("pdfimport", &json!({ "data": data, "name": "plan.pdf" })).unwrap();
             let EntityKind::Line(l) = &s.doc().unwrap().model.iter().last().unwrap().kind else { panic!() };

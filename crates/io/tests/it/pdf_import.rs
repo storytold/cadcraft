@@ -381,3 +381,68 @@ fn a_plot_of_a_drawing_imports_back_as_its_geometry() {
     let lines = back.model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_) | EntityKind::LwPolyline(_))).count();
     assert!(lines >= 1, "{:?}", back.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
 }
+
+/// A one-page PDF drawing `content` with Helvetica as `/F1`, whose ToUnicode CMap maps the code
+/// `<41>` to `to` (a hex string of UTF-16 code units).
+fn page_with_to_unicode(content: &str, to: &str) -> Vec<u8> {
+    let cmap = format!(
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+         /CMapName /Test def /CMapType 2 def\n\
+         1 begincodespacerange <00> <FF> endcodespacerange\n\
+         1 beginbfchar <41> <{to}> endbfchar\n\
+         endcmap CMapName currentdict /CMap defineresource pop end end"
+    );
+    format!(
+        "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+         2 0 obj << /Type /Pages /Kids [10 0 R] /Count 1 >> endobj\n\
+         3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 5 0 R >> endobj\n\
+         5 0 obj << /Length {} >> stream\n{cmap}\nendstream endobj\n\
+         10 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 11 0 R /Resources << /Font << /F1 3 0 R >> >> >> endobj\n\
+         11 0 obj << /Length {} >> stream\n{content}\nendstream endobj\n\
+         trailer << /Root 1 0 R >>\n%%EOF\n",
+        cmap.len(),
+        content.len()
+    )
+    .into_bytes()
+}
+
+#[test]
+fn one_glyph_gives_at_most_32_characters_and_a_page_a_bounded_text() {
+    // `<41>` (an A) stands for 16 000 Bs.
+    let long = "0042".repeat(16_000);
+    let d = read(&page_with_to_unicode("BT /F1 12 Tf 100 200 Td (A) Tj ET", &long), &PdfImportOptions::default()).unwrap().0;
+    assert_eq!(texts(&d), ["B".repeat(32)]);
+    // 125 000 of them, each kerned back onto the one before: more text than a page may hold, so
+    // the import stops with a reason instead of growing the text.
+    let content = format!("BT /F1 12 Tf 100 200 Td [{}] TJ ET", "(A) 667 ".repeat(125_000));
+    let e = read(&page_with_to_unicode(&content, &long), &PdfImportOptions::default()).unwrap_err().to_string();
+    assert!(e.contains("characters of text on the page"), "{e}");
+}
+
+#[test]
+fn text_with_a_scale_too_large_for_numbers_is_skipped_not_added() {
+    // Ten times 1e30 makes 1e300; a larger font size pushes the em square past what a number holds,
+    // and a horizontal scaling of 1000 % its width alone (the baseline's direction).
+    let big = "1000000000000000000000000000000 0 0 1000000000000000000000000000000 0 0 cm ".repeat(10);
+    for (size, scaling) in [1, 100, 10_000, 1_000_000, 100_000_000].into_iter().flat_map(|s| [(s, 100), (s, 1000)]) {
+        let r = read(&page(&format!("{big} BT /F1 {size} Tf {scaling} Tz (AB) Tj ET")), &PdfImportOptions::default());
+        let (d, _) = r.unwrap_or_else(|e| panic!("size {size}, scaling {scaling}: {e}"));
+        for e in kinds(&d) {
+            if let EntityKind::Text(t) = &e.kind {
+                let finite = |v: Vec3| v.x.is_finite() && v.y.is_finite();
+                assert!(finite(t.insert) && t.align_pt.is_none_or(finite) && t.rotation.is_finite() && t.height.is_finite(), "{t:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_curve_after_a_close_starts_where_the_subpath_did() {
+    let d = import("0 0 m 100 0 l 100 100 l h 0 50 50 100 100 100 c S");
+    let all = kinds(&d);
+    assert_eq!(all.len(), 2, "{all:?}");
+    let EntityKind::LwPolyline(p) = &all[1].kind else { panic!("{:?}", all[1].kind) };
+    let (first, last) = (p.vertices.first().unwrap().p, p.vertices.last().unwrap().p);
+    assert!(near(first.x, 0.0) && near(first.y, 0.0), "{first:?}");
+    assert!(near(last.x, 100.0 * MM_PER_PT) && near(last.y, 100.0 * MM_PER_PT), "{last:?}");
+}
