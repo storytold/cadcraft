@@ -17,10 +17,12 @@
 //!   lacks (CJK in an SHX big font, for example), before the automatic system font search.
 //!
 //! Both start empty; the host sets its starting values ([`set_font_alt`], [`set_fallback_fonts`]).
+//!
+//! Besides the system font folders, the user's own font folders ([`set_font_dirs`], Options ▸
+//! Fonts) are searched first: a font placed there wins over an installed one with the same file
+//! name.
 
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
@@ -84,6 +86,16 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// The family name, as the font gives it (the typographic family, else the family when that
+    /// is missing or blank).
+    pub fn family_name(&self) -> Option<String> {
+        let f = self.font()?;
+        [skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FAMILY_NAME].into_iter().find_map(|id| {
+            let s = f.localized_strings(id).next()?.to_string();
+            Some(s.chars().filter(|c| !c.is_control()).take(80).collect::<String>()).filter(|s| !s.trim().is_empty())
+        })
+    }
+
     /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
     pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
         let Some(f) = self.font() else { return vec![None; chars.len()] };
@@ -242,11 +254,28 @@ struct Db {
     paths: HashMap<String, Source>,
     /// Loaded or registered font file bytes, by lower-case file stem.
     files: HashMap<String, Arc<Vec<u8>>>,
+    /// The keys of `files` given by [`register`]: kept over a file of the same stem, and by a
+    /// rescan.
+    registered: std::collections::HashSet<String>,
     /// Name lookups already answered, found or not.
     resolved: HashMap<String, Option<Face>>,
     fallback: Fallback,
     /// Bytes of font files loaded from disk so far (bounded by `MAX_LOADED_BYTES`).
     loaded_bytes: usize,
+    /// Stems of the fonts found in the user's font folders.
+    user: std::collections::HashSet<String>,
+    /// Names read from user font files for lists and family searches, by stem. Reading them
+    /// does not keep the file's bytes, so it does not use up `MAX_LOADED_BYTES`.
+    face_names: HashMap<String, Arc<FaceNames>>,
+}
+
+/// The names inside one font file.
+#[derive(Default)]
+struct FaceNames {
+    /// The first face's family name.
+    family: Option<String>,
+    /// Each face's normalized names (family, typographic family, full name).
+    faces: Vec<Vec<String>>,
 }
 
 /// State of the missing-glyph search.
@@ -277,10 +306,18 @@ fn lock() -> MutexGuard<'static, Db> {
     let mut g = DB.get_or_init(|| Mutex::new(Db::default())).lock().unwrap_or_else(PoisonError::into_inner);
     if !g.scanned {
         g.scanned = true;
-        g.paths = scan().into_iter().map(|(stem, p)| (stem, Source::File(p))).collect();
-        // Embedded craft-fonts fonts take the place of an installed file with the same stem.
+        let user = scan_dirs(&user_dirs(), true);
+        g.user = user.keys().cloned().collect();
+        let mut all = scan();
+        all.extend(user);
+        g.paths = all.into_iter().map(|(stem, p)| (stem, Source::File(p))).collect();
+        // Embedded craft-fonts fonts take the place of an installed file with the same stem,
+        // but not of a font in the user's own folders (which they chose to use).
         for f in crate::CRAFT_FONTS {
-            g.paths.insert(f.stem(), Source::Static(f.bytes));
+            let stem = f.stem();
+            if !g.user.contains(&stem) {
+                g.paths.insert(stem, Source::Static(f.bytes));
+            }
         }
     }
     g
@@ -288,7 +325,7 @@ fn lock() -> MutexGuard<'static, Db> {
 
 /// The platform's system font directories, in search order.
 #[cfg(not(target_arch = "wasm32"))]
-fn font_dirs() -> Vec<PathBuf> {
+fn system_font_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into));
@@ -308,32 +345,29 @@ fn font_dirs() -> Vec<PathBuf> {
     } else {
         // Where fontconfig looks: NixOS, Guix and Flatpak keep fonts outside /usr/share/fonts
         // (#674). Later directories take precedence (the stack pops them first), so the
-        // resolver's priority order is reversed; [`walk_font_dirs`] reads each resolved
+        // resolver's priority order is reversed; [`scan_dirs`] reads each resolved
         // directory once and skips missing ones.
         dirs.extend(dirs::font_dirs(|k| std::env::var_os(k), dirs::read_config).into_iter().rev());
     }
     dirs
 }
 
-/// Installed font files by lower-case stem, from the platform's font directories (on Linux and
-/// the BSDs, wherever fontconfig looks: [`dirs`]).
+/// Every font file under [`system_font_dirs`], by lower-case file stem.
 #[cfg(not(target_arch = "wasm32"))]
 fn scan() -> HashMap<String, PathBuf> {
-    walk_font_dirs(font_dirs())
+    scan_dirs(&system_font_dirs(), false)
 }
 
-/// Font files by lower-case stem under `dirs`, the last directory first. Each directory is read
-/// once by its resolved path, so a symlink back up the tree cannot use up the entry budget
-/// before the other directories are reached.
+/// Font files under `dirs` by lower-case stem; the first file found with a stem wins
+/// (`in_order`: a folder listed earlier wins over a later one).
 #[cfg(not(target_arch = "wasm32"))]
-fn walk_font_dirs(dirs: Vec<PathBuf>) -> HashMap<String, PathBuf> {
+fn scan_dirs(dirs: &[PathBuf], in_order: bool) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
-    let mut stack = dirs;
-    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<PathBuf> = if in_order { dirs.iter().rev().cloned().collect() } else { dirs.to_vec() };
     let mut seen = 0usize;
+    let mut visited = std::collections::HashSet::new();
     while let Some(d) = stack.pop() {
-        let Ok(c) = std::fs::canonicalize(&d) else { continue };
-        if !visited.insert(c) {
+        if !first_visit(&mut visited, &d) {
             continue;
         }
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
@@ -343,6 +377,8 @@ fn walk_font_dirs(dirs: Vec<PathBuf>) -> HashMap<String, PathBuf> {
                 return out;
             }
             let p = e.path();
+            // Linked folders are followed (font folders often are links); `first_visit` keeps a
+            // circle of links from reading a folder twice.
             if p.is_dir() {
                 stack.push(p);
                 continue;
@@ -362,6 +398,188 @@ fn walk_font_dirs(dirs: Vec<PathBuf>) -> HashMap<String, PathBuf> {
 #[cfg(target_arch = "wasm32")]
 fn scan() -> HashMap<String, PathBuf> {
     HashMap::new()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scan_dirs(_dirs: &[PathBuf], _in_order: bool) -> HashMap<String, PathBuf> {
+    HashMap::new()
+}
+
+/// Most user font folders.
+pub const MAX_FONT_DIRS: usize = 16;
+/// The longest font folder path kept.
+const MAX_DIR_CHARS: usize = 1024;
+
+fn dirs_lock() -> MutexGuard<'static, Vec<PathBuf>> {
+    static DIRS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+    DIRS.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn user_dirs() -> Vec<PathBuf> {
+    dirs_lock().clone()
+}
+
+/// Counts changes to the set of fonts ([`set_font_dirs`], [`rescan`]): text drawn before a change
+/// may have been drawn with another font.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The font set's change count (see [`GENERATION`]).
+pub fn generation() -> u64 {
+    GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The user's font folders, searched before the system's.
+pub fn font_dirs() -> Vec<String> {
+    user_dirs().iter().map(|p| p.to_string_lossy().to_string()).collect()
+}
+
+/// Clean a font folder list: trimmed, without empty, repeated or over-long entries, at most
+/// [`MAX_FONT_DIRS`].
+pub fn clean_dirs<S: AsRef<str>>(dirs: &[S]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for d in dirs.iter().take(MAX_FONT_DIRS * 4) {
+        let d = d.as_ref().trim();
+        if d.is_empty() || d.chars().count() > MAX_DIR_CHARS || d.chars().any(char::is_control) || out.iter().any(|o| o == d) {
+            continue;
+        }
+        out.push(d.to_string());
+        if out.len() >= MAX_FONT_DIRS {
+            break;
+        }
+    }
+    out
+}
+
+/// Set the user's font folders (Options ▸ Fonts) and look for fonts again.
+pub fn set_font_dirs<S: AsRef<str>>(dirs: &[S]) {
+    let dirs: Vec<PathBuf> = clean_dirs(dirs).into_iter().map(PathBuf::from).collect();
+    {
+        let mut current = dirs_lock();
+        if *current == dirs {
+            return;
+        }
+        *current = dirs;
+    }
+    rescan();
+}
+
+/// Forget what was found and look for fonts again (files added to a font folder).
+pub fn rescan() {
+    let mut g = lock();
+    // Fonts registered by name stay, also where a found file has the same stem; bytes read
+    // from found files go.
+    let paths = std::mem::take(&mut g.paths);
+    let Db { files, registered, .. } = &mut *g;
+    files.retain(|k, _| registered.contains(k) || !paths.contains_key(k));
+    g.scanned = false;
+    g.resolved.clear();
+    g.fallback = Fallback::default();
+    g.loaded_bytes = 0;
+    g.user.clear();
+    g.face_names.clear();
+    drop(g);
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // SHX files in the same folders: the SHX font table looks there too.
+    crate::shx::set_font_dirs(shx_dirs(&user_dirs()));
+}
+
+/// Whether folder `d` is read for the first time (by its real path: a link to a folder already
+/// read, or a circle of links, is not read again).
+#[cfg(not(target_arch = "wasm32"))]
+fn first_visit(visited: &mut std::collections::HashSet<PathBuf>, d: &std::path::Path) -> bool {
+    visited.insert(std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf()))
+}
+
+/// The folders under `dirs` (them included) that hold SHX files, in order, bounded like the
+/// font scan.
+#[cfg(not(target_arch = "wasm32"))]
+fn shx_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
+    let mut seen = 0usize;
+    let mut visited = std::collections::HashSet::new();
+    while let Some(d) = stack.pop() {
+        if !first_visit(&mut visited, &d) {
+            continue;
+        }
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let mut subs = Vec::new();
+        let mut has_shx = false;
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 20_000 {
+                return out;
+            }
+            if e.path().is_dir() {
+                subs.push(e.path());
+            } else if e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("shx")) {
+                has_shx = true;
+            }
+        }
+        if has_shx && !out.contains(&d) {
+            out.push(d);
+        }
+        stack.extend(subs.into_iter().rev());
+    }
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+fn shx_dirs(_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// A font file CADCraft can use, for font lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontFile {
+    /// The name a text style stores: the file name (`arial.ttf`), or the name of a font built
+    /// into CADCraft.
+    pub name: String,
+    /// The family name inside the file, read for fonts in the user's folders.
+    pub family: Option<String>,
+    /// Found in one of the user's font folders.
+    pub user: bool,
+}
+
+/// The fonts CADCraft can use: those in the user's folders first (with their family names),
+/// then the installed and built-in ones, by name.
+pub fn installed() -> Vec<FontFile> {
+    /// Fonts whose family name is read for the list.
+    const MAX_NAMED: usize = 200;
+    let mut g = lock();
+    let mut list: Vec<(String, String, bool)> = g
+        .paths
+        .iter()
+        .map(|(stem, src)| {
+            let name = match src {
+                Source::File(p) => p.file_name().map_or_else(|| stem.clone(), |n| n.to_string_lossy().to_string()),
+                Source::Static(_) => stem.clone(),
+            };
+            (stem.clone(), name, g.user.contains(stem))
+        })
+        .collect();
+    list.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+    let mut named = 0usize;
+    list.into_iter()
+        .map(|(stem, name, user)| {
+            let family = if user && named < MAX_NAMED {
+                named += 1;
+                g.face_names(&stem).and_then(|n| n.family.clone())
+            } else {
+                None
+            };
+            FontFile { name, family, user }
+        })
+        .collect()
+}
+
+/// Whether a text style font is drawn as named: a font CADCraft found, or its own stroke font.
+/// Other names (an SHX file, a missing TTF) are drawn with a substitute ([`crate::TextFont::resolve`]).
+pub fn available(name: &str) -> bool {
+    let k = key(name);
+    // The built-in stroke font is CADCraft's own stand-in for the basic stroke fonts.
+    let stand_in = matches!(k.trim_end_matches(".shx"), "txt" | "simplex" | "romans");
+    k.is_empty() || stand_in || k == crate::BUILTIN_FONT.to_ascii_lowercase() || crate::shx::find(name).is_some() || find(name).is_some()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -388,13 +606,33 @@ impl Db {
         if self.loaded_bytes >= MAX_LOADED_BYTES {
             return None;
         }
-        let bytes = Arc::new(match self.paths.get(stem)? {
-            Source::File(path) => read_file(path)?,
-            Source::Static(bytes) => bytes.to_vec(),
-        });
+        let bytes = self.peek(stem)?;
         self.loaded_bytes = self.loaded_bytes.saturating_add(bytes.len());
         self.files.insert(stem.to_string(), bytes.clone());
         Some(bytes)
+    }
+
+    /// Bytes of the font file with this stem, without keeping them or charging the load budget.
+    fn peek(&self, stem: &str) -> Option<Arc<Vec<u8>>> {
+        if let Some(b) = self.files.get(stem) {
+            return Some(b.clone());
+        }
+        Some(Arc::new(match self.paths.get(stem)? {
+            Source::File(path) => read_file(path)?,
+            Source::Static(bytes) => bytes.to_vec(),
+        }))
+    }
+
+    /// The names inside the font file with this stem, read once (the bytes are dropped after).
+    fn face_names(&mut self, stem: &str) -> Option<Arc<FaceNames>> {
+        if let Some(n) = self.face_names.get(stem) {
+            return Some(n.clone());
+        }
+        let bytes = self.peek(stem)?;
+        let all = faces(&bytes);
+        let names = Arc::new(FaceNames { family: all.first().and_then(Face::family_name), faces: all.iter().map(Face::names).collect() });
+        self.face_names.insert(stem.to_string(), names.clone());
+        Some(names)
     }
 
     fn lookup(&mut self, k: &str) -> Option<Face> {
@@ -404,7 +642,28 @@ impl Db {
                 return Some(face);
             }
         }
-        self.by_family(k)
+        self.by_family(k).or_else(|| self.user_family(k))
+    }
+
+    /// A face in the user's font folders whose family or full name is `k`, whatever its file is
+    /// called (the folders are small; at most 200 files are looked at).
+    fn user_family(&mut self, k: &str) -> Option<Face> {
+        let want = norm(k);
+        if want.is_empty() {
+            return None;
+        }
+        let mut stems: Vec<String> = self.user.iter().cloned().collect();
+        stems.sort();
+        for stem in stems.into_iter().take(200) {
+            let Some(names) = self.face_names(&stem) else { continue };
+            let Some(i) = names.faces.iter().position(|f| f.iter().any(|n| *n == want || format!("{n}regular") == want)) else { continue };
+            // Only the file that has the face is kept, charged to the load budget like any other
+            // (once it is used up, no more faces are loaded). A file that cannot be read now
+            // (deleted, too large) does not end the search: another file may hold the family.
+            let Some(bytes) = self.file(&stem) else { continue };
+            return faces(&bytes).into_iter().nth(i);
+        }
+        None
     }
 
     /// A face whose family or full name is `k`, among files with a similar stem, then among the
@@ -552,7 +811,9 @@ pub(crate) fn rank_fallback(stems: &[String]) -> Vec<String> {
 /// Register font bytes under a name (web builds and tests).
 pub fn register(name: &str, bytes: Vec<u8>) {
     let mut g = lock();
-    g.files.insert(key(name), Arc::new(bytes));
+    let k = key(name);
+    g.files.insert(k.clone(), Arc::new(bytes));
+    g.registered.insert(k);
     g.resolved.clear();
     g.fallback = Fallback::default();
 }
@@ -564,6 +825,7 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     let mut g = lock();
     let k = key(name);
     g.files.remove(&k);
+    g.registered.remove(&k);
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
@@ -1022,6 +1284,78 @@ mod family_tests {
     use super::*;
 
     #[test]
+    fn font_folders_are_cleaned_and_unknown_shx_names_are_not_available() {
+        let long = "x".repeat(MAX_DIR_CHARS + 1);
+        let many: Vec<String> = (0..40).map(|i| format!("/fonts/{i}")).collect();
+        assert_eq!(clean_dirs(&["  /a ", "", "/a", "/b", long.as_str(), "bad\u{0}dir"]), vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(clean_dirs(&many).len(), MAX_FONT_DIRS);
+        assert!(!available("gost_cadcraft.shx"));
+        assert!(available("txt.shx") && available("SIMPLEX.SHX"), "the built-in stroke font stands in for these");
+        assert!(available(""));
+        assert!(available(crate::BUILTIN_FONT));
+    }
+
+    /// Reading a user font's names for a list keeps none of its bytes and uses none of the load
+    /// budget. (Font folders themselves are process-wide: `tests/ttf_font_folders.rs`.)
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reading_a_user_fonts_names_keeps_no_font_bytes() {
+        let Some(src) = scan().into_values().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ttf"))) else { return };
+        let mut db = Db::default();
+        db.user.insert("face".into());
+        db.paths.insert("face".into(), Source::File(src));
+        assert!(db.face_names("face").is_some_and(|n| n.family.is_some()));
+        assert!(db.files.is_empty() && db.loaded_bytes == 0);
+    }
+
+    /// One unreadable user font file with the family does not stop the search: the next file
+    /// that has the family is still read.
+    #[test]
+    fn an_unreadable_user_font_does_not_end_the_family_search() {
+        let mut db = Db::default();
+        let names = || Arc::new(FaceNames { family: Some("Foo".into()), faces: vec![vec!["foo".into()]] });
+        for stem in ["a", "b"] {
+            db.user.insert(stem.into());
+            db.face_names.insert(stem.into(), names());
+        }
+        // "a" has no file left on disk; "b" can be read.
+        db.paths.insert("b".into(), Source::Static(b"not a font"));
+        let _ = db.user_family("Foo");
+        assert!(db.files.contains_key("b"), "the second file with the family was tried");
+    }
+
+    /// A face found by family name is loaded within the font-byte budget: once it is used up,
+    /// none is read past it (#2316 review).
+    #[test]
+    fn a_family_search_keeps_to_the_load_budget() {
+        let mut db = Db::default();
+        db.user.insert("b".into());
+        db.face_names.insert("b".into(), Arc::new(FaceNames { family: Some("Foo".into()), faces: vec![vec!["foo".into()]] }));
+        db.paths.insert("b".into(), Source::Static(b"not a font"));
+        db.loaded_bytes = MAX_LOADED_BYTES;
+        assert!(db.user_family("Foo").is_none());
+        assert!(db.files.is_empty(), "nothing read past the budget");
+    }
+
+    /// Linked font folders are followed, and a circle of links reads each folder once.
+    #[cfg(unix)]
+    #[test]
+    fn linked_font_folders_are_followed_once() {
+        let root = std::env::temp_dir().join(format!("cadcraft-fontlinks-{}", std::process::id()));
+        let real = root.join("real");
+        let _ = std::fs::create_dir_all(&real);
+        let Ok(()) = std::fs::write(real.join("LinkedFace.ttf"), b"x") else { return };
+        let _ = std::fs::write(real.join("linked.shx"), b"x");
+        let _ = std::os::unix::fs::symlink(&real, root.join("link"));
+        // A link back up: a circle.
+        let _ = std::os::unix::fs::symlink(&root, real.join("up"));
+        let found = scan_dirs(&[root.join("link")], true);
+        assert!(found.contains_key("linkedface"), "{found:?}");
+        assert_eq!(shx_dirs(std::slice::from_ref(&root)).len(), 1, "the folder with the SHX file, once");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn thai_looks_in_thai_fonts_before_the_general_search() {
         // Letters, vowels, tone marks and digits: the general search loads a bounded number of
         // files with the CJK fonts first, none of which has Thai.
@@ -1142,7 +1476,7 @@ mod scan_tests {
     /// here rather than discovered by a drawing full of missing-glyph boxes.
     #[test]
     fn the_platforms_system_font_directory_is_searched() {
-        let dirs = font_dirs();
+        let dirs = system_font_dirs();
         #[cfg(target_os = "macos")]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/System/Library/Fonts")), "{dirs:?}");
         #[cfg(target_os = "android")]
@@ -1171,7 +1505,7 @@ mod scan_tests {
         std::fs::write(other.join("b.ttf"), b"").unwrap();
         std::os::unix::fs::symlink(&looped, looped.join("again")).unwrap();
         // The looped directory is walked first.
-        let found = walk_font_dirs(vec![other.clone(), looped.clone()]);
+        let found = scan_dirs(&[other.clone(), looped.clone()], false);
         std::fs::remove_dir_all(&root).unwrap();
         assert!(found.contains_key("a") && found.contains_key("b"), "{found:?}");
     }

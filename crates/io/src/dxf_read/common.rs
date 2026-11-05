@@ -23,10 +23,8 @@ impl T<'_> {
     /// origin is the view target (`target`), so the point in the middle of a plan view is their
     /// sum: a file whose view centre is 0,0 keeps the location in the target (#2492). A sum that
     /// overflows leaves the stored centre.
-    pub(super) fn view_center(&self, center: i32, target: i32) -> Vec2 {
-        let c = self.p(center).xy();
-        let sum = c + self.p(target).xy();
-        if sum.is_finite() { sum } else { c }
+    pub(super) fn view_center(&self, center: i32, target: i32, twist: f64) -> Vec2 {
+        crate::dxf_ext::dcs_center_to_model(self.p(center).xy(), twist, self.p(target).xy())
     }
     pub(super) fn all_f(&self, code: i32) -> Vec<f64> {
         self.0.iter().filter(|t| t.code == code).map(Tag::f64).collect()
