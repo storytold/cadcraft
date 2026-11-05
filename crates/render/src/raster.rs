@@ -64,9 +64,14 @@ pub struct RasterOptions {
     pub antialias: bool,
 }
 
+impl RasterOptions {
+    /// The dark canvas a render draws on by default.
+    pub const DARK_BACKGROUND: Rgb = Rgb(33, 40, 48);
+}
+
 impl Default for RasterOptions {
     fn default() -> Self {
-        RasterOptions { background: Rgb(33, 40, 48), hairline: 1.0, px_per_mm: 0.0, antialias: true }
+        RasterOptions { background: Self::DARK_BACKGROUND, hairline: 1.0, px_per_mm: 0.0, antialias: true }
     }
 }
 
