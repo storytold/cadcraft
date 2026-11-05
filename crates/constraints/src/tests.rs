@@ -328,6 +328,8 @@ fn invalid_references_and_purge() {
             style: "Standard".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         }),
     );
     let bad = |d: &mut Drawing, c: Constraint| assert!(add(d, c, &SolveOptions::default()).is_err());

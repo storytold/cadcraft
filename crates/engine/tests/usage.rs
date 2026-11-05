@@ -30,6 +30,8 @@ fn text(handle: u64, layer: &str, style: &str) -> Entity {
             style: style.into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         }),
     );
     e.common = Common { layer: layer.into(), ..Common::default() };

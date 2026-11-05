@@ -4,9 +4,9 @@
 
 use cadcraft_doc::{AttribModes, HAlign, VAlign};
 
-use super::{Accept, Attrib, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Text, Vec2, number, v3};
+use super::{Accept, Attrib, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Vec2, number};
 use crate::cmd::curves::KW;
-use crate::cmd::draw::justify;
+use crate::cmd::draw::{justify, text_in};
 
 /// AFLAGS bits, as AutoCAD numbers the modes.
 const INVISIBLE: i64 = 1;
@@ -101,22 +101,11 @@ impl AttdefM {
     }
 
     fn finish(&mut self, s: &mut Session, rotation: f64) -> Result<Step> {
-        let (h, v) = self.justify;
-        let left = h == HAlign::Left && v == VAlign::Baseline;
+        // Set in its style as TEXT is: the style's width factor, obliquing and effects.
+        let text = text_in(s, &self.style, self.at, &std::mem::take(&mut self.value), self.height, rotation, self.justify);
         s.add_entity(EntityKind::AttDef(Attrib {
             tag: self.tag.to_uppercase(),
-            text: Text {
-                insert: v3(self.at),
-                align_pt: if left { None } else { Some(v3(self.at)) },
-                height: self.height,
-                value: std::mem::take(&mut self.value),
-                rotation,
-                width_factor: 1.0,
-                oblique: 0.0,
-                style: self.style.clone(),
-                halign: h,
-                valign: v,
-            },
+            text,
             invisible: self.flags & INVISIBLE != 0,
             constant: self.flags & CONSTANT != 0,
             prompt: std::mem::take(&mut self.prompt),

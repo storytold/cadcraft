@@ -41,6 +41,8 @@ fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     let def = Attrib {
         tag: "NUMBER".into(),

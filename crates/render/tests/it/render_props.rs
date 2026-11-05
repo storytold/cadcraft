@@ -111,6 +111,8 @@ fn text(x: f64, value: &str) -> Text {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     }
 }
 
