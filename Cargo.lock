@@ -827,6 +827,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-io",
  "cadcraft-ui-egui",
+ "craft-web-host",
  "eframe",
  "egui",
  "log",
@@ -1228,6 +1229,15 @@ dependencies = [
  "winreg",
  "winsafe",
  "zip",
+]
+
+[[package]]
+name = "craft-web-host"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=2e2312ddaf21bc3d85cd3395d0955c7d239306f6#2e2312ddaf21bc3d85cd3395d0955c7d239306f6"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

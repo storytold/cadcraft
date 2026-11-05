@@ -94,7 +94,7 @@ page over `postMessage`, with plain window messages that carry a `type`:
 
 | Message | Direction | Fields |
 |---|---|---|
-| `cadcraft:ready` | app → page | `version`: the app is listening; send a drawing now |
+| `cadcraft:ready` | app → page | `version`, `appVersion`: the app is listening; send a drawing now |
 | `cadcraft:open` | page → app | `name`, `bytes` (an `ArrayBuffer` or `Uint8Array`): open like File › Open |
 | `cadcraft:save` | app → page | `name`, `bytes` (a transferred `ArrayBuffer`): every file the app would otherwise download (SAVE, SAVEAS, exports). The page stores it and reports failures itself. |
 | `cadcraft:dirty` | app → page | `dirty`: unsaved changes appeared or went away |
@@ -150,6 +150,8 @@ try {
   showError(String(error));
 }
 ```
+
+The messages and both transports are the shared contract of [`craft-web-host`](https://github.com/storytold/craft-libs/tree/main/crates/web-host) (storytold/craft-libs#420), the same for every Craft app: its README lists every message, including `saved`, with the compatibility notes. In `cadcraft:ready`, `version` is the contract's (`"1"`) and `appVersion` is this app's release. CADCraft reads bytes, so a host sends `bytes`, not a `File`.
 
 ### Trust and limits
 

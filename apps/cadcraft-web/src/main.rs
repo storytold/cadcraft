@@ -32,13 +32,7 @@ mod web {
     /// `prefers-reduced-motion` (it stays
     /// live, so View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting follows a change),
     /// and the document title last written to the page.
-    struct Shell(
-        CadApp,
-        crate::upload::Inbox,
-        Option<(crate::host::Bridge, crate::host::DirtyReport)>,
-        Option<web_sys::MediaQueryList>,
-        Option<String>,
-    );
+    struct Shell(CadApp, crate::upload::Inbox, Option<crate::host::Bridge>, Option<web_sys::MediaQueryList>, Option<String>);
 
     impl eframe::App for Shell {
         /// Runs one frame: takes in files dropped on or picked for the page, drains the background
@@ -53,10 +47,10 @@ mod web {
             self.0.logic(ctx);
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
-            // `DirtyReport` suppresses duplicates, so reporting after every logic callback
+            // The crate suppresses duplicates, so reporting after every logic callback
             // (including a hidden tab's) is idempotent and keeps the parent's guard current.
-            if let Some((bridge, reported)) = &self.2 {
-                bridge.report_dirty(&self.0, reported);
+            if let Some(bridge) = &self.2 {
+                bridge.report_dirty(&self.0);
             }
         }
         /// Forward raw input to the web `CadApp` and capture Tab at the command line.
@@ -108,10 +102,6 @@ mod web {
         web_sys::window()?.document()?.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
     }
 
-    fn query_param(key: &str) -> Option<String> {
-        web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
-    }
-
     /// No file picker on the web: Save / Save As from the menu (and the close prompt) download the
     /// drawing under its current name; `saveas {"path": "name.dxf"}` picks another name. There is
     /// no file system either, so a dropped file is opened from its contents and APPLOAD says to
@@ -146,13 +136,7 @@ mod web {
         // `CustomEvent`s on the canvas (`host`). With neither, there is no file system here:
         // saved files reach the user as browser downloads; an unframed `?host=parent` stays
         // that normal app.
-        let bridge = if query_param("host").as_deref() == Some("parent") {
-            crate::host::Bridge::new()
-        } else if crate::page_host_enabled(canvas.get_attribute("data-host").as_deref()) {
-            Some(crate::host::Bridge::for_page(&canvas))
-        } else {
-            None
-        };
+        let bridge = crate::host::Bridge::connect(&canvas);
         match &bridge {
             Some(bridge) => {
                 bridge.install();
@@ -209,10 +193,9 @@ mod web {
                             picker.pick();
                             None
                         }));
-                        let host = app_bridge.map(|bridge| {
+                        let host = app_bridge.inspect(|bridge| {
                             bridge.listen(inbox.clone());
                             bridge.post_ready();
-                            (bridge, crate::host::DirtyReport::default())
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
                         Ok(Box::new(Shell(app, inbox, host, reduced_motion, None)))
@@ -238,14 +221,6 @@ mod web {
 #[cfg(any(target_arch = "wasm32", test))]
 fn wants_cpu(query: &str) -> bool {
     query.trim_start_matches('?').split('&').any(|p| p == "cpu" || p.starts_with("cpu="))
-}
-
-/// Host mode on the canvas is opt-in by attribute value: only the exact `page` turns it on
-/// (`data-host="page"`). Everything else — `Page`, ` page`, `page `, `parent` (the URL opt-in),
-/// empty or missing — keeps the normal app with downloads.
-#[cfg(any(target_arch = "wasm32", test))]
-fn page_host_enabled(data_host: Option<&str>) -> bool {
-    data_host == Some("page")
 }
 
 /// The browser tab title: the open drawing's file name, a bullet once it has unsaved changes,
@@ -301,7 +276,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_title, page_host_enabled, push_title, title_to_send, wants_cpu};
+    use super::{document_title, push_title, title_to_send, wants_cpu};
 
     /// Guards the `?cpu` URL flag: only a whole `cpu` query parameter (bare or with a value)
     /// selects the CPU canvas, so `?sample` and `?gpucpu` stay on the GPU path.
@@ -362,16 +337,5 @@ mod tests {
         // Closing the drawing writes the app name.
         assert!(push_title(&mut sent, None, false, |title| written.push(title.to_owned())));
         assert_eq!(written, ["drawing.dwg — CADCraft", "drawing.dwg • — CADCraft", "CADCraft"]);
-    }
-
-    /// Guards the `data-host="page"` opt-in: only the exact value `page` on the canvas turns the
-    /// page host mode on; anything else (or a missing attribute) keeps the normal app with
-    /// downloads, and so does an unframed `?host=parent` (decided in `web::start`, not here).
-    #[test]
-    fn only_the_exact_page_attribute_enables_the_page_host_mode() {
-        assert!(page_host_enabled(Some("page")));
-        for off in [None, Some(""), Some("Page"), Some(" page"), Some("page "), Some("parent")] {
-            assert!(!page_host_enabled(off), "{off:?} must keep host mode off");
-        }
     }
 }
