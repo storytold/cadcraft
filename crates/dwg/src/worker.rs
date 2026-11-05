@@ -82,13 +82,29 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<(Vec<u8>, Vec<String>), St
 
 /// [`super::dxf_to_dwg_as`] in the worker, when there is one.
 pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
+    encode_noted(dxf, version).map(|(dwg, _)| dwg)
+}
+
+/// [`super::dxf_to_dwg_noted`] in the worker, when there is one. What the writer left out comes
+/// back as notes of `TYPE<tab>count`.
+pub fn encode_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
     if u8::try_from(version.len()).is_err() {
         return Err(super::unsupported(version));
     }
     match call(&request(ENCODE, Limits::DEFAULT, version), dxf, MAX_DWG_REPLY, "writing this file") {
-        Some(reply) => reply?.map(|(dwg, _)| dwg),
-        None => super::dxf_to_dwg_as(dxf, version),
+        Some(reply) => reply?.map(|(dwg, notes)| (dwg, unwritten_from(&notes))),
+        None => super::dxf_to_dwg_noted(dxf, version),
     }
+}
+
+fn unwritten_from(notes: &[String]) -> super::Unwritten {
+    notes.iter().filter_map(|n| n.split_once('\t')).filter_map(|(kind, n)| Some((kind.to_string(), n.parse::<usize>().ok()?))).fold(
+        super::Unwritten::new(),
+        |mut m, (kind, n)| {
+            *m.entry(kind).or_insert(0) = n;
+            m
+        },
+    )
 }
 
 /// Make the worker abort, as the third-party code can: what the tests prove isolation with.
@@ -241,7 +257,7 @@ fn handle(mut b: &[u8]) -> Reply {
     let version = take(&mut b, usize::from(version_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
     match op {
         DECODE => super::dwg_to_dxf_noted(b, Limits { max_dwg_bytes, max_dxf_bytes }),
-        ENCODE => super::dxf_to_dwg_as(b, version).map(|dwg| (dwg, Vec::new())),
+        ENCODE => super::dxf_to_dwg_noted(b, version).map(|(dwg, left_out)| (dwg, left_out.iter().map(|(kind, n)| format!("{kind}\t{n}")).collect())),
         CRASH => std::process::abort(),
         _ => Err(bad()),
     }
@@ -265,6 +281,12 @@ mod tests {
         let mut out = Vec::new();
         write_reply(&mut out, reply).unwrap();
         out
+    }
+
+    #[test]
+    fn what_the_writer_left_out_survives_the_reply() {
+        let notes = vec!["ACME_WIDGET\t2".to_string(), "not a count".to_string(), "X\tmany".to_string()];
+        assert_eq!(unwritten_from(&notes), [("ACME_WIDGET".to_string(), 2)].into_iter().collect());
     }
 
     #[test]
