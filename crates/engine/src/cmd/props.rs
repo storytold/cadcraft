@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dimstyle", "Dimension Style...", run_dimstyle)
             .menu(&["Format", "Dimension Style..."])
             .alias(&["d", "dst", "ddim"])
-            .params("{name, current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles"),
+            .params("{name, base? (the style a new one copies; default the current style), current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles"),
         CommandSpec::new("dimstyle.dimension", "Dimension Style...", run_dimstyle).menu(&["Dimension", "Dimension Style..."]).params("same as `dimstyle`"),
         CommandSpec::new("dimstyle.list", "List Dimension Styles", run_dimstyle_list).params("{name?} → styles (with all variables for `name`)").noundo(),
         CommandSpec::new("dimstyle.rename", "Rename Dimension Style", run_dimstyle_rename).params("{from, to}"),
@@ -875,10 +875,15 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("dimstyle", "bad style name"));
     }
     let d = s.doc_mut()?;
-    let base = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
     let idx = match d.dim_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
         Some(i) => i,
         None => {
+            // A new style copies `base` (the Dimension Style Manager's selected style), else the
+            // current one.
+            let base = match str_param(p, "base") {
+                Some(b) => d.dim_style(b).cloned().ok_or_else(|| bad("dimstyle", format!("no dimension style `{b}`")))?,
+                None => d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default(),
+            };
             d.dim_styles.push(cadcraft_doc::DimStyle { name: name.clone(), ..base });
             d.dim_styles.len() - 1
         }
@@ -887,7 +892,7 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     let mut changed = false;
     if let (Some(st), Some(src)) = (d.dim_styles.get_mut(idx), p.as_object()) {
         let fields: serde_json::Map<String, Value> =
-            src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
+            src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "base" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
         let before = st.clone();
         rejected = st.apply_fields(&fields);
         changed = *st != before;
@@ -896,14 +901,14 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     // DIMSTYLE.UPDATE and DIMOVERRIDE do.
     if changed {
         let style_name = d.dim_styles.get(idx).map(|t| t.name.clone()).unwrap_or_else(|| name.clone());
-        for (_, h) in dims_using(d, &style_name) {
+        for (_, h) in dims_using(d, &style_name, true) {
             d.modify_entity(h, |e| {
                 if let EntityKind::Dimension(dm) = &mut e.kind {
                     dm.block = None;
                 }
             })?;
         }
-        for (bname, h) in block_dims_using(d, &style_name) {
+        for (bname, h) in block_dims_using(d, &style_name, true) {
             if let Some(b) = d.blocks.get_mut(&bname) {
                 std::sync::Arc::make_mut(b).entities.modify(h, |e| {
                     if let EntityKind::Dimension(dm) = &mut e.kind {
@@ -955,18 +960,23 @@ fn run_dimstyle_current(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(dimstyles_json(d))
 }
 
-fn dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(cadcraft_doc::Space, cadcraft_doc::Handle)> {
+/// Whether `e` uses dimension style `name`: a dimension, or (unless `dims_only`) a leader or tolerance.
+fn uses_dim_style(e: &cadcraft_doc::Entity, name: &str, dims_only: bool) -> bool {
+    match &e.kind {
+        EntityKind::Dimension(dm) => dm.style.eq_ignore_ascii_case(name),
+        EntityKind::Leader(l) => !dims_only && l.style.eq_ignore_ascii_case(name),
+        EntityKind::Tolerance(t) => !dims_only && t.style.eq_ignore_ascii_case(name),
+        _ => false,
+    }
+}
+
+/// Entities in model and paper space that use the style (see [`uses_dim_style`]).
+fn dims_using(d: &cadcraft_doc::Drawing, name: &str, dims_only: bool) -> Vec<(cadcraft_doc::Space, cadcraft_doc::Handle)> {
     let mut out = Vec::new();
     for space in std::iter::once(cadcraft_doc::Space::Model).chain(d.layouts.iter().map(|l| cadcraft_doc::Space::Paper(l.name.clone()))) {
         if let Some(st) = d.space(&space) {
             for e in st.iter() {
-                let uses = match &e.kind {
-                    EntityKind::Dimension(dm) => dm.style.eq_ignore_ascii_case(name),
-                    EntityKind::Leader(l) => l.style.eq_ignore_ascii_case(name),
-                    EntityKind::Tolerance(t) => t.style.eq_ignore_ascii_case(name),
-                    _ => false,
-                };
-                if uses {
+                if uses_dim_style(e, name, dims_only) {
                     out.push((space.clone(), e.handle));
                 }
             }
@@ -976,17 +986,11 @@ fn dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(cadcraft_doc::Space
 }
 
 /// Dimensions and leaders inside block definitions that use the style (block name, entity handle).
-fn block_dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(String, cadcraft_doc::Handle)> {
+fn block_dims_using(d: &cadcraft_doc::Drawing, name: &str, dims_only: bool) -> Vec<(String, cadcraft_doc::Handle)> {
     let mut out = Vec::new();
     for (bname, b) in &d.blocks {
         for e in b.entities.iter() {
-            let uses = match &e.kind {
-                EntityKind::Dimension(dm) => dm.style.eq_ignore_ascii_case(name),
-                EntityKind::Leader(l) => l.style.eq_ignore_ascii_case(name),
-                EntityKind::Tolerance(t) => t.style.eq_ignore_ascii_case(name),
-                _ => false,
-            };
-            if uses {
+            if uses_dim_style(e, name, dims_only) {
                 out.push((bname.clone(), e.handle));
             }
         }
@@ -1009,7 +1013,7 @@ fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
     if d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(&from) {
         d.header.set_str("DIMSTYLE", &to);
     }
-    for (_, h) in dims_using(d, &from) {
+    for (_, h) in dims_using(d, &from, false) {
         d.modify_entity(h, |e| match &mut e.kind {
             EntityKind::Dimension(dm) => dm.style = to.clone(),
             EntityKind::Leader(l) => l.style = to.clone(),
@@ -1017,7 +1021,7 @@ fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
             _ => {}
         })?;
     }
-    for (bname, h) in block_dims_using(d, &from) {
+    for (bname, h) in block_dims_using(d, &from, false) {
         if let Some(b) = d.blocks.get_mut(&bname) {
             std::sync::Arc::make_mut(b).entities.modify(h, |e| match &mut e.kind {
                 EntityKind::Dimension(dm) => dm.style = to.clone(),
@@ -1038,7 +1042,7 @@ fn run_dimstyle_delete(s: &mut Session, p: &Value) -> Result<Value> {
     if d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(&name) {
         return Err(bad("dimstyle.delete", "the current dimension style cannot be deleted"));
     }
-    if !dims_using(d, &name).is_empty() || !block_dims_using(d, &name).is_empty() {
+    if !dims_using(d, &name, false).is_empty() || !block_dims_using(d, &name, false).is_empty() {
         return Err(bad("dimstyle.delete", format!("dimension style `{name}` is in use")));
     }
     let before = d.dim_styles.len();

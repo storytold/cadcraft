@@ -1546,6 +1546,11 @@
 	Upper value	上偏差
 	Vertical position	垂直位置
 	Windows Desktop	Windows 桌面
+	Dimensions or leaders use this style	有标注或引线正在使用此样式
+	The Standard style cannot be deleted	不能删除 Standard 样式
+	The current style cannot be deleted	不能删除当前样式
+	{field} must be 0 or more	{field} 必须大于或等于 0
+	{field} must be greater than 0	{field} 必须大于 0
 menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改

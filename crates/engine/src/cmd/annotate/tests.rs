@@ -287,6 +287,35 @@ fn a_style_in_use_cannot_be_deleted() {
 }
 
 #[test]
+fn a_new_dimstyle_copies_its_base_else_the_current_style() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Mech", "DIMTXT": 0.3, "current": false })).unwrap();
+    // `base` names the style to copy; the current style (Standard) is not it.
+    s.execute("dimstyle", &json!({ "name": "Mech2", "base": "Mech", "current": false })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "Plain", "current": false })).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(d.dim_style("Mech2").map(|t| t.text_height), Some(0.3));
+    assert_eq!(d.dim_style("Plain").map(|t| t.text_height), d.dim_style("Standard").map(|t| t.text_height));
+    // One undo step removes the new style.
+    s.execute("u", &json!({})).unwrap();
+    assert!(s.doc().unwrap().dim_style("Plain").is_none());
+    // An unknown base is an error and makes nothing.
+    assert!(s.execute("dimstyle", &json!({ "name": "X", "base": "Nope" })).is_err());
+    assert!(s.doc().unwrap().dim_style("X").is_none());
+}
+
+#[test]
+fn editing_a_style_leaves_its_leaders_alone() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "DS" })).unwrap();
+    s.execute("leader", &json!({ "points": [[0, 0], [5, 5]], "text": "A" })).unwrap();
+    let leader = |s: &Session| s.doc().unwrap().model.iter().find(|e| matches!(&e.kind, EntityKind::Leader(l) if l.style == "DS")).cloned().unwrap();
+    let before = leader(&s);
+    s.execute("dimstyle", &json!({ "name": "DS", "DIMTXT": 0.4 })).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&before, &leader(&s)), "the leader is not copied");
+}
+
+#[test]
 fn dimstyle_keeps_prefix_suffix_text_exactly() {
     let mut s = Session::new();
     s.execute("dimstyle", &json!({ "name": "DS", "post": "  <> mm" })).unwrap();

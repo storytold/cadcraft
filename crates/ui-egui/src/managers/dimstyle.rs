@@ -1,9 +1,10 @@
 //! Dimension Style Manager (DIMSTYLE, Format > Dimension Style...): the drawing's dimension
-//! styles with New, Rename, Delete and Set Current, and the selected style's variables on four
-//! tabs (Lines & Arrows, Text, Primary Units, Tolerances). Every edit runs `dimstyle` with the
-//! changed variables, so it is undoable, and dimensions of that style are redrawn from it.
+//! styles with New (a copy of the selected style), Rename, Delete and Set Current, and the
+//! selected style's variables on four tabs (Lines & Arrows, Text, Primary Units, Tolerances).
+//! Every edit runs `dimstyle` with the changed variables, so it is undoable, and dimensions of
+//! that style are redrawn from it.
 
-use cadcraft_doc::DimStyle;
+use cadcraft_doc::{DimStyle, EntityKind};
 use cadcraft_render::Arrowhead;
 use egui::{RichText, vec2};
 use serde_json::{Map, Value, json};
@@ -67,18 +68,28 @@ fn precisions() -> Vec<(Value, String)> {
 struct Rows<'a> {
     salt: &'a str,
     out: Map<String, Value>,
+    /// Why a typed value was refused this frame (it is out of range).
+    rejected: Option<String>,
 }
 
-impl Rows<'_> {
+impl<'a> Rows<'a> {
+    fn new(salt: &'a str) -> Self {
+        Rows { salt, out: Map::new(), rejected: None }
+    }
+
     fn label(ui: &mut egui::Ui, label: &str, var: &str) -> egui::Id {
         ui.label(label).on_hover_text(var).id
     }
 
-    /// A number at least `min`.
+    /// A number at least `min`; a smaller one is refused with a message.
     fn num(&mut self, ui: &mut egui::Ui, label: &str, var: &str, key: &str, v: f64, min: f64) {
         let id = Self::label(ui, label, var);
-        if let Some(x) = num_field(ui, (self.salt, key), v, Some(id)).filter(|x| *x >= min) {
-            self.out.insert(key.into(), json!(x));
+        if let Some(x) = num_field(ui, (self.salt, key), v, Some(id)) {
+            if x >= min {
+                self.out.insert(key.into(), json!(x));
+            } else {
+                self.rejected = Some(range_message(label, min));
+            }
         }
         ui.end_row();
     }
@@ -133,6 +144,25 @@ impl Rows<'_> {
         ui.label(RichText::new(text).strong());
         ui.end_row();
     }
+}
+
+/// The message for a value below `min` in the field labelled `label`.
+fn range_message(label: &str, min: f64) -> String {
+    if min > 0.0 { crate::tf!("{field} must be greater than 0", field = label) } else { crate::tf!("{field} must be 0 or more", field = label) }
+}
+
+/// Whether a dimension, leader or tolerance in the drawing (model, layouts or blocks) uses
+/// dimension style `name`, so that `dimstyle.delete` would refuse it.
+fn style_in_use(d: &cadcraft_doc::Drawing, name: &str) -> bool {
+    let uses = |e: &cadcraft_doc::Entity| match &e.kind {
+        EntityKind::Dimension(dm) => dm.style.eq_ignore_ascii_case(name),
+        EntityKind::Leader(l) => l.style.eq_ignore_ascii_case(name),
+        EntityKind::Tolerance(t) => t.style.eq_ignore_ascii_case(name),
+        _ => false,
+    };
+    d.model.iter().any(|e| uses(e))
+        || d.layouts.iter().filter_map(|l| d.space(&cadcraft_doc::Space::Paper(l.name.clone()))).any(|st| st.iter().any(|e| uses(e)))
+        || d.blocks.values().any(|b| b.entities.iter().any(|e| uses(e)))
 }
 
 /// The text a field commits: on focus loss, when it differs from the stored value. Never trimmed,
@@ -249,13 +279,28 @@ fn tolerance_method(s: &DimStyle) -> usize {
     }
 }
 
+/// The method shown, given the one last picked in the dialog: the style's, except that a picked
+/// Deviation stays while the upper and lower values are equal (the style alone reads Symmetrical).
+fn shown_method(s: &DimStyle, picked: Option<usize>) -> usize {
+    match tolerance_method(s) {
+        1 if picked == Some(2) => 2,
+        m => m,
+    }
+}
+
 fn tolerances_tab(rows: &mut Rows<'_>, ui: &mut egui::Ui, s: &DimStyle) {
     Rows::heading(ui, crate::tl!("Tolerance format"));
     let methods = numbered(&[crate::tl!("None"), crate::tl!("Symmetrical"), crate::tl!("Deviation"), crate::tl!("Limits")], 0);
-    let method = tolerance_method(s);
-    let mut picked = Rows { salt: rows.salt, out: Map::new() };
+    // The method picked for this style, kept across frames (DIMTOL alone can't tell Deviation
+    // with equal values from Symmetrical).
+    let kept_id = egui::Id::unique((rows.salt, "tolMethod"));
+    let mut method = shown_method(s, ui.data(|d| d.get_temp::<usize>(kept_id)));
+    let mut picked = Rows::new(rows.salt);
     picked.choice(ui, crate::tl!("Method"), "DIMTOL / DIMLIM", "method", Some(method), &methods);
     if let Some(m) = picked.out.get("method").and_then(Value::as_u64) {
+        // The rows below follow the new method this frame.
+        method = usize::try_from(m).unwrap_or(0);
+        ui.data_mut(|d| d.insert_temp(kept_id, method));
         let (tol, lim) = match m {
             1 | 2 => (true, false),
             3 => (false, true),
@@ -306,6 +351,11 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
     // The Rename text belongs to the style it was typed for: another selection starts it empty.
     let mut rename = temp::<(String, String)>(ctx, "dimstyle_rename").filter(|(of, _)| *of == sel).map(|(_, r)| r).unwrap_or_default();
     let mut tab = temp::<Tab>(ctx, "dimstyle_tab").unwrap_or_default();
+    // Why the last typed value was refused (style name, message).
+    let mut warning = temp::<Option<(String, String)>>(ctx, "dimstyle_warning").flatten();
+    // A New style copies the selected one; the drawing has no styles when it shows the default.
+    let base_exists = d.dim_styles.iter().any(|s| s.name == sel);
+    let in_use = !sel.eq_ignore_ascii_case("Standard") && !sel.eq_ignore_ascii_case(&current) && style_in_use(d, &sel);
     let mut action: Action = None;
     let taken = |n: &str| styles.iter().any(|s| s.name.eq_ignore_ascii_case(n));
     egui::Window::new(title).id(egui::Id::unique("dimstyle_manager")).open(open).default_size(vec2(720.0, 460.0)).resizable(true).show(ctx, |ui| {
@@ -332,7 +382,18 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                     if ui.add_enabled(!is_current, egui::Button::new(crate::tl!("Set Current"))).clicked() {
                         action = Some(("dimstyle.current", json!({ "name": sel })));
                     }
-                    if ui.add_enabled(!standard && !is_current, egui::Button::new(crate::tl!("Delete"))).clicked() {
+                    let reason = if standard {
+                        crate::tl!("The Standard style cannot be deleted")
+                    } else if is_current {
+                        crate::tl!("The current style cannot be deleted")
+                    } else {
+                        crate::tl!("Dimensions or leaders use this style")
+                    };
+                    if ui
+                        .add_enabled(!standard && !is_current && !in_use, egui::Button::new(crate::tl!("Delete")))
+                        .on_disabled_hover_text(reason)
+                        .clicked()
+                    {
                         action = Some(("dimstyle.delete", json!({ "name": sel })));
                     }
                 });
@@ -346,8 +407,12 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                     let name = new_name.trim().to_string();
                     let ok = !name.is_empty() && !taken(&name);
                     if (ui.add_enabled(ok, egui::Button::new(crate::tl!("New"))).clicked() || entered) && ok {
-                        // A new style starts as a copy of the current one (DIMSTYLE's base).
-                        action = Some(("dimstyle", json!({ "name": name, "current": false })));
+                        // A new style starts as a copy of the selected one, as in AutoCAD.
+                        let mut p = json!({ "name": name, "current": false });
+                        if base_exists && let Some(o) = p.as_object_mut() {
+                            o.insert("base".into(), json!(sel));
+                        }
+                        action = Some(("dimstyle", p));
                         sel = name;
                         new_name.clear();
                     }
@@ -380,7 +445,10 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                 let Some(style) = styles.iter().find(|s| s.name == sel) else { return };
                 ui.label(RichText::new(crate::tf!("Properties of {name}", name = style.name)).strong());
                 let salt = format!("dimstyle_{}", style.name);
-                let mut rows = Rows { salt: &salt, out: Map::new() };
+                let mut rows = Rows::new(&salt);
+                if let Some(msg) = warning.as_ref().filter(|(of, _)| *of == style.name).map(|(_, m)| m) {
+                    ui.colored_label(t.warn, msg);
+                }
                 egui::ScrollArea::vertical().id_salt("dimstyle_props").auto_shrink([false, true]).show(ui, |ui| {
                     egui::Grid::new(("dimstyle_grid", tab as u8)).num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| match tab {
                         Tab::Lines => lines_tab(&mut rows, ui, style),
@@ -389,6 +457,12 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
                         Tab::Tolerances => tolerances_tab(&mut rows, ui, style),
                     });
                 });
+                // A refused value shows why until the next accepted edit.
+                if let Some(msg) = rows.rejected.take() {
+                    warning = Some((style.name.clone(), msg));
+                } else if !rows.out.is_empty() {
+                    warning = None;
+                }
                 if !rows.out.is_empty() {
                     let mut p = rows.out;
                     p.insert("name".into(), json!(style.name));
@@ -402,6 +476,7 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
     set_temp(ctx, "dimstyle_sel", sel);
     set_temp(ctx, "dimstyle_new", new_name);
     set_temp(ctx, "dimstyle_tab", tab);
+    set_temp(ctx, "dimstyle_warning", warning);
     action
 }
 
@@ -421,6 +496,25 @@ mod tests {
         assert_eq!(tolerance_method(&s), 2);
         s.limits = true;
         assert_eq!(tolerance_method(&s), 3);
+    }
+
+    #[test]
+    fn a_picked_deviation_stays_with_equal_values() {
+        let mut s = DimStyle { tolerance: true, ..DimStyle::default() };
+        assert_eq!(shown_method(&s, None), 1);
+        assert_eq!(shown_method(&s, Some(2)), 2);
+        assert_eq!(shown_method(&s, Some(1)), 1);
+        // The style decides when it no longer agrees with the pick.
+        s.tolerance = false;
+        assert_eq!(shown_method(&s, Some(2)), 0);
+        s.limits = true;
+        assert_eq!(shown_method(&s, Some(2)), 3);
+    }
+
+    #[test]
+    fn a_refused_value_says_why() {
+        assert_eq!(range_message("Arrow size", 0.0), "Arrow size must be 0 or more");
+        assert_eq!(range_message("Text height", f64::MIN_POSITIVE), "Text height must be greater than 0");
     }
 
     #[test]

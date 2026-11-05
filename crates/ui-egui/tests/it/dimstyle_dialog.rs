@@ -118,6 +118,66 @@ fn an_edit_changes_the_style_and_its_existing_dimension() {
 }
 
 #[test]
+fn deviation_can_be_picked_with_equal_values() {
+    let mut h = opened();
+    h.get_by_label("Tolerances").click();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::ComboBox, "Method").click();
+    h.run_steps(3);
+    h.get_by_label("Deviation").click();
+    h.run_steps(4);
+    let st = h.state().session.doc().unwrap().dim_style("Standard").cloned().unwrap();
+    assert!(st.tolerance && !st.limits && st.tol_plus == st.tol_minus, "tolerances on, both values still equal");
+    let shown = h.get_by_role_and_label(Role::ComboBox, "Method").accesskit_node().value().unwrap_or_default().to_string();
+    assert_eq!(shown, "Deviation", "the pick stays although the values are equal");
+    h.get_by_role_and_label(Role::TextInput, "Lower value");
+    enter(&mut h, "Upper value", "0.1");
+    let st = h.state().session.doc().unwrap().dim_style("Standard").cloned().unwrap();
+    assert_eq!((st.tol_plus, st.tol_minus), (0.1, 0.0), "Upper value leaves the lower one");
+}
+
+#[test]
+fn new_copies_the_selected_style() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("dimstyle", json!({ "name": "Mech", "DIMTXT": 0.3, "current": false })).unwrap();
+    menus::activate(&mut app, "dimstyle");
+    let mut h = harness(app);
+    h.get_by_label("Mech").click();
+    h.run_steps(3);
+    h.get_by_label("Properties of Mech");
+    enter(&mut h, "New style name", "Mech2");
+    let d = h.state().session.doc().unwrap();
+    assert_eq!(d.dim_style("Mech2").map(|s| s.text_height), Some(0.3), "a copy of Mech, not of the current Standard");
+    assert_eq!(d.header.str("DIMSTYLE", ""), "Standard");
+    h.state_mut().run("u", json!({})).unwrap();
+    assert!(h.state().session.doc().unwrap().dim_style("Mech2").is_none(), "one undo step");
+}
+
+#[test]
+fn a_style_in_use_cannot_be_deleted_and_a_refused_value_says_why() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("dimstyle", json!({ "name": "Used" })).unwrap();
+    app.run("dimlinear", json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    app.run("dimstyle", json!({ "name": "Spare", "current": false })).unwrap();
+    app.run("dimstyle.current", json!({ "name": "Standard" })).unwrap();
+    menus::activate(&mut app, "dimstyle");
+    let mut h = harness(app);
+    for (style, enabled) in [("Used", false), ("Spare", true)] {
+        h.get_by_label(style).click();
+        h.run_steps(3);
+        assert_eq!(!h.get_by_label("Delete").accesskit_node().is_disabled(), enabled, "{style}");
+    }
+    h.get_by_label("Used").click();
+    h.run_steps(3);
+    enter(&mut h, "Arrow size", "-1");
+    h.get_by_label("Arrow size must be 0 or more");
+    assert!(h.state().session.doc().unwrap().dim_style("Used").is_some_and(|s| s.arrow_size >= 0.0));
+    // An accepted edit clears the message.
+    enter(&mut h, "Arrow size", "0.2");
+    assert!(h.query_by_label("Arrow size must be 0 or more").is_none());
+}
+
+#[test]
 fn new_rename_set_current_and_delete() {
     let mut h = opened();
     enter(&mut h, "New style name", "Mech");
