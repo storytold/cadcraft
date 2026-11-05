@@ -1472,3 +1472,6 @@ menu	Modify	แก้ไข
 	This format can't keep these objects yet: {objects}.	รูปแบบนี้ยังเก็บออบเจกต์เหล่านี้ไม่ได้: {objects}
 	Whole words	ทั้งคำ
 	{count} more types	อีก {count} ชนิด
+	Clip Xref	คลิปเอกซ์เรฟ
+	Xref	เอกซ์เรฟ
+	Xref Clip Frame	กรอบคลิปเอกซ์เรฟ
