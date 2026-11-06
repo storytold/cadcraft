@@ -415,18 +415,24 @@ pub(crate) fn pattern_lines_until(
 const SWATCH_REPEATS: f64 = 6.0;
 /// Most runs a swatch holds.
 const MAX_SWATCH_RUNS: usize = 4000;
+/// Runs a swatch over [`MAX_SWATCH_RUNS`] zooms in to: about one tile of AR-CONC, its stones a
+/// few points across in a picker's swatch.
+const ZOOMED_SWATCH_RUNS: usize = 125;
+/// Most times a swatch zooms in (twice the scale each time).
+const SWATCH_ZOOMS: usize = 6;
 
 /// A preview of a pattern for a pattern picker: the runs of its line families `lines` inside the
 /// `side` × `side` square with a corner at the origin, at a scale that shows a few repeats of the
-/// pattern (each family's line spacing or dash repeat, whichever is longer). Empty for a pattern
-/// with no lines (SOLID).
+/// pattern (each family's line spacing or dash repeat, whichever is longer). A swatch that would
+/// hold more than [`MAX_SWATCH_RUNS`] runs zooms in to [`ZOOMED_SWATCH_RUNS`] or fewer, so every
+/// family shows at a readable size. Empty for a pattern with no lines (SOLID).
 pub fn pattern_swatch(lines: &[PatternLine], side: f64) -> Vec<Vec<Vec2>> {
     let repeat =
         lines.iter().map(|l| l.delta.1.abs().max(l.dashes.iter().map(|d| d.abs()).sum::<f64>())).filter(|r| r.is_finite()).fold(0.0, f64::max);
     if !side.is_finite() || side <= 0.0 || repeat < 1e-9 {
         return Vec::new();
     }
-    let h = Hatch {
+    let mut h = Hatch {
         pattern: String::new(),
         solid: false,
         loops: Vec::new(),
@@ -440,8 +446,18 @@ pub fn pattern_swatch(lines: &[PatternLine], side: f64) -> Vec<Vec<Vec2>> {
         background: None,
         pattern_lines: lines.to_vec(),
     };
-    let square = vec![Vec2::new(0.0, 0.0), Vec2::new(side, 0.0), Vec2::new(side, side), Vec2::new(0.0, side)];
-    let mut runs = pattern_lines(&Drawing::default(), &h, &[square], 0.0, None);
+    let square = [vec![Vec2::new(0.0, 0.0), Vec2::new(side, 0.0), Vec2::new(side, side), Vec2::new(0.0, side)]];
+    let mut runs = pattern_lines(&Drawing::default(), &h, &square, 0.0, None);
+    // A pattern whose dash repeats are mostly gaps (AR-CONC) spans many tiles at that scale: cut
+    // at the cap, its last families would not show at all, and its marks would be specks.
+    let target = if runs.len() > MAX_SWATCH_RUNS { ZOOMED_SWATCH_RUNS } else { MAX_SWATCH_RUNS };
+    for _ in 0..SWATCH_ZOOMS {
+        if runs.len() <= target {
+            break;
+        }
+        h.scale *= 2.0;
+        runs = pattern_lines(&Drawing::default(), &h, &square, 0.0, None);
+    }
     runs.truncate(MAX_SWATCH_RUNS);
     runs
 }
