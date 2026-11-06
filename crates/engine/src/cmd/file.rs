@@ -56,6 +56,9 @@ pub struct EntityCodec {
     pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
     /// An entity from a type name and groups.
     pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
+    /// The non-graphic records a DXF save writes (table records, BLOCK records, objects): handle,
+    /// type and groups. The drawing keeps no handles for these, so they are the file's.
+    pub objects: fn(&Drawing) -> Vec<(cadcraft_doc::Handle, String, Vec<cadcraft_dxf::Tag>)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();
