@@ -179,7 +179,12 @@ fn vlax_curve_rejects_a_spline_whose_length_overflows() {
     };
     add(&mut s, "e", EntityKind::Spline(huge));
     // Not 0.0: a length past f64's range is not measurable.
-    for code in ["(vlax-curve-getDistAtParam e 1.0)", "(vlax-curve-getDistAtParam e 2.0)", "(vlax-curve-getParamAtDist e 1e300)", "(vlax-curve-getPointAtDist e 1e300)"] {
+    for code in [
+        "(vlax-curve-getDistAtParam e 1.0)",
+        "(vlax-curve-getDistAtParam e 2.0)",
+        "(vlax-curve-getParamAtDist e 1e300)",
+        "(vlax-curve-getPointAtDist e 1e300)",
+    ] {
         let r = eval(&mut s, code);
         assert!(matches!(r.as_deref(), Ok("nil") | Err(_)), "{code}: {r:?}");
     }
