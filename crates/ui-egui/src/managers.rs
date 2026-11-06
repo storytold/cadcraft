@@ -544,18 +544,42 @@ impl PageChoices {
     }
 }
 
-/// The plotter devices (built-in, then the user's files), read again at most every 2 s: the
-/// dialogs ask every frame and user devices are files.
+/// The plotter devices (built-in, system printers, then the user's files), read again at most
+/// every 2 s: the dialogs ask every frame and user devices are files. System printers are listed
+/// in the background; while that runs the list is kept only [`DEVICES_PENDING_MS`] and the dialog
+/// redraws then, so they appear soon after it ends without the files read every frame.
 fn device_choices(ctx: &egui::Context) -> std::sync::Arc<Vec<cadcraft_doc::PlotterConfig>> {
-    type Cached = (f64, std::sync::Arc<Vec<cadcraft_doc::PlotterConfig>>);
-    let now = crate::now_ms();
-    if let Some((at, list)) = temp::<Cached>(ctx, "plot_devices")
-        && now - at < 2000.0
+    use cadcraft_engine::cmd::plotters::{devices, system_printers_pending};
+    cached_devices(ctx, crate::now_ms(), system_printers_pending, devices)
+}
+
+/// How long the device list is kept (ms), and while system printers are being listed.
+const DEVICES_MS: f64 = 2000.0;
+const DEVICES_PENDING_MS: f64 = 250.0;
+
+/// [`device_choices`] at `now` (ms), with `load` reading the devices and `pending` telling
+/// whether system printers are being listed.
+fn cached_devices(
+    ctx: &egui::Context,
+    now: f64,
+    pending: impl FnOnce() -> bool,
+    load: impl FnOnce() -> Vec<cadcraft_doc::PlotterConfig>,
+) -> std::sync::Arc<Vec<cadcraft_doc::PlotterConfig>> {
+    /// When the list was made, how long it is kept (ms), and the list.
+    type Cached = (f64, f64, std::sync::Arc<Vec<cadcraft_doc::PlotterConfig>>);
+    if let Some((at, ttl, list)) = temp::<Cached>(ctx, "plot_devices")
+        && now - at < ttl
     {
         return list;
     }
-    let list = std::sync::Arc::new(cadcraft_engine::cmd::plotters::devices());
-    set_temp::<Cached>(ctx, "plot_devices", (now, list.clone()));
+    let list = std::sync::Arc::new(load());
+    let ttl = if pending() {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(DEVICES_PENDING_MS / 1000.0));
+        DEVICES_PENDING_MS
+    } else {
+        DEVICES_MS
+    };
+    set_temp::<Cached>(ctx, "plot_devices", (now, ttl, list.clone()));
     list
 }
 
@@ -821,6 +845,8 @@ struct PlotState {
     page: cadcraft_doc::PageSetup,
     /// Plot area "window" corners in drawing units: [x1, y1, x2, y2].
     window: [f64; 4],
+    /// Copies a system printer prints.
+    copies: u32,
     /// Model-space placement; stays outside PageSetup so layouts keep their existing behavior.
     center: bool,
     offset_mm: [f64; 2],
@@ -932,12 +958,15 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
             window: [ext.min.x, ext.min.y, ext.max.x, ext.max.y],
             center: true,
             offset_mm: [0.0, 0.0],
+            copies: 1,
         }
     });
     let model = st.target == "Model";
     let choices = PageChoices::new(ctx, d);
     let offset_supported =
         choices.devices.iter().find(|dev| dev.name.eq_ignore_ascii_case(&st.page.device)).is_none_or(|dev| dev.output.as_str() != "svg");
+    // A system printer prints the plot; other devices write a file.
+    let printer = choices.devices.iter().any(|dv| dv.system && dv.name.eq_ignore_ascii_case(&st.page.device));
     // Print... in a preview opened from here plots with these settings.
     let mut ok = temp::<bool>(ctx, PLOT_NOW) == Some(true);
     set_temp(ctx, PLOT_NOW, false);
@@ -967,6 +996,11 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                 let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
                     apply_page_change(&mut st.page, k, &v);
+                }
+                if printer {
+                    ui.label("Number of copies");
+                    ui.add(egui::DragValue::new(&mut st.copies).range(1..=999));
+                    ui.end_row();
                 }
                 if model && st.page.plot_area == "window" {
                     for (i, label) in [(0, "First corner"), (2, "Opposite corner")] {
@@ -1039,7 +1073,11 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     }
     if ok {
         let mut params = plot_params(&st, None);
-        if let Some(pick) = app.services.pick_save.as_ref() {
+        if printer {
+            if let Some(o) = params.as_object_mut() {
+                o.insert("copies".into(), json!(st.copies.max(1)));
+            }
+        } else if let Some(pick) = app.services.pick_save.as_ref() {
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let suggested = format!("{}-{}.{ext}", stem.unwrap_or_else(|| "Drawing".into()), st.target);
@@ -1053,6 +1091,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         match app.run("plot", params) {
             Ok(r) => {
                 let msg = match r.get("path").and_then(Value::as_str) {
+                    _ if printer => format!("Sent {} to {} (job {})", st.target, st.page.device, r["job"].as_str().unwrap_or("?")),
                     Some(path) => format!("Plotted {} to {path}", st.target),
                     None => format!("Plotted {} ({} bytes of PDF; there is no file dialog here)", st.target, r["bytes"]),
                 };
@@ -1164,7 +1203,38 @@ mod plot_dialog_tests {
             window: [0.0, 0.0, 10.0, 10.0],
             center: true,
             offset_mm: [0.0, 0.0],
+            copies: 1,
         }
+    }
+
+    /// While system printers are being listed the device list is still kept, only for a
+    /// shorter while: the dialogs ask every frame, and reading it reads the user's device files.
+    #[test]
+    fn the_device_list_is_kept_while_printers_are_listed() {
+        let ctx = egui::Context::default();
+        let reads = std::cell::Cell::new(0);
+        let ask = |now: f64, pending: bool| {
+            cached_devices(
+                &ctx,
+                now,
+                || pending,
+                || {
+                    reads.set(reads.get() + 1);
+                    Vec::new()
+                },
+            )
+        };
+        ask(0.0, true);
+        ask(16.0, true);
+        ask(DEVICES_PENDING_MS - 1.0, true);
+        assert_eq!(reads.get(), 1, "one read for the frames of a listing under way");
+        ask(DEVICES_PENDING_MS, true);
+        assert_eq!(reads.get(), 2, "read again shortly, for the printers once listed");
+        ask(DEVICES_PENDING_MS * 2.0, false);
+        ask(DEVICES_PENDING_MS * 2.0 + DEVICES_MS - 1.0, false);
+        assert_eq!(reads.get(), 3, "once listed, kept the full while");
+        ask(DEVICES_PENDING_MS * 2.0 + DEVICES_MS, false);
+        assert_eq!(reads.get(), 4);
     }
 
     #[test]
