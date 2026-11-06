@@ -63,32 +63,217 @@ fn blank(s: &str) -> bool {
     s.replace("\\~", " ").chars().all(char::is_whitespace)
 }
 
-/// Approximate box of an MTEXT, from its attachment point, width and line count.
-fn mtext_box(t: &crate::MText) -> Bounds2 {
-    let lines = t.contents.split("\\P").count().max(1);
-    let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
-    let estimate = t.height * 0.8 * longest as f64;
+/// Width of one character of MTEXT, in text heights, for measuring without a font: a little
+/// wider than the stroke font's average, so a wrapped text is never given too few lines.
+const MTEXT_CHAR_WIDTH: f64 = 0.9;
+
+/// One piece of an MTEXT paragraph, measured in multiples of the text height: a word (its width
+/// and its tallest character) or the space before the next word.
+#[derive(Clone, Copy)]
+enum MTextAtom {
+    Word { width: f64, height: f64 },
+    Space(f64),
+}
+
+/// The paragraphs of MTEXT contents as the renderer splits them (`\P`, `\N`, a line break),
+/// each its words and spaces, with formatting codes and braces left out and height changes
+/// (`\H`, absolute or relative) and width factor changes (`\W`, starting from `width_factor`),
+/// both scoped by braces, applied. A stacked fraction counts as its longer part. Each paragraph
+/// also carries the height in effect where it ends (an empty line's height).
+fn mtext_atoms(s: &str, height: f64, width_factor: f64) -> Vec<(Vec<MTextAtom>, f64)> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut paras: Vec<(Vec<MTextAtom>, f64)> = vec![(Vec::new(), 1.0)];
+    // The word being read: (width, tallest character).
+    let mut word: Option<(f64, f64)> = None;
+    let mut f = 1.0f64;
+    // The width factor in effect.
+    let mut wf = width_factor;
+    let mut stack: Vec<(f64, f64)> = Vec::new();
+    let end_word = |paras: &mut Vec<(Vec<MTextAtom>, f64)>, word: &mut Option<(f64, f64)>| {
+        if let (Some((width, height)), Some(p)) = (word.take(), paras.last_mut()) {
+            p.0.push(MTextAtom::Word { width, height });
+        }
+    };
+    let add = |word: &mut Option<(f64, f64)>, n: usize, f: f64, wf: f64| {
+        let (w, h) = word.get_or_insert((0.0, f));
+        *w += n as f64 * f * wf;
+        *h = h.max(f);
+    };
+    // The end of a code's argument, past its `;`.
+    let arg_end = |i: usize| chars.get(i..).and_then(|r| r.iter().position(|c| *c == ';')).map_or(chars.len(), |n| i + n + 1);
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        match c {
+            '\\' => {
+                let code = chars.get(i + 1).copied().unwrap_or(' ');
+                i += 2;
+                match code {
+                    'P' | 'N' => {
+                        end_word(&mut paras, &mut word);
+                        if let Some(p) = paras.last_mut() {
+                            p.1 = f;
+                        }
+                        paras.push((Vec::new(), f));
+                    }
+                    '~' | '\\' | '{' | '}' => add(&mut word, 1, f, wf),
+                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {}
+                    'S' => {
+                        let n = arg_end(i);
+                        let arg: String = chars.get(i..n).unwrap_or_default().iter().filter(|c| **c != ';').collect();
+                        add(&mut word, arg.split(['/', '#', '^']).map(|p| p.chars().count()).max().unwrap_or(0), f, wf);
+                        i = n;
+                    }
+                    'H' => {
+                        let n = arg_end(i);
+                        let arg: String = chars.get(i..n).unwrap_or_default().iter().filter(|c| **c != ';').collect();
+                        let (rel, v) = match arg.trim().strip_suffix(['x', 'X']) {
+                            Some(r) => (true, r.trim().parse::<f64>().ok()),
+                            None => (false, arg.trim().parse::<f64>().ok()),
+                        };
+                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
+                            f = if rel { f * v } else { v / height };
+                        }
+                        i = n;
+                    }
+                    'W' => {
+                        // Absolute, as the renderer reads it (a trailing `x` is ignored).
+                        let n = arg_end(i);
+                        let arg: String = chars.get(i..n).unwrap_or_default().iter().filter(|c| **c != ';').collect();
+                        if let Some(v) = arg.trim().trim_end_matches(['x', 'X']).trim().parse::<f64>().ok().filter(|v| *v > 0.01 && *v < 100.0) {
+                            wf = v;
+                        }
+                        i = n;
+                    }
+                    _ => i = arg_end(i),
+                }
+            }
+            '\n' => {
+                end_word(&mut paras, &mut word);
+                if let Some(p) = paras.last_mut() {
+                    p.1 = f;
+                }
+                paras.push((Vec::new(), f));
+                i += 1;
+            }
+            ' ' => {
+                end_word(&mut paras, &mut word);
+                if let Some(p) = paras.last_mut() {
+                    p.0.push(MTextAtom::Space(f * wf));
+                }
+                i += 1;
+            }
+            '{' => {
+                if stack.len() < 256 {
+                    stack.push((f, wf));
+                }
+                i += 1;
+            }
+            '}' => {
+                if let Some((g, w)) = stack.pop() {
+                    f = g;
+                    wf = w;
+                }
+                i += 1;
+            }
+            '\r' => i += 1,
+            _ => {
+                add(&mut word, 1, f, wf);
+                i += 1;
+            }
+        }
+    }
+    end_word(&mut paras, &mut word);
+    if let Some(p) = paras.last_mut() {
+        p.1 = f;
+    }
+    paras
+}
+
+/// [`mtext_box`] with the width factor of the MTEXT's text style.
+fn mtext_bounds(d: &Drawing, t: &crate::MText) -> Bounds2 {
+    let wf = d.text_style(&t.style).map_or(1.0, |s| s.width_factor);
+    mtext_box(t, if wf.is_finite() && wf > 0.0 { wf } else { 1.0 })
+}
+
+/// Approximate box of an MTEXT: its paragraphs word-wrapped to the column width as the renderer
+/// wraps them (a word wider than the column keeps a line of its own), the lines spaced as the
+/// renderer spaces them, and the block placed by its attachment point, with room below for the
+/// last line's descenders. `width_factor` is its text style's.
+fn mtext_box(t: &crate::MText, width_factor: f64) -> Bounds2 {
+    let h0 = if t.height.is_finite() && t.height > 0.0 { t.height } else { 1.0 };
+    let cw = h0 * MTEXT_CHAR_WIDTH;
+    let wrap = t.width.is_finite() && t.width > 0.0;
+    // Each line's width and tallest character (in text heights).
+    let mut lines: Vec<(f64, f64)> = Vec::new();
+    // The widest paragraph as one unwrapped line.
+    let mut unwrapped = 0.0f64;
+    for (atoms, end_height) in mtext_atoms(&t.contents, h0, width_factor) {
+        let mut line: Option<(f64, f64)> = None;
+        let mut space = None;
+        let mut para = 0.0;
+        for a in atoms {
+            match a {
+                MTextAtom::Space(f) => {
+                    if line.is_some() {
+                        space = Some(f);
+                    }
+                }
+                MTextAtom::Word { width, height } => {
+                    let ww = cw * width;
+                    let sw = space.take().map_or(0.0, |f| cw * f);
+                    para += sw + ww;
+                    line = Some(match line {
+                        Some((l, lh)) if !wrap || l + sw + ww <= t.width => (l + sw + ww, lh.max(height)),
+                        Some(done) => {
+                            lines.push(done);
+                            (ww, height)
+                        }
+                        None => (ww, height),
+                    });
+                }
+            }
+        }
+        lines.push(line.unwrap_or((0.0, end_height)));
+        unwrapped = unwrapped.max(para);
+    }
+    let longest = lines.iter().map(|l| l.0).fold(0.0, f64::max);
     // The wrap width only narrows the box: a garbage width must not stretch the drawing extents (#2465).
-    let mut w = if t.width > 0.0 { t.width.min(estimate) } else { estimate };
-    let mut h = t.height * 1.66 * lines as f64;
+    let mut w = if wrap { t.width.min(unwrapped.max(cw)) } else { longest.max(cw) };
+    // The first line is as tall as its tallest character; each further one adds 5/3 of its own
+    // (or, spaced exactly, of the text height) times the spacing.
+    let ls = if t.line_spacing.is_finite() && t.line_spacing > 0.0 { t.line_spacing } else { 1.0 };
+    let mut h = 0.0;
+    for (k, (_, lh)) in lines.iter().enumerate() {
+        h += h0
+            * if k == 0 {
+                *lh
+            } else if t.line_spacing_exact {
+                5.0 / 3.0 * ls
+            } else {
+                lh * 5.0 / 3.0 * ls
+            };
+    }
+    // Descenders of the last line hang below the block; columns keep to their own box.
+    let mut descent = h0 * lines.last().map_or(1.0, |l| l.1) / 3.0;
     if let Some(c) = t.columns.as_ref().filter(|_| t.width > 0.0) {
         // Columns side by side, the text flowing down each in turn.
         w = c.total_width(t.width);
         h = if c.max_height() > 0.0 { c.max_height() } else { h };
+        descent = 0.0;
     }
-    let (dx, dy) = match t.attach {
-        2 | 5 | 8 => (-w / 2.0, 0.0),
-        3 | 6 | 9 => (-w, 0.0),
-        _ => (0.0, 0.0),
+    let dx = match t.attach {
+        2 | 5 | 8 => -w / 2.0,
+        3 | 6 | 9 => -w,
+        _ => 0.0,
     };
     let top = match t.attach {
         4..=6 => h / 2.0,
         7..=9 => h,
         _ => 0.0,
     };
+    let bottom = top - h - descent;
     let o = t.insert.xy();
-    let pts = [Vec2::new(dx, top + dy), Vec2::new(dx + w, top + dy), Vec2::new(dx + w, top - h + dy), Vec2::new(dx, top - h + dy)]
-        .map(|p| o + p.rotate(t.rotation));
+    let pts = [Vec2::new(dx, top), Vec2::new(dx + w, top), Vec2::new(dx + w, bottom), Vec2::new(dx, bottom)].map(|p| o + p.rotate(t.rotation));
     Bounds2::from_points(pts)
 }
 
@@ -153,10 +338,10 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
         EntityKind::Text(t) if e.common.matches_layout_orientation() => {
             text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
         }
-        EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_box(&crate::MText { rotation: 0.0, ..t.clone() }),
+        EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_bounds(d, &crate::MText { rotation: 0.0, ..t.clone() }),
         EntityKind::Text(t) => text_box(t, t.value.chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
-        EntityKind::MText(t) => mtext_box(t),
+        EntityKind::MText(t) => mtext_bounds(d, t),
         EntityKind::Insert(ins) => {
             if depth >= MAX_BLOCK_DEPTH {
                 return Bounds2::EMPTY;
@@ -201,7 +386,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             for a in &ins.attribs {
                 if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
                     b = b.union(&match a.multiline_text() {
-                        Some(m) => mtext_box(&m),
+                        Some(m) => mtext_bounds(d, &m),
                         None => text_box(&a.text, a.text.value.chars().count()),
                     });
                 }
@@ -260,7 +445,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             if let Some(t) = &m.text {
                 b.add(t.insert.xy());
                 if !blank(&t.contents) {
-                    b = b.union(&mtext_box(t));
+                    b = b.union(&mtext_bounds(d, t));
                 }
             }
             if let Some(ins) = &m.block {
@@ -401,8 +586,8 @@ mod tests {
     #[test]
     fn a_huge_mtext_wrap_width_does_not_inflate_the_extents() {
         let b = bounds(EntityKind::MText(mtext("AB", 300_000_009_519_104.0)));
-        // "AB" at height 2.5 is 2 chars * 0.8 * 2.5 = 4 wide.
-        assert!(b.max.x <= 10.0 + 4.0 + 1e-9, "box ends at x = {}", b.max.x);
+        // "AB" at height 2.5 is 2 chars * 0.9 * 2.5 = 4.5 wide.
+        assert!(b.max.x <= 10.0 + 4.5 + 1e-9, "box ends at x = {}", b.max.x);
         assert!(b.min.x >= 10.0 - 1e-9);
     }
 
@@ -412,6 +597,7 @@ mod tests {
         let b = bounds(EntityKind::MText(mtext("A LONG LINE OF WRAPPING TEXT", 5.0)));
         assert!((b.max.x - b.min.x - 5.0).abs() < 1e-9, "width {}", b.max.x - b.min.x);
     }
+
     #[test]
     fn right_justified_text_is_left_of_alignment_point() {
         let b = bounds(EntityKind::Text(text(HAlign::Right, VAlign::Baseline)));
@@ -476,6 +662,71 @@ mod tests {
         let mut empty = ml;
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
         assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+    }
+
+    /// Wrapped MTEXT: the box takes every wrapped line, spaced as drawn, and a middle or bottom
+    /// attachment places the whole wrapped block around its insertion point.
+    #[test]
+    fn wrapped_mtext_box_takes_every_line() {
+        // Twenty 4-character words, two to a 10-unit line at 0.9 per character: ten lines.
+        let words = vec![r"{\H1x;abcd}"; 20].join(" ");
+        let mtext = |attach: u8| crate::MText {
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            height: 1.0,
+            width: 10.0,
+            attach,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: words.clone(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        // First line one height, nine more at 5/3 each, then the descenders.
+        let block = 1.0 + 9.0 * 5.0 / 3.0;
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let top_left = mtext_box(&mtext(1), 1.0);
+        assert!(near(top_left.max.y, 0.0) && near(top_left.min.y, -block - 1.0 / 3.0), "{top_left:?}");
+        assert!(near(top_left.min.x, 0.0) && near(top_left.max.x, 10.0));
+        let middle = mtext_box(&mtext(5), 1.0);
+        assert!(near(middle.max.y, block / 2.0) && near(middle.min.x, -5.0), "{middle:?}");
+        let bottom_right = mtext_box(&mtext(9), 1.0);
+        assert!(near(bottom_right.max.y, block) && near(bottom_right.max.x, 0.0), "{bottom_right:?}");
+        // Paragraph breaks start new lines; a word wider than the column keeps a line of its own,
+        // and the box stays the column's width.
+        let paras = mtext_box(&crate::MText { contents: r"a\Pb\Pabcdefghijklmnopqrstuvwxyz c".into(), ..mtext(1) }, 1.0);
+        assert!(near(paras.min.y, -(1.0 + 3.0 * 5.0 / 3.0) - 1.0 / 3.0), "{paras:?}");
+        assert!(near(paras.max.x, 10.0), "{paras:?}");
+    }
+
+    /// `\W` widens the characters after it (inside its braces), and the style's width factor
+    /// widens them all, as the renderer draws them.
+    #[test]
+    fn mtext_box_takes_width_factors() {
+        let mtext = |contents: &str| crate::MText {
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            height: 1.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: contents.into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(near(mtext_box(&mtext("AA"), 1.0).max.x, 1.8));
+        assert!(near(mtext_box(&mtext(r"\W2;AA"), 1.0).max.x, 3.6));
+        assert!(near(mtext_box(&mtext(r"{\W2;A}A"), 1.0).max.x, 2.7));
+        assert!(near(mtext_box(&mtext(r"\W2;A A"), 1.0).max.x, 5.4), "the space widens too");
+        assert!(near(mtext_box(&mtext("AA"), 1.5).max.x, 2.7));
+        // Through the drawing: the MTEXT's style supplies the starting width factor.
+        let mut d = Drawing::new_imperial();
+        if let Some(s) = d.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case("Standard")) {
+            s.width_factor = 2.0;
+        }
+        assert!(near(mtext_bounds(&d, &mtext("AA")).max.x, 3.6));
     }
 
     #[test]
