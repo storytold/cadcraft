@@ -109,6 +109,21 @@ pub fn default_workspace() -> Workspace {
     })
 }
 
+/// The Windows layout: the Properties palette docked on the left of the drawing, no Tool Sets
+/// (the Ribbon holds the tools) and no Layers palette (the Ribbon's Layers panel holds the layer
+/// list).
+pub fn pc_workspace() -> Workspace {
+    Workspace::new(Layout {
+        root: Some(split(
+            SplitAxis::Horizontal,
+            SplitSize::FixedFirst(PALETTES_WIDTH),
+            dock(Side::Start, PALETTES_WIDTH, &[Panel::Properties]),
+            tabs(Panel::Canvas),
+        )),
+        floating: Vec::new(),
+    })
+}
+
 /// The dock a panel belongs in: Tool Sets on the left, the palettes on the right.
 fn home_side(panel: Panel) -> (Side, f32) {
     if panel == Panel::ToolSets { (Side::Start, TOOL_SETS_WIDTH) } else { (Side::End, PALETTES_WIDTH) }
@@ -288,7 +303,7 @@ fn sync(workspace: &mut Workspace, app: &crate::CadApp) -> Result<(), String> {
     Ok(())
 }
 
-fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
+pub(crate) fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
     app.ui.show_toolsets = workspace.layout.contains(&Panel::ToolSets);
     app.ui.show_palettes = workspace.layout.contains(&Panel::Layers) || workspace.layout.contains(&Panel::Properties);
 }

@@ -1029,3 +1029,161 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Le dessin a changé. Fermez la fenêtre et rouvrez-la.
+# Ribbon labels (context `ribbon`): the French wording drafting users know from Windows CAD ribbons (observed black-box, 2026-10-13).
+ribbon	Home	Début
+ribbon	Tab: Insert	Insertion
+ribbon	Insert	Insérer
+ribbon	Annotate	Annoter
+ribbon	Parametric	Paramétrique
+ribbon	View	Vue
+ribbon	Manage	Gérer
+ribbon	Output	Sortie
+ribbon	Collaborate	Collaborer
+ribbon	Draw	Dessin
+ribbon	Modify	Modification
+ribbon	Annotation	Annotation
+ribbon	Layers	Calques
+ribbon	Block	Bloc
+ribbon	Properties	Propriétés
+ribbon	Groups	Groupes
+ribbon	Utilities	Utilitaires
+ribbon	Clipboard	Presse-papiers
+ribbon	Block Definition	Définition de bloc
+ribbon	Reference	Référence
+ribbon	Import	Importer
+ribbon	Data	Données
+ribbon	Text	Texte
+ribbon	Dimensions	Cotes
+ribbon	Centerlines	Traits d'axe
+ribbon	Leaders	Lignes de repère
+ribbon	Tables	Tableaux
+ribbon	Markup	Annotation
+ribbon	Geometric	Géométrique
+ribbon	Dimensional	Cotes
+ribbon	Manage Constraints	Gérer les contraintes
+ribbon	Navigate 2D	Navigation 2D
+ribbon	Views	Vues
+ribbon	Coordinates	Coordonnées
+ribbon	Visual Styles	Styles visuels
+ribbon	Model Viewports	Fenêtres du modèle
+ribbon	Palettes	Palettes
+ribbon	Action Recorder	Enregistreur d'actions
+ribbon	CAD Standards	Normes CAO
+ribbon	Applications	Applications
+ribbon	Plot	Tracer
+ribbon	Export to DWF/PDF	Exporter au format DWF/PDF
+ribbon	Share	Partager
+ribbon	Review	Vérifier
+ribbon	Compare	Comparer
+ribbon	Line	Ligne
+ribbon	Polyline	Polyligne
+ribbon	Circle	Cercle
+ribbon	Arc	Arc
+ribbon	Rectangle	Rectangle
+ribbon	Polygon	Polygone
+ribbon	Ellipse	Ellipse
+ribbon	Hatch	Hachures
+ribbon	Spline	Spline
+ribbon	Construction Line	Ligne de construction
+ribbon	Ray	Rayon
+ribbon	Multiple Points	Points multiples
+ribbon	Move	Déplacer
+ribbon	Copy	Copier
+ribbon	Stretch	Étirer
+ribbon	Rotate	Faire pivoter
+ribbon	Mirror	Miroir
+ribbon	Scale	Échelle
+ribbon	Trim	Ajuster
+ribbon	Extend	Prolonger
+ribbon	Fillet	Raccord
+ribbon	Chamfer	Chanfrein
+ribbon	Array	Réseau
+ribbon	Erase	Effacer
+ribbon	Explode	Décomposer
+ribbon	Offset	Décaler
+ribbon	Multiline Text	Texte multiligne
+ribbon	Single Line Text	Texte sur une ligne
+ribbon	Dimension	Cote
+ribbon	Linear	Linéaire
+ribbon	Aligned	Alignée
+ribbon	Angular	Angulaire
+ribbon	Arc Length	Longueur d'arc
+ribbon	Radius	Rayon
+ribbon	Diameter	Diamètre
+ribbon	Multileader	Ligne de repère multiple
+ribbon	Table	Tableau
+ribbon	Layer Properties	Propriétés du calque
+ribbon	Create Block	Créer un bloc
+ribbon	Match Properties	Faire correspondre les propriétés
+ribbon	Group	Grouper
+ribbon	Ungroup	Dissocier
+ribbon	Group Edit	Modifier le groupe
+ribbon	Measure	Mesurer
+ribbon	Distance	Distance
+ribbon	Area	Aire
+ribbon	Paste	Coller
+ribbon	Cut	Couper
+ribbon	Design Center	Design Center
+ribbon	Tool Palettes	Palettes d'outils
+ribbon	Sheet Set Manager	Gestionnaire du jeu de feuilles
+ribbon	External References	Références externes
+ribbon	Attach	Attacher
+ribbon	Clip	Délimiter
+ribbon	DWF Underlay	Sous-couche DWF
+ribbon	DGN Underlay	Sous-couche DGN
+ribbon	PDF Underlay	Sous-couche PDF
+ribbon	Import PDF	Importer un PDF
+ribbon	Link Data	Lier les données
+ribbon	Extract Data	Extraire les données
+ribbon	AutoConstrain	Contraindre autom.
+ribbon	Coincident	Coïncident
+ribbon	Collinear	Colinéaire
+ribbon	Concentric	Concentrique
+ribbon	Parallel	Parallèle
+ribbon	Perpendicular	Perpendiculaire
+ribbon	Horizontal	Horizontal
+ribbon	Vertical	Vertical
+ribbon	Tangent	Tangent
+ribbon	Smooth	Lisse
+ribbon	Symmetric	Symétrique
+ribbon	Equal	Égal
+ribbon	Show/Hide	Afficher/Masquer
+ribbon	Show All	Afficher tout
+ribbon	Hide All	Masquer tout
+ribbon	Named Views	Vues existantes
+ribbon	ViewCube	ViewCube
+ribbon	Navigation Bar	Barre de navigation
+ribbon	UCS Icon	Icône SCU
+ribbon	Layout Tabs	Onglets de présentation
+ribbon	Named	Nommé
+ribbon	World	Général
+ribbon	Previous	Précédent
+ribbon	2D Wireframe	Filaire 2D
+ribbon	Conceptual	Conceptuel
+ribbon	Hidden	Masqué
+ribbon	Realistic	Réaliste
+ribbon	Shaded	Ombré
+ribbon	Record	Enregistrer
+ribbon	Run Script	Exécuter le script
+ribbon	Visual LISP Editor	Éditeur Visual LISP
+ribbon	VBA Manager	Gestionnaire VBA
+ribbon	Load Application	Charger l'application
+ribbon	Preview	Aperçu
+ribbon	Page Setup Manager	Gestionnaire des mises en page
+ribbon	View Details	Afficher les détails
+ribbon	Plotter Manager	Gestionnaire de traçage
+ribbon	Share Drawing	Partager le dessin
+ribbon	Shared Views	Vues partagées
+ribbon	Off	Désactiver
+ribbon	Isolate	Isoler
+ribbon	Freeze	Geler
+ribbon	Lock	Verrouiller
+ribbon	Unlock	Déverrouiller
+ribbon	Turn All Layers On	Activer tous les calques
+ribbon	Unisolate	Annuler l'isolement
+ribbon	Thaw All Layers	Libérer tous les calques
+ribbon	Quick Select	Sélection rapide
+ribbon	Command Line	Ligne de commande
+	Ribbon	Ruban
+	Windows Layout (Ribbon)	Disposition Windows (ruban)
+	Mac Layout (Tool Sets)	Disposition Mac (palettes)
