@@ -1,5 +1,5 @@
 //! Regions (#510): REGION turns closed objects into region objects; AREA and MASSPROP measure
-//! them; UNION, SUBTRACT and INTERSECT combine regions whose boundaries don't meet; they move,
+//! them; UNION, SUBTRACT and INTERSECT combine regions with line and arc boundaries; they move,
 //! explode and snap like other objects.
 
 use cadcraft_doc::{EntityKind, Handle, Region, Space};
@@ -146,15 +146,6 @@ fn booleans_on_separate_and_nested_regions() {
     let r = s.execute("intersect", &json!({"handles": [a.hex(), c.hex()]})).unwrap();
     assert!(r["handle"].is_null());
     assert_eq!(s.doc().unwrap().model.len(), 0);
-
-    // Overlapping boundaries: not available yet, nothing changes.
-    let mut s = Session::new();
-    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
-    let b = rect_region(&mut s, [5.0, 5.0], [15.0, 15.0]);
-    let err = s.execute("union", &json!({"handles": [a.hex(), b.hex()]})).unwrap_err().to_string();
-    assert!(err.contains("not available yet"), "{err}");
-    assert_eq!(s.doc().unwrap().model.len(), 2);
-    assert!(s.execute("subtract", &json!({"from": [a.hex()], "remove": [a.hex()]})).is_err());
 }
 
 #[test]
@@ -219,4 +210,99 @@ fn hostile_region_params_never_panic() {
     for t in ["union", "", "subtract", "", "massprop", ""] {
         let _ = s.cmdline(t);
     }
+}
+
+/// F21: crossing regions give the known union, difference and intersection, and the whole
+/// command is one undo step. The first input keeps its handle and properties.
+#[test]
+fn overlapping_regions_boolean_areas_and_undo() {
+    for (command, expected) in [("union", 175.0), ("subtract", 75.0), ("intersect", 25.0)] {
+        let mut s = Session::new();
+        let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
+        let b = rect_region(&mut s, [5.0, 5.0], [15.0, 15.0]);
+        let before_a = s.doc().unwrap().entity(a).unwrap().clone();
+        let before_b = s.doc().unwrap().entity(b).unwrap().clone();
+        let params = if command == "subtract" { json!({"from": [a.hex()], "remove": [b.hex()]}) } else { json!({"handles": [a.hex(), b.hex()]}) };
+        let result = s.execute(command, &params).unwrap();
+        assert_eq!(h(&result), a);
+        assert!(near(region(&s, a).area(), expected), "{command}");
+        assert_eq!(s.doc().unwrap().entity(a).unwrap().common, before_a.common);
+        assert!(s.doc().unwrap().entity(b).is_none());
+        s.execute("u", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().entity(a).unwrap(), &before_a);
+        assert_eq!(s.doc().unwrap().entity(b).unwrap(), &before_b);
+        s.execute("redo", &json!({})).unwrap();
+        assert!(near(region(&s, a).area(), expected));
+    }
+}
+
+#[test]
+fn overlapping_region_arcs_survive_explode_and_dxf() {
+    let mut s = Session::new();
+    let a = circle_region(&mut s, [0.0, 0.0], 5.0);
+    let b = rect_region(&mut s, [3.0, -10.0], [10.0, 10.0]);
+    s.execute("intersect", &json!({"handles": [a.hex(), b.hex()]})).unwrap();
+    let expected = 25.0 * 0.6_f64.acos() - 12.0;
+    let r = region(&s, a);
+    assert!(near(r.area(), expected));
+    assert!(r.loops.iter().flat_map(|l| &l.vertices).any(|v| v.bulge != 0.0));
+    let bytes = cadcraft_io::write_dxf(s.doc().unwrap());
+    let back = cadcraft_io::read_dxf(bytes.as_bytes()).unwrap();
+    let EntityKind::Region(saved) = &back.entity(a).unwrap().kind else { panic!("saved region missing") };
+    assert!(near(saved.area(), expected));
+    s.execute("explode", &json!({"handles": [a.hex()]})).unwrap();
+    assert!(s.doc().unwrap().model.iter().any(|e| matches!(e.kind, EntityKind::Arc(_))));
+}
+
+#[test]
+fn overlapping_subtract_splits_a_region_with_a_hole() {
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
+    let hole = rect_region(&mut s, [2.0, 2.0], [8.0, 8.0]);
+    s.execute("subtract", &json!({"from": [a.hex()], "remove": [hole.hex()]})).unwrap();
+    let strip = rect_region(&mut s, [4.0, -1.0], [6.0, 11.0]);
+    s.execute("subtract", &json!({"from": [a.hex()], "remove": [strip.hex()]})).unwrap();
+    let r = region(&s, a);
+    assert!(near(r.area(), 56.0));
+    assert_eq!(r.loops.len(), 2);
+    assert!(r.loops.iter().all(|l| l.outer));
+    assert!(!r.contains(Vec2::new(5.0, 1.0)));
+    assert!(r.contains(Vec2::new(1.0, 5.0)) && r.contains(Vec2::new(9.0, 5.0)));
+}
+
+#[test]
+fn overlapping_union_on_the_command_line() {
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
+    rect_region(&mut s, [5.0, 5.0], [15.0, 15.0]);
+    s.set_selection(Vec::new());
+    for text in ["union", "0,5", "15,10", ""] {
+        s.cmdline(text).unwrap();
+    }
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+    assert!(near(region(&s, a).area(), 175.0));
+}
+
+#[test]
+fn a_failed_later_region_keeps_all_inputs_and_undo() {
+    use cadcraft_geom::PolyVertex;
+
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
+    let b = rect_region(&mut s, [5.0, 5.0], [15.0, 15.0]);
+    // A malformed boundary in an imported drawing: the combined input exceeds the cap.
+    let bad = Region::from_loop(vec![PolyVertex::new(Vec2::ZERO); cadcraft_geom::area_boolean::MAX_EDGES + 1]);
+    let c = s.doc_mut().unwrap().add(&Space::Model, Default::default(), EntityKind::Region(bad)).unwrap();
+    let before_a = region(&s, a);
+    let before_b = region(&s, b);
+    let error = s.execute("union", &json!({"handles": [a.hex(), b.hex(), c.hex()]})).unwrap_err().to_string();
+    assert!(error.contains("too complex"), "{error}");
+    assert_eq!(region(&s, a), before_a);
+    assert_eq!(region(&s, b), before_b);
+    assert!(s.doc().unwrap().entity(c).is_some());
+    // A rejected self-subtraction also leaves everything in place.
+    assert!(s.execute("subtract", &json!({"from": [a.hex()], "remove": [a.hex()]})).is_err());
+    s.execute("u", &json!({})).unwrap();
+    assert!(matches!(&s.doc().unwrap().entity(b).unwrap().kind, EntityKind::LwPolyline(_)), "undo still undoes the preceding REGION");
 }

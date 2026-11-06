@@ -1,13 +1,10 @@
 //! Region booleans (UNION, SUBTRACT, INTERSECT) and MASSPROP.
 //!
-//! The booleans handle regions whose boundaries don't cross or touch: each loop then lies wholly
-//! inside or outside the other region, and the result keeps the loops that bound it (union: the
-//! loops outside the other region; subtract: the first region's loops outside the second and the
-//! second's inside the first; intersect: the loops inside the other region). Overlapping
-//! boundaries need curve splitting and report "not available yet".
+//! Boundaries are split at line/arc crossings and coincident ends, then joined around the
+//! resulting area. Holes, disconnected pieces and circular arcs survive the operation.
 
 use cadcraft_doc::{EntityKind, Handle, HatchLoop, MAX_REGION_LOOPS, Region};
-use cadcraft_geom::{Line, Vec2, line_line, point_in_polygon};
+use cadcraft_geom::area_boolean::{self, Operation};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase, SelectRun};
@@ -46,9 +43,6 @@ fn other(m: impl Into<String>) -> EngineError {
     EngineError::Other(m.into())
 }
 
-/// Most segment pairs compared when checking two regions for crossing boundaries.
-const MAX_PAIRS: usize = 50_000_000;
-
 /// The regions among `hs` (others are left alone).
 fn regions(s: &Session, hs: &[Handle]) -> Result<Vec<(Handle, Region)>> {
     let d = s.doc()?;
@@ -61,80 +55,20 @@ fn regions(s: &Session, hs: &[Handle]) -> Result<Vec<(Handle, Region)>> {
         .collect())
 }
 
-/// Each loop of a region as points, with a chord tolerance for both regions' size.
-fn tess(r: &Region, tol: f64) -> Vec<Vec<Vec2>> {
-    r.tessellate(tol)
-}
-
-/// A point on a loop's boundary (its first edge's middle).
-fn probe(l: &[Vec2]) -> Option<Vec2> {
-    let n = l.len();
-    (0..n).find_map(|i| {
-        let (a, b) = (*l.get(i)?, *l.get((i + 1) % n)?);
-        (a.dist(b) > 1e-12).then(|| (a + b) * 0.5)
-    })
-}
-
-/// Whether two sets of loops have boundaries that cross, touch or overlap.
-fn boundaries_meet(a: &[Vec<Vec2>], b: &[Vec<Vec2>], tol: f64) -> Result<bool> {
-    let edges = |ls: &[Vec<Vec2>]| -> Vec<Line> {
-        ls.iter().flat_map(|l| (0..l.len()).filter_map(move |i| Some(Line::new(*l.get(i)?, *l.get((i + 1) % l.len())?)))).collect()
-    };
-    let (ea, eb) = (edges(a), edges(b));
-    if ea.len().saturating_mul(eb.len()) > MAX_PAIRS {
+/// Combine without mutating the drawing: a failed geometric operation leaves both inputs.
+fn combine(a: &Region, b: &Region, op: Operation) -> Result<Region> {
+    // Check before cloning input-sized polylines (the geometry kernel has the same edge cap).
+    let count = a.loops.iter().chain(&b.loops).try_fold(0usize, |n, l| n.checked_add(l.vertices.len()));
+    if count.is_none_or(|n| n > area_boolean::MAX_EDGES) {
         return Err(other("These regions are too complex to combine."));
     }
-    for x in &ea {
-        for y in &eb {
-            if line_line(x, y).is_some() || x.dist(y.a) < tol || y.dist(x.a) < tol {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
-/// Inside the area of loops `ls` (odd parity).
-fn inside(ls: &[Vec<Vec2>], p: Vec2) -> bool {
-    ls.iter().filter(|l| point_in_polygon(l, p)).count() % 2 == 1
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Op {
-    Union,
-    Subtract,
-    Intersect,
-}
-
-/// `a` op `b` for regions whose boundaries don't meet; `None` when they do (overlapping
-/// regions are not available yet).
-fn combine(a: &Region, b: &Region, op: Op) -> Result<Option<Region>> {
-    let size = a.bounds().union(&b.bounds());
-    let tol = ((size.width() + size.height()) * 1e-6).max(1e-12);
-    let (ta, tb) = (tess(a, tol), tess(b, tol));
-    if boundaries_meet(&ta, &tb, tol * 10.0)? {
-        return Ok(None);
-    }
-    let keep = |loops: &[HatchLoop], pts: &[Vec<Vec2>], other: &[Vec<Vec2>], want_inside: bool| -> Vec<HatchLoop> {
-        loops.iter().zip(pts).filter(|(_, p)| probe(p).is_some_and(|q| inside(other, q) == want_inside)).map(|(l, _)| l.clone()).collect()
-    };
-    let mut loops = match op {
-        Op::Union => [keep(&a.loops, &ta, &tb, false), keep(&b.loops, &tb, &ta, false)].concat(),
-        Op::Subtract => [keep(&a.loops, &ta, &tb, false), keep(&b.loops, &tb, &ta, true)].concat(),
-        Op::Intersect => [keep(&a.loops, &ta, &tb, true), keep(&b.loops, &tb, &ta, true)].concat(),
-    };
-    if loops.len() > MAX_REGION_LOOPS {
+    let polys = area_boolean::combine(&a.polylines(), &b.polylines(), op).map_err(other)?;
+    if polys.len() > MAX_REGION_LOOPS {
         return Err(other("Too many loops."));
     }
-    loops.retain(|l| l.vertices.len() >= 2);
-    let mut r = Region { loops };
-    if !r.renest() {
-        return Err(other("These regions are too complex to combine."));
-    }
-    Ok(Some(r))
+    let loops = polys.into_iter().map(|p| HatchLoop { outer: p.area() > 0.0, vertices: p.vertices, sources: Vec::new() }).collect();
+    Ok(Region { loops })
 }
-
-const OVERLAP: &str = "Combining regions whose boundaries overlap is not available yet.";
 
 /// Replace the first region with `r` (or erase it when empty) and erase the others.
 fn apply(s: &mut Session, keep: Handle, r: Region, erase: &[Handle]) -> Result<()> {
@@ -150,12 +84,12 @@ fn apply(s: &mut Session, keep: Handle, r: Region, erase: &[Handle]) -> Result<(
     Ok(())
 }
 
-fn fold(s: &mut Session, hs: &[Handle], op: Op) -> Result<Value> {
+fn fold(s: &mut Session, hs: &[Handle], op: Operation) -> Result<Value> {
     let rs = regions(s, hs)?;
     let Some(((h0, first), rest)) = rs.split_first() else { return Err(other("Select at least one region.")) };
     let mut acc = first.clone();
     for (_, r) in rest {
-        acc = combine(&acc, r, op)?.ok_or_else(|| other(OVERLAP))?;
+        acc = combine(&acc, r, op)?;
     }
     let all: Vec<Handle> = rs.iter().map(|(h, _)| *h).collect();
     let empty = acc.loops.is_empty();
@@ -167,12 +101,12 @@ fn fold(s: &mut Session, hs: &[Handle], op: Op) -> Result<Value> {
 
 fn run_union(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    fold(s, &hs, Op::Union)
+    fold(s, &hs, Operation::Union)
 }
 
 fn run_intersect(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    fold(s, &hs, Op::Intersect)
+    fold(s, &hs, Operation::Intersection)
 }
 
 fn handles(p: &Value, key: &str) -> Result<Vec<Handle>> {
@@ -185,13 +119,13 @@ fn subtract(s: &mut Session, from: &[Handle], remove: &[Handle]) -> Result<Value
     let Some(((h0, first), rest)) = a.split_first() else { return Err(other("Select regions to subtract from.")) };
     let mut acc = first.clone();
     for (_, r) in rest {
-        acc = combine(&acc, r, Op::Union)?.ok_or_else(|| other(OVERLAP))?;
+        acc = combine(&acc, r, Operation::Union)?;
     }
     for (h, r) in &b {
         if a.iter().any(|(x, _)| x == h) {
             return Err(other("A region can't be subtracted from itself."));
         }
-        acc = combine(&acc, r, Op::Subtract)?.ok_or_else(|| other(OVERLAP))?;
+        acc = combine(&acc, r, Operation::Difference)?;
     }
     let all: Vec<Handle> = a.iter().chain(&b).map(|(h, _)| *h).collect();
     let empty = acc.loops.is_empty();
