@@ -6,10 +6,13 @@ impl Session {
     /// Open a selection window with one corner at `corner`, for press-and-drag selection
     /// (AutoCAD's PICKDRAG = 2: a drag opens the window wherever it starts, even over an object;
     /// the next point, where the drag ends, closes it). Only while objects are being selected: no
-    /// command running, or a command asking for objects. Returns whether a window was opened.
+    /// command running, or a command asking for objects, either through the usual "Select
+    /// objects" handling or with windows of its own ([`crate::Prompt::windows`], STRETCH).
+    /// Returns whether a window was opened.
     pub fn begin_window(&mut self, corner: Vec2) -> bool {
         let during_command = self.running.is_some();
-        if !self.settings.pickdrag || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
+        let selecting = |p: &crate::Prompt| p.accept.select || p.windows;
+        if !self.settings.pickdrag || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| selecting(&p))) {
             return false;
         }
         self.pending_window = Some(PendingWindow { corner, during_command });
