@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Circle, Common, Drawing, Ellipse, EntityKind, Layer, Line, LwPolyline, Space};
-use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3};
+use cadcraft_geom::{Mat3, PolyVertex, Spline, Vec2, Vec3, bulge_to_arc};
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
@@ -137,6 +137,8 @@ struct Parser {
     skip: usize,
     /// What was left out, by kind ([`LeftOut`]).
     left_out: BTreeMap<LeftOut, usize>,
+    /// Shapes left out because their coordinates or extents overflow: invalid, not unsupported.
+    too_large: usize,
 }
 
 /// Drawn content the reader leaves out, named in the drawing's read note.
@@ -184,6 +186,7 @@ impl Parser {
             verts_left: MAX_TOTAL_VERTS,
             skip: 0,
             left_out: BTreeMap::new(),
+            too_large: 0,
         }
     }
 
@@ -191,13 +194,19 @@ impl Parser {
         *self.left_out.entry(kind).or_default() += 1;
     }
 
-    /// The read note on what was left out, if anything was.
-    fn note(&self) -> Option<String> {
-        if self.left_out.is_empty() {
-            return None;
+    /// The read notes on what was left out: what isn't read yet, then what is invalid.
+    fn notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        if !self.left_out.is_empty() {
+            let list: Vec<String> = self.left_out.iter().map(|(k, n)| k.describe(*n)).collect();
+            notes.push(format!("SVG: CADCraft doesn't read these yet, so they were left out: {}", list.join(", ")));
         }
-        let list: Vec<String> = self.left_out.iter().map(|(k, n)| k.describe(*n)).collect();
-        Some(format!("SVG: CADCraft doesn't read these yet, so they were left out: {}", list.join(", ")))
+        match self.too_large {
+            0 => {}
+            1 => notes.push("SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent".into()),
+            n => notes.push(format!("SVG: {n} shapes were left out as invalid: their coordinates or size are too large to represent")),
+        }
+        notes
     }
 
     fn parse(&mut self, text: &str) -> Result<()> {
@@ -221,7 +230,7 @@ impl Parser {
                 _ => {}
             }
         }
-        self.drawing.read_notes.extend(self.note());
+        self.drawing.read_notes.extend(self.notes());
         Ok(())
     }
 
@@ -356,12 +365,18 @@ impl Parser {
         }
         // Charge the vertices this entity retains against the shared document budget, so repeated
         // flattened arcs/curves cannot amplify a compact path into unbounded geometry (CWE-400).
+        // A shape left out below was generated all the same, so it is charged too.
         let verts = match &kind {
             EntityKind::LwPolyline(p) => p.vertices.len(),
             EntityKind::Spline(s) => s.control.len(),
             _ => 1,
         };
         self.verts_left = self.verts_left.checked_sub(verts).ok_or_else(|| IoError::Format("SVG: too much generated geometry".into()))?;
+        // Finite numbers can still overflow through transforms and relative steps (`l1e308 0` twice).
+        if !finite(&kind) {
+            self.too_large += 1;
+            return Ok(());
+        }
         let common = Common { layer: self.layer.clone(), ..Common::default() };
         self.drawing.add(&Space::Model, common, kind).map(|_| ()).map_err(parse_err)
     }
@@ -403,7 +418,9 @@ impl Parser {
     /// A circle or ellipse through a transform. A circle stays a `CIRCLE` under rotations,
     /// uniform scales and reflections; anything else becomes an `ELLIPSE` holding the axes
     /// of the transformed shape — a linear map sends the unit circle to an ellipse whose
-    /// semi-axes are the square roots of the eigenvalues of `A·Aᵀ`.
+    /// semi-axes are the square roots of the eigenvalues of `A·Aᵀ`. With `B = [bx by]` the
+    /// ellipse is `center + B·(cos t, sin t)`; the leading eigenvector `v` of `Bᵀ·B` is a
+    /// parameter-space direction, and the major axis is its image `B·v`.
     fn add_rounded(&mut self, center_user: Vec2, rx: f64, ry: f64) -> Result<()> {
         let center = self.map(center_user);
         let bx = self.map_vec(Vec2::new(rx, 0.0));
@@ -424,18 +441,15 @@ impl Parser {
         if s_max <= f64::EPSILON {
             return Ok(());
         }
-        let axis = if xy.abs() <= 1e-12 * trace.max(1.0) {
+        let axis = if xy.abs() <= 1e-12 * trace {
             if yy > xx { Vec2::new(0.0, 1.0) } else { Vec2::new(1.0, 0.0) }
         } else {
             let v = Vec2::new(xy, l_max - xx);
-            let l = len(v);
-            if l <= f64::EPSILON {
-                return Ok(());
-            }
-            v / l
+            // |v| ≥ |xy| > 1e-12·trace ≥ 0 here, so the division is never by zero.
+            v / len(v)
         };
         let ratio = (l_min.max(0.0).sqrt() / s_max).clamp(1e-9, 1.0);
-        let major = center + axis * s_max;
+        let major = bx * axis.x + by * axis.y;
         self.add(EntityKind::Ellipse(Ellipse { center: v3(center), major: v3(major), ratio, start: 0.0, end: std::f64::consts::TAU }))
     }
 
@@ -579,6 +593,79 @@ impl Parser {
         }
         Ok(())
     }
+}
+
+/// Every coordinate of an entity the reader makes is finite, and so are its extents: a finite
+/// centre and radius can still reach past the largest number.
+fn finite(kind: &EntityKind) -> bool {
+    match kind {
+        EntityKind::Line(l) => l.a.is_finite() && l.b.is_finite(),
+        EntityKind::Circle(c) => {
+            c.center.is_finite()
+                && c.radius.is_finite()
+                && cadcraft_geom::Circle::new(c.center.xy(), c.radius).bounds().corners().iter().all(|p| p.is_finite())
+        }
+        EntityKind::Ellipse(e) => {
+            // Half the box is `hypot` of the major axis and the minor axis (`ratio` times it, turned).
+            let (m, r) = (e.major.xy(), e.ratio);
+            e.center.is_finite() && e.major.is_finite() && e.ratio.is_finite() && box_finite(e.center.xy(), m.x.hypot(r * m.y), m.y.hypot(r * m.x))
+        }
+        EntityKind::LwPolyline(p) => p.vertices.iter().all(|v| v.p.is_finite() && v.bulge.is_finite()) && bulges_finite(p),
+        EntityKind::Spline(s) => s.control.iter().all(|p| p.is_finite()),
+        // The SVG reader doesn't make these.
+        EntityKind::Point(_)
+        | EntityKind::Arc(_)
+        | EntityKind::Polyline3d(_)
+        | EntityKind::Helix(_)
+        | EntityKind::Ray(_)
+        | EntityKind::XLine(_)
+        | EntityKind::Text(_)
+        | EntityKind::MText(_)
+        | EntityKind::AttDef(_)
+        | EntityKind::Insert(_)
+        | EntityKind::Dimension(_)
+        | EntityKind::MLine(_)
+        | EntityKind::Leader(_)
+        | EntityKind::MLeader(_)
+        | EntityKind::Hatch(_)
+        | EntityKind::Solid(_)
+        | EntityKind::Trace(_)
+        | EntityKind::Face3d(_)
+        | EntityKind::PolyfaceMesh(_)
+        | EntityKind::Region(_)
+        | EntityKind::Viewport(_)
+        | EntityKind::Image(_)
+        | EntityKind::Wipeout(_)
+        | EntityKind::Table(_)
+        | EntityKind::Tolerance(_)
+        | EntityKind::Unknown(_) => true,
+    }
+}
+
+/// The box `centre ± (hx, hy)` is finite.
+fn box_finite(c: Vec2, hx: f64, hy: f64) -> bool {
+    [c.x - hx, c.x + hx, c.y - hy, c.y + hy].iter().all(|v| v.is_finite())
+}
+
+/// Every arc segment of the polyline (a bulge between finite vertices) has a finite centre and
+/// radius, and the quadrant points it passes through are finite.
+fn bulges_finite(p: &LwPolyline) -> bool {
+    let n = p.vertices.len();
+    p.vertices.iter().enumerate().all(|(i, v)| {
+        let next = if i + 1 < n {
+            p.vertices.get(i + 1)
+        } else if p.closed {
+            p.vertices.first()
+        } else {
+            None
+        };
+        let Some((arc, _)) = next.and_then(|w| bulge_to_arc(v.p, w.p, v.bulge)) else { return true };
+        arc.center.is_finite()
+            && arc.radius.is_finite()
+            && (0..4)
+                .map(|k| f64::from(k) * std::f64::consts::FRAC_PI_2)
+                .all(|a| !arc.contains_angle(a) || Vec2::polar(arc.center, arc.radius, a).is_finite())
+    })
 }
 
 /// The element is not rendered (`display="none"`, or a style that says so).
@@ -1097,5 +1184,23 @@ mod tests {
         assert_eq!(arc_of("M10 10 a20 20 0 0120 20"), spaced);
         assert_eq!(arc_of("M10 10 a20 20 0 1 0 20 20"), (true, false, spaced.2));
         assert!(arc_of("M10 10 a20 20 0 10-20 20").0);
+    }
+
+    #[test]
+    fn extents_past_the_largest_number_are_not_finite() {
+        let ellipse = |c: Vec2, major: Vec2| EntityKind::Ellipse(Ellipse { center: v3(c), major: v3(major), ratio: 1.0, start: 0.0, end: 0.0 });
+        assert!(!finite(&ellipse(Vec2::new(1e308, 0.0), Vec2::new(1e308, 0.0))));
+        assert!(finite(&ellipse(Vec2::new(5e307, 0.0), Vec2::new(5e307, 0.0))));
+        // Turned, its box is wider than its axis: `centre ± major` is finite, the box isn't.
+        assert!(!finite(&ellipse(Vec2::new(6e307, 0.0), Vec2::new(9e307, 9e307))));
+        assert!(finite(&ellipse(Vec2::ZERO, Vec2::new(9e307, 9e307))));
+        // Half circles between the same finite points: bulging up passes 1.8e308, down doesn't.
+        let half = |bulge: f64| {
+            let (a, b) = (Vec2::new(0.0, 1.5e308), Vec2::new(1e308, 1.5e308));
+            let vertices = vec![PolyVertex::with_bulge(a, bulge), PolyVertex::new(b)];
+            EntityKind::LwPolyline(LwPolyline { vertices, closed: false, const_width: 0.0, elevation: 0.0, plinegen: false })
+        };
+        assert!(!finite(&half(-1.0)));
+        assert!(finite(&half(1.0)));
     }
 }

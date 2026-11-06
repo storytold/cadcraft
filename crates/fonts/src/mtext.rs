@@ -182,6 +182,8 @@ enum Atom {
 
 /// Upper bound on parsed atoms (hostile contents).
 const MAX_ATOMS: usize = 200_000;
+/// Largest height `\H` sets; a relative one (`\H1000x;` again and again) grows no further.
+const MAX_HEIGHT: f64 = 1e6;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
 
@@ -341,8 +343,8 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                             Some(r) => (true, num(r)),
                             None => (false, num(&a)),
                         };
-                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
-                            derive(&mut fmts, &mut cur, &|f| f.height = if rel { f.height * v } else { v });
+                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < MAX_HEIGHT) {
+                            derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(MAX_HEIGHT.max(f.height)) } else { v });
                         }
                     }
                     'W' => {
@@ -974,6 +976,17 @@ mod tests {
         }
         // Too long to look up: one unbreakable word, like a long Latin word.
         assert_eq!(lay(&"ภาษาไทย".repeat(20_000), 3.0).lines.len(), 1);
+    }
+
+    #[test]
+    fn compounding_relative_heights_stay_finite() {
+        // Each `\H1000x;` multiplied the height again: 1000^200 is infinite, and so was the layout.
+        let grow = "\\H1000x;".repeat(200);
+        for s in [format!("{grow}ab cd\\Pef"), format!("\\pxi1,t2;{grow}ab\tcd\\Pef")] {
+            let l = lay(&s, 10.0);
+            assert!(l.strokes.iter().flatten().all(|p| p.x.is_finite() && p.y.is_finite()), "{s}");
+            assert!(l.bounds.min.is_finite() && l.bounds.max.is_finite(), "{s}");
+        }
     }
 
     /// Thai writes no spaces between words: a long line wraps between words, in the plain and the

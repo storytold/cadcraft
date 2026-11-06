@@ -245,6 +245,112 @@ fn synchronous_callback_loop_is_an_error_not_a_hang() {
     assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
 }
 
+/// A step that walks a long list counts its work: one `length` of 32768 cells is past a 1000-step
+/// slice, so the slice yields after it.
+#[test]
+fn walking_a_long_list_counts_against_the_slice() {
+    use super::eval::{Ctx, Machine, Need, Outcome};
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    let mut env = super::Env::default();
+    let mut ctx = Ctx { s: &mut s, env: &mut env, depth: 0 };
+    // Built before the measured run, so only the `length` is counted.
+    let mut build = Machine::forms(super::read::read_all("(setq l '(1)) (repeat 15 (setq l (append l l)))").unwrap());
+    assert!(matches!(build.run(&mut ctx, u64::MAX), Outcome::Done(_)));
+    let mut m = Machine::forms(super::read::read_all("(length l)").unwrap());
+    // Counted as one step, the walk left the few steps of `(length l)` well inside the slice.
+    assert!(matches!(m.run(&mut ctx, 1_000), Outcome::Wait(Need::Yield)), "the walk was not charged");
+    assert!(m.used > 32_768, "{}", m.used);
+    match m.run(&mut ctx, u64::MAX) {
+        Outcome::Done(v) => assert_eq!(to_text(&v, true), "32768"),
+        _ => panic!("the length did not finish"),
+    }
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
+/// A routine is charged the work its slice did, not the slice's length: one `length` of 2^19
+/// cells is far past a 400000-step slice.
+#[test]
+fn a_routine_is_charged_the_work_of_its_slice() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    ok(&mut s, "(setq l '(1)) (repeat 19 (setq l (append l l))) nil");
+    let r = s.lisp_eval("(length l) (repeat 10 (setq x 1))", false, false, Vec::new()).unwrap();
+    assert!(r.is_none(), "the routine gave the interface a frame");
+    assert!(s.lisp_busy());
+    let steps = s.lisp.run.as_ref().map(|r| r.steps).unwrap_or(0);
+    assert!(steps >= 1 << 19, "{steps}");
+    for _ in 0..100 {
+        if !s.lisp_busy() {
+            break;
+        }
+        s.lisp_tick();
+    }
+    assert!(!s.lisp_running());
+    ok(&mut s, "(setq l nil)");
+}
+
+/// A run's last step walking a long list is charged to that run, not left for the next one: here
+/// it fails after the walk (a list of numbers isn't a list of strings), so no step follows it.
+#[test]
+fn the_last_steps_list_walk_is_charged_to_its_run() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list(vec![Value::Int(1); 100_000]));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(acad_strlsort l)").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    assert!(matches!(m.run(&mut ctx, u64::MAX), super::eval::Outcome::Error(_)));
+    assert!(m.used > 100_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
+/// Nested callbacks share one cap: an inner endless callback retried by an outer one stops.
+#[test]
+fn nested_callback_steps_count_against_the_outer_callback() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 10_000;
+    // Each level retried the endless level inside it with a fresh cap: 10000^3 steps, a hang.
+    let code = "(defun g (a b) (while t)) \
+                (defun f (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'g)))) \
+                (defun h (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'f)))) \
+                (vl-sort '(1 2) 'h)";
+    assert_eq!(eval(&mut s, code), Err("callback stopped after 10000 steps".into()));
+    // A callback's own steps count once, however many slices it runs in: three slices do three
+    // times the work of one.
+    let counts: Vec<u64> = [400_000, 1_200_000]
+        .into_iter()
+        .map(|cap| {
+            s.lisp.limits.callback_steps = cap;
+            ok(&mut s, "(setq n 0)");
+            assert!(eval(&mut s, "(vl-remove-if '(lambda (x) (while t (setq n (1+ n)))) '(1))").is_err());
+            ok(&mut s, "n").parse().unwrap()
+        })
+        .collect();
+    assert!(counts[1] * 10 >= counts[0] * 29, "{counts:?}");
+}
+
+/// The callback cap holds for each callback: a sort's comparisons together take more steps than
+/// it, and all their work still reaches the enclosing run.
+#[test]
+fn each_callback_has_its_own_cap_and_its_work_reaches_the_caller() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list((0..300).rev().map(Value::Int)));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(vl-sort l (function (lambda (a b) (< a b))))").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    let v = match m.run(&mut ctx, u64::MAX) {
+        super::eval::Outcome::Done(v) => v,
+        super::eval::Outcome::Error(e) => panic!("the sort failed: {e:?}"),
+        super::eval::Outcome::Wait(_) => panic!("the sort waited"),
+    };
+    assert_eq!(to_text(&v, true), to_text(&Value::list((0..300).map(Value::Int)), true));
+    // Over a thousand comparisons of several steps each, together well past the cap.
+    assert!(m.used > 3_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
 /// A zero-step callback limit prevents even the first callback side effect.
 #[test]
 fn a_zero_callback_budget_does_not_run_the_callback() {

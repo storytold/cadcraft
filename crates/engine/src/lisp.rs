@@ -353,6 +353,14 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // The work the slice did, which one step can take far past the slice. After a panic
+            // `used` is still the previous slice's; the run ends with the error anyway.
+            run.steps = run.steps.saturating_add(run.machine.used);
+            if run.blocking && run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_)) {
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -365,13 +373,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }
