@@ -8,6 +8,66 @@ use crate::CadApp;
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
 
+/// The reference menu tree (feature names, four spaces per level): the order every menu lists
+/// its items in. The same file is `cargo xtask parity`'s oracle.
+const REFERENCE_TREE: &str = include_str!("../../../xtask/data/menu-catalog.txt");
+
+/// A menu of the reference tree: its label and its items, in order.
+struct Reference {
+    label: &'static str,
+    children: Vec<Reference>,
+}
+
+/// The reference tree's top-level menus.
+fn reference() -> &'static [Reference] {
+    static TREE: std::sync::OnceLock<Vec<Reference>> = std::sync::OnceLock::new();
+    TREE.get_or_init(|| {
+        // The menus being read, outermost first; a line closes every menu deeper than its indent.
+        let mut open = vec![Reference { label: "", children: Vec::new() }];
+        let close = |open: &mut Vec<Reference>| {
+            if let Some(done) = open.pop()
+                && let Some(parent) = open.last_mut()
+            {
+                parent.children.push(done);
+            }
+        };
+        for line in REFERENCE_TREE.lines().filter(|l| !l.trim().is_empty()) {
+            let depth = (line.len() - line.trim_start_matches(' ').len()) / 4;
+            while open.len() > depth + 1 {
+                close(&mut open);
+            }
+            open.push(Reference { label: line.trim(), children: Vec::new() });
+        }
+        while open.len() > 1 {
+            close(&mut open);
+        }
+        open.pop().map(|root| root.children).unwrap_or_default()
+    })
+}
+
+/// Whether our item `ours` is the reference's `theirs`. The reference names Undo by what it shows
+/// at the moment, the last command ("Undo Group of commands" when the tree was read), not by a
+/// fixed label.
+fn same_item(ours: &str, theirs: &str) -> bool {
+    ours == theirs || (ours == "Undo" && theirs.starts_with("Undo "))
+}
+
+/// Put `entries` in `reference`'s order: the items the reference lists first, as it lists them,
+/// then the rest in registration order. Submenus the reference has are ordered the same way.
+fn order(entries: &mut [Entry], reference: &[Reference]) {
+    let position = |label: &str| reference.iter().position(|r| same_item(label, r.label)).unwrap_or(usize::MAX);
+    entries.sort_by_key(|e| match e {
+        Entry::Item { label, .. } | Entry::Sub { label, .. } => position(label),
+    });
+    for e in entries {
+        if let Entry::Sub { label, children } = e
+            && let Some(r) = reference.iter().find(|r| r.label == *label)
+        {
+            order(children, &r.children);
+        }
+    }
+}
+
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
@@ -73,6 +133,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
+    ("ui.dialog.find", "Find and Replace", &[], Some("Cmd+F")),
     ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
@@ -275,6 +336,7 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 "No installed interface font has the Vietnamese letters, so the interface stays in English. Install one that does (Segoe UI, Arial, DejaVu Sans or Noto Sans) to use Vietnamese."
             }
             "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
+            "ka" => "This build has no Georgian font, so the interface stays in English. Build with craft-fonts (its Geor face) to use Georgian.",
             _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
@@ -331,6 +393,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     }
     if let Some(result) = run_close_command(app, id, params) {
         return Some(result);
+    }
+    // FIND typed, or chosen from Edit ▸ Find..., opens the window; a JSON call carries `find`
+    // and falls through to the engine, so scripts, LISP and the MCP server keep their answer.
+    if id == "find" && params.is_null() {
+        app.ui.dialog = Some("find".to_string());
+        return Some(Ok(Value::Null));
     }
     let r = match id {
         "ui.open" | "open" if no_path => {
@@ -456,7 +524,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         | "ui.dialog.about"
         | "ui.dialog.commands"
         | "ui.dialog.qselect"
-        | "ui.dialog.parameters" => {
+        | "ui.dialog.parameters"
+        | "ui.dialog.find" => {
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
             Ok(Value::Null)
         }
@@ -622,6 +691,11 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
         file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
+    }
+    for (menu, entries) in &mut out {
+        if let Some(r) = reference().iter().find(|r| r.label == menu) {
+            order(entries, &r.children);
+        }
     }
     out
 }
@@ -816,6 +890,7 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
         (sc(cmd, Key::S), "qsave"),
         (sc(cmd, Key::P), "plot"),
         (sc(cmd, Key::A), "selectall"),
+        (sc(cmd, Key::F), "ui.dialog.find"),
         (sc(cmd_shift, Key::C), "copybase"),
         (sc(cmd, Key::C), "copyclip"),
         (sc(cmd, Key::X), "cutclip"),
@@ -992,6 +1067,81 @@ mod tests {
         app.start("exportpdf");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod reference_order_tests {
+    use cadcraft_engine::Session;
+
+    use super::{Entry, Reference, reference, tree};
+    use crate::{CadApp, Services};
+
+    fn label(e: &Entry) -> &str {
+        match e {
+            Entry::Item { label, .. } | Entry::Sub { label, .. } => label,
+        }
+    }
+
+    /// Every item the reference lists comes in the reference's order, at every level, and the
+    /// items the reference lacks follow them.
+    fn check(path: &str, entries: &[Entry], reference: &[Reference], failures: &mut Vec<String>) {
+        let theirs = |e: &Entry| reference.iter().find(|r| super::same_item(label(e), r.label)).map(|r| r.label);
+        let known = |e: &Entry| theirs(e).is_some();
+        // Our items by the reference's names for them, to compare orders.
+        let listed: Vec<&str> = entries.iter().filter_map(theirs).collect();
+        let expected: Vec<&str> = reference.iter().map(|r| r.label).filter(|l| listed.contains(l)).collect();
+        if listed != expected {
+            failures.push(format!("{path}: {listed:?} should be {expected:?}"));
+        }
+        if let (Some(unlisted), Some(last)) = (entries.iter().position(|e| !known(e)), entries.iter().rposition(known))
+            && unlisted < last
+        {
+            failures.push(format!("{path}: {} comes before the reference's items", entries.get(unlisted).map_or("?", label)));
+        }
+        for e in entries {
+            if let Entry::Sub { label, children } = e
+                && let Some(r) = reference.iter().find(|r| r.label == *label)
+            {
+                check(&format!("{path} > {label}"), children, &r.children, failures);
+            }
+        }
+    }
+
+    #[test]
+    fn menus_follow_the_reference_tree() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let mut failures = Vec::new();
+        for (menu, entries) in tree(&app) {
+            let r = reference().iter().find(|r| r.label == menu).unwrap_or_else(|| panic!("{menu} is not in the reference tree"));
+            check(&menu, &entries, &r.children, &mut failures);
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn reference_tree_is_nested_by_indentation() {
+        assert_eq!(reference().iter().map(|r| r.label).collect::<Vec<_>>(), super::MENUS);
+        let draw = reference().iter().find(|r| r.label == "Draw").unwrap();
+        let circle = draw.children.iter().find(|r| r.label == "Circle").unwrap();
+        assert_eq!(circle.children.first().map(|r| r.label), Some("Center, Radius"));
+    }
+
+    #[test]
+    fn open_recent_stays_after_open() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let file = tree(&app).into_iter().find(|(m, _)| m == "File").map(|(_, e)| e).unwrap_or_default();
+        let open = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).unwrap();
+        assert_eq!(file.get(open + 1).map(label), Some(super::OPEN_RECENT));
+    }
+
+    /// Edit starts with Undo and Redo, as the reference's does: its Undo is named by the last
+    /// command, so a plain label match sent Undo to the end of the menu (#2658 review).
+    #[test]
+    fn edit_starts_with_undo_and_redo() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let edit = tree(&app).into_iter().find(|(m, _)| m == "Edit").map(|(_, e)| e).unwrap_or_default();
+        assert_eq!(edit.iter().take(2).map(label).collect::<Vec<_>>(), ["Undo", "Redo"]);
     }
 }
 

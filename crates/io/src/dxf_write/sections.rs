@@ -90,9 +90,10 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(50, s.oblique.to_degrees());
         w.i(71, if s.backwards { 2 } else { 0 } | if s.upside_down { 4 } else { 0 });
         w.f(42, 0.2);
-        // The built-in font goes out as `txt`, which every reader has; CADCraft's own name
-        // travels in `CADCRAFT` xdata (`1000 FONT`, name) so the style reopens with it.
-        let file = if s.font == cadcraft_fonts_name() { "txt" } else { s.font.as_str() };
+        // The built-in font goes out as `txt`, which every reader has, and a Linux font as its
+        // Windows one with portable fonts; CADCraft's own name travels in `CADCRAFT` xdata
+        // (`1000 FONT`, name) so the style reopens with it.
+        let file = if s.font == cadcraft_fonts_name() { "txt" } else { cadcraft_fonts::windows::written_font(&s.font, d.portable_fonts) };
         w.s(3, file);
         w.s(4, &s.big_font);
         if s.annotative {
@@ -135,14 +136,15 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.s(2, &v.name);
         w.i(70, i64::from(v.layout.is_some()));
         w.f(40, v.height);
-        w.p2(10, v.center);
+        let twist = cadcraft_geom::norm_angle(v.twist);
+        w.p2(10, dxf_ext::model_center_to_dcs(v.center, twist));
         w.f(41, v.width);
         w.p(11, Vec3::Z);
         w.p(12, Vec3::ZERO);
         w.f(42, 50.0);
         w.f(43, 0.0);
         w.f(44, 0.0);
-        w.f(50, if v.twist.is_finite() { v.twist.to_degrees() } else { 0.0 });
+        w.f(50, twist.to_degrees());
         w.i(71, 0);
         w.i(281, 0);
         w.i(72, 0);
@@ -383,6 +385,8 @@ struct LayoutWriteData<'a> {
     flags: i64,
     page: &'a PageSetup,
     view: Option<(Vec2, f64)>,
+    /// The layout's limits as read (`None`: the default 0,0 to 12,9).
+    limits: Option<(Vec2, Vec2)>,
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
@@ -421,13 +425,14 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
     w.s(4, page.paper.replace(' ', "_"));
     w.s(6, "");
+    let (paper_w, paper_h, rotation) = plot_paper(page);
     for (c, v) in [
         (40, page.margins_mm[0]),
         (41, page.margins_mm[1]),
         (42, page.margins_mm[2]),
         (43, page.margins_mm[3]),
-        (44, page.width_mm),
-        (45, page.height_mm),
+        (44, paper_w),
+        (45, paper_h),
         (46, 0.0),
         (47, 0.0),
         (48, page.plot_window[0]),
@@ -442,19 +447,23 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(70, plot_flags);
     // Plot paper units: 1 millimetres, 0 inches (#1058).
     w.i(72, i64::from(cadcraft_render::paper::page_unit_mm(d, page) == 1.0));
-    w.i(73, i64::from(page.landscape));
+    w.i(73, rotation);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
     w.i(75, if page.scale_to_fit { 0 } else { 16 });
     w.f(147, scale);
-    w.f(148, 0.0);
-    w.f(149, 0.0);
+    // The paper image origin the file had (#2109), else 0,0.
+    let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
+    w.f(148, origin.x);
+    w.f(149, origin.y);
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
     w.i(71, tab);
-    w.p2(10, Vec2::ZERO);
-    w.p2(11, Vec2::new(12.0, 9.0));
+    // The layout's limits as the file had them (#2109), else 0,0 to 12,9.
+    let (lo, hi) = data.limits.filter(|(a, b)| a.is_finite() && b.is_finite()).unwrap_or((Vec2::ZERO, Vec2::new(12.0, 9.0)));
+    w.p2(10, lo);
+    w.p2(11, hi);
     w.p(12, Vec3::ZERO);
     w.p(14, Vec3::ZERO);
     w.p(15, Vec3::ZERO);
@@ -523,7 +532,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None },
+        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, limits: None },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
@@ -538,6 +547,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 flags: 1,
                 page: &l.page,
                 view: l.view,
+                limits: l.limits,
             },
         );
     }
@@ -873,7 +883,20 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
             if let EntityKind::Dimension(dm) = &e.kind {
                 let (flags, refs) = std_assoc_refs(d, dm);
                 if !refs.is_empty() {
-                    cx.assoc.insert(e.handle, AssocObj { xdict: w.h(), handle: w.h(), flags, refs });
+                    let assoc = AssocObj { xdict: w.h(), handle: w.h(), flags, refs };
+                    // Source geometry must name the DIMASSOC as well, or other readers do not
+                    // follow later edits. Both objects of an intersection need the reactor.
+                    for source in assoc.refs.iter().flat_map(|r| std::iter::once(r.main).chain(r.other)) {
+                        // common_x already gives the dimension its own DIMASSOC reactor.
+                        if source == e.handle {
+                            continue;
+                        }
+                        let reactors = w.reactors.entry(source).or_default();
+                        if !reactors.contains(&assoc.handle) {
+                            reactors.push(assoc.handle.clone());
+                        }
+                    }
+                    cx.assoc.insert(e.handle, assoc);
                 }
             }
         }
@@ -882,10 +905,14 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
 /// file ends up in: `version`, or the DWG version the bridge writes) has.
-pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
+/// `frozen_341`: see [`Ctx::frozen_341`].
+pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
+    // XCLIP boundaries go into the foreign data the raw writer places on the references.
+    let clipped = crate::dxf_clip::prepare(d);
+    let d: &Drawing = clipped.as_ref().unwrap_or(d);
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),
@@ -915,7 +942,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         .collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let mut cx = Ctx { paper_views: paper_views(d), target, ..Ctx::default() };
+    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
     let mut dim_defs = dimension_block_definitions(d, &all_spaces, &dim_plan, &mut w, &mut cx);
@@ -1115,11 +1142,49 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     if let Some(t) = w.t.get_mut(seed_pos + 1) {
         *t = Tag::s(5, seed);
     }
-    crate::dxf_raw::finish(&mut w.t, d);
+    // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
+    // DWG writer, which keeps SAT-text solids (#2334).
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
     w.t
+}
+
+/// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups
+/// keep a portrait size and a landscape flag. The values read from the file are written back
+/// as they were while they still describe that size and orientation, whatever convention the
+/// program that wrote them follows. Otherwise a media whose name makes it wider than tall,
+/// such as `ISO_full_bleed_A3_(420.00_x_297.00_MM)`, gets its size in that order and the
+/// rotation relative to it, so readers that take the media's size from its name agree with
+/// groups 44 and 45 (#1463). Other media are written as before.
+fn plot_paper(page: &PageSetup) -> (f64, f64, i64) {
+    if let Some((w, h, rotation)) = page.file_paper {
+        let same = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        let landscape = matches!(rotation, 1 | 3) != (w > h);
+        if same(w.min(h), page.width_mm) && same(w.max(h), page.height_mm) && landscape == page.landscape {
+            return (w, h, rotation);
+        }
+    }
+    if media_is_landscape(&page.paper) {
+        let (short, long) = (page.width_mm.min(page.height_mm), page.width_mm.max(page.height_mm));
+        (long, short, i64::from(!page.landscape))
+    } else {
+        (page.width_mm, page.height_mm, i64::from(page.landscape))
+    }
+}
+
+/// Whether a media name ends in a size wider than tall, like `… (420.00 x 297.00 MM)`.
+fn media_is_landscape(paper: &str) -> bool {
+    let name = paper.replace('_', " ");
+    let Some(open) = name.rfind('(') else { return false };
+    let mut sides = name[open + 1..].splitn(2, ['x', 'X', '×']);
+    let num = |s: Option<&str>| {
+        let s = s?.trim_start();
+        let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+        s[..end].parse::<f64>().ok()
+    };
+    matches!((num(sides.next()), num(sides.next())), (Some(w), Some(h)) if w > h)
 }
 
 /// DXF Reference group 91 of CLASS records, the instance count, which came with the 2004 format.
