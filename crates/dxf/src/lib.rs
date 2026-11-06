@@ -518,11 +518,19 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
 /// valid UTF-8 (`СІ` in ANSI_1251 is D1 B2, U+0472), since readers, ours included, take an ASCII
 /// DXF that is valid UTF-8 as UTF-8.
 pub fn write_ascii_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
-    let bytes = ascii(tags, Strings::Escaped(codepage::encoder(code_page)));
+    let bytes = write_ascii_in_page(tags, code_page);
     if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
         return ascii(tags, Strings::Escaped(None));
     }
     bytes
+}
+
+/// [`write_ascii_in`] without its fallback to pure ASCII: the text is in the code page even when
+/// its bytes happen to be valid UTF-8. For a reader that decodes a pre-2007 DXF by the
+/// `$DWGCODEPAGE` it declares and never guesses UTF-8, as the DWG bridge's acadrust does. A code
+/// page CADCraft doesn't know, `ASCII`, and `UTF8`/`UNICODE` still give pure ASCII.
+pub fn write_ascii_in_page(tags: &[Tag], code_page: &str) -> Vec<u8> {
+    ascii(tags, Strings::Escaped(codepage::encoder(code_page)))
 }
 
 /// How a writer stores string values.

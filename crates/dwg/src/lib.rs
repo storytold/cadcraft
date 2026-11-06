@@ -704,8 +704,11 @@ mod native {
     /// The ASCII DXF with its `$ACADVER` set to `kept` when that is newer than the version it
     /// declares, or `None` to read it as it is (binary, no `$ACADVER`, or non-ASCII text without a
     /// `$DWGCODEPAGE` to decode it by). From AutoCAD 2007 (AC1021) a DXF is UTF-8, so other bytes
-    /// are first decoded with the code page the DXF declares; `\U+XXXX` escapes read the same in
-    /// every version, and CADCraft's R2000 DXF is ASCII with such escapes.
+    /// are first decoded with the code page the DXF declares, and the `\U+XXXX` escapes CADCraft's
+    /// R2000 DXF writes for characters outside it become those characters: acadrust reads every
+    /// escape in a UTF-8 DXF as literal text (UTF-8 holds every character), so `é` would reach the
+    /// DWG as `\U+00E9`. A backslash that starts an escape is itself written as `\U+005C`, so text
+    /// that was a literal `\U+XXXX` decodes back to it.
     pub(super) fn declare_version(dxf: &[u8], kept: acadrust::DxfVersion) -> Option<Vec<u8>> {
         if dxf.starts_with(b"AutoCAD Binary DXF") {
             return None;
@@ -715,22 +718,27 @@ mod native {
         if declared >= kept {
             return None;
         }
-        let text: std::borrow::Cow<'_, [u8]> = if dxf.is_ascii() || kept < acadrust::DxfVersion::AC1021 {
+        let text: std::borrow::Cow<'_, [u8]> = if kept < acadrust::DxfVersion::AC1021 {
             std::borrow::Cow::Borrowed(dxf)
         } else {
-            // As acadrust decodes an older DXF: by its code page, Windows-1252 for one it doesn't
-            // know; a code page that names UTF-8 needs no decoding.
-            let (_, code_page) = header_value(dxf, b"$DWGCODEPAGE")?;
-            match acadrust::io::dxf::code_page::encoding_from_code_page(std::str::from_utf8(code_page).ok()?) {
-                Some(encoding) => {
-                    let (text, errors) = encoding.decode_without_bom_handling(dxf);
-                    if errors {
-                        return None;
+            let utf8: std::borrow::Cow<'_, str> = if dxf.is_ascii() {
+                std::borrow::Cow::Borrowed(std::str::from_utf8(dxf).ok()?)
+            } else {
+                // As acadrust decodes an older DXF: by its code page, Windows-1252 for one it
+                // doesn't know; a code page that names UTF-8 needs no decoding.
+                let (_, code_page) = header_value(dxf, b"$DWGCODEPAGE")?;
+                match acadrust::io::dxf::code_page::encoding_from_code_page(std::str::from_utf8(code_page).ok()?) {
+                    Some(encoding) => {
+                        let (text, errors) = encoding.decode_without_bom_handling(dxf);
+                        if errors {
+                            return None;
+                        }
+                        std::borrow::Cow::Owned(text.into_owned())
                     }
-                    std::borrow::Cow::Owned(text.into_owned().into_bytes())
+                    None => std::borrow::Cow::Borrowed(std::str::from_utf8(dxf).ok()?),
                 }
-                None => std::borrow::Cow::Borrowed(std::str::from_utf8(dxf).ok()?.as_bytes()),
-            }
+            };
+            std::borrow::Cow::Owned(decode_escapes(&utf8).into_bytes())
         };
         let (at, value) = header_value(&text, b"$ACADVER")?;
         let code = kept.to_string();
@@ -739,6 +747,41 @@ mod native {
         out.extend_from_slice(code.as_bytes());
         out.extend_from_slice(text.get(at.checked_add(value.len())?..)?);
         Some(out)
+    }
+
+    /// `text` with each `\U+XXXX` escape (four hex digits; a surrogate pair as two escapes) as the
+    /// character it names, in one pass. An escape that is malformed, names a lone surrogate or a
+    /// control character (one would break a DXF line) stays as it is.
+    fn decode_escapes(text: &str) -> String {
+        fn unit(s: &str) -> Option<u16> {
+            let hex = s.strip_prefix("\\U+")?.get(..4)?;
+            if hex.bytes().all(|b| b.is_ascii_hexdigit()) { u16::from_str_radix(hex, 16).ok() } else { None }
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find("\\U+") {
+            let (before, tail) = rest.split_at(at);
+            out.push_str(before);
+            let high = unit(tail);
+            let low = tail.get(7..).and_then(unit).filter(|u| (0xDC00..0xE000).contains(u));
+            let (c, len) = match (high, low) {
+                (Some(h @ 0xD800..0xDC00), Some(l)) => (char::decode_utf16([h, l]).next().and_then(Result::ok), 14),
+                (Some(h), _) => (char::from_u32(u32::from(h)), 7),
+                (None, _) => (None, 0),
+            };
+            match c.filter(|c| !c.is_control()) {
+                Some(c) => {
+                    out.push(c);
+                    rest = tail.get(len..).unwrap_or_default();
+                }
+                None => {
+                    out.push('\\');
+                    rest = tail.get(1..).unwrap_or_default();
+                }
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     /// The byte offset and the trimmed value of header variable `name` in an ASCII DXF: the value
@@ -1554,13 +1597,40 @@ mod tests {
         dxf
     }
 
-    /// The kept version replaces only the `$ACADVER` value; everything else stays byte for byte.
+    /// The kept version replaces only the `$ACADVER` value; everything else in an ASCII DXF without
+    /// escapes stays byte for byte.
     #[cfg(not(no_dwg_bridge))]
     #[test]
     fn declare_version_changes_only_acadver() {
-        let dxf = r2000(b"A\\U+00E7\\U+00E3o");
+        let dxf = r2000(b"Plain text");
         let out = native::declare_version(&dxf, acadrust::DxfVersion::AC1032).unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), String::from_utf8(dxf).unwrap().replacen("AC1015", "AC1032", 1));
+    }
+
+    /// Declared as 2007 or later the DXF is UTF-8, where acadrust reads a `\U+XXXX` escape as
+    /// literal text: the escapes CADCraft's R2000 DXF writes become their characters (a surrogate
+    /// pair one character), and the escaped backslash gives back text that was a literal escape.
+    /// A malformed escape, a lone surrogate or a control character stays as it is.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn declare_version_decodes_escapes_for_utf8_versions() {
+        let cases: [(&[u8], &str); 7] = [
+            (b"A\\U+00E7\\U+00E3o", "Ação"),
+            (b"M\xe9dia \\U+03A9 \\U+6F22", "Média Ω 漢"),
+            (b"\\U+D83D\\U+DE00!", "😀!"),
+            (b"\\U+005CU+00E9", "\\U+00E9"),
+            (b"\\U+00G9 \\U+12", "\\U+00G9 \\U+12"),
+            (b"\\U+D800x", "\\U+D800x"),
+            (b"a\\U+000Ab", "a\\U+000Ab"),
+        ];
+        for (value, want) in cases {
+            let out = native::declare_version(&r2000(value), acadrust::DxfVersion::AC1032).unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(text.contains(&format!("\r\n{want}\r\n")), "{}: {text}", String::from_utf8_lossy(value));
+        }
+        // Read as an older version the escapes stay for acadrust's code page reader.
+        let legacy = native::declare_version(&r2000(b"A\\U+00E7"), acadrust::DxfVersion::AC1018).unwrap();
+        assert!(legacy.windows(8).any(|w| w == b"A\\U+00E7"), "{}", String::from_utf8_lossy(&legacy));
     }
 
     /// A kept version not newer than the declared one, a binary DXF and a DXF without `$ACADVER`

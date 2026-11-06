@@ -17,6 +17,7 @@ mod dim_marks_roundtrip;
 mod dimstyle_vars_roundtrip;
 mod dimtfill_roundtrip;
 mod drafting_spacing;
+mod dwg_bridge_accents;
 #[cfg(not(target_arch = "wasm32"))]
 mod dwg_header_vars;
 mod dwg_layout_owner;
