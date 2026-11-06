@@ -1,0 +1,17 @@
+[package]
+name = "cadcraft-collab-server"
+description = "CADCraft collaboration room: applies operations to an authoritative drawing and answers with the change set"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cadcraft-doc = { workspace = true }
+cadcraft-collab = { workspace = true }
+cadcraft-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
