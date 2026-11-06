@@ -227,10 +227,22 @@ fn is_device_name(component: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A new folder of this test's own: made here, so nothing else put it there first.
+    fn fresh_dir(tag: &str) -> PathBuf {
+        let mut n = 0u32;
+        loop {
+            let dir = std::env::temp_dir().join(format!("cc-file-access-{tag}-{}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+                Err(e) => panic!("{}: {e}", dir.display()),
+            }
+        }
+    }
+
     /// A fresh folder holding `in` (read root), `out` (write root) and `outside`.
     fn folders(name: &str) -> (PathBuf, Arc<AutomationRoots>) {
-        let base = std::env::temp_dir().join(format!("cc-file-access-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let base = fresh_dir(name);
         for d in ["in/sub", "out", "outside", "in2"] {
             std::fs::create_dir_all(base.join(d)).unwrap();
         }
@@ -439,9 +451,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_case_sensitive_windows_folder_can_hold_a_sibling_of_the_root() {
-        let base = std::env::temp_dir().join(format!("cc-file-access-sensitive-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
+        let base = fresh_dir("sensitive");
         let sensitive = std::process::Command::new("fsutil").args(["file", "setCaseSensitiveInfo"]).arg(&base).arg("enable").output();
         if !sensitive.is_ok_and(|o| o.status.success()) {
             eprintln!("this runner can't make a case-sensitive folder: skipped");

@@ -312,6 +312,11 @@ fn the_replace_prompt_says_nothing_about_a_file_outside_the_roots() {
     }
     let there = dir.join("outside/there.dwg");
     std::fs::write(&there, "old").unwrap();
+    // Without roots the same file gets the prompt, so its absence below is the check's doing.
+    let (mut free, ..) = drawing();
+    free.cmdline("-wblock").unwrap();
+    free.cmdline(&there.display().to_string()).unwrap();
+    assert!(free.prompt_text().contains("already exists"), "{}", free.prompt_text());
     let write = dir.join("out");
     let roots = cadcraft_engine::file_access::AutomationRoots::new(Some(&dir.join("in")), Some(&write)).unwrap();
     cadcraft_engine::file_access::confine(roots.as_ref(), || {

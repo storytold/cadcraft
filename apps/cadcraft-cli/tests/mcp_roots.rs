@@ -13,11 +13,23 @@ use serde_json::{Value, json};
 
 const INIT: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#;
 
+/// A new folder of this test's own: made here, so nothing else put it there first.
+fn fresh_dir(tag: &str) -> PathBuf {
+    let mut n = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!("cc-mcp-roots-{tag}-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => panic!("{}: {e}", dir.display()),
+        }
+    }
+}
+
 /// A folder holding `in` (the read root, with `a.dxf`), `out` (the write root), `outside` (with
 /// `b.dxf`) and `in2` (a sibling with the same prefix as `in`).
 fn folders(tag: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!("cc-mcp-roots-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = fresh_dir(tag);
     for d in ["in", "out", "outside", "in2"] {
         std::fs::create_dir_all(base.join(d)).unwrap();
     }

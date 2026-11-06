@@ -103,6 +103,19 @@ impl Drop for Server {
 }
 
 /// The folders of one walk: `in` and `out` are the roots, nothing under `outside` may be touched.
+/// A new folder of this test's own: made here, so nothing else put it there first.
+fn fresh_dir(tag: &str) -> PathBuf {
+    let mut n = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!("cc-walk-{tag}-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => panic!("{}: {e}", dir.display()),
+        }
+    }
+}
+
 struct Fixture {
     base: PathBuf,
     outside: PathBuf,
@@ -114,10 +127,9 @@ struct Fixture {
 
 impl Fixture {
     fn new(tag: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("cc-walk-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let base = fresh_dir(tag);
         for d in ["in", "out"] {
-            std::fs::create_dir_all(base.join(d)).unwrap();
+            std::fs::create_dir(base.join(d)).unwrap();
         }
         let probe = base.join("probe");
         std::fs::write(&probe, "x").unwrap();
