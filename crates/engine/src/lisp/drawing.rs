@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Entity, Handle, Space};
+use cadcraft_doc::{Entity, Handle, Space, XrefStatus};
 use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
 
@@ -975,12 +975,21 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .blocks
             .values()
             .map(|b| {
-                Value::list(vec![
+                // Group 70: 4 = external reference, 8 = overlay, 32 = resolved (loaded).
+                let flags = match b.xref_path {
+                    Some(_) => 4 | if b.xref_overlay { 8 } else { 0 } | if b.xref_status == XrefStatus::Loaded { 32 } else { 0 },
+                    None => 0,
+                };
+                let mut rec = vec![
                     pair(0, Value::str("BLOCK")),
                     pair(2, Value::str(&b.name)),
-                    pair(70, Value::Int(0)),
+                    pair(70, Value::Int(flags)),
                     Value::list(vec![Value::Int(10), Value::Real(b.base.x), Value::Real(b.base.y), Value::Real(b.base.z)]),
-                ])
+                ];
+                if let Some(path) = &b.xref_path {
+                    rec.push(pair(1, Value::str(path)));
+                }
+                Value::list(rec)
             })
             .collect(),
         "DIMSTYLE" => d
