@@ -38,6 +38,12 @@ struct State {
     /// active, and committing to it would edit an object the user never saw.
     uid: u64,
     message: String,
+    /// Multiline text (MTEXT): plain Enter breaks the line. TEXT and ATTDEF are one line, and a
+    /// line break typed there would be a space once saved.
+    multiline: bool,
+    /// The UI pass the window last showed in. A window that missed a pass was closed some other
+    /// way (another dialog took its place), and its edit is not the user's any more.
+    pass: u64,
 }
 
 /// Read the object the window is for. A handle that no longer exists, or an object that is not
@@ -49,6 +55,7 @@ fn initial(app: &CadApp, hex: &str) -> State {
     let Ok(d) = app.session.doc() else { return st };
     let Some(e) = d.entity(h) else { return st };
     st.kind = e.kind.type_name().to_string();
+    st.multiline = matches!(e.kind, EntityKind::MText(_));
     st.text = text_of(&e.kind).unwrap_or_default();
     st.original = st.text.clone();
     st
@@ -61,10 +68,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
     let hex = spec.strip_prefix("textedit:").unwrap_or_default().to_string();
     let sid = egui::Id::unique("textedit_state").with(&hex);
     let cached: Option<State> = ctx.data_mut(|d| d.get_temp(sid));
+    let pass = ctx.cumulative_pass_nr();
     let mut st = match cached {
-        Some(s) => s,
+        // Shown in the last pass: the same window, still open.
+        Some(s) if s.pass.saturating_add(1) >= pass => s,
+        // Closed without passing through here: start from the drawing again, with a fresh field.
+        Some(s) => {
+            let field = egui::Id::unique("textedit_field").with(s.uid).with(&s.handle);
+            ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(field));
+            initial(app, &hex)
+        }
         None => initial(app, &hex),
     };
+    st.pass = pass;
     // The window's own close button and the two buttons below all decide the same thing, so the
     // decision stays in a local until the window is gone: `open` is borrowed for the title bar.
     let mut keep = *open;
@@ -82,10 +98,12 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, spec: &str, open: &mut bool
         .show(ctx, |ui| {
             let head = format!("{} · {}", crate::i18n::t(&st.kind), st.handle);
             ui.label(RichText::new(head).color(t.text_faint).small());
-            let r =
-                ui.add(egui::TextEdit::multiline(&mut st.text).id(field).desired_width(f32::INFINITY).desired_rows(3).hint_text(crate::tl!("Text")));
-            // Ctrl+Enter commits from inside the field, so a multiline text can keep plain Enter.
-            if r.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)) {
+            let edit = if st.multiline { egui::TextEdit::multiline(&mut st.text).desired_rows(3) } else { egui::TextEdit::singleline(&mut st.text) };
+            let r = ui.add(edit.id(field).desired_width(f32::INFINITY).hint_text(crate::tl!("Text")));
+            // Ctrl+Enter commits from inside the field, so a multiline text can keep plain Enter;
+            // a one-line field commits on Enter too.
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (r.has_focus() && enter && ui.input(|i| i.modifiers.ctrl)) || (!st.multiline && r.lost_focus() && enter) {
                 commit = true;
             }
             ui.horizontal(|ui| {

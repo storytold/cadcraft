@@ -366,5 +366,9 @@ fn plot_path_extension_picks_the_format_like_export() {
     }
     // An explicit output still decides for an odd name.
     assert_eq!(s.execute("plot", &json!({"path": path("z.txt"), "output": "pdf"})).unwrap()["format"], "pdf");
+    // But one that contradicts the extension is refused, as a device that does is (#2585 review).
+    let e = s.execute("plot", &json!({"path": path("w.png"), "output": "svg"})).unwrap_err().to_string();
+    assert!(e.contains("svg") && e.contains("png"), "{e}");
+    assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
 }

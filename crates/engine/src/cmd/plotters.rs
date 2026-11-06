@@ -312,6 +312,13 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     {
         return Err(bad(cmd, format!("plotter `{}` writes {}, but the path asks for {}", dev.name, dev.output.as_str(), want.as_str())));
     }
+    // An `output` that says another format than the path's extension is refused too, as a device
+    // that does is: either way the file would not hold what its name says.
+    if let (Some(want), Some(asked)) = (by_path, p.get("output").and_then(Value::as_str).and_then(PlotOutput::parse))
+        && asked != want
+    {
+        return Err(bad(cmd, format!("`output` is {}, but the path asks for {}", asked.as_str(), want.as_str())));
+    }
     let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else {
         if let (Some(want), Some(o)) = (by_path, out.as_object_mut()) {
             o.insert("output".into(), json!(want.as_str()));

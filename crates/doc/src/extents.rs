@@ -124,7 +124,10 @@ fn ole_data_transform(tags: &mut [crate::RawTag], new: [Vec2; 4], frame: [f64; 4
         let (Some(t), Some(chunk)) = (tags.get_mut(i), bytes.get(pos..pos + n)) else { return };
         // Leave any padding around the digits, and the digits after the header, as they were.
         let start = t.value.len() - t.value.trim_start().len();
-        let hex = recase(chunk, t.value.get(start..).unwrap_or_default());
+        // Only the rewritten digits and a few after them, for the case of the nearest letter: a
+        // hostile 310 line can be as long as the file (the value is checked to be ASCII above).
+        let end = start.saturating_add(2 * n + 64).min(t.value.len());
+        let hex = recase(chunk, t.value.get(start..end).unwrap_or_default());
         t.value.replace_range(start..start + 2 * n, &hex);
         pos += n;
     }
@@ -189,14 +192,32 @@ const CORNER_EPS: f64 = 1e-6;
 /// Transform an OLE2FRAME by `m`: its two corners are mapped through `m` (a DWG save writes the
 /// frame's position from these groups), and so are the corners at the start of its OLE data (310
 /// groups), which a reader of the saved file may trust instead. The frame stays axis aligned with
-/// its upper-left corner first: the result is the box of the two mapped corners. Commands refuse a
-/// rotation or mirror (see [`ole_frame_accepts`]), but internal callers such as EXPLODE, REFEDIT and
-/// paste still apply them, and must leave a consistent frame. A frame with no usable corners is
+/// its upper-left corner first. A matrix that keeps the axes or swaps them (a move, scale, mirror or
+/// quarter turn) gives the box of the two mapped corners. Any other turn would collapse that box
+/// (a square turned 45° maps its two corners level), so the frame's centre is mapped and its size
+/// kept, scaled by `m`'s, its sides swapped when the turn is nearer a quarter turn. Commands refuse
+/// a rotation or mirror (see [`ole_frame_accepts`]), but internal callers such as EXPLODE, REFEDIT
+/// and paste still apply them, and must leave a consistent frame. A frame with no usable corners is
 /// left alone.
 pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
     let Some([(ix1, x1), (iy1, y1), (ix2, x2), (iy2, y2)]) = ole_corner_groups(tags) else { return };
     let frame = [x1, y1, x2, y2];
-    let (a, b) = (m.apply(Vec2::new(x1, y1)), m.apply(Vec2::new(x2, y2)));
+    let t = 1e-12 * (m.a.abs() + m.b.abs() + m.c.abs() + m.d.abs());
+    let axes_kept = (m.b.abs() <= t && m.c.abs() <= t) || (m.a.abs() <= t && m.d.abs() <= t);
+    let (a, b) = if axes_kept {
+        (m.apply(Vec2::new(x1, y1)), m.apply(Vec2::new(x2, y2)))
+    } else {
+        let center = m.apply(Vec2::new((x1 + x2) / 2.0, (y1 + y2) / 2.0));
+        // A plain turn keeps the size exactly; cos² + sin² can miss 1 by an ulp or two.
+        let s = (m.a * m.d - m.b * m.c).abs().sqrt();
+        let scale = if (s - 1.0).abs() < 1e-12 { 1.0 } else { s };
+        let (mut w, mut h) = ((x2 - x1).abs() * scale, (y2 - y1).abs() * scale);
+        // Where the frame's x axis goes: nearer to y than to x is nearer a quarter turn.
+        if m.b.abs() > m.a.abs() {
+            std::mem::swap(&mut w, &mut h);
+        }
+        (center - Vec2::new(w, h) / 2.0, center + Vec2::new(w, h) / 2.0)
+    };
     if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
         return;
     }
@@ -909,16 +930,23 @@ mod tests {
     }
 
     /// Internal callers (EXPLODE, REFEDIT, paste, array placement) transform a frame by any matrix.
-    /// It stays axis aligned: groups 10/20 are the upper-left of the box of the mapped corners,
-    /// 11/21 the lower-right, and the OLE data holds the same box (review on #2587).
+    /// It stays axis aligned: groups 10/20 are the upper-left of its box, 11/21 the lower-right,
+    /// and the OLE data holds the same box (review on #2587). A mirror keeps the axes, so the box
+    /// is that of the mapped corners; a 30° turn keeps the frame's own 5 x 3 about its turned
+    /// centre, where the corners' box would flatten it.
     #[test]
     fn a_rotated_frame_stays_axis_aligned_and_consistent() {
         use cadcraft_geom::Mat3;
         let rotate = Mat3::rotate_about(Vec2::new(1.0, 2.0), 30f64.to_radians());
         let mirror = Mat3::mirror(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0));
-        for m in [rotate, mirror] {
+        for (m, turned) in [(rotate, true), (mirror, false)] {
             let mut tags = small_frame();
-            let mapped = [m.apply(Vec2::new(30.0, -19.0)), m.apply(Vec2::new(35.0, -22.0))];
+            let mapped = if turned {
+                let c = m.apply(Vec2::new(32.5, -20.5));
+                [c - Vec2::new(2.5, 1.5), c + Vec2::new(2.5, 1.5)]
+            } else {
+                [m.apply(Vec2::new(30.0, -19.0)), m.apply(Vec2::new(35.0, -22.0))]
+            };
             let (minx, maxx) = (mapped[0].x.min(mapped[1].x), mapped[0].x.max(mapped[1].x));
             let (miny, maxy) = (mapped[0].y.min(mapped[1].y), mapped[0].y.max(mapped[1].y));
             ole_frame_transform(&mut tags, &m);
@@ -1033,5 +1061,58 @@ mod tests {
         }
         assert!(same > 40, "most of the header is unchanged: {same}");
         assert_eq!(header_corners(&tags)[0], (40.0, -14.0));
+    }
+
+    /// A frame from `(x1, y1)` (upper left) to `(x2, y2)` (lower right), its OLE header holding the
+    /// same corners.
+    fn frame_at(x1: f64, y1: f64, x2: f64, y2: f64) -> Vec<crate::RawTag> {
+        let mut blob = vec![1u8, 0];
+        for (x, y) in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)] {
+            for v in [x, y, 0.0] {
+                blob.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let tag = |code: i32, value: String| crate::RawTag { code, value };
+        vec![
+            tag(10, x1.to_string()),
+            tag(20, y1.to_string()),
+            tag(11, x2.to_string()),
+            tag(21, y2.to_string()),
+            tag(310, blob.iter().map(|b| format!("{b:02X}")).collect()),
+        ]
+    }
+
+    fn size(tags: &[crate::RawTag]) -> (f64, f64, Vec2) {
+        let o = ole_frame(tags).unwrap();
+        let b = Bounds2::from_points(o);
+        (b.width(), b.height(), b.center())
+    }
+
+    /// A frame turned by an angle that isn't a quarter turn keeps its size about its turned
+    /// centre instead of collapsing to the box of its two corners (a 10 x 10 square turned 45°
+    /// became 14.14 x 0), and the OLE header follows (#2587 review).
+    #[test]
+    fn a_frame_turned_off_the_axes_keeps_its_size() {
+        use cadcraft_geom::Mat3;
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let mut tags = frame_at(0.0, 10.0, 10.0, 0.0);
+        ole_frame_transform(&mut tags, &Mat3::rotate(std::f64::consts::FRAC_PI_4));
+        let (w, h, c) = size(&tags);
+        assert!(close(w, 10.0) && close(h, 10.0), "{w} x {h}");
+        assert!(close(c.x, 0.0) && close(c.y, 50f64.sqrt()), "{c:?}");
+        let (ul, lr) = (header_corners(&tags)[0], header_corners(&tags)[2]);
+        assert!(close(ul.0, -5.0) && close(lr.1, 50f64.sqrt() - 5.0), "the header follows: {ul:?} {lr:?}");
+        // Nearer a quarter turn, the sides swap: a 10 wide, 4 tall frame turned 100° is 4 x 10.
+        let mut tags = frame_at(0.0, 4.0, 10.0, 0.0);
+        ole_frame_transform(&mut tags, &Mat3::rotate(100f64.to_radians()));
+        let (w, h, _) = size(&tags);
+        assert!(close(w, 4.0) && close(h, 10.0), "{w} x {h}");
+        // A turn and its inverse bring the frame back.
+        let mut tags = frame_at(2.0, 9.0, 7.0, 3.0);
+        let m = Mat3::rotate(0.3);
+        ole_frame_transform(&mut tags, &m);
+        ole_frame_transform(&mut tags, &m.inverse().unwrap());
+        let (w, h, c) = size(&tags);
+        assert!(close(w, 5.0) && close(h, 6.0) && close(c.x, 4.5) && close(c.y, 6.0), "{w} x {h} at {c:?}");
     }
 }
