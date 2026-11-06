@@ -31,7 +31,7 @@ impl Accept {
 /// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
 /// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
 /// AutoCAD's command line over measured runs, where no prompt was written both ways.
-const NO_OR: [&str; 27] = [
+const NO_OR: [&str; 28] = [
     "Bring to front",
     "Calculate rectangle dimensions based on",
     "Choose mode for selected object conversion",
@@ -47,6 +47,7 @@ const NO_OR: [&str; 27] = [
     "Enter leader format option",
     "Enter line spacing type",
     "Enter object ordering option",
+    "Enter option",
     "Enter polyline linetype generation option",
     "Enter property to change",
     "Enter the type of array",
@@ -269,6 +270,9 @@ pub trait Interactive: Send {
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
+    /// Called when the command is cancelled from outside (Esc, or another command starting),
+    /// before it finishes: what it records on every exit path.
+    fn cancelled(&mut self, _s: &mut Session) {}
     /// Rubber-band geometry for the cursor position.
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
@@ -290,6 +294,22 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
+    /// only its preview set); `None` shows the drawing.
+    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
+        None
+    }
+}
+
+/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
+/// runs. The whole drawing is drawn again when it ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DisplayOnly {
+    /// Objects of the drawing, drawn as they are.
+    pub handles: Vec<Handle>,
+    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
+    /// DVIEWBLOCK block), with its own properties.
+    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// See [`Interactive::drag`].

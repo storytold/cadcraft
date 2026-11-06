@@ -302,6 +302,7 @@ fn block_reference_moves_rigidly() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     );
     assert_eq!(obj_dof(&d, ins), Some(3));
@@ -343,6 +344,7 @@ fn hostile_new_geometry_never_panics() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     );
     let l = line(&mut d, (0.0, 0.0), (0.0, 0.0));

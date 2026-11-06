@@ -306,6 +306,9 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     let rotated = matches!(t.i(73), Some(1 | 3));
     if w > 0.0 && h > 0.0 {
         p.landscape = rotated != (w > h);
+        // Kept to be written back, so only a rotation the DXF Reference defines (0-3): any other
+        // value reads as not rotated and is written so.
+        p.file_paper = Some((w, h, t.i(73).filter(|r| (0..=3).contains(r)).unwrap_or(0)));
     } else if t.i(73).is_some() {
         p.landscape = rotated;
     }

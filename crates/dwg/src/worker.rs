@@ -26,7 +26,7 @@ use super::Limits;
 /// The argument that makes the app a worker.
 pub const WORKER_ARG: &str = "--dwg-worker";
 /// Bumped when the messages change: an app updated while running may start a newer copy.
-const PROTOCOL: u8 = 1;
+const PROTOCOL: u8 = 2;
 const DECODE: u8 = 1;
 const ENCODE: u8 = 2;
 const CRASH: u8 = 0xff;
@@ -82,13 +82,47 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<(Vec<u8>, Vec<String>), St
 
 /// [`super::dxf_to_dwg_as`] in the worker, when there is one.
 pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
+    encode_noted(dxf, version).map(|(dwg, _)| dwg)
+}
+
+/// [`super::dxf_to_dwg_noted`] in the worker, when there is one. What the writer left out comes
+/// back as notes of `TYPE<tab>count`.
+pub fn encode_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
+    encode_kept_noted(dxf, version, None)
+}
+
+/// [`encode_noted`] for a DXF whose carried-over groups were read from a file of version `kept`
+/// ([`super::dxf_to_dwg_kept_noted`]); `None` is [`encode_noted`].
+pub fn encode_kept_noted(dxf: &[u8], version: &str, kept: Option<&str>) -> Result<(Vec<u8>, super::Unwritten), String> {
     if u8::try_from(version.len()).is_err() {
         return Err(super::unsupported(version));
     }
-    match call(&request(ENCODE, Limits::DEFAULT, version), dxf, MAX_DWG_REPLY, "writing this file") {
-        Some(reply) => reply?.map(|(dwg, _)| dwg),
-        None => super::dxf_to_dwg_as(dxf, version),
+    // A kept version too long to send is no version CADCraft knows: it changes nothing.
+    let kept = kept.filter(|k| u8::try_from(k.len()).is_ok());
+    let mut header = request(ENCODE, Limits::DEFAULT, version);
+    push_str(&mut header, kept.unwrap_or(""));
+    match call(&header, dxf, MAX_DWG_REPLY, "writing this file") {
+        Some(reply) => reply?.map(|(dwg, notes)| (dwg, unwritten_from(&notes))),
+        None => encode_here(dxf, version, kept),
     }
+}
+
+/// The conversion in this process.
+fn encode_here(dxf: &[u8], version: &str, kept: Option<&str>) -> Result<(Vec<u8>, super::Unwritten), String> {
+    match kept {
+        Some(kept) => super::dxf_to_dwg_kept_noted(dxf, version, kept),
+        None => super::dxf_to_dwg_noted(dxf, version),
+    }
+}
+
+fn unwritten_from(notes: &[String]) -> super::Unwritten {
+    notes.iter().filter_map(|n| n.split_once('\t')).filter_map(|(kind, n)| Some((kind.to_string(), n.parse::<usize>().ok()?))).fold(
+        super::Unwritten::new(),
+        |mut m, (kind, n)| {
+            *m.entry(kind).or_insert(0) = n;
+            m
+        },
+    )
 }
 
 /// Make the worker abort, as the third-party code can: what the tests prove isolation with.
@@ -101,9 +135,14 @@ fn request(op: u8, limits: Limits, version: &str) -> Vec<u8> {
     let mut r = vec![PROTOCOL, op];
     r.extend((limits.max_dwg_bytes as u64).to_le_bytes());
     r.extend((limits.max_dxf_bytes as u64).to_le_bytes());
-    r.push(u8::try_from(version.len()).unwrap_or(0));
-    r.extend(version.as_bytes());
+    push_str(&mut r, version);
     r
+}
+
+/// `text` with a one-byte length before it; callers keep it under 256 bytes.
+fn push_str(r: &mut Vec<u8>, text: &str) {
+    r.push(u8::try_from(text.len()).unwrap_or(0));
+    r.extend(text.as_bytes());
 }
 
 type Reply = Result<(Vec<u8>, Vec<String>), String>;
@@ -241,7 +280,13 @@ fn handle(mut b: &[u8]) -> Reply {
     let version = take(&mut b, usize::from(version_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
     match op {
         DECODE => super::dwg_to_dxf_noted(b, Limits { max_dwg_bytes, max_dxf_bytes }),
-        ENCODE => super::dxf_to_dwg_as(b, version).map(|dwg| (dwg, Vec::new())),
+        ENCODE => {
+            // The version the DXF's carried-over groups were read from; empty for none.
+            let kept_len = take(&mut b, 1).and_then(<[u8]>::first).copied().ok_or_else(bad)?;
+            let kept = take(&mut b, usize::from(kept_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
+            encode_here(b, version, (!kept.is_empty()).then_some(kept))
+                .map(|(dwg, left_out)| (dwg, left_out.iter().map(|(kind, n)| format!("{kind}\t{n}")).collect()))
+        }
         CRASH => std::process::abort(),
         _ => Err(bad()),
     }
@@ -265,6 +310,12 @@ mod tests {
         let mut out = Vec::new();
         write_reply(&mut out, reply).unwrap();
         out
+    }
+
+    #[test]
+    fn what_the_writer_left_out_survives_the_reply() {
+        let notes = vec!["ACME_WIDGET\t2".to_string(), "not a count".to_string(), "X\tmany".to_string()];
+        assert_eq!(unwritten_from(&notes), [("ACME_WIDGET".to_string(), 2)].into_iter().collect());
     }
 
     #[test]
@@ -297,6 +348,22 @@ mod tests {
             &[PROTOCOL, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         ] {
             assert!(handle(request).is_err(), "{request:?}");
+        }
+    }
+
+    /// An encode request carries the kept version after the target one; a request without it is
+    /// one it can't read, and one with it reaches the converter.
+    #[test]
+    fn an_encode_request_carries_the_kept_version() {
+        let bad = "the DWG worker got a request it can't read (a different CADCraft version?)";
+        let short = self::request(ENCODE, Limits::DEFAULT, "AC1032");
+        assert_eq!(handle(&short).unwrap_err(), bad);
+        for kept in ["", "AC1032"] {
+            let mut request = self::request(ENCODE, Limits::DEFAULT, "AC1032");
+            push_str(&mut request, kept);
+            request.extend(b"not a drawing");
+            let err = handle(&request).unwrap_err();
+            assert_ne!(err, bad, "kept {kept:?}");
         }
     }
 
