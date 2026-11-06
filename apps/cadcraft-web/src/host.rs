@@ -9,11 +9,28 @@
 //!   delivery hook. The parent stores the file and reports failures itself.
 //! - `cadcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
 //! - `cadcraft:failed` (to the parent): `{ error }` when the app couldn't start.
+//! - `cadcraft:panel` (from the parent): `{ panel: null | {title, sections, notice?} }`.
+//!   Null removes the dock panel. A section has `{id, title, filter?, empty, columns,
+//!   rows, actions?}`; columns are `{id, label}`, rows `{id, group?, cells}` keyed by
+//!   column id, actions `{id, label, disabled?}`. Cells are `{kind:"text"|"edit", text}`,
+//!   `{kind:"toggle", on, label}`, or `{kind:"button", text, label}`, with optional
+//!   `label`, `disabled` and `error`. Unknown kinds display text; unknown fields are ignored.
+//!   Limits: 8 sections, 64 columns/section, 2000 rows/section, 128 cells/row,
+//!   512 Unicode characters/string and 64/id. Invalid messages retain the previous panel.
+//!   Host text is never translated. Filters search cell text; consecutive groups get headings.
+//! - `cadcraft:panel-edit` (to the parent): `{section, row, column, value}`. Value is
+//!   text on Enter or changed focus-leave, a boolean for a toggle, null for a button.
+//!   Escape abandons edits; disabled controls emit nothing. Changes are never applied locally:
+//!   the parent sends a whole new panel, preserving the buffer of an edit in progress.
+//! - `cadcraft:panel-action` (to the parent): `{section, action}` for section actions.
+//!   The first panel docks right; user-close persists until Window reopens it or a new
+//!   `cadcraft:open` followed by a panel message. None of this is available outside host mode.
 //!
 //! Only the parent window on the page's own origin is heard or answered. In host mode the app
 //! starts on the Start tab rather than an empty Drawing1, and the parent guards leaving the page.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use cadcraft_ui_egui::CadApp;
 use wasm_bindgen::JsCast as _;
@@ -39,6 +56,41 @@ pub struct Bridge {
 /// The unsaved-changes state last reported to the parent.
 #[derive(Default)]
 pub struct DirtyReport(Cell<Option<bool>>);
+
+/// Coalesces parent snapshots between frames; receipt order around a drawing open is retained.
+#[derive(Clone)]
+pub struct PanelInbox {
+    pending: Rc<RefCell<PanelPending>>,
+    ctx: egui::Context,
+}
+
+#[derive(Default)]
+struct PanelPending {
+    opened: bool,
+    panel_after_open: bool,
+    panel: Option<Option<cadcraft_ui_egui::host_panel::Model>>,
+}
+
+impl PanelInbox {
+    pub fn new(ctx: &egui::Context) -> Self {
+        Self { pending: Rc::default(), ctx: ctx.clone() }
+    }
+
+    pub fn drain(&self, app: &mut CadApp) {
+        let mut pending = std::mem::take(&mut *self.pending.borrow_mut());
+        if !pending.panel_after_open
+            && let Some(panel) = pending.panel.take()
+        {
+            app.receive_host_panel(panel);
+        }
+        if pending.opened {
+            app.host_panel_open();
+        }
+        if let Some(panel) = pending.panel {
+            app.receive_host_panel(panel);
+        }
+    }
+}
 
 impl Bridge {
     /// `None` when the page isn't framed (there is no parent to talk to).
@@ -66,7 +118,7 @@ impl Bridge {
     }
 
     /// Hear drawings from the parent; they arrive through the upload inbox.
-    pub fn listen(&self, inbox: crate::upload::Inbox) {
+    pub fn listen(&self, inbox: crate::upload::Inbox, panels: PanelInbox) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
@@ -74,6 +126,19 @@ impl Bridge {
                 return;
             }
             let data = event.data();
+            if string(&data, "type").as_deref() == Some("cadcraft:panel") {
+                if let Ok(json) = js_sys::JSON::stringify(&data)
+                    && let Some(json) = json.as_string()
+                    && let Ok(value) = serde_json::from_str(&json)
+                    && let Ok(panel) = cadcraft_ui_egui::host_panel::parse(&value)
+                {
+                    let mut pending = panels.pending.borrow_mut();
+                    pending.panel = Some(panel);
+                    pending.panel_after_open = pending.opened;
+                    panels.ctx.request_repaint();
+                }
+                return;
+            }
             if string(&data, "type").as_deref() != Some("cadcraft:open") {
                 return;
             }
@@ -88,6 +153,10 @@ impl Bridge {
                 return;
             }
             inbox.receive(name, array.to_vec());
+            let mut pending = panels.pending.borrow_mut();
+            pending.opened = true;
+            pending.panel_after_open = false;
+            panels.ctx.request_repaint();
         });
         if self.window.add_event_listener_with_callback("message", on_message.as_ref().unchecked_ref()).is_ok() {
             // The listener lives as long as the page.
@@ -101,6 +170,16 @@ impl Bridge {
         let dirty = app.session.docs.iter().any(|d| d.is_dirty());
         if reported.0.get() != Some(dirty) && self.send(&[("type", "cadcraft:dirty".into()), ("dirty", dirty.into())]) {
             reported.0.set(Some(dirty));
+        }
+    }
+
+    pub fn report_panel_events(&self, app: &mut CadApp) {
+        for event in std::mem::take(&mut app.host_panel.events) {
+            if let Ok(json) = serde_json::to_string(&event)
+                && let Ok(message) = js_sys::JSON::parse(&json)
+            {
+                let _ = self.parent.post_message(&message, &self.origin);
+            }
         }
     }
 

@@ -38,6 +38,7 @@ pub fn restore(ui: &mut UiState, saved: &str) -> Result<(), String> {
     let tools = value.get("showToolsets").and_then(Value::as_bool).ok_or("invalid Tool Sets visibility")?;
     let palettes = value.get("showPalettes").and_then(Value::as_bool).ok_or("invalid palette visibility")?;
     ui.docking = workspace;
+    cadcraft_ui_egui::host_panel::remove(&mut ui.docking);
     ui.show_toolsets = tools;
     ui.show_palettes = palettes;
     Ok(())
@@ -48,6 +49,20 @@ mod tests {
     use super::*;
     use cadcraft_engine::Session;
     use cadcraft_ui_egui::{CadApp, Services};
+
+    #[test]
+    fn host_panel_old_layout_restores_and_host_panel_cannot_restore() {
+        use cadcraft_ui_egui::docking::{Panel, default_workspace, reveal_panel};
+        let mut ui = UiState::default();
+        let old = save(&ui).unwrap();
+        restore(&mut ui, &old).unwrap();
+        assert_eq!(ui.docking, default_workspace());
+        reveal_panel(&mut ui.docking, Panel::Host).unwrap();
+        let hosted = save(&ui).unwrap();
+        restore(&mut ui, &hosted).unwrap();
+        assert!(!ui.docking.layout.contains(&Panel::Host));
+        assert!(!ui.docking.hidden.iter().any(|(panel, _)| *panel == Panel::Host));
+    }
 
     #[test]
     fn floating_and_hidden_panels_survive_storage_without_replacing_drawing_state() {

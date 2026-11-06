@@ -36,6 +36,7 @@ mod web {
         Option<(crate::host::Bridge, crate::host::DirtyReport)>,
         Option<web_sys::MediaQueryList>,
         Option<String>,
+        crate::host::PanelInbox,
     );
 
     impl eframe::App for Shell {
@@ -47,6 +48,7 @@ mod web {
             // Background reads are consume-based and run on hidden ticks too. Dropped files are
             // input and are read from `ui` only.
             self.1.drain(&mut self.0);
+            self.5.drain(&mut self.0);
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
             let drawing = self.0.session.state().ok();
@@ -55,6 +57,7 @@ mod web {
             // (including a hidden tab's) is idempotent and keeps the parent's guard current.
             if let Some((bridge, reported)) = &self.2 {
                 bridge.report_dirty(&self.0, reported);
+                bridge.report_panel_events(&mut self.0);
             }
         }
         /// Forward raw input to the web `CadApp` and capture Tab at the command line.
@@ -83,6 +86,9 @@ mod web {
                 self.1.take_dropped(ui.ctx());
             }
             self.0.ui(ui);
+            if let Some((bridge, _)) = &self.2 {
+                bridge.report_panel_events(&mut self.0);
+            }
         }
     }
 
@@ -191,13 +197,15 @@ mod web {
                             picker.pick();
                             None
                         }));
+                        let panels = crate::host::PanelInbox::new(&cc.egui_ctx);
+                        app.host_panel.enabled = app_bridge.is_some();
                         let host = app_bridge.map(|bridge| {
-                            bridge.listen(inbox.clone());
+                            bridge.listen(inbox.clone(), panels.clone());
                             bridge.post_ready();
                             (bridge, crate::host::DirtyReport::default())
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
-                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None)))
+                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None, panels)))
                     }),
                 )
                 .await;

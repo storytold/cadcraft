@@ -19,12 +19,14 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    Host,
 }
 
 impl Panel {
     pub const ALL: &[Self] = &[Self::Canvas, Self::ToolSets, Self::Layers, Self::Properties, Self::ExternalRefs];
     pub fn id(self) -> &'static str {
         match self {
+            Self::Host => "host",
             Self::Canvas => "canvas",
             Self::ToolSets => "toolSets",
             Self::QuickCalc => "quickCalc",
@@ -35,6 +37,7 @@ impl Panel {
     }
     fn label(self) -> &'static str {
         match self {
+            Self::Host => "",
             Self::Canvas => "Drawing",
             Self::ToolSets => "Tool Sets",
             Self::QuickCalc => "QuickCalc",
@@ -47,6 +50,7 @@ impl Panel {
     pub fn icon(self) -> Option<crate::icons::Icon> {
         use crate::icons::Icon;
         match self {
+            Self::Host => Some(Icon::Table),
             Self::Canvas => None,
             Self::ToolSets => Some(Icon::Switcher),
             Self::QuickCalc => Some(Icon::Table),
@@ -148,7 +152,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::Layers => &[(Panel::Properties, false), (Panel::ExternalRefs, false)],
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
-        Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::Host | Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -276,6 +280,9 @@ fn apply_command(workspace: &mut Workspace, params: &Value) -> Result<(), String
 }
 
 fn sync(workspace: &mut Workspace, app: &crate::CadApp) -> Result<(), String> {
+    if !app.host_panel.enabled || app.host_panel.model.is_none() {
+        crate::host_panel::remove(workspace);
+    }
     set_visible(workspace, Panel::ToolSets, app.ui.show_toolsets)?;
     if !app.ui.show_palettes {
         set_visible(workspace, Panel::Layers, false)?;
@@ -300,6 +307,9 @@ pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<V
     } else {
         sync(&mut workspace, app)?;
         apply_command(&mut workspace, params)?;
+        if (!app.host_panel.enabled || app.host_panel.model.is_none()) && workspace.layout.contains(&Panel::Host) {
+            return Err("No host panel is available".into());
+        }
         // An opened panel's floating window comes to the front, in its own OS window too.
         if matches!(params.get("operation").and_then(Value::as_str), Some("open" | "activate")) {
             app.raise_panel = params.get("panel").and_then(|panel| serde_json::from_value(panel.clone()).ok());
@@ -394,9 +404,14 @@ impl DockContent<Panel> for Panels<'_> {
     fn body(&mut self, ui: &mut egui::Ui, panel: &Panel) {
         let app = &mut *self.app;
         match panel {
+            Panel::Host => crate::host_panel::show(&mut app.host_panel, ui),
             Panel::Canvas => {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, crate::theme::Tokens::get().canvas);
-                crate::canvas::show(app, ui);
+                if app.session.docs.is_empty() || app.ui.start_tab {
+                    crate::chrome::start_page(app, ui);
+                } else {
+                    crate::canvas::show(app, ui);
+                }
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
@@ -417,6 +432,9 @@ impl DockContent<Panel> for Panels<'_> {
         }
     }
     fn logical_label(&self, panel: &Panel) -> String {
+        if *panel == Panel::Host {
+            return self.app.host_panel.model.as_ref().map(|model| model.title.clone()).unwrap_or_default();
+        }
         crate::i18n::t(panel.label()).into()
     }
     fn permissions(&self, panel: &Panel) -> Permissions {
@@ -441,7 +459,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
-        Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
+        Panel::Host | Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

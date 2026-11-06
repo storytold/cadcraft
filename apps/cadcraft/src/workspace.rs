@@ -87,6 +87,7 @@ fn read(path: &Path) -> Result<Option<UiState>, String> {
         && cadcraft_ui_egui::docking::validate(&docking).is_ok()
     {
         ui.docking = docking;
+        cadcraft_ui_egui::host_panel::remove(&mut ui.docking);
     }
     // Old or hand-edited files cannot reopen a dialog or replace the active drawing view.
     ui.dialog = None;
@@ -184,6 +185,22 @@ impl Workspace {
 mod tests {
     use super::*;
     use std::ffi::OsString;
+
+    #[test]
+    fn host_panel_old_workspace_restores_and_host_panel_cannot_restore() {
+        use cadcraft_ui_egui::docking::{Panel, default_workspace, reveal_panel};
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        let mut ui = UiState::default();
+        write(&path, &snapshot(&ui).unwrap()).unwrap();
+        assert_eq!(read(&path).unwrap().unwrap().docking, default_workspace());
+        reveal_panel(&mut ui.docking, Panel::Host).unwrap();
+        write(&path, &snapshot(&ui).unwrap()).unwrap();
+        let restored = read(&path).unwrap().unwrap();
+        assert!(!restored.docking.layout.contains(&Panel::Host));
+        assert!(!restored.docking.hidden.iter().any(|(panel, _)| *panel == Panel::Host));
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     fn temp_dir() -> PathBuf {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);

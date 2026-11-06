@@ -33,6 +33,7 @@ pub mod credits;
 pub mod dialogs;
 pub mod docking;
 pub mod hatchdlg;
+pub mod host_panel;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
@@ -266,6 +267,7 @@ pub struct CadApp {
     /// A panel opened from a menu or command, whose floating window comes to the front on the
     /// next frame (craft-ui's `DockArea::raise_panel`).
     pub raise_panel: Option<docking::Panel>,
+    pub host_panel: host_panel::State,
     /// One synthetic batch has been put into `RawInput` and is waiting for a real `App::ui` call.
     synthetic_injected: bool,
     /// Counts settled UI passes (one per painted frame; never hidden logic-only ticks or
@@ -344,6 +346,7 @@ impl CadApp {
             forwarded_modifiers: None,
             restore_modifiers: None,
             raise_panel: None,
+            host_panel: host_panel::State::default(),
             synthetic_injected: false,
             ui_frames: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -888,7 +891,7 @@ impl CadApp {
             palettes::toolsets_strip(self, ui);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
-            if has_doc {
+            if has_doc || (self.host_panel.enabled && self.host_panel.model.is_some()) {
                 docking::show(self, ui);
             } else {
                 chrome::start_page(self, ui);

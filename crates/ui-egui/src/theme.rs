@@ -120,6 +120,8 @@ pub struct Tokens {
     pub list_row: Color32,
     /// Transient warnings (status bar messages).
     pub warn: Color32,
+    /// Errors reported by a host-owned panel.
+    pub error: Color32,
     /// The drawing-area crosshair cursor and its pick box.
     pub crosshair: Color32,
     /// The sheet of paper on a layout tab.
@@ -170,6 +172,7 @@ impl Tokens {
         list_bg: Color32::from_rgb(0x2b, 0x31, 0x3b),
         list_row: Color32::from_rgb(0x3a, 0x42, 0x50),
         warn: Color32::from_rgb(0xff, 0xd0, 0x80),
+        error: Color32::from_rgb(0xff, 0x8a, 0x6a),
         crosshair: Color32::from_rgb(0xe8, 0xe8, 0xe8),
         paper: Color32::WHITE,
     };
@@ -202,6 +205,7 @@ impl Tokens {
         list_bg: Color32::from_rgb(0xfb, 0xfc, 0xfd),
         list_row: Color32::from_rgb(0xe3, 0xe8, 0xef),
         warn: Color32::from_rgb(0x8a, 0x53, 0x00),
+        error: Color32::from_rgb(0xb0, 0x24, 0x18),
         ..Tokens::DARK
     };
 

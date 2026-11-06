@@ -30,6 +30,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.panel.properties", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
     ("ui.toggle.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
+    ("ui.panel.host", "", &[], None),
     ("ui.panel.quickcalc", "QuickCalc", &[], None),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
     ("ui.animations.system", "Use System Setting", &["View", "Accessibility", "Animation Effects", "Use System Setting"], None),
@@ -106,6 +107,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if matches!(id, "ui.panel.properties" | "ui.panel.layers") {
         let panel = if id == "ui.panel.properties" { "properties" } else { "layers" };
         return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":panel})));
+    }
+    if id == "ui.panel.host" {
+        return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":"host"})));
     }
     if id == "ui.toggle.quickcalc" {
         return Some(crate::palettes::quickcalc::toggle(app));
@@ -619,6 +623,12 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
             add(menu, label, id, *sc, true);
         }
     }
+    if app.host_panel.enabled
+        && let Some(model) = &app.host_panel.model
+        && let Some((_, window)) = out.iter_mut().find(|(name, _)| name == "Window")
+    {
+        window.push(Entry::Item { label: model.title.clone(), id: "ui.panel.host".into(), shortcut: None, enabled: true });
+    }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
         file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
@@ -659,7 +669,7 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
+            let mut b = egui::Button::new(if id == "ui.panel.host" { label.clone() } else { crate::i18n::t(label).into() });
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
