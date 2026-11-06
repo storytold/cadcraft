@@ -1,4 +1,4 @@
-use super::trim::{param_on, sub_polyline};
+use super::trim::{param_on, replace_with_pieces, sub_polyline};
 use super::{
     Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
     Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
@@ -105,19 +105,7 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
         }
         _ => return Err(EngineError::Other("Cannot break that object.".into())),
     };
-    let common = e.common.clone();
-    let space = s.space();
-    let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
-        if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
-        }
-    }
-    Ok(out)
+    replace_with_pieces(s, h, pieces)
 }
 
 pub(super) fn run_break(s: &mut Session, p: &Value) -> Result<Value> {

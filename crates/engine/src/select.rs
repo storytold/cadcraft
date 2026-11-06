@@ -36,6 +36,13 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             }
             v
         }
+        // An OLE object's frame is drawn, so it is picked on its outline (the corners the extents and
+        // the renderer use); a frame with no width or height is drawn as a line, so it is picked as
+        // one. It stays out of prims(), which TRIM, object snap and the dimension commands read.
+        EntityKind::Unknown(u) if u.is_ole_frame() => match cadcraft_doc::ole_frame(&u.tags) {
+            Some(q) => vec![q.to_vec()],
+            None => Vec::new(),
+        },
         kind => {
             let mut out = Vec::new();
             for p in kind.prims() {
@@ -507,6 +514,23 @@ mod tests {
         assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
     }
 
+    /// An OLE2FRAME draws as its frame, so a click on an edge picks it (review on #2587); a click in
+    /// the middle of the frame, or on a frame without both corners, does not.
+    #[test]
+    fn clicking_an_ole_frame_edge_selects_it() {
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+        d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();
+        let line = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "60"), tag(20, "-19"), tag(11, "60"), tag(21, "-22")])).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -19.0), 0.2), Some(h), "top edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(35.0, -20.5), 0.2), Some(h), "right edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(60.0, -20.0), 0.2), Some(line), "a frame with no width is drawn as a line and picked as one");
+    }
+
     /// A block holding a diagonal dashed line, inserted at `scale`.
     fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
         let mut d = Drawing::new_imperial();
@@ -527,6 +551,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
         (d, h)
