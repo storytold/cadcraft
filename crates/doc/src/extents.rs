@@ -298,8 +298,14 @@ fn blank(s: &str) -> bool {
 
 /// Approximate box of an MTEXT, from its attachment point, width and line count.
 fn mtext_box(t: &crate::MText) -> Bounds2 {
-    let lines = t.contents.split("\\P").count().max(1);
-    let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
+    // Measure the text the MTEXT shows: inline codes (`{\fArial|b0;...}`, `\H0.8x;`) draw nothing, and a text
+    // with nothing to show takes no room, wherever the MTEXT comes from (entity, attribute, leader).
+    let plain = cadcraft_geom::plain_mtext(&t.contents);
+    if blank(&plain) {
+        return Bounds2::EMPTY;
+    }
+    let lines = plain.split('\n').count().max(1);
+    let longest = plain.split('\n').map(|l| l.chars().count()).max().unwrap_or(1);
     let estimate = t.height * 0.8 * longest as f64;
     // The wrap width only narrows the box: a garbage width must not stretch the drawing extents (#2465).
     let mut w = if t.width > 0.0 { t.width.min(estimate) } else { estimate };
@@ -381,7 +387,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
         EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
+        EntityKind::MText(t) if blank(&cadcraft_geom::plain_mtext(&t.contents)) => Bounds2::EMPTY,
         // Text that matches the layout's orientation is drawn upright (#2498).
         EntityKind::Text(t) if e.common.matches_layout_orientation() => {
             text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
@@ -492,7 +498,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
             if let Some(t) = &m.text {
                 b.add(t.insert.xy());
-                if !blank(&t.contents) {
+                if !blank(&cadcraft_geom::plain_mtext(&t.contents)) {
                     b = b.union(&mtext_box(t));
                 }
             }
@@ -631,6 +637,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mtext_without_width_is_measured_by_its_shown_text() {
+        let plain = bounds(EntityKind::MText(mtext("AB", 0.0)));
+        let coded = bounds(EntityKind::MText(mtext("{\\fArial|b0|i0|c0|p34;\\H0.8x;\\W0.9;AB}", 0.0)));
+        assert_eq!(coded, plain);
+        let two_lines = bounds(EntityKind::MText(mtext("{\\fArial|b0;A}\\P{\\C1;B}", 0.0)));
+        assert_eq!(two_lines.max.x, bounds(EntityKind::MText(mtext("A\\PB", 0.0))).max.x);
+    }
+
+    #[test]
+    fn mtext_of_only_formatting_codes_takes_no_room() {
+        assert!(bounds(EntityKind::MText(mtext("{\\fArial|b0|i0|c0|p34;}", 0.0))).is_empty());
+    }
+
+    #[test]
+    fn a_formatting_only_mtext_box_is_empty() {
+        assert!(mtext_box(&mtext("{\\fArial|b0|i0|c0|p34;}", 0.0)).is_empty());
+    }
+
     /// A garbage wrap width only narrows an MTEXT's box, never widens it: a huge group 41 must not
     /// stretch the drawing extents (#2465).
     #[test]
@@ -647,6 +672,7 @@ mod tests {
         let b = bounds(EntityKind::MText(mtext("A LONG LINE OF WRAPPING TEXT", 5.0)));
         assert!((b.max.x - b.min.x - 5.0).abs() < 1e-9, "width {}", b.max.x - b.min.x);
     }
+
     #[test]
     fn right_justified_text_is_left_of_alignment_point() {
         let b = bounds(EntityKind::Text(text(HAlign::Right, VAlign::Baseline)));

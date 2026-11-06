@@ -93,17 +93,7 @@ pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
     out
 }
 
-/// The character of a `\U+XXXX` escape (four hex digits) starting at `chars[i]`.
-pub(crate) fn unicode_escape(chars: &[char], i: usize) -> Option<char> {
-    if chars.get(i) != Some(&'\\') || !matches!(chars.get(i + 1), Some('U' | 'u')) || chars.get(i + 2) != Some(&'+') {
-        return None;
-    }
-    let hex: String = chars.get(i + 3..i + 7)?.iter().collect();
-    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
-}
+pub(crate) use cadcraft_geom::unicode_escape;
 
 /// Advance width of one character at height 1 and width factor 1.
 pub fn char_advance(c: char) -> f64 {
