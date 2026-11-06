@@ -41,8 +41,8 @@ use cadcraft_geom::Vec2;
 
 pub use compile::compile;
 pub use table::{
-    FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, register, search_path, set_font_map, set_provider,
-    set_search_path,
+    FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, installed, register, search_path, set_font_dirs,
+    set_font_map, set_provider, set_search_path,
 };
 pub use text::ShxText;
 pub(crate) use text::{shape, width};
@@ -128,6 +128,9 @@ pub struct ShxFont {
     data: Vec<u8>,
     records: HashMap<u16, Record>,
     cache: RwLock<GlyphCache>,
+    /// Whether a one-byte font holds Hebrew letters at their Windows-1255 / DOS 862 places,
+    /// worked out on first use ([`ShxFont::hebrew_places`]).
+    hebrew: std::sync::OnceLock<(bool, bool)>,
 }
 
 impl std::fmt::Debug for ShxFont {
@@ -193,6 +196,19 @@ impl ShxFont {
     }
     pub fn has_shape(&self, number: u16) -> bool {
         number != 0 && self.records.contains_key(&number)
+    }
+    /// Whether this one-byte font draws Hebrew letters at their Windows-1255 places (0xE0..0xFA)
+    /// and at their DOS 862 places (0x80..0x9A), as Israeli SHX fonts do. A Cyrillic font fills
+    /// the same places with its letters, so it must not also fill 0xC0..0xDF (Windows-1251) or
+    /// 0xA0..0xAF (DOS 866): Hebrew text never turns into Russian.
+    pub fn hebrew_places(&self) -> (bool, bool) {
+        *self.hebrew.get_or_init(|| {
+            if self.kind != ShxKind::Shapes {
+                return (false, false);
+            }
+            let count = |r: std::ops::RangeInclusive<u16>| r.filter(|c| self.has_shape(*c)).count();
+            (count(0xE0..=0xFA) >= 20 && count(0xC0..=0xDF) < 16, count(0x80..=0x9A) >= 20 && count(0xA0..=0xAF) < 8)
+        })
     }
     /// The shape numbers in the file, sorted (not shape 0).
     pub fn shape_numbers(&self) -> Vec<u16> {

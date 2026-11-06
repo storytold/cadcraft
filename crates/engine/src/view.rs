@@ -35,6 +35,12 @@ pub(crate) fn usable_view(v: &View) -> bool {
     v.center.is_finite() && v.height.is_finite() && v.height > 1e-12 && v.twist.is_finite()
 }
 
+/// The view drawing `d` was saved at, when it records a usable one: OPEN opens on it, and nothing
+/// after the open (resolving xrefs, the UI's first frame) fits the extents over it.
+pub(crate) fn saved_view(d: &cadcraft_doc::Drawing) -> Option<View> {
+    d.header.saved_view().map(|(center, height)| View { center, height, twist: 0.0 }).filter(usable_view)
+}
+
 /// Tiled model viewports (VPORTS): the session side of the drawing's `*Active` configuration.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelTiles {

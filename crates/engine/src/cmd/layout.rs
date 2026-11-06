@@ -786,12 +786,32 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     // Checked here for a clear error; the plotter resolves the names the same way.
     let sheets = p.get("layouts").map(|v| plot_sheets(cmd, s.doc()?, v)).transpose()?;
 
+    // `layout` and `layouts` must name the same sheet(s), or the reply would name one sheet and the render another.
+    if let (Some(n), Some(names)) = (str_param(p, "layout"), sheets.as_deref())
+        && !matches!(names, [only] if only.eq_ignore_ascii_case(n))
+    {
+        return Err(bad(cmd, "`layout` and `layouts` name different sheets; give only one of them"));
+    }
+    let printer = str_param(p, "printer").map(str::trim).filter(|n| !n.is_empty());
+    // A printer always takes the PDF, whatever `output` says.
+    let is_image =
+        printer.is_none() && p.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
     let space = match str_param(p, "layout") {
         Some(n) if n.eq_ignore_ascii_case("model") => Space::Model,
         Some(n) => Space::Paper(layout_name(cmd, s.doc()?, n)?),
-        None => s.space(),
+        // A PNG or SVG holds one render: a single `layouts` entry names the sheet to draw (the PDF
+        // path resolves `layouts` itself), not whatever space the session happens to show.
+        None => match sheets.as_deref() {
+            Some([only]) if is_image => {
+                if only.eq_ignore_ascii_case("model") {
+                    Space::Model
+                } else {
+                    Space::Paper(only.clone())
+                }
+            }
+            _ => s.space(),
+        },
     };
-    let printer = str_param(p, "printer").map(str::trim).filter(|n| !n.is_empty());
     let mut opts = if p.is_object() { p.clone() } else { json!({}) };
     if let Some(raw) = p.get("offset") {
         let values = raw
@@ -837,6 +857,10 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             None => o.remove("plotTransparency"),
         };
     }
+    // A PNG or SVG holds one render: several sheets would report `pages: N` but write only one.
+    if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
+        return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
+    }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
         Some(names) => names.first().cloned().unwrap_or_default(),
@@ -852,6 +876,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             json!({ "printer": printer, "job": job, "copies": copies.clamp(1, super::plotters::MAX_COPIES), "bytes": bytes.len(), "layout": layout, "pages": pages }),
         );
     }
+    let format = opts.get("output").and_then(Value::as_str).map(str::to_ascii_lowercase).unwrap_or_else(|| "pdf".into());
     match str_param(p, "path") {
         Some(_path) => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -861,17 +886,17 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
                 let folder = super::file::new_folder(path);
                 crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages });
+                let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });
                 super::file::report_new_folder(s, &mut r, folder);
                 Ok(r)
             }
             #[cfg(target_arch = "wasm32")]
             {
                 super::exchange::deliver_file(cmd, _path, &bytes, super::file::deliver())?;
-                Ok(json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages }))
+                Ok(json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format }))
             }
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages })),
+        None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format })),
     }
 }
 
