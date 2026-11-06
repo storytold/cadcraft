@@ -60,16 +60,19 @@ configuration works across the suite) keep the agent to the folders you give it:
   a folder that doesn't exist is refused, as is a link that leads nowhere. The result is compared
   with the root by whole folder names, exactly: `/work2/x` is not inside `/work`, and on Windows
   a folder's own case comes from the file system, so a case-sensitive folder's `Root` is not
-  `root`. On Windows UNC paths are resolved like drive-letter ones, and device names (`CON`, `NUL`,
-  `COM1`, `LPT¹`…) are refused.
+  `root`. On Windows a UNC path (`\\server\share`, `\\?\UNC\...`, including `\\host@SSL\...`), a
+  device path (`\\.\...`) or a verbatim path that isn't a disk is refused before it is opened,
+  unless a root is already on that same server and share. Device names (`CON`, `NUL`, `COM1`,
+  `LPT¹`…) are refused too.
 - A path you write must also stand under the write root: a link outside it pointing in is refused,
   because a drawing's `.bak` goes beside the link and a delete removes the link.
 - A refused path is an ordinary tool error with `isError: true` that the agent can read and
   correct, for example `automation path rejected: outside the write root
   /work/project/out: /etc/x.png`, `automation path rejected: outside the read root (or the write
   root): /etc/x.png`, `automation path rejected: the write root itself cannot be written:
-  /work/project/out`, or `automation filesystem access is not granted: write authority is absent:
-  /work/project/out/x.png`.
+  /work/project/out`, `automation path rejected: UNC paths are refused unless a root is on the
+  same server and share: \\203.0.113.5\s\x.dwg`, or `automation filesystem access is not granted:
+  write authority is absent: /work/project/out/x.png`.
 - A file a drawing names is held to the roots too: an image or xref saved with a path outside them
   stays unloaded, and the answer doesn't say whether the file exists.
 - A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):

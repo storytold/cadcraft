@@ -373,3 +373,29 @@ fn missing_roots_and_roots_with_connect_fail_at_startup() {
     assert!(!out.status.success() && out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("headless MCP server"));
 }
+
+/// A UNC, device or non-disk verbatim path is refused by the server before it is opened.
+/// The reply names the prefix. It is not an operating-system error from opening the path.
+#[cfg(windows)]
+#[test]
+fn a_network_path_is_refused_before_it_is_opened() {
+    let base = folders("unc");
+    let (out, t) = run(
+        &["--automation-read-root", &s(&base.join("in")), "--automation-write-root", &s(&base.join("out"))],
+        &[
+            ("open", json!({"path": r"\\203.0.113.5\s\x.dwg"})),
+            ("open", json!({"path": r"\\?\UNC\203.0.113.5\s\x.dwg"})),
+            ("open", json!({"path": r"\\host@SSL\share\x.dwg"})),
+            ("open", json!({"path": r"\\.\PhysicalDrive0"})),
+            ("open", json!({"path": r"\\?\Volume{00000000-0000-0000-0000-000000000000}\x.dwg"})),
+            ("execute", json!({"command": "circle", "params": {"center": [0, 0], "radius": 1}})),
+        ],
+    );
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let kinds = ["UNC", "UNC", "UNC", "device path", "verbatim path"];
+    for (tool, kind) in t.iter().zip(kinds) {
+        refused(tool, kind);
+        assert!(!tool.text.contains("cannot resolve") && !tool.text.to_ascii_lowercase().contains("os error"), "{}", tool.text);
+    }
+    ok(&t[5]);
+}

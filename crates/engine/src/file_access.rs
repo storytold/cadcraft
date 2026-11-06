@@ -9,6 +9,11 @@
 //!   links are followed: for a file that doesn't exist yet, the links of its nearest existing
 //!   folder, the rest of the path being plain names (`..` below a missing folder is refused, and so
 //!   is a link that leads nowhere).
+//! - On Windows a network path (`\\server\share`, `\\?\UNC\...`), a device path (`\\.\...`) or a
+//!   verbatim path that isn't a disk is refused before anything opens it, unless a root is already
+//!   on that same server and share (or that same device or prefix). A link whose target is one of
+//!   those is refused from the target text, before the link is followed. Opening such a path would
+//!   contact a host the agent named.
 //! - The result must lie inside the root, compared by whole components (`/work2` isn't inside
 //!   `/work`) and exactly: both sides have been through the file system, which gives each folder
 //!   its real name, and a Windows folder can be case sensitive, with `Root` beside `root`.
@@ -20,8 +25,9 @@
 //! it; without roots nothing is checked, so the app and the command line keep working everywhere.
 //!
 //! A path is checked, then opened: a process that can change the folders in between (swapping in
-//! a link) can still win that race. The roots keep an agent to the files it was given; they don't
-//! guard against other programs on the computer.
+//! a link) can still win that race. A network, device or non-disk verbatim path is not opened at
+//! all. The roots keep an agent to the files it was given; they don't guard against other
+//! programs on the computer.
 
 pub mod commands;
 
@@ -90,7 +96,7 @@ impl AutomationRoots {
     /// different file.
     pub fn check(&self, given: impl AsRef<Path>, access: Access) -> Result<(), String> {
         let given = given.as_ref();
-        let target = resolve(given)?;
+        let target = resolve(given, self)?;
         let path = given.display();
         if access == Access::Read {
             let roots = [self.read.as_ref(), self.write.as_ref()];
@@ -112,7 +118,7 @@ impl AutomationRoots {
         if same(&target, folder) {
             return Err(format!("automation path rejected: the write root itself cannot be written: {path}"));
         }
-        if !inside(&resolve(given.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")))?, folder) {
+        if !inside(&resolve(given.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")), self)?, folder) {
             return Err(format!("automation path rejected: stands outside the write root {}: {path}", folder.display()));
         }
         Ok(())
@@ -157,7 +163,10 @@ pub fn check_write(path: impl AsRef<Path>) -> Result<(), String> {
 
 /// `path` made absolute with its links followed; for a path that doesn't exist (yet), its nearest
 /// existing folder's links followed and the rest appended.
-fn resolve(path: &Path) -> Result<PathBuf, String> {
+///
+/// A Windows network, device or non-disk verbatim prefix is refused before any of that, unless
+/// `roots` already stands on the same server and share (or the same device or prefix).
+fn resolve(path: &Path, roots: &AutomationRoots) -> Result<PathBuf, String> {
     let shown = path.display();
     if path.as_os_str().is_empty() {
         return Err("automation path rejected: path is empty".into());
@@ -166,11 +175,23 @@ fn resolve(path: &Path) -> Result<PathBuf, String> {
     if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if n.to_str().is_some_and(is_device_name))) {
         return Err(format!("automation path rejected: reserved device names are not allowed: {shown}"));
     }
+    // Before `absolute` too: on Windows that call asks the system about the path.
+    if let Some(why) = refused_prefix(path, roots) {
+        return Err(format!("automation path rejected: {why}: {shown}"));
+    }
     let absolute = std::path::absolute(path).map_err(|e| format!("automation path rejected: cannot resolve {shown}: {e}"))?;
+    if let Some(why) = refused_prefix(&absolute, roots) {
+        return Err(format!("automation path rejected: {why}: {shown}"));
+    }
     // The names below the nearest existing folder, last first.
     let mut missing: Vec<OsString> = vec![];
     let mut at = absolute.as_path();
     loop {
+        // A link to a network path is judged from the target text. Canonicalizing it would follow
+        // the link and contact that host.
+        if let Some(why) = link_leads_to_refused_prefix(at, roots) {
+            return Err(format!("automation path rejected: {why}: {shown}"));
+        }
         match std::fs::canonicalize(at) {
             Ok(mut found) => {
                 found.extend(missing.iter().rev());
@@ -199,6 +220,136 @@ fn resolve(path: &Path) -> Result<PathBuf, String> {
                 return Err(format!("automation path rejected: cannot resolve {shown}: {e}"));
             }
         }
+    }
+}
+
+/// Why `path` must not be opened: it is a Windows network, device or non-disk verbatim path, and
+/// no root already uses that prefix. A local disk path returns `None`.
+///
+/// The comparison is ASCII case only, so `FileServer` matches `fileserver` and U+212A does not
+/// match `k`. Matching only decides whether that host may be contacted; [`inside`] still decides
+/// the folder.
+fn refused_prefix(path: &Path, roots: &AutomationRoots) -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        let key = windows_prefix(path)?;
+        let allowed = [roots.read.as_ref(), roots.write.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|root| windows_prefix(root).is_some_and(|root_key| prefixes_match(&root_key, &key)));
+        if allowed { None } else { Some(key.refusal()) }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, roots);
+        None
+    }
+}
+
+/// The refusal for a link in `path`, taken from the link's own text.
+///
+/// Folders are inspected from the root downward with [`std::fs::symlink_metadata`], which does not
+/// follow a link, and the target is read with [`std::fs::read_link`]. A link to a network path is
+/// therefore refused before [`std::fs::canonicalize`] would open that host, including when the
+/// link is only an ancestor of the name. At most [`MAX_LINK_HOPS`] links are followed.
+fn link_leads_to_refused_prefix(path: &Path, roots: &AutomationRoots) -> Option<&'static str> {
+    follow_links(path, roots, MAX_LINK_HOPS)
+}
+
+/// [`link_leads_to_refused_prefix`], with `hops_left` links still allowed.
+fn follow_links(path: &Path, roots: &AutomationRoots, hops_left: usize) -> Option<&'static str> {
+    if let Some(why) = refused_prefix(path, roots) {
+        return Some(why);
+    }
+    let mut ancestors: Vec<&Path> = path.ancestors().collect();
+    ancestors.reverse();
+    for prefix in ancestors {
+        // A relative path's ancestor list ends at an empty name. Absolute paths, which are all
+        // this is called with, have no empty ancestor; skip it rather than treating it as missing.
+        if prefix.as_os_str().is_empty() {
+            continue;
+        }
+        if let Some(why) = refused_prefix(prefix, roots) {
+            return Some(why);
+        }
+        let Ok(meta) = std::fs::symlink_metadata(prefix) else { return None };
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        if hops_left == 0 {
+            return None;
+        }
+        let Ok(target) = std::fs::read_link(prefix) else { return None };
+        let joined = if target.is_absolute() {
+            target
+        } else {
+            match prefix.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent.join(target),
+                _ => target,
+            }
+        };
+        let rest = match path.strip_prefix(prefix) {
+            Ok(rest) if !rest.as_os_str().is_empty() => rest,
+            _ => Path::new(""),
+        };
+        let next = if rest.as_os_str().is_empty() { joined } else { joined.join(rest) };
+        if let Some(why) = refused_prefix(&next, roots) {
+            return Some(why);
+        }
+        return follow_links(&next, roots, hops_left - 1);
+    }
+    None
+}
+
+/// How many links [`link_leads_to_refused_prefix`] follows before it stops.
+const MAX_LINK_HOPS: usize = 40;
+
+/// A Windows prefix that is not a local disk.
+#[cfg(windows)]
+enum WindowsPrefix {
+    /// `\\server\share` or `\\?\UNC\server\share`.
+    Unc(OsString, OsString),
+    /// `\\.\device`.
+    Device(OsString),
+    /// `\\?\` that is neither a disk nor `UNC`.
+    Verbatim(OsString),
+}
+
+#[cfg(windows)]
+impl WindowsPrefix {
+    /// The error text for a path with this prefix.
+    fn refusal(&self) -> &'static str {
+        match self {
+            Self::Unc(_, _) => "UNC paths are refused unless a root is on the same server and share",
+            Self::Device(_) => "device paths are refused unless a root uses the same device",
+            Self::Verbatim(_) => "verbatim paths are refused unless a root uses the same prefix",
+        }
+    }
+}
+
+/// `path`'s Windows prefix when it is not a local disk.
+#[cfg(windows)]
+fn windows_prefix(path: &Path) -> Option<WindowsPrefix> {
+    use std::path::Prefix;
+    let Component::Prefix(prefix) = path.components().next()? else { return None };
+    match prefix.kind() {
+        Prefix::Disk(_) | Prefix::VerbatimDisk(_) => None,
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => Some(WindowsPrefix::Unc(server.to_os_string(), share.to_os_string())),
+        Prefix::DeviceNS(device) => Some(WindowsPrefix::Device(device.to_os_string())),
+        Prefix::Verbatim(rest) => Some(WindowsPrefix::Verbatim(rest.to_os_string())),
+    }
+}
+
+/// Whether `path` may be opened because `root` already stands on the same server and share,
+/// device or verbatim prefix. ASCII case only.
+#[cfg(windows)]
+fn prefixes_match(root: &WindowsPrefix, path: &WindowsPrefix) -> bool {
+    let same = |a: &std::ffi::OsStr, b: &std::ffi::OsStr| a.eq_ignore_ascii_case(b);
+    match (root, path) {
+        (WindowsPrefix::Unc(server, share), WindowsPrefix::Unc(path_server, path_share)) => same(server, path_server) && same(share, path_share),
+        (WindowsPrefix::Device(root_device), WindowsPrefix::Device(path_device)) => same(root_device, path_device),
+        (WindowsPrefix::Verbatim(root_prefix), WindowsPrefix::Verbatim(path_prefix)) => same(root_prefix, path_prefix),
+        _ => false,
     }
 }
 
@@ -473,10 +624,10 @@ mod tests {
         std::fs::write(base.join("Root/secret.dxf"), "x").unwrap();
         let roots = AutomationRoots::new(Some(&base.join("root")), Some(&base.join("root"))).unwrap().unwrap();
         for p in ["Root/secret.dxf", "Root/new.dxf"] {
-            assert!(roots.check(&s(base.join(p)), Access::Read).is_err(), "{p}");
-            assert!(roots.check(&s(base.join(p)), Access::Write).is_err(), "{p}");
+            assert!(roots.check(s(base.join(p)), Access::Read).is_err(), "{p}");
+            assert!(roots.check(s(base.join(p)), Access::Write).is_err(), "{p}");
         }
-        assert_eq!(roots.check(&s(base.join("root/new.dxf")), Access::Write), Ok(()));
+        assert_eq!(roots.check(s(base.join("root/new.dxf")), Access::Write), Ok(()));
     }
 
     /// On an ordinary Windows folder any case finds the root, and device names are refused.
@@ -485,13 +636,111 @@ mod tests {
     fn windows_gives_a_root_its_real_spelling_and_refuses_devices() {
         let (base, roots) = folders("case");
         let upper = s(base.join("IN/A.DXF"));
-        assert_eq!(roots.check(&upper, Access::Read), Ok(()), "{upper}");
-        assert_eq!(roots.check(&s(base.join("In/Sub/New.dxf")), Access::Read), Ok(()));
-        let e = roots.check(&s(base.join("out/NUL")), Access::Write).unwrap_err();
+        assert_eq!(roots.check(upper.as_str(), Access::Read), Ok(()), "{upper}");
+        assert_eq!(roots.check(s(base.join("In/Sub/New.dxf")), Access::Read), Ok(()));
+        let e = roots.check(s(base.join("out/NUL")), Access::Write).unwrap_err();
         assert!(e.contains("reserved device names"), "{e}");
-        assert!(roots.check(&s(base.join("out/com1.txt")), Access::Write).is_err());
-        assert!(roots.check(&s(base.join("out/COM¹")), Access::Write).is_err());
-        assert_eq!(roots.check(&s(base.join("out/console.txt")), Access::Write), Ok(()));
+        assert!(roots.check(s(base.join("out/com1.txt")), Access::Write).is_err());
+        assert!(roots.check(s(base.join("out/COM¹")), Access::Write).is_err());
+        assert_eq!(roots.check(s(base.join("out/console.txt")), Access::Write), Ok(()));
+    }
+
+    /// A network, device or non-disk verbatim path is refused before the file system is asked.
+    /// The error names the prefix. It is not the error canonicalize would return.
+    #[cfg(windows)]
+    #[test]
+    fn a_network_path_is_refused_before_it_is_opened() {
+        let (base, roots) = folders("unc");
+        let paths = [
+            (r"\\203.0.113.5\s\x.dwg", "UNC"),
+            (r"\\?\UNC\203.0.113.5\s\x.dwg", "UNC"),
+            (r"//203.0.113.5/s/x.dwg", "UNC"),
+            (r"\\host@SSL\share\x.dwg", "UNC"),
+            (r"\\host@SSL@443\share\x.dwg", "UNC"),
+            (r"\\.\PhysicalDrive0", "device path"),
+            (r"\\?\Volume{00000000-0000-0000-0000-000000000000}\x.dwg", "verbatim path"),
+        ];
+        for (p, kind) in paths {
+            for access in [Access::Read, Access::Write] {
+                let e = roots.check(p, access).unwrap_err();
+                assert!(e.starts_with("automation path rejected:"), "{p}: {e}");
+                assert!(e.contains(kind), "{p}: {e}");
+                assert!(!e.contains("cannot resolve") && !e.to_ascii_lowercase().contains("os error"), "{p}: {e}");
+            }
+        }
+        let e = roots.check(s(base.join("outside/secret.dxf")), Access::Read).unwrap_err();
+        assert!(e.contains("outside the read root"), "{e}");
+
+        let root = windows_prefix(Path::new(r"\\?\UNC\FileServer\Projects\work")).unwrap();
+        let same = windows_prefix(Path::new(r"\\fileserver\projects\a.dwg")).unwrap();
+        let other_share = windows_prefix(Path::new(r"\\fileserver\secret\a.dwg")).unwrap();
+        let other_host = windows_prefix(Path::new(r"\\203.0.113.5\Projects\a.dwg")).unwrap();
+        let kelvin = windows_prefix(Path::new(&format!("\\\\wor\u{212a}\\Projects\\a.dwg"))).unwrap();
+        assert!(prefixes_match(&root, &same), "the same server and share, in either spelling");
+        assert!(!prefixes_match(&root, &other_share));
+        assert!(!prefixes_match(&root, &other_host));
+        assert!(!prefixes_match(&root, &kelvin), "U+212A is not k");
+        assert!(windows_prefix(Path::new(r"C:\Projects\a.dwg")).is_none());
+        assert!(windows_prefix(Path::new(r"\\?\C:\Projects\a.dwg")).is_none());
+    }
+
+    /// U+212A is a different folder from `k`, so a write there is outside the root and creates nothing.
+    #[cfg(windows)]
+    #[test]
+    fn a_kelvin_sign_is_not_a_way_out_of_the_write_root() {
+        let base = fresh_dir("kelvin");
+        let root = base.join("work");
+        std::fs::create_dir(&root).unwrap();
+        let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+        let sibling = base.join(format!("wor\u{212a}")).join("x.dwg");
+        let e = roots.check(s(sibling), Access::Write).unwrap_err();
+        assert!(e.contains("outside the write root"), "{e}");
+        assert!(!base.join(format!("wor\u{212a}")).exists(), "the check must not create the folder");
+        assert_eq!(roots.check(s(root.join("new.dxf")), Access::Write), Ok(()));
+    }
+
+    /// A junction needs no extra privilege. One that leads out of the write root is outside it.
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_out_of_the_write_root_is_refused() {
+        let (base, roots) = folders("junction");
+        let link = base.join("out/away");
+        let made = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg(format!("mklink /J \"{}\" \"{}\"", link.display(), base.join("outside").display()))
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            eprintln!("skipped: junctions can't be made here");
+            return;
+        }
+        let e = roots.check(s(base.join("out/away/new.png")), Access::Write).unwrap_err();
+        assert!(e.contains("outside the write root"), "{e}");
+        assert!(!base.join("outside/new.png").exists());
+    }
+
+    /// A link whose text names a network path is refused before that path is opened.
+    #[cfg(windows)]
+    #[test]
+    fn a_link_to_a_network_path_is_refused_before_it_is_followed() {
+        let (base, roots) = folders("unc-link");
+        let link = base.join("in/leak.dxf");
+        if std::os::windows::fs::symlink_file(r"\\203.0.113.5\s\x.dwg", &link).is_err() {
+            eprintln!("skipped: symbolic links can't be made here");
+            return;
+        }
+        let e = roots.check(link.as_path(), Access::Read).unwrap_err();
+        assert!(e.contains("UNC"), "{e}");
+        assert!(!e.contains("cannot resolve") && !e.to_ascii_lowercase().contains("os error"), "{e}");
+    }
+
+    /// An alternate data stream is still the file it hangs off: outside the roots it is refused.
+    #[cfg(windows)]
+    #[test]
+    fn an_alternate_stream_outside_the_roots_is_refused() {
+        let (base, roots) = folders("ads");
+        let e = roots.check(s(base.join("outside/secret.dxf:zone")), Access::Read).unwrap_err();
+        assert!(e.contains("outside the read root"), "{e}");
+        assert_eq!(roots.check(s(base.join("out/new.dxf:zone")), Access::Write), Ok(()));
     }
 
     /// Roots end with their scope, also when a nested scope or a panic ends it.
