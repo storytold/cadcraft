@@ -64,6 +64,11 @@ pub fn rad(d: f64) -> f64 {
 }
 
 /// Number of segments needed to approximate an arc of `radius` and `sweep` within `tol`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "The segment count is nonnegative and immediately clamped to 1..=4096; float-to-usize saturation handles out-of-range values."
+)]
 pub fn arc_segments(radius: f64, sweep: f64, tol: f64) -> usize {
     let r = radius.abs();
     if !(r.is_finite() && sweep.is_finite()) || r <= EPS {
