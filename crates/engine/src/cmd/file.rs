@@ -777,7 +777,10 @@ const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
 
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`].
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`], nor
+/// another program's proxy entity whose class the file names: the DWG writes it with that class.
+/// Before 2013, or when its group 91 names no class of the file, the DWG leaves the proxy out and
+/// it is counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
@@ -792,6 +795,9 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
                 continue;
             }
             if DWG_WRITES.contains(&u.dxf_type.as_str()) {
+                continue;
+            }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.proxy_class(&u.tags).is_some() {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);

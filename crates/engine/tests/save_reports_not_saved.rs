@@ -115,6 +115,39 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
 }
 
+/// Another program's proxy entity reaches a 2013 or later DWG with the class its group 91 names;
+/// before 2013, or when the file has no such class, the DWG leaves it out and says so.
+#[test]
+fn proxy_entities_are_reported_only_before_2013() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    use cadcraft_engine::doc::foreign::Foreign;
+    let proxy = |class: i64| {
+        EntityKind::Unknown(Unknown {
+            dxf_type: "ACAD_PROXY_ENTITY".into(),
+            tags: vec![
+                RawTag { code: 8, value: "0".into() },
+                RawTag { code: 90, value: "498".into() },
+                RawTag { code: 91, value: class.to_string() },
+            ],
+        })
+    };
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), proxy(500)).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    d.foreign = std::sync::Arc::new(Foreign { class_order: vec!["MYAPP_THING".into()], ..Foreign::default() });
+    for v in [Version::R2013, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+    for v in [Version::R2004, Version::R2010] {
+        assert_eq!(not_saved_as(&d, v), [("ACAD_PROXY_ENTITY".to_string(), 1), ("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+    // A class number the file's CLASSES don't have, or none at all: the DWG can't name the class,
+    // leaves the proxy out, and says so from 2013 on too.
+    d.add(&Space::Model, Common::default(), proxy(501)).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("ACAD_PROXY_ENTITY")).unwrap();
+    assert_eq!(not_saved_as(&d, Version::R2018), [("ACAD_PROXY_ENTITY".to_string(), 2), ("MLINE".to_string(), 1)].into_iter().collect());
+}
+
 /// A DXF of 2013 or later can't hold a solid's SAT-text geometry (it lives in the data store
 /// there), so the save leaves it out and says so; 2010 and earlier keep it (#2334).
 #[test]
