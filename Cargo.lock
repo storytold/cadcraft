@@ -828,6 +828,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-io",
  "cadcraft-ui-egui",
+ "craft-web-api",
  "craft-web-host",
  "eframe",
  "egui",
@@ -1233,9 +1234,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-web-api"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "craft-web-host"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=2e2312ddaf21bc3d85cd3395d0955c7d239306f6#2e2312ddaf21bc3d85cd3395d0955c7d239306f6"
+source = "git+https://github.com/storytold/craft-libs?rev=a231e517c3b371e1bf0ee8af71ed807424a9a05d#a231e517c3b371e1bf0ee8af71ed807424a9a05d"
 dependencies = [
  "wasm-bindgen",
  "web-sys",

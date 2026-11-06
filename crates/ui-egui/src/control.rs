@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use cadcraft_engine::Input;
@@ -86,6 +86,25 @@ impl PendingReply {
         }
         // Started: a reply that arrived just now still counts.
         self.rx.try_recv().unwrap_or_else(|_| json!({"ok": false, "error": "timeout", "state": "may-have-run"}))
+    }
+
+    /// The reply if the app has answered, without waiting: a transport that cannot block (the web
+    /// shell) polls this once a frame. A request the app dropped without answering reports that.
+    pub fn try_reply(&self) -> Option<ControlResponse> {
+        match self.rx.try_recv() {
+            Ok(reply) => Some(reply),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(json!({"ok": false, "error": "the app dropped the request"})),
+        }
+    }
+}
+
+impl Drop for PendingReply {
+    /// A reply nobody waits for any more cancels a request the app has not started, as a timed-out
+    /// [`PendingReply::wait`] does: the client was told it failed, so the app must not run it late.
+    /// A request the app already started, or answered, is unaffected.
+    fn drop(&mut self) {
+        let _ = self.state.compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire);
     }
 }
 
@@ -741,6 +760,33 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropping_a_pending_reply_cancels_a_request_the_app_has_not_started() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(pending);
+        assert!(!request.begin(), "the app must skip a request nobody waits for");
+    }
+
+    #[test]
+    fn dropping_a_pending_reply_leaves_a_started_request_alone() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert!(request.begin());
+        drop(pending);
+        assert_eq!(request.state.load(Ordering::Acquire), STARTED, "a started request is not cancelled");
+    }
+
+    #[test]
+    fn try_reply_polls_without_blocking() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert_eq!(pending.try_reply(), None, "no answer yet");
+        assert!(request.begin());
+        request.reply.send(json!({"ok": true, "result": 1})).unwrap_or_default();
+        assert_eq!(pending.try_reply(), Some(json!({"ok": true, "result": 1})));
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(request);
+        assert_eq!(pending.try_reply().and_then(|r| r["ok"].as_bool()), Some(false), "the app went away");
+    }
 
     #[test]
     fn render_view_fit_finds_offscreen_drawing() {

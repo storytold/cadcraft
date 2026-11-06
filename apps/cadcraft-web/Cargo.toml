@@ -20,7 +20,9 @@ cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
 cadcraft-fonts = { workspace = true }
 # The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
-craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "2e2312ddaf21bc3d85cd3395d0955c7d239306f6", version = "0.1.0" }
+# The page command API (storytold/craft-libs#413): window.cadcraft over the control channel.
+craft-web-api = { git = "https://github.com/storytold/craft-libs", rev = "a231e517c3b371e1bf0ee8af71ed807424a9a05d", version = "0.1.0" }
+craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "a231e517c3b371e1bf0ee8af71ed807424a9a05d", version = "0.1.0" }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
@@ -33,4 +35,5 @@ web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"]
 eframe = { workspace = true, features = ["persistence", "wgpu", "accesskit"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag", "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList", "Event", "EventTarget", "CustomEvent", "CustomEventInit"] }
