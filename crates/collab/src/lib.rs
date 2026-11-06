@@ -35,6 +35,7 @@
 
 mod apply;
 mod change;
+mod context;
 mod diff;
 mod error;
 
@@ -43,5 +44,6 @@ mod tests;
 
 pub use apply::apply;
 pub use change::{Anchor, Change};
+pub use context::OpContext;
 pub use diff::diff;
 pub use error::CollabError;

@@ -171,3 +171,16 @@ fn an_unknown_space_is_refused() {
     assert_eq!(diff(&drawing, &drawing.clone(), &sheet), Err(CollabError::NoSpace(sheet.clone())));
     assert_eq!(apply(&mut drawing, &[]), Ok(()));
 }
+
+#[test]
+fn an_operation_context_round_trips_through_json() {
+    let context = crate::OpContext::in_space(Space::Paper("Sheet1".into()));
+    let json = serde_json::to_string(&context).unwrap();
+    assert_eq!(json, r#"{"space":{"paper":"Sheet1"}}"#);
+    let decoded: crate::OpContext = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, context);
+
+    let model: crate::OpContext = serde_json::from_str(r#"{"space":"model","selection":[42]}"#).unwrap();
+    assert_eq!(model.space, Space::Model);
+    assert_eq!(model.selection, Some(vec![Handle(42)]));
+}
