@@ -19,6 +19,7 @@ mod blockreplace;
 mod break_closed_polyline;
 mod break_join_locked_layers;
 mod break_keeps_z;
+mod break_trim_keep_handle;
 mod burst;
 mod change_command;
 mod chprop_command;
