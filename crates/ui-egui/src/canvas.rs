@@ -180,6 +180,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// Where the primary button went down on the canvas, while it is down: to tell a click that
+    /// egui doesn't report as one ([`unreported_click`]).
+    primary_press: Option<Pos2>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -735,22 +738,31 @@ struct PromptClickContext<'a> {
     response: &'a egui::Response,
 }
 
-/// Whether the press-and-drag selection window ends this frame where it began, within egui's click
-/// distance on screen: a click that egui took for a drag (#2813).
+/// Whether the primary button came up this frame as a click that egui didn't report (#2813): it
+/// went down on the canvas and came up within egui's click distance of there.
 ///
-/// egui calls a press a drag once it lasts longer than `max_click_duration` (0.8 s), and it times
-/// the press by frames. On a drawing that draws slowly, a quick click can come down in one frame and
-/// up in the next, more than 0.8 s later; so can a deliberate, slow click. The window that "drag"
-/// opened has no size and would select nothing.
-fn drag_window_is_a_click(app: &CadApp, ui: &egui::Ui, xf: &Xf, response: &egui::Response) -> bool {
-    if !app.canvas.drag_window || !response.drag_stopped_by(egui::PointerButton::Primary) {
-        return false;
-    }
-    let (Some(window), Some(end)) = (app.session.pending_window, ui.input(|i| i.pointer.interact_pos())) else {
-        return false;
-    };
+/// egui times a press by frames and calls it a drag once it lasts longer than
+/// `max_click_duration` (0.8 s); when no frame ran while the button was down, it reports neither a
+/// click nor a drag. On a drawing that draws slowly, an ordinary click comes down in one frame and
+/// up in the next, more than 0.8 s later, and a deliberate slow click lasts that long anyway. As in
+/// other CAD programs, a click on the canvas is not limited in time, only in movement.
+///
+/// Reads every primary press and release this frame, so call it once per frame.
+fn unreported_click(app: &mut CadApp, ui: &egui::Ui, rect: Rect, inside: bool, reported: bool) -> bool {
     let click_distance = ui.ctx().options(|o| o.input_options.max_click_dist);
-    xf.to_screen(window.corner).distance(end) <= click_distance
+    let mut released_in_place = false;
+    ui.input(|i| {
+        for event in &i.events {
+            if let egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, .. } = event {
+                if *pressed {
+                    app.canvas.primary_press = (inside && rect.contains(*pos)).then_some(*pos);
+                } else if let Some(down) = app.canvas.primary_press.take() {
+                    released_in_place = down.distance(*pos) <= click_distance;
+                }
+            }
+        }
+    });
+    released_in_place && !reported
 }
 
 fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickContext<'_>) -> bool {
@@ -887,11 +899,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.session.pending_window = None;
         app.canvas.drag_window = false;
     }
-    // A click egui took for a drag because it lasted too long is a click (#2813): see
-    // `drag_window_is_a_click`. Its window, which never left the click, is dropped, and the click
-    // picks, or starts a click-click window in empty space, as a quick click there does.
-    let slow_click = !pressed_primary && drag_window_is_a_click(app, ui, &xf, &resp);
-    if slow_click {
+    // A click egui didn't report because it lasted too long is a click all the same (#2813): see
+    // `unreported_click`. When egui took it for a press-and-drag, the selection window that "drag"
+    // opened never left the click and is dropped. The click then picks, or starts a click-click
+    // window in empty space, as a quick click there does.
+    let slow_click = unreported_click(app, ui, rect, inside, pressed_primary);
+    if slow_click && app.canvas.drag_window {
         app.session.pending_window = None;
         app.canvas.drag_window = false;
     }

@@ -3,7 +3,8 @@
 //! egui calls a press that lasts longer than `max_click_duration` (0.8 s) a drag, and it times the
 //! press by frames. On a large drawing that draws slowly, an ordinary click can come down in one
 //! frame and up in the next, more than 0.8 s later. The canvas took that "drag" for a press-and-drag
-//! selection window that never left the click, a window of no size, and nothing was selected.
+//! selection window that never left the click, a window of no size, and nothing was selected; when
+//! no frame ran while the button was down, egui reported nothing at all.
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::{Drawing, Handle, Space};
@@ -17,8 +18,14 @@ use serde_json::json;
 /// press longer than egui's 0.8 s click limit.
 const STEP: f32 = 0.5;
 
-/// A drawing with one line from (10, 10) to (30, 10), no object snaps, nothing selected.
+/// A drawing with one line from (10, 10) to (30, 10), no object snaps, nothing selected; each frame
+/// advances egui's clock by [`STEP`].
 fn harness() -> (Harness<'static, CadApp>, Handle) {
+    harness_stepping(STEP)
+}
+
+/// [`harness`] with each frame advancing egui's clock by `step` seconds.
+fn harness_stepping(step: f32) -> (Harness<'static, CadApp>, Handle) {
     let mut session = Session::empty();
     session.open_drawing(Drawing::new_imperial(), "Slow clicks", None);
     session.execute("view.set", &json!({"center": [50, 50], "height": 100})).unwrap();
@@ -27,7 +34,7 @@ fn harness() -> (Harness<'static, CadApp>, Handle) {
     let line = session.doc().unwrap().space(&Space::Model).unwrap().iter().next().unwrap().handle;
     let mut app = CadApp::new(session, Services::default());
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(STEP).build_ui_state(
+    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(step).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -62,6 +69,27 @@ fn a_click_spanning_slow_frames_selects_the_object() {
     slow_click(&mut h, at, at, 2);
     assert_eq!(h.state().session.selection(), vec![line]);
     assert!(h.state().session.pending_window.is_none(), "no window is left open");
+}
+
+/// The slowest case: the frame the button went down in took a second, and the next frame already
+/// has it up. No frame ran with the button down, so egui reports neither a click nor a drag.
+#[test]
+fn a_click_across_one_slow_frame_selects_the_object() {
+    let (mut h, line) = harness_stepping(1.0);
+    let at = screen(&h, Vec2::new(20.0, 10.0));
+    slow_click(&mut h, at, at, 1);
+    assert_eq!(h.state().session.selection(), vec![line]);
+}
+
+/// A slow click on a grip of a selected object makes it hot, as a quick one does.
+#[test]
+fn a_slow_click_on_a_grip_starts_a_grip_edit() {
+    let (mut h, line) = harness();
+    h.state_mut().session.set_selection(vec![line]);
+    h.run_steps(2);
+    let grip = screen(&h, Vec2::new(30.0, 10.0));
+    slow_click(&mut h, grip, grip, 2);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("grip"));
 }
 
 /// The hand drifts a pixel or two while the button is down: still a click.
