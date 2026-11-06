@@ -87,7 +87,7 @@ jobs:
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}\fontpack
           CRAFT_FONTS_REQUIRED: '1'
-          CADCRAFT_VERSION: ${{ inputs.version || '0.13.0-zhTW.1' }}
+          CADCRAFT_VERSION: ${{ inputs.version || '0.17.0-zhTW.1' }}
         run: pwsh packaging/windows/package.ps1 -Arch x64
 
       - name: Check the font is in the binary

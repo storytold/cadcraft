@@ -86,8 +86,8 @@ Ukrainian and German. Detail: [localization-parity.md](docs/localization-parity.
 | Language | Status | UI translated |
 |---|---|---:|
 | English | full | 100% |
-| Simplified Chinese | complete current catalog | 1,343 current source keys; 96 newer strings fall back to English |
-| Traditional Chinese (Taiwan) | complete current catalog | 1,440 current source keys; proofreading pending |
+| Simplified Chinese | none | 0% |
+| Traditional Chinese (Taiwan) | complete current catalog | 1,478 current source keys; proofreading pending |
 | Spanish | none | 0% |
 | Hindi | none | 0% |
 | Arabic | none | 0% |

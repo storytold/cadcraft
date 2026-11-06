@@ -305,7 +305,6 @@
 	Enter a vertex editing option	輸入頂點編輯選項
 	Enter an option	輸入選項
 	Enter angle of xline	輸入構造線角度
-	Enter angle of xline (0) or	輸入構造線角度 (0) 或
 	Enter area of rectangle in current units	以目前單位輸入矩形面積
 	Enter attribute prompt	輸入屬性提示
 	Enter attribute tag name	輸入屬性標籤名稱
@@ -316,7 +315,6 @@
 	Enter default attribute value	輸入預設屬性值
 	Enter degree of spline	輸入雲形線次數
 	Enter delta angle	輸入角度差值
-	Enter delta length or	輸入長度差值或
 	Enter dimension text	輸入標註文字
 	Enter dimension text (<> = measurement)	輸入標註文字 (<> = 測量值)
 	Enter dimension value or [name=expression]	輸入標註值或 [名稱=表示式]
@@ -850,8 +848,6 @@
 	Select an arc or circle	選取圓弧或圓
 	Select an arc.	選取一段圓弧。
 	Select an object	選取物件
-	Select an object to change or	Select an object to change or
-	Select an object to measure or	Select an object to measure or
 	Select an object.	選取一個物件。
 	Select an open curve.	選取一條開曲線。
 	Select an open line, arc, polyline, ellipse arc or spline.	選取開放的直線、圓弧、聚合線、橢圓弧或雲形線。
@@ -865,9 +861,7 @@
 	Select first line	選取第一條直線
 	Select first line or arc	選取第一條直線或圓弧
 	Select first object	選取第一個物件
-	Select first object or	Select first object or
 	Select first point	指定第一點
-	Select nested objects to copy or	Select nested objects to copy or
 	Select object	選取物件
 	Select object to dimension	選取要標註的物件
 	Select object to divide	選取要等分的物件
@@ -884,7 +878,6 @@
 	Select one polyline (Multiple is available through the JSON form).	選取一條聚合線（可透過 JSON 表單選取多個）。
 	Select path curve	選取路徑曲線
 	Select point or object	選取點或物件
-	Select polyline or	選取聚合線或
 	Select second line	選取第二條直線
 	Select second line or shift-select to apply corner	選取第二條直線，或按 Shift 鍵套用角點
 	Select second object	選取第二個物件
@@ -954,9 +947,7 @@
 	Specify axis endpoint of ellipse	指定橢圓的軸端點
 	Specify base diameter	指定底面直徑
 	Specify base point	指定基點
-	Specify base point or	Specify base point or
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基點或位移（按住滑鼠中鍵拖動以進行即時平移）
-	Specify base radius or	Specify base radius or
 	Specify center of donut	指定環中心
 	Specify center of ellipse	指定橢圓中心
 	Specify center of polygon	指定多邊形中心
@@ -998,7 +989,6 @@
 	Specify first point on circle: _tan to	指定圓上的第一點: _tan 到
 	Specify first source point	指定第一個來源點
 	Specify height	指定高度
-	Specify helix height or	Specify helix height or
 	Specify included angle	指定包含角
 	Specify insertion base point	指定插入基點
 	Specify insertion point	指定插入點
@@ -1017,7 +1007,6 @@
 	Specify new width for all segments	指定所有段的新寬度
 	Specify next point	指定下一點
 	Specify offset distance	指定偏移距離
-	Specify offset distance or	Specify offset distance or
 	Specify opposite corner	指定對角點
 	Specify other corner point	指定另一角點
 	Specify other endpoint of axis	指定軸的另一端點
@@ -1030,7 +1019,6 @@
 	Specify radius of circle	指定圓半徑
 	Specify rotation angle	指定旋轉角度
 	Specify rotation angle of text	指定文字旋轉角度
-	Specify rotation angle or	Specify rotation angle or
 	Specify scale factor	指定比例因子
 	Specify second angle endpoint	指定第二角度端點
 	Specify second break point	指定第二切斷點
@@ -1063,9 +1051,7 @@
 	Specify third source point or <continue>	指定第三個來源點或 <繼續>
 	Specify through point	指定通過點
 	Specify top diameter	指定頂面直徑
-	Specify top radius or	Specify top radius or
 	Specify total angle	指定總角度
-	Specify total length or	Specify total length or
 	Specify width for rectangles	指定矩形寬度
 	Sphere	球體
 	Spline	雲形線
@@ -1445,3 +1431,55 @@ menu	View	檢視
 	Layouts	配置
 	Associate	關聯
 	Font	字體
+	Block Description...	圖塊描述...
+	Enter angle of xline (0)	輸入構造線角度 (0)
+	Enter delta length	輸入長度差值
+	Multiple Insert	多重插入
+	Named Viewports...	具名視埠...
+	Oops	復原已刪除物件
+	Select an object to change	選取要變更的物件
+	Select an object to measure	選取要測量的物件
+	Select nested objects to copy	選取要複製的巢狀物件
+	Select polyline	選取聚合線
+	Specify base radius	指定底面半徑
+	Specify helix height	指定螺旋線高度
+	Specify top radius	指定頂面半徑
+	Specify total length	指定總長度
+	Save changes to block "{name}"?	是否儲存對圖塊「{name}」的變更？
+	Backup copy	備份複本
+	Create backup copy with each save	每次儲存時建立備份複本
+	Change Properties	變更性質
+	Save Layout as Template	將配置另存為樣板
+	Find All	全部尋找
+	Find what:	尋找目標：
+	Match case	大小寫須相符
+	Replace	取代
+	Replace All	全部取代
+	Replace with:	取代為：
+	Replacement text	取代文字
+	Results	結果
+	Searches the current space.	只搜尋目前空間。
+	Text to find	要尋找的文字
+	Whole words	全字拼寫須相符
+	Nothing found	找不到符合項目
+	Ctrl+Enter to apply	Ctrl+Enter 套用
+	Edit Text	編輯文字
+	The drawing changed. Close the window and open it again.	圖面已切換。請關閉視窗後重新開啟。
+	DView	動態檢視
+	Raster Image Reference...	點陣影像參考...
+	Raster Images	點陣影像
+	Change	變更
+	Units	單位
+	Clip Xref	裁剪外部參考
+	Xref	外部參考
+	Xref Clip Frame	外部參考裁剪邊框
+	Backup copies are off, so the current file will be replaced.	備份複本已關閉，因此目前的檔案將被取代。
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 及更早版本可保留這些物件。請使用「另存新檔」將它們保留在圖面中。
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF 可保留這些物件。請使用「另存新檔」將它們保留在圖面中。
+	Save Anyway	仍要儲存
+	Save cancelled: {path} was not changed.	已取消儲存：{path} 未變更。
+	Saving {name} will remove content	儲存 {name} 將會移除內容
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	目前的檔案看起來不完整，因此 {name} 維持原樣，目前的檔案將被取代。
+	The current file is kept as {name} until the next save.	目前的檔案會保留為 {name}，直到下次儲存。
+	This format can't keep these objects yet: {objects}.	此格式尚無法保留這些物件：{objects}。
+	{count} more types	另有 {count} 種類型

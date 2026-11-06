@@ -48,7 +48,7 @@ The translations are original, AI-assisted Korean CAD terminology (for example, 
 치수, 모깎기, 모따기, 간격띄우기 and 객체 스냅). Independent native proofreading and
 platform-specific layout/IME validation remain follow-up work.
 
-Traditional Chinese (Taiwan) has **1,440 rows**: 1,434 ordinary labels, four contextual menu
+Traditional Chinese (Taiwan) has **1,478 rows**: 1,472 ordinary labels, four contextual menu
 headings (**繪製**, **修改**, **標註**, **檢視**) and two count templates, which read the same in both
 forms because Chinese has no grammatical plural. It covers the union of the existing catalogs —
 every marked UI literal, prompts, dialogs, Options and tooltips. Terminology follows, in order,
