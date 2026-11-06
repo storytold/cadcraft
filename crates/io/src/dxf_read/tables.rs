@@ -199,7 +199,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             // The first *ACTIVE viewport holds the current snap/grid settings.
             "VPORT" if !active_vport && t.s(2).is_some_and(|n| n.trim().eq_ignore_ascii_case("*ACTIVE")) => {
                 active_vport = true;
-                vport_record(d, &t);
+                vport_record(d, &t, true);
                 for (name, code) in [("SNAPUNIT", 14), ("GRIDUNIT", 15)] {
                     if let (Some(x), Some(y)) = (t.f(code), t.f(code + 10)) {
                         let p = Vec2::new(x, y);
@@ -282,7 +282,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     None => d.dim_styles.push(st),
                 }
             }
-            "VPORT" => vport_record(d, &t),
+            "VPORT" => vport_record(d, &t, false),
             _ => {}
         }
     }
@@ -323,8 +323,9 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
 const MAX_VPORT_TILES: usize = 64;
 
 /// A VPORT record: one tile of the configuration it names (`*ACTIVE` the one shown). Corners
-/// are fractions of the drawing area; unusable tiles are skipped.
-fn vport_record(d: &mut Drawing, t: &T) {
+/// are fractions of the drawing area; unusable tiles are skipped. `first_active`: this is the
+/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view.
+fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
     // View twist (group 51, degrees).
     let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
@@ -334,7 +335,9 @@ fn vport_record(d: &mut Drawing, t: &T) {
     // 40 height) as well as in the HEADER pair, and as with the snap and grid spacing the record
     // is the newer of the two and wins (#1602). A record that leaves the centre out has no view
     // to give -- `p` reads a missing coordinate as zero -- so the header pair stays.
-    let first_active = name.eq_ignore_ascii_case(VportConfig::ACTIVE) && !d.vports.iter().any(|c| c.is_active());
+    // From the caller, which knows the record's place: whether a tile was kept for an earlier
+    // `*ACTIVE` record says nothing when that record's tile was unusable.
+    let first_active = first_active && name.eq_ignore_ascii_case(VportConfig::ACTIVE);
     let centred = t.f(12).is_some() && t.f(22).is_some();
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);

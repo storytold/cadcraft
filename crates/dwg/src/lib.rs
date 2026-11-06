@@ -816,9 +816,19 @@ mod native {
             match (code, value) {
                 (b"0", b"ENDSEC") if in_classes => break,
                 (b"2", b"CLASSES") => in_classes = true,
-                (b"0", v) if in_classes => in_class = v == b"CLASS",
+                (b"0", v) if in_classes => {
+                    in_class = v == b"CLASS";
+                    // Every record keeps its place, named or not: a proxy numbers its class by
+                    // place, so a record without a name must not move the ones after it. An empty
+                    // name matches no class, and such a proxy is left out.
+                    if in_class {
+                        names.push(String::new());
+                    }
+                }
                 (b"1", v) if in_class => {
-                    names.push(String::from_utf8_lossy(v).into_owned());
+                    if let Some(last) = names.last_mut() {
+                        *last = String::from_utf8_lossy(v).into_owned();
+                    }
                     in_class = false;
                 }
                 _ => {}
@@ -1622,6 +1632,10 @@ mod tests {
     fn dxf_class_names_in_classes_order() {
         let dxf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nCLASSES\r\n  0\r\nCLASS\r\n  1\r\nWIDGETA\r\n  2\r\nAcDbWidgetA\r\n  3\r\nApp\r\n  0\r\nCLASS\r\n  1\r\nWIDGETB\r\n  2\r\nAcDbWidgetB\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nTEXT\r\n  1\r\nNOT_A_CLASS\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
         assert_eq!(native::dxf_class_names(dxf).unwrap(), ["WIDGETA", "WIDGETB"]);
+        // A CLASS record without a name keeps its place, so the classes after it keep theirs
+        // (#2837 review).
+        let unnamed = b"  0\r\nSECTION\r\n  2\r\nCLASSES\r\n  0\r\nCLASS\r\n  2\r\nAcDbNoName\r\n  0\r\nCLASS\r\n  1\r\nWIDGETB\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
+        assert_eq!(native::dxf_class_names(unnamed).unwrap(), ["", "WIDGETB"]);
         assert_eq!(native::dxf_class_names(b"  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n  0\nEOF\n"), Some(Vec::new()));
         assert_eq!(native::dxf_class_names(b"AutoCAD Binary DXF\r\n\x1a\0"), None);
     }

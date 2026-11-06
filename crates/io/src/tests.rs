@@ -648,6 +648,19 @@ fn a_viewport_record_without_a_centre_keeps_the_header_view() {
     assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the header pair is kept");
 }
 
+/// The saved view is the first `*ACTIVE` record's even when that record's tile rectangle is
+/// unusable: the next `*ACTIVE` record is a second tile, not the first again (#2837 review).
+#[test]
+fn the_first_active_record_gives_the_view_even_with_an_unusable_tile() {
+    const TWO: &str = "\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n\
+0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n12\n50.0\n22\n50.0\n40\n20.0\n\
+0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n12\n900.0\n22\n900.0\n40\n5.0\n\
+0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(TWO.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the first record's view");
+}
+
 /// A tiled drawing need not hold a saved view: `-VPORTS` splits the current view into tiles and
 /// sets none. The first tile's own view is then the only one there is, and must not be replaced
 /// by the extents fallback `vport_table` computes for a drawing with no view (noted in review).
