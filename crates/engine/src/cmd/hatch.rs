@@ -533,6 +533,19 @@ fn run_region(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "message": format!("{n} Region(s) created.") }))
 }
 
+/// Whether the upper-case `name` is a pattern: a standard one or a loaded one.
+fn pattern_exists(name: &str) -> bool {
+    cadcraft_doc::library::pattern(name).is_some() || patfile::user_pattern(name).is_some()
+}
+
+/// The existing pattern `name` means, typed at the pattern prompt: read upper-cased, else a loaded
+/// pattern's own name when only its Greek spelling differs in case or accent (σολιδ for ΣΟΛΙΔ).
+pub(crate) fn pattern_named(name: &str) -> Option<String> {
+    let name = name.trim();
+    let up = name.to_ascii_uppercase();
+    if pattern_exists(&up) { Some(up) } else { patfile::user_pattern_name(name) }
+}
+
 /// The origin sub-prompt's keywords (a point sets a new origin).
 const ORIGIN_KW: [&str; 6] = ["Bottom left", "bottom Right", "Top left", "top riGht", "Center", "Use current"];
 
@@ -597,7 +610,7 @@ impl HatchM {
                     Some(n) => n,
                     None => t.trim().to_ascii_uppercase(),
                 };
-                if cadcraft_doc::library::pattern(&up).is_some() || patfile::user_pattern(&up).is_some() {
+                if pattern_exists(&up) {
                     self.settings.pattern = up.clone();
                     s.doc_mut()?.header.set_str("HPNAME", &up);
                 } else {

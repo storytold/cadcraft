@@ -121,7 +121,18 @@ impl Session {
             && matches!(tt.strip_prefix('_').unwrap_or(tt).to_ascii_lowercase().as_str(), "all" | "l" | "last" | "p" | "previous");
         // A leading underscore asks for a keyword by its English name, whatever the interface
         // language (`_M`, `_Yes`): scripts and LISP routines write them that way. (Snap
-        // overrides such as `_cen` were taken above.)
+        // overrides such as `_cen` were taken above.) A Greek word that is an existing name at a prompt
+        // that takes one is that name, in any case: ΣΟΛΙΔ is also the keys of Solid.
+        let existing = if matches!(prompt.picker, Some(crate::Picker::HatchPattern(_))) {
+            crate::keyboard::greek_fold(tt).and_then(|_| cmd::hatch::pattern_named(tt))
+        } else if prompt.takes_block {
+            self.greek_block_name(tt)
+        } else {
+            None
+        };
+        if let Some(name) = existing {
+            return self.input(Input::Text(name));
+        }
         if !selection_mode
             && let Some(k) = prompt.match_keyword(tt).or_else(|| tt.strip_prefix('_').and_then(|r| prompt.match_keyword(r)))
             && !(prompt.accept.number && tt.parse::<f64>().is_ok())
