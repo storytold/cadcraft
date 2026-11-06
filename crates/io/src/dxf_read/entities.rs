@@ -18,6 +18,52 @@ const VIEWPORT_NOT_EXTRA: &[i32] = &[
     17, 27, 37,
 ];
 
+/// The values a viewport nobody set anything on has for the groups below: what the DWG writer
+/// (the bridge's) puts in every viewport, and the DXF Reference's defaults. A group at its default
+/// is not "extra" data: a default viewport reads back with no extras, a changed one keeps its
+/// group. Each entry is a group code with its default; `(x, y)` pairs (13/23 snap base,
+/// 14/24 snap spacing, 15/25 grid spacing) are default only together.
+const VIEWPORT_DEFAULTS: &[(i32, f64)] = &[
+    (13, 0.0),
+    (23, 0.0),
+    (14, 10.0),
+    (24, 10.0),
+    (15, 10.0),
+    (25, 10.0),
+    // Lens length, front and back clip planes, snap angle, circle sides, render mode, major grid.
+    (42, 50.0),
+    (43, 0.0),
+    (44, 0.0),
+    (50, 0.0),
+    (72, 1000.0),
+    (281, 0.0),
+    (61, 5.0),
+    // Shade plot mode.
+    (170, 0.0),
+];
+
+/// The group that goes with `code` in a coordinate pair (13/23, 14/24, 15/25).
+fn pair_of(code: i32) -> Option<i32> {
+    match code {
+        13 | 14 | 15 => Some(code + 10),
+        23 | 24 | 25 => Some(code - 10),
+        _ => None,
+    }
+}
+
+/// Is the group `code` of `groups` at its default (see [`VIEWPORT_DEFAULTS`])? A value that
+/// doesn't read as a number is not.
+fn at_default(groups: &[RawTag], code: i32, value: &str) -> bool {
+    let is = |c: i32, v: &str| {
+        VIEWPORT_DEFAULTS.iter().find(|(k, _)| *k == c).is_some_and(|(_, d)| v.trim().parse::<f64>().is_ok_and(|x| (x - d).abs() < 1e-9))
+    };
+    is(code, value)
+        && match pair_of(code) {
+            Some(other) => groups.iter().find(|t| t.code == other).is_some_and(|t| is(other, &t.value)),
+            None => true,
+        }
+}
+
 /// Most groups kept raw on one viewport (a VIEWPORT record has about forty).
 const MAX_VIEWPORT_EXTRA: usize = 512;
 
@@ -44,6 +90,18 @@ fn viewport_ucs(tags: &[Tag]) -> Option<ViewportUcs> {
     // Unreadable numbers come through as 0, so a broken axis is one with no length.
     let finite = [origin, x_axis, y_axis].iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
     if !finite || x_axis.len() <= 1e-12 || y_axis.len() <= 1e-12 {
+        return None;
+    }
+    // The World UCS of a viewport that names no UCS and keeps none of its own (UCSVP 0) is what a
+    // viewport nobody gave a UCS reads as (a DWG writes one for every viewport): no UCS.
+    let ortho = t.i(79).unwrap_or(0);
+    let nothing_named = !g.iter().any(|t| matches!(t.code, 345 | 346)) && crate::dxf_ext::read_ucs_names(tags) == (None, None);
+    let identity = origin.len() <= 1e-12
+        && (x_axis - Vec3::new(1.0, 0.0, 0.0)).len() <= 1e-12
+        && (y_axis - Vec3::new(0.0, 1.0, 0.0)).len() <= 1e-12
+        && t.f(146).unwrap_or(0.0) == 0.0
+        && ortho == 0;
+    if identity && nothing_named && t.i(71) != Some(1) {
         return None;
     }
     Some(ViewportUcs {
@@ -79,6 +137,9 @@ fn viewport_extra(tags: &[Tag]) -> Vec<RawTag> {
             out.push(RawTag { code, value });
         }
     }
+    let keep: Vec<bool> = out.iter().map(|t| !at_default(&out, t.code, &t.value)).collect();
+    let mut keep = keep.into_iter();
+    out.retain(|_| keep.next().unwrap_or(true));
     out
 }
 

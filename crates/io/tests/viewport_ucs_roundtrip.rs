@@ -144,7 +144,7 @@ fn foreign_groups(site: &str, base_ucs: &str, style: &str) -> Vec<(i32, String)>
 }
 
 /// The non-default unmodelled groups, in file order; default-valued settings are canonical absence.
-const EXTRA: &[i32] = &[13, 23, 14, 24, 1, 74, 170, 348, 292, 282, 141, 142, 63];
+const EXTRA: &[i32] = &[13, 23, 14, 24, 1, 74, 348, 292, 282, 141, 142, 63];
 
 fn the_viewport(d: &Drawing) -> (Handle, Viewport) {
     d.layouts
@@ -416,7 +416,8 @@ fn a_viewport_with_non_default_snap_keeps_it() {
         d.modify_entity(h, |e| {
             let EntityKind::Viewport(v) = &mut e.kind else { return };
             v.extra = vec![RawTag { code: 14, value: "2.0".into() }, RawTag { code: 24, value: "2.0".into() }];
-        }).unwrap();
+        })
+        .unwrap();
         let bytes = cadcraft_io::write_with(&d, "viewport.dwg", &cadcraft_io::SaveOptions { version: Some(version), binary: false }).unwrap();
         let back = cadcraft_io::read(&bytes, "viewport.dwg").unwrap();
         let (_, viewport) = the_viewport(&back);
