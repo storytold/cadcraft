@@ -141,9 +141,9 @@ fn a_slow_click_picks_at_select_objects() {
     assert!(d.entity(line).is_none(), "the line was picked and erased");
 }
 
-/// At a point prompt, a click across one slow frame places one point. This already worked: a drag
-/// that stops at a point prompt counts as a click (#815), and egui reports this press as one. The
-/// test keeps it so, and shows the click isn't counted twice (CIRCLE would take it as the radius).
+/// At a point prompt, a click across one slow frame places one point. This already worked (a drag
+/// that stops at a point prompt counts as a click, #815). The test keeps it so, and shows the click
+/// isn't counted twice (CIRCLE would take the second as the radius).
 #[test]
 fn a_click_across_one_slow_frame_places_a_point() {
     let (mut h, _) = harness_stepping(1.0);
