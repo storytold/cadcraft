@@ -88,6 +88,18 @@ impl FrameCap {
     }
 }
 
+/// Samples per pixel of the window's render pass (eframe `NativeOptions::
+/// multisampling`). The native app sets it before the window opens (4, or 1 with `CADCRAFT_MSAA=1`), so
+/// the canvas pipelines match the pass; 1 (no multisampling) when [`set_msaa_samples`] is never
+/// called, as in the web app and the tests. With 4 the hairlines and edges are anti-aliased
+/// instead of drawn with stair-steps.
+static MSAA_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Set the render pass's sample count before [`install`] (see [`MSAA_SAMPLES`]).
+pub fn set_msaa_samples(n: u32) {
+    MSAA_SAMPLES.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The wgpu target the app renders into, recorded by [`install`].
 #[derive(Clone, Copy, Debug)]
 pub struct GpuTarget {
@@ -573,7 +585,11 @@ impl Resources {
                 },
                 primitive: wgpu::PrimitiveState { topology, ..Default::default() },
                 depth_stencil: stencil_state(s),
-                multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLES.load(std::sync::atomic::Ordering::Relaxed).max(1),
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
                     entry_point: Some("fs_main"),
@@ -693,7 +709,12 @@ pub fn install(rs: &egui_wgpu::RenderState, faults: &Arc<GpuFaults>, stencil: Op
     let target = GpuTarget { format: rs.target_format, stencil: stencil.filter(|s| s.has_stencil_aspect()) };
     let res = Resources::new(&rs.device, target);
     rs.renderer.write().callback_resources.insert(res);
-    log::info!("gpu canvas: target {:?}, stencil {:?}", rs.target_format, target.stencil);
+    log::info!(
+        "gpu canvas: target {:?}, stencil {:?}, msaa {}",
+        rs.target_format,
+        target.stencil,
+        MSAA_SAMPLES.load(std::sync::atomic::Ordering::Relaxed)
+    );
     target
 }
 
