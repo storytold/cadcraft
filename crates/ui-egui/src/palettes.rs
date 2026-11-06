@@ -1170,7 +1170,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                             set = Some(json!({ "handles": ids, "text": s }));
                         }
                     });
-                    num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, &ids);
+                    num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, ids);
                 }
             }
             EntityKind::LwPolyline(pl) => {
