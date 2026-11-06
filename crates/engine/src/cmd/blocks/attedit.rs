@@ -19,7 +19,7 @@ pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle, values: {TAG: value} (tags in any case)} → {changed, unknownTags?}")
+        .params("{handle | handles (every block reference gets the values), values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags; with `handle`, not `handles`); constant attributes are left alone; among several `handles` the references on locked layers are left out} → {changed, locked?, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -34,7 +34,11 @@ pub(super) fn dash_attedit_spec() -> CommandSpec {
 /// The value `values` gives for `tag`, matching the tag in any case. Numbers and booleans count
 /// as their text.
 pub(super) fn value_for(values: &Map<String, Value>, tag: &str) -> Option<String> {
-    let v = values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?;
+    text_of(values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?)
+}
+
+/// A value given for an attribute as its text (numbers and booleans count as their text).
+fn text_of(v: &Value) -> Option<String> {
     match v {
         Value::String(t) => Some(t.clone()),
         Value::Number(n) => Some(n.to_string()),
@@ -59,21 +63,148 @@ pub(super) fn with_unknown_tags(s: &Session, h: Handle, values: &Map<String, Val
     r
 }
 
+/// `r` with `unknownTags`: the keys of `values` that none of the block references `hs` has an
+/// attribute for (left out when there are none).
+fn with_unknown_tags_of_all(s: &Session, hs: &[Handle], values: &Map<String, Value>, mut r: Value) -> Value {
+    let Ok(d) = s.doc() else { return r };
+    let known = |k: &str| {
+        hs.iter()
+            .any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Insert(i)) if i.attribs.iter().any(|a| a.tag.eq_ignore_ascii_case(k))))
+    };
+    let unknown: Vec<&String> = values.keys().filter(|k| !known(k)).collect();
+    if !unknown.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("unknownTags".into(), json!(unknown));
+    }
+    r
+}
+
+/// ATTEDIT on `handle` or `handles`: every block reference gets the values. The whole request is
+/// checked before the first edit, so a refused one changes nothing: each target must be a block
+/// reference and no value may be too long. A `handle` on a locked layer is refused; among several
+/// `handles` the references on locked layers are left out and counted in `locked`, as CHPROP does
+/// (all of them locked is refused). Constant attributes are left alone and named in `constantTags`.
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
-    let h = targets(s, p)?.first().copied().ok_or_else(|| bad("attedit", "`handle` is required"))?;
+    let hs = targets(s, p)?;
+    if hs.is_empty() {
+        return Err(bad("attedit", "`handle` or `handles` is required"));
+    }
     let vals = p.get("values").and_then(Value::as_object).cloned().unwrap_or_default();
-    let mut n = 0;
-    s.doc_mut()?.modify_entity(h, |e| {
-        if let EntityKind::Insert(i) = &mut e.kind {
-            for a in &mut i.attribs {
-                if let Some(v) = value_for(&vals, &a.tag) {
-                    set_value(&mut a.text, v);
-                    n += 1;
-                }
+    // Values by place (`at`): one attribute each, where a tag repeats (a DXF reference may carry
+    // two attributes with one tag; `values` changes both). A place means one reference's attribute.
+    let mut at: Vec<(usize, String)> = Vec::new();
+    if let Some(m) = p.get("at").filter(|v| !v.is_null()) {
+        let m = m.as_object().ok_or_else(|| bad("attedit", "`at` must be an object of {index: value}"))?;
+        if !m.is_empty() && hs.len() != 1 {
+            return Err(bad("attedit", "`at` goes with one `handle`: places differ from one reference to the next"));
+        }
+        for (k, v) in m {
+            let i =
+                k.trim().parse::<usize>().map_err(|_| bad("attedit", format!("`at`: {k} is not the index of one of the reference's attributes")))?;
+            at.push((i, text_of(v).ok_or_else(|| bad("attedit", format!("`at`: the value for {k} must be text")))?));
+        }
+    }
+    let given = |i: usize, tag: &str| at.iter().find(|(j, _)| *j == i).map(|(_, v)| v.clone()).or_else(|| value_for(&vals, tag));
+    let mut constant: Vec<String> = Vec::new();
+    let mut free: Vec<Handle> = Vec::new();
+    for h in &hs {
+        let Some(entity) = s.doc()?.entity(*h) else {
+            return Err(bad("attedit", format!("no object has handle {}", h.hex())));
+        };
+        let EntityKind::Insert(ins) = &entity.kind else {
+            return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
+        };
+        if super::super::curves::is_locked(s, *h) {
+            if hs.len() == 1 {
+                return Err(bad("attedit", format!("the reference {} is on a locked layer", h.hex())));
+            }
+            continue;
+        }
+        free.push(*h);
+        if let Some((i, _)) = at.iter().find(|(i, _)| *i >= ins.attribs.len()) {
+            return Err(bad("attedit", format!("`at`: {i} is not the index of one of the reference's attributes")));
+        }
+        if let Some((_, a)) = ins.attribs.iter().enumerate().find(|(i, a)| given(*i, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
+            return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
+        }
+        for (_, a) in ins.attribs.iter().enumerate().filter(|(i, a)| a.constant && given(*i, &a.tag).is_some()) {
+            if !constant.iter().any(|t| t.eq_ignore_ascii_case(&a.tag)) {
+                constant.push(a.tag.clone());
             }
         }
-    })?;
-    Ok(with_unknown_tags(s, h, &vals, json!({ "changed": n })))
+    }
+    let locked = hs.len() - free.len();
+    if free.is_empty() {
+        return Err(bad("attedit", "every reference is on a locked layer"));
+    }
+    let mut n = 0;
+    for h in &free {
+        s.doc_mut()?.modify_entity(*h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
+                    if let Some(v) = given(j, &a.tag) {
+                        set_value(&mut a.text, v);
+                        n += 1;
+                    }
+                }
+            }
+        })?;
+    }
+    let mut r = with_unknown_tags_of_all(s, &free, &vals, json!({ "changed": n }));
+    if locked > 0 {
+        if let Some(o) = r.as_object_mut() {
+            o.insert("locked".into(), json!(locked));
+        }
+        s.echo(if locked == 1 { "1 was on a locked layer.".to_string() } else { format!("{locked} were on a locked layer.") });
+    }
+    if !constant.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("constantTags".into(), json!(constant));
+    }
+    Ok(r)
+}
+
+/// One attribute of a block reference, as the Properties palette and the Edit Attributes dialog
+/// list it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttributeRow {
+    pub tag: String,
+    /// The definition's prompt (the tag when it has none).
+    pub prompt: String,
+    pub value: String,
+    /// Not constant: the value can be changed.
+    pub editable: bool,
+    pub invisible: bool,
+    /// A multiline attribute: its value may hold line breaks.
+    pub multiline: bool,
+}
+
+/// The attributes of block reference `h`, in order (empty for other objects). The prompt comes
+/// from the attribute, else from its definition in the reference's block.
+pub fn attributes(d: &cadcraft_doc::Drawing, h: Handle) -> Vec<AttributeRow> {
+    let Some(EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { return Vec::new() };
+    let block = d.block(&ins.block);
+    let def_prompt = |tag: &str| {
+        block.and_then(|b| {
+            b.entities.iter().find_map(|e| match &e.kind {
+                EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(tag) && !ad.prompt.is_empty() => Some(ad.prompt.clone()),
+                _ => None,
+            })
+        })
+    };
+    ins.attribs
+        .iter()
+        .map(|a| AttributeRow {
+            tag: a.tag.clone(),
+            prompt: if a.prompt.is_empty() { def_prompt(&a.tag).unwrap_or_else(|| a.tag.clone()) } else { a.prompt.clone() },
+            value: a.text.value.clone(),
+            editable: !a.constant,
+            invisible: a.invisible,
+            multiline: a.multiline.is_some(),
+        })
+        .collect()
 }
 
 /// A block name, tag or value specification: comma-separated wildcard patterns, any case. For
@@ -246,6 +377,14 @@ impl AtteditM {
 impl Interactive for AtteditM {
     fn name(&self) -> &'static str {
         "ATTEDIT"
+    }
+    /// A selected block reference is taken at once (Edit Attributes from the shortcut menu).
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let pre = s.selection();
+        if s.settings.pickfirst && !pre.is_empty() && self.pick(s, &pre).is_ok() {
+            s.set_selection(Vec::new());
+        }
+        Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.attribs.get(self.values.len()) {
