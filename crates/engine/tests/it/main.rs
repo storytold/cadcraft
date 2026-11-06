@@ -169,6 +169,7 @@ mod vplayer_prompts;
 mod vports;
 mod wipeout_grips;
 mod xclip;
+mod xdata_api;
 mod xdata_follows_entity;
 mod zoom_keywords;
 mod zoom_viewport;

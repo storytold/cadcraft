@@ -252,6 +252,7 @@ static BUILTINS: &[Builtin] = &[
     ctx!("ENTNEXT", drawing::entnext),
     ctx!("ENTUPD", drawing::entupd),
     ctx!("HANDENT", drawing::handent),
+    ctx!("REGAPP", drawing::regapp),
     ctx!("SSGET", drawing::ssget),
     ctx!("SSADD", drawing::ssadd),
     ctx!("SSDEL", drawing::ssdel),

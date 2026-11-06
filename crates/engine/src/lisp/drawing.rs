@@ -5,11 +5,14 @@
 //!
 //! Entity lists use the DXF groups the file reader and writer use (through
 //! [`crate::cmd::file::entity_codec`]), so what `entget` shows is what a DXF file holds, except
-//! for angles, which are radians in a list and degrees in a file.
+//! for angles, which are radians in a list and degrees in a file. Extended data (xdata) is the
+//! `-3` group, as in AutoCAD: `(entget ename '("APP" …))` adds `(-3 ("APP" (1000 . "…") …))` for
+//! the applications named (wildcards allowed), `entmake` and `entmod` take it, and `regapp`
+//! registers an application name.
 
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Entity, Handle, Space};
+use cadcraft_doc::{Entity, Handle, RawTag, Space};
 use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
 
@@ -313,7 +316,7 @@ fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
                     other => return Err(LispError::bad_arg("stringp", other)),
                 })
             }
-            -1 | 5 | 330 | 360 | 410 | 102 => {}
+            -1 | -3 | 5 | 330 | 360 | 410 | 102 => {}
             _ if point_group(code) && matches!(v, Value::Cons(_)) => {
                 let p = v.as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", &v))?;
                 tags.push(Tag::f(code, p[0]));
@@ -343,9 +346,16 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
+    // The applications whose xdata to list: names or wildcard patterns ("*": every application).
+    let apps: Option<Vec<String>> = match a.get(1) {
+        None | Some(Value::Nil) => None,
+        Some(v) if v.is_list() => Some(v.iter().map(|x| string(&x)).collect::<Result<_, _>>()?),
+        Some(other) => return Err(LispError::bad_arg("listp", other)),
+    };
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
     let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
     let (kind, mut tags) = (codec()?.groups)(d, e);
+    let xdata = apps.map(|apps| xdata_to_list(&e.common.xdata, &apps)).filter(|v| !v.is_nil());
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
         Some(Space::Paper(name)) => name,
@@ -362,12 +372,144 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             placed_layout = true;
         }
     }
+    if let Some(x) = xdata {
+        items.push(Value::cons(Value::Int(-3), x));
+    }
     Ok(Flow::Value(Value::list(items)))
 }
 
-/// The entity a list describes, as the reader makes it; a missing layer (8) is the current one.
-fn entity_from_list(ctx: &Ctx<'_>, list: &Value) -> Result<(String, cadcraft_doc::Common, cadcraft_doc::EntityKind), LispError> {
+/// A group kept raw, typed by its code (so a 1070 lists as an integer, a 1040 as a real).
+fn typed_tag(r: &RawTag) -> Tag {
+    use cadcraft_dxf::{Kind, Value as V, kind_of};
+    let v = r.value.trim();
+    let value = match kind_of(r.code) {
+        Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(V::Real),
+        Kind::Int16 | Kind::Int32 | Kind::Int64 => v.parse::<i64>().ok().map(V::Int),
+        Kind::Bool => v.parse::<i64>().ok().map(|x| V::Bool(x != 0)),
+        Kind::Hex => Some(V::Hex(v.to_string())),
+        Kind::Str => None,
+    };
+    Tag::new(r.code, value.unwrap_or_else(|| V::Str(r.value.clone())))
+}
+
+/// The `-3` group's value: `(("APP" (1000 . "…") (1070 . 3) (1010 x y z) …) …)` for the
+/// applications of `xdata` matching one of `patterns` (any case; `wcmatch` wildcards).
+fn xdata_to_list(xdata: &[RawTag], patterns: &[String]) -> Value {
+    let patterns: Vec<String> = patterns.iter().map(|p| p.trim().to_ascii_uppercase()).collect();
+    // A file may hold several runs of one application, `ACME` and `acme` among them; they are
+    // one application to `set_xdata_app`, so they are one list here (first spelling, all the
+    // groups), or `(entmod (entget e '("*")))` would keep only the last run.
+    let mut apps: Vec<(&str, Vec<RawTag>)> = Vec::new();
+    for (name, groups) in cadcraft_doc::xdata_apps(xdata) {
+        let up = name.to_ascii_uppercase();
+        if !patterns.iter().any(|p| super::builtins::wild_match(&up, p)) {
+            continue;
+        }
+        match apps.iter_mut().find(|(app, _)| app.eq_ignore_ascii_case(name)) {
+            Some((_, all)) => all.extend_from_slice(groups),
+            None => apps.push((name, groups.to_vec())),
+        }
+    }
+    let lists: Vec<Value> = apps
+        .into_iter()
+        .map(|(name, groups)| {
+            let tags: Vec<Tag> = groups.iter().map(typed_tag).collect();
+            Value::list_with_tail(vec![Value::str(name)], Value::list(groups_to_list(&tags)))
+        })
+        .collect();
+    Value::list(lists)
+}
+
+/// The applications of a list's `-3` group, each with its groups (checked as xdata): `None`
+/// when the list has no `-3`. An application with no groups removes its data in `entmod`.
+fn xdata_from_list(list: &Value) -> Result<Option<Vec<(String, Vec<RawTag>)>>, LispError> {
+    let Some(x) = list.iter().find(|v| v.car().as_number() == Some(-3.0)).map(|v| v.cdr()) else { return Ok(None) };
+    // `(-3 . 7)` is not a list of applications: refused, not read as "no applications".
+    if !x.is_list() {
+        return Err(LispError::bad_arg("listp", &x));
+    }
+    let bad = |what: &str| LispError::new(format!("bad DXF group: {what}"));
+    let mut out = Vec::new();
+    for app in x.iter() {
+        let name = match app.car() {
+            Value::Str(s) => s.to_string(),
+            other => return Err(LispError::bad_arg("stringp", &other)),
+        };
+        cadcraft_doc::check_xdata_app_name(&name).map_err(|e| bad(&e.to_string()))?;
+        if cadcraft_doc::is_reserved_xdata_app(&name) {
+            return Err(bad(&format!("xdata application {name} is reserved")));
+        }
+        // The application's groups must be a proper list too: `("ACME" . 7)` would otherwise
+        // read as "no groups" and remove the data in `entmod`, and a dotted tail after real
+        // groups would be dropped.
+        let tail = app.cdr();
+        if !tail.is_list() {
+            return Err(LispError::bad_arg("listp", &tail));
+        }
+        let mut groups: Vec<RawTag> = Vec::new();
+        for g in tail.iter() {
+            if groups.len() >= cadcraft_doc::MAX_XDATA_GROUPS {
+                return Err(bad("too many xdata groups"));
+            }
+            let Value::Cons(c) = &g else { return Err(LispError::bad_arg("consp", &g)) };
+            let Value::Int(code) = c.car else { return Err(LispError::bad_arg("fixnump", &c.car)) };
+            match &c.cdr {
+                Value::Cons(_) if (1010..=1013).contains(&code) => {
+                    let p = c.cdr.as_point().ok_or_else(|| LispError::bad_arg("3D point", &c.cdr))?;
+                    if p.iter().any(|v| !v.is_finite()) {
+                        return Err(bad("xdata point must be finite"));
+                    }
+                    groups.push(RawTag { code, value: cadcraft_dxf::format_real(p[0]) });
+                    groups.push(RawTag { code: code + 10, value: cadcraft_dxf::format_real(p[1]) });
+                    groups.push(RawTag { code: code + 20, value: cadcraft_dxf::format_real(p[2]) });
+                }
+                Value::Int(i) => groups.push(RawTag { code, value: i.to_string() }),
+                Value::Real(r) => groups.push(RawTag { code, value: cadcraft_dxf::format_real(*r) }),
+                Value::Str(s) => groups.push(RawTag { code, value: s.to_string() }),
+                Value::Ename(h) => groups.push(RawTag { code, value: h.hex() }),
+                other => return Err(LispError::bad_arg("DXF group value", other)),
+            }
+        }
+        cadcraft_doc::check_xdata_groups(&groups).map_err(|e| bad(&e.to_string()))?;
+        out.push((name, groups));
+    }
+    Ok(Some(out))
+}
+
+/// `(regapp "name")`: register an application for xdata. The name when it is new, nil when it
+/// is already registered (by `regapp` or by xdata an object carries) or invalid. Saving writes
+/// an APPID record for every application with xdata, so nothing else is needed.
+pub fn regapp(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 1, 1)?;
+    let name = string(&a[0])?;
+    if cadcraft_doc::check_xdata_app_name(&name).is_err() {
+        return Ok(Flow::Value(Value::Nil));
+    }
+    let up = name.trim().to_ascii_uppercase();
+    let known = ctx.env.regapps.contains(&up) || ctx.s.doc().is_ok_and(|d| xdata_app_names(d).contains(&up));
+    if known {
+        return Ok(Flow::Value(Value::Nil));
+    }
+    ctx.env.regapps.insert(up);
+    Ok(Flow::Value(Value::str(name.trim())))
+}
+
+/// The upper-case names of every application with xdata on an object of the drawing.
+fn xdata_app_names(d: &cadcraft_doc::Drawing) -> std::collections::BTreeSet<String> {
+    std::iter::once(&d.model)
+        .chain(d.layouts.iter().map(|l| &l.entities))
+        .chain(d.blocks.values().map(|b| &b.entities))
+        .flat_map(|s| s.iter())
+        .flat_map(|e| cadcraft_doc::xdata_apps(&e.common.xdata).into_iter().map(|(n, _)| n.to_ascii_uppercase()).collect::<Vec<_>>())
+        .collect()
+}
+
+/// The entity a list describes, as the reader makes it, with the applications of its `-3`
+/// group (their xdata is on the entity); a missing layer (8) is the current one.
+type ListedEntity = (String, cadcraft_doc::Common, cadcraft_doc::EntityKind, Option<Vec<(String, Vec<RawTag>)>>);
+fn entity_from_list(ctx: &Ctx<'_>, list: &Value) -> Result<ListedEntity, LispError> {
     let (kind, mut tags) = list_to_groups(list)?;
+    let xdata = xdata_from_list(list)?;
     convert_angles(&kind, &mut tags, f64::to_degrees);
     if !tags.iter().any(|t| t.code == 8) {
         let layer = crate::sysvars::get(ctx.s, "CLAYER").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "0".into());
@@ -376,7 +518,23 @@ fn entity_from_list(ctx: &Ctx<'_>, list: &Value) -> Result<(String, cadcraft_doc
     match (codec()?.entity)(&kind, &tags) {
         // A type the reader only carries through (an unknown or invalid name) isn't made.
         Some((_, cadcraft_doc::EntityKind::Unknown(_))) | None => Err(LispError::new(format!("bad DXF group: {kind} can't be made from this list"))),
-        Some((common, k)) => Ok((kind, common, k)),
+        Some((mut common, k)) => {
+            if let Some(apps) = &xdata {
+                for (app, groups) in apps {
+                    // `ACAD` on a dimension holds its overrides (DSTYLE), written from the model.
+                    if cadcraft_doc::is_model_xdata_app(app, &k) {
+                        return Err(LispError::new(format!("bad DXF group: xdata application {app} of a {kind} is written from its own properties")));
+                    }
+                    cadcraft_doc::set_xdata_app(&mut common.xdata, app, Some(groups));
+                }
+                // Each application's groups are checked one by one above; together they must
+                // still fit what a file holds for one object.
+                if common.xdata.len() > cadcraft_doc::MAX_XDATA_GROUPS {
+                    return Err(LispError::new("bad DXF group: too many xdata groups"));
+                }
+            }
+            Ok((kind, common, k, xdata))
+        }
     }
 }
 
@@ -389,7 +547,7 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
         _ => {}
     }
-    let (_, common, kind) = match entity_from_list(ctx, list) {
+    let (_, common, kind, _) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
@@ -491,13 +649,24 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
-    let (kind_name, common, kind) = match entity_from_list(ctx, list) {
+    let (kind_name, mut common, kind, xdata) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
     // entmod changes an entity, never its type.
     if !kind_name.eq_ignore_ascii_case(old.kind.dxf_name()) {
         return Ok(Flow::Value(Value::Nil));
+    }
+    // Xdata stays unless the list has a -3 group, which replaces the data of the applications it
+    // names (one with no groups removes it) and leaves the others alone, as in AutoCAD.
+    common.xdata = old.common.xdata.clone();
+    if let Some(apps) = &xdata {
+        for (app, groups) in apps {
+            cadcraft_doc::set_xdata_app(&mut common.xdata, app, Some(groups));
+        }
+        if common.xdata.len() > cadcraft_doc::MAX_XDATA_GROUPS {
+            return Ok(Flow::Value(Value::Nil));
+        }
     }
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     d.ensure_layer(&common.layer);
@@ -988,9 +1157,25 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .iter()
             .map(|s| Value::list(vec![pair(0, Value::str("DIMSTYLE")), pair(2, Value::str(&s.name)), pair(70, Value::Int(0))]))
             .collect(),
-        "APPID" => vec![Value::list(vec![pair(0, Value::str("APPID")), pair(2, Value::str("ACAD")), pair(70, Value::Int(0))])],
+        "APPID" => std::iter::once("ACAD".to_string())
+            .chain(xdata_app_names(d).into_iter().filter(|n| n != "ACAD"))
+            .map(|n| Value::list(vec![pair(0, Value::str("APPID")), pair(2, Value::str(&n)), pair(70, Value::Int(0))]))
+            .collect(),
         _ => Vec::new(),
     }
+}
+
+/// [`table_records`] plus, for APPID, the applications `regapp` registered in this session.
+fn table_records_with(ctx: &Ctx<'_>, d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
+    let mut records = table_records(d, table);
+    if table == "APPID" {
+        let have: Vec<String> = records.iter().map(record_name).map(|n| n.to_ascii_uppercase()).collect();
+        for app in ctx.env.regapps.iter().filter(|a| !have.contains(a)) {
+            let pair = |c: i32, v: Value| Value::cons(Value::Int(c), v);
+            records.push(Value::list(vec![pair(0, Value::str("APPID")), pair(2, Value::str(app)), pair(70, Value::Int(0))]));
+        }
+    }
+    records
 }
 
 fn record_name(r: &Value) -> String {
@@ -1002,7 +1187,7 @@ pub fn tblsearch(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let table = string(&a[0])?.to_ascii_uppercase();
     let name = string(&a[1])?;
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-    let records = table_records(d, &table);
+    let records = table_records_with(ctx, d, &table);
     let found = records.iter().position(|r| record_name(r).eq_ignore_ascii_case(&name));
     if let Some(i) = found
         && a.get(2).is_some_and(|v| !v.is_nil())
@@ -1017,7 +1202,7 @@ pub fn tblnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let table = string(&a[0])?.to_ascii_uppercase();
     let rewind = a.get(1).is_some_and(|v| !v.is_nil());
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-    let records = table_records(d, &table);
+    let records = table_records_with(ctx, d, &table);
     let i = if rewind { 0 } else { ctx.env.tblnext.get(&table).copied().unwrap_or(0) };
     ctx.env.tblnext.insert(table, i + 1);
     Ok(Flow::Value(records.get(i).cloned().unwrap_or_default()))
