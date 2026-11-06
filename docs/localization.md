@@ -191,7 +191,7 @@ region and does not select Traditional Chinese; bare `zh` and explicit `Hans` se
 extensions do not change script selection.
 
 For the 2026-11-06 local repair integrating PR head `e7c9802` with the fixed upstream
-base `1b39fbbabeb55dfd28f9ac9a297f868ae5a095b0`, the Traditional Chinese catalog has
+base `8e899eef6322288409d7f7b4f50b7a5f80f479be`, the Traditional Chinese catalog has
 1,353 rows against 1,382 Ukrainian reference rows: 29 reference-key fallbacks and
 0 stale keys. The integrated registry has 21 preferences and 20 languages.
 Of the original key/value pairs, 1,343 are unchanged; 10 keys receive the necessary
