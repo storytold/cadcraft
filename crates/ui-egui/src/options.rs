@@ -18,6 +18,7 @@
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
 //! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
+//! | `showRibbon` | the Ribbon under the menu bar (default: off) |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
@@ -151,6 +152,7 @@ struct UiChanges {
     isavebak: Option<bool>,
     time_sensitive_right_click: Option<bool>,
     interface_scale: Option<f32>,
+    show_ribbon: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -193,6 +195,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "showRibbon" => c.show_ribbon = Some(v.as_bool().ok_or("showRibbon must be true or false")?),
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -223,6 +226,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("interfaceLanguage".into(), json!(app.ui.interface_language.code()));
     m.insert("saveFormat".into(), json!(app.ui.save_format.as_str()));
     m.insert("systemCursor".into(), json!(app.ui.system_cursor));
+    m.insert("showRibbon".into(), json!(app.ui.show_ribbon));
     m.insert("historyLines".into(), json!(app.ui.history_lines));
     m.insert("modelBackground".into(), color_json(o.model_background));
     m.insert("paperBackground".into(), color_json(o.paper_background));
@@ -310,6 +314,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(b) = ui.show_ribbon {
+        app.ui.show_ribbon = b;
+    }
     Ok(report(app))
 }
 
@@ -322,6 +329,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.save_version = d.save_version;
     app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
+    app.ui.show_ribbon = d.show_ribbon;
     app.options = UiOptions::default();
 }
 
@@ -341,6 +349,7 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "interfaceScale": self.options.interface_scale,
+            "showRibbon": self.ui.show_ribbon,
         })
         .to_string()
     }
@@ -356,9 +365,16 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in
-            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "interfaceScale"]
-        {
+        for key in [
+            "systemCursor",
+            "modelBackground",
+            "paperBackground",
+            "selectionColor",
+            "snapMarkerSize",
+            "timeSensitiveRightClick",
+            "interfaceScale",
+            "showRibbon",
+        ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }
@@ -384,6 +400,9 @@ impl CadApp {
         }
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
+        }
+        if let Some(b) = c.show_ribbon {
+            self.ui.show_ribbon = b;
         }
     }
 }

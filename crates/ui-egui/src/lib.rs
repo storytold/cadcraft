@@ -59,6 +59,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod ribbon;
 pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
@@ -92,6 +93,8 @@ pub struct UiState {
 
     pub interface_language: i18n::Preference,
     pub show_toolsets: bool,
+    /// The Ribbon under the menu bar (Home tab). Off by default: Options > Display.
+    pub show_ribbon: bool,
     pub show_palettes: bool,
     pub show_toolbar: bool,
     pub show_file_tabs: bool,
@@ -186,6 +189,7 @@ impl Default for UiState {
 
             interface_language: i18n::Preference::default(),
             show_toolsets: true,
+            show_ribbon: false,
             show_palettes: true,
             show_toolbar: true,
             show_file_tabs: true,
@@ -900,6 +904,9 @@ impl CadApp {
             chrome::file_tabs(self, ui);
         }
         let has_doc = !self.session.docs.is_empty() && !self.ui.start_tab;
+        if has_doc && self.ui.show_ribbon {
+            ribbon::show(self, ui);
+        }
         if has_doc && !self.ui.show_toolsets {
             palettes::toolsets_strip(self, ui);
         }

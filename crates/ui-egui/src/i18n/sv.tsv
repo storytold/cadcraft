@@ -32,6 +32,7 @@
 	= Equals	= Lika med
 	> Greater than	> Större än
 	A drawing opened from a file keeps that file's format.	En ritning som öppnats från en fil behåller filens format.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Ett kommandofält med flikar under menyraden, med fliken Starts paneler Rita, Ändra, Anteckning, Lager, Block och Egenskaper.
 	A variable name starts with a letter and has only letters, digits and _	Ett variabelnamn börjar med en bokstav och innehåller bara bokstäver, siffror och _
 	About	Om
 	About CADCraft	Om CADCraft
@@ -702,6 +703,7 @@
 	Reset Panel Layout	Återställ panellayout
 	Reset keeps the interface language.	Återställningen behåller gränssnittsspråket.
 	Reset to Defaults	Återställ standardvärden
+	Ribbon	Menyfliksområde
 	SVG drawings (SVG, SVGZ)	SVG-ritningar (SVG, SVGZ)
 	Save new drawings as	Spara nya ritningar som
 	Saved Path	Sparad sökväg

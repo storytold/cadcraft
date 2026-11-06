@@ -48,6 +48,7 @@
 	> Greater than	> Nagyobb
 	A built-in table: editing it keeps an edited copy in the drawing.	Beépített táblázat: szerkesztéskor a módosított másolata a rajzba kerül.
 	A drawing opened from a file keeps that file's format.	A fájlból megnyitott rajz megtartja a fájl formátumát.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Füles parancssáv a menüsor alatt a Kezdőlap fül Rajzolás, Módosítás, Feliratozás, Fóliák, Blokk és Tulajdonságok paneljeivel.
 	A variable name starts with a letter and has only letters, digits and _	A változónév betűvel kezdődik, és csak betűt, számjegyet és _ jelet tartalmazhat
 	About	Névjegy
 	About CADCraft	A CADCraft névjegye
@@ -879,6 +880,7 @@
 	Reverse zoom direction	Fordított nagyítási irány
 	Revision Cloud	Revíziós felhő
 	Revolve	Forgatás tengely körül
+	Ribbon	Menüszalag
 	Right	Jobbra
 	Rotate	Elforgatás
 	Rotation	Elforgatás

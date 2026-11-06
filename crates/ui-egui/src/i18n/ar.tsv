@@ -37,6 +37,7 @@
 	> Greater than	> أكبر من
 	A built-in table: editing it keeps an edited copy in the drawing.	جدول مدمج: تحريره يُبقي نسخة محررة في الرسم.
 	A drawing opened from a file keeps that file's format.	الرسم المفتوح من ملف يحتفظ بتنسيق ذلك الملف.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	شريط أوامر بعلامات تبويب أسفل شريط القوائم، يحوي لوحات علامة التبويب الرئيسية: رسم، تعديل، تعليق توضيحي، طبقات، كتلة وخصائص.
 	A variable name starts with a letter and has only letters, digits and _	يبدأ اسم المتغير بحرف ولا يحوي إلا أحرفاً وأرقاماً و _
 	About	حول
 	About CADCraft	حول CADCraft
@@ -804,6 +805,7 @@
 	Reverse zoom direction	عكس اتجاه التكبير
 	Revision Cloud	سحابة المراجعة
 	Revolve	دوران
+	Ribbon	الشريط
 	Right	يمين
 	Rotate	تدوير
 	Rotation	التدوير
