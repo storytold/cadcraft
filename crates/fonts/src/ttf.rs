@@ -35,6 +35,9 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use crate::{Run, Shaped};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod dirs;
+
 /// One face of a font file (a TrueType collection holds several).
 #[derive(Clone)]
 pub struct Face {
@@ -136,7 +139,11 @@ const MAX_CACHED_CHARS: usize = 50_000;
 pub(crate) const MAX_SHAPED_POINTS: usize = 8_000_000;
 
 /// Fonts known to cover many scripts (CJK first), tried first for missing glyphs. Matched as
-/// substrings of the normalised file stem.
+/// substrings of the normalised file stem. The last two are the wide nets: GNU FreeSerif (most
+/// non-CJK scripts, with real OpenType shaping; in the default font set of NixOS and many
+/// distributions), then Unifont (every BMP character, as bitmap-like outlines; the only
+/// CJK-capable font of NixOS's default set) for what FreeSerif lacks. Both come before the
+/// alphabetical rest, which the bounded search never gets through.
 const PREFERRED_FALLBACK: &[&str] = &[
     "notosanscjk",
     "sourcehansans",
@@ -160,6 +167,8 @@ const PREFERRED_FALLBACK: &[&str] = &[
     "dejavusans",
     "segoeui",
     "arial",
+    "freeserif",
+    "unifont",
 ];
 /// Fonts known to cover a right-to-left script, tried before the general search for its
 /// characters (the general search loads a bounded number of files, and wide-coverage CJK fonts
@@ -334,11 +343,11 @@ fn system_font_dirs() -> Vec<PathBuf> {
             dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
-        if let Some(h) = std::env::var_os("HOME") {
-            dirs.push(PathBuf::from(&h).join(".fonts"));
-            dirs.push(PathBuf::from(h).join(".local/share/fonts"));
-        }
+        // Where fontconfig looks: NixOS, Guix and Flatpak keep fonts outside /usr/share/fonts
+        // (#674). Later directories take precedence (the stack pops them first), so the
+        // resolver's priority order is reversed; [`scan_dirs`] reads each resolved
+        // directory once and skips missing ones.
+        dirs.extend(dirs::font_dirs(|k| std::env::var_os(k), dirs::read_config).into_iter().rev());
     }
     dirs
 }
@@ -850,6 +859,16 @@ pub fn find(name: &str) -> Option<Face> {
     }
     g.resolved.insert(k, r.clone());
     r
+}
+
+/// The installed font file with this stem (`DejaVuSans`, `NotoSansCJK-Regular`; case and an
+/// extension don't matter), wherever the system keeps its fonts. A font compiled in from
+/// craft-fonts is no file and gives `None`.
+pub fn installed_font_path(stem: &str) -> Option<PathBuf> {
+    match lock().paths.get(&key(stem))? {
+        Source::File(p) => Some(p.clone()),
+        Source::Static(_) => None,
+    }
 }
 
 struct Prefs {
@@ -1468,5 +1487,26 @@ mod scan_tests {
         assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_back_up_the_tree_does_not_hide_the_other_font_directories() {
+        let root = std::env::temp_dir().join(format!("cadcraft-font-walk-{}", std::process::id()));
+        let (looped, other) = (root.join("looped"), root.join("other"));
+        std::fs::create_dir_all(&looped).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(looped.join("a.ttf"), b"").unwrap();
+        // The kernel gives up on a symlink chain after about 40 hops; with this many entries,
+        // reading the directory at every hop would still run past the 20 000 entry budget.
+        for i in 0..600 {
+            std::fs::write(looped.join(format!("readme{i}.txt")), b"").unwrap();
+        }
+        std::fs::write(other.join("b.ttf"), b"").unwrap();
+        std::os::unix::fs::symlink(&looped, looped.join("again")).unwrap();
+        // The looped directory is walked first.
+        let found = scan_dirs(&[other.clone(), looped.clone()], false);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(found.contains_key("a") && found.contains_key("b"), "{found:?}");
     }
 }
