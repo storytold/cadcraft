@@ -153,9 +153,29 @@ fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
     }
 }
 
-/// [`object_commands`] that are registered, as menu items.
+/// [`object_commands`] that are registered, as menu items. The Edit Text entry of a single
+/// selected text, mtext or attribute definition opens the Edit Text window instead of the
+/// TEXTEDIT command line; the double-click keeps its in-place editing (#842), and several
+/// selected texts still take the command line.
 pub fn object_entries(app: &CadApp) -> Vec<Entry> {
-    object_commands(app).into_iter().filter_map(|(id, label)| item(app, id, label)).collect()
+    object_commands(app)
+        .into_iter()
+        .filter_map(|(id, label)| if id == "textedit" { edit_text_window_entry(app).or_else(|| item(app, id, label)) } else { item(app, id, label) })
+        .collect()
+}
+
+/// The Edit Text entry as the `textedit:<handle>` dialog id, for a single selected text, mtext
+/// or attribute definition; `None` otherwise, so the command line entry stands in.
+fn edit_text_window_entry(app: &CadApp) -> Option<Entry> {
+    use cadcraft_engine::doc::EntityKind;
+    let sel = app.session.selection();
+    if sel.len() != 1 {
+        return None;
+    }
+    let h = *sel.first()?;
+    let d = app.session.doc().ok()?;
+    d.entity(h).filter(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)))?;
+    Some(Entry::Item { label: "Edit Text".into(), id: format!("textedit:{}", h.hex()), shortcut: None, enabled: true })
 }
 
 /// The command menu while a command runs (`None` when none does): Enter and Cancel, Recent Input,
@@ -213,6 +233,9 @@ pub fn choose(app: &mut CadApp, id: &str) {
         }
     } else if let Some(s) = id.strip_prefix(SNAP) {
         choose_snap(app, s);
+    } else if id.starts_with("textedit:") {
+        // The Edit Text window of the single selected text object; the id carries the handle.
+        app.ui.dialog = Some(id.to_string());
     } else {
         activate(app, id);
     }
