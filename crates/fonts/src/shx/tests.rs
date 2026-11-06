@@ -309,6 +309,120 @@ fn hostile_files_never_panic() {
     assert!(compile("").is_err());
 }
 
+#[test]
+fn a_far_extended_subshape_cell_is_cut_off() {
+    // Hostile: nested cells 255 units out put the pen 255^4 units away; a location pushed there
+    // and popped at the top became the advance.
+    let mut src = String::from("*BIGFONT 6,1,081,09F\n*0,5,far\n1,0,0,1,0\n");
+    for k in 1..=3 {
+        src.push_str(&format!("*08F0{k},10,L\n7,0,08F0{},255,0,255,255,0\n", k + 1));
+    }
+    src.push_str("*08F04,2,PUSH\n5,0\n*082A0,10,T\n7,0,08F01,255,0,255,255,6,0\n*082A1,10,NEAR\n7,0,08F04,255,0,255,255,6,0\n");
+    let f = font(&src);
+    assert!(f.glyph(0x82A0, false).is_none());
+    assert!(close(f.glyph(0x82A1, false).unwrap().advance, Vec2::new(255.0, 0.0)));
+}
+
+#[test]
+fn subshape_fan_out_past_the_point_and_step_bounds_is_cut_off() {
+    // Hostile: a few hundred bytes of fan-out drew 48,000 points per character (1.7 GB for a
+    // 1,000-character text) or ran 200,000 steps per character with the pen up.
+    let src = format!(
+        "*1,1,TOO_MANY_POINTS\n{a}0\n*2,1,HUNDRED\n{b}0\n*3,3,V\n011,019,0\n*4,1,ENOUGH\n{c}0\n*5,1,TOO_MANY_STEPS\n{d}0\n*6,1,UP\n{e}0\n*7,3,U\n2,010,0\n",
+        a = "7,2,".repeat(41),
+        b = "7,3,".repeat(100),
+        c = "7,2,".repeat(40),
+        d = "7,6,".repeat(100),
+        e = "7,7,".repeat(100),
+    );
+    let f = font(&src);
+    assert!(f.glyph(1, false).is_none() && f.glyph(5, false).is_none());
+    assert_eq!(f.glyph(4, false).unwrap().strokes.iter().map(Vec::len).sum::<usize>(), 8001);
+    assert!(f.glyph(6, false).is_some());
+}
+
+#[test]
+fn the_glyph_cache_is_bounded_by_points() {
+    // Hostile: every glyph at the point bound, so 16,384 cached glyphs would hold 2 GB.
+    let mut src = format!("*2,1,HUNDRED\n{}0\n*3,3,V\n011,019,0\n", "7,3,".repeat(100));
+    for n in 10..=200 {
+        src.push_str(&format!("*{n},1,HEAVY\n{}0\n", "7,2,".repeat(40)));
+    }
+    let f = font(&src);
+    for n in 10..=200 {
+        assert!(f.glyph(n, false).is_some());
+    }
+    let c = f.cache.read().unwrap();
+    let cached: usize = c.glyphs.values().flatten().map(|g| g.strokes.iter().map(Vec::len).sum::<usize>()).sum();
+    assert!(cached <= MAX_CACHED_POINTS && cached == c.points, "{cached}");
+}
+
+#[test]
+fn a_name_is_looked_for_in_its_first_kilobyte_only() {
+    // Hostile: 65,535 big font records over one 64 KB run without a NUL were each searched to
+    // the end, 4 G bytes (1.7 s) for a 576 KB file.
+    let mut shp = parse::SHAPES_10.to_vec();
+    shp.extend([1, 0, 2, 0, 2, 0]);
+    for (n, len) in [(1u8, 1024u16), (2, 1025)] {
+        shp.push(n);
+        shp.push(0);
+        shp.extend((len + 2).to_le_bytes());
+    }
+    for len in [1024, 1025] {
+        shp.extend(std::iter::repeat_n(b'N', len));
+        shp.extend([0, 0]);
+    }
+    shp.extend(b"EOF");
+    let f = ShxFont::parse(&shp).unwrap();
+    assert!(f.has_shape(1) && !f.has_shape(2));
+    let mut big = parse::BIGFONT.to_vec();
+    big.extend([3, 0, 3, 0, 0, 0]);
+    for n in 1..=3u8 {
+        big.extend([n, 0, 0xFF, 0xFF, 55, 0, 0, 0]);
+    }
+    big.extend([b'N'; 0xFFFF]);
+    assert_eq!(ShxFont::parse(&big).err(), Some(ShxError::Empty));
+}
+
+#[test]
+fn a_name_the_reader_would_drop_does_not_compile() {
+    let long = "N".repeat(1025);
+    assert_eq!(
+        compile(&format!("*1,1,X\n0\n*2,1,{long}\n0\n")).err(),
+        Some(ShxError::Source(3, "the name of shape 2 is longer than 1024 bytes".into()))
+    );
+    let nul = format!("{}\0", "N".repeat(1024));
+    let short = "N".repeat(1024);
+    for name in [&short, &nul] {
+        let f = font(&format!("*BIGFONT 1,1,081,09F\n*082A0,1,{name}\n010,0\n"));
+        assert_eq!(f.shape_name(0x82A0).as_deref(), Some(short.as_str()));
+    }
+}
+
+#[test]
+fn all_65535_shape_numbers_compile_and_a_repeat_is_found() {
+    // Hostile: each of 65,535 definitions was compared with all before it, 2.8 s for an 821 KB
+    // source.
+    let src: String = (1..=65535u32).map(|n| format!("*{n},1,X\n0\n")).collect();
+    assert_eq!(ShxFont::parse(&compile(&src).unwrap()).unwrap().shape_count(), 65535);
+    assert_eq!(compile("*1,1,X\n0\n*2,1,Y\n0\n*1,1,Z\n0\n").err(), Some(ShxError::Source(5, "shape 1 is defined twice".into())));
+}
+
+#[test]
+fn a_doubled_minus_sign_is_not_a_number() {
+    // Hostile: the digits after the sign were themselves negative, down to i64::MIN; as a big
+    // font's range count the magnitude pushed ranges until 8 GB failed to allocate.
+    for src in [
+        "*1,1,X\n--9223372036854775808,0\n",
+        "*BIGFONT 4,--9223372036854775807,081,09F\n*1,1,X\n0\n",
+        "*1,1,X\n-0-8000000000000000,0\n",
+        "*--5,1,X\n0\n",
+        "*1,1,X\n+-5,0\n",
+    ] {
+        assert!(compile(src).is_err(), "{src:?}");
+    }
+}
+
 /// Register a compiled test font under `name` (each test its own names: the table is shared).
 fn reg(name: &str, src: &str) {
     register(name, &compile(src).unwrap()).unwrap();
