@@ -227,13 +227,29 @@ fn is_device_name(component: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A folder of a test's own, removed when the test ends, also when it fails.
+    struct TestDir(PathBuf);
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A new folder of this test's own: made here, so nothing else put it there first.
-    fn fresh_dir(tag: &str) -> PathBuf {
+    fn fresh_dir(tag: &str) -> TestDir {
         let mut n = 0u32;
         loop {
             let dir = std::env::temp_dir().join(format!("cc-file-access-{tag}-{}-{n}", std::process::id()));
             match std::fs::create_dir(&dir) {
-                Ok(()) => return dir,
+                Ok(()) => return TestDir(dir),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
                 Err(e) => panic!("{}: {e}", dir.display()),
             }
@@ -241,7 +257,7 @@ mod tests {
     }
 
     /// A fresh folder holding `in` (read root), `out` (write root) and `outside`.
-    fn folders(name: &str) -> (PathBuf, Arc<AutomationRoots>) {
+    fn folders(name: &str) -> (TestDir, Arc<AutomationRoots>) {
         let base = fresh_dir(name);
         for d in ["in/sub", "out", "outside", "in2"] {
             std::fs::create_dir_all(base.join(d)).unwrap();
@@ -271,7 +287,6 @@ mod tests {
         assert_eq!(roots.check(s(base.join("out/x.png")), Access::Read), Ok(()), "the write root also grants reads");
         let e = roots.check(s(base.join("in/a.dxf")), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A write-only root still permits reads inside it; reads outside both roots are refused.
@@ -285,7 +300,6 @@ mod tests {
         let read_only = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
         assert_eq!(read_only.check(s(base.join("in/a.dxf")), Access::Read), Ok(()));
         assert!(read_only.check(s(base.join("out/new.dxf")), Access::Read).is_err(), "a read root alone grants no read of another folder");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A write to the write root itself would put its `.cadcraft-tmp` file beside the root: refused.
@@ -300,7 +314,6 @@ mod tests {
         }
         assert_eq!(roots.check(&out, Access::Read), Ok(()), "reading the root stays allowed");
         assert_eq!(roots.check(s(base.join("out/new/x.png")), Access::Write), Ok(()), "a normal save inside still works");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -309,7 +322,6 @@ mod tests {
         std::fs::write(base.join("in2/b.dxf"), "0\nEOF\n").unwrap();
         assert!(roots.check(s(base.join("in2/b.dxf")), Access::Read).is_err(), "in2 is not inside in");
         assert!(roots.check(format!("{}2/c.dxf", s(base.join("in"))), Access::Read).is_err());
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -324,16 +336,14 @@ mod tests {
         let e = roots.check(&missing, Access::Write).unwrap_err();
         // Windows resolves `..` by name first (so does opening the file there): then it's outside.
         assert!(e.contains("parent traversal below a folder that doesn't exist") || e.contains("outside the write root"), "{e}");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
     fn relative_paths_resolve_against_the_working_directory() {
-        let (base, roots) = folders("relative");
+        let (_base, roots) = folders("relative");
         // The tests' working directory is the crate's folder: not inside the roots.
         assert!(roots.check("a.dxf", Access::Read).unwrap_err().contains("outside the read root"));
         assert!(roots.check("", Access::Read).unwrap_err().contains("path is empty"));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -353,7 +363,6 @@ mod tests {
         let read_only = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
         let e = read_only.check(s(base.join("in/x.dxf")), Access::Write).unwrap_err();
         assert!(e.contains("write authority is absent"), "{e}");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -372,7 +381,6 @@ mod tests {
         // Windows needs Developer Mode or elevation to make links: nothing to test without them.
         if !made(&base.join("outside/secret.dxf"), &base.join("in/leak.dxf")) {
             eprintln!("skipped: symbolic links can't be made here");
-            let _ = std::fs::remove_dir_all(base);
             return;
         }
         assert!(roots.check(s(base.join("in/leak.dxf")), Access::Read).unwrap_err().contains("outside the read root"), "a file link out");
@@ -389,7 +397,6 @@ mod tests {
         assert!(made(&base.join("in"), &base.join("in-link")));
         let linked = AutomationRoots::new(Some(&base.join("in-link")), None).unwrap().unwrap();
         assert_eq!(linked.check(s(base.join("in/a.dxf")), Access::Read), Ok(()));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     /// Names are compared exactly: `Root` isn't `root`, which a case-sensitive folder can hold beside it.
@@ -423,12 +430,10 @@ mod tests {
         // APFS and others refuse such a name: nothing to test there.
         if std::os::unix::fs::symlink(base.join("outside/secret.dxf"), &link).is_err() {
             eprintln!("skipped: this file system refuses a name that isn't text");
-            let _ = std::fs::remove_dir_all(base);
             return;
         }
         assert!(roots.check(&link, Access::Read).is_err());
         assert_eq!(roots.check(&*link.to_string_lossy(), Access::Read), Ok(()), "as text it is another file, which isn't there");
-        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A name is judged by the folder it stands in as well as by where it leads.
@@ -445,17 +450,15 @@ mod tests {
         std::os::unix::fs::symlink(base.join("out/t.dxf"), &inner).unwrap();
         assert_eq!(roots.check(&inner, Access::Write), Ok(()));
         assert_eq!(roots.check(base.join("out/new/deep/x.dxf"), Access::Write), Ok(()));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[cfg(windows)]
     #[test]
     fn a_case_sensitive_windows_folder_can_hold_a_sibling_of_the_root() {
         let base = fresh_dir("sensitive");
-        let sensitive = std::process::Command::new("fsutil").args(["file", "setCaseSensitiveInfo"]).arg(&base).arg("enable").output();
+        let sensitive = std::process::Command::new("fsutil").args(["file", "setCaseSensitiveInfo"]).arg(&*base).arg("enable").output();
         if !sensitive.is_ok_and(|o| o.status.success()) {
             eprintln!("this runner can't make a case-sensitive folder: skipped");
-            let _ = std::fs::remove_dir_all(&base);
             return;
         }
         std::fs::create_dir(base.join("root")).unwrap();
@@ -467,7 +470,6 @@ mod tests {
             assert!(roots.check(&s(base.join(p)), Access::Write).is_err(), "{p}");
         }
         assert_eq!(roots.check(&s(base.join("root/new.dxf")), Access::Write), Ok(()));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[cfg(windows)]
@@ -482,7 +484,6 @@ mod tests {
         assert!(roots.check(&s(base.join("out/com1.txt")), Access::Write).is_err());
         assert!(roots.check(&s(base.join("out/COM¹")), Access::Write).is_err());
         assert_eq!(roots.check(&s(base.join("out/console.txt")), Access::Write), Ok(()));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -501,7 +502,6 @@ mod tests {
         assert!(r.is_err());
         assert_eq!(check_read(&outside), Ok(()), "restored after a panic");
         assert_eq!(confine(None, || check_read(&outside)), Ok(()));
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

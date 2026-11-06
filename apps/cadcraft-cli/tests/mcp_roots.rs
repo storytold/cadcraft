@@ -13,13 +13,29 @@ use serde_json::{Value, json};
 
 const INIT: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#;
 
+/// A folder of a test's own, removed when the test ends, also when it fails.
+struct TestDir(PathBuf);
+
+impl std::ops::Deref for TestDir {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A new folder of this test's own: made here, so nothing else put it there first.
-fn fresh_dir(tag: &str) -> PathBuf {
+fn fresh_dir(tag: &str) -> TestDir {
     let mut n = 0u32;
     loop {
         let dir = std::env::temp_dir().join(format!("cc-mcp-roots-{tag}-{}-{n}", std::process::id()));
         match std::fs::create_dir(&dir) {
-            Ok(()) => return dir,
+            Ok(()) => return TestDir(dir),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => panic!("{}: {e}", dir.display()),
         }
@@ -28,7 +44,7 @@ fn fresh_dir(tag: &str) -> PathBuf {
 
 /// A folder holding `in` (the read root, with `a.dxf`), `out` (the write root), `outside` (with
 /// `b.dxf`) and `in2` (a sibling with the same prefix as `in`).
-fn folders(tag: &str) -> PathBuf {
+fn folders(tag: &str) -> TestDir {
     let base = fresh_dir(tag);
     for d in ["in", "out", "outside", "in2"] {
         std::fs::create_dir_all(base.join(d)).unwrap();
@@ -119,7 +135,6 @@ fn files_open_only_from_inside_the_read_root() {
     refused(&t[3], "outside the read root");
     // A refused path is an ordinary tool error; the session keeps working.
     ok(&t[4]);
-    let _ = std::fs::remove_dir_all(base);
 }
 
 /// Writes stay inside the write root, the root itself is refused, and no temporary file is left outside.
@@ -172,9 +187,8 @@ fn writes_go_only_into_the_write_root_and_leave_no_temp_file_outside() {
         std::fs::read_dir(base.join("outside")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(leftovers, ["b.dxf"], "nothing was written outside the roots");
     let temps: Vec<String> =
-        std::fs::read_dir(&base).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".cadcraft-tmp")).collect();
+        std::fs::read_dir(&*base).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".cadcraft-tmp")).collect();
     assert!(temps.is_empty(), "no temporary file beside or outside the roots: {temps:?}");
-    let _ = std::fs::remove_dir_all(base);
 }
 
 /// A root left out grants none of its own access: a read root allows no writes, while a write root also allows reads.
@@ -205,7 +219,6 @@ fn a_root_left_out_grants_none_of_its_access() {
     ok(&t[1]);
     assert!(base.join("out/new.dxf").is_file());
     ok(&t[2]);
-    let _ = std::fs::remove_dir_all(base);
 }
 
 /// The shared plotter settings folder is outside the roots: every action refuses and it is unchanged.
@@ -250,7 +263,6 @@ fn plotter_settings_outside_the_roots_are_refused() {
     let names: Vec<String> = std::fs::read_dir(&settings).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(names, ["Office.plotter.json"], "nothing was created or deleted in the settings folder");
     assert!(!settings.join("Office.plotter.json.cadcraft-tmp").exists());
-    let _ = std::fs::remove_dir_all(base);
 }
 
 #[test]
@@ -262,7 +274,6 @@ fn without_roots_files_are_reachable_as_before() {
     ok(&t[0]);
     ok(&t[1]);
     assert!(base.join("outside/new.dxf").is_file());
-    let _ = std::fs::remove_dir_all(base);
 }
 
 #[cfg(unix)]
@@ -279,7 +290,6 @@ fn links_out_of_a_root_are_refused() {
     refused(&t[0], "outside the read root");
     refused(&t[1], "outside the write root");
     assert!(!base.join("outside/new.dxf").exists());
-    let _ = std::fs::remove_dir_all(base);
 }
 
 #[test]
@@ -323,7 +333,6 @@ fn every_file_a_command_touches_is_held_to_the_roots() {
     assert!(base.join("out/plot.pdf").is_file());
     refused(&t[10], "outside the write root");
     assert!(!base.join("outside/plot.pdf").exists());
-    let _ = std::fs::remove_dir_all(base);
 }
 
 #[test]
@@ -355,5 +364,4 @@ fn missing_roots_and_roots_with_connect_fail_at_startup() {
     let out = start(&["--connect", "127.0.0.1:1", "--automation-read-root", &s(&base.join("in"))]);
     assert!(!out.status.success() && out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("headless MCP server"));
-    let _ = std::fs::remove_dir_all(base);
 }

@@ -116,6 +116,18 @@ fn fresh_dir(tag: &str) -> PathBuf {
     }
 }
 
+/// Remove the file or folder at `p`.
+fn remove(p: &Path) {
+    let _ = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+}
+
+/// Remove what `dir` holds, if it exists.
+fn clear(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        remove(&entry.path());
+    }
+}
+
 struct Fixture {
     base: PathBuf,
     outside: PathBuf,
@@ -146,7 +158,13 @@ impl Fixture {
     /// Lay out `outside` afresh and start watching it.
     fn reset(&mut self) {
         let o = self.outside.clone();
-        let _ = std::fs::remove_dir_all(&o);
+        // The running server's working directory stays: without it a relative path can't be resolved.
+        clear(&o.join("cwd"));
+        for entry in std::fs::read_dir(&o).into_iter().flatten().flatten() {
+            if entry.file_name() != "cwd" {
+                remove(&entry.path());
+            }
+        }
         for d in ["cwd", "config/plotters", "recover"] {
             std::fs::create_dir_all(o.join(d)).unwrap();
         }
@@ -620,4 +638,44 @@ fn without_roots_an_unreadable_settings_folder_still_lists_devices() {
     let mut server = Server::start(&[], &f.outside.join("cwd"), &not_a_folder);
     let list = server.execute("plottermanager", json!({"action": "list"})).unwrap();
     assert!(list.contains("devices"), "{list}");
+}
+
+/// A font beside a drawing inside the roots is still used.
+#[test]
+fn a_font_beside_a_drawing_inside_the_roots_is_used() {
+    let f = Fixture::new("font-inside");
+    let host = f.base.join("in/host.dxf");
+    {
+        let mut free = Server::start(&[], &f.outside.join("cwd"), &f.outside.join("config"));
+        free.execute("new", json!({})).unwrap();
+        free.execute("style", json!({"name": "Walk", "font": "walkinside.shx"})).unwrap();
+        free.execute("style.current", json!({"name": "Walk"})).unwrap();
+        free.execute("text", json!({"at": [0, 0], "height": 5, "text": "walk"})).unwrap();
+        free.execute("saveas", json!({"path": s(&host)})).unwrap();
+    }
+    let font = f.base.join("in/walkinside.shx");
+    std::fs::write(&font, b"AutoCAD-86 shapes 1.0").unwrap();
+    age_access_time(&font);
+    let before = std::fs::metadata(&font).unwrap().accessed().unwrap();
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    server.tool("open", json!({"path": s(&host)})).unwrap();
+    server.tool("render", json!({})).unwrap();
+    if f.sees_reads {
+        assert_ne!(std::fs::metadata(&font).unwrap().accessed().unwrap(), before, "the font was read");
+    }
+}
+
+/// The fixture leaves the server's working directory in place, so a relative path meets the roots
+/// and not a folder that has gone.
+#[test]
+fn a_relative_path_is_refused_by_the_roots() {
+    let mut f = Fixture::new("relative");
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    f.reset();
+    let reply = server.tool("open", json!({"path": "../canary.dxf"})).unwrap();
+    assert!(reply.contains("outside the read root"), "{reply}");
+    let touched = f.touched();
+    assert!(touched.is_empty(), "{touched:?}");
 }

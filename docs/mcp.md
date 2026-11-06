@@ -75,8 +75,8 @@ configuration works across the suite) keep the agent to the folders you give it:
 - A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):
   one nobody classified is refused, whatever it does. `drawingrecovery` is refused, and SAVEFILEPATH
   can't be changed, because both work on the server's autosave folder.
-- SHX fonts beside an opened drawing aren't searched under the roots, since one could be a link
-  leading out. Set `CADCRAFT_SHXPATH` for the server to supply fonts.
+- SHX fonts beside an opened drawing are searched only if every `.shx` in that folder stays inside
+  the roots: one link leading out and the folder is skipped.
 - The server itself still reads the system's fonts, from the system font folders and
   `CADCRAFT_SHXPATH`. Their paths come from the server's setup, never from the agent, but a font file
   named by a drawing can decide which of them is read.

@@ -470,9 +470,6 @@ pub const NO_FILES: &[&str] = &[
     "constraintinfer",
     "constraints.inspect",
     "constraints.dof",
-    "breakatpoint",
-    "chprop",
-    "properties.set",
 ];
 
 /// Why command `id` may not run here; `None` when it may. Without roots in force everything may.
