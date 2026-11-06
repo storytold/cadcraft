@@ -1007,6 +1007,23 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
 }
 
 #[test]
+fn close_reports_a_failed_write_and_keeps_the_stream() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("cadcraft-lisp-close-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.to_string_lossy().replace('\\', "/");
+    // A directory cannot be opened for writing, so the buffered output cannot be saved.
+    ok(&mut s, &format!("(setq f (open \"{path}\" \"w\"))"));
+    ok(&mut s, "(write-line \"data\" f)");
+    let err = eval(&mut s, "(close f)").unwrap_err();
+    assert!(err.contains("cannot write file"), "{err}");
+    // The stream is still open, so closing it again reports the same failure instead of "bad argument".
+    let err = eval(&mut s, "(close f)").unwrap_err();
+    assert!(err.contains("cannot write file"), "{err}");
+    let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
 fn angtof_reads_the_string_in_the_given_units() {
     let mut s = Session::new();
     assert_eq!(ok(&mut s, "(angtof \"1.5\" 3)"), "1.5");

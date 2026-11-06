@@ -45,8 +45,13 @@ pub(super) fn close(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
     arity(&a, 1, 1)?;
     let Value::File(id) = a[0] else { return Err(LispError::bad_arg("streamp", &a[0])) };
     let Some(f) = ctx.env.files.remove(&id) else { return Err(LispError::bad_arg("streamp", &a[0])) };
-    if f.writing {
-        write_text_file(&f.path, &f.text, f.append);
+    if f.writing
+        && let Err(e) = write_text_file(&f.path, &f.text, f.append)
+    {
+        // Keep the stream so the buffered output is not lost and CLOSE can be retried.
+        let msg = format!("cannot write file {}: {e}", f.path);
+        ctx.env.files.insert(id, f);
+        return Err(LispError::new(msg));
     }
     Ok(Flow::Value(Value::Nil))
 }
@@ -98,16 +103,16 @@ fn can_write(_path: &str) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_text_file(path: &str, text: &str, append: bool) {
+fn write_text_file(path: &str, text: &str, append: bool) -> std::io::Result<()> {
     use std::io::Write;
-    let f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(path);
-    if let Ok(mut f) = f {
-        let _ = f.write_all(text.as_bytes());
-    }
+    let mut f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(path)?;
+    f.write_all(text.as_bytes())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_text_file(_path: &str, _text: &str, _append: bool) {}
+fn write_text_file(_path: &str, _text: &str, _append: bool) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn file_exists(path: &str) -> bool {
