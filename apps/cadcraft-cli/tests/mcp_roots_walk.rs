@@ -1,7 +1,8 @@
 //! Walks every command in the registry through the real MCP server with paths outside the
-//! automation roots (#1472). Reads show as a changed access time and writes as a changed size,
-//! modification time or folder, whatever the command does with the path. The same walk without
-//! roots has to find escapes, or finding none under roots would prove nothing.
+//! automation roots (#1472). Reads show as a changed access time and writes as a changed size or
+//! modification time, a removed file, or a file that was not there before, whatever the command
+//! does with the path. The same walk without roots has to find escapes, or finding none under
+//! roots would prove nothing.
 #![cfg(unix)]
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Never crash).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -206,17 +207,29 @@ impl Fixture {
         }
     }
 
-    /// What happened under `outside` since [`Self::reset`]. Only metadata is read: this leaves
-    /// the access times as they are.
+    /// What happened under `outside` since [`Self::reset`]. Metadata is read before any directory
+    /// listing, and directory access times are put back afterwards: the listing is how a new file
+    /// is seen when the folder's modification time has not moved, and it must not look like a read.
     fn touched(&self) -> Vec<String> {
         let mut seen = Vec::new();
         for (p, (len, modified, accessed)) in &self.baseline {
-            let name = p.strip_prefix(&self.outside).unwrap().display();
+            let name = p.strip_prefix(&self.outside).unwrap_or(p).display();
             match std::fs::metadata(p) {
                 Err(_) => seen.push(format!("removed {name}")),
                 Ok(m) if m.modified().unwrap() != *modified || (!m.is_dir() && m.len() != *len) => seen.push(format!("wrote {name}")),
                 Ok(m) if self.sees_reads && m.accessed().unwrap() != *accessed => seen.push(format!("read {name}")),
                 Ok(_) => {}
+            }
+        }
+        for p in tree(&self.outside) {
+            if !self.baseline.contains_key(&p) {
+                let name = p.strip_prefix(&self.outside).unwrap_or(&p).display();
+                seen.push(format!("created {name}"));
+            }
+        }
+        for (p, (_, _, accessed)) in &self.baseline {
+            if p.is_dir() {
+                let _ = File::open(p).and_then(|f| f.set_times(FileTimes::new().set_accessed(*accessed)));
             }
         }
         seen
