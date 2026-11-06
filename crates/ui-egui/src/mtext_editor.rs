@@ -76,6 +76,9 @@ struct State {
     /// The text box has had keyboard focus: it takes it once when the editor opens, so typing
     /// goes into the text, not to the command line.
     focused: bool,
+    /// The MTEXT the state was made for (its insertion point and contents when it opened): a
+    /// state kept for another one is not reused, so one MTEXT's text never goes to the next.
+    target: Option<(cadcraft_engine::geom::Vec3, String)>,
 }
 
 fn state_id() -> egui::Id {
@@ -106,7 +109,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     };
     let t = Tokens::get();
     let (rect, scale) = app.canvas.xf.map_or((ctx.content_rect(), 20.0), |x| (x.rect, x.scale.max(1e-6)));
-    let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_else(|| {
+    let target = (mt.insert, mt.contents.clone());
+    let kept = ctx.data_mut(|d| d.get_temp::<State>(state_id())).filter(|st| st.target.as_ref() == Some(&target));
+    let mut st = kept.unwrap_or_else(|| {
         // An existing MTEXT (TEXTEDIT) starts with its contents and their formats.
         let mut fmt = if mt.contents.is_empty() { Formatted::default() } else { Formatted::from_contents_with_height(&mt.contents, Some(mt.height)) };
         if let Some(f) = app.session.doc().ok().and_then(|d| d.text_style(&mt.style).map(|s| s.font.clone())) {
@@ -117,7 +122,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
         // An existing text opens with the caret at its end.
         let caret = (!fmt.is_empty()).then(|| fmt.len());
-        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret, focused: false }
+        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret, focused: false, target: Some(target.clone()) }
     });
     let base_h = if mt.height > 0.0 { mt.height } else { 0.2 };
     let px = ((base_h * scale) as f32).clamp(MIN_PX, MAX_PX);
@@ -622,7 +627,7 @@ mod tests {
     #[test]
     fn diameter_insertion_keeps_real_text_and_renders_without_optional_fonts() {
         let state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).with_context_setup(install_diameter_glyph).build_ui_state(
             |ui, state| {
                 toolbar(ui, state, 2.5);
@@ -644,7 +649,7 @@ mod tests {
     #[test]
     fn an_empty_editor_leaves_the_focus_on_the_height_field() {
         let state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).build_ui_state(
             |ui, state| {
                 toolbar(ui, state, 2.5);
@@ -664,7 +669,7 @@ mod tests {
     #[test]
     fn the_whole_toolbar_uses_bundled_glyphs_and_names_its_controls() {
         let mut state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 120.0)).build_ui(move |ui| toolbar(ui, &mut state, 2.5));
         harness.run();
         for name in ["Left", "Center", "Right", "Justify", "Bulleted list", "Numbered list", "Insert tab", "Diameter", "Text color", "Font"] {
@@ -756,6 +761,33 @@ mod tests {
 
     /// #842: TEXTEDIT on an existing MTEXT (what a double-click starts) opens it in the editor
     /// with its text and formats; finishing writes the edited contents back to that MTEXT.
+    /// TEXTEDIT moving on to another MTEXT between two frames (Enter keeps the first, a point picks
+    /// the next) opens the next one with its own text, never the first one's.
+    #[test]
+    fn textedit_on_the_next_mtext_does_not_keep_the_first_ones_text() {
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let frame = |app: &mut CadApp| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(input.clone(), |ui| show(app, ui.ctx()));
+                out.textures_delta.clear();
+            }
+        };
+        app.run("mtext", serde_json::json!({ "at": [0, 20], "text": "first one", "height": 2.5, "width": 20 })).unwrap();
+        app.run("mtext", serde_json::json!({ "at": [0, 60], "text": "second one", "height": 2.5, "width": 20 })).unwrap();
+        app.start("textedit");
+        app.session.input(cadcraft_engine::Input::Point(cadcraft_geom::Vec2::new(1.0, 19.0))).unwrap();
+        frame(&mut app);
+        assert_eq!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open").fmt.text(), "first one");
+        // Both inputs between two frames: the first MTEXT kept as it is, then the second picked.
+        app.session.input(cadcraft_engine::Input::Enter).unwrap();
+        app.session.input(cadcraft_engine::Input::Point(cadcraft_geom::Vec2::new(1.0, 59.0))).unwrap();
+        assert!(app.session.editing_mtext().is_some_and(|m| m.contents.contains("second")), "TEXTEDIT is on the second MTEXT");
+        frame(&mut app);
+        assert_eq!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open").fmt.text(), "second one");
+    }
+
     #[test]
     fn textedit_opens_an_existing_mtext_with_its_contents() {
         let ctx = egui::Context::default();
