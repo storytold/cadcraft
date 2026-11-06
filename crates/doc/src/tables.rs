@@ -799,6 +799,13 @@ pub struct PageSetup {
     /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
     /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
     pub paper_mm: bool,
+    /// Paper size (DXF groups 44, 45) and plot rotation (group 73) as the file stored them.
+    /// Saving writes them back while they still describe `width_mm`, `height_mm` and
+    /// `landscape`, so each program's convention for media defined wider than tall survives a
+    /// round trip: AutoCAD stores a portrait size and a quarter turn, ZWCAD the media's own size
+    /// and no turn (#1463). `None` for page setups made in CADCraft.
+    #[serde(skip)]
+    pub file_paper: Option<(f64, f64, i64)>,
     /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
     /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -824,6 +831,7 @@ impl Default for PageSetup {
             show_plot_styles: false,
             plot_transparency: false,
             paper_mm: false,
+            file_paper: None,
             image_origin: None,
         }
     }
