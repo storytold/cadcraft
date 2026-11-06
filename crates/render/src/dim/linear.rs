@@ -198,6 +198,7 @@ fn draw_linear_lines(config: &DimConfig<'_>, g: &mut DimGeometry, state: &Linear
     let dle = if state.tick_like { st.dim_line_extend * config.scale } else { 0.0 };
     let lo = if st.suppress_dim1 { state.measurement / 2.0 } else { f64::NEG_INFINITY };
     let hi = if st.suppress_dim2 { state.measurement / 2.0 } else { f64::INFINITY };
+    g.dim_axis = Some((state.f1, state.f2));
     let seg = |geometry: &mut DimGeometry, a: Vec2, b: Vec2| {
         let (ta, tb) = ((a - state.f1).dot(u), (b - state.f1).dot(u));
         let (t0, t1) = (ta.min(tb).max(lo), ta.max(tb).min(hi));
@@ -252,7 +253,9 @@ fn draw_linear_lines(config: &DimConfig<'_>, g: &mut DimGeometry, state: &Linear
         let offset = (state.text_mid - base).dot(n).abs();
         if offset > state.text_height / 2.0 + config.gap + 1e-9 {
             let side = if (base - state.text_mid).dot(state.text_axis) >= 0.0 { state.text_axis } else { -state.text_axis };
-            g.dim(vec![base, state.text_mid + side * (state.text_width / 2.0 + config.gap)]);
+            let end = state.text_mid + side * (state.text_width / 2.0 + config.gap);
+            g.text_leader = Some((base, end));
+            g.dim(vec![base, end]);
         }
     }
     if let Some(jog) = d.marks.jog_line {
