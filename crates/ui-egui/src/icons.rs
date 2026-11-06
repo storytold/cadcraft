@@ -123,6 +123,7 @@ pub enum Icon {
     ChevronLeft,
     ChevronRight,
     Plus,
+    NewLayerPlus,
     Switcher,
     Close,
     Search,
@@ -944,6 +945,11 @@ fn paint_navigation_controls(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, 
         Plus => {
             pen.l(12.0, 4.0, 12.0, 20.0);
             pen.l(4.0, 12.0, 20.0, 12.0);
+        }
+        NewLayerPlus => {
+            let stroke = Stroke::new(pen.w * 2.0, b);
+            pen.p.line_segment([pen.at(12.0, 4.0), pen.at(12.0, 20.0)], stroke);
+            pen.p.line_segment([pen.at(4.0, 12.0), pen.at(20.0, 12.0)], stroke);
         }
         Switcher => {
             for (x, y) in [(3.0, 3.0), (13.0, 3.0), (3.0, 13.0), (13.0, 13.0)] {

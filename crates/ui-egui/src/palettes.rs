@@ -375,10 +375,11 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
 
 pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
+    let new_layer_notice = ui.scope_id().with("new_layer_notice");
     section_header(ui, "Layers");
     // Layer tools row.
     let mut cmd = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
         for (icon, c, tip) in [
@@ -391,6 +392,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
             (Icon::LayerFreeze, "layfrz", "Freeze Layer"),
             (Icon::LayerLock, "laylck", "Lock Layer"),
             (Icon::Unlock, "layulk", "Unlock Layer"),
+            (Icon::NewLayerPlus, "new-layer", "New Layer"),
         ] {
             if icons::button(ui, icon, 26.0, tip, false).clicked() {
                 cmd = Some(c);
@@ -398,7 +400,19 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
     if let Some(c) = cmd {
-        if c.starts_with("ui.") {
+        if c == "new-layer" {
+            if let Ok(d) = app.session.doc() {
+                let mut n = 1;
+                while d.layer(&format!("Layer{n}")).is_some() {
+                    n += 1;
+                }
+                let name = format!("Layer{n}");
+                if app.run("layer.new", json!({ "name": name })).is_ok() {
+                    let until = ui.input(|i| i.time) + 5.0;
+                    ui.data_mut(|data| data.insert_temp(new_layer_notice, (name, until)));
+                }
+            }
+        } else if c.starts_with("ui.") {
             app.start(c);
         } else {
             let _ = app.run(c, json!({}));
@@ -408,14 +422,26 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     // Current layer combo.
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
+    let selection = app.session.selection();
+    let selected_layers: Vec<&str> = selection.iter().filter_map(|h| d.entity(*h).map(|e| e.common.layer.as_str())).collect();
+    let shown = if selection.is_empty() {
+        Some(cur.as_str())
+    } else {
+        selected_layers
+            .first()
+            .copied()
+            .filter(|first| selected_layers.len() == selection.len() && selected_layers.iter().all(|name| name.eq_ignore_ascii_case(first)))
+    }
+    .map(str::to_owned);
     let layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
-    let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
+    let cur_info = shown.as_deref().and_then(|name| layers.iter().find(|l| l.0.eq_ignore_ascii_case(name))).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         let w = ui.available_width() - 10.0;
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), crate::tl!("Layer")));
         let p = ui.painter();
         p.rect_filled(rect, 3.0, t.control);
         if let Some((name, on, frozen, locked, color)) = &cur_info {
@@ -430,11 +456,15 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             swatch(p, Rect::from_min_size(pos2(x + 2.0, rect.top() + 7.0), vec2(10.0, 10.0)), *color);
             p.text(pos2(x + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, name, crate::theme::body(), t.text);
+        } else {
+            p.text(pos2(rect.left() + 8.0, rect.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t("*VARIES*"), crate::theme::body(), t.text);
         }
         icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
         egui::Popup::from_toggle_button_response(&resp).width(w).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             for (name, on, frozen, locked, color) in &layers {
-                ui.horizontal(|ui| {
+                let selected = shown.as_deref().is_some_and(|s| name.eq_ignore_ascii_case(s));
+                let background = ui.painter().add(egui::Shape::Noop);
+                let row_ui = ui.horizontal(|ui| {
                     if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
                         toggle = Some((name.clone(), "on", !*on));
                     }
@@ -444,15 +474,41 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
                         toggle = Some((name.clone(), "locked", !*locked));
                     }
-                    let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                    swatch(ui.painter(), sr, *color);
-                    if ui.selectable_label(name.eq_ignore_ascii_case(&cur), name).clicked() {
+                    let (sr, swatch_response) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::click());
+                    swatch(ui.painter(), Rect::from_center_size(sr.center(), vec2(12.0, 12.0)), *color);
+                    let row = ui.add_sized([ui.available_width().max(0.0), 18.0], egui::Button::new(name).frame(false).right_text(""));
+                    row.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::Role::Button,
+                            ui.is_enabled(),
+                            shown.as_deref().is_some_and(|s| name.eq_ignore_ascii_case(s)),
+                            name,
+                        )
+                    });
+                    if swatch_response.clicked() || row.clicked() {
                         set_current = Some(name.clone());
+                        ui.close();
                     }
                 });
+                if selected || ui.rect_contains_pointer(row_ui.response.rect) {
+                    let fill = if selected { t.select_bg } else { t.control_hover };
+                    ui.painter().set(background, egui::Shape::rect_filled(row_ui.response.rect, 2.0, fill));
+                }
             }
         });
     });
+    if let Some((name, until)) = ui.data(|data| data.get_temp::<(String, f64)>(new_layer_notice)) {
+        let remaining = until - ui.input(|i| i.time);
+        if remaining > 0.0 {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(crate::tf!("Layer created: {name}", name = name));
+            });
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(remaining));
+        } else {
+            ui.data_mut(|data| data.remove::<(String, f64)>(new_layer_notice));
+        }
+    }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
@@ -487,8 +543,10 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if app.ui.show_layer_list {
         ui.add_space(2.0);
         for (name, on, frozen, locked, color) in &layers {
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
+            let selected = shown.as_deref().is_some_and(|s| name.eq_ignore_ascii_case(s));
+            let background = ui.painter().add(egui::Shape::Noop);
+            let row_ui = ui.horizontal(|ui| {
+                let (_, indent) = ui.allocate_exact_size(vec2(14.0, 18.0), Sense::click());
                 if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
                     toggle = Some((name.clone(), "on", !*on));
                 }
@@ -498,18 +556,37 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
                     toggle = Some((name.clone(), "locked", !*locked));
                 }
-                let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                swatch(ui.painter(), sr, *color);
-                let r = ui.selectable_label(name.eq_ignore_ascii_case(&cur), name);
-                if r.clicked() {
+                let (sr, swatch_response) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::click());
+                swatch(ui.painter(), Rect::from_center_size(sr.center(), vec2(12.0, 12.0)), *color);
+                let r = ui.add_sized([ui.available_width().max(0.0), 18.0], egui::Button::new(name).frame(false).right_text(""));
+                r.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::Role::Button,
+                        ui.is_enabled(),
+                        shown.as_deref().is_some_and(|s| name.eq_ignore_ascii_case(s)),
+                        name,
+                    )
+                });
+                if indent.clicked() || swatch_response.clicked() || r.clicked() {
                     set_current = Some(name.clone());
                 }
-                crate::shortcut_menus::attach(app, &r, |app| crate::shortcut_menus::layer_entries(app, name));
+                let row = indent.union(swatch_response).union(r);
+                crate::shortcut_menus::attach(app, &row, |app| crate::shortcut_menus::layer_entries(app, name));
             });
+            if selected || ui.rect_contains_pointer(row_ui.response.rect) {
+                let fill = if selected { t.select_bg } else { t.control_hover };
+                ui.painter().set(background, egui::Shape::rect_filled(row_ui.response.rect, 2.0, fill));
+            }
         }
     }
     if let Some(n) = set_current {
-        let _ = app.run("layer.current", json!({ "name": n }));
+        if selection.is_empty() {
+            let _ = app.run("layer.current", json!({ "name": n }));
+        } else if let Ok(result) = app.run("chprop", json!({ "layer": n }))
+            && let Some(locked) = result.get("locked").and_then(Value::as_u64).filter(|n| *n > 0)
+        {
+            app.session.echo(format!("{locked} object(s) on locked layers were not changed."));
+        }
     }
     if let Some((n, k, v)) = toggle {
         let _ = app.run("layer.set", json!({ "name": n, k: v }));
@@ -1182,6 +1259,185 @@ mod tests {
     use crate::Services;
     use cadcraft_engine::Session;
     use egui::{Color32, Shape};
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    fn click_at(h: &mut Harness<'_, CadApp>, pos: egui::Pos2, button: egui::PointerButton) {
+        h.event(egui::Event::PointerMoved(pos));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(2);
+    }
+
+    #[test]
+    fn layer_row_hover_highlights_without_changing_the_selection() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layer.new", json!({ "name": "Walls" })).unwrap();
+        app.ui.show_layer_list = true;
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(3);
+        let name_rect = h.get_by_label("Walls").rect();
+        for x in [name_rect.left() - 50.0, name_rect.right() - 4.0] {
+            h.event(egui::Event::PointerMoved(egui::pos2(x, name_rect.center().y)));
+            h.run_steps(3);
+            assert!(h.output().shapes.iter().any(|shape| matches!(&shape.shape, Shape::Rect(rect)
+                if rect.fill == Tokens::get().control_hover && rect.rect.contains_rect(name_rect) && rect.rect.left() < name_rect.left() - 60.0)));
+            assert_eq!(h.state().session.doc().unwrap().header.str("CLAYER", "0"), "0");
+        }
+        h.event(egui::Event::PointerMoved(egui::pos2(5.0, 5.0)));
+        h.run_steps(3);
+        assert!(!h.output().shapes.iter().any(|shape| matches!(&shape.shape, Shape::Rect(rect)
+            if rect.fill == Tokens::get().control_hover && rect.rect.contains_rect(name_rect))));
+        h.state_mut().ui.show_layer_list = false;
+        h.run_steps(2);
+        h.get_by_label("Layer").click();
+        h.run_steps(3);
+        let popup_rect = h.get_by_label("Walls").rect();
+        h.event(egui::Event::PointerMoved(egui::pos2(popup_rect.right() - 4.0, popup_rect.center().y)));
+        h.run_steps(3);
+        assert!(h.output().shapes.iter().any(|shape| matches!(&shape.shape, Shape::Rect(rect)
+            if rect.fill == Tokens::get().control_hover && rect.rect.contains_rect(popup_rect))));
+        assert_eq!(h.state().session.doc().unwrap().header.str("CLAYER", "0"), "0");
+    }
+
+    #[test]
+    fn new_layer_plus_has_twice_the_normal_stroke_width() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(24.0, 24.0));
+            icons::paint(ui.painter(), rect, Icon::Plus, false);
+            icons::paint(ui.painter(), rect, Icon::NewLayerPlus, false);
+        });
+        let strokes: Vec<f32> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::LineSegment { stroke, .. } => Some(stroke.width),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(strokes.len(), 4);
+        assert_eq!(strokes[2], strokes[0] * 2.0);
+        assert_eq!(strokes[3], strokes[1] * 2.0);
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn selected_layer_highlight_spans_status_and_name_and_name_is_left_aligned() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layer.new", json!({ "name": "Walls", "current": true })).unwrap();
+        app.ui.show_layer_list = true;
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(3);
+        let name_rect = h.get_by_label("Walls").rect();
+        let mut highlight = None;
+        let mut text_rect = None;
+        for clipped in &h.output().shapes {
+            match &clipped.shape {
+                Shape::Rect(rect) if rect.fill == Tokens::get().select_bg && rect.rect.contains_rect(name_rect) => highlight = Some(rect.rect),
+                Shape::Text(text) if text.galley.text() == "Walls" => text_rect = Some(text.visual_bounding_rect()),
+                _ => {}
+            }
+        }
+        let highlight = highlight.expect("selected row background");
+        assert!(highlight.left() < name_rect.left() - 60.0, "highlight must include the status icons and colour");
+        let text = text_rect.expect("layer name text");
+        assert!(text.left() < name_rect.left() + 20.0, "layer name must be left aligned");
+        let on_off = h.get_all_by_label("On/Off").find(|node| (node.rect().center().y - name_rect.center().y).abs() < 5.0).unwrap();
+        on_off.click();
+        h.run_steps(2);
+        let doc = h.state().session.doc().unwrap();
+        assert!(!doc.layer("Walls").unwrap().on, "status icon must still toggle visibility");
+        assert_eq!(doc.header.str("CLAYER", "0"), "Walls");
+    }
+
+    #[test]
+    fn layers_palette_creates_unique_layers() {
+        let app = CadApp::new(Session::default(), Services::default());
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(2);
+        h.get_by_label("New Layer").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("Layer created: Layer1").is_some());
+        h.get_by_label("New Layer").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("Layer created: Layer2").is_some());
+        let doc = h.state().session.doc().unwrap();
+        assert!(doc.layer("Layer1").is_some());
+        assert!(doc.layer("Layer2").is_some());
+        assert_eq!(doc.header.str("CLAYER", "0"), "0");
+    }
+
+    #[test]
+    fn layers_palette_moves_selection_and_changes_current_only_without_selection() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layer.new", json!({ "name": "Destination" })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        app.run("select", json!({ "handles": [line["handles"][0].clone()] })).unwrap();
+        let handle = app.session.selection()[0];
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(2);
+        h.get_by_label("Layer").click();
+        h.run_steps(2);
+        let rect = h.get_by_label("Destination").rect();
+        click_at(&mut h, egui::pos2(rect.right() - 4.0, rect.center().y), egui::PointerButton::Primary);
+        h.run_steps(2);
+        let doc = h.state().session.doc().unwrap();
+        assert_eq!(doc.entity(handle).unwrap().common.layer, "Destination");
+        assert_eq!(doc.header.str("CLAYER", "0"), "0");
+        h.state_mut().session.set_selection(Vec::new());
+        h.run_steps(2);
+        h.get_by_label("Layer").click();
+        h.run_steps(2);
+        h.get_by_label("Destination").click();
+        h.run_steps(2);
+        assert_eq!(h.state().session.doc().unwrap().header.str("CLAYER", "0"), "Destination");
+    }
+
+    #[test]
+    fn layer_list_right_click_on_row_deletes_non_current_empty_layer() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layer.new", json!({ "name": "Remove me" })).unwrap();
+        app.ui.show_layer_list = true;
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(2);
+        let rect = h.get_by_label("Remove me").rect();
+        assert!(rect.width() > 100.0);
+        click_at(&mut h, egui::pos2(rect.right() - 4.0, rect.center().y), egui::PointerButton::Secondary);
+        h.get_by_label("Delete Layer").click();
+        h.run_steps(2);
+        let doc = h.state().session.doc().unwrap();
+        assert!(doc.layer("Remove me").is_none());
+        assert_eq!(doc.header.str("CLAYER", "0"), "0");
+    }
+
+    #[test]
+    fn layers_palette_moves_multiple_unlocked_objects_and_preserves_locked_objects() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layer.new", json!({ "name": "Destination" })).unwrap();
+        app.run("layer.new", json!({ "name": "Locked", "current": true })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [1, 0]] })).unwrap();
+        app.run("select", json!({ "handles": [line["handles"][0].clone()] })).unwrap();
+        let locked = app.session.selection()[0];
+        app.run("layer.current", json!({ "name": "0" })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 1], [1, 1]] })).unwrap();
+        app.run("select", json!({ "handles": [line["handles"][0].clone()] })).unwrap();
+        let free = app.session.selection()[0];
+        app.run("layer.set", json!({ "name": "Locked", "locked": true })).unwrap();
+        app.session.set_selection(vec![locked, free]);
+        let mut h = Harness::builder().with_size(vec2(320.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| layers_section(app, ui), app);
+        h.run_steps(2);
+        h.get_by_label("Layer").click();
+        h.run_steps(2);
+        h.get_by_label("Destination").click();
+        h.run_steps(2);
+        let doc = h.state().session.doc().unwrap();
+        assert_eq!(doc.entity(locked).unwrap().common.layer, "Locked");
+        assert_eq!(doc.entity(free).unwrap().common.layer, "Destination");
+        h.state_mut().run("undo", json!({})).unwrap();
+        assert_eq!(h.state().session.doc().unwrap().entity(free).unwrap().common.layer, "0");
+    }
 
     fn contains_swatch(shape: &Shape, color: Color32) -> bool {
         match shape {

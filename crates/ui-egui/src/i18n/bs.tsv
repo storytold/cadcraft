@@ -549,6 +549,7 @@
 	New Drawing (⌘N)	Novi crtež (⌘N)
 	New Drawing...	Novi crtež...
 	New Layer	Novi sloj
+	Layer created: {name}	Kreiran sloj: {name}
 	New Layout	Novi raspored
 	New VP Freeze	Zamrzni u novom PP
 	New Viewports...	Novi prozori prikaza...
