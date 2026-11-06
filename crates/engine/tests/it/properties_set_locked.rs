@@ -127,6 +127,7 @@ fn during_refedit_objects_outside_the_working_set_are_left_out() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     let a = s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
     let other = line(&mut s, 20.0);

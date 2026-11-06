@@ -365,10 +365,12 @@ pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option
 fn opened(s: &Session, i: usize, entities: bool) -> Value {
     let d = s.docs.get(i).map(|st| &st.doc);
     let warnings = d.map(|d| d.read_notes.clone()).unwrap_or_default();
+    // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
+    let saved_view = d.is_some_and(|d| crate::view::saved_view(d).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings })
+        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings, "saved_view": saved_view })
     } else {
-        json!({ "index": i, "warnings": warnings })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view })
     }
 }
 
@@ -801,6 +803,14 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    // Another program's proxy objects (in the OBJECTS section) follow the same rule as its proxy
+    // entities: the DWG writer leaves them out before 2013, or when their class can't be named.
+    for o in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_PROXY_OBJECT")) {
+        if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
+            let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }

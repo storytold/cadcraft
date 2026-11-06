@@ -148,6 +148,34 @@ fn proxy_entities_are_reported_only_before_2013() {
     assert_eq!(not_saved_as(&d, Version::R2018), [("ACAD_PROXY_ENTITY".to_string(), 2), ("MLINE".to_string(), 1)].into_iter().collect());
 }
 
+/// Another program's proxy objects are left out of a DWG the same way as its proxy entities, and
+/// said so: before 2013 always, from 2013 when the file names no class for them (#2471 review).
+#[test]
+fn proxy_objects_are_reported_like_proxy_entities() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    use cadcraft_engine::doc::Handle;
+    use cadcraft_engine::doc::foreign::{Foreign, ForeignObject};
+    let object = |h: u64, class: i64| ForeignObject {
+        handle: Handle(h),
+        kind: "ACAD_PROXY_OBJECT".into(),
+        tags: vec![
+            RawTag { code: 5, value: format!("{h:X}") },
+            RawTag { code: 90, value: "499".into() },
+            RawTag { code: 91, value: class.to_string() },
+        ],
+    };
+    let mut d = Drawing::new_imperial();
+    d.foreign = std::sync::Arc::new(Foreign {
+        class_order: vec!["MYAPP_DATA".into()],
+        objects: vec![object(0x500, 500), object(0x501, 501)],
+        ..Foreign::default()
+    });
+    let lost = |v| not_saved_as(&d, v).get("ACAD_PROXY_OBJECT").copied().unwrap_or(0);
+    assert_eq!(lost(Version::R2004), 2, "before 2013 every proxy object is left out");
+    assert_eq!(lost(Version::R2010), 2);
+    assert_eq!(lost(Version::R2018), 1, "from 2013 only the one whose class the file doesn't name");
+}
+
 /// A DXF of 2013 or later can't hold a solid's SAT-text geometry (it lives in the data store
 /// there), so the save leaves it out and says so; 2010 and earlier keep it (#2334).
 #[test]

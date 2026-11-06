@@ -213,6 +213,33 @@ fn a_drawing_opens_on_the_view_it_was_saved_at() {
     assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
 }
 
+/// Resolving a drawing's xrefs after OPEN refits the view only for a drawing that stores none:
+/// one saved at a view keeps it, xref or not (#1626 review).
+#[test]
+fn a_drawing_with_an_xref_keeps_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(5e6, 5e6, 0.0) };
+    d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    let mut xref = cadcraft_doc::Block::new("XR");
+    xref.xref_path = Some("missing-xref.dxf".into());
+    d.blocks.insert("XR".into(), std::sync::Arc::new(xref));
+    let mut plain = d.clone();
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    let i = s.open_drawing(d, "saved-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
+
+    // With no stored view, the xrefs' pass still frames the drawing.
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    let i = s.open_drawing(plain, "no-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
 #[test]
 fn move_with_pickfirst_and_window_selection() {
     let mut s = Session::new();

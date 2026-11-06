@@ -159,11 +159,12 @@ fn typed(code: i32, text: &str) -> Value {
     match kind_of(code) {
         Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map(Value::Real).unwrap_or(Value::Real(0.0)),
         Kind::Int16 | Kind::Int32 | Kind::Int64 => {
-            // A float spelling ("1e3", "12.0") is accepted when finite, clamped to the group's
-            // width; NaN, inf and text become 0.
+            // A float spelling ("1e3", "12.0") is accepted when finite, clamped to what the
+            // group's width holds, signed or unsigned (files write 16-bit flags up to 65535, as
+            // the integer spelling reads them); NaN, inf and text become 0.
             let (lo, hi) = match kind_of(code) {
-                Kind::Int16 => (i64::from(i16::MIN), i64::from(i16::MAX)),
-                Kind::Int32 => (i64::from(i32::MIN), i64::from(i32::MAX)),
+                Kind::Int16 => (i64::from(i16::MIN), i64::from(u16::MAX)),
+                Kind::Int32 => (i64::from(i32::MIN), i64::from(u32::MAX)),
                 _ => (i64::MIN, i64::MAX),
             };
             t.parse::<i64>()
@@ -434,10 +435,13 @@ pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
 fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     let mut text = codepage::BinaryText::default();
     let tags = parse_binary_pass(b, max_tags, &mut text)?;
-    if text.needs_code_page_pass() {
-        return parse_binary_pass(b, max_tags, &mut codepage::BinaryText::code_page_pass());
+    if !text.needs_code_page_pass() {
+        return Ok(tags);
     }
-    Ok(tags)
+    // The first pass's tags go before the second pass runs: both held at once would double
+    // the peak near the tag limit.
+    drop(tags);
+    parse_binary_pass(b, max_tags, &mut codepage::BinaryText::code_page_pass())
 }
 
 fn parse_binary_pass(b: &[u8], max_tags: usize, text: &mut codepage::BinaryText) -> Result<Vec<Tag>> {

@@ -648,10 +648,6 @@ fn a_viewport_record_without_a_centre_keeps_the_header_view() {
     assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the header pair is kept");
 }
 
-/// Updating the saved view of a drawing that has several model-space tiles survives a round
-/// trip. The write put the new view in HEADER but emitted the stored tiles unchanged, and the
-/// read takes its view from the first `*ACTIVE` record, so the update was read back as the old
-/// view (noted in review of #1602).
 /// A tiled drawing need not hold a saved view: `-VPORTS` splits the current view into tiles and
 /// sets none. The first tile's own view is then the only one there is, and must not be replaced
 /// by the extents fallback `vport_table` computes for a drawing with no view (noted in review).
@@ -676,6 +672,10 @@ fn a_tiled_drawing_with_no_saved_view_keeps_its_first_tiles_view() {
     assert_eq!(back.header.saved_view(), Some((Vec2::new(1.0, 1.0), 10.0)), "read from the first tile");
 }
 
+/// Updating the saved view of a drawing that has several model-space tiles survives a round
+/// trip. The write put the new view in HEADER but emitted the stored tiles unchanged, and the
+/// read takes its view from the first `*ACTIVE` record, so the update was read back as the old
+/// view (noted in review of #1602).
 #[test]
 fn a_saved_view_set_on_a_tiled_drawing_survives_a_round_trip() {
     let mut d = sample();
@@ -832,6 +832,10 @@ fn a_files_own_paper_groups_are_written_back() {
     let mut r = read_dxf(set(&write_dxf(&d), (420.0, 297.0, 0)).as_bytes()).unwrap();
     r.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.landscape = false;
     assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), (420.0, 297.0, 1), "portrait after the change");
+    // A plot rotation the DXF Reference doesn't define (0-3) reads as not rotated and is written
+    // back as 0, not as read (#2028 review).
+    let r = read_dxf(set(&write_dxf(&d), (210.0, 297.0, 99)).as_bytes()).unwrap();
+    assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1").2, 0, "an undefined rotation is not written back");
 }
 
 #[test]
@@ -2681,6 +2685,23 @@ fn tilted_tapered_arc_spreads_its_width() {
     assert_eq!(arc.first().map(|v| v.start_width), Some(1.0));
     assert!(arc.last().is_some_and(|v| (v.end_width - 3.0).abs() < 1e-9), "{:?}", arc.last());
     assert!(arc.windows(2).all(|w| (w[0].end_width - w[1].start_width).abs() < 1e-9 && w[0].start_width < w[1].start_width));
+}
+
+/// A tilted polyline made of a great many arcs is flattened within a budget: past a million
+/// vertices its arcs stay chords, so a hostile file can't ask for gigabytes (#2584 review).
+#[test]
+fn a_tilted_polyline_of_many_arcs_is_flattened_within_a_budget() {
+    let n = 50_000;
+    let mut text = format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n{n}\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n");
+    for i in 0..n {
+        text.push_str(&format!("10\n{i}\n20\n0\n42\n1\n"));
+    }
+    text.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    // Every arc flattened would be millions; the budget, one last arc past it and the chords.
+    assert!(p.vertices.len() <= 1_000_000 + 4_096 + n, "{} vertices", p.vertices.len());
+    assert!(p.vertices.len() > n, "the arcs before the budget are still curved");
 }
 
 /// Far from the origin even a tilt under a thousandth moves an object visibly, so it is

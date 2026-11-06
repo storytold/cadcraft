@@ -45,10 +45,17 @@ fn reference() -> &'static [Reference] {
     })
 }
 
+/// Whether our item `ours` is the reference's `theirs`. The reference names Undo by what it shows
+/// at the moment, the last command ("Undo Group of commands" when the tree was read), not by a
+/// fixed label.
+fn same_item(ours: &str, theirs: &str) -> bool {
+    ours == theirs || (ours == "Undo" && theirs.starts_with("Undo "))
+}
+
 /// Put `entries` in `reference`'s order: the items the reference lists first, as it lists them,
 /// then the rest in registration order. Submenus the reference has are ordered the same way.
 fn order(entries: &mut [Entry], reference: &[Reference]) {
-    let position = |label: &str| reference.iter().position(|r| r.label == label).unwrap_or(usize::MAX);
+    let position = |label: &str| reference.iter().position(|r| same_item(label, r.label)).unwrap_or(usize::MAX);
     entries.sort_by_key(|e| match e {
         Entry::Item { label, .. } | Entry::Sub { label, .. } => position(label),
     });
@@ -1079,8 +1086,10 @@ mod reference_order_tests {
     /// Every item the reference lists comes in the reference's order, at every level, and the
     /// items the reference lacks follow them.
     fn check(path: &str, entries: &[Entry], reference: &[Reference], failures: &mut Vec<String>) {
-        let known = |e: &Entry| reference.iter().any(|r| r.label == label(e));
-        let listed: Vec<&str> = entries.iter().filter(|e| known(e)).map(label).collect();
+        let theirs = |e: &Entry| reference.iter().find(|r| super::same_item(label(e), r.label)).map(|r| r.label);
+        let known = |e: &Entry| theirs(e).is_some();
+        // Our items by the reference's names for them, to compare orders.
+        let listed: Vec<&str> = entries.iter().filter_map(theirs).collect();
         let expected: Vec<&str> = reference.iter().map(|r| r.label).filter(|l| listed.contains(l)).collect();
         if listed != expected {
             failures.push(format!("{path}: {listed:?} should be {expected:?}"));
@@ -1124,6 +1133,15 @@ mod reference_order_tests {
         let file = tree(&app).into_iter().find(|(m, _)| m == "File").map(|(_, e)| e).unwrap_or_default();
         let open = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).unwrap();
         assert_eq!(file.get(open + 1).map(label), Some(super::OPEN_RECENT));
+    }
+
+    /// Edit starts with Undo and Redo, as the reference's does: its Undo is named by the last
+    /// command, so a plain label match sent Undo to the end of the menu (#2658 review).
+    #[test]
+    fn edit_starts_with_undo_and_redo() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let edit = tree(&app).into_iter().find(|(m, _)| m == "Edit").map(|(_, e)| e).unwrap_or_default();
+        assert_eq!(edit.iter().take(2).map(label).collect::<Vec<_>>(), ["Undo", "Redo"]);
     }
 }
 

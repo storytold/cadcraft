@@ -109,13 +109,26 @@ fn integer_groups_reject_non_finite_and_clamp() {
     let t = parse(b"70\ninf\n70\nNaN\n70\n1e30\n70\n-1e30\n90\n1e30\n160\n1e30\n160\n-inf\n62\n12.0\n0\nEOF\n").unwrap();
     assert_eq!(t[0], Tag::i(70, 0));
     assert_eq!(t[1], Tag::i(70, 0));
-    assert_eq!(t[2], Tag::i(70, i64::from(i16::MAX)));
+    // Clamped to what the group's width holds, unsigned values included (the binary writer
+    // keeps up to 65535 and 4294967295 as their bit patterns).
+    assert_eq!(t[2], Tag::i(70, i64::from(u16::MAX)));
     assert_eq!(t[3], Tag::i(70, i64::from(i16::MIN)));
-    assert_eq!(t[4], Tag::i(90, i64::from(i32::MAX)));
+    assert_eq!(t[4], Tag::i(90, i64::from(u32::MAX)));
     assert_eq!(t[5], Tag::i(160, i64::MAX));
     assert_eq!(t[6], Tag::i(160, 0));
     assert_eq!(t[7], Tag::i(62, 12));
     assert_eq!(Value::Str("inf".into()).as_i64(), 0);
+}
+
+/// An unsigned value spelled as a float reads as the same spelled as an integer (#1026 review):
+/// `65535.0` is 65535 like `65535`, not 32767.
+#[test]
+fn unsigned_values_read_the_same_in_either_spelling() {
+    let t = parse(b"70\n65535.0\n70\n65535\n90\n4294967295.0\n90\n4294967295\n0\nEOF\n").unwrap();
+    assert_eq!(t[0], t[1]);
+    assert_eq!(t[0], Tag::i(70, 65535));
+    assert_eq!(t[2], t[3]);
+    assert_eq!(t[2], Tag::i(90, 4_294_967_295));
 }
 
 #[test]
