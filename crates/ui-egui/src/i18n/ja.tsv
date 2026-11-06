@@ -1,0 +1,1332 @@
+# CADCraft Japanese interface catalog — draft translation (first section, AI-assisted; needs native proofreading).
+# License: MIT OR Apache-2.0 (the repository LICENSE-MIT and LICENSE-APACHE).
+# Written from CADCraft's English strings; no proprietary translations were copied.
+# UTF-8: context<TAB>English source<TAB>Japanese translation.
+# Empty context = ordinary label; @plural = single form (other) with {n}.
+# Keep command IDs, keywords, technology/product names and user data unchanged.
+# External References palette (#525).
+	Apply	適用
+	Attach DWG...	DWGをアタッチ...
+	Bind	バインド
+	Detach	デタッチ
+	Loaded	ロード済み
+	Make it a block of this drawing, keeping its layer names	この図面のブロックにする(画層名を保持)
+	Make it a block of this drawing; its layers become NAME$0$LAYER	この図面のブロックにする(画層は NAME$0$LAYER になります)
+	No external references are attached.	外部参照はアタッチされていません。
+	Not Found	見つかりません
+	Not loaded	未ロード
+	Open	開く
+	Overlay	オーバーレイ
+	Reference Manager	参照マネージャ
+	Reference Name	参照名
+	References: {n}	参照: {n}
+	Reload	再ロード
+	Reload All	すべて再ロード
+	Saved Path	保存パス
+	Unload	アンロード
+	Unloaded	アンロード済み
+	Unreferenced	未参照
+	Unresolved	未解決
+	  Cancel  	キャンセル
+	  OK  	OK
+	 or [	 または [
+	% of all commits	全コミットに占める割合
+	* Wildcard Match	* ワイルドカード一致
+	*VARIES*	*さまざま*
+	+  |  Top  |  2D Wireframe	+  |  上面  |  2Dワイヤフレーム
+	+Bin	+バイナリ
+	+LOC	+行数
+	1 Viewport	ビューポート 1個
+	2 Points	2点
+	2 Viewports	ビューポート 2個
+	2D Solid	2Dソリッド
+	3 Points	3点
+	3 Viewports	ビューポート 3個
+	3D Face	3Dフェイス
+	3D Operations	3D操作
+	3D Polyline	3Dポリライン
+	4 Viewports	ビューポート 4個
+	< Less than	< より小さい
+	<> Not Equal	<> 等しくない
+	= Equals	= 等しい
+	> Greater than	> より大きい
+	A variable name starts with a letter and has only letters, digits and _	変数名は文字で始まり、文字・数字・_ のみ使用できます
+	About	バージョン情報
+	About CADCraft	CADCraft について
+	Absolute	絶対
+	Add Leader	引出線を追加
+	Additional angles	追加の角度
+	Align	位置合わせ
+	Align Text	文字の位置合わせ
+	Aligned	平行
+	All	すべて
+	All Annotation Objects	すべての注釈オブジェクト
+	All Used Layers	使用中のすべての画層
+	All files	すべてのファイル
+	Angle	角度
+	Angular	角度寸法
+	Annotation Visibility	注釈の表示
+	Annotation scale	注釈尺度
+	Apparent Intersection	みかけの交点
+	Append to current selection set	現在の選択セットに追加
+	Apply to:	適用先:
+	Apply true color	トゥルーカラーを適用
+	Arc	円弧
+	Arc Length	弧長
+	Area	面積
+	Arrange Panel	パネルを配置
+	Array	配列複写
+	Attach	アタッチ
+	Attribute	属性
+	Attribute Definition	属性定義
+	Attribute Display	属性の表示
+	Audit	図面チェック
+	Auto (system language)	自動(システムの言語)
+	Auto Constrain	自動拘束
+	AutoConstrain	自動拘束
+	Axis, End	軸、端点
+	Base	基準
+	Baseline	並列寸法
+	Batch Publish	一括パブリッシュ
+	Binary assets added	追加されたバイナリアセット
+	Binary assets removed	削除されたバイナリアセット
+	Bind...	バインド...
+	Blend	ブレンド
+	Block	ブロック
+	Block Attribute Manager...	ブロック属性管理...
+	Block Editor	ブロックエディタ
+	Block Reference	ブロック参照
+	Block...	ブロック...
+	Blocks	ブロック
+	Blue	青
+	Bold	太字
+	Boolean	ブール演算
+	Boundary	境界
+	Boundary...	境界...
+	Box	直方体
+	Break	部分削除
+	Break At Point	点で部分削除
+	Bring Above Objects	オブジェクトの前面へ
+	Bring Annotations to Front	注釈を最前面へ
+	Bring to Front	最前面へ
+	Bulleted list	箇条書き
+	ByBlock	ByBlock
+	ByColor	ByColor
+	ByLayer	ByLayer
+	CADCraft Help	CADCraft ヘルプ
+	Cancel	キャンセル
+	Cartesian (x, y)	直交座標 (x, y)
+	Center	中心
+	Center Line	中心線
+	Center Mark	中心マーク
+	Center X	中心 X
+	Center Y	中心 Y
+	Center Z	中心 Z
+	Center, Diameter	中心、直径
+	Center, Radius	中心、半径
+	Center, Start, Angle	中心、始点、角度
+	Center, Start, End	中心、始点、終点
+	Center, Start, Length	中心、始点、長さ
+	Chamfer	面取り
+	Change Space	空間を変更
+	Change to Current Layer	現在の画層に変更
+	Changed: {n}	変更: {n}
+	Circle	円
+	Circumference	円周
+	Clear History	履歴をクリア
+	Clear	クリア
+	Clip	クリップ
+	Clip Viewport	ビューポートをクリップ
+	Clipboard	クリップボード
+	Close	閉じる
+	Close All	すべて閉じる
+	Close All Other Drawings	ほかの図面をすべて閉じる
+	Closed	閉
+	Close Comparison	比較を閉じる
+	Coincident	一致
+	Collapse Palettes	パレットを折りたたむ
+	Collapse Tool Sets	ツールセットを折りたたむ
+	Collinear	共線
+	Color	色
+	Color 8	色 8
+	Color 9	色 9
+	Color Index	色番号
+	Color...	色...
+	Command Aliases	コマンドエイリアス
+	Command History	コマンド履歴
+	Clear Command History	コマンド履歴をクリア
+	Command Line	コマンドライン
+	Command Line History Lines	コマンドライン履歴の行数
+	Command Reference	コマンドリファレンス
+	Commits	コミット
+	Company	会社
+	Compare Drawings...	図面を比較...
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	コンピュータ支援設計・製図:Rust で書かれた、オープンソースのクリーンルーム方式 CAD アプリケーション。
+	Concentric	同心
+	Cone	円錐
+	Constraint Bars	拘束バー
+	Constraint Settings	拘束設定
+	Construction Line	構築線
+	Contents	内容
+	Continue	続行
+	Contributors	貢献者
+	Control Vertices	制御点
+	Convert	変換
+	Copy	コピー
+	Copy Full File Path	ファイルのフルパスをコピー
+	Copy History	履歴をコピー
+	Copy Layout	レイアウトをコピー
+	Copy Nested Objects	ネストされたオブジェクトをコピー
+	Copy Selection	選択をコピー
+	Copy with Base Point	基点を指定してコピー
+	Count	数
+	Count List	カウント一覧
+	Count Table	カウント表
+	Create Block	ブロック作成
+	Creates a user parameter	ユーザパラメータを作成します
+	Ctrl+Enter to finish	Ctrl+Enter で完了
+	Current layer	現在の画層
+	Current selection	現在の選択
+	Current: {color}	現在: {color}
+	Cut	切り取り
+	Cyan	シアン
+	Cylinder	円柱
+	DWG	DWG
+	DWG Reference...	DWG参照...
+	DXF	DXF
+	Dark	ダーク
+	Data Extraction...	データ抽出...
+	Default	既定
+	Data Link...	データリンク...
+	Default Save Format	既定の保存形式
+	Default Save Version	既定の保存バージョン
+	Define Attributes	属性定義
+	Define Attributes...	属性定義...
+	Defined width	定義幅
+	Degree	次数
+	Degrees of Freedom	自由度
+	Degrees of freedom: {n}	自由度: {n}
+	Delete	削除
+	Delete Column	列を削除
+	Delete Constraints	拘束を削除
+	Delete Dimension Style	寸法スタイルを削除
+	Delete Duplicate Objects	重複オブジェクトを削除
+	Delete Layer	画層を削除
+	Delete Layer State	画層状態を削除
+	Delete Layout	レイアウトを削除
+	Delete Row	行を削除
+	Delete Text Style	文字スタイルを削除
+	Delta X	差分 X
+	Delta Y	差分 Y
+	Description	説明
+	Deselect All	選択解除
+	Diameter	直径
+	Dim style	寸法スタイル
+	Dimension Break	寸法ブレーク
+	Dimension Edit	寸法編集
+	Dimension	寸法
+	Dimension Objects Only	寸法オブジェクトのみ
+	Dimension Space	寸法間隔
+	Dimension Style Override	寸法スタイルの優先
+	Dimension Style...	寸法スタイル...
+	Dimension Text Edit	寸法文字編集
+	Dimension style	寸法スタイル
+	Dimensional Constraint	寸法拘束
+	Dimensional Constraint Parameters	寸法拘束パラメータ
+	Dimensional Constraints	寸法拘束
+	Disassociate Dimensions	寸法の関連付けを解除
+	Display name	表示名
+	Distance	距離
+	Divide	等分割
+	Do not plot (click: plot)	印刷しない(クリックで印刷する)
+	Donut	ドーナツ
+	Double-click to edit the description	ダブルクリックで説明を編集
+	Down	下へ
+	Drafting	製図
+	Drafting Settings	作図設定
+	Drafting Settings...	作図設定...
+	Draw	作成
+	Draw Order	表示順序
+	Drawing (DWG)	図面 (DWG)
+	Drawing (DXF)	図面 (DXF)
+	Drawing Limits	図面範囲
+	Drawing Template (DWT)	図面テンプレート (DWT)
+	Drawing Utilities	図面ユーティリティ
+	Drawings (DWG, DXF)	図面 (DWG, DXF)
+	SVG drawings (SVG, SVGZ)	SVG図面 (SVG, SVGZ)
+	Dynamic	ダイナミック
+	Dynamic Dimensions	ダイナミック寸法
+	Dynamic Input	ダイナミック入力
+	Dynamic Input (F12)	ダイナミック入力 (F12)
+	E	東
+	Edit	編集
+	Edit Attributes...	属性を編集...
+	Edit Text...	文字を編集...
+	Edit Table Cell	表のセルを編集
+	Elevation	高度
+	Ellipse	楕円
+	Elliptical Arc	楕円弧
+	Enable Dynamic Input (F12)	ダイナミック入力を有効にする (F12)
+	End Object Isolation	オブジェクトの分離を終了
+	End Width	終了幅
+	End X	終点 X
+	End Y	終点 Y
+	End angle	終了角度
+	Endpoint	端点
+	Enter	Enter
+	Enter Top, Zero or Bottom.	Top、Zero、Bottom のいずれかを入力してください。
+	Enter a fit data option	フィットデータのオプションを入力
+	Enter a pattern name	パターン名を入力
+	Enter a vertex editing option	頂点編集のオプションを入力
+	Enter an option	オプションを入力
+	Enter angle of xline	構築線の角度を入力
+	Enter angle of xline (0) or	構築線の角度 (0) を入力、または
+	Enter area of rectangle in current units	現在の単位で長方形の面積を入力
+	Enter attribute prompt	属性のプロンプトを入力
+	Enter attribute tag name	属性のタグ名を入力
+	Enter attribute value	属性値を入力
+	Enter block name	ブロック名を入力
+	Enter constraint type	拘束の種類を入力
+	Enter continuity	連続性を入力
+	Enter default attribute value	属性の既定値を入力
+	Enter degree of spline	スプラインの次数を入力
+	Enter delta angle	角度の増分を入力
+	Enter delta length or	長さの増分を入力、または
+	Enter dimension text	寸法文字を入力
+	Enter dimension text (<> = measurement)	寸法文字を入力 (<> = 測定値)
+	Enter dimension value or [name=expression]	寸法値を入力、または [name=expression]
+	Enter dimension variable name to override	上書きする寸法変数名を入力
+	Enter justification type	位置合わせの種類を入力
+	Enter leader text	引出線の文字を入力
+	Enter mline scale	複線の尺度を入力
+	Enter mode	モードを入力
+	Enter name of block to insert	挿入するブロック名を入力
+	Enter new text	新しい文字を入力
+	Enter next point	次の点を入力
+	Enter number of columns	列数を入力
+	Enter number of data rows	データ行数を入力
+	Enter number of items	要素数を入力
+	Enter number of items along path	パスに沿った要素数を入力
+	Enter number of sides	辺の数を入力
+	Enter number of turns	巻き数を入力
+	Enter percentage length	長さのパーセントを入力
+	Enter rectangle length	長方形の長さを入力
+	Enter rectangle width	長方形の幅を入力
+	Enter scale factor	尺度係数を入力
+	Enter text	文字を入力
+	Enter text (use \P for new paragraphs)	文字を入力 (\P で改段落)
+	Enter the number of segments	分割数を入力
+	Enter twist direction of helix	らせんの巻き方向を入力
+	Entire drawing	図面全体
+	Equal	等しい
+	Erase	削除
+	Evaluate	評価
+	Evaluate LISP	LISP を評価
+	Exclude from new selection set	新しい選択セットから除外
+	Explode	分解
+	Export	エクスポート
+	Export Table	表をエクスポート
+	Export to PDF...	PDF にエクスポート...
+	Expression	式
+	Extend	延長
+	Extension	延長
+	Extents	範囲
+	External Reference	外部参照
+	External References	外部参照
+	Extrude	押し出し
+	File	ファイル
+	File Tab	ファイルタブ
+	Fillet	フィレット
+	Filter	フィルタ
+	Filters	フィルタ
+	Find and Replace	検索と置換
+	Find...	検索...
+	First	最初
+	First commit	最初のコミット
+	Fit Points	フィット点
+	Fix	固定
+	Flatten Objects	オブジェクトのフラット化
+	Format	書式
+	Freehand	フリーハンド
+	Freeze	フリーズ
+	Freeze Layer	画層をフリーズ
+	Freeze in new viewports	新しいビューポートでフリーズ
+	Freeze/Thaw	フリーズ/フリーズ解除
+	Freeze/Thaw in all viewports	すべてのビューポートでフリーズ/フリーズ解除
+	Freeze/Thaw in the current viewport	現在のビューポートでフリーズ/フリーズ解除
+	From	基点
+	From Template...	テンプレートから...
+	General	一般
+	Geometric Center	図心
+	Geometric Constraint	幾何拘束
+	Geometric Constraints	幾何拘束
+	Geometry	ジオメトリ
+	Get from the Drawing	図面から取得
+	Get Variable	変数を取得
+	Get View	ビューを取得
+	Global	グローバル
+	Global width	全体の幅
+	Grab bag	その他
+	Gradient	グラデーション
+	Gradient...	グラデーション...
+	Green	緑
+	Grid (F7)	グリッド (F7)
+	Grid Display	グリッド表示
+	Grid On (F7)	グリッドをオン (F7)
+	Grid snap	グリッドスナップ
+	Grid spacing	グリッド間隔
+	Grip Edit	グリップ編集
+	Grip Mirror	グリップ鏡像
+	Grip Option	グリップオプション
+	Grip Rotate	グリップ回転
+	Grip Scale	グリップ尺度変更
+	Grip Stretch	グリップストレッチ
+	Group	グループ化
+	Group Edit	グループ編集
+	Group Options	グループオプション
+	Group Selection	グループ選択
+	Hatch	ハッチング
+	Hatch Edit	ハッチング編集
+	Hatch Patterns	ハッチングパターン
+	Hatch...	ハッチング...
+	Height	高さ
+	Height: {height}	高さ: {height}
+	Helix	らせん
+	Help	ヘルプ
+	Hide All	すべて非表示
+	Hide All Constraint Bars	すべての拘束バーを非表示
+	Hide All Dynamic Dimensions	すべてのダイナミック寸法を非表示
+	Hide Layer List	画層リストを非表示
+	Hide Objects	オブジェクトを非表示
+	Hide Palettes	パレットを非表示
+	History	履歴
+	Home	ホーム
+	Horizontal	水平
+	HorizontalDistance	水平距離
+	How to apply:	適用方法:
+	ID Point	点座標
+	Import	インポート
+	Align Multileaders	マルチ引出線を整列
+	Collect	集約
+	Collect Multileaders	マルチ引出線を集約
+	Edit Multileader	マルチ引出線を編集
+	In	拡大
+	In-window Menu Bar	ウィンドウ内メニューバー
+	Include in new selection set	新しい選択セットに含める
+	Increment angle	角度の増分
+	Index Color	インデックスカラー
+	Index color: {index}	インデックスカラー: {index}
+	Infer Constraints	拘束の推定
+	Inquiry	照会
+	Insert	挿入
+	Insert Block	ブロックを挿入
+	Insert Column	列を挿入
+	Insert Row	行を挿入
+	Insert tab	タブを挿入
+	Insert this block	このブロックを挿入
+	Insert Table Formula	表に計算式を挿入
+	Insertion	挿入基点
+	Insertion X	挿入基点 X
+	Insertion Y	挿入基点 Y
+	Insertion Z	挿入基点 Z
+	Inspect Constraints	拘束を確認
+	Inspect Drawing	図面を確認
+	Inspection	検査
+	Interface Language	インターフェースの言語
+	Interface Theme	インターフェースのテーマ
+	Intersect	交差
+	Intersection	交点
+	Isolate	分離
+	Isolate Layer	画層を分離
+	Isolate Objects	オブジェクトを分離
+	Isometric Drafting	アイソメ作図
+	Jogged	ジョグ
+	Jogged Linear	ジョグ線形
+	Join	結合
+	Join the ArtCraft Discord…	ArtCraft の Discord に参加…
+	Join us on Discord	Discord に参加しよう
+	Isometric Plane	アイソメ平面
+	Isometric snap	アイソメスナップ
+	Language	言語
+	Last	最後
+	Last commit	最後のコミット
+	Layer	画層
+	Layer Delete	画層削除
+	Layer Match	画層合わせ
+	Layer Merge	画層マージ
+	Layer Off	画層オフ
+	Layer Properties	画層プロパティ
+	Layer Properties Manager	画層プロパティ管理
+	Layer Properties Manager — current viewport	画層プロパティ管理 — 現在のビューポート
+	Layer State	画層状態
+	Layer States Manager...	画層状態管理...
+	Layer Tools	画層ツール
+	Layer contains objects (double-click to make current)	画層にオブジェクトがあります (ダブルクリックで現在の画層にする)
+	Layer is empty (double-click to make current)	画層は空です (ダブルクリックで現在の画層にする)
+	Layers	画層
+	Layers Palette	画層パレット
+	Hide Palette	パレットを非表示
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	表示中の画層: {shown} / {total}。   現在の画層: {layer}
+	Layout	レイアウト
+	Layout list	レイアウト一覧
+	Leader	引出線
+	Leaders Only	引出線のみ
+	Left	左
+	Length	長さ
+	Length X	長さ X
+	Length Y	長さ Y
+	Lengthen	長さ変更
+	Light	ライト
+	Line	線分
+	Line delta	行数の増減
+	Linear	長さ寸法
+	Lines +/−	行 +/−
+	Lines added	追加された行
+	Lines deleted	削除された行
+	Lines of Command History	コマンド履歴の行数
+	Linetype	線種
+	Linetype Scale	線種尺度
+	Linetype scale	線種尺度
+	Ltscale	線種尺度
+	Linetype...	線種...
+	Lineweight	線の太さ
+	Lineweight...	線の太さ...
+	List	リスト
+	List Blocks	ブロック一覧
+	List Dimension Styles	寸法スタイル一覧
+	List Groups	グループ一覧
+	List Layer States	画層状態一覧
+	List Layouts	レイアウト一覧
+	List System Variables	システム変数一覧
+	List Text Styles	文字スタイル一覧
+	Load all	すべてロード
+	Load...	ロード...
+	Load Application...	アプリケーションをロード...
+	Loaded linetypes	ロード済みの線種
+	Lock	ロック
+	Lock Layer	画層をロック
+	Lock viewport	ビューポートをロック
+	Lock/Unlock	ロック/ロック解除
+	Loft	ロフト
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0。Autodesk, Inc. とは無関係です。
+	MODEL	モデル
+	MText	マルチテキスト
+	Magenta	マゼンタ
+	Major line every	主線の間隔
+	Make Current	現在にする
+	Make Object's Layer Current	オブジェクトの画層を現在にする
+	Make...	作成...
+	Match Layer	画層合わせ
+	Match Properties	プロパティコピー
+	Measure	長さ分割
+	Measure Distance	距離を測定
+	Measure Geometry	ジオメトリを測定
+	Merge Cells	セルを結合
+	Merged PRs	マージされたPR
+	Mid Between 2 Points	2点間の中点
+	Midpoint	中点
+	Mirror	鏡像
+	Model	モデル
+	Model Space (in viewport)	モデル空間 (ビューポート内)
+	Modeling	モデリング
+	Models	モデル
+	Modify	修正
+	Move	移動
+	Multileader	マルチ引出線
+	Multileader Style...	マルチ引出線スタイル...
+	Multileader style	マルチ引出線スタイル
+	Multiline	複線
+	Multiline Text	マルチテキスト
+	Multiline Text...	マルチテキスト...
+	Multiple	複数
+	Multiple Point	複数点
+	My	自分の
+	My properties: not available yet	自分のプロパティ: まだ利用できません
+	N	北
+	Name	名前
+	Name (A–Z)	名前 (A–Z)
+	Named Views...	名前の付いたビュー...
+	Nearest	近接点
+	New	新規
+	New (metric)	新規 (メートル法)
+	New Drawing	新規図面
+	New Drawing (⌘N)	新規図面 (⌘N)
+	New Drawing...	新規図面...
+	New Layer	新規画層
+	New Layout	新規レイアウト
+	New VP Freeze	新規VPフリーズ
+	New Viewports...	新規ビューポート...
+	New from Template...	テンプレートから新規作成...
+	New layout	新規レイアウト
+	New state name	新しい状態名
+	Next Change	次の変更
+	No	いいえ
+	No blocks defined in this drawing.	この図面にはブロックが定義されていません。
+	No contributor data was built into this copy.	このビルドには貢献者データが含まれていません。
+	No model credits were built into this copy.	このビルドにはモデルのクレジットが含まれていません。
+	No saved layer states	保存された画層状態はありません
+	No selection	選択なし
+	Node	ノード
+	None	なし
+	Not available	利用できません
+	Not available yet	まだ利用できません
+	Numbered list	番号付きリスト
+	OK	OK
+	Object	オブジェクト
+	Object Snap	オブジェクトスナップ
+	Object Snap (F3)	オブジェクトスナップ (F3)
+	Object Snap On (F3)	オブジェクトスナップをオン (F3)
+	Object Snap Tracking	オブジェクトスナップトラッキング
+	Object Snap Tracking (F11)	オブジェクトスナップトラッキング (F11)
+	Object Snap Tracking Settings	オブジェクトスナップトラッキング設定
+	Object type:	オブジェクトの種類:
+	Oblique	傾斜
+	Off	オフ
+	Offset	オフセット
+	On	オン
+	On/Off	オン/オフ
+	One of the Crafting Apps by the ArtCraft team and community.	ArtCraft のチームとコミュニティによる Crafting Apps のひとつです。
+	Only in this drawing: {n}	この図面のみ: {n}
+	Only in {name}: {n}	{name} のみ: {n}
+	Open (⌘O)	開く (⌘O)
+	Open Sample Drawing	サンプル図面を開く
+	Open sample drawing	サンプル図面を開く
+	Open Xref	外部参照を開く
+	Open...	開く...
+	Open Recent	最近使ったファイルを開く
+	Clear Recent Files	最近使ったファイルをクリア
+	Operator:	演算子:
+	Orbit	オービット
+	Ordinate	座標寸法
+	Ortho (F8)	直交モード (F8)
+	Ortho Mode	直交モード
+	Ortho Mode (F8)	直交モード (F8)
+	Osnap Settings...	オブジェクトスナップ設定...
+	Out	縮小
+	Over-constrained	過剰拘束
+	Override	上書き
+	PAPER	ペーパー
+	Percent	パーセント
+	Polar (distance < angle)	極座標 (距離 < 角度)
+	PRs	PR
+	Page Setup Manager	ページ設定管理
+	Page Setup Manager...	ページ設定管理...
+	Pan	画面移動
+	Pan Down	下へ画面移動
+	Pan Left	左へ画面移動
+	Pan Right	右へ画面移動
+	Pan Up	上へ画面移動
+	Paper Space	ペーパー空間
+	Parallel	平行
+	Parameters Manager	パラメータ管理
+	Parametric	パラメトリック
+	Paste	貼り付け
+	Paste as Block	ブロックとして貼り付け
+	Paste to Command Line	コマンドラインに貼り付け
+	Paste to Original Coordinates	元の座標に貼り付け
+	Path Array	パス配列複写
+	Pattern	パターン
+	Perpendicular	垂直
+	Plot	印刷
+	Plot (click: do not plot)	印刷する(クリックで印刷しない)
+	Plot Preview	印刷プレビュー
+	Plot Window	印刷ウィンドウ
+	Plot style	印刷スタイル
+	Plot style attached to	印刷スタイルのアタッチ先
+	Plot style table	印刷スタイルテーブル
+	Plot Style...	印刷スタイル...
+	Plot Style Manager	印刷スタイル管理
+	Plot Style Manager...	印刷スタイル管理...
+	Plot Styles...	印刷スタイル...
+	Plotter Manager	プロッタ管理
+	Plotter Manager...	プロッタ管理...
+	New CTB	新規 CTB
+	New STB	新規 STB
+	New style	新規スタイル
+	Reset Panel Layout	パネルレイアウトをリセット
+	Send Hatches to Back	ハッチングを最背面へ
+	Send Under Objects	オブジェクトの背面へ
+	Text Objects Only	文字オブジェクトのみ
+	Use for this layout	このレイアウトに使用
+	Display plot styles	印刷スタイルを表示
+	No plot style tables.	印刷スタイルテーブルがありません。
+	A built-in table: editing it keeps an edited copy in the drawing.	組み込みのテーブルです。編集すると、編集後のコピーが図面内に保持されます。
+	Keep an editable copy of this table in the drawing	このテーブルの編集可能なコピーを図面内に保持
+	Layout {name}: {table}	レイアウト {name}: {table}
+	Grayscale	グレースケール
+	Screening	スクリーニング
+	Use object linetype	オブジェクトの線種を使用
+	Use object lineweight	オブジェクトの線の太さを使用
+	Remove	削除
+	Add	追加
+	Open a drawing first.	先に図面を開いてください。
+	Plot table type	印刷テーブルの種類
+	Color-dependent	色従属
+	Named	名前付き
+	Plus/minus	プラスマイナス
+	Point	点
+	Point Filters	点フィルタ
+	Point Style...	点スタイル...
+	Polar Array	円形配列複写
+	Polar Tracking	極トラッキング
+	Polar Tracking (F10)	極トラッキング (F10)
+	Polar Tracking On (F10)	極トラッキングをオン (F10)
+	Polar angle measurement	極角度の測定
+	Polar distance	極距離
+	Polar: {distance} < {angle}°	極座標: {distance} < {angle}°
+	PolarSnap	極スナップ
+	Polygon	正多角形
+	Polygonal	多角形
+	Polygonal Viewport	多角形ビューポート
+	Polyline	ポリライン
+	Polyline Edit	ポリライン編集
+	Position X	位置 X
+	Position Y	位置 Y
+	Position Z	位置 Z
+	Previous	前へ
+	Previous Change	前の変更
+	Previous Layer	前の画層
+	Primitives	プリミティブ
+	Print	印刷
+	Print...	印刷...
+	Properties	プロパティ
+	Properties Inspector	プロパティインスペクタ
+	Properties:	プロパティ:
+	Proxy	プロキシ
+	Purge	名前削除
+	Pyramid	角錐
+	Quadrant	四半円点
+	Query Entities	エンティティを照会
+	Quick	クイック
+	Quick Dimension	クイック寸法
+	Quick Properties	クイックプロパティ
+	Quick Select	クイック選択
+	Quick Select Properties	クイック選択のプロパティ
+	Quick Select...	クイック選択...
+	QuickCalc	クイック計算
+	QuickCalc Pick	クイック計算で選択
+	Quit CADCraft	CADCraft を終了
+	Radius	半径
+	Raster Image	ラスタイメージ
+	Ray	レイ
+	Read-only	読み取り専用
+	Real name	実名
+	Realtime	リアルタイム
+	Reassociate Dimensions	寸法を再関連付け
+	Recent	最近
+	Recent Commands	最近のコマンド
+	Recent Input	最近の入力
+	Recover...	修復...
+	Rectangle	長方形
+	Recalculate Table Formulas	表の計算式を再計算
+	Rectangular	矩形
+	Rectangular snap	矩形スナップ
+	Rectangular Array	矩形配列複写
+	Red	赤
+	Redo	やり直し
+	Redo (⇧⌘Z)	やり直し (⇧⌘Z)
+	Redraw	再描画
+	Regen	再作図
+	Regen All	すべて再作図
+	Region	リージョン
+	Region/Mass Properties	リージョン/マスプロパティ
+	Reinitialize	再初期化
+	Relative	相対
+	Relative to last segment	最後のセグメントからの相対
+	Remove Leader	引出線を削除
+	Remove the viewport override	ビューポートの優先設定を削除
+	Rename Dimension Style	寸法スタイルの名前変更
+	Rename Layer	画層の名前変更
+	Rename Layer State	画層状態の名前変更
+	Rename Layout	レイアウトの名前変更
+	Rename Text Style	文字スタイルの名前変更
+	Rename...	名前変更...
+	Repeat {command}	{command} を繰り返す
+	Requires a point (x,y, @dx,dy or @d<a).	点が必要です (x,y、@dx,dy、または @d<a)。
+	Reset Palettes	パレットをリセット
+	Restore	復元
+	Restore Layer State	画層状態を復元
+	Reverse	反転
+	Reverse the order	順序を逆にする
+	Revision Cloud	雲マーク
+	Revolve	回転体
+	Right	右
+	Rotate	回転
+	Rotation	回転角度
+	S	南
+	Save	保存
+	Save (⌘S)	保存 (⌘S)
+	Save As	名前を付けて保存
+	Save As...	名前を付けて保存...
+	Save Layer State	画層状態を保存
+	Save State	状態を保存
+	Scale	尺度変更
+	Search for layer	画層を検索
+	Search for parameter	パラメータを検索
+	Second and next points:	2点目以降:
+	Select	選択
+	Select 2D polyline	2Dポリラインを選択
+	Select All	すべて選択
+	Select Objects	オブジェクトを選択
+	Select Similar	同様のものを選択
+	Select a 2D polyline.	2Dポリラインを選択してください。
+	Select a block reference.	ブロック参照を選択してください。
+	Select a circle or arc.	円または円弧を選択してください。
+	Select a closed polyline	閉じたポリラインを選択
+	Select a closed polyline, circle, ellipse or closed spline.	閉じたポリライン、円、楕円、または閉じたスプラインを選択してください。
+	Select a closed polyline.	閉じたポリラインを選択してください。
+	Select a curve as the path.	パスとして曲線を選択してください。
+	Select a dimension constraint type	寸法拘束の種類を選択
+	Select a line object	線分オブジェクトを選択
+	Select a line object.	線分オブジェクトを選択してください。
+	Select a line or an arc.	線分または円弧を選択してください。
+	Select a line or polyline segment	線分またはポリラインのセグメントを選択
+	Select a line, arc or open polyline.	線分、円弧、または開いたポリラインを選択してください。
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	パスとして、線分、円弧、円、ポリライン、楕円、またはスプラインを選択してください。
+	Select a line, circle, arc or polyline segment.	線分、円、円弧、またはポリラインのセグメントを選択してください。
+	Select a line.	線分を選択してください。
+	Select a polyline.	ポリラインを選択してください。
+	Select a text, mtext, attribute definition or dimension.	文字、マルチテキスト、属性定義、または寸法を選択してください。
+	Select an annotation object	注釈オブジェクトを選択
+	Select an arc or circle	円弧または円を選択
+	Select an arc.	円弧を選択してください。
+	Select an object	オブジェクトを選択
+	Select an object to change or	変更するオブジェクトを選択、または
+	Select an object to measure or	測定するオブジェクトを選択、または
+	Select an object.	オブジェクトを選択してください。
+	Select an open curve.	開いた曲線を選択してください。
+	Select an open line, arc, polyline, ellipse arc or spline.	開いた線分、円弧、ポリライン、楕円弧、またはスプラインを選択してください。
+	Select arc or circle	円弧または円を選択
+	Select arc or polyline arc segment	円弧またはポリラインの円弧セグメントを選択
+	Select arc style	円弧スタイルを選択
+	Select arc, circle, line	円弧、円、線分を選択
+	Select at least two objects to join.	結合するオブジェクトを2つ以上選択してください。
+	Select circle or arc to add center mark	中心マークを追加する円または円弧を選択
+	Select closed objects (regions, closed polylines, circles).	閉じたオブジェクト(リージョン、閉じたポリライン、円)を選択してください。
+	Select first line	1本目の線分を選択
+	Select first line or arc	1本目の線分または円弧を選択
+	Select first object	1つ目のオブジェクトを選択
+	Select first object or	1つ目のオブジェクトを選択、または
+	Select first point	1点目を選択
+	Select nested objects to copy or	コピーするネストされたオブジェクトを選択、または
+	Select object	オブジェクトを選択
+	Select object to dimension	寸法を記入するオブジェクトを選択
+	Select object to divide	分割するオブジェクトを選択
+	Select object to extend or shift-select to trim	延長するオブジェクトを選択 (Shift を押しながら選択でトリム)
+	Select object to measure	長さで分割するオブジェクトを選択
+	Select object to offset	オフセットするオブジェクトを選択
+	Select object to trim or shift-select to extend	トリムするオブジェクトを選択 (Shift を押しながら選択で延長)
+	Select objects	オブジェクトを選択
+	Select objects (crossing window first corner)	オブジェクトを選択 (交差窓の最初のコーナー)
+	Select objects to array.	配列複写するオブジェクトを選択してください。
+	Select objects to stretch by crossing-window or crossing-polygon...	交差窓または交差ポリゴンでストレッチするオブジェクトを選択...
+	Select objects:	オブジェクトを選択:
+	Add to Working Set	作業セットに追加
+	Edit Reference In-Place	参照をその場で編集
+	Save Reference Edits	参照の編集を保存
+	Working Set	作業セット
+	Xref and Block In-place Editing	外部参照とブロックのその場編集
+	Select one polyline (Multiple is available through the JSON form).	ポリラインを1つ選択してください (Multiple は JSON 形式で利用できます)。
+	Select path curve	パス曲線を選択
+	Select point or object	点またはオブジェクトを選択
+	Select polyline or	ポリラインを選択、または
+	Select second line	2本目の線分を選択
+	Select second line or shift-select to apply corner	2本目の線分を選択 (Shift を押しながら選択でコーナー適用)
+	Select second object	2つ目のオブジェクトを選択
+	Select second object or shift-select to apply corner	2つ目のオブジェクトを選択 (Shift を押しながら選択でコーナー適用)
+	Select second point	2点目を選択
+	Select spline	スプラインを選択
+	Select symmetry line	対称軸を選択
+	Select two points	2点を選択
+	Selection Cycling	選択の循環
+	Send to Back	最背面へ
+	Set Current	現在にする
+	Set Current Dimension Style	寸法スタイルを現在にする
+	Set Current Text Style	文字スタイルを現在にする
+	Set Current Viewport	ビューポートを現在にする
+	Set Layer Properties	画層プロパティを設定
+	Set Properties	プロパティを設定
+	Set Table Cell	表のセルを設定
+	Set Table Cell Style	表のセルスタイルを設定
+	Set Variable	変数を設定
+	Set View	ビューを設定
+	Share	共有
+	Show	表示
+	Show All	すべて表示
+	Show All Constraint Bars	すべての拘束バーを表示
+	Show All Dynamic Dimensions	すべてのダイナミック寸法を表示
+	Show and hide the tools of this category	このカテゴリのツールを表示/非表示
+	Show in Tool Sets	ツールセットに表示
+	Show command prompting near the crosshairs	十字カーソルの近くにコマンドプロンプトを表示
+	Show Layer List	画層リストを表示
+	Show/Hide Lineweight	線の太さの表示/非表示
+	Show/Hide Transparency	透過性の表示/非表示
+	Single Line Text	単一行テキスト
+	Single Point	単一点
+	Single...	単一...
+	Smooth	スムーズ
+	Snap	スナップ
+	Snap Mode	スナップモード
+	Snap Mode (F9)	スナップモード (F9)
+	Snap On (F9)	スナップをオン (F9)
+	Snap Overrides	スナップの優先
+	Snap X spacing	スナップ X 間隔
+	Snap and Grid	スナップとグリッド
+	Snap type	スナップの種類
+	Solid	ソリッド
+	Sort	並べ替え
+	Specify a point	点を指定
+	Specify a scale for the hatch pattern	ハッチングパターンの尺度を指定
+	Specify a second extension line origin	2つ目の寸法補助線の起点を指定
+	Specify an angle for the hatch pattern	ハッチングパターンの角度を指定
+	Specify angle end point	角度の終点を指定
+	Specify angle of dimension line	寸法線の角度を指定
+	Specify angle of dimension text	寸法文字の角度を指定
+	Specify angle start point	角度の始点を指定
+	Specify angle vertex	角度の頂点を指定
+	Specify angle vertex point	角度の頂点を指定
+	Specify arc length dimension location	弧長寸法の位置を指定
+	Specify axis endpoint of ellipse	楕円の軸の端点を指定
+	Specify base diameter	底面の直径を指定
+	Specify base point	基点を指定
+	Specify base point or	基点を指定、または
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	基点または移動距離を指定 (マウスの中ボタンのドラッグでリアルタイムに画面移動)
+	Specify base radius or	底面の半径を指定、または
+	Specify center of donut	ドーナツの中心を指定
+	Specify center of ellipse	楕円の中心を指定
+	Specify center of polygon	多角形の中心を指定
+	Specify center point for circle	円の中心点を指定
+	Specify center point of arc	円弧の中心点を指定
+	Specify center point of array	配列の中心点を指定
+	Specify center point of base	底面の中心点を指定
+	Specify corner of viewport	ビューポートのコーナーを指定
+	Specify corner of window, enter a scale factor (nX or nXP)	ウィンドウのコーナーを指定、または尺度係数 (nX または nXP) を入力
+	Specify diameter of circle	円の直径を指定
+	Specify dimension arc line location	寸法円弧線の位置を指定
+	Specify dimension line location	寸法線の位置を指定
+	Specify distance between turns	巻きの間隔を指定
+	Specify distance to other axis	もう一方の軸までの距離を指定
+	Specify end angle	終了角度を指定
+	Specify end point of arc	円弧の終点を指定
+	Specify end point of arc (hold Ctrl to switch direction)	円弧の終点を指定 (Ctrl を押すと方向を切り替え)
+	Specify ending width	終了幅を指定
+	Specify ending width for next segment	次のセグメントの終了幅を指定
+	Specify endpoint of arc	円弧の端点を指定
+	Specify endpoint of axis	軸の端点を指定
+	Specify endpoint of line	線分の端点を指定
+	Specify feature location	フィーチャの位置を指定
+	Specify fillet radius	フィレット半径を指定
+	Specify fillet radius for rectangles	長方形のフィレット半径を指定
+	Specify first angle endpoint	角度の1つ目の端点を指定
+	Specify first chamfer distance	1つ目の面取り距離を指定
+	Specify first chamfer distance for rectangles	長方形の1つ目の面取り距離を指定
+	Specify first constraint point	1つ目の拘束点を指定
+	Specify first corner	1つ目のコーナーを指定
+	Specify first corner point	1つ目のコーナー点を指定
+	Specify first destination point	1つ目の目的点を指定
+	Specify first end point of circle's diameter	円の直径の1つ目の端点を指定
+	Specify first endpoint of edge	エッジの1つ目の端点を指定
+	Specify first extension line origin	1つ目の寸法補助線の起点を指定
+	Specify first point	1点目を指定
+	Specify first point of mirror line	鏡像軸の1点目を指定
+	Specify first point on circle	円周上の1点目を指定
+	Specify first point on circle: _tan to	円周上の1点目を指定: _tan to
+	Specify first source point	1つ目の元の点を指定
+	Specify height	高さを指定
+	Specify helix height or	らせんの高さを指定、または
+	Specify included angle	挟角を指定
+	Specify insertion base point	挿入基点を指定
+	Specify insertion point	挿入点を指定
+# Options dialog (OPTIONS).
+	A drawing opened from a file keeps that file's format.	ファイルから開いた図面は、そのファイルの形式を保持します。
+	An array that would create more objects than this is refused.	この数より多くのオブジェクトを作成する配列複写は拒否されます。
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft は、これらの設定、オブジェクトスナップのモード、作図の切り替えをユーザアカウントごとに保存し、起動時に復元します。
+	Changes apply at once and are kept for next time.	変更はすぐに反映され、次回のために保存されます。
+	Command line history	コマンドライン履歴
+	Copy as JSON	JSON としてコピー
+	Crosshair size	十字カーソルのサイズ
+	Crossing selection color:	交差選択の色:
+	Display	表示
+	Exclude:	除外:
+	Grip size	グリップのサイズ
+	Grips	グリップ
+	Groups	グループ
+	Hatches	ハッチング
+	Hold Shift to add to the selection	Shift を押しながら選択で追加
+	Indicate selection area	選択範囲を表示
+	Interface language	インターフェースの言語
+	Interface theme	インターフェースのテーマ
+	Keep the system cursor visible over the drawing area	作図領域でシステムカーソルを表示したままにする
+	Largest array	配列複写の最大数
+	Layout paper	レイアウトの用紙
+	Model background	モデルの背景
+	Multiline text	マルチテキスト
+	Object grouping	オブジェクトのグループ化
+	Object selection limit for display of grips	グリップを表示するオブジェクト選択数の上限
+	Object snap aperture	オブジェクトスナップのアパーチャ
+	Object snap marker size	オブジェクトスナップマーカーのサイズ
+	Objects on locked layers	ロックされた画層のオブジェクト
+	Open and Save	開くと保存
+	Options	オプション
+	Options...	オプション...
+	Pickbox size	ピックボックスのサイズ
+	Preview	プレビュー
+	Profiles	プロファイル
+	Reset keeps the interface language.	リセットしてもインターフェースの言語は変わりません。
+	Reset to Defaults	既定値にリセット
+	Save new drawings as	新規図面の保存形式
+	Screen magnifiers, screen readers and recorders follow the system cursor.	画面拡大ツール、スクリーンリーダー、録画ソフトはシステムカーソルを追跡します。
+	Select objects first, then choose a command	先にオブジェクトを選択してからコマンドを選ぶ
+	Selection	選択
+	Selection Area Effect	選択範囲の効果
+	Selection Preview Filter	選択プレビューのフィルタ
+	Selection area opacity:	選択範囲の不透明度:
+	Selection effect color	選択効果の色
+	Selection modes	選択モード
+	Selection preview	選択プレビュー
+	Settings...	設定...
+	Show Quick Properties for selected objects	選択したオブジェクトのクイックプロパティを表示
+	Show grips	グリップを表示
+	Snap, grid, polar tracking and Dynamic Input:	スナップ、グリッド、極トラッキング、ダイナミック入力:
+	Tables	表
+	The aperture is how near the cursor must come to a point for an object snap to find it.	アパーチャは、オブジェクトスナップが点を検出するためにカーソルが近づく必要のある距離です。
+	User Preferences	ユーザ設定
+	Visual Effect Settings	視覚効果の設定
+	Visual Effect Settings...	視覚効果の設定...
+	When a command is active	コマンド実行中
+	When no command is active	コマンド未実行時
+	Window selection color:	窓選択の色:
+	Xrefs	外部参照
+	objects	オブジェクト
+	Specify inside diameter of donut	ドーナツの内径を指定
+	Specify leader arrowhead location	引出線の矢印の位置を指定
+	Specify leader endpoint	引出線の端点を指定
+	Specify leader landing location	引出線のランディング位置を指定
+	Specify length for rectangles	長方形の長さを指定
+	Specify length of chord	弦の長さを指定
+	Specify length of segment	セグメントの長さを指定
+	Specify line width for rectangles	長方形の線幅を指定
+	Specify location for new vertex	新しい頂点の位置を指定
+	Specify minimum length of arc	円弧の最小長さを指定
+	Specify new end point	新しい終点を指定
+	Specify new location for marked vertex	マークした頂点の新しい位置を指定
+	Specify new width for all segments	すべてのセグメントの新しい幅を指定
+	Specify next point	次の点を指定
+	Specify offset distance	オフセット距離を指定
+	Specify offset distance or	オフセット距離を指定、または
+	Specify opposite corner	対角のコーナーを指定
+	Specify other corner point	もう一方のコーナー点を指定
+	Specify other endpoint of axis	軸のもう一方の端点を指定
+	Specify outside diameter of donut	ドーナツの外径を指定
+	Specify point	点を指定
+	Specify point on object for first tangent of circle	円の1つ目の接線のオブジェクト上の点を指定
+	Specify point on object for second tangent of circle	円の2つ目の接線のオブジェクト上の点を指定
+	Specify point on side to offset	オフセットする側の点を指定
+	Specify radius of arc	円弧の半径を指定
+	Specify radius of circle	円の半径を指定
+	Specify rotation angle	回転角度を指定
+	Specify rotation angle of text	文字の回転角度を指定
+	Specify rotation angle or	回転角度を指定、または
+	Specify scale factor	尺度係数を指定
+	Specify second angle endpoint	角度の2つ目の端点を指定
+	Specify second break point	2つ目の部分削除点を指定
+	Specify second chamfer distance for rectangles	長方形の2つ目の面取り距離を指定
+	Specify second constraint point	2つ目の拘束点を指定
+	Specify second destination point	2つ目の目的点を指定
+	Specify second end point of circle's diameter	円の直径の2つ目の端点を指定
+	Specify second endpoint of edge	エッジの2つ目の端点を指定
+	Specify second extension line origin	2つ目の寸法補助線の起点を指定
+	Specify second point	2点目を指定
+	Specify second point of arc	円弧の2点目を指定
+	Specify second point of mirror line	鏡像軸の2点目を指定
+	Specify second point on circle	円周上の2点目を指定
+	Specify second point on circle: _tan to	円周上の2点目を指定: _tan to
+	Specify second point or <use first point as displacement>	2点目を指定、または <1点目を移動距離として使用>
+	Specify second source point	2つ目の元の点を指定
+	Specify side to offset	オフセットする側を指定
+	Specify start angle	開始角度を指定
+	Specify start point	始点を指定
+	Specify start point of arc	円弧の始点を指定
+	Specify start point of polyline	ポリラインの始点を指定
+	Specify start point of text	文字の始点を指定
+	Specify starting width	開始幅を指定
+	Specify starting width for next segment	次のセグメントの開始幅を指定
+	Specify tangent direction for the start point of arc	円弧の始点の接線方向を指定
+	Specify the elevation for rectangles	長方形の高度を指定
+	Specify thickness for rectangles	長方形の厚さを指定
+	Specify third point on circle	円周上の3点目を指定
+	Specify third point on circle: _tan to	円周上の3点目を指定: _tan to
+	Specify third source point or <continue>	3つ目の元の点を指定、または <続行>
+	Specify through point	通過点を指定
+	Specify top diameter	上面の直径を指定
+	Specify top radius or	上面の半径を指定、または
+	Specify total angle	全体の角度を指定
+	Specify total length or	全体の長さを指定、または
+	Specify width for rectangles	長方形の幅を指定
+	Sphere	球
+	Spline	スプライン
+	Spline Edit	スプライン編集
+	Stack (type 1/2 then select)	積み重ね (1/2 と入力して選択)
+	Standard	標準
+	Start	開始
+	Start Width	開始幅
+	Start X	始点 X
+	Start Y	始点 Y
+	Start angle	開始角度
+	Start, Center, Angle	始点、中心、角度
+	Start, Center, End	始点、中心、終点
+	Start, Center, Length	始点、中心、長さ
+	Start, End, Angle	始点、終点、角度
+	Start, End, Direction	始点、終点、方向
+	Start, End, Radius	始点、終点、半径
+	Status	状態
+	Status Bar	ステータスバー
+	Stretch	ストレッチ
+	Style: Standard	スタイル: Standard
+	Subtract	差
+	Sweep	スイープ
+	Switch Drawing	図面を切り替え
+	Switch Layout	レイアウトを切り替え
+	Switch between model space in a viewport and paper space	ビューポート内のモデル空間とペーパー空間を切り替え
+	Symmetric	対称
+	Synchronize Attributes	属性を同期
+	To	終点
+	Toggle PICKADD (off: each pick replaces the selection)	PICKADD を切り替え (オフ: 選択するたびに選択セットが置き換わる)
+	Toggle PICKADD (on: picks add to the selection)	PICKADD を切り替え (オン: 選択したものが選択セットに追加される)
+	TOP	上面
+	Table	表
+	Table Breaks	表の分割
+	Table Cell Style	表のセルスタイル
+	Table Style...	表スタイル...
+	Table style	表スタイル
+	Table...	表...
+	Tan, Tan, Radius	接線、接線、半径
+	Tan, Tan, Tan	接線、接線、接線
+	Tangent	接線
+	Temporary track point	一時トラッキング点
+	Text	文字
+	Text Editor	文字エディタ
+	Text Height	文字の高さ
+	Text Style...	文字スタイル...
+	Text height	文字の高さ
+	Text override	文字の優先
+	Text style	文字スタイル
+	Thaw All Layers	すべての画層をフリーズ解除
+	Thaw Layer	画層をフリーズ解除
+	There is nothing here yet.	ここにはまだ何もありません。
+	Thickness	厚さ
+	Time	時間
+	To get started, create or open a drawing.	始めるには、図面を新規作成するか開いてください。
+	Tool Bar	ツールバー
+	Tool Sets	ツールセット
+	Tools	ツール
+	Torus	トーラス
+	Trace	トレース
+	Track orthogonally only	直交方向のみトラッキング
+	Track using all polar angle settings	すべての極角度設定でトラッキング
+	Transparency	透過性
+	Trim	トリム
+	True Color	トゥルーカラー
+	Turn All Layers On	すべての画層をオン
+	Turn Off Layer	画層をオフ
+	Turn On Layer	画層をオン
+	Turn Quick Properties off (QPMODE)	クイックプロパティをオフ (QPMODE)
+	Type	種類
+	Type a command	コマンドを入力
+	Type text; Enter starts a new paragraph	文字を入力。Enter で改段落
+	UCS Icon	UCS アイコン
+	Undo	元に戻す
+	Undo (⌘Z)	元に戻す (⌘Z)
+	Ungroup	グループ解除
+	Union	和
+	Unisolate Layer	画層の分離を解除
+	Units Conversion	単位変換
+	Units...	単位...
+	Unlock Layer	画層のロックを解除
+	Unlock viewport	ビューポートのロックを解除
+	Unmerge Cells	セルの結合を解除
+	Unsaved Layer State	未保存の画層状態
+	Up	上へ
+	Update Data Links	データリンクを更新
+	Update	更新
+	Use System Setting	システム設定を使用
+	User	ユーザ
+	User Parameters	ユーザパラメータ
+	Username	ユーザ名
+	Volume	体積
+	VP Color	VP色
+	VP Freeze	VPフリーズ
+	Value	値
+	Value:	値:
+	Variables	変数
+	Version	バージョン
+	Version 2000	バージョン 2000
+	Version 2004	バージョン 2004
+	Version 2007	バージョン 2007
+	Version 2010	バージョン 2010
+	Version 2013	バージョン 2013
+	Version 2018	バージョン 2018
+	Version {version}	バージョン {version}
+	Vertical	鉛直
+	VerticalDistance	鉛直距離
+	View	表示
+	ViewCube	ViewCube
+	Viewport	ビューポート
+	Viewport Layer Freeze	ビューポートの画層フリーズ
+	Viewport Properties	ビューポートのプロパティ
+	Viewport is locked	ビューポートはロックされています
+	Viewport scale	ビューポートの尺度
+	Viewport {id}	ビューポート {id}
+	Viewports	ビューポート
+	W	西
+	WCS ⌄	WCS ⌄
+	White	白
+	Width factor	幅係数
+	Window	ウィンドウ
+	Wipeout	ワイプアウト
+	Workspace Switching	ワークスペースの切り替え
+	Write Block	ブロック書き出し
+	Xline	構築線
+	Yellow	黄
+	Yes	はい
+	Zoom	ズーム
+	Zoom All	すべてズーム
+	Zoom Dynamic	ダイナミックズーム
+	Zoom Extents	範囲ズーム
+	Zoom In	拡大
+	Zoom Object	オブジェクトズーム
+	Zoom Out	縮小
+	Zoom Previous	前のズーム
+	Zoom Realtime	リアルタイムズーム
+	Zoom Window	窓ズーム
+	error	エラー
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (拘束 {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} 拘束 {name} = {expression}  (ダブルクリックで編集)
+	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	ƒx  New User Parameter	ƒx  新規ユーザパラメータ
+	ΔLOC	Δ行数
+	−Bin	−バイナリ
+	−LOC	−行数
+	⌘↩ to finish	⌘↩ で完了
+@plural	{n} commit	{n} コミット
+@plural	{n} contributor	{n} 人の貢献者
+	Drawing as bytes	図面のバイト列
+	Services	サービス
+	Hide CADCraft	CADCraft を隠す
+	Hide Others	ほかを隠す
+	Accessibility	アクセシビリティ
+	Show System Cursor	システムカーソルを表示
+	Animation Effects	アニメーション効果
+	Animation effects	アニメーション効果
+	Import...	インポート...
+	Export...	エクスポート...
+	Batch Publish...	一括パブリッシュ...
+	Scale List...	尺度リスト...
+	Annotative Object Scale	異尺度対応オブジェクトの尺度
+	Add Current Scale	現在の尺度を追加
+	Delete Current Scale	現在の尺度を削除
+	Add/Delete Scales...	尺度を追加/削除...
+	Synchronize Multiple-scale Positions	複数尺度の位置を同期
+	Annotative Update	異尺度対応の更新
+	Show Annotative Objects	異尺度対応オブジェクトを表示
+	Current Scale Only	現在の尺度のみ
+	All Scales	すべての尺度
+	Drawing Recovery Manager...	図面修復管理...
+	Tolerance...	公差...
+	Add Vertex	頂点を追加
+	Remove Vertex	頂点を削除
+	Convert to Arc	円弧に変換
+	Convert to Line	線分に変換
+	Stretch Vertex	頂点をストレッチ
+	Edit Array	配列複写を編集
+	Close Array Editing	配列複写の編集を閉じる
+	Multiline...	複線...
+	Multiline Style...	複線スタイル...
+	Solid Editing	ソリッド編集
+	3D Mouse...	3Dマウス...
+	3D Mouse	3Dマウス
+	Calibrate 3D Mouse	3Dマウスを校正
+	3D Mouse Navigation	3Dマウスナビゲーション
+	3D mouse input is unavailable on this platform	このプラットフォームでは3Dマウスの入力を利用できません
+	No supported 3D mouse found	対応する3Dマウスが見つかりません
+	Release the 3D mouse to calibrate its resting position	3Dマウスから手を離して、静止位置を校正してください
+	3D mouse connected	3Dマウスが接続されました
+	3D mouse busy, possibly 3DxWare or missing device permissions	3Dマウスが使用中です (3DxWare が動作しているか、デバイスの権限がない可能性があります)
+	3D mouse disconnected	3Dマウスが切断されました
+	3D mouse input could not be started	3Dマウスの入力を開始できませんでした
+	Enable 3D mouse navigation	3Dマウスナビゲーションを有効にする
+	Pan sensitivity	画面移動の感度
+	Zoom sensitivity	ズームの感度
+	Reverse zoom direction	ズームの方向を反転
+	Calibrate	校正
+	Move sideways to pan; push/pull or twist to zoom.	横に動かすと画面移動、押す/引く/ひねるとズームします。
+	Left device button: zoom extents. Right device button: calibrate.	デバイスの左ボタン: 範囲ズーム。右ボタン: 校正。
+	More toolbar commands	ツールバーのその他のコマンド
+	Default save version	既定の保存バージョン
+	Automatic save every	自動保存の間隔
+	min	分
+	Automatic save file location	自動保存ファイルの場所
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	まだファイルのない図面は既定のバージョンで保存されます。0分にすると自動保存がオフになります。
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	時間で動作が変わる右クリック: すばやいクリックは Enter、長押しはメニューを開く
+	Turned off, a right-click while a command runs always opens the shortcut menu.	オフの場合、コマンド実行中の右クリックは常にショートカットメニューを開きます。
+	Hatch Pattern	ハッチングパターン
+	Search for pattern	パターンを検索
+	Run Script...	スクリプトを実行...
+	Query Texts	文字を照会
+	Hatch Pick	ハッチング選択
+# Hatch and Gradient dialog
+	Hatch and Gradient	ハッチングとグラデーション
+	Color 1	色 1
+	Color 2	色 2
+	Shape	形状
+	Curved	曲線
+	Spherical	球形
+	Hemispherical	半球形
+	Inverted	反転
+	Centered	中央
+	Hatch origin	ハッチングの原点
+	Use current origin	現在の原点を使用
+	Specified origin	指定した原点
+	Click to set new origin	クリックして新しい原点を設定
+	Default to boundary extents	既定は境界の範囲
+	Bottom left	左下
+	Bottom right	右下
+	Top left	左上
+	Top right	右上
+	Boundaries	境界
+	Add: Pick points	追加: 点を指定
+	Add: Select objects	追加: オブジェクトを選択
+	Boundaries picked: {n}	選択した境界: {n}
+	Associative	関連付け
+	Create separate hatches	個別のハッチングを作成
+	Island detection	島検出
+	Normal	通常
+	Outer	外側
+	Ignore	無視
+	Origin: {x}, {y}	原点: {x}, {y}
+	Sheet Books to PDF...	シートブックを PDF に...
+	Not a number or distance: {text}	数値または距離ではありません: {text}
+	Dynamic Block Data	ダイナミックブロックのデータ
+	Custom	カスタム
+	Dynamic Block Reference	ダイナミックブロック参照
+	Set Dynamic Property	ダイナミックプロパティを設定
+	Dynamic Block Grips	ダイナミックブロックのグリップ
+	Drag Dynamic Grip	ダイナミックグリップをドラッグ
+# Block Editor (BEDIT).
+	Save Block	ブロックを保存
+	Save Block As	ブロックに名前を付けて保存
+	Close Block Editor	ブロックエディタを閉じる
+	Unsaved changes	未保存の変更
+	Edit Block Definition	ブロック定義を編集
+	Block to create or edit	作成または編集するブロック
+	Open in Block Editor	ブロックエディタで開く
+	This drawing	この図面
+	contains authoring elements. Open in Block Editor?	にオーサリング要素が含まれています。ブロックエディタで開きますか?
+	New block	新規ブロック
+	Italic	斜体
+	Underline	下線
+	Overline	上線
+	Justify	両端揃え
+	Text color	文字の色
+	Click the ruler to add a tab stop, right-click to remove one	ルーラーをクリックするとタブ位置を追加、右クリックで削除
