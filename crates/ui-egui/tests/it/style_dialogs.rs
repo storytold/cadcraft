@@ -159,4 +159,24 @@ fn text_style_dialog_exposes_font_picker_and_updates_the_style_font() {
     h.run_steps(2);
     let combo = h.get_by_role_and_label(Role::ComboBox, "Font Name:");
     assert_eq!(combo.accesskit_node().value().as_deref(), Some("CADCraft Stroke"));
+
+    // Edits outside the dialog while it stays open invalidate the (uid, revision) in-use cache:
+    // a newly created unused style can be deleted until an MTEXT entity references it.
+    h.state_mut().run("style", json!({ "name": "Notes", "font": "ccpickertest-r.ttf", "current": false })).unwrap();
+    h.run_steps(2);
+    h.get_by_label("Notes").click();
+    h.run_steps(2);
+    assert!(!h.get_by_role_and_label(Role::Button, "Delete").accesskit_node().is_disabled());
+    h.state_mut().run("mtext", json!({ "at": [0.0, 0.0], "height": 2.5, "text": "Note", "style": "Notes" })).unwrap();
+    h.run_steps(2);
+    assert!(h.get_by_role_and_label(Role::Button, "Delete").accesskit_node().is_disabled());
+
+    // Switching drawings with the same number of styles uses the active drawing's (uid, revision):
+    // a newly created "Notes" in the second drawing is not in use even though it was in the first.
+    h.state_mut().session.new_drawing(false);
+    h.state_mut().run("style", json!({ "name": "Notes", "font": "ccpickertest-r.ttf", "current": false })).unwrap();
+    h.run_steps(2);
+    h.get_by_label("Notes").click();
+    h.run_steps(2);
+    assert!(!h.get_by_role_and_label(Role::Button, "Delete").accesskit_node().is_disabled());
 }

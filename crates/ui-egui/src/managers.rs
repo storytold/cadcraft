@@ -30,10 +30,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "battman" => "battman",
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
-        "style" | "st" => {
-            STYLE_GEN.fetch_add(1, Ordering::Relaxed);
-            "textstyle"
-        }
+        "style" | "st" => "textstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -320,12 +317,8 @@ struct Style {
     fields: Vec<Field>,
 }
 
-/// Bumped when STYLE opens its dialog or changes the drawing so used text styles are rescanned once.
-static STYLE_GEN: AtomicU32 = AtomicU32::new(0);
-
-fn cached_used_text_styles(ctx: &egui::Context, d: &cadcraft_doc::Drawing) -> std::sync::Arc<std::collections::HashSet<String>> {
-    type Entry = ((u32, usize), std::sync::Arc<std::collections::HashSet<String>>);
-    let key = (STYLE_GEN.load(Ordering::Relaxed), d.text_styles.len());
+fn cached_used_text_styles(ctx: &egui::Context, key: (u64, u64), d: &cadcraft_doc::Drawing) -> std::sync::Arc<std::collections::HashSet<String>> {
+    type Entry = ((u64, u64), std::sync::Arc<std::collections::HashSet<String>>);
     if let Some((k, used)) = temp::<Entry>(ctx, "style_used_cache")
         && k == key
     {
@@ -399,17 +392,18 @@ fn draw_text_style_preview(p: &egui::Painter, rect: egui::Rect, style: &cadcraft
 
 fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
-    let Ok(d) = app.session.doc() else {
+    let Ok(st) = app.session.state() else {
         no_drawing(ctx, "Text Style", open);
         return None;
     };
+    let d = &st.doc;
     let available = cadcraft_fonts::ttf::available_fonts();
     let mut all_styles: Vec<cadcraft_doc::TextStyle> = d.text_styles.clone();
     if all_styles.is_empty() {
         all_styles.push(cadcraft_doc::TextStyle::default());
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
-    let used_styles = cached_used_text_styles(ctx, d);
+    let used_styles = cached_used_text_styles(ctx, (st.uid, st.revision), d);
     let sel_key = "style_sel";
     let new_key = "style_new";
     let filter_key = "style_filter_in_use";
@@ -678,9 +672,6 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
 
     if close {
         *open = false;
-    }
-    if action.is_some() {
-        STYLE_GEN.fetch_add(1, Ordering::Relaxed);
     }
     set_temp(ctx, sel_key, sel);
     set_temp(ctx, new_key, new_name);
