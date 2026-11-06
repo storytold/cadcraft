@@ -938,7 +938,7 @@ mod tests {
     fn unknown_pattern_error_and_catalog_name_the_pat_file_route() {
         let mut s = Session::new();
         s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
-        let e = s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "GRAVEL" })).unwrap_err();
+        let e = s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "NOSUCHPAT" })).unwrap_err();
         assert!(e.to_string().contains("patternFile"), "{e}");
         let spec = specs().into_iter().find(|c| c.id == "hatch").unwrap();
         assert!(spec.params.contains("patternFile") && spec.params.contains("patternText"), "{}", spec.params);

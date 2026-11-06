@@ -16,8 +16,11 @@ exception is the ArtCraft brand in `docs/brand/`: ArtCraft trademarks, not open 
 Generated-in-code assets are original and have no file to list:
 - the UI icon set (`crates/ui-egui/src/icons.rs`);
 - the "CADCraft Stroke" single-stroke drafting font (`crates/fonts/src/stroke.rs`);
-- the standard linetype and hatch-pattern libraries (`crates/doc/src/library.rs`; industry-common
-  names, our own dash/spacing values);
+- the standard linetype and hatch-pattern libraries (`crates/doc/src/library.rs`,
+  `crates/doc/src/library/more_patterns.rs`; industry-common names for file compatibility; our own tiles,
+  dash and spacing values and our own descriptions of what each draws; the brick and block patterns use published unit
+  sizes (8 × 8 × 16 in concrete masonry unit, US modular brick, UK/ISO metric brick); the ISO02W100–ISO15W100 dash/gap
+  multiples are the line types ISO 128 publishes);
 - the colour index palette, generated from its structure (`crates/color/src/lib.rs`);
 - the sample drawings (`crates/engine/src/sample.rs`).
 

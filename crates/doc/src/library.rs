@@ -7,6 +7,7 @@
 use crate::{DashElement, Drawing, Linetype};
 
 pub mod files;
+mod more_patterns;
 
 /// The standard linetype library, defined in inches. Load it into a drawing with
 /// [`standard_linetypes_for`], which scales it for metric drawings.
@@ -98,6 +99,22 @@ fn pl(angle: f64, origin: (f64, f64), delta: (f64, f64), dashes: &[f64]) -> Patt
 
 /// The standard hatch pattern library.
 pub fn standard_patterns() -> Vec<HatchPattern> {
+    library().to_vec()
+}
+
+/// The standard hatch pattern library, built once, borrowed (callers that only read it, such as
+/// the name list, need no copy).
+pub fn library() -> &'static [HatchPattern] {
+    static LIBRARY: std::sync::OnceLock<Vec<HatchPattern>> = std::sync::OnceLock::new();
+    LIBRARY.get_or_init(|| {
+        let mut v = first_patterns();
+        v.extend(more_patterns::patterns_checked().0);
+        v
+    })
+}
+
+/// The library's first patterns; the rest are in [`more_patterns`].
+fn first_patterns() -> Vec<HatchPattern> {
     vec![
         HatchPattern { name: "SOLID", description: "Solid fill", lines: vec![] },
         HatchPattern { name: "ANSI31", description: "Iron, brick, stone masonry", lines: vec![pl(45.0, (0.0, 0.0), (0.0, 0.125), &[])] },
@@ -238,7 +255,7 @@ pub fn standard_patterns() -> Vec<HatchPattern> {
 }
 
 pub fn pattern(name: &str) -> Option<HatchPattern> {
-    standard_patterns().into_iter().find(|p| p.name.eq_ignore_ascii_case(name))
+    library().iter().find(|p| p.name.eq_ignore_ascii_case(name)).cloned()
 }
 
 /// The library pattern `name` as drawn in `d`. In a metric drawing (`MEASUREMENT` 1) every

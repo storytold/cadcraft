@@ -9,7 +9,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use cadcraft_doc::library::files::{UserPattern, parse_pat};
-use cadcraft_doc::library::{PatternLine, pattern, standard_patterns};
+use cadcraft_doc::library::{PatternLine, library, pattern, standard_patterns};
 use serde_json::{Value, json};
 
 use super::super::helpers::support_text;
@@ -39,7 +39,7 @@ pub(crate) fn lines_for(name: &str) -> Vec<PatternLine> {
 
 /// Every pattern name offered: the library's, then the loaded user patterns.
 pub(crate) fn names() -> Vec<String> {
-    let mut v: Vec<String> = standard_patterns().iter().map(|p| p.name.to_string()).collect();
+    let mut v: Vec<String> = library().iter().map(|p| p.name.to_string()).collect();
     v.extend(store().iter().map(|p| p.name.clone()));
     v
 }
@@ -136,7 +136,7 @@ pub(crate) fn run_patterns(_s: &mut Session, p: &Value) -> Result<Value> {
     };
     let user: Vec<Value> = store().iter().map(|p| json!({ "name": p.name, "description": p.description, "families": p.lines.len() })).collect();
     Ok(json!({
-        "standard": standard_patterns().iter().map(|p| p.name).collect::<Vec<_>>(),
+        "standard": library().iter().map(|p| p.name).collect::<Vec<_>>(),
         "user": user,
         "added": added,
         "warnings": warnings,
