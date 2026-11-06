@@ -74,7 +74,8 @@ impl DimGeometry {
     /// A typed diameter sign is written `%%c`, not ⌀ (U+2300), which no SHX font has, so other
     /// programs plot nothing for it, while every font draws `%%c` (#1645). A lone `%` right
     /// before it is written `%%%`, so it doesn't run into that code. `%%` codes already in the
-    /// text (`%%c`, `%%d`, `%%%`) are copied whole, so they aren't escaped again.
+    /// text (`%%c`, `%%d`, `%%%`) are copied whole, so they aren't escaped again; a `%%` right
+    /// before a typed sign is two literal signs and is written `%%%%%%`.
     pub fn mtext_contents(&self) -> String {
         let mut out = String::with_capacity(self.mtext.len() + 2);
         let mut chars = self.mtext.chars().peekable();
@@ -82,9 +83,15 @@ impl DimGeometry {
             match c {
                 '⌀' => out.push_str("%%c"),
                 '%' if chars.peek() == Some(&'%') => {
-                    out.push_str("%%");
                     chars.next();
-                    out.extend(chars.next());
+                    if chars.peek() == Some(&'⌀') {
+                        // `%%` before a typed sign is no code: two literal signs, written
+                        // `%%%` each, so the sign's `%%c` doesn't run into them.
+                        out.push_str("%%%%%%");
+                    } else {
+                        out.push_str("%%");
+                        out.extend(chars.next());
+                    }
                 }
                 '%' if chars.peek() == Some(&'⌀') => out.push_str("%%%"),
                 c => out.push(c),
