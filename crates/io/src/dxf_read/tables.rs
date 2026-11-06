@@ -286,8 +286,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             _ => {}
         }
     }
-    // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents),
-    // kept only for its view twist (see `cadcraft_engine::DocState`).
+    // One *Active viewport is no tiling: its single tile is not a configuration to switch to. Its
+    // view was kept in the HEADER pair as it was read (see `vport_record`), and the record stays
+    // only for its view twist (see `cadcraft_engine::DocState`).
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
 }
 
@@ -329,15 +330,28 @@ fn vport_record(d: &mut Drawing, t: &T) {
     let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
     // The view centre 12/22 is in display coordinates, whose origin is the view target 17/27/37.
     let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17, twist));
+    // A modern file keeps the view it was saved at in the first `*ACTIVE` record (12/22 centre,
+    // 40 height) as well as in the HEADER pair, and as with the snap and grid spacing the record
+    // is the newer of the two and wins (#1602). A record that leaves the centre out has no view
+    // to give -- `p` reads a missing coordinate as zero -- so the header pair stays.
+    let first_active = name.eq_ignore_ascii_case(VportConfig::ACTIVE) && !d.vports.iter().any(|c| c.is_active());
+    let centred = t.f(12).is_some() && t.f(22).is_some();
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
-    let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
-        && max.x > min.x + 1e-6
-        && max.y > min.y + 1e-6
-        && center.is_finite()
-        && height.is_finite()
-        && height > 0.0;
-    if name.is_empty() || !ok {
+    // One record carries two separate things: where the tile sits on the screen (10/11) and the
+    // view it shows (12/22, 40). They are judged apart, because a record can hold a usable view
+    // with a tile rectangle that is not usable -- a first `*ACTIVE` like that used to return
+    // before the view was read, so a file whose header has no view opened on the extent fit
+    // instead of where it was saved (noted in review).
+    let view_ok = center.is_finite() && height.is_finite() && height > 0.0;
+    let tile_ok = [min.x, min.y, max.x, max.y].into_iter().all(unit) && max.x > min.x + 1e-6 && max.y > min.y + 1e-6;
+    if name.is_empty() {
+        return;
+    }
+    if first_active && centred && view_ok {
+        d.header.set_saved_view(center, height);
+    }
+    if !view_ok || !tile_ok {
         return;
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
