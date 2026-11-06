@@ -74,6 +74,8 @@ pub const OPEN_RECENT: &str = "Open Recent";
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
 const RECENT_CLEAR: &str = "ui.recent.clear";
+/// Open a resource from the registered provider through the ordinary application command route.
+pub const PROVIDER_RECENT_OPEN: &str = "ui.provider.open";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -83,6 +85,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dock", "Arrange Panel", &[], None),
     ("ui.dock.reset", "Reset Panel Layout", &["Window", "Reset Panel Layout"], None),
     ("ui.open", "Open...", &[], Some("Cmd+O")),
+    (PROVIDER_RECENT_OPEN, "Open Provider File", &[], None),
     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
     ("ui.saveas", "Save As...", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
@@ -195,6 +198,15 @@ fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, S
         return Some(Ok(Value::Null));
     }
     None
+}
+
+fn run_provider_file_command(app: &mut CadApp, id: &str, params: &Value, no_path: bool) -> Option<Result<Value, String>> {
+    let result = match id {
+        PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
+        "ui.saveas" | "saveas" if no_path && app.file_providers.enabled() => crate::file_provider_app::save(app, true),
+        _ => return None,
+    };
+    Some(result)
 }
 
 fn run_preference_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -365,10 +377,29 @@ fn should_pick_file_path(id: &str, params: &Value) -> bool {
 /// content asks first. `None` lets the engine save. JSON calls carry params and never get here;
 /// they report the loss in their result instead.
 fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
+    if app.file_providers.enabled() {
+        return Some(crate::file_provider_app::save(app, false));
+    }
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
         return run_ui_command(app, "ui.saveas", &Value::Null);
     }
     app.hold_lossy_save().then_some(Ok(Value::Null))
+}
+
+fn run_settings_and_close_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = run_preference_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_ui_toggle_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_language_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_close_command(app, id, params) {
+        return Some(result);
+    }
+    None
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -382,16 +413,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(result) = run_recent_file_command(app, id) {
         return Some(result);
     }
-    if let Some(result) = run_preference_command(app, id, params) {
+    if let Some(result) = run_settings_and_close_command(app, id, params) {
         return Some(result);
     }
-    if let Some(result) = run_ui_toggle_command(app, id, params) {
-        return Some(result);
-    }
-    if let Some(result) = run_language_command(app, id, params) {
-        return Some(result);
-    }
-    if let Some(result) = run_close_command(app, id, params) {
+    if let Some(result) = run_provider_file_command(app, id, params, no_path) {
         return Some(result);
     }
     // FIND typed, or chosen from Edit ▸ Find..., opens the window; a JSON call carries `find`
@@ -763,8 +788,16 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 // Titles first, so a hovered title can take over before any menu is drawn.
                 let titles: Vec<egui::Response> = tree.iter().map(|(name, _)| ui.add(egui::Button::new(crate::i18n::menu(name)))).collect();
                 switch_on_hover(ui.ctx(), &titles);
-                for ((_, entries), title) in tree.iter().zip(&titles) {
+                for ((menu, entries), title) in tree.iter().zip(&titles) {
                     egui::Popup::menu(title).show(|ui| {
+                        if menu == "File" && app.file_providers.enabled() {
+                            let resource = ui.menu_button("Open Recent — file provider", |ui| app.file_providers.recent_ui(ui)).inner.flatten();
+                            if let Some(resource) = resource
+                                && app.run(PROVIDER_RECENT_OPEN, json!({"resource":resource})).is_ok()
+                            {
+                                ui.close();
+                            }
+                        }
                         for e in entries {
                             entry_ui(ui, e, &mut clicked);
                         }
