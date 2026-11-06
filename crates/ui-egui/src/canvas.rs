@@ -735,6 +735,24 @@ struct PromptClickContext<'a> {
     response: &'a egui::Response,
 }
 
+/// Whether the press-and-drag selection window ends this frame where it began, within egui's click
+/// distance on screen: a click that egui took for a drag (#2813).
+///
+/// egui calls a press a drag once it lasts longer than `max_click_duration` (0.8 s), and it times
+/// the press by frames. On a drawing that draws slowly, a quick click can come down in one frame and
+/// up in the next, more than 0.8 s later; so can a deliberate, slow click. The window that "drag"
+/// opened has no size and would select nothing.
+fn drag_window_is_a_click(app: &CadApp, ui: &egui::Ui, xf: &Xf, response: &egui::Response) -> bool {
+    if !app.canvas.drag_window || !response.drag_stopped_by(egui::PointerButton::Primary) {
+        return false;
+    }
+    let (Some(window), Some(end)) = (app.session.pending_window, ui.input(|i| i.pointer.interact_pos())) else {
+        return false;
+    };
+    let click_distance = ui.ctx().options(|o| o.input_options.max_click_dist);
+    xf.to_screen(window.corner).distance(end) <= click_distance
+}
+
 fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickContext<'_>) -> bool {
     // egui drops a click whose button comes up a few pixels from where it went down (a drag to it),
     // and eframe hands a slow frame's clicks over together, which egui reports as one.
@@ -869,7 +887,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.session.pending_window = None;
         app.canvas.drag_window = false;
     }
-    let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl;
+    // A click egui took for a drag because it lasted too long is a click (#2813): see
+    // `drag_window_is_a_click`. Its window, which never left the click, is dropped, and the click
+    // picks, or starts a click-click window in empty space, as a quick click there does.
+    let slow_click = !pressed_primary && drag_window_is_a_click(app, ui, &xf, &resp);
+    if slow_click {
+        app.session.pending_window = None;
+        app.canvas.drag_window = false;
+    }
+    let pressed_primary = (pressed_primary || slow_click) && !picked && !hatch_dialog && !idle_dbl;
     let key: CycleKey = (
         app.session.running.as_ref().map(|r| r.id.clone()),
         app.session.current_prompt().map(|p| p.message),
