@@ -252,6 +252,12 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, l);
             }
         }
+        // An OLE object's content is not drawn; its frame, from its two corner points, is.
+        EntityKind::Unknown(u) if u.is_ole_frame() => {
+            if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
+                b.polyline(ctx, rgb, lw, &q);
+            }
+        }
         EntityKind::Line(_) | EntityKind::Polyline3d(_) | EntityKind::Face3d(_) if !orbit.is_top() && draw_3d_wire(b, ctx, &e.kind, rgb, lw) => {}
         kind => {
             for prim in kind.prims() {

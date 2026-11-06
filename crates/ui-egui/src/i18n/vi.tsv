@@ -1461,6 +1461,9 @@ menu	Modify	Hiệu chỉnh
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
 	Copy All	Sao chép tất cả
 	Copy history output to clipboard	Sao chép lịch sử đầu ra vào bộ nhớ tạm
 	Close History Window (F2)	Đóng cửa sổ lịch sử (F2)

@@ -395,10 +395,12 @@ fn opened(s: &Session, i: usize, entities: bool) -> Value {
     let read_only = d.map(|st| st.read_only).unwrap_or(false);
     let lock_info = d.and_then(|st| st.lock_info.clone());
     let lock_holder = d.and_then(|st| st.lock_holder.clone());
+    // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
+    let saved_view = d.is_some_and(|st| crate::view::saved_view(&st.doc).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|st| st.doc.entity_count()), "warnings": warnings, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
+        json!({ "index": i, "entities": d.map(|st| st.doc.entity_count()), "warnings": warnings, "saved_view": saved_view, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
     } else {
-        json!({ "index": i, "warnings": warnings, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
     }
 }
 
@@ -851,7 +853,10 @@ const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
 
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`].
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`], nor
+/// another program's proxy entity whose class the file names: the DWG writes it with that class.
+/// Before 2013, or when its group 91 names no class of the file, the DWG leaves the proxy out and
+/// it is counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
@@ -868,7 +873,18 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
             if DWG_WRITES.contains(&u.dxf_type.as_str()) {
                 continue;
             }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.proxy_class(&u.tags).is_some() {
+                continue;
+            }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    // Another program's proxy objects (in the OBJECTS section) follow the same rule as its proxy
+    // entities: the DWG writer leaves them out before 2013, or when their class can't be named.
+    for o in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_PROXY_OBJECT")) {
+        if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
+            let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }

@@ -1256,6 +1256,9 @@ menu	Modify	수정
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	도면이 변경되었습니다. 창을 닫고 다시 여십시오.
 	Copy All	모두 복사
 	Copy history output to clipboard	명령 기록 클립보드 복사
 	Close History Window (F2)	명령 기록 닫기 (F2)

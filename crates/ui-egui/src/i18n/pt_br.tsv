@@ -1462,6 +1462,9 @@ menu	Dimension	Cota
 menu	Draw	Desenho
 menu	Modify	Modificar
 menu	View	Exibir
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	O desenho mudou. Feche a janela e abra-a novamente.
 	Copy All	Copiar tudo
 	Copy history output to clipboard	Copiar histórico para a área de transferência
 	Close History Window (F2)	Fechar janela de histórico (F2)

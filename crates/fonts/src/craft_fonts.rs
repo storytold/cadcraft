@@ -1,8 +1,8 @@
 //! Fonts from the optional craft-fonts build input (<https://github.com/storytold/craft-fonts>).
 //!
 //! Built with `CRAFT_FONTS_DIR=<craft-fonts checkout>`, `build.rs` embeds the fonts listed in its
-//! `fonts/manifest.txt` (web builds: only BIZ UDPGothic Regular, the Arabic faces and the Thai
-//! Regular faces). Without it [`CRAFT_FONTS`] is empty and nothing changes. The font table ([`crate::ttf`])
+//! `fonts/manifest.txt` (web builds: only BIZ UDPGothic Regular, the Arabic and Georgian faces and
+//! the Thai Regular faces). Without it [`CRAFT_FONTS`] is empty and nothing changes. The font table ([`crate::ttf`])
 //! lists the embedded fonts with the installed ones, under [`CraftFont::stem`]. A text style
 //! can name one (`BIZ UDPGothic`), and they are fallbacks for characters a text's font lacks.
 //! They are copied out of the binary only when first used.
@@ -85,6 +85,7 @@ mod tests {
                 Some("Arab") => '\u{0628}',
                 Some("Thai") => '\u{0E01}',
                 Some("Hang" | "Kore") => '가',
+                Some("Geor") => 'ა',
                 _ => 'A',
             };
             assert!(face.is_some_and(|x| x.has_glyph(sample)), "{} lacks {sample}", f.family);
