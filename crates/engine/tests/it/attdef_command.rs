@@ -130,7 +130,7 @@ fn the_prompts_are_autocads() {
     // A wrong answer, or a justification not available here, is asked again.
     for typed in ["X", "_A"] {
         s.cmdline(typed).unwrap();
-        assert!(s.prompt_text().contains("[Left/Center/Right/Align/Middle/Fit/TL/"), "{typed}: {}", s.prompt_text());
+        assert!(s.prompt_text().contains("[Left/Center/Right/Middle/TL/"), "{typed}: {}", s.prompt_text());
     }
     s.cmdline("_MC").unwrap();
     assert!(s.prompt_text().ends_with("Specify middle point of text:"), "{}", s.prompt_text());
