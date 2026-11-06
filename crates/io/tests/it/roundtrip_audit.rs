@@ -717,6 +717,24 @@ fn unknown_entities_in_model_paper_and_blocks_are_kept() {
 }
 
 #[test]
+fn unknown_entity_keeps_an_applications_own_102_group() {
+    let entities = ENTITIES.replace(
+        "0 ACME_WIDGET\n5 30\n",
+        "0 ACME_WIDGET\n5 30\n102 {ACME_DATA\n300 payload\n102 }\n102 {ACAD_REACTORS\n330 42\n102 }\n",
+    );
+    assert_ne!(entities, ENTITIES, "fixture edit");
+    let (_, a, b) = saves(&dxf(&[HEADER, TABLES, BLOCKS, &entities, OBJECTS].concat()));
+    for o in [&a, &b] {
+        let model = entity_by_text(o, "ACME_WIDGET", "widget-in-model");
+        assert_eq!(group(model, "ACME_DATA"), vec!["payload".to_string()]);
+        // Recognised groups are regenerated once, not copied beside the regenerated ones.
+        let opened = |name: &str| model.iter().filter(|t| t.code == 102 && t.str() == format!("{{{name}")).count();
+        assert_eq!(opened("ACME_DATA"), 1);
+        assert!(opened("ACAD_REACTORS") <= 1);
+    }
+}
+
+#[test]
 fn unknown_objects_in_named_and_nested_dictionaries_are_kept() {
     let (_, a, b) = saves(&fixture());
     for o in [&a, &b] {

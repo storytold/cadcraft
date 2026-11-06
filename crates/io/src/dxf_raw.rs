@@ -621,7 +621,9 @@ fn strip_entries(tags: &mut Vec<RawTag>) {
 
 /// An entity of a type CADCraft doesn't model, as read, with its handle, owner, space and layer
 /// from the drawing. Its reactors, extension dictionary and xdata are added by [`finish`] (they
-/// are kept with the drawing's other foreign data); its references are remapped there too.
+/// are kept with the drawing's other foreign data); its references are remapped there too. An
+/// application's own `102 {NAME` groups are kept as read, like those of unknown objects; the
+/// handles inside them are remapped by [`finish`] with the entity's other references.
 pub(crate) fn unknown_entity(u: &Unknown, e: &Entity, owner: &str, paper: bool) -> Vec<Tag> {
     let kind = up(&u.dxf_type);
     if STRUCTURAL.contains(&kind.as_str()) || u.dxf_type.trim() != u.dxf_type {
@@ -629,17 +631,37 @@ pub(crate) fn unknown_entity(u: &Unknown, e: &Entity, owner: &str, paper: bool) 
     }
     let mut out = vec![Tag::s(0, u.dxf_type.clone()), Tag::s(5, e.handle.hex()), Tag::s(330, owner)];
     let fixed = out.len();
-    let mut in_group = false;
+    // Inside a `102 {NAME` group: whether it is dropped (reactors and extension dictionary are
+    // written by `finish`) or kept as it is (an application's own group).
+    let mut in_group: Option<bool> = None;
     let mut owner_seen = false;
     let mut layer = false;
     let mut paper_done = !paper;
     for r in u.tags.iter().take_while(|r| r.code < 1000) {
-        match r.code {
-            102 => {
-                in_group = r.value.trim().starts_with('{');
-                continue;
+        if r.code == 102 {
+            let v = r.value.trim();
+            let skip = match in_group {
+                Some(skip) => skip,
+                // A stray `102 }` outside any group is dropped.
+                None => v.strip_prefix('{').is_none_or(|n| matches!(up(n).as_str(), "ACAD_REACTORS" | "ACAD_XDICTIONARY")),
+            };
+            if v.starts_with('{') && in_group.is_none() {
+                in_group = Some(skip);
+            } else if v == "}" {
+                in_group = None;
             }
-            _ if in_group => continue,
+            if !skip {
+                out.push(tag(r));
+            }
+            continue;
+        }
+        if let Some(skip) = in_group {
+            if !skip {
+                out.push(tag(r));
+            }
+            continue;
+        }
+        match r.code {
             5 | 67 => continue,
             330 if !owner_seen => {
                 owner_seen = true;
