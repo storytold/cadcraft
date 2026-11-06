@@ -2,7 +2,8 @@
 //! the text's location and width with a formatting toolbar (font, height, bold, italic,
 //! underline, overline, colour, alignment, lists, tabs) and a ruler for the paragraph's indents
 //! and tab stops. The text and its formats live in the engine's
-//! [`cadcraft_engine::mtext_edit::Formatted`]; this file only draws and forwards edits.
+//! [`cadcraft_engine::mtext_edit::Formatted`]; this file only draws and forwards edits. TEXTEDIT
+//! (and so a double-click) on an existing MTEXT opens it here with its contents (#842).
 
 use std::sync::Arc;
 
@@ -72,6 +73,9 @@ struct State {
     sel: (usize, usize),
     /// A caret position to set on the text box in the next frame (after a toolbar insertion).
     caret: Option<usize>,
+    /// The text box has had keyboard focus: it takes it once when the editor opens, so typing
+    /// goes into the text, not to the command line.
+    focused: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -91,7 +95,8 @@ fn color32(c: MTextColor) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
 
-/// Show the editor while MTEXT collects its text; clears its state when it isn't running.
+/// Show the editor while MTEXT, or TEXTEDIT on an MTEXT, collects its text; clears its state
+/// when neither is running.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mtext = app.session.editing_mtext();
     let asking = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point);
@@ -102,14 +107,17 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (rect, scale) = app.canvas.xf.map_or((ctx.content_rect(), 20.0), |x| (x.rect, x.scale.max(1e-6)));
     let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_else(|| {
-        let mut fmt = Formatted::default();
+        // An existing MTEXT (TEXTEDIT) starts with its contents and their formats.
+        let mut fmt = if mt.contents.is_empty() { Formatted::default() } else { Formatted::from_contents_with_height(&mt.contents, Some(mt.height)) };
         if let Some(f) = app.session.doc().ok().and_then(|d| d.text_style(&mt.style).map(|s| s.font.clone())) {
             // A family name, not a font file (`txt.shx`, `arial.ttf`).
             if !f.is_empty() && !f.contains('.') {
                 fmt.base_font = f;
             }
         }
-        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None }
+        // An existing text opens with the caret at its end.
+        let caret = (!fmt.is_empty()).then(|| fmt.len());
+        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret, focused: false }
     });
     let base_h = if mt.height > 0.0 { mt.height } else { 0.2 };
     let px = ((base_h * scale) as f32).clamp(MIN_PX, MAX_PX);
@@ -158,8 +166,12 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         Done::Ok => {
             ctx.data_mut(|d| d.remove::<State>(state_id()));
             // The editor holds the whole contents: one input, then Enter ends MTEXT's text entry.
+            // Emptied while editing an existing MTEXT: it keeps its text (Enter), as TEXTEDIT
+            // keeps it for an empty answer.
             if !st.fmt.is_empty() {
                 let _ = app.session.input(cadcraft_engine::Input::Text(st.fmt.to_contents()));
+            } else if app.session.running.as_ref().is_some_and(|r| r.id == "textedit") {
+                let _ = app.session.input(cadcraft_engine::Input::Enter);
             }
             if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);
@@ -248,7 +260,10 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         let mut h = cur.height.unwrap_or(base_h);
         if height_field(ui, &mut h, base_h) {
             let none = (h - base_h).abs() < 1e-9;
-            change(st, |c| c.height = (!none).then_some(h));
+            change(st, |c| {
+                c.height = (!none).then_some(h);
+                c.height_rel = None;
+            });
         }
         ui.separator();
         for (flag, label, tip) in [
@@ -507,9 +522,8 @@ fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
 /// MTEXT editor area with the formatted preview; restores a pending caret position before laying text out with `base_h`, `px`, `width` and the theme tokens.
 fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32, t: &Tokens) {
     let id = edit_id();
-    if let Some(at) = st.caret.take()
-        && let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), id)
-    {
+    if let Some(at) = st.caret.take() {
+        let mut s = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
         s.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
         s.store(ui.ctx(), id);
     }
@@ -568,9 +582,13 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
         .layouter(&mut layouter)
         .show(ui);
     out.response.response.clone().accessible_name(crate::tl!("Text"));
-    if !out.response.has_focus() && buf.is_empty() && st.fmt.is_empty() {
+    // On opening, and while the text is empty, the editor takes the focus; a field of the toolbar
+    // the user clicked keeps it.
+    let free = ui.memory(|m| m.focused().is_none());
+    if !out.response.has_focus() && (!st.focused || (buf.is_empty() && st.fmt.is_empty() && free)) {
         out.response.request_focus();
     }
+    st.focused = true;
     if out.response.changed() {
         let typing = st.typing.clone();
         st.fmt.set_text(&buf, &typing);
@@ -603,7 +621,8 @@ mod tests {
     /// Clicking Diameter inserts U+2300 into both the formatted text and `to_contents()`, selects it, and leaves no unnamed widget.
     #[test]
     fn diameter_insertion_keeps_real_text_and_renders_without_optional_fonts() {
-        let state = State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None };
+        let state =
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).with_context_setup(install_diameter_glyph).build_ui_state(
             |ui, state| {
                 toolbar(ui, state, 2.5);
@@ -620,10 +639,32 @@ mod tests {
         assert!(harness.unnamed_widgets().is_empty());
     }
 
+    /// With the text empty, a click on the height field keeps the focus there; the editor doesn't
+    /// take it back.
+    #[test]
+    fn an_empty_editor_leaves_the_focus_on_the_height_field() {
+        let state =
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
+        let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).build_ui_state(
+            |ui, state| {
+                toolbar(ui, state, 2.5);
+                text_box(ui, state, 2.5, 20.0, 1000.0, &Tokens::get());
+            },
+            state,
+        );
+        harness.run();
+        assert!(harness.ctx.memory(|m| m.has_focus(edit_id())), "the editor opens with the focus");
+        harness.get_by_role_and_label(Role::SpinButton, "Text height").click();
+        harness.run();
+        harness.run();
+        assert!(!harness.ctx.memory(|m| m.has_focus(edit_id())), "the height field keeps the focus");
+    }
+
     /// The ten toolbar controls listed in the test are found by semantic name under the harness's default bundled fonts, and no toolbar widget is unnamed.
     #[test]
     fn the_whole_toolbar_uses_bundled_glyphs_and_names_its_controls() {
-        let mut state = State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None };
+        let mut state =
+            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 120.0)).build_ui(move |ui| toolbar(ui, &mut state, 2.5));
         harness.run();
         for name in ["Left", "Center", "Right", "Justify", "Bulleted list", "Numbered list", "Insert tab", "Diameter", "Text color", "Font"] {
@@ -711,5 +752,75 @@ mod tests {
         let d = app.session.doc().unwrap();
         let found = d.model.iter().any(|e| matches!(&e.kind, cadcraft_engine::doc::EntityKind::MText(m) if m.contents == contents));
         assert!(found, "{contents}");
+    }
+
+    /// #842: TEXTEDIT on an existing MTEXT (what a double-click starts) opens it in the editor
+    /// with its text and formats; finishing writes the edited contents back to that MTEXT.
+    #[test]
+    fn textedit_opens_an_existing_mtext_with_its_contents() {
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let frame = |app: &mut CadApp| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(input.clone(), |ui| show(app, ui.ctx()));
+                out.textures_delta.clear();
+            }
+        };
+        app.run("mtext", serde_json::json!({ "at": [0, 20], "text": "{\\fArial|b1;first}\\Psecond", "height": 2.5, "width": 20 })).unwrap();
+        let h = app.session.doc().unwrap().model.last().unwrap().handle;
+        app.start("textedit");
+        let at = cadcraft_geom::Vec2::new(1.0, 19.0);
+        app.session.input(cadcraft_engine::Input::Point(at)).unwrap();
+        let m = app.session.editing_mtext().expect("an MTEXT to edit");
+        assert!(m.contents.contains("second"), "{}", m.contents);
+        frame(&mut app);
+        let st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open");
+        assert_eq!(st.fmt.text(), "first\nsecond");
+        assert!(st.fmt.fmt_at(0).bold && !st.fmt.fmt_at(7).bold, "formats kept");
+        let mut st = st;
+        st.fmt.set_text("first\nsecond\nthird", &CharFmt::default());
+        app.session.input(cadcraft_engine::Input::Text(st.fmt.to_contents())).unwrap();
+        frame(&mut app);
+        assert!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).is_none(), "editor closed");
+        match &app.session.doc().unwrap().entity(h).unwrap().kind {
+            cadcraft_engine::doc::EntityKind::MText(m) => assert!(m.contents.contains("third") && m.contents.contains("b1"), "{}", m.contents),
+            _ => panic!(),
+        }
+    }
+
+    /// A multileader's text with a relative height code (`\H2x;`) opens in the editor at twice
+    /// its text height, so saving it back keeps the bigger letters.
+    #[test]
+    fn a_relative_height_in_a_multileaders_text_is_kept() {
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let frame = |app: &mut CadApp| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(input.clone(), |ui| show(app, ui.ctx()));
+                out.textures_delta.clear();
+            }
+        };
+        app.run("mleader", serde_json::json!({ "points": [[16, -10], [20, -5]], "text": "{\\H2x;big} small" })).unwrap();
+        let (at, height) = app
+            .session
+            .doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| {
+                if let cadcraft_engine::doc::EntityKind::MLeader(m) = &e.kind { m.text.as_ref().map(|t| (t.insert.xy(), t.height)) } else { None }
+            })
+            .unwrap();
+        app.start("textedit");
+        app.session.input(cadcraft_engine::Input::Point(at + cadcraft_geom::Vec2::new(0.5, -0.05))).unwrap();
+        assert!(app.session.editing_mtext().is_some(), "the multileader's text is being edited");
+        frame(&mut app);
+        let st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open");
+        assert_eq!(st.fmt.text(), "big small");
+        let big = st.fmt.fmt_at(0).height.expect("the relative height is kept");
+        assert!((big - 2.0 * height).abs() < 1e-9, "{big} for a {height} text");
+        assert_eq!(st.fmt.fmt_at(5).height, None, "the rest keeps the text's height");
     }
 }
