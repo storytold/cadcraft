@@ -1165,3 +1165,339 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// A screen build for a window leaves out what lies away from it (on one thread and
+/// on all cores), keeps what crosses it, and a build with no window, or a plot, draws everything.
+#[test]
+fn a_screen_build_leaves_out_what_is_off_the_window() {
+    use cadcraft_geom::Bounds2;
+    let mut d = Drawing::new_imperial();
+    let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+    // 600 lines (enough for the parallel path) from x = 0 to x = 5990, one crossing the window's edge.
+    for i in 0..600 {
+        d.add(&Space::Model, Common::default(), line(f64::from(i) * 10.0)).unwrap();
+    }
+    let window = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(100.5, 5.0));
+    let screen = build(&d, &Space::Model, &Options { view: Some(window), ..Default::default() });
+    assert_eq!(screen.prims.len(), 11, "the lines at x = 0..100 (the one at 100 crosses the edge)");
+    assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), 600);
+    assert_eq!(build_plot(&d, &Space::Model, &Options { view: Some(window), ..Default::default() }).prims.len(), 600);
+    // One thread (few entities): the same rule.
+    let mut small = Drawing::new_imperial();
+    for x in [0.0, 50.0, 5000.0] {
+        small.add(&Space::Model, Common::default(), line(x)).unwrap();
+    }
+    assert_eq!(build(&small, &Space::Model, &Options { view: Some(window), ..Default::default() }).prims.len(), 2);
+}
+
+/// Bounds kept from the previous build are reused only for the same entities: a
+/// drawing changed between builds (an object added in the window, one moved into it) shows it.
+#[test]
+fn bounds_kept_between_builds_follow_edits() {
+    use cadcraft_geom::Bounds2;
+    let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+    let window = Some(Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(20.0, 5.0)));
+    let mut d = Drawing::new_imperial();
+    let far = d.add(&Space::Model, Common::default(), line(1000.0)).unwrap();
+    d.add(&Space::Model, Common::default(), line(0.0)).unwrap();
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 1);
+    let mut added = d.clone();
+    added.add(&Space::Model, Common::default(), line(10.0)).unwrap();
+    assert_eq!(build(&added, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 2);
+    // The far line moved into the window: a new entity value under the same handle.
+    let mut moved = added.clone();
+    assert!(moved.model.modify(far, |e| e.kind = line(5.0)));
+    assert_eq!(build(&moved, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 3);
+}
+
+/// A large block draws on screen only its entities near the build window (through
+/// the reference's transform), the whole block with no window or in a plot.
+#[test]
+fn a_large_block_draws_only_what_is_near_the_window() {
+    use cadcraft_geom::Bounds2;
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("SITE");
+    for i in 0..200u64 {
+        let x = i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(blk));
+    // Inserted at x = 1000, scaled 2: block line i lies at x = 1000 + 20 i.
+    let ins = cadcraft_doc::Insert {
+        block: "SITE".into(),
+        insert: Vec3::new(1000.0, 0.0, 0.0),
+        scale: Vec3::new(2.0, 2.0, 1.0),
+        rotation: 0.0,
+        attribs: vec![],
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    // World x 990..1105 holds block lines 0..=5 (the one at 1100 reaches 1102).
+    let window = Some(Bounds2::new(Vec2::new(990.0, -5.0), Vec2::new(1105.0, 5.0)));
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 6);
+    assert_eq!(build(&d, &Space::Model, &Options::default()).prims.len(), 200);
+    assert_eq!(build_plot(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 200);
+}
+
+/// A block's grid finds exactly the entities near an area, also when the block is
+/// one long thin row (every entity as tall as the whole block) and for entities far longer than a
+/// cell, and keeps block order.
+#[test]
+fn a_block_index_finds_the_entities_near_an_area() {
+    use cadcraft_geom::Bounds2;
+    let d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("ROW");
+    for i in 0..5000u64 {
+        let x = i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 5.0, 0.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    // One line along the whole row.
+    let long = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(50_000.0, 0.0, 0.0) });
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(9999), long));
+    let blk = std::sync::Arc::new(blk);
+    let ix = block_index(&d, &blk);
+    let near = ix.near(&Bounds2::new(Vec2::new(49_985.0, -1.0), Vec2::new(49_996.0, 1.0)));
+    assert_eq!(near, vec![4998, 4999, 5000], "the last two short lines and the long one, in block order");
+    assert!(ix.near(&Bounds2::new(Vec2::new(0.0, 10_000.0), Vec2::new(10.0, 10_010.0))).is_empty(), "nothing far off the row");
+}
+
+/// A large block's index is not reused after a block it references changes: what the
+/// nested block gained away from its old extents is drawn in the window.
+#[test]
+fn a_large_block_shows_what_an_edited_nested_block_gained() {
+    use cadcraft_geom::Bounds2;
+    let line = |x: f64, y: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, y, 0.0), b: Vec3::new(x + 1.0, y + 1.0, 0.0) });
+    let insert = |name: &str, y: f64| {
+        EntityKind::Insert(cadcraft_doc::Insert {
+            block: name.into(),
+            insert: Vec3::new(0.0, y, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        })
+    };
+    let mut d = Drawing::new_imperial();
+    let mut sub = cadcraft_doc::Block::new("SUB");
+    sub.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line(0.0, 0.0)));
+    d.blocks.insert("SUB".into(), std::sync::Arc::new(sub));
+    // SITE: 100 lines along y = 0 and, at y = 100, a reference to SUB.
+    let mut site = cadcraft_doc::Block::new("SITE");
+    for i in 0..100u64 {
+        site.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 10), line(i as f64 * 10.0, 0.0)));
+    }
+    site.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), insert("SUB", 100.0)));
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(site));
+    d.add(&Space::Model, Common::default(), insert("SITE", 0.0)).unwrap();
+    let window = Some(Bounds2::new(Vec2::new(395.0, 95.0), Vec2::new(420.0, 110.0)));
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 0);
+    // SUB now holds a line at x = 400: inside the window, far from SUB's old extents.
+    let mut edited = d.clone();
+    let mut sub = cadcraft_doc::Block::new("SUB");
+    sub.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line(400.0, 0.0)));
+    edited.blocks.insert("SUB".into(), std::sync::Arc::new(sub));
+    assert_eq!(build(&edited, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 1);
+}
+
+/// Bounds kept between builds depend on the content of the dimension and text styles,
+/// not only on how many there are.
+#[test]
+fn bounds_kept_between_builds_follow_style_edits() {
+    let d = Drawing::new_imperial();
+    let before = crate::pipeline::bounds_context(&d);
+    let mut dims = d.clone();
+    if let Some(s) = dims.dim_styles.first_mut() {
+        s.text_height *= 2.0;
+    }
+    assert_ne!(crate::pipeline::bounds_context(&dims), before, "a dimension style edit");
+    let mut texts = d.clone();
+    if let Some(s) = texts.text_styles.first_mut() {
+        s.height += 1.0;
+    }
+    assert_ne!(crate::pipeline::bounds_context(&texts), before, "a text style edit");
+    assert_eq!(crate::pipeline::bounds_context(&d.clone()), before, "an unchanged copy");
+}
+
+/// #2692 review: an MTEXT's box counts its paragraphs, not the lines wrapped at its width, so a
+/// long wrapped note zoomed onto its lower half is still drawn, at top level and inside a large
+/// block; so is an XLINE inside a large block whose other entities are far from the window.
+#[test]
+fn a_screen_build_keeps_what_its_estimated_bounds_would_leave_out() {
+    use cadcraft_geom::Bounds2;
+    let note = || {
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::ZERO,
+            height: 2.5,
+            width: 100.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "word ".repeat(600),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        })
+    };
+    // Well below the first paragraph's box, inside the wrapped text.
+    let window = Some(Bounds2::new(Vec2::new(0.0, -150.0), Vec2::new(100.0, -120.0)));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), note()).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the note draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole, "top level");
+    // Inside a large block: 100 short lines far from the window, the note and an XLINE.
+    let mut blk = cadcraft_doc::Block::new("NOTES");
+    for i in 0..100u64 {
+        let x = 10_000.0 + i as f64 * 10.0;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+        blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+    }
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), note()));
+    let xline = EntityKind::XLine(cadcraft_doc::RayLine { base: Vec3::new(10_000.0, -135.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(501), xline));
+    let mut b = Drawing::new_imperial();
+    b.blocks.insert("NOTES".into(), std::sync::Arc::new(blk));
+    let ins = cadcraft_doc::Insert {
+        block: "NOTES".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: vec![],
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    b.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let drawn = build(&b, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    let lines_left_out = build(&b, &Space::Model, &Options::default()).prims.len() - drawn;
+    assert_eq!(lines_left_out, 100, "only the far lines are left out; the note and the XLINE are drawn");
+}
+
+/// #2692 review: a multileader's text and a multiline attribute are measured like MTEXT (by
+/// paragraphs) but drawn wrapped, so zoomed onto the lower part of a long note they are still
+/// drawn, at top level and inside a large block.
+#[test]
+fn a_screen_build_keeps_wrapped_multileader_text_and_multiline_attributes() {
+    use cadcraft_geom::Bounds2;
+    let note = || cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "word ".repeat(600),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let mleader = || {
+        EntityKind::MLeader(cadcraft_doc::MLeader {
+            leaders: vec![vec![Vec3::new(-20.0, 10.0, 0.0)]],
+            landing: Vec3::ZERO,
+            dogleg: 0.0,
+            text: Some(note()),
+            style: "Standard".into(),
+            arrow_size: 1.0,
+            spline: false,
+            block: None,
+        })
+    };
+    let window = Some(Bounds2::new(Vec2::new(0.0, -150.0), Vec2::new(100.0, -120.0)));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), mleader()).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the multileader draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole, "multileader at top level");
+    // Inside a large block: 100 short lines far from the window and the multileader.
+    let far_lines = |blk: &mut cadcraft_doc::Block| {
+        for i in 0..100u64 {
+            let x = 10_000.0 + i as f64 * 10.0;
+            let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 1.0, 0.0) });
+            blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(i + 1), line));
+        }
+    };
+    let insert = |block: &str, attribs: Vec<cadcraft_doc::Attrib>| cadcraft_doc::Insert {
+        block: block.into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs,
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    let mut blk = cadcraft_doc::Block::new("NOTES");
+    far_lines(&mut blk);
+    blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(500), mleader()));
+    let mut b = Drawing::new_imperial();
+    b.blocks.insert("NOTES".into(), std::sync::Arc::new(blk));
+    b.add(&Space::Model, Common::default(), EntityKind::Insert(insert("NOTES", vec![]))).unwrap();
+    let drawn = build(&b, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    let left_out = build(&b, &Space::Model, &Options::default()).prims.len() - drawn;
+    assert_eq!(left_out, 100, "only the far lines are left out; the multileader is drawn");
+    // A reference to a block of far lines whose multiline attribute holds the note.
+    let mut blk = cadcraft_doc::Block::new("TAGS");
+    far_lines(&mut blk);
+    let text = cadcraft_doc::Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "word ".repeat(600),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let attrib = cadcraft_doc::Attrib {
+        tag: "NOTE".into(),
+        text: text.clone(),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: Some(cadcraft_doc::MultilineAttrib { mtext: note(), read_as: text.value.clone() }),
+        modes: Default::default(),
+    };
+    let mut a = Drawing::new_imperial();
+    a.blocks.insert("TAGS".into(), std::sync::Arc::new(blk));
+    a.add(&Space::Model, Common::default(), EntityKind::Insert(insert("TAGS", vec![attrib]))).unwrap();
+    let whole = build(&a, &Space::Model, &Options::default()).prims.len();
+    let drawn = build(&a, &Space::Model, &Options { view: window, ..Default::default() }).prims.len();
+    assert!(whole > 100, "the attribute draws");
+    assert_eq!(whole - drawn, 100, "only the far lines are left out; the multiline attribute is drawn");
+}
+
+/// #2692 review: a point measures as its position, but a sized figure (PDMODE 3, a cross of
+/// PDSIZE 10) reaches around it, so a point just outside the window whose cross reaches into it
+/// is still drawn; as a plain dot (PDMODE 0) it is left out.
+#[test]
+fn a_screen_build_keeps_a_point_whose_figure_reaches_the_window() {
+    use cadcraft_geom::Bounds2;
+    let window = Some(Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(100.0, 5.0)));
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("PDMODE", 3);
+    d.header.set_f64("PDSIZE", 10.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(103.0, 0.0, 0.0), angle: 0.0 })).unwrap();
+    let whole = build(&d, &Space::Model, &Options::default()).prims.len();
+    assert!(whole > 0, "the cross draws");
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), whole);
+    d.header.set_i64("PDMODE", 0);
+    assert_eq!(build(&d, &Space::Model, &Options { view: window, ..Default::default() }).prims.len(), 0, "a dot outside is left out");
+}

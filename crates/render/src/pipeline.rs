@@ -101,19 +101,38 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_context: None,
+    };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
+        // Worked out once per windowed screen build (model space, or a layout and the
+        // viewports in it) for the large blocks culled against the window.
+        if !plotting && opts.view.is_some() {
+            b.bounds_context = Some(bounds_context(d));
+        }
+        let shown = on_screen(d, store, opts, paper || plotting);
+        let shown_at = |i: usize| shown.as_ref().is_none_or(|s| s.get(i).copied().unwrap_or(true));
         #[cfg(not(target_arch = "wasm32"))]
         if !paper && !plotting && b.styles.is_none() && store.len() >= 2 * PARALLEL_CHUNK {
-            build_parallel(&mut b, d, store);
+            build_parallel(&mut b, d, store, &shown_at);
             return b.list;
         }
         let mut viewports = 0usize;
-        for e in store.iter() {
+        for (i, e) in store.iter().enumerate() {
+            if !shown_at(i) {
+                continue;
+            }
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
@@ -134,6 +153,149 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     b.list
 }
 
+/// Which top-level entities of a model-space screen build lie near enough to the
+/// build window (`opts.view`, the visible area with its pan margin) to be drawn; `None` draws
+/// everything (no window, a layout, a plot). The canvas rebuilds when the view leaves the window,
+/// so what is left out comes back as soon as it can be seen. Bounds are approximate (text boxes are
+/// estimated), so each is widened by a tenth of its size; an entity with no bounds is kept, and so
+/// is one whose bounds can fall far short of what is drawn (see [`super::blocks::estimated`]).
+/// On a 300 MB site plan the list no longer holds every primitive of the drawing at every zoom.
+fn on_screen(d: &Drawing, store: &cadcraft_doc::EntityStore, opts: &Options, everything: bool) -> Option<Vec<bool>> {
+    let window = opts.view.filter(|w| !everything && !w.is_empty() && w.width().is_finite() && w.height().is_finite())?;
+    let bounds = model_bounds(d, store);
+    Some(
+        bounds
+            .iter()
+            .map(|(b, estimated)| {
+                let size = b.width().max(b.height());
+                *estimated || b.is_empty() || !size.is_finite() || b.expand(size * 0.1).intersects(&window)
+            })
+            .collect(),
+    )
+}
+
+/// The bounds measured for the last drawing built, kept between builds: the canvas rebuilds its
+/// list at every zoom step and after every edit, and measuring a site plan's every insert anew
+/// costs more than the build it saves. Each entry holds its entity, so an edited entity's new
+/// allocation can never take the address of one still listed here.
+struct BoundsMemo {
+    /// What the bounds of an unchanged entity also depend on: the block definitions (held, so
+    /// compared by address), and a hash of layer visibility and annotation scale.
+    blocks: Vec<std::sync::Arc<cadcraft_doc::Block>>,
+    context: u64,
+    /// Each entity's bounds, and whether they are only an estimate that can fall short of what
+    /// is drawn (see [`super::blocks::estimated`]).
+    by_entity: std::collections::HashMap<usize, (std::sync::Arc<Entity>, Bounds2, bool)>,
+}
+
+/// Shared and never taken out: screen builds run in the background while the pointer picks, and
+/// a pick that found the memo missing would measure a site plan's huge block reference from
+/// scratch (about 0.9 s per mouse move on a 330 MB drawing).
+static BOUNDS_MEMO: std::sync::Mutex<Option<std::sync::Arc<BoundsMemo>>> = std::sync::Mutex::new(None);
+
+pub(crate) fn bounds_context(d: &Drawing) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for l in &d.layers {
+        (&l.name, l.on, l.frozen).hash(&mut h);
+    }
+    d.current_anno_scale().factor().to_bits().hash(&mut h);
+    d.anno_all_visible().hash(&mut h);
+    d.header.f64("DIMSCALE", 1.0).to_bits().hash(&mut h);
+    // Whether points draw as a sized figure decides whether they may be left out.
+    d.header.i64("PDMODE", 0).hash(&mut h);
+    d.header.f64("PDSIZE", 0.0).to_bits().hash(&mut h);
+    // Dimensions and text are measured with their styles, so an edited style changes the bounds
+    // of entities that did not change themselves: hash every style's content, not their count.
+    d.dim_styles.len().hash(&mut h);
+    d.text_styles.len().hash(&mut h);
+    {
+        use std::fmt::Write;
+        let mut w = HashWrite(&mut h);
+        for s in &d.dim_styles {
+            let _ = write!(w, "{s:?}");
+        }
+        for s in &d.text_styles {
+            let _ = write!(w, "{s:?}");
+        }
+    }
+    // The block definitions by address: a block's bounds include those of the blocks it
+    // references, so an edited nested block (a new allocation) must not reuse them. Whoever keeps
+    // bounds made in this state also holds these blocks, so no new block can take their addresses.
+    d.blocks.len().hash(&mut h);
+    for b in d.blocks.values() {
+        (std::sync::Arc::as_ptr(b) as usize).hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Feeds formatted text to a hasher without building a string.
+struct HashWrite<'a, H: std::hash::Hasher>(&'a mut H);
+
+impl<H: std::hash::Hasher> std::fmt::Write for HashWrite<'_, H> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// The bounds the last screen build measured for `e` (a model-space entity of this
+/// drawing state), if it measured them: picking an insert of a site-plan block then needs no new
+/// pass over the block. `None` when unknown (another drawing, or `e` not built yet).
+pub fn known_bounds(d: &Drawing, e: &Entity) -> Option<Bounds2> {
+    known_bounds_of(d)?.get(e)
+}
+
+/// The bounds the last screen build measured, checked against the drawing state
+/// once, for looking up many entities (the pick index measures every entity of model space on
+/// its first use: 1.2 s on a 330 MB drawing whose screen build had just measured them all).
+pub struct KnownBounds(std::sync::Arc<BoundsMemo>);
+
+impl KnownBounds {
+    /// The bounds measured for `e`, if the last screen build measured them.
+    pub fn get(&self, e: &Entity) -> Option<Bounds2> {
+        self.0.by_entity.get(&(e as *const Entity as usize)).map(|(_, b, _)| *b)
+    }
+}
+
+/// [`KnownBounds`] for this drawing state, `None` when the last screen build was of another.
+pub fn known_bounds_of(d: &Drawing) -> Option<KnownBounds> {
+    let context = bounds_context(d);
+    let m = BOUNDS_MEMO.lock().ok()?.clone()?;
+    let same_blocks = m.blocks.len() == d.blocks.len() && m.blocks.iter().zip(d.blocks.values()).all(|(a, b)| std::sync::Arc::ptr_eq(a, b));
+    (m.context == context && same_blocks).then_some(KnownBounds(m))
+}
+
+/// Bounds of model space's entities in store order, with whether each is only an estimate,
+/// measuring only those not measured for the previous build of the same drawing state
+/// ([`BoundsMemo`]).
+fn model_bounds(d: &Drawing, store: &cadcraft_doc::EntityStore) -> Vec<(Bounds2, bool)> {
+    let context = bounds_context(d);
+    let previous = BOUNDS_MEMO.lock().ok().and_then(|m| m.clone());
+    let same_blocks =
+        |m: &BoundsMemo| m.blocks.len() == d.blocks.len() && m.blocks.iter().zip(d.blocks.values()).all(|(a, b)| std::sync::Arc::ptr_eq(a, b));
+    let empty = std::collections::HashMap::new();
+    let old = previous.as_deref().filter(|m| m.context == context && same_blocks(m)).map_or(&empty, |m| &m.by_entity);
+    let mut cache = cadcraft_doc::BlockBoundsCache::default();
+    let mut estimated = std::collections::HashMap::new();
+    let mut by_entity = std::collections::HashMap::with_capacity(store.len());
+    let mut out = Vec::with_capacity(store.len());
+    for e in store.iter() {
+        let key = std::sync::Arc::as_ptr(e) as usize;
+        let (b, est) = match old.get(&key) {
+            Some((_, b, est)) => (*b, *est),
+            None => (cadcraft_doc::entity_bounds_cached(d, e, 0, &mut cache), super::blocks::estimated(d, e, &mut estimated, 0)),
+        };
+        by_entity.insert(key, (std::sync::Arc::clone(e), b, est));
+        out.push((b, est));
+    }
+    drop(previous);
+    if let Ok(mut m) = BOUNDS_MEMO.lock() {
+        *m = Some(std::sync::Arc::new(BoundsMemo { blocks: d.blocks.values().cloned().collect(), context, by_entity }));
+    }
+    out
+}
+
 /// Top-level entities per task when a display list is built on all cores.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const PARALLEL_CHUNK: usize = 256;
@@ -144,16 +306,28 @@ pub(crate) const PARALLEL_CHUNK: usize = 256;
 /// stopped blocking the UI) and after every edit; one core made both slow on real drawings. Plots, layouts and plot styles keep the one-thread
 /// path (they run once, and their pens and per-primitive layers are built along the way).
 #[cfg(not(target_arch = "wasm32"))]
-fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStore) {
+fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStore, shown: &dyn Fn(usize) -> bool) {
     use rayon::prelude::*;
-    let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
+    let ents: Vec<&std::sync::Arc<Entity>> = store.iter().enumerate().filter(|(i, _)| shown(*i)).map(|(_, e)| e).collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
-    let (opts, plotting) = (b.opts, b.plotting);
+    let (opts, plotting, bounds_context) = (b.opts, b.plotting, b.bounds_context);
+    // Left to the entities near the view, a site plan's heavy block references sit
+    // side by side and a few 256-entity chunks would hold nearly all the work; chunks of about a
+    // sixteenth of each core's share let the cores even it out between them.
+    let chunk = (ents.len() / rayon::current_num_threads().max(1).saturating_mul(16)).clamp(1, PARALLEL_CHUNK);
     let parts: Vec<DisplayList> = ents
-        .par_chunks(PARALLEL_CHUNK)
+        .par_chunks(chunk)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+                bounds_context,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
@@ -205,7 +379,16 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_context: None,
+    };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }
