@@ -72,6 +72,11 @@ pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &C
 /// The VPORT table: the `*Active` model space tiles (one viewport on the extents when there is no
 /// tiled configuration) and the saved configurations, each tile a record, the current one first.
 pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
+    // The view the drawing is saved at, so that reading a drawing and writing it back keeps it;
+    // a drawing that stores none is written on its extents. The fallback fits the width as well,
+    // through the aspect the record is written with: a drawing 100 wide and 10 tall otherwise got
+    // a view 11 tall, which shows a sliver of it, and a horizontal line got 1e-6 (#1602).
+    const ASPECT: f64 = 1.6;
     // An untiled view's twist: the lone `*Active` tile the editor keeps for it.
     let twist = d
         .vports
@@ -79,21 +84,37 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         .find(|c| c.is_active() && c.tiles.len() == 1)
         .and_then(|c| c.tiles.first())
         .map_or(0.0, |t| cadcraft_geom::norm_angle(t.twist));
-    // The extents fitted as the turned view sees them.
-    let (center, height) = if ext.is_empty() {
-        (Vec2::new(6.0, 4.5), 9.0)
-    } else if twist == 0.0 {
-        (ext.center(), (ext.height() * 1.1).max(1e-6))
-    } else {
-        let r = Bounds2::from_points(ext.corners().map(|p| p.rotate(twist)));
-        let height = r.height() * 1.1;
-        (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
+    let (center, height) = match d.header.saved_view() {
+        Some(v) => v,
+        None if ext.is_empty() => (Vec2::new(6.0, 4.5), 9.0),
+        None if twist == 0.0 => (ext.center(), (ext.height().max(ext.width() / ASPECT) * 1.1).max(1e-6)),
+        // The extents fitted as the turned view sees them.
+        None => {
+            let r = Bounds2::from_points(ext.corners().map(|p| p.rotate(twist)));
+            let height = r.height().max(r.width() / ASPECT) * 1.1;
+            (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
+        }
     };
-    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: 1.6, twist };
+    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
-    let mut records: Vec<(&str, &VportTile)> = match tiled {
-        Some(c) => c.tiles.iter().map(|t| (VportConfig::ACTIVE, t)).collect(),
-        None => vec![(VportConfig::ACTIVE, &single)],
+    // The first `*ACTIVE` record is the one a reader takes the view from, so it carries the saved
+    // view while keeping its own place on the screen and the tiles after it unchanged. Writing
+    // the stored tiles as they stand put the new view in HEADER and the old one here, and the
+    // read takes this one, so updating the view of a tiled drawing did not survive a round trip
+    // (noted in review).
+    //
+    // Only where there is a saved view to carry. `center` and `height` are the extents fallback
+    // when the header holds none, and a tiled drawing can hold none -- `-VPORTS` splits the
+    // current view into tiles without setting one -- so overriding regardless replaced a tile's
+    // own good view with that fallback, and the drawing opened on the extents instead of where
+    // its tile was (noted in review).
+    let saved = d.header.saved_view().is_some();
+    let first = tiled.and_then(|c| c.tiles.first()).map(|t| if saved { VportTile { center, height, ..*t } } else { *t });
+    let mut records: Vec<(&str, &VportTile)> = match (tiled, first.as_ref()) {
+        (Some(c), Some(first)) => {
+            std::iter::once((VportConfig::ACTIVE, first)).chain(c.tiles.iter().skip(1).map(|t| (VportConfig::ACTIVE, t))).collect()
+        }
+        _ => vec![(VportConfig::ACTIVE, &single)],
     };
     records.extend(d.vports.iter().filter(|c| !c.is_active() && !c.name.is_empty()).flat_map(|c| c.tiles.iter().map(|t| (c.name.as_str(), t))));
     let th = table_head(w, "VPORT", records.len());
