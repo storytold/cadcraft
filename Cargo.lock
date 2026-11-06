@@ -659,6 +659,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadcraft-collab"
+version = "0.17.0"
+dependencies = [
+ "cadcraft-doc",
+ "cadcraft-geom",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "cadcraft-color"
 version = "0.17.0"
 dependencies = [
