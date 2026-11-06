@@ -201,6 +201,19 @@ impl Session {
         self.lisp.envs.remove(&uid).unwrap_or_default()
     }
 
+    /// Drop a closed drawing's environment and its startup bookkeeping. Session-wide state
+    /// (APPLOAD'd files, `acad.lsp`) stays.
+    pub(crate) fn lisp_forget(&mut self, uid: u64) {
+        self.lisp.envs.remove(&uid);
+        self.lisp.autoloaded.remove(&uid);
+    }
+
+    /// Drop every drawing's environment (CLOSEALL).
+    pub(crate) fn lisp_forget_all(&mut self) {
+        self.lisp.envs.clear();
+        self.lisp.autoloaded.clear();
+    }
+
     fn lisp_env_put(&mut self, uid: u64, env: Env) {
         self.lisp.envs.insert(uid, env);
     }
