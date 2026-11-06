@@ -800,6 +800,22 @@ mod native {
         }
     }
 
+    /// Table style rows' text style handles from their names, else Standard. acadrust 0.6.6
+    /// writes a pre-R2010 row without a handle as null, which ZWCAD's AUDIT reports (#2871).
+    pub(super) fn table_style_text_styles(doc: &mut acadrust::CadDocument) {
+        let known: Vec<_> = doc.text_styles.iter().map(|ts| (ts.handle, ts.name.clone())).collect();
+        let standard = known.iter().find(|(_, n)| n.eq_ignore_ascii_case("Standard")).map(|(h, _)| *h);
+        for o in doc.objects.values_mut() {
+            let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+            for row in [&mut s.data_row_style, &mut s.header_row_style, &mut s.title_row_style] {
+                if row.text_style_handle.is_some_and(|h| known.iter().any(|(k, _)| *k == h)) {
+                    continue;
+                }
+                row.text_style_handle = known.iter().find(|(_, n)| n.eq_ignore_ascii_case(&row.text_style_name)).map(|(h, _)| *h).or(standard);
+            }
+        }
+    }
+
     /// The DXF names of an ASCII DXF's CLASS records, in CLASSES order: a proxy's class number
     /// (group 91) is 500 plus its class's place here (DXF Reference, ACAD_PROXY_OBJECT). Empty for
     /// one without a CLASSES section. `None` for a binary DXF, whose classes this doesn't read:
@@ -998,6 +1014,7 @@ mod native {
             current_dimstyle(&mut doc);
             add_variable_dictionary(&mut doc);
             current_text_style(&mut doc);
+            table_style_text_styles(&mut doc);
             current_layer(&mut doc);
             unwritten
         }))
@@ -1306,6 +1323,28 @@ mod tests {
         let _panic = PanicIn::at("convert");
         let err = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap_err();
         assert!(err.contains("the DXF to DWG conversion failed on this file"), "{err}");
+    }
+
+    /// Every table style row in the DWG points at a text style: the default AC1018 writer
+    /// writes a missing handle as null, which ZWCAD's AUDIT reports as invalid (#2871).
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn table_style_rows_get_a_text_style() {
+        // The DWG reader fills a null handle in again, so the check is on the document written.
+        // A DXF TABLESTYLE names its text style (group 7) without a handle, as CADCraft writes it.
+        let read = |dxf: Vec<u8>| acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf)).unwrap().read().unwrap();
+        let mut doc = read(acadrust::DxfWriter::new(&read(MINIMAL_DXF.into())).write_to_vec().unwrap());
+        native::table_style_text_styles(&mut doc);
+        let styles: Vec<_> = doc.text_styles.iter().map(|ts| ts.handle).collect();
+        let mut rows = 0;
+        for o in doc.objects.values() {
+            let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+            for row in [&s.data_row_style, &s.header_row_style, &s.title_row_style] {
+                assert!(row.text_style_handle.is_some_and(|h| styles.contains(&h)), "{}: {:?}", s.name, row.text_style_handle);
+                rows += 1;
+            }
+        }
+        assert!(rows > 0);
     }
 
     #[test]
