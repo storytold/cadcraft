@@ -79,15 +79,21 @@ impl Default for DevicePaper {
 impl DevicePaper {
     /// The paper with hostile values fixed: finite sizes within 1..=[`MAX_PAPER_MM`] mm
     /// (portrait), margins 0..=1000 mm that leave a printable area (else none), a name of at
-    /// most [`MAX_PLOTTER_NAME`] characters.
+    /// most [`MAX_PLOTTER_NAME`] characters. A sheet wider than tall is stored turned 90° and
+    /// its margins turn with it, so the printable area the caller measured against the sheet it
+    /// named is the one the stored portrait paper holds.
     pub fn sanitized(mut self) -> DevicePaper {
         let side = |v: f64| if v.is_finite() { v.clamp(1.0, MAX_PAPER_MM) } else { 1.0 };
         let (w, h) = (side(self.width), side(self.height));
-        self.width = w.min(h);
-        self.height = w.max(h);
         for m in &mut self.margins {
             *m = if m.is_finite() { m.clamp(0.0, 1000.0) } else { 0.0 };
         }
+        if w > h {
+            let [l, b, r, t] = self.margins;
+            self.margins = [b, r, t, l];
+        }
+        self.width = w.min(h);
+        self.height = w.max(h);
         let [l, b, r, t] = self.margins;
         if l + r >= self.width || b + t >= self.height {
             self.margins = [0.0; 4];
@@ -243,6 +249,9 @@ mod tests {
         assert_eq!(back.papers[1].margins, [0.0, 1000.0, 0.0, 5.0], "hostile margins clamped");
         let wide = DevicePaper { margins: [150.0, 0.0, 100.0, 0.0], ..DevicePaper::default() }.sanitized();
         assert_eq!(wide.margins, [0.0; 4], "margins wider than the paper are dropped");
+        let turned = DevicePaper { name: "Banner".into(), width: 400.0, height: 200.0, margins: [150.0, 0.0, 150.0, 0.0] }.sanitized();
+        assert_eq!((turned.width, turned.height), (200.0, 400.0), "portrait");
+        assert_eq!(turned.margins, [0.0, 150.0, 0.0, 150.0], "margins turn with the sheet");
         assert!(back.paper("a3 BORDERLESS").is_some());
         assert!(PlotterConfig::from_file_text("{}").is_err());
         assert!(PlotterConfig::from_file_text(r#"{"cadcraftPlotter": 1}"#).is_err(), "needs a name");

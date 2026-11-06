@@ -206,6 +206,30 @@ fn plotwindow_keeps_the_picked_window_for_the_plot_dialog() {
     assert!(s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 0]})).is_err());
 }
 
+#[test]
+fn paper_margins_are_checked_against_their_own_axis() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "png"})).unwrap();
+    let paper = |margins: Value| json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200, "margins": margins}});
+    // 250 mm of bottom + top margin leaves no printable height on a 200 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([0, 250, 0, 0]))).is_err());
+    // 300 mm of left + right margin still leaves 100 mm of printable width on a 400 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([150, 0, 150, 0]))).is_ok());
+    // The paper is stored portrait and the margins turn with it: the 100 x 200 printable area
+    // of the requested sheet stays 200 x 100 on the stored 200 x 400 one.
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!((banner["width"].as_f64().unwrap(), banner["height"].as_f64().unwrap()), (200.0, 400.0));
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+    // Setting the same sheet again without margins keeps them: the stored margins belong to the
+    // portrait sheet and turn back before the per-axis check.
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200}}))
+        .unwrap();
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+}
+
 /// Snap `raw` at the current prompt the way the canvas does, so a test sees the pick ORTHO and
 /// object snap would really produce.
 fn hover(s: &mut Session, raw: Vec2) -> Vec2 {
