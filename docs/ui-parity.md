@@ -168,7 +168,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Workspaces | Drafting & Annotation, 3D Modeling | no |
 | Browser panel layout storage | not applicable | Versioned, validated panel placement and visibility saved through the browser host; floating palettes remain embedded. Requires available browser storage and a completed host save; named workspaces and drawing persistence are separate. |
 | Options / Preferences dialog | many tabs | **no** (issue #23) |
-| Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); no CUI or tool palettes |
+| Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); Library palette (LIBRARY, Window ▸ Library): a folder of DXF/DWG block files, one group per sub-folder, click to insert; no CUI |
 | Themes | Dark, Light | Dark, Light, System (#179) |
 | Accessibility | VoiceOver basics | AccessKit through eframe; screen-reader coverage untested; magnifier issue #39; animation effects follow the OS setting (View ▸ Accessibility ▸ Animation Effects: System, On, Off) |
 
