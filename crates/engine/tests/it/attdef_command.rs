@@ -173,6 +173,50 @@ fn a_typed_height_is_a_distance() {
     assert_eq!(attdefs(&s)[0].text.height, 18.0);
 }
 
+fn multiline_check(a: &Attrib, contents: &str, plain: &str, at: (f64, f64), attach: u8) {
+    let m = a.multiline.as_ref().unwrap_or_else(|| panic!("not multiline: {a:?}"));
+    assert_eq!((a.text.value.as_str(), m.read_as.as_str(), m.mtext.contents.as_str()), (plain, plain, contents), "{a:?}");
+    assert_eq!((m.mtext.insert.x, m.mtext.insert.y, m.mtext.attach), (at.0, at.1, attach), "{a:?}");
+    assert!((m.mtext.height - a.text.height).abs() < 1e-12 && m.mtext.style.eq_ignore_ascii_case(&a.text.style), "{a:?}");
+}
+
+#[test]
+fn multiple_lines_makes_a_multiline_definition() {
+    let mut s = session();
+    s.cmdline("-attdef").unwrap();
+    s.cmdline("_M").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Invisible=N  Constant=N  Verify=N  Preset=N  Lock position=Y  Annotative=N  Multiple line=Y"));
+    for typed in ["", "LABEL", "Site", "SITE\\PNAME", "5,10", "", "0"] {
+        s.cmdline(typed).unwrap();
+    }
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(aflags(&s), 48, "Multiple lines is kept in AFLAGS");
+    multiline_check(&attdefs(&s)[0], "SITE\\PNAME", "SITE\nNAME", (5.0, 10.0), 7);
+    // Justified: the multiline text is attached to match, at the alignment point.
+    s.cmdline("(command \"_.-ATTDEF\" \"\" \"MID\" \"Hoi\" \"A\\\\PB\" \"_J\" \"_MC\" '(1.0 2.0) 2.5 0)").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    multiline_check(&attdefs(&s)[1], "A\\PB", "A\nB", (1.0, 2.0), 5);
+    // The JSON form.
+    s.execute("attdef", &json!({ "tag": "NOTE", "default": "ONE\\PTWO", "at": [3, 4], "multiline": true })).unwrap();
+    multiline_check(&attdefs(&s)[2], "ONE\\PTWO", "ONE\nTWO", (3.0, 4.0), 7);
+    // Written and read back multiline.
+    for name in ["m.dxf", "m.dwg"] {
+        let d = cadcraft_io::read(&cadcraft_io::write(s.doc().unwrap(), name).unwrap(), name).unwrap();
+        let defs: Vec<Attrib> = d.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None }).collect();
+        assert_eq!(defs.len(), 3, "{name}");
+        for (a, (contents, plain)) in defs.iter().zip([("SITE\\PNAME", "SITE\nNAME"), ("A\\PB", "A\nB"), ("ONE\\PTWO", "ONE\nTWO")]) {
+            let m = a.multiline.as_ref().unwrap_or_else(|| panic!("{name}: not multiline: {a:?}"));
+            assert_eq!((a.text.value.as_str(), m.mtext.contents.as_str()), (plain, contents), "{name}");
+        }
+    }
+    // Annotative still says it is not available, and changes no mode.
+    s.cmdline("-attdef").unwrap();
+    s.cmdline("_A").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Annotative attributes are not available yet."));
+    s.cancel();
+    assert_eq!(aflags(&s), 48);
+}
+
 #[test]
 fn the_modes_start_from_aflags() {
     // AFLAGS 0, not the default 16: Invisible toggled on gives 1, and nothing else.

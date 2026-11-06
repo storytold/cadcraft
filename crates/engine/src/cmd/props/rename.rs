@@ -121,9 +121,91 @@ pub(super) fn simple(s: &mut Session, table: &str, from: &str, to: &str) -> Resu
     repoint(d, &uses, &fix)
 }
 
+/// Whether `n` names no plot style of its own: ByLayer, ByBlock or nothing.
+fn logical_plot_style(n: &str) -> bool {
+    let n = n.trim();
+    n.is_empty() || n.eq_ignore_ascii_case("ByLayer") || n.eq_ignore_ascii_case("ByBlock")
+}
+
+/// Whether the current plot style (CPLOTSTYLE) or a layer or object of the drawing (model space,
+/// layouts, block definitions) is the named plot style `name`.
+pub(super) fn plot_style_used(d: &Drawing, name: &str) -> bool {
+    let name = name.trim();
+    !logical_plot_style(name)
+        && (d.header.str("CPLOTSTYLE", "ByLayer").trim().eq_ignore_ascii_case(name)
+            || d.layers.iter().any(|l| l.plot_style.trim().eq_ignore_ascii_case(name))
+            || d.model
+                .iter()
+                .chain(d.layouts.iter().flat_map(|l| l.entities.iter()))
+                .chain(d.blocks.values().flat_map(|b| b.entities.iter()))
+                .any(|e| e.common.plot_style.trim().eq_ignore_ascii_case(name)))
+}
+
+/// Rename a named plot style the drawing uses: the layers and objects that use it follow. Normal
+/// (every named table has it), ByLayer and ByBlock stay.
+pub(super) fn plot_style(s: &mut Session, from: &str, to: &str) -> Result<()> {
+    let (from, to) = (from.trim().to_string(), to.trim().to_string());
+    if !valid_name(&to) || logical_plot_style(&to) {
+        return Err(bad("rename", "invalid plot style name"));
+    }
+    if logical_plot_style(&from) || from.eq_ignore_ascii_case(cadcraft_doc::NORMAL_STYLE) {
+        return Err(bad("rename", format!("the {from} plot style cannot be renamed")));
+    }
+    let d = s.doc_mut()?;
+    if !plot_style_used(d, &from) {
+        return Err(bad("rename", format!("no plot style `{from}` is used in the drawing")));
+    }
+    if !to.eq_ignore_ascii_case(&from) && (to.eq_ignore_ascii_case(cadcraft_doc::NORMAL_STYLE) || plot_style_used(d, &to)) {
+        return Err(bad("rename", format!("a plot style `{to}` already exists")));
+    }
+    let is_old = |n: &str| n.trim().eq_ignore_ascii_case(&from);
+    if is_old(&d.header.str("CPLOTSTYLE", "ByLayer")) {
+        d.header.set_str("CPLOTSTYLE", &to);
+    }
+    for l in &mut d.layers {
+        if is_old(&l.plot_style) {
+            l.plot_style = to.clone();
+        }
+    }
+    let users = |st: &EntityStore| -> Vec<Handle> { st.iter().filter(|e| is_old(&e.common.plot_style)).map(|e| e.handle).collect() };
+    let mut hs = users(&d.model);
+    hs.extend(d.layouts.iter().flat_map(|l| users(&l.entities)));
+    for h in hs {
+        d.modify_entity(h, |e| e.common.plot_style = to.clone())?;
+    }
+    for block in d.blocks.values_mut() {
+        let hs = users(&block.entities);
+        if !hs.is_empty() {
+            let b = Arc::make_mut(block);
+            for h in hs {
+                b.entities.modify(h, |e| e.common.plot_style = to.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rename a named model space viewport configuration (VPORTS Save). The one shown, `*Active`,
+/// has no name to change.
+pub(super) fn vport(s: &mut Session, from: &str, to: &str) -> Result<()> {
+    let to = to.trim().to_string();
+    if !valid_name(&to) {
+        return Err(bad("rename", "invalid viewport configuration name"));
+    }
+    let d = s.doc_mut()?;
+    let named = |c: &cadcraft_doc::VportConfig, n: &str| !c.is_active() && c.name.eq_ignore_ascii_case(n.trim());
+    if !to.eq_ignore_ascii_case(from.trim()) && d.vports.iter().any(|c| named(c, &to)) {
+        return Err(bad("rename", format!("a viewport configuration `{to}` already exists")));
+    }
+    let c = d.vports.iter_mut().find(|c| named(c, from)).ok_or_else(|| bad("rename", format!("no viewport configuration `{}`", from.trim())))?;
+    c.name = to;
+    Ok(())
+}
+
 // ---------------- -RENAME prompts ----------------
 
-/// Prompt keyword, `rename` table (None: not available yet), noun.
+/// Prompt keyword, `rename` table (None: not available: CADCraft keeps no materials, which are
+/// for 3D rendering), noun.
 const TYPES: &[(&str, Option<&str>, &str)] = &[
     ("Block", Some("block"), "block"),
     ("Dimstyle", Some("dimstyle"), "dimension style"),
@@ -131,12 +213,12 @@ const TYPES: &[(&str, Option<&str>, &str)] = &[
     ("LType", Some("linetype"), "linetype"),
     ("Material", None, "material"),
     ("multileadeRstyle", Some("mleaderstyle"), "multileader style"),
-    ("Plotstyle", None, "plot style"),
+    ("Plotstyle", Some("plotstyle"), "plot style"),
     ("textStyle", Some("style"), "text style"),
     ("Tablestyle", Some("tablestyle"), "table style"),
     ("Ucs", Some("ucs"), "UCS"),
     ("VIew", Some("view"), "view"),
-    ("VPort", None, "viewport configuration"),
+    ("VPort", Some("vport"), "viewport configuration"),
 ];
 
 /// Keyword-only: spaces separate inputs.
@@ -159,6 +241,8 @@ fn exists(d: &Drawing, table: &str, name: &str) -> bool {
         "tablestyle" => any_named(d.table_styles.iter().map(|t| &t.name), name),
         "view" => any_named(d.views.iter().map(|t| &t.name), name),
         "ucs" => any_named(d.ucss.iter().map(|t| &t.name), name),
+        "plotstyle" => plot_style_used(d, name),
+        "vport" => d.vports.iter().any(|c| !c.is_active() && c.name.eq_ignore_ascii_case(name)),
         _ => true,
     }
 }
@@ -232,7 +316,7 @@ impl Interactive for RenameM {
                     return Ok(Step::Continue);
                 };
                 let Some(table) = table else {
-                    s.echo(format!("Renaming a {noun} is not available yet."));
+                    s.echo(format!("Renaming a {noun} is not available: CADCraft keeps no {noun}s."));
                     return Ok(Step::Done);
                 };
                 match super::run_rename(s, &json!({ "table": table, "from": old, "to": name })) {

@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params("{tag, prompt?, default?, at, height?, invisible?, multiline? (default is multiline text contents: \\P starts a new line)}")
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -432,7 +432,13 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let at = point_req("attdef", p, "at")?;
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
+    let mut k =
+        attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
+    if bool_or(p, "multiline", false)
+        && let EntityKind::AttDef(a) = &mut k
+    {
+        a.multiline = Some(attdef::multiline(&mut a.text));
+    }
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 

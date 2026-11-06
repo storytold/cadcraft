@@ -81,8 +81,84 @@ fn rename_prompts_type_old_and_new_name() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.doc().unwrap().layer("Newer").is_some());
     let n = s.log.len();
-    s.script("-RENAME VP a b\nLINE 0,0 2,0\n\n").unwrap();
+    s.script("-RENAME M a b\nLINE 0,0 2,0\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
-    assert!(s.log[n..].iter().any(|l| l.contains("not available yet")), "{:?}", &s.log[n..]);
+    assert!(s.log[n..].iter().any(|l| l.contains("Renaming a material is not available")), "{:?}", &s.log[n..]);
     assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 2);
+}
+
+/// Layer P and a line on it use plot style "Heavy"; a circle uses "Thin"; Heavy is current.
+fn plot_styled() -> Session {
+    let mut s = Session::new();
+    s.execute("layer.new", &json!({ "name": "P" })).unwrap();
+    s.execute("layer.set", &json!({ "name": "P", "plotStyle": "Heavy" })).unwrap();
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let l = s.doc().unwrap().model.last().unwrap().handle.hex();
+    s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap();
+    let c = s.doc().unwrap().model.last().unwrap().handle.hex();
+    s.execute("plotstyle", &json!({ "name": "Heavy", "handles": [l] })).unwrap();
+    s.execute("plotstyle", &json!({ "name": "Thin", "handles": [c] })).unwrap();
+    s.execute("plotstyle", &json!({ "name": "Heavy" })).unwrap();
+    s
+}
+
+/// The plot styles of layer P, of each object, and the current one.
+fn plot_styles(d: &Drawing) -> (String, Vec<String>, String) {
+    let layer = d.layer("P").unwrap().plot_style.clone();
+    let objects = d.model.iter().map(|e| e.common.plot_style.clone()).collect();
+    (layer, objects, d.header.str("CPLOTSTYLE", ""))
+}
+
+#[test]
+fn plot_styles_rename_with_their_layers_objects_and_the_current_style() {
+    let mut s = plot_styled();
+    let undo = s.state().unwrap().undo.len();
+    s.execute("rename", &json!({ "table": "plotstyle", "from": "heavy", "to": "Bold" })).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+    let want = ("Bold".to_string(), vec!["Bold".to_string(), "Thin".to_string()], "Bold".to_string());
+    assert_eq!(plot_styles(s.doc().unwrap()), want);
+    // The new name is written and read back with the layer and the objects (DXF: the DWG writer
+    // keeps no plot style names).
+    let d = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    let (layer, objects, _) = plot_styles(&d);
+    assert_eq!((layer, objects), (want.0.clone(), want.1.clone()));
+    // Refused: a name in use, Normal, ByLayer, an unused name, invalid names.
+    for (from, to) in [("Bold", "thin"), ("Bold", "Normal"), ("Normal", "X"), ("ByLayer", "X"), ("Nope", "X"), ("Bold", "a*b"), ("Bold", "ByBlock")] {
+        assert!(s.execute("rename", &json!({ "table": "plotstyle", "from": from, "to": to })).is_err(), "{from} -> {to}");
+    }
+    assert_eq!(plot_styles(s.doc().unwrap()), want);
+    // -RENAME at the command line: an unused old name is asked again.
+    s.script("-RENAME P Nope\nThin Fine\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(plot_styles(s.doc().unwrap()).1, ["Bold", "Fine"]);
+    s.undo().unwrap();
+    assert_eq!(plot_styles(s.doc().unwrap()).1, ["Bold", "Thin"]);
+}
+
+#[test]
+fn named_viewport_configurations_rename() {
+    let mut s = Session::new();
+    s.viewport_px = (1200.0, 800.0);
+    s.execute("-vports", &json!({ "option": "2", "arrangement": "vertical" })).unwrap();
+    s.execute("-vports", &json!({ "option": "save", "name": "Two" })).unwrap();
+    s.execute("-vports", &json!({ "option": "save", "name": "Other" })).unwrap();
+    let names = |d: &Drawing| -> Vec<String> { d.vports.iter().filter(|c| !c.is_active()).map(|c| c.name.to_uppercase()).collect() };
+    let undo = s.state().unwrap().undo.len();
+    s.execute("rename", &json!({ "table": "vport", "from": "two", "to": "Pair" })).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+    assert_eq!(names(s.doc().unwrap()), ["PAIR", "OTHER"]);
+    for (from, to) in [("Pair", "other"), ("Nope", "X"), ("*Active", "X"), ("Pair", "a<b")] {
+        assert!(s.execute("rename", &json!({ "table": "vport", "from": from, "to": to })).is_err(), "{from} -> {to}");
+    }
+    assert!(s.execute("vports.named", &json!({ "name": "pair" })).is_ok(), "the renamed configuration restores");
+    // -RENAME: an unknown old name is asked again.
+    s.script("-RENAME VP Nope\nOther Side\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(names(s.doc().unwrap()), ["PAIR", "SIDE"]);
+    for name in ["v.dxf", "v.dwg"] {
+        let d = cadcraft_io::read(&cadcraft_io::write(s.doc().unwrap(), name).unwrap(), name).unwrap();
+        let mut got = names(&d);
+        got.sort();
+        assert_eq!(got, ["PAIR", "SIDE"], "{name}");
+    }
 }

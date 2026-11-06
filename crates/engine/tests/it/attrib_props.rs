@@ -38,7 +38,7 @@ fn dash_attedit_sets_layer_and_colour_of_one_attribute() {
     for t in ["-attedit", "y", "", "T", "", "105,0", ""] {
         s.cmdline(t).unwrap();
     }
-    assert!(s.prompt_text().contains("[Value/Layer/Color/Next] <N>"), "{}", s.prompt_text());
+    assert!(s.prompt_text().contains("[Value/Position/Height/Angle/Style/Layer/Color/Next] <N>"), "{}", s.prompt_text());
     s.cmdline("l").unwrap();
     assert!(s.prompt_text().contains("Enter new layer name <0>"), "{}", s.prompt_text());
     // An unknown layer is refused and asked again.

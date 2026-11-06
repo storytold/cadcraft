@@ -1,15 +1,17 @@
 //! ATTEDIT / EATTEDIT: one block reference's attribute values, asked for one after another.
 //! -ATTEDIT: the attributes picked by block name, tag and value specifications, edited one at a
-//! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
+//! time (value, position, height, angle, text style, layer, colour) or by replacing a string in
+//! all of them. Attribute tags match in any case, as in AutoCAD.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::{AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
+use cadcraft_doc::{Attrib, AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
+use cadcraft_geom::Vec2;
 use serde_json::{Map, Value, json};
 
 use crate::cmd::curves::KW;
-use crate::cmd::machines::{SelOutcome, SelectPhase};
+use crate::cmd::machines::{SelOutcome, SelectPhase, number};
 use crate::cmd::qselect::wildcard;
-use crate::cmd::{CommandSpec, bad, str_param, targets};
+use crate::cmd::{CommandSpec, bad, point_param, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Longest attribute value a string replacement may produce (bytes).
@@ -27,7 +29,7 @@ pub(super) fn dash_attedit_spec() -> CommandSpec {
     CommandSpec::new("-attedit", "Global", run_global)
         .menu(&["Modify", "Object", "Attribute", "Global"])
         .alias(&["-ate", "atte"])
-        .params("{find, replace?, block?, tag?, value? (wildcard specifications, default *), handles? (default: every block reference in the current space)} → {changed}")
+        .params("{find?, replace?, position?: [x,y], height?, angle? (degrees), style? (find or one of position / height / angle / style is required), block?, tag?, value? (wildcard specifications, default *), handles? (default: every block reference in the current space)} → {changed}")
         .interactive(|_| Ok(Box::new(DashAtteditM::default())))
 }
 
@@ -145,6 +147,12 @@ fn set_value(text: &mut Text, value: String) {
         return;
     }
     text.value = value;
+    rebase(text);
+}
+
+/// Justified text is placed by its alignment point: equal XY points request the start point's
+/// recomputation on export. Left-baseline, aligned and fitted text keep their start point.
+fn rebase(text: &mut Text) {
     if !matches!((text.halign, text.valign), (HAlign::Left, VAlign::Baseline) | (HAlign::Aligned | HAlign::Fit, _))
         && let Some(anchor) = text.align_pt
     {
@@ -163,6 +171,125 @@ fn set_props(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&mut Attri
         }
     })?;
     Ok(())
+}
+
+/// A change to an attribute's text that -ATTEDIT makes one at a time.
+#[derive(Clone, Debug, PartialEq)]
+enum Reshape {
+    /// Move it so the point it is placed by (its justification point) lands here.
+    Position(Vec2),
+    Height(f64),
+    /// Rotation in radians counterclockwise from +X.
+    Angle(f64),
+    /// A text style the drawing has (its name as the drawing spells it).
+    Style(String),
+}
+
+/// Apply `r` to attribute `a`: its text and, for a multiline attribute, its multiline text.
+fn reshape(a: &mut Attrib, r: &Reshape) {
+    let t = &mut a.text;
+    let m = a.multiline.as_mut().map(|m| &mut m.mtext);
+    match r {
+        Reshape::Position(p) => {
+            let at = t.justify_point();
+            let (dx, dy) = (p.x - at.x, p.y - at.y);
+            if !(dx.is_finite() && dy.is_finite()) {
+                return;
+            }
+            t.insert.x += dx;
+            t.insert.y += dy;
+            if let Some(ap) = &mut t.align_pt {
+                ap.x += dx;
+                ap.y += dy;
+            }
+            if let Some(m) = m {
+                m.insert.x += dx;
+                m.insert.y += dy;
+            }
+        }
+        Reshape::Height(h) => {
+            t.height = *h;
+            if let Some(m) = m {
+                m.height = *h;
+            }
+        }
+        Reshape::Angle(r) => {
+            // Aligned and fitted text run from their start point to their end point: turn the
+            // end point about the start point.
+            if matches!(t.halign, HAlign::Aligned | HAlign::Fit)
+                && let Some(ap) = &mut t.align_pt
+            {
+                let len = t.insert.xy().dist(ap.xy());
+                let (x, y) = (t.insert.x + len * r.cos(), t.insert.y + len * r.sin());
+                if x.is_finite() && y.is_finite() {
+                    ap.x = x;
+                    ap.y = y;
+                }
+            }
+            t.rotation = *r;
+            if let Some(m) = m {
+                m.rotation = *r;
+            }
+        }
+        Reshape::Style(n) => {
+            t.style = n.clone();
+            if let Some(m) = m {
+                m.style = n.clone();
+            }
+        }
+    }
+    rebase(t);
+}
+
+/// Apply `r` to attribute `k` of block reference `h`; returns whether it changed.
+fn reshape_at(s: &mut Session, (h, k): (Handle, usize), r: &Reshape) -> Result<bool> {
+    let mut changed = false;
+    s.doc_mut()?.modify_entity(h, |e| {
+        if let EntityKind::Insert(ins) = &mut e.kind
+            && let Some(a) = ins.attribs.get_mut(k)
+        {
+            let before = (a.text.clone(), a.multiline.clone());
+            reshape(a, r);
+            changed = before != (a.text.clone(), a.multiline.clone());
+        }
+    })?;
+    Ok(changed)
+}
+
+/// The text of attribute `k` of block reference `h`.
+fn current_text(s: &Session, (h, k): (Handle, usize)) -> Option<Text> {
+    match &s.doc().ok()?.entity(h)?.kind {
+        EntityKind::Insert(ins) => ins.attribs.get(k).map(|a| a.text.clone()),
+        _ => None,
+    }
+}
+
+/// A text style the drawing has, as the drawing spells its name.
+fn style_named(s: &Session, name: &str) -> Result<String> {
+    let name = name.trim();
+    s.doc()?.text_style(name).map(|st| st.name.clone()).ok_or_else(|| EngineError::Other(format!("Cannot find text style \"{name}\".")))
+}
+
+/// The reshapes the JSON form asks for: `position`, `height`, `angle` (degrees), `style`.
+fn json_reshapes(s: &Session, p: &Value) -> Result<Vec<Reshape>> {
+    let cmd = "-attedit";
+    let mut v = Vec::new();
+    if p.get("position").is_some() {
+        v.push(Reshape::Position(point_param(p, "position").ok_or_else(|| bad(cmd, "`position` must be a point [x, y]"))?));
+    }
+    if let Some(h) = p.get("height") {
+        let h = h.as_f64().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| bad(cmd, "`height` must be a positive number"))?;
+        v.push(Reshape::Height(h));
+    }
+    if let Some(a) = p.get("angle") {
+        let a = a.as_f64().map(f64::to_radians).filter(|a| a.is_finite()).ok_or_else(|| bad(cmd, "`angle` must be a number of degrees"))?;
+        v.push(Reshape::Angle(a));
+    }
+    if let Some(n) = p.get("style") {
+        let n = n.as_str().ok_or_else(|| bad(cmd, "`style` must be a text style name"))?;
+        v.push(Reshape::Style(style_named(s, n).map_err(|e| bad(cmd, e.to_string()))?));
+    }
+    Ok(v)
 }
 
 /// The layer and colour attribute `k` of block reference `h` is drawn with: its own, else its
@@ -202,14 +329,33 @@ fn replace_all(s: &mut Session, items: &[(Handle, usize)], find: &str, with: &st
 }
 
 fn run_global(s: &mut Session, p: &Value) -> Result<Value> {
-    let find = str_param(p, "find").filter(|f| !f.is_empty()).ok_or_else(|| bad("-attedit", "`find` (a non-empty string) is required"))?;
-    let with = str_param(p, "replace").unwrap_or("");
+    let reshapes = json_reshapes(s, p)?;
+    let find = match p.get("find") {
+        None | Some(Value::Null) if !reshapes.is_empty() => None,
+        _ => Some(
+            str_param(p, "find")
+                .filter(|f| !f.is_empty())
+                .ok_or_else(|| bad("-attedit", "`find` (a non-empty string) is required, unless position, height, angle or style is given"))?
+                .to_string(),
+        ),
+    };
+    let with = str_param(p, "replace").unwrap_or("").to_string();
     let spec = |k| str_param(p, k).unwrap_or("*").to_string();
     let specs = Specs { block: spec("block"), tag: spec("tag"), value: spec("value") };
     let hs = if p.get("handles").is_some() || p.get("handle").is_some() { targets(s, p)? } else { all_in_space(s)? };
     let items = matching(s, &hs, &specs, true)?;
-    let (find, with) = (find.to_string(), with.to_string());
-    Ok(json!({ "changed": replace_all(s, &items, &find, &with)? }))
+    let mut n = 0usize;
+    for it in &items {
+        let mut changed = match &find {
+            Some(f) => edit(s, *it, |v| replaced(v, f, &with))?,
+            None => false,
+        };
+        for r in &reshapes {
+            changed |= reshape_at(s, *it, r)?;
+        }
+        n += usize::from(changed);
+    }
+    Ok(json!({ "changed": n }))
 }
 
 // ---------------- ATTEDIT / EATTEDIT ----------------
@@ -294,6 +440,10 @@ enum Stage {
     Option,
     ValueKind,
     NewValue,
+    Position,
+    Height,
+    Angle,
+    Style,
     Layer,
     Color,
     TrueColor,
@@ -372,9 +522,40 @@ impl Interactive for DashAtteditM {
             Stage::TagSpec => Prompt::new("Enter attribute tag specification", Accept::TEXT).default("*"),
             Stage::ValueSpec => Prompt::new("Enter attribute value specification", Accept::TEXT).default("*"),
             Stage::Select => Prompt::new("Select attributes", Accept::SELECT),
-            Stage::Option => Prompt::new("Enter an option", KW).kw(&["Value", "Layer", "Color", "Next"]).default("N"),
+            Stage::Option => {
+                Prompt::new("Enter an option", KW).kw(&["Value", "Position", "Height", "Angle", "Style", "Layer", "Color", "Next"]).default("N")
+            }
             Stage::ValueKind => Prompt::new("Enter type of value modification", KW).kw(&["Change", "Replace"]).default("R"),
             Stage::NewValue => Prompt::new("Enter new attribute value", Accept::TEXT),
+            Stage::Position => Prompt::new("Specify new text insertion point", Accept::POINT).default("no change"),
+            Stage::Height | Stage::Angle => {
+                let t = self.items.get(self.cur).and_then(|it| current_text(s, *it));
+                let height = self.stage == Stage::Height;
+                let msg = if height { "Specify new height" } else { "Specify new rotation angle" };
+                let cur = t.as_ref().map(|t| {
+                    if height {
+                        format!("{:.4}", t.height)
+                    } else {
+                        let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
+                        crate::units::format_angle(s.angle_settings().shown(t.rotation), au, ap)
+                    }
+                });
+                let mut p = Prompt::new(msg, Accept::POINT_OR_NUMBER);
+                if let Some(t) = &t {
+                    p = p.base(t.justify_point());
+                }
+                match cur {
+                    Some(c) => p.default(c),
+                    None => p,
+                }
+            }
+            Stage::Style => {
+                let p = Prompt::new("Enter new text style", Accept::TEXT);
+                match self.items.get(self.cur).and_then(|it| current_text(s, *it)) {
+                    Some(t) => p.default(t.style),
+                    None => p,
+                }
+            }
             Stage::Layer => {
                 let p = Prompt::new("Enter new layer name", Accept::TEXT);
                 match cur {
@@ -446,6 +627,10 @@ impl Interactive for DashAtteditM {
             }
             Stage::Option => match &i {
                 Input::Keyword(k) if k == "Value" => self.stage = Stage::ValueKind,
+                Input::Keyword(k) if k == "Position" => self.stage = Stage::Position,
+                Input::Keyword(k) if k == "Height" => self.stage = Stage::Height,
+                Input::Keyword(k) if k == "Angle" => self.stage = Stage::Angle,
+                Input::Keyword(k) if k == "Style" => self.stage = Stage::Style,
                 Input::Keyword(k) if k == "Layer" => self.stage = Stage::Layer,
                 Input::Keyword(k) if k == "Color" => self.stage = Stage::Color,
                 Input::Keyword(_) | Input::Enter => {
@@ -455,16 +640,36 @@ impl Interactive for DashAtteditM {
                     }
                     self.show_current(s);
                 }
-                Input::Text(t) => {
-                    let tl = t.trim().to_ascii_lowercase();
-                    let later = ["Position", "Height", "Angle", "Style"];
-                    return match later.iter().find(|k| !tl.is_empty() && k.to_ascii_lowercase().starts_with(&tl)) {
-                        Some(k) => Err(EngineError::Other(format!("{k} is not available yet."))),
-                        None => Err(invalid_keyword()),
-                    };
-                }
+                Input::Text(_) => return Err(invalid_keyword()),
                 _ => {}
             },
+            Stage::Position | Stage::Height | Stage::Angle | Stage::Style => {
+                // Enter keeps the attribute as it is; a refused answer asks again.
+                let at = self.items.get(self.cur).and_then(|it| current_text(s, *it)).map(|t| t.justify_point()).unwrap_or(Vec2::ZERO);
+                let r = match (self.stage, &i) {
+                    (_, Input::Enter) => None,
+                    (Stage::Position, Input::Point(p)) => Some(Reshape::Position(*p)),
+                    (Stage::Height, Input::Point(p)) => Some(Reshape::Height(at.dist(*p))),
+                    (Stage::Angle, Input::Point(p)) => Some(Reshape::Angle(at.angle_to(*p))),
+                    // A distance, as TEXT takes its height (1'6" in feet and inches, too).
+                    (Stage::Height, Input::Text(t)) => Some(Reshape::Height(number(t).unwrap_or(f64::NAN))),
+                    (Stage::Angle, Input::Text(t)) => Some(Reshape::Angle(s.angle_settings().direction(t).unwrap_or(f64::NAN))),
+                    (Stage::Style, Input::Text(t)) if t.trim().is_empty() => None,
+                    (Stage::Style, Input::Text(t)) => Some(Reshape::Style(style_named(s, t)?)),
+                    _ => return Ok(Step::Continue),
+                };
+                match &r {
+                    Some(Reshape::Height(h)) if !(h.is_finite() && *h > 0.0) => {
+                        return Err(EngineError::Other("Requires a positive height.".into()));
+                    }
+                    Some(Reshape::Angle(a)) if !a.is_finite() => return Err(EngineError::Other("Requires an angle.".into())),
+                    _ => {}
+                }
+                if let (Some(r), Some(it)) = (r, self.items.get(self.cur).copied()) {
+                    reshape_at(s, it, &r)?;
+                }
+                self.stage = Stage::Option;
+            }
             Stage::ValueKind => match &i {
                 Input::Keyword(k) if k == "Change" => self.stage = Stage::Find,
                 Input::Keyword(_) | Input::Enter => self.stage = Stage::NewValue,

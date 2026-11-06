@@ -1,8 +1,9 @@
 //! -ATTDEF at the command line, as AutoCAD 2024 runs it (accoreconsole): the attribute modes
 //! (kept in AFLAGS), the tag, prompt and default value (a constant attribute's value instead),
-//! then the text's point, justification, style, height and rotation.
+//! then the text's point, justification, style, height and rotation. With Multiple lines on, the
+//! value is multiline text: `\P` starts a new line.
 
-use cadcraft_doc::{AttribModes, HAlign, VAlign};
+use cadcraft_doc::{AttribModes, HAlign, MText, MultilineAttrib, VAlign};
 
 use super::{Accept, Attrib, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Text, Vec2, number, v3};
 use crate::cmd::curves::KW;
@@ -103,29 +104,74 @@ impl AttdefM {
     fn finish(&mut self, s: &mut Session, rotation: f64) -> Result<Step> {
         let (h, v) = self.justify;
         let left = h == HAlign::Left && v == VAlign::Baseline;
+        let mut text = Text {
+            insert: v3(self.at),
+            align_pt: if left { None } else { Some(v3(self.at)) },
+            height: self.height,
+            value: std::mem::take(&mut self.value),
+            rotation,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: self.style.clone(),
+            halign: h,
+            valign: v,
+        };
+        let multiline = (self.flags & MULTILINE != 0).then(|| multiline(&mut text));
         s.add_entity(EntityKind::AttDef(Attrib {
             tag: self.tag.to_uppercase(),
-            text: Text {
-                insert: v3(self.at),
-                align_pt: if left { None } else { Some(v3(self.at)) },
-                height: self.height,
-                value: std::mem::take(&mut self.value),
-                rotation,
-                width_factor: 1.0,
-                oblique: 0.0,
-                style: self.style.clone(),
-                halign: h,
-                valign: v,
-            },
+            text,
             invisible: self.flags & INVISIBLE != 0,
             constant: self.flags & CONSTANT != 0,
             prompt: std::mem::take(&mut self.prompt),
             props: Default::default(),
-            multiline: None,
+            multiline,
             modes: AttribModes { verify: self.flags & VERIFY != 0, preset: self.flags & PRESET != 0, lock_position: self.flags & LOCK != 0 },
         }))?;
         Ok(Step::Done)
     }
+}
+
+/// Longest multiline attribute contents (bytes) the plain text is made from.
+const MAX_CONTENTS: usize = 65_536;
+
+/// Make `text` a multiline attribute's: its value, read as multiline text contents (`\P` a new
+/// line), becomes the multiline text placed at its point with its justification, height,
+/// rotation and style; the value keeps the plain text. Returns the multiline text.
+pub(in crate::cmd) fn multiline(text: &mut Text) -> MultilineAttrib {
+    let mut contents = std::mem::take(&mut text.value);
+    if contents.len() > MAX_CONTENTS {
+        let mut end = MAX_CONTENTS;
+        while !contents.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        contents.truncate(end);
+    }
+    let plain = cadcraft_fonts::plain_mtext(&contents);
+    text.value = plain.clone();
+    // MTEXT attachment 1..=9: TL TC TR ML MC MR BL BC BR.
+    let col = match text.halign {
+        HAlign::Center | HAlign::Middle => 2,
+        HAlign::Right => 3,
+        _ => 1,
+    };
+    let row = match (text.halign, text.valign) {
+        (HAlign::Middle, _) | (_, VAlign::Middle) => 1,
+        (_, VAlign::Top) => 0,
+        _ => 2,
+    };
+    let mtext = MText {
+        insert: text.align_pt.unwrap_or(text.insert),
+        height: text.height,
+        width: 0.0,
+        attach: row * 3 + col,
+        rotation: text.rotation,
+        style: text.style.clone(),
+        contents,
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    MultilineAttrib { mtext, read_as: plain }
 }
 
 /// The justification's name in "Current text style: … Justify: …".
@@ -175,6 +221,9 @@ impl Interactive for AttdefM {
                         "Verify" => VERIFY,
                         "Preset" => PRESET,
                         "Lock position" => LOCK,
+                        "Multiple lines" => MULTILINE,
+                        // Annotative attributes scale with an annotative block: CADCraft's
+                        // annotation scaling has no attribute definitions yet.
                         _ => {
                             s.echo(format!("{k} attributes are not available yet."));
                             return Ok(Step::Continue);

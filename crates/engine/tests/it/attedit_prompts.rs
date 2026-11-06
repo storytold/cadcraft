@@ -83,14 +83,128 @@ fn dash_attedit_one_at_a_time_edits_the_selected_attributes() {
     let mut s = with_block();
     let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
     type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", ""]);
-    assert!(s.prompt_text().contains("[Value/Layer/Color/Next] <N>"), "{}", s.prompt_text());
-    // Unsupported options say so and keep the prompt.
-    s.cmdline("p").unwrap();
-    assert!(s.log.iter().any(|l| l.contains("Position is not available yet")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("[Value/Position/Height/Angle/Style/Layer/Color/Next] <N>"), "{}", s.prompt_text());
     type_lines(&mut s, &["v", "c", "b", "B", "v", "r", "replaced value", "n"]);
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(value(&s, h, "T"), "replaced value");
     assert_eq!(value(&s, h, "U"), "u");
+}
+
+fn text(s: &Session, h: Handle, tag: &str) -> cadcraft_doc::Text {
+    let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+    i.attribs.iter().find(|a| a.tag == tag).unwrap().text.clone()
+}
+
+#[test]
+fn dash_attedit_one_at_a_time_changes_position_height_angle_and_style() {
+    let mut s = with_block();
+    s.execute("style", &json!({ "name": "Notes" })).unwrap();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    let (before, u) = (text(&s, h, "T"), text(&s, h, "U"));
+    assert_eq!((before.insert.x, before.insert.y), (100.0, 1.0));
+    let undo = s.state().unwrap().undo.len();
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", ""]);
+    // Position: Enter keeps it, a point moves it there.
+    s.cmdline("p").unwrap();
+    assert!(s.prompt_text().contains("Specify new text insertion point <no change>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "p", "120,30"]);
+    // Height: a refused answer asks again; a distance is taken.
+    s.cmdline("h").unwrap();
+    assert!(s.prompt_text().contains("Specify new height <"), "{}", s.prompt_text());
+    type_lines(&mut s, &["0", "-2", "x"]);
+    assert!(s.prompt_text().contains("Specify new height"), "{}", s.prompt_text());
+    assert!(s.log.iter().any(|l| l.contains("Requires a positive height.")), "{:?}", s.log);
+    s.cmdline("4.5").unwrap();
+    // Angle, as AUNITS shows it.
+    s.cmdline("a").unwrap();
+    assert!(s.prompt_text().contains("Specify new rotation angle <0>"), "{}", s.prompt_text());
+    s.cmdline("30").unwrap();
+    // Style: an unknown one is refused and asked again.
+    s.cmdline("s").unwrap();
+    assert!(s.prompt_text().contains("Enter new text style <Standard>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["Nope", "notes", "n"]);
+    assert!(s.log.iter().any(|l| l.contains("Cannot find text style \"Nope\".")), "{:?}", s.log);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let t = text(&s, h, "T");
+    assert_eq!((t.insert.x, t.insert.y, t.height, t.style.as_str(), t.value.as_str()), (120.0, 30.0, 4.5, "Notes", "abc"));
+    assert!((t.rotation - 30f64.to_radians()).abs() < 1e-12, "{}", t.rotation);
+    assert_eq!(text(&s, h, "U"), u, "only the attribute being edited");
+    // The whole -ATTEDIT is one undo step.
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+    s.undo().unwrap();
+    assert_eq!(text(&s, h, "T"), before);
+
+    // Written and read back.
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "h", "3", "a", "90", "p", "110,20", "s", "Notes", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    for name in ["a.dxf", "a.dwg"] {
+        let d = cadcraft_io::read(&cadcraft_io::write(s.doc().unwrap(), name).unwrap(), name).unwrap();
+        let t = d
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                EntityKind::Insert(i) => i.attribs.iter().find(|a| a.tag == "T").map(|a| a.text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!((t.insert.x - 110.0).abs() < 1e-9 && (t.insert.y - 20.0).abs() < 1e-9, "{name}: {t:?}");
+        assert!((t.height - 3.0).abs() < 1e-9 && (t.rotation - 90f64.to_radians()).abs() < 1e-9, "{name}: {t:?}");
+        assert!(t.style.eq_ignore_ascii_case("Notes"), "{name}: {t:?}");
+    }
+}
+
+#[test]
+fn dash_attedit_moves_justified_text_by_its_alignment_point() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    // A middle-centre attribute definition, from -ATTDEF.
+    type_lines(&mut s, &["-attdef", "", "MC", "p", "v", "j", "mc", "5,5", "1", "0"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    s.execute("block", &json!({"name": "J", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+    let h = handle(&s.execute("insert", &json!({"name": "J", "at": [100, 0], "attribs": {"MC": "v"}})).unwrap());
+    type_lines(&mut s, &["-attedit", "y", "", "", "", "105,0", "", "p", "200,50", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let t = text(&s, h, "MC");
+    assert_eq!((t.justify_point().x, t.justify_point().y), (200.0, 50.0));
+}
+
+#[test]
+fn dash_attedit_json_changes_position_height_angle_and_style() {
+    let mut s = with_block();
+    s.execute("style", &json!({ "name": "Notes" })).unwrap();
+    let a = handle(&insert(&mut s, 100.0, json!({"T": "x"})));
+    let b = handle(&insert(&mut s, 200.0, json!({"T": "y"})));
+    let b_height = text(&s, b, "T").height;
+    let undo = s.state().unwrap().undo.len();
+    let r =
+        s.execute("-attedit", &json!({"tag": "t", "handles": [a.hex()], "position": [7, 8], "height": 2.5, "angle": 45, "style": "notes"})).unwrap();
+    assert_eq!(r["changed"], 1);
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+    let t = text(&s, a, "T");
+    assert_eq!((t.insert.x, t.insert.y, t.height, t.style.as_str()), (7.0, 8.0, 2.5, "Notes"));
+    assert!((t.rotation - 45f64.to_radians()).abs() < 1e-12);
+    assert_eq!(text(&s, b, "T").height, b_height, "only the given reference");
+    // Every reference of the block, with a value replacement in the same call.
+    let r = s.execute("-attedit", &json!({"tag": "T", "height": 9, "find": "y", "replace": "z"})).unwrap();
+    assert_eq!(r["changed"], 2);
+    assert_eq!((text(&s, a, "T").height, text(&s, b, "T").height, value(&s, b, "T")), (9.0, 9.0, "z".to_string()));
+    // Hostile or missing parameters are refused and change nothing.
+    for bad in [
+        json!({"height": 0}),
+        json!({"height": -1}),
+        json!({"height": "big"}),
+        json!({"angle": "x"}),
+        json!({"position": [1]}),
+        json!({"position": "nowhere"}),
+        json!({"style": "Nope"}),
+        json!({"style": 3}),
+        json!({}),
+        json!({"find": ""}),
+    ] {
+        assert!(s.execute("-attedit", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(text(&s, a, "T").height, 9.0);
 }
 
 #[test]
