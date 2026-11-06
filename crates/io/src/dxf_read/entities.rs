@@ -45,8 +45,8 @@ const VIEWPORT_DEFAULTS: &[(i32, f64)] = &[
 /// The group that goes with `code` in a coordinate pair (13/23, 14/24, 15/25).
 fn pair_of(code: i32) -> Option<i32> {
     match code {
-        13 | 14 | 15 => Some(code + 10),
-        23 | 24 | 25 => Some(code - 10),
+        13..=15 => Some(code + 10),
+        23..=25 => Some(code - 10),
         _ => None,
     }
 }
