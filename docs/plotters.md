@@ -16,12 +16,23 @@ The built-in devices come first:
 
 They offer the standard sizes:
 
-- ISO 216 A0–A6 and B0–B5
+- ISO 216 A0–A6 and B0–B6
+- JIS B4–B6 (JIS P 0138) by explicit name: `B4 (JIS)`/`JIS B4`, `B5 (JIS)`/`JIS B5` and
+  `B6 (JIS)`/`JIS B6` (257×364, 182×257 and 128×182 mm). The bare `B4`/`B5`/`B6` stay the ISO
+  sizes (250×353, 176×250 and 125×176 mm)
+- Japanese stationery: Japanese Postcard (はがき, 100×148 mm), Japanese Double Postcard (往復はがき,
+  148×200 mm), Japanese Envelope #3 (長形3号, 120×235 mm), Japanese Envelope Kaku #2 (角形2号,
+  240×332 mm) and 四六判 (127×188 mm)
 - ANSI A–E and Legal
 - ARCH A–E and E1
 
-ISO sheets have 5 mm margins. Inch sheets have quarter-inch (6.35 mm) margins. A page setup
-with the device `None` plots to PDF on the page setup's paper, as before.
+Metric sheets (ISO and JIS) have 5 mm margins, inch sheets have quarter-inch (6.35 mm) margins.
+A page setup with the device `None` plots to PDF on the page setup's paper, as before. Paper names
+resolve case-insensitively and ignore spaces, hyphens and parentheses (`B5 (JIS)`, `b5-jis`,
+`はがき`).
+
+`B4`/`B5` keep meaning the ISO sizes, so a drawing or caller that used them doesn't change; a plot
+that means JIS B4/B5 says `B4 (JIS)`/`B5 (JIS)`. A drawing keeps the sheet size it stored.
 
 User devices are files in our own format, kept in the `plotters` folder of the CADCraft
 settings directory:
