@@ -20,6 +20,7 @@ const COMPLEX: &str = "These regions are too complex to combine.";
 const INVALID: &str = "Region boundaries must contain finite, closed, non-degenerate curves.";
 const PRECISION: &str = "Region boundaries are too close to combine reliably at this scale.";
 
+/// Set operation applied to the filled sides of two region boundaries.
 #[derive(Clone, Copy, Debug)]
 pub enum Operation {
     Union,
@@ -28,6 +29,7 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// Whether the result contains a point with the given membership in each input area.
     fn filled(self, a: bool, b: bool) -> bool {
         match self {
             Self::Union => a || b,
@@ -40,6 +42,7 @@ impl Operation {
 struct Budget(usize);
 
 impl Budget {
+    /// Charge geometric work before doing it; exhaustion aborts the whole operation.
     fn spend(&mut self, n: usize) -> Result<(), &'static str> {
         self.0 = self.0.checked_sub(n).ok_or(COMPLEX)?;
         Ok(())
@@ -62,6 +65,7 @@ struct Edge {
 }
 
 impl Edge {
+    /// Build a normalized directed line or circular arc from its endpoints and signed bulge.
     fn new(a: Vec2, b: Vec2, bulge: f64) -> Result<Self, &'static str> {
         let round = if bulge.abs() < 1e-12 {
             None
@@ -72,11 +76,20 @@ impl Edge {
             if !center.is_finite() || !radius.is_finite() || radius <= TOL {
                 return Err(INVALID);
             }
+            // Center/radius evaluation and intersection tests subtract numbers at this
+            // magnitude to recover boundary coordinates. If their rounding uncertainty
+            // exceeds our normalized tolerance, missed crossings can classify a real
+            // overlap as empty and cause INTERSECT to erase both source regions.
+            let uncertainty = 32.0 * f64::EPSILON * (center.x.abs().max(center.y.abs()) + radius);
+            if uncertainty > TOL {
+                return Err(PRECISION);
+            }
             Some(Round { center, radius, start: center.angle_to(a), sweep: 4.0 * bulge.atan() })
         };
         Ok(Self { a, b, round })
     }
 
+    /// Evaluate a fraction of the edge, retaining the supplied endpoint coordinates exactly.
     fn at(self, t: f64) -> Vec2 {
         if t == 0.0 {
             return self.a;
@@ -90,6 +103,7 @@ impl Edge {
         }
     }
 
+    /// Unit direction along the edge at a fraction of its length.
     fn tangent(self, t: f64) -> Vec2 {
         match self.round {
             None => (self.b - self.a) / self.a.dist(self.b),
@@ -97,10 +111,12 @@ impl Edge {
         }
     }
 
+    /// Length in normalized drawing coordinates, including the full circular sweep.
     fn len(self) -> f64 {
         self.round.map_or_else(|| self.a.dist(self.b), |r| r.radius * r.sweep.abs())
     }
 
+    /// Parameter of the line projection or radial arc projection, possibly outside the edge.
     fn parameter(self, p: Vec2) -> f64 {
         match self.round {
             None => {
@@ -115,11 +131,13 @@ impl Edge {
         }
     }
 
+    /// Distance to the finite edge, using its ends when the projection falls outside it.
     fn distance(self, p: Vec2) -> f64 {
         let t = self.parameter(p);
         if (0.0..=1.0).contains(&t) { p.dist(self.at(t)) } else { p.dist(self.a).min(p.dist(self.b)) }
     }
 
+    /// Return a split parameter only when the point lies on this finite edge within `TOL`.
     fn on(self, p: Vec2) -> Option<f64> {
         if p.dist(self.a) <= TOL {
             return Some(0.0);
@@ -131,14 +149,17 @@ impl Edge {
         ((0.0..=1.0).contains(&t) && p.dist(self.at(t)) <= TOL).then_some(t)
     }
 
+    /// Restrict the edge to two ordered parameters without approximating its circular arc.
     fn part(self, t0: f64, t1: f64) -> Self {
         Self { a: self.at(t0), b: self.at(t1), round: self.round.map(|r| Round { start: r.start + r.sweep * t0, sweep: r.sweep * (t1 - t0), ..r }) }
     }
 
+    /// Reverse travel, including the sign and starting angle of an arc's sweep.
     fn reversed(self) -> Self {
         Self { a: self.b, b: self.a, round: self.round.map(|r| Round { start: r.start + r.sweep, sweep: -r.sweep, ..r }) }
     }
 
+    /// Polyline bulge for this edge's signed sweep, or zero for a line.
     fn bulge(self) -> f64 {
         self.round.map_or(0.0, |r| (r.sweep * 0.25).tan())
     }
@@ -171,6 +192,7 @@ impl Edge {
     }
 }
 
+/// Validate and normalize closed input loops before constructing their directed edges.
 fn edges(polys: &[Polyline], origin: Vec2, scale: f64) -> Result<Vec<Edge>, &'static str> {
     let mut out = Vec::new();
     for p in polys {
@@ -194,6 +216,7 @@ fn edges(polys: &[Polyline], origin: Vec2, scale: f64) -> Result<Vec<Edge>, &'st
     Ok(out)
 }
 
+/// Paired parameters for finite line/arc crossings and coincident edges' shared endpoints.
 fn cuts(a: Edge, b: Edge) -> Vec<(f64, f64)> {
     // Endpoints split collinear overlaps and coincident circular arcs, as well as T junctions.
     let mut points = vec![a.a, a.b, b.a, b.b];
@@ -226,11 +249,14 @@ fn cuts(a: Edge, b: Edge) -> Vec<(f64, f64)> {
     points.into_iter().filter_map(|p| Some((a.on(p)?, b.on(p)?))).collect()
 }
 
+/// Odd-parity containment across all input loops, charging each ray/edge test to the budget.
 fn contains(es: &[Edge], p: Vec2, budget: &mut Budget) -> Result<bool, &'static str> {
     budget.spend(es.len())?;
     Ok(es.iter().map(|e| e.crossings(p)).sum::<usize>() % 2 == 1)
 }
 
+/// Keep a boundary piece only if its two sides differ in result membership; orient it so
+/// filled area lies to the left. Probes stay clear of nearby noncoincident edges.
 fn retain(piece: Edge, a: &[Edge], b: &[Edge], op: Operation, budget: &mut Budget) -> Result<Option<Edge>, &'static str> {
     let mid = piece.at(0.5);
     let normal = piece.tangent(0.5).perp();
@@ -262,6 +288,7 @@ struct Nodes {
 }
 
 impl Nodes {
+    /// Reuse a node within `TOL`, checking adjacent spatial bins to avoid bin-edge cracks.
     fn insert(&mut self, p: Vec2, budget: &mut Budget) -> Result<usize, &'static str> {
         let q = p / TOL;
         // Leave room for neighbour-bin arithmetic; non-finite/saturating casts would alias
@@ -289,6 +316,8 @@ impl Nodes {
     }
 }
 
+/// Deduplicate coincident pieces, trace closed result loops with filled area to the left,
+/// and restore drawing coordinates. An open or ambiguous boundary returns a precision error.
 fn stitch(pieces: Vec<Edge>, origin: Vec2, scale: f64, budget: &mut Budget) -> Result<Vec<Polyline>, &'static str> {
     let mut nodes = Nodes::default();
     let mut graph: HashMap<usize, Vec<usize>> = HashMap::new();

@@ -39,6 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// Wrap a geometry or selection diagnostic in the engine command error type.
 fn other(m: impl Into<String>) -> EngineError {
     EngineError::Other(m.into())
 }
@@ -84,6 +85,7 @@ fn apply(s: &mut Session, keep: Handle, r: Region, erase: &[Handle]) -> Result<(
     Ok(())
 }
 
+/// Combine selected regions in memory, then apply the complete union or intersection once.
 fn fold(s: &mut Session, hs: &[Handle], op: Operation) -> Result<Value> {
     let rs = regions(s, hs)?;
     let Some(((h0, first), rest)) = rs.split_first() else { return Err(other("Select at least one region.")) };
@@ -99,21 +101,25 @@ fn fold(s: &mut Session, hs: &[Handle], op: Operation) -> Result<Value> {
     )
 }
 
+/// Run the JSON UNION form on explicit handles or the current selection.
 fn run_union(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     fold(s, &hs, Operation::Union)
 }
 
+/// Run the JSON INTERSECT form on explicit handles or the current selection.
 fn run_intersect(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     fold(s, &hs, Operation::Intersection)
 }
 
+/// Parse a required SUBTRACT handle array, rejecting malformed entries before editing.
 fn handles(p: &Value, key: &str) -> Result<Vec<Handle>> {
     let a = p.get(key).and_then(Value::as_array).ok_or_else(|| bad("subtract", format!("`{key}` (array of handles) is required")))?;
     a.iter().map(|v| super::super::curves::handle_value(v).ok_or_else(|| bad("subtract", format!("`{key}`: {v} is not a handle")))).collect()
 }
 
+/// Union the source regions, subtract each removal region, and apply only a complete result.
 fn subtract(s: &mut Session, from: &[Handle], remove: &[Handle]) -> Result<Value> {
     let (a, b) = (regions(s, from)?, regions(s, remove)?);
     let Some(((h0, first), rest)) = a.split_first() else { return Err(other("Select regions to subtract from.")) };
@@ -135,6 +141,7 @@ fn subtract(s: &mut Session, from: &[Handle], remove: &[Handle]) -> Result<Value
     )
 }
 
+/// Parse the two SUBTRACT handle lists before combining any region boundaries.
 fn run_subtract(s: &mut Session, p: &Value) -> Result<Value> {
     let (from, remove) = (handles(p, "from")?, handles(p, "remove")?);
     subtract(s, &from, &remove)

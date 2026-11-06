@@ -1,5 +1,6 @@
 use super::*;
 
+/// Make a counter-clockwise rectangle with a known analytic area.
 fn rect(x: f64, y: f64, w: f64, h: f64) -> Polyline {
     Polyline {
         vertices: [Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)].map(PolyVertex::new).to_vec(),
@@ -7,10 +8,12 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Polyline {
     }
 }
 
+/// Represent a circle exactly with two semicircular bulge edges.
 fn circle(x: f64, y: f64, r: f64) -> Polyline {
     Polyline { vertices: vec![PolyVertex::with_bulge(Vec2::new(x + r, y), 1.0), PolyVertex::with_bulge(Vec2::new(x - r, y), 1.0)], closed: true }
 }
 
+/// Reverse a closed loop and its bulges without changing the represented area.
 fn reverse(p: &Polyline) -> Polyline {
     let mut vertices = Vec::new();
     for i in (0..p.vertices.len()).rev() {
@@ -20,14 +23,17 @@ fn reverse(p: &Polyline) -> Polyline {
     Polyline { vertices, closed: true }
 }
 
+/// Signed sum of result loops: outer boundaries add area and holes subtract it.
 fn area(ps: &[Polyline]) -> f64 {
     ps.iter().map(Polyline::area).sum()
 }
 
+/// Compare areas with a relative tolerance and a small absolute floor.
 fn close(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-8 * b.abs().max(1.0), "{a} != {b}");
 }
 
+/// Boolean areas match analytic rectangle overlaps, including shared sides and corners.
 #[test]
 fn rectangles_cross_touch_and_coincide() {
     let a = rect(0.0, 0.0, 10.0, 10.0);
@@ -42,6 +48,7 @@ fn rectangles_cross_touch_and_coincide() {
     }
 }
 
+/// Coincident boundaries deduplicate even when only part of an edge is shared.
 #[test]
 fn shared_partial_edges_and_different_vertex_partitions() {
     let a = rect(0.0, 0.0, 10.0, 10.0);
@@ -53,6 +60,7 @@ fn shared_partial_edges_and_different_vertex_partitions() {
     assert!(combine(&[a], &[b], Operation::Difference).unwrap().is_empty());
 }
 
+/// Circle intersections match the analytic lens area with either input winding.
 #[test]
 fn circular_lens_keeps_exact_arcs_in_both_directions() {
     let a = circle(0.0, 0.0, 5.0);
@@ -67,6 +75,7 @@ fn circular_lens_keeps_exact_arcs_in_both_directions() {
     }
 }
 
+/// Clipping a circle preserves its arc and the exact line/circle crossing coordinates.
 #[test]
 fn circular_segment_crossings_are_analytic() {
     let a = circle(0.0, 0.0, 5.0);
@@ -80,6 +89,7 @@ fn circular_segment_crossings_are_analytic() {
     assert!(vs.iter().any(|v| v.bulge != 0.0));
 }
 
+/// Point contacts retain separate filled components; coincident circular boundaries cancel.
 #[test]
 fn tangent_circles_and_coincident_arcs() {
     let a = circle(0.0, 0.0, 5.0);
@@ -97,6 +107,7 @@ fn tangent_circles_and_coincident_arcs() {
     assert!(combine(&[a], &[b], Operation::Difference).unwrap().is_empty());
 }
 
+/// Boolean operations respect hole parity and can leave several disconnected outer loops.
 #[test]
 fn cut_holes_islands_and_disconnected_results() {
     let outer = rect(0.0, 0.0, 10.0, 10.0);
@@ -111,6 +122,7 @@ fn cut_holes_islands_and_disconnected_results() {
     close(area(&combine(&a, &[inside], Operation::Union).unwrap()), 64.0 + PI);
 }
 
+/// Normalization keeps the same known area at remote coordinates and different scales.
 #[test]
 fn translated_and_scaled_known_answers() {
     for (origin, scale) in [(1e7, 1.0), (0.0, 1e-6), (0.0, 1e50)] {
@@ -120,6 +132,7 @@ fn translated_and_scaled_known_answers() {
     }
 }
 
+/// Rotated circle pairs satisfy the analytic lens formula through containment and tangency.
 #[test]
 fn circle_pairs_at_many_angles_match_the_lens_formula() {
     for i in 0..24 {
@@ -145,6 +158,7 @@ fn circle_pairs_at_many_angles_match_the_lens_formula() {
     }
 }
 
+/// Rotating a circle/line tangency must neither open the result nor create spurious area.
 #[test]
 fn a_circle_touches_a_straight_side_at_arbitrary_angles() {
     for i in 0..24 {
@@ -161,6 +175,7 @@ fn a_circle_touches_a_straight_side_at_arbitrary_angles() {
     }
 }
 
+/// Concave outlines and arcs larger than a semicircle retain their known clipped areas.
 #[test]
 fn concave_boundaries_and_major_arcs() {
     let l = Polyline {
@@ -180,6 +195,7 @@ fn concave_boundaries_and_major_arcs() {
     close(area(&combine(&[major], &[clip], Operation::Intersection).unwrap()), 12.5 * PI);
 }
 
+/// Sweep rectangle placements through crossings and contacts with analytic overlap areas.
 #[test]
 fn many_known_rectangle_answers() {
     let a = rect(0.0, 0.0, 10.0, 10.0);
@@ -196,6 +212,7 @@ fn many_known_rectangle_answers() {
     }
 }
 
+/// Invalid numbers and excessive input or geometric work fail without panicking.
 #[test]
 fn hostile_inputs_and_work_limits_return_errors() {
     let a = rect(0.0, 0.0, 10.0, 10.0);
@@ -212,4 +229,47 @@ fn hostile_inputs_and_work_limits_return_errors() {
     // A modest-size pair whose crossings/classification could otherwise grow quadratically.
     let many: Vec<_> = (0..600).map(|i| rect(i as f64 * 2.0, 0.0, 1.0, 1.0)).collect();
     assert_eq!(combine(&many, &many, Operation::Union), Err(COMPLEX));
+}
+
+/// A near-straight arc can overlap a thin strip even when circle arithmetic misses the
+/// crossings. Reject unresolved geometry instead of reporting an empty intersection.
+#[test]
+fn ill_conditioned_arcs_return_precision_before_classification() {
+    for bulge in [1e-6, -1e-6, 1e-8, -1e-8, 1e-9, -1e-9, 1e-11, -1e-11] {
+        let a = Polyline {
+            vertices: vec![
+                PolyVertex::with_bulge(Vec2::new(0.0, 0.5), bulge),
+                PolyVertex::new(Vec2::new(1.0, 0.5)),
+                PolyVertex::new(Vec2::new(1.0, 1.0)),
+                PolyVertex::new(Vec2::new(0.0, 1.0)),
+            ],
+            closed: true,
+        };
+        let b = rect(0.01, 0.0, 0.1, 0.5 - 0.15 * bulge.abs());
+        for op in [Operation::Intersection, Operation::Union, Operation::Difference] {
+            assert_eq!(combine(std::slice::from_ref(&a), std::slice::from_ref(&b), op), Err(PRECISION), "{bulge}, {op:?}");
+        }
+    }
+}
+
+/// A shallow arc whose center and radius are still well conditioned must keep its bulge and
+/// the known circular-segment area, rather than being rejected or straightened.
+#[test]
+fn a_resolvable_shallow_arc_stays_curved() {
+    let bulge = 1e-3;
+    let a = Polyline {
+        vertices: vec![
+            PolyVertex::with_bulge(Vec2::new(0.0, 0.5), bulge),
+            PolyVertex::new(Vec2::new(1.0, 0.5)),
+            PolyVertex::new(Vec2::new(1.0, 1.0)),
+            PolyVertex::new(Vec2::new(0.0, 1.0)),
+        ],
+        closed: true,
+    };
+    let ps = combine(&[a], &[rect(-0.1, 0.0, 1.2, 0.5)], Operation::Intersection).unwrap();
+    assert_eq!(ps.len(), 1);
+    assert!(ps[0].vertices.iter().any(|v| v.bulge != 0.0));
+    // Circular-segment area for a unit chord: b/3 + b^3/15 + O(b^5).
+    let expected = bulge / 3.0 + bulge.powi(3) / 15.0;
+    assert!((area(&ps) - expected).abs() < 1e-10, "{} != {expected}", area(&ps));
 }

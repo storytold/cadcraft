@@ -7,10 +7,12 @@ use cadcraft_engine::Session;
 use cadcraft_geom::{PI, Vec2};
 use serde_json::{Value, json};
 
+/// Parse the handle returned by a command in the test drawing.
 fn h(v: &Value) -> Handle {
     Handle::parse_hex(v["handle"].as_str().unwrap()).unwrap()
 }
 
+/// Read a region and fail the test if the command replaced it with another object type.
 fn region(s: &Session, hd: Handle) -> Region {
     match &s.doc().unwrap().entity(hd).unwrap().kind {
         EntityKind::Region(r) => r.clone(),
@@ -18,6 +20,7 @@ fn region(s: &Session, hd: Handle) -> Region {
     }
 }
 
+/// Compare measured areas with a relative tolerance and a small absolute floor.
 fn near(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-6 * b.abs().max(1.0)
 }
@@ -148,6 +151,7 @@ fn booleans_on_separate_and_nested_regions() {
     assert_eq!(s.doc().unwrap().model.len(), 0);
 }
 
+/// Typed SUBTRACT uses separate source and removal selections to cut an interior hole.
 #[test]
 fn subtract_on_the_command_line() {
     let mut s = Session::new();
@@ -161,6 +165,7 @@ fn subtract_on_the_command_line() {
     assert_eq!(region(&s, a).loops.len(), 2);
 }
 
+/// Region boundaries remain usable by transforms, grips, snaps, selection and EXPLODE.
 #[test]
 fn regions_move_grip_explode_and_snap() {
     let mut s = Session::new();
@@ -192,6 +197,7 @@ fn regions_move_grip_explode_and_snap() {
     assert_eq!(d.model.iter().filter(|e| matches!(e.kind, EntityKind::Arc(_))).count(), 2);
 }
 
+/// Malformed command parameters and extreme imported coordinates never escape as panics.
 #[test]
 fn hostile_region_params_never_panic() {
     let mut s = Session::new();
@@ -236,6 +242,7 @@ fn overlapping_regions_boolean_areas_and_undo() {
     }
 }
 
+/// A clipped circular region keeps its analytic area and curved boundary through save and EXPLODE.
 #[test]
 fn overlapping_region_arcs_survive_explode_and_dxf() {
     let mut s = Session::new();
@@ -254,6 +261,7 @@ fn overlapping_region_arcs_survive_explode_and_dxf() {
     assert!(s.doc().unwrap().model.iter().any(|e| matches!(e.kind, EntityKind::Arc(_))));
 }
 
+/// Subtracting a crossing strip opens a hole and leaves two correctly classified outer pieces.
 #[test]
 fn overlapping_subtract_splits_a_region_with_a_hole() {
     let mut s = Session::new();
@@ -270,6 +278,7 @@ fn overlapping_subtract_splits_a_region_with_a_hole() {
     assert!(r.contains(Vec2::new(1.0, 5.0)) && r.contains(Vec2::new(9.0, 5.0)));
 }
 
+/// Typed UNION accepts two crossing regions and completes with the known union area.
 #[test]
 fn overlapping_union_on_the_command_line() {
     let mut s = Session::new();
@@ -284,6 +293,7 @@ fn overlapping_union_on_the_command_line() {
     assert!(near(region(&s, a).area(), 175.0));
 }
 
+/// Failure on a later pair must preserve all input regions and the preceding undo step.
 #[test]
 fn a_failed_later_region_keeps_all_inputs_and_undo() {
     use cadcraft_geom::PolyVertex;
@@ -305,4 +315,39 @@ fn a_failed_later_region_keeps_all_inputs_and_undo() {
     assert!(s.execute("subtract", &json!({"from": [a.hex()], "remove": [a.hex()]})).is_err());
     s.execute("u", &json!({})).unwrap();
     assert!(matches!(&s.doc().unwrap().entity(b).unwrap().kind, EntityKind::LwPolyline(_)), "undo still undoes the preceding REGION");
+}
+
+/// An unresolved near-straight arc must never turn overlapping regions into an empty result:
+/// all boolean commands fail atomically and keep the selection, undo and pending redo.
+#[test]
+fn unresolved_arc_booleans_keep_the_drawing_and_history() {
+    use cadcraft_geom::PolyVertex;
+
+    for command in ["intersect", "union", "subtract"] {
+        let mut s = Session::new();
+        let a = Region::from_loop(vec![
+            PolyVertex::with_bulge(Vec2::new(0.0, 0.5), 1e-6),
+            PolyVertex::new(Vec2::new(1.0, 0.5)),
+            PolyVertex::new(Vec2::new(1.0, 1.0)),
+            PolyVertex::new(Vec2::new(0.0, 1.0)),
+        ]);
+        let a = s.doc_mut().unwrap().add(&Space::Model, Default::default(), EntityKind::Region(a)).unwrap();
+        let b = rect_region(&mut s, [0.01, 0.0], [0.01 + 0.1, 0.5 - 1.5e-7]);
+        s.execute("move", &json!({"handles": [b.hex()], "delta": [0, 1]})).unwrap();
+        s.undo().unwrap();
+        s.set_selection(vec![a, b]);
+        let before = s.state().unwrap().clone();
+        let params = if command == "subtract" { json!({"from": [a.hex()], "remove": [b.hex()]}) } else { json!({"handles": [a.hex(), b.hex()]}) };
+        let result = s.execute(command, &params);
+        assert!(result.is_err(), "{command} must reject unresolved geometry: {result:?}");
+        assert!(result.unwrap_err().to_string().contains("too close to combine reliably"));
+        let after = s.state().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&before.doc, &after.doc));
+        assert_eq!(after.selection, before.selection);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.undo.len(), before.undo.len());
+        assert_eq!(after.redo.len(), before.redo.len());
+        assert!(s.redo().unwrap().is_some());
+        assert!(region(&s, b).bounds().min.near(Vec2::new(0.01, 1.0), 1e-9));
+    }
 }
