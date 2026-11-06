@@ -1,7 +1,7 @@
 //! Pre-R2007 DXF text is written in the `$DWGCODEPAGE` code page: characters it has as their
 //! bytes, the others as `\U+XXXX` escapes; every form reads back to the same text.
 
-use cadcraft_dxf::{Tag, parse, write_ascii, write_ascii_in, write_binary_in};
+use cadcraft_dxf::{Tag, parse, write_ascii, write_ascii_in, write_ascii_in_page, write_binary_in};
 
 fn file(code_page: &str, text: &str) -> Vec<Tag> {
     vec![
@@ -75,6 +75,27 @@ fn code_page_bytes_that_are_valid_utf8_are_escaped_in_ascii() {
     assert_eq!(parse(&binary).unwrap()[10].str(), "СІ");
     // Bytes that are not valid UTF-8 stay as they are.
     assert!(contains(&write_ascii_in(&file("ANSI_1251", "Слой"), "ANSI_1251"), b"\xD1\xEB\xEE\xE9"));
+}
+
+/// `write_ascii_in_page`, for a reader that decodes by `$DWGCODEPAGE` and never guesses UTF-8 (the
+/// DWG bridge's acadrust), keeps the code page bytes even when they form valid UTF-8 (`Ã©` in
+/// ANSI_1252 is C3 A9, `é` in UTF-8), escapes only what the code page lacks, and escapes a
+/// backslash that starts an escape. Otherwise it writes what `write_ascii_in` writes.
+#[test]
+fn page_writer_keeps_code_page_bytes_that_are_valid_utf8() {
+    let tags = file("ANSI_1252", "Ã© Média Ω \\U+00E9");
+    let page = write_ascii_in_page(&tags, "ANSI_1252");
+    assert!(contains(&page, b"\xC3\xA9 M\xE9dia \\U+03A9 \\U+005CU+00E9"), "{:?}", String::from_utf8_lossy(&page));
+    // Text whose bytes are all valid UTF-8: `write_ascii_in` still falls back to escapes, the
+    // page writer keeps them.
+    let utf8_like = file("ANSI_1252", "Ã©");
+    assert!(write_ascii_in(&utf8_like, "ANSI_1252").is_ascii());
+    assert!(contains(&write_ascii_in_page(&utf8_like, "ANSI_1252"), b"\r\n\xC3\xA9\r\n"));
+    let plain = file("ANSI_1252", "Ação");
+    assert_eq!(write_ascii_in_page(&plain, "ANSI_1252"), write_ascii_in(&plain, "ANSI_1252"));
+    for cp in ["EBCDIC", "ASCII", "UTF8"] {
+        assert_eq!(write_ascii_in_page(&plain, cp), write_ascii(&plain).into_bytes(), "{cp}");
+    }
 }
 
 /// A literal `\U+` or `\M+` in the text (#2050) reads back as written alongside code page bytes,
