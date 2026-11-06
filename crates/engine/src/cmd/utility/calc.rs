@@ -1,6 +1,8 @@
 //! The CAL / QuickCalc evaluator: numbers and points (`[x,y]`, `[d<a]`), arithmetic and vector
 //! arithmetic, numeric and geometric functions; unit conversion; values picked from the drawing.
 
+use std::collections::HashMap;
+
 use cadcraft_geom::Vec2;
 use serde_json::{Map, Value, json};
 
@@ -67,6 +69,9 @@ struct Parser<'a> {
     s: &'a [u8],
     i: usize,
     vars: &'a Map<String, Value>,
+    /// `vars` by ASCII-lower-cased name (the first of names that differ only in case), so a
+    /// case-insensitive lookup is not a scan of the map per reference.
+    folded: HashMap<String, &'a Value>,
     depth: usize,
     unary_depth: usize,
 }
@@ -230,7 +235,7 @@ impl Parser<'_> {
                 match name.as_str() {
                     "pi" => Ok(Val::Num(std::f64::consts::PI)),
                     "e" => Ok(Val::Num(std::f64::consts::E)),
-                    _ => var(self.vars, &name).ok_or_else(|| format!("unknown name `{name}`")),
+                    _ => var(self.vars, &self.folded, &name).ok_or_else(|| format!("unknown name `{name}`")),
                 }
             }
             _ => Err("expected a number".into()),
@@ -239,8 +244,8 @@ impl Parser<'_> {
 }
 
 /// A variable: a number, or a point as `[x, y]`. Names are case-insensitive.
-fn var(vars: &Map<String, Value>, name: &str) -> Option<Val> {
-    let v = vars.get(name).or_else(|| vars.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))?;
+fn var(vars: &Map<String, Value>, folded: &HashMap<String, &Value>, name: &str) -> Option<Val> {
+    let v = vars.get(name).or_else(|| folded.get(&name.to_ascii_lowercase()).copied())?;
     if let Some(n) = v.as_f64() {
         return Some(Val::Num(n));
     }
@@ -411,7 +416,11 @@ pub fn eval_val(expr: &str, vars: &Map<String, Value>) -> Result<Val, String> {
     if expr.len() > MAX_LEN {
         return Err("expression too long".into());
     }
-    let mut p = Parser { s: expr.as_bytes(), i: 0, vars, depth: 0, unary_depth: 0 };
+    let mut folded = HashMap::with_capacity(vars.len());
+    for (k, v) in vars {
+        folded.entry(k.to_ascii_lowercase()).or_insert(v);
+    }
+    let mut p = Parser { s: expr.as_bytes(), i: 0, vars, folded, depth: 0, unary_depth: 0 };
     let v = p.expr()?;
     if p.peek().is_some() {
         return Err(format!("unexpected `{}`", expr.get(p.i..).unwrap_or("")));
@@ -585,6 +594,21 @@ mod tests {
 
     fn ev(s: &str) -> Result<Val, String> {
         eval_val(s, &Map::new())
+    }
+
+    /// Variables are found without regard to case; an exact match wins over a case variant.
+    /// (Names are read lower-cased, so `X` finds `x` too.)
+    #[test]
+    fn variables_ignore_case_and_prefer_exact_names() {
+        let mut vars = Map::new();
+        for i in 0..10_000 {
+            vars.insert(format!("v{i}"), json!(i));
+        }
+        vars.insert("X".into(), json!(1));
+        vars.insert("x".into(), json!(2));
+        assert!(matches!(eval_val("V9999 + 1", &vars), Ok(Val::Num(n)) if n == 10_000.0));
+        assert!(matches!(eval_val("x", &vars), Ok(Val::Num(n)) if n == 2.0));
+        assert!(eval_val("nope", &vars).is_err());
     }
 
     #[test]
