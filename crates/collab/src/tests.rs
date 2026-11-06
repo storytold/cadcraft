@@ -184,3 +184,110 @@ fn an_operation_context_round_trips_through_json() {
     assert_eq!(model.space, Space::Model);
     assert_eq!(model.selection, Some(vec![Handle(42)]));
 }
+
+#[test]
+fn renaming_a_layer_is_one_change_without_replacing_its_objects() {
+    let mut before = Drawing::new_metric();
+    before.layers.push(cadcraft_doc::Layer::new("WALLS"));
+    for i in 0..5 {
+        before.add(&Space::Model, Common { layer: "WALLS".into(), ..Default::default() }, point(f64::from(i))).unwrap();
+    }
+    let mut renamed = before.clone();
+    crate::table::rename_layer(&mut renamed, "WALLS", "WALLS-2").unwrap();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let renames = crate::TableRenames { layers: vec![("WALLS".into(), "WALLS-2".into())], layouts: vec![] };
+    let changes = crate::diff_all(&before, &renamed, &mut registry, &renames).unwrap();
+
+    assert_eq!(changes.len(), 1, "a rename is one change, not five replacements: {changes:?}");
+    assert!(matches!(&changes[0], Change::TableRename { from, to, .. } if from == "WALLS" && to == "WALLS-2"));
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.space(&Space::Model), renamed.space(&Space::Model));
+    assert_eq!(applied.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), renamed.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>());
+}
+
+#[test]
+fn deleting_a_layer_takes_its_objects_in_one_change() {
+    let mut before = Drawing::new_metric();
+    before.layers.push(cadcraft_doc::Layer::new("TEMP"));
+    let h = before.add(&Space::Model, Common { layer: "TEMP".into(), ..Default::default() }, point(1.0)).unwrap();
+    let mut after = before.clone();
+    crate::table::delete_layer(&mut after, "TEMP").unwrap();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+
+    assert!(
+        matches!(changes.as_slice(), [Change::TableDelete { name, .. }] if name == "TEMP"),
+        "one layer deletion, no entity deletions: {changes:?}"
+    );
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert!(applied.entity(h).is_none());
+    assert!(applied.layers.iter().all(|l| l.name != "TEMP"));
+}
+
+#[test]
+fn a_new_layer_is_created_before_the_objects_on_it() {
+    let before = Drawing::new_metric();
+    let mut after = before.clone();
+    after.layers.push(cadcraft_doc::Layer::new("NEW"));
+    after.add(&Space::Model, Common { layer: "NEW".into(), ..Default::default() }, point(1.0)).unwrap();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+    match changes.first() {
+        Some(Change::TableCreate { name, .. }) => assert_eq!(name, "NEW"),
+        other => panic!("the layer must come first, got {other:?}"),
+    }
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.space(&Space::Model), after.space(&Space::Model));
+    assert!(applied.layers.iter().any(|l| l.name == "NEW"));
+}
+
+#[test]
+fn renaming_a_layout_keeps_its_entities() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Plan", 1));
+    before.add(&Space::Paper("Plan".into()), Common::default(), point(1.0)).unwrap();
+    let mut after = before.clone();
+    let layout = after.layouts.iter_mut().find(|l| l.name == "Plan").unwrap();
+    layout.name = "Sheet".into();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let renames = crate::TableRenames { layers: vec![], layouts: vec![("Plan".into(), "Sheet".into())] };
+    let changes = crate::diff_all(&before, &after, &mut registry, &renames).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::LayoutRename { from, to, .. } if from == "Plan" && to == "Sheet")));
+    assert!(!changes.iter().any(|c| matches!(c, Change::EntityDelete { .. })), "a layout rename keeps its objects: {changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.space(&Space::Paper("Sheet".into())), after.space(&Space::Paper("Sheet".into())));
+}
+
+#[test]
+fn deleting_a_layout_removes_its_space_and_its_objects() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Old", 1));
+    let h = before.add(&Space::Paper("Old".into()), Common::default(), point(1.0)).unwrap();
+    let mut after = before.clone();
+    after.layouts.retain(|l| l.name != "Old");
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+    assert!(matches!(changes.as_slice(), [Change::LayoutDelete { name, .. }] if name == "Old"), "{changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert!(applied.layouts.iter().all(|l| l.name != "Old"));
+    assert!(applied.entity(h).is_none());
+}

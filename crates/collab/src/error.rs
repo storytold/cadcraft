@@ -2,6 +2,8 @@
 
 use cadcraft_doc::{Handle, Space};
 
+use crate::table::RecordKind;
+
 /// A change set that does not fit the drawing it is applied to.
 ///
 /// Every variant is a protocol error, not a user error: the authoritative server and the client
@@ -20,4 +22,10 @@ pub enum CollabError {
     HandleMismatch { change: Handle, entity: Handle },
     #[error("no such layer `{0}`")]
     NoLayer(String),
+    #[error("no such {0:?} record `{1}`")]
+    NoRecord(RecordKind, String),
+    #[error("a {0:?} named `{1}` already exists")]
+    DuplicateName(RecordKind, String),
+    #[error("{0}")]
+    InvalidName(String),
 }

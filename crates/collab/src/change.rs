@@ -3,6 +3,8 @@
 use cadcraft_doc::{Entity, Handle, Space};
 use serde::{Deserialize, Serialize};
 
+use crate::table::{RecordId, RecordKind};
+
 /// Where an entity goes in its space's draw order.
 ///
 /// The order is a position in the space's entity store, not a field, so it cannot be sent as a
@@ -32,16 +34,16 @@ pub enum Change {
     EntityDelete { handle: Handle },
     /// An existing entity moved in the draw order, with no other change.
     EntityOrder { handle: Handle, order: Anchor },
-}
-
-impl Change {
-    /// The entity this change is about.
-    pub fn handle(&self) -> Handle {
-        match self {
-            Change::EntityCreate { handle, .. }
-            | Change::EntityReplace { handle, .. }
-            | Change::EntityDelete { handle }
-            | Change::EntityOrder { handle, .. } => *handle,
-        }
-    }
+    /// A named record (a layer) created; entities may name it after this change.
+    TableCreate { kind: RecordKind, id: RecordId, name: String },
+    /// A named record renamed; every reference follows, on the receiving side too.
+    TableRename { kind: RecordKind, id: RecordId, from: String, to: String },
+    /// A named record deleted; its objects go with it.
+    TableDelete { kind: RecordKind, id: RecordId, name: String },
+    /// A layout (paper space) created.
+    LayoutCreate { id: RecordId, name: String, tab_order: u32 },
+    /// A layout renamed; the active-layout name follows.
+    LayoutRename { id: RecordId, from: String, to: String },
+    /// A layout deleted; its entities go with it.
+    LayoutDelete { id: RecordId, name: String },
 }

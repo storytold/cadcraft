@@ -38,6 +38,7 @@ mod change;
 mod context;
 mod diff;
 mod error;
+mod table;
 
 #[cfg(test)]
 mod tests;
@@ -45,5 +46,6 @@ mod tests;
 pub use apply::apply;
 pub use change::{Anchor, Change};
 pub use context::OpContext;
-pub use diff::diff;
+pub use diff::{diff, diff_all, diff_tables};
 pub use error::CollabError;
+pub use table::{RecordId, RecordKind, TableRegistry, TableRenames};
