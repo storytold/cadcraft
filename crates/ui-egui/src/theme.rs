@@ -483,18 +483,13 @@ struct NameFonts {
     primary: Option<std::sync::Arc<egui::FontData>>,
     /// Scripts looked for, with the face that shows them (`None`: the UI font has them).
     resolved: Vec<(Scripts, Option<usize>)>,
-    /// Scripts no installed font showed, and when that was found out. They are looked for again
-    /// after [`UNFOUND_RETRY`], so a font installed meanwhile is found.
-    unfound: Vec<(Scripts, std::time::Instant)>,
-    /// Expired misses need a fresh font-table scan, performed by the loader thread.
-    rescan: bool,
+    /// Scripts no installed font showed, with the font table's [`cadcraft_fonts::ttf::generation`]
+    /// when that was found out. They are looked for again once the table changes (the user changed
+    /// the font folders), not on a timer.
+    unfound: Vec<(Scripts, u64)>,
     /// Scripts being looked for off the UI thread.
     loading: Scripts,
 }
-
-/// How long a script no installed font showed stays unsearched.
-#[cfg(not(target_arch = "wasm32"))]
-const UNFOUND_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(not(target_arch = "wasm32"))]
 fn same_primary(a: &Option<std::sync::Arc<egui::FontData>>, b: &Option<std::sync::Arc<egui::FontData>>) -> bool {
@@ -507,12 +502,9 @@ fn same_primary(a: &Option<std::sync::Arc<egui::FontData>>, b: &Option<std::sync
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NameFonts {
-    fn expire_unfound(&mut self, now: std::time::Instant) -> bool {
-        let before = self.unfound.len();
-        self.unfound.retain(|(_, at)| now.saturating_duration_since(*at) < UNFOUND_RETRY);
-        let expired = self.unfound.len() != before;
-        self.rescan |= expired;
-        expired
+    /// Forget the misses found out against an older font table, so they are searched again.
+    fn drop_stale_unfound(&mut self, generation: u64) {
+        self.unfound.retain(|(_, g)| *g == generation);
     }
 
     /// Forget what was worked out against another interface font.
@@ -555,24 +547,10 @@ fn name_fonts() -> std::sync::MutexGuard<'static, NameFonts> {
 static NAME_FONTS_LOADED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Changes when faces for names' scripts finished loading since they were asked for.
-pub fn fonts_generation(ctx: &egui::Context) -> u64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let now = std::time::Instant::now();
-        let mut c = name_fonts();
-        if c.expire_unfound(now) {
-            NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
-        }
-        let retry = c.unfound.iter().map(|(_, at)| UNFOUND_RETRY.saturating_sub(now.saturating_duration_since(*at))).min();
-        drop(c);
-        // Rearm from each frame: egui coalesces a worker's delayed request with its immediate wake.
-        if let Some(after) = retry {
-            ctx.request_repaint_after(after);
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    let _ = ctx;
-    NAME_FONTS_LOADED.load(std::sync::atomic::Ordering::Acquire)
+pub fn fonts_generation() -> u64 {
+    // The font table's change count is part of it: a changed table makes the caller look again
+    // for scripts no font showed.
+    NAME_FONTS_LOADED.load(std::sync::atomic::Ordering::Acquire).wrapping_add(cadcraft_fonts::ttf::generation())
 }
 
 /// [`install_fonts`], then a face for each of `names`' scripts the interface language's fonts
@@ -647,8 +625,7 @@ fn name_faces(
     }
     let mut c = name_fonts();
     c.use_primary(&primary);
-    let now = std::time::Instant::now();
-    c.expire_unfound(now);
+    c.drop_stale_unfound(cadcraft_fonts::ttf::generation());
     let (mut shown, mut missing) = (Vec::new(), Scripts::NONE);
     for (s, _) in Scripts::SAMPLES {
         if !needed.contains(s) {
@@ -688,10 +665,7 @@ fn name_faces(
 #[cfg(not(target_arch = "wasm32"))]
 fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontData>>) {
     use cadcraft_fonts::ttf::{Face, fallback_for};
-    let rescan = std::mem::take(&mut name_fonts().rescan);
-    if rescan {
-        cadcraft_fonts::ttf::rescan();
-    }
+    let generation = cadcraft_fonts::ttf::generation();
     let face_of_primary = primary.as_deref().and_then(|d| Face::new(std::sync::Arc::new(d.bytes().to_vec()), d.index));
     // For each script: `Ok(None)` the UI font has it, `Ok(Some)` a face that does, `Err` none does.
     let mut found: Vec<(Scripts, Result<Option<Face>, ()>)> = Vec::new();
@@ -715,7 +689,7 @@ fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontDa
     let mut ids: Vec<(Face, usize)> = Vec::new();
     for (s, face) in found {
         match face {
-            Err(()) => c.unfound.push((s, std::time::Instant::now())),
+            Err(()) => c.unfound.push((s, generation)),
             Ok(None) => c.resolved.push((s, None)),
             Ok(Some(f)) => {
                 let i = match ids.iter().find(|(g, _)| *g == f) {
@@ -1233,7 +1207,7 @@ mod tests {
         let mut c = super::NameFonts::default();
         c.use_primary(&a);
         c.resolved.push((Scripts::THAI, None));
-        c.unfound.push((Scripts::HEBREW, std::time::Instant::now()));
+        c.unfound.push((Scripts::HEBREW, 0));
         c.use_primary(&a);
         assert_eq!(c.resolved.len(), 1, "the same primary keeps its answers");
         c.use_primary(&b);
@@ -1242,14 +1216,30 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn an_unfound_font_is_retried_when_its_deadline_expires() {
-        let now = std::time::Instant::now();
+    fn an_unfound_font_is_retried_after_the_font_table_changes() {
         let mut c = super::NameFonts::default();
-        c.unfound.push((Scripts::THAI, now));
-        assert!(!c.expire_unfound(now));
-        assert!(c.expire_unfound(now + super::UNFOUND_RETRY));
-        assert!(c.unfound.is_empty());
-        assert!(c.rescan, "the font table also caches misses, so the worker must refresh it");
+        c.unfound.push((Scripts::THAI, 7));
+        c.unfound.push((Scripts::HEBREW, 6));
+        c.drop_stale_unfound(7);
+        assert_eq!(c.unfound, vec![(Scripts::THAI, 7)], "a miss from the current table stays, an older one is searched again");
+    }
+
+    /// No timer and no rescan: a miss is not searched again while the font table is as it was.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_unfound_font_is_not_retried_while_the_font_table_is_unchanged() {
+        let primary = Some(std::sync::Arc::new(egui::FontData::from_static(b"unfound-test-primary")));
+        {
+            let mut c = super::name_fonts();
+            c.use_primary(&primary);
+            c.unfound.push((Scripts::THAI, cadcraft_fonts::ttf::generation()));
+        }
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let out = super::name_faces(&ctx, "en", Scripts::THAI, primary.clone());
+            assert!(out.is_empty());
+            assert!(!super::name_fonts().loading.contains(Scripts::THAI), "no search was started");
+        }
     }
 
     /// A loader that panics must not leave its scripts "loading" for good (review on #768).
