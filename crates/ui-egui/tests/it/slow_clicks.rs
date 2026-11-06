@@ -140,3 +140,20 @@ fn a_slow_click_picks_at_select_objects() {
     let d = h.state().session.doc().unwrap();
     assert!(d.entity(line).is_none(), "the line was picked and erased");
 }
+
+/// At a point prompt, a click across one slow frame places one point. This already worked: a drag
+/// that stops at a point prompt counts as a click (#815), and egui reports this press as one. The
+/// test keeps it so, and shows the click isn't counted twice (CIRCLE would take it as the radius).
+#[test]
+fn a_click_across_one_slow_frame_places_a_point() {
+    let (mut h, _) = harness_stepping(1.0);
+    h.state_mut().start("circle");
+    h.run_steps(1);
+    let prompt = |h: &Harness<'_, CadApp>| h.state().session.current_prompt().map(|p| p.message).unwrap_or_default();
+    let center_prompt = prompt(&h);
+    let at = screen(&h, Vec2::new(60.0, 60.0));
+    slow_click(&mut h, at, at, 1);
+    let next = prompt(&h);
+    assert_ne!(next, center_prompt, "the center was taken");
+    assert!(next.to_ascii_lowercase().starts_with("specify radius"), "{next}");
+}
