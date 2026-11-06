@@ -60,7 +60,9 @@ fn an_edited_multileader_text_undoes_and_survives_a_dxf_save() {
     s.input(Input::Point(at + Vec2::new(1.0, -0.05))).unwrap();
     s.input(Input::Text("edited\nsecond line".into())).unwrap();
     s.cancel();
-    let reopened = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    // 2007 DXF: older versions keep a multileader as a LEADER and an MTEXT.
+    let opts = cadcraft_io::SaveOptions { version: Some(cadcraft_io::Version::R2007), binary: false };
+    let reopened = cadcraft_io::read_dxf(&cadcraft_io::write_with(s.doc().unwrap(), "x.dxf", &opts).unwrap()).unwrap();
     let saved =
         reopened.model.iter().find_map(|e| if let EntityKind::MLeader(m) = &e.kind { m.text.as_ref().map(|t| t.contents.clone()) } else { None });
     assert_eq!(saved.as_deref(), Some("edited\\Psecond line"));
