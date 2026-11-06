@@ -118,7 +118,11 @@ if has deb || has rpm; then
   export VERSION
   export NFPM_ARCH="$DEB_ARCH"
   # nfpm expands env vars in fields like `version` and `arch`, but not in `contents[].src`.
-  sed "s|\${STAGE}|$STAGE|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
+  # Without the man pages and completions (a cross build with no EMULATOR, or --skip-build without
+  # the example), their entries are dropped: nfpm.yaml names them one by one.
+  DROP_CLI_DOCS=
+  [[ -f "$STAGE/usr/share/zsh/site-functions/_cadcraft-cli" ]] || DROP_CLI_DOCS='/^  # cli-docs:begin/,/^  # cli-docs:end/d;'
+  sed "${DROP_CLI_DOCS}s|\${STAGE}|$STAGE|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
   for fmt in deb rpm; do
     if has "$fmt"; then (cd "$ROOT" && nfpm package -f "$WORK/nfpm.yaml" -p "$fmt" -t "$DIST/$BASENAME.$fmt"); fi
   done
