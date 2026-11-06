@@ -14,4 +14,5 @@
 
 mod room;
 
-pub use room::{Applied, CommitFormat, Committed, Op, OpKind, Outcome, Reject, Room, RoomError, Snapshot};
+pub use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject};
+pub use room::{CommitFormat, Committed, Room, RoomError, Snapshot};

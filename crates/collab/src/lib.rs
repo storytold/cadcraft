@@ -39,6 +39,7 @@ mod context;
 mod diff;
 mod error;
 mod table;
+mod wire;
 
 #[cfg(test)]
 mod tests;
@@ -49,3 +50,4 @@ pub use context::OpContext;
 pub use diff::{diff, diff_all, diff_tables};
 pub use error::CollabError;
 pub use table::{RecordId, RecordKind, TableRegistry, TableRenames};
+pub use wire::{Applied, Op, OpKind, Outcome, Reject};

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use cadcraft_collab::{Change, OpContext, TableRegistry, TableRenames, diff_all};
+use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, TableRegistry, TableRenames, diff_all};
 use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
@@ -14,77 +14,6 @@ const IDEMPOTENCY_WINDOW: usize = 1_000;
 /// How many operations the journal keeps (compaction and snapshots come later).
 const JOURNAL_LIMIT: usize = 10_000;
 
-/// What an operation is, for the ordering rules.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OpKind {
-    /// A command from the allowlist, with explicit addresses.
-    Command,
-    /// A normalized operation that has no command.
-    Primitive,
-    /// An operation whose result depends on other objects (a cascade): exclusive, in order.
-    Structural,
-}
-
-/// An operation as a client sends it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Op {
-    /// The client's identifier; a repeat is answered from the window, never applied twice.
-    pub op_id: String,
-    /// Who sent it (the JWT `sub`).
-    pub actor: String,
-    /// The version the client had when it built the operation.
-    pub base_version: u64,
-    /// Command, primitive or structural.
-    pub kind: OpKind,
-    /// The command id (`"line"`, `"rename"`, `"layout.rename"`, …).
-    pub command: String,
-    /// The command's JSON parameters.
-    pub params: Value,
-    /// The space and selection the command acts on.
-    pub context: OpContext,
-}
-
-/// The authoritative result of one operation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Applied {
-    /// The operation it answers.
-    pub op_id: String,
-    /// The drawing's version after it.
-    pub version: u64,
-    /// Who applied it.
-    pub actor: String,
-    /// What the other participants must apply to reach this version.
-    pub changes: Vec<Change>,
-}
-
-/// Why an operation was not applied.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Reject {
-    /// The operation it answers.
-    pub op_id: String,
-    /// A stable code: `stale`, `invalid`, `forbidden`.
-    pub code: String,
-    /// What the client should say.
-    pub message: String,
-    /// Whether sending it again (after resynchronising) can work.
-    pub retryable: bool,
-}
-
-/// What happened to an operation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Outcome {
-    /// Applied; the change set is the authoritative result.
-    Applied(Applied),
-    /// Not applied; the drawing is unchanged.
-    Rejected(Reject),
-}
-
-/// Why the room could not answer at all (as opposed to rejecting an operation).
 /// A room's state at one version, as a drawing file.
 ///
 /// The snapshot is DXF (ADR-0005): the writer keeps the data CADCraft does not model (unknown
@@ -308,6 +237,7 @@ fn renames_of(command: &str, params: &Value, before: &Drawing, after: &Drawing) 
 mod tests {
     use super::*;
     use cadcraft_collab::apply;
+    use cadcraft_collab::{Change, OpContext};
     use cadcraft_doc::geom::Vec3;
     use cadcraft_doc::{Common, EntityKind, Layer, Line, Space};
     use serde_json::json;
@@ -449,6 +379,7 @@ mod tests {
 #[cfg(test)]
 mod commit_tests {
     use super::*;
+    use cadcraft_collab::OpContext;
     use cadcraft_doc::Space;
 
     #[test]

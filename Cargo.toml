@@ -19,6 +19,7 @@ cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
 cadcraft-collab = { path = "crates/collab" }
 cadcraft-collab-server = { path = "crates/collab-server" }
+cadcraft-collab-client = { path = "crates/collab-client" }
 cadcraft-constraints = { path = "crates/constraints" }
 cadcraft-fonts = { path = "crates/fonts" }
 cadcraft-render = { path = "crates/render" }

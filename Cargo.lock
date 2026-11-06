@@ -670,6 +670,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadcraft-collab-client"
+version = "0.17.0"
+dependencies = [
+ "cadcraft-collab",
+ "cadcraft-doc",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "cadcraft-collab-server"
 version = "0.17.0"
 dependencies = [
