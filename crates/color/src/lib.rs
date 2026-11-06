@@ -1,5 +1,5 @@
 //! CAD colours: the 256-entry colour index (ACI), 24-bit true colour, and the logical
-//! ByLayer / ByBlock values. The index palette is generated from its well-known structure
+//! `ByLayer` / `ByBlock` values. The index palette is generated from its well-known structure
 //! (24 hues × 5 values × 2 saturations, plus primaries and greys), not copied from any file.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -11,12 +11,15 @@ use serde::{Deserialize, Serialize};
 pub struct Rgb(pub u8, pub u8, pub u8);
 
 impl Rgb {
+    #[must_use]
     pub fn to_u32(self) -> u32 {
         (u32::from(self.0) << 16) | (u32::from(self.1) << 8) | u32::from(self.2)
     }
+    #[must_use]
     pub fn from_u32(v: u32) -> Rgb {
         Rgb(((v >> 16) & 0xff) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8)
     }
+    #[must_use]
     pub fn hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
     }
@@ -29,6 +32,7 @@ impl Rgb {
         u32::from_str_radix(s, 16).ok().map(Rgb::from_u32)
     }
     /// Relative luminance (0..1) for contrast decisions.
+    #[must_use]
     pub fn luma(self) -> f64 {
         (0.2126 * f64::from(self.0) + 0.7152 * f64::from(self.1) + 0.0722 * f64::from(self.2)) / 255.0
     }
@@ -48,7 +52,8 @@ pub enum Color {
 
 impl Color {
     pub const WHITE: Color = Color::Index(7);
-    /// DXF group 62 value: 0 = ByBlock, 256 = ByLayer.
+    /// DXF group 62 value: 0 = `ByBlock`, 256 = `ByLayer`.
+    #[must_use]
     pub fn to_aci(self) -> i16 {
         match self {
             Color::ByLayer => 256,
@@ -57,14 +62,16 @@ impl Color {
             Color::True(rgb) => i16::from(nearest_aci(rgb)),
         }
     }
+    #[must_use]
     pub fn from_aci(v: i16) -> Color {
         match v {
             0 => Color::ByBlock,
-            1..=255 => Color::Index(v as u8),
+            1..=255 => u8::try_from(v).map_or(Color::ByLayer, Color::Index),
             _ => Color::ByLayer,
         }
     }
     /// Resolve to RGB given the layer and block colours.
+    #[must_use]
     pub fn resolve(self, layer: Color, block: Color) -> Rgb {
         match self {
             Color::ByLayer => match layer {
@@ -79,7 +86,8 @@ impl Color {
             Color::True(c) => c,
         }
     }
-    /// Short display name like AutoCAD's Properties palette ("ByLayer", "Red", "Color 34", "255,128,0").
+    /// Short display name like `AutoCAD`'s Properties palette ("`ByLayer`", "Red", "Color 34", "255,128,0").
+    #[must_use]
     pub fn name(self) -> String {
         match self {
             Color::ByLayer => "ByLayer".into(),
@@ -102,7 +110,7 @@ impl Color {
         let t = s.trim().to_ascii_lowercase();
         let named = ["", "red", "yellow", "green", "cyan", "blue", "magenta", "white"];
         if let Some(i) = named.iter().position(|n| !n.is_empty() && *n == t) {
-            return Some(Color::Index(i as u8));
+            return u8::try_from(i).ok().map(Color::Index);
         }
         match t.as_str() {
             "bylayer" => return Some(Color::ByLayer),
@@ -117,7 +125,7 @@ impl Color {
             return match i {
                 0 => Some(Color::ByBlock),
                 256 => Some(Color::ByLayer),
-                1..=255 => Some(Color::Index(i as u8)),
+                1..=255 => u8::try_from(i).ok().map(Color::Index),
                 _ => None,
             };
         }
@@ -145,11 +153,16 @@ pub fn aci_rgb(i: u8) -> Rgb {
     PALETTE.get(usize::from(i)).copied().unwrap_or(Rgb(255, 255, 255))
 }
 
-/// The palette as a 256-entry table (entry 0 = ByBlock placeholder = black).
+/// The palette as a 256-entry table (entry 0 = `ByBlock` placeholder = black).
 pub static PALETTE: std::sync::LazyLock<[Rgb; 256]> = std::sync::LazyLock::new(build_palette);
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Palette channels are finite and clamped to the u8 range before conversion."
+)]
 fn build_palette() -> [Rgb; 256] {
-    let mut p = [Rgb(0, 0, 0); 256];
+    let mut palette = [Rgb(0, 0, 0); 256];
     let base = [
         Rgb(0, 0, 0),
         Rgb(255, 0, 0),
@@ -162,34 +175,35 @@ fn build_palette() -> [Rgb; 256] {
         Rgb(128, 128, 128),
         Rgb(192, 192, 192),
     ];
-    for (slot, c) in p.iter_mut().zip(base) {
-        *slot = c;
+    for (slot, colour) in palette.iter_mut().zip(base) {
+        *slot = colour;
     }
     let values = [255.0, 204.0, 153.0, 127.0, 76.0];
-    for i in 10..250usize {
-        let hue = (i - 10) / 10; // 0..24, 15° each
-        let sub = i % 10;
-        let v: f64 = values.get(sub / 2).copied().unwrap_or(255.0);
+    for index in 10..250usize {
+        let hue = (index - 10) / 10; // 0..24, 15° each
+        let sub = index % 10;
+        let value: f64 = values.get(sub / 2).copied().unwrap_or(255.0);
         let half = sub % 2 == 1;
-        let (r, g, b) = hue_fractions(hue);
-        let ch = |f: f64| -> u8 {
-            let f = if half { 0.5 + 0.5 * f } else { f };
-            (v * f).floor().clamp(0.0, 255.0) as u8
+        let (red, green, blue) = hue_fractions(hue);
+        let channel = |fraction: f64| -> u8 {
+            let fraction = if half { 0.5 + 0.5 * fraction } else { fraction };
+            (value * fraction).floor().clamp(0.0, 255.0) as u8
         };
-        if let Some(slot) = p.get_mut(i) {
-            *slot = Rgb(ch(r), ch(g), ch(b));
+        if let Some(slot) = palette.get_mut(index) {
+            *slot = Rgb(channel(red), channel(green), channel(blue));
         }
     }
     let greys = [51u8, 91, 132, 173, 214, 255];
-    for (k, g) in greys.iter().enumerate() {
-        if let Some(slot) = p.get_mut(250 + k) {
-            *slot = Rgb(*g, *g, *g);
+    for (offset, shade) in greys.iter().enumerate() {
+        if let Some(slot) = palette.get_mut(250 + offset) {
+            *slot = Rgb(*shade, *shade, *shade);
         }
     }
-    p
+    palette
 }
 
 /// Channel fractions for hue step 0..24 (red → yellow → green → cyan → blue → magenta → red).
+#[expect(clippy::cast_precision_loss, reason = "Only the four hue offsets 0..=3 are converted; they are exact in f64.")]
 fn hue_fractions(h: usize) -> (f64, f64, f64) {
     let seg = h / 4;
     let t = (h % 4) as f64 / 4.0;
@@ -204,6 +218,7 @@ fn hue_fractions(h: usize) -> (f64, f64, f64) {
 }
 
 /// The closest index colour to an RGB value (1..=255).
+#[must_use]
 pub fn nearest_aci(c: Rgb) -> u8 {
     let mut best = (u32::MAX, 7u8);
     for i in 1..=255u8 {
@@ -220,6 +235,7 @@ pub fn nearest_aci(c: Rgb) -> u8 {
 /// Display colour of `c` on `background`. Colour 7 (`aci7`) flips to contrast with the
 /// background, white on dark and black on light (paper), as CAD programs draw it; every other
 /// colour, including a true-colour or index white or black, keeps its RGB.
+#[must_use]
 pub fn display_rgb(c: Rgb, aci7: bool, background: Rgb) -> Rgb {
     if !aci7 {
         c
