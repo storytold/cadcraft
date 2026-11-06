@@ -1,6 +1,6 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
+use cadcraft_doc::{AnnoDraw, BlockBoundsCache, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_scaled, entity_bounds, entity_bounds_cached};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -8,9 +8,33 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    if d.anno_draw(e) == AnnoDraw::Hidden {
+        return Vec::new();
+    }
     match &e.kind {
+        EntityKind::MText(t) => {
+            let scaled;
+            let t = match d.anno_draw(e) {
+                AnnoDraw::Scaled(f) => {
+                    scaled = anno_scaled(e, f);
+                    match &scaled.kind {
+                        EntityKind::MText(st) => st,
+                        _ => t,
+                    }
+                }
+                _ => t,
+            };
+            let insert = t.insert.xy();
+            let unturn = |q: Vec2| insert + q.rotate(t.rotation);
+            mtext_line_bounds(d, t)
+                .into_iter()
+                .map(|b| {
+                    let c = b.corners().map(unturn);
+                    vec![c[0], c[1], c[2], c[3], c[0]]
+                })
+                .collect()
+        }
         EntityKind::Text(_)
-        | EntityKind::MText(_)
         | EntityKind::Insert(_)
         | EntityKind::Dimension(_)
         | EntityKind::AttDef(_)
@@ -19,7 +43,7 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
         | EntityKind::MLeader(_)
         | EntityKind::Image(_) => {
             // Text-like objects are hit inside their box.
-            let b = entity_bounds(d, e, 0);
+            let b = select_bounds(d, e, None);
             if b.is_empty() {
                 return Vec::new();
             }
@@ -95,8 +119,7 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let polys = hit_polylines(d, e, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
-    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
-        || matches!(e.kind, EntityKind::Tolerance(_));
+    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Table(_)) || matches!(e.kind, EntityKind::Tolerance(_));
     if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
         best = 0.0;
     }
@@ -120,6 +143,17 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
 /// hit along its lines, so without this the cursor found the object only between the letters'
 /// edges and the lines.
 fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+    match d.anno_draw(e) {
+        AnnoDraw::Hidden => false,
+        AnnoDraw::Scaled(f) => {
+            let scaled = anno_scaled(e, f);
+            raw_in_text(d, &scaled, p)
+        }
+        AnnoDraw::Plain => raw_in_text(d, e, p),
+    }
+}
+
+fn raw_in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
     match &e.kind {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
@@ -128,7 +162,7 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
             Some(blk) => {
                 let p = p - dm.insertion_point.xy();
                 blk.entities.iter().any(|be| match &be.kind {
-                    EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                    EntityKind::MText(t) => in_mtext(d, t, p),
                     EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
                     _ => false,
                 })
@@ -138,11 +172,174 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
             }
         },
-        EntityKind::MLeader(m) => {
-            m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
-        }
+        EntityKind::MLeader(m) => m.text.as_ref().is_some_and(|t| in_mtext(d, t, p)),
+        EntityKind::MText(t) => in_mtext(d, t, p),
         _ => false,
     }
+}
+
+/// Tight bounds of each laid-out line of `t` in its local (`t.insert`, `-t.rotation`) frame.
+fn mtext_line_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Vec<Bounds2> {
+    let insert = t.insert.xy();
+    let turn = |q: Vec2| (q - insert).rotate(-t.rotation);
+    let boxes: Vec<Bounds2> = cadcraft_render::layout_mtext_entity(d, t)
+        .strokes
+        .into_iter()
+        .map(|s| Bounds2::from_points(s.into_iter().filter(|q| q.is_finite()).map(turn)))
+        .filter(|b| !b.is_empty())
+        .collect();
+    if boxes.is_empty() {
+        return Vec::new();
+    }
+    let pad = (t.height.abs() * 0.25).max(1e-6);
+    let col_info = t.columns.as_ref().filter(|_| t.width.is_finite() && t.width > 0.0).map(|c| {
+        let gutter = if c.gutter.is_finite() && c.gutter >= 0.0 { c.gutter } else { 0.0 };
+        let step = (t.width + gutter).max(1e-9);
+        let acol = (t.attach.clamp(1, 9) - 1) % 3;
+        let n_cols = if c.kind == cadcraft_doc::MTextColumnType::Static {
+            usize::from(c.count.clamp(1, 100))
+        } else {
+            let all = Bounds2::from_points(boxes.iter().flat_map(|b| [b.min, b.max]));
+            ((all.width() + gutter) / step).ceil().clamp(1.0, 100.0) as usize
+        };
+        let total_w = t.width * n_cols as f64 + gutter * n_cols.saturating_sub(1) as f64;
+        let box_x0 = match acol {
+            0 => 0.0,
+            1 => -total_w / 2.0,
+            _ => -total_w,
+        };
+        (box_x0, step)
+    });
+    let mut by_col: Vec<(usize, Bounds2)> = boxes
+        .into_iter()
+        .map(|b| {
+            let col = col_info.map(|(x0, step)| ((b.center().x - x0) / step).floor().clamp(0.0, 100.0) as usize).unwrap_or(0);
+            (col, b)
+        })
+        .collect();
+    by_col.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.max.y.total_cmp(&a.1.max.y)));
+    let mut lines: Vec<(usize, Bounds2)> = Vec::new();
+    for (col, b) in by_col {
+        if let Some((_, line)) = lines.iter_mut().find(|(c, l)| *c == col && b.max.y >= l.min.y - pad && b.min.y <= l.max.y + pad) {
+            *line = line.union(&b);
+        } else {
+            lines.push((col, b));
+        }
+    }
+    lines.into_iter().map(|(_, b)| b).collect()
+}
+
+/// Whether `p` lies inside any laid-out line box of `t`.
+fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
+    let tp = (p - t.insert.xy()).rotate(-t.rotation);
+    mtext_line_bounds(d, t).into_iter().any(|b| b.contains(tp))
+}
+
+/// Tight world-space bounding box of all laid-out lines of `t`.
+pub(crate) fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds2 {
+    let insert = t.insert.xy();
+    let unturn = |q: Vec2| insert + q.rotate(t.rotation);
+    let lines = mtext_line_bounds(d, t);
+    if lines.is_empty() {
+        return entity_bounds(d, &Entity::new(Handle(0), EntityKind::MText(t.clone())), 0);
+    }
+    Bounds2::from_points(lines.into_iter().flat_map(|b| b.corners().map(unturn)))
+}
+
+/// Tight selection bounds for e (using laid-out line boxes for MText),
+/// reusing cache to measure referenced block definitions once.
+pub(crate) fn select_bounds_cached<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
+    match &e.kind {
+        EntityKind::MText(t) => match d.anno_draw(e) {
+            AnnoDraw::Hidden => Bounds2::EMPTY,
+            AnnoDraw::Scaled(f) => {
+                let scaled = anno_scaled(e, f);
+                match &scaled.kind {
+                    EntityKind::MText(st) => mtext_world_bounds(d, st),
+                    _ => mtext_world_bounds(d, t),
+                }
+            }
+            AnnoDraw::Plain => mtext_world_bounds(d, t),
+        },
+        EntityKind::MLeader(m) => {
+            let mut b = bounds_of(d, e, known, cache);
+            if b.is_empty() {
+                return Bounds2::EMPTY;
+            }
+            match d.anno_draw(e) {
+                AnnoDraw::Hidden => Bounds2::EMPTY,
+                AnnoDraw::Scaled(f) => {
+                    let scaled = anno_scaled(e, f);
+                    if let EntityKind::MLeader(sm) = &scaled.kind
+                        && let Some(st) = &sm.text
+                    {
+                        b = b.union(&mtext_world_bounds(d, st));
+                    }
+                    b
+                }
+                AnnoDraw::Plain => {
+                    if let Some(t) = &m.text {
+                        b = b.union(&mtext_world_bounds(d, t));
+                    }
+                    b
+                }
+            }
+        }
+        _ => bounds_of(d, e, known, cache),
+    }
+}
+
+/// Tight selection bounds for e (using laid-out line boxes for MText).
+pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    select_bounds_cached(d, e, known, &mut BlockBoundsCache::default())
+}
+/// on text with an empty first line or at the anchor is not filtered out.
+pub(crate) fn snap_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    if d.anno_draw(e) == AnnoDraw::Hidden {
+        return Bounds2::EMPTY;
+    }
+    let mut b = select_bounds(d, e, known);
+    match &e.kind {
+        EntityKind::MText(t) => {
+            let p = t.insert.xy();
+            if b.is_empty() {
+                b = Bounds2::new(p, p);
+            } else {
+                b.add(p);
+            }
+        }
+        EntityKind::MLeader(m) => {
+            let scaled;
+            let m = match d.anno_draw(e) {
+                AnnoDraw::Scaled(f) => {
+                    scaled = anno_scaled(e, f);
+                    match &scaled.kind {
+                        EntityKind::MLeader(sm) => sm,
+                        _ => m,
+                    }
+                }
+                _ => m,
+            };
+            if let Some(t) = &m.text {
+                let p = t.insert.xy();
+                if b.is_empty() {
+                    b = Bounds2::new(p, p);
+                } else {
+                    b.add(p);
+                }
+            }
+            if let Some(blk) = &m.block {
+                let p = blk.insert.xy();
+                if b.is_empty() {
+                    b = Bounds2::new(p, p);
+                } else {
+                    b.add(p);
+                }
+            }
+        }
+        _ => {}
+    }
+    b
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
@@ -153,14 +350,14 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
 }
 
 fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+    d.is_visible(e) && d.anno_draw(e) != AnnoDraw::Hidden
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
-pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| entity_bounds(d, e, 0))
+pub(crate) fn bounds_of<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
+    known.unwrap_or_else(|| entity_bounds_cached(d, e, 0, cache))
 }
 
 pub(crate) fn is_infinite(e: &Entity) -> bool {
@@ -208,7 +405,7 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
             continue;
         }
         let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        if !infinite && !select_bounds(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
         if entity_distance(d, e, p, aperture / 4.0) <= aperture {
@@ -225,7 +422,7 @@ pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handl
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
     cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
+        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || select_bounds(d, e, *known).expand(aperture).intersects(&probe)))
         .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
         .map(|(e, _)| e.handle)
         .collect()
@@ -272,7 +469,7 @@ pub(crate) fn window_tol(bx: &Bounds2) -> f64 {
 /// touching its geometry, not just its bounding box) selects `e`.
 pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bounds2, crossing: bool, tol: f64) -> bool {
     let infinite = is_infinite(e);
-    let eb = bounds_of(d, e, known);
+    let eb = select_bounds(d, e, known);
     if !infinite && bx.contains_box(&eb) {
         return true;
     }
@@ -288,7 +485,10 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
         }
     });
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    if hit
+        || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::Insert(_)))
+        || (matches!(e.kind, EntityKind::MText(_)) && in_text(d, e, bx.center()))
+    {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
@@ -318,7 +518,7 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
+        if !selectable(d, e) || (!is_infinite(e) && !select_bounds(d, e, known).intersects(&probe)) {
             continue;
         }
         let polys = hit_polylines(d, e, tol);
@@ -352,7 +552,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         if !selectable(d, e) || (infinite && !crossing) {
             continue;
         }
-        let eb = bounds_of(d, e, known);
+        let eb = select_bounds(d, e, known);
         if !infinite && if crossing { !eb.intersects(&pb) } else { !pb.contains_box(&eb) } {
             continue;
         }
@@ -364,7 +564,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         });
         let mut pts = polys.iter().flatten();
         let hit = if crossing {
-            crosses || pts.any(|p| point_in_polygon(poly, *p))
+            crosses || pts.any(|p| point_in_polygon(poly, *p)) || (matches!(e.kind, EntityKind::MText(_)) && in_text(d, e, *first))
         } else {
             !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
         };
