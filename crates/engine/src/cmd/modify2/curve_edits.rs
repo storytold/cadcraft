@@ -137,9 +137,9 @@ pub(super) fn lengthen_spline(sp: &Spline, pick: Option<Vec2>, mode: LenMode) ->
     } else if target >= len - 1e-12 {
         sp.clone()
     } else if at_end {
-        sp.sub_between(lo, sp.param_at_length(lo, target)).ok_or_else(fail)?
+        sp.sub_between(lo, sp.param_at_length(lo, target).ok_or_else(fail)?).ok_or_else(fail)?
     } else {
-        sp.sub_between(sp.param_at_length(hi, -target), hi).ok_or_else(fail)?
+        sp.sub_between(sp.param_at_length(hi, -target).ok_or_else(fail)?, hi).ok_or_else(fail)?
     };
     Ok(EntityKind::Spline(out))
 }

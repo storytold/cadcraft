@@ -169,6 +169,23 @@ fn a_spline_round_trips_parameters_points_and_distances() {
 }
 
 #[test]
+fn vlax_curve_rejects_a_spline_whose_length_overflows() {
+    let mut s = session();
+    let huge = Spline {
+        degree: 1,
+        knots: vec![0.0, 0.0, 1.0, 2.0, 2.0],
+        control: vec![Vec2::new(0.0, 0.0), Vec2::new(1e308, 0.0), Vec2::new(0.0, 0.0)],
+        ..Spline::default()
+    };
+    add(&mut s, "e", EntityKind::Spline(huge));
+    // Not 0.0: a length past f64's range is not measurable.
+    for code in ["(vlax-curve-getDistAtParam e 1.0)", "(vlax-curve-getDistAtParam e 2.0)", "(vlax-curve-getParamAtDist e 1e300)", "(vlax-curve-getPointAtDist e 1e300)"] {
+        let r = eval(&mut s, code);
+        assert!(matches!(r.as_deref(), Ok("nil") | Err(_)), "{code}: {r:?}");
+    }
+}
+
+#[test]
 fn a_3d_polyline_measures_in_space() {
     let mut s = session();
     let flat = Polyline3d { points: vec![v3(0.0, 0.0, 0.0), v3(3.0, 4.0, 0.0), v3(3.0, 4.0, 12.0)], closed: false };

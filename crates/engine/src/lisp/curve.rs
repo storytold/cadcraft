@@ -261,7 +261,7 @@ impl Curve {
                     })
                     .collect();
                 Curve::from_pieces(flattened(&pts), Exact::Spline(sp.clone()), sp.closed, sp.closed && sp.is_periodic(), true)
-                    .map(|c| Curve { len: sp.length(), ..c })
+                    .and_then(|c| Some(Curve { len: sp.checked_length()?, ..c }))
             }
             _ => return None,
         };
@@ -375,7 +375,7 @@ impl Curve {
         }
         Some(match &self.exact {
             Exact::Ellipse(e, _) => e.param_at_length(self.start, d).unwrap_or(self.end).clamp(self.start, self.end),
-            Exact::Spline(sp) => sp.param_at_length(self.start, d),
+            Exact::Spline(sp) => sp.param_at_length(self.start, d)?,
             Exact::None => self.start,
         })
     }
