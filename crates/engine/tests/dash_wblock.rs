@@ -285,6 +285,7 @@ fn oops_brings_back_what_it_erased_where_it_was() {
     assert_eq!(order, [a, b, c]);
 }
 
+/// A refused -WBLOCK leaves OOPS as it was.
 #[test]
 fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
     let (mut s, a, b, c) = drawing();

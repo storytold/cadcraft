@@ -30,6 +30,7 @@ const PNG: &[u8] = &[
     0xAE, 0x42, 0x60, 0x82,
 ];
 
+/// `p` as the text a tool call passes.
 fn s(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
@@ -43,6 +44,7 @@ struct Server {
 }
 
 impl Server {
+    /// Start the real binary as an MCP server and initialize it.
     fn start(args: &[String], cwd: &Path, config: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_cadcraft-cli"))
             .arg("mcp")
@@ -71,6 +73,7 @@ impl Server {
         server
     }
 
+    /// Send one JSON-RPC request; `None` if the server stopped answering.
     fn request(&mut self, method: &str, params: Value) -> Option<Value> {
         let id = self.next;
         self.next += 1;
@@ -90,6 +93,7 @@ impl Server {
         Some(reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string())
     }
 
+    /// Run an engine command through the `execute` tool.
     fn execute(&mut self, command: &str, params: Value) -> Option<String> {
         self.tool("execute", json!({"command": command, "params": params}))
     }
@@ -138,6 +142,7 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// A new fixture, finding out whether this file system records reads.
     fn new(tag: &str) -> Self {
         let base = fresh_dir(tag);
         for d in ["in", "out"] {
@@ -224,6 +229,7 @@ impl Drop for Fixture {
     }
 }
 
+/// Every file and folder under `dir`.
 fn tree(dir: &Path) -> Vec<PathBuf> {
     let mut out = vec![dir.to_path_buf()];
     for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -458,6 +464,7 @@ fn walk(tag: &str, roots: bool) -> Walk {
     result
 }
 
+/// One line saying what a walk saw.
 fn summary(w: &Walk) -> String {
     format!(
         "{} commands, {} calls, reads seen: {}, {} commands touched files outside, {} calls lost the server",

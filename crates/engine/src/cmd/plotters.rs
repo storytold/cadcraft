@@ -556,6 +556,7 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
     Ok(())
 }
 
+/// List, read, change, load, export and delete plotter configurations; any file is held to the automation roots.
 fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "plottermanager";
     let action = str_param(p, "action").unwrap_or("list").trim().to_ascii_lowercase();

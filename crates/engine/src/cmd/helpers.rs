@@ -127,6 +127,7 @@ fn read_support_file(cmd: &str, path: &str) -> crate::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The text of a support file (a linetype or hatch pattern file, say), size-limited and held to the automation roots.
 #[cfg(target_arch = "wasm32")]
 fn read_support_file(cmd: &str, _path: &str) -> crate::Result<String> {
     Err(super::bad(cmd, "paths are not available on the web; pass the file's contents"))

@@ -56,6 +56,7 @@ fn folders(tag: &str) -> TestDir {
     base
 }
 
+/// `p` as the text a tool call passes.
 fn s(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
@@ -106,15 +107,18 @@ fn run_env(args: &[&str], calls: &[(&str, Value)], env: &[(&str, &str)]) -> (Out
     (out, tools)
 }
 
+/// The call succeeded.
 fn ok(t: &Tool) {
     assert!(!t.error, "should be allowed: {}", t.text);
 }
 
+/// The call was refused, saying `why`.
 fn refused(t: &Tool, why: &str) {
     assert!(t.error, "should be refused ({why}): {}", t.text);
     assert!(t.text.contains(why), "should say `{why}`: {}", t.text);
 }
 
+/// `open` and every other read stay inside the read root or the write root.
 #[test]
 fn files_open_only_from_inside_the_read_root() {
     let base = folders("open");
@@ -265,6 +269,7 @@ fn plotter_settings_outside_the_roots_are_refused() {
     assert!(!settings.join("Office.plotter.json.cadcraft-tmp").exists());
 }
 
+/// With no roots nothing changes: files anywhere can be reached.
 #[test]
 fn without_roots_files_are_reachable_as_before() {
     let base = folders("none");
@@ -276,6 +281,7 @@ fn without_roots_files_are_reachable_as_before() {
     assert!(base.join("outside/new.dxf").is_file());
 }
 
+/// A link inside a root leading out is refused for reads and writes.
 #[cfg(unix)]
 #[test]
 fn links_out_of_a_root_are_refused() {
@@ -292,6 +298,7 @@ fn links_out_of_a_root_are_refused() {
     assert!(!base.join("outside/new.dxf").exists());
 }
 
+/// Each kind of command that touches a file is refused outside the roots.
 #[test]
 fn every_file_a_command_touches_is_held_to_the_roots() {
     let base = folders("commands");
@@ -335,6 +342,7 @@ fn every_file_a_command_touches_is_held_to_the_roots() {
     assert!(!base.join("outside/plot.pdf").exists());
 }
 
+/// A root that can't be opened, or roots with `--connect`, stop the server at startup.
 #[test]
 fn missing_roots_and_roots_with_connect_fail_at_startup() {
     let base = folders("bad-roots");

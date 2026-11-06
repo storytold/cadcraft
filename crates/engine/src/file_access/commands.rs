@@ -496,6 +496,7 @@ mod tests {
     /// direction.
     const NOT_FILES: &[&str] = &["array", "arraypath", "blocks.reference.grips"];
 
+    /// The words of a command's documentation, lower case.
     fn words(doc: &str) -> BTreeSet<String> {
         doc.to_ascii_lowercase().split(|c: char| !c.is_ascii_alphanumeric()).map(str::to_string).collect()
     }

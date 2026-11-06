@@ -1,6 +1,7 @@
 use super::args::{McpArgs, McpTarget};
 use super::error::{CliError, Result};
 
+/// Serve MCP on stdin and stdout against the running app or a headless session held to any roots given.
 pub(crate) fn mcp(a: &McpArgs) -> Result {
     let backend: Box<dyn cadcraft_mcp::Backend> = match a.target() {
         McpTarget::Connect { addr, lazy: true, launch } => Box::new(cadcraft_mcp::Remote::lazy(&addr, launch)),

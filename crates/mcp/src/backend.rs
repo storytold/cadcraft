@@ -342,6 +342,7 @@ fn state(s: &Session) -> Value {
 }
 
 impl Headless {
+    /// The reply to one control method; the caller holds it to the roots.
     fn answer(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         let s = &mut self.session;
         let str_p = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
@@ -462,6 +463,7 @@ impl Headless {
 }
 
 impl Backend for Headless {
+    /// Run one control method inside the roots, if any.
     fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
         let roots = self.roots.clone();
         file_access::confine(roots.as_ref(), || self.answer(method, &p))
@@ -469,6 +471,7 @@ impl Backend for Headless {
     fn has_ui(&self) -> bool {
         false
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         "headless CADCraft session".into()
     }

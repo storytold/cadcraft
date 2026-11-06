@@ -13,6 +13,7 @@ pub struct LispFile {
     pub text: String,
 }
 
+/// LISP `open`: a file handle, or nil when the file can't be opened or the automation roots refuse it.
 pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 3)?;
     let path = string(&a[0])?.to_string();
@@ -98,6 +99,7 @@ fn can_write(_path: &str) -> bool {
     false
 }
 
+/// Write or append `text`, doing nothing when the automation roots refuse the path.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_text_file(path: &str, text: &str, append: bool) {
     use std::io::Write;
@@ -113,6 +115,7 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 #[cfg(target_arch = "wasm32")]
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 
+/// Whether a file is at `path`; outside the automation roots the answer is no.
 #[cfg(not(target_arch = "wasm32"))]
 fn file_exists(path: &str) -> bool {
     crate::file_access::check_read(path).is_ok() && std::path::Path::new(path).is_file()

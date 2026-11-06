@@ -24,6 +24,7 @@ impl Session {
         }
     }
 
+    /// Run a command by id, unless the automation roots, its own state or the block editor refuse it.
     fn execute_guarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         if let Some(why) = crate::file_access::commands::refusal(spec.id) {

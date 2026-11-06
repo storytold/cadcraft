@@ -353,6 +353,7 @@ fn run_xbind(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "bound": bound }))
 }
 
+/// Open the file a selected reference points at, as its own drawing.
 fn run_xopen(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let name = match str_param(p, "name") {

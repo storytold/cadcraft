@@ -423,6 +423,7 @@ enum UsageError {
 }
 
 impl UsageError {
+    /// This error in clap's form, so it prints with the usual usage text.
     fn into_clap(self, cmd: &mut clap::Command) -> clap::Error {
         let kind = match self {
             Self::FramingNeedsImage { .. } | Self::OutIsInput(_) | Self::AutomationRootsNeedHeadless => ErrorKind::ArgumentConflict,
@@ -530,6 +531,7 @@ pub(crate) enum McpTarget {
 }
 
 impl McpArgs {
+    /// What these arguments ask the server to talk to.
     pub(crate) fn target(&self) -> McpTarget {
         match &self.connect {
             // `--launch` connects at the first call too (the app opens then).
@@ -663,6 +665,7 @@ mod tests {
         }
     }
 
+    /// Without `--connect` the server runs headless, confining nothing unless asked.
     #[test]
     fn mcp_without_connect_is_headless() {
         assert_eq!(mcp(&[]).unwrap(), McpTarget::Headless { read_root: None, write_root: None });

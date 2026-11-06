@@ -200,6 +200,7 @@ fn csv(columns: &[String], rows: &[Vec<Cell>], sep: char) -> String {
     out
 }
 
+/// Write the extracted table to `path`, held to the automation roots.
 fn write_file(path: &str, text: &str) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {

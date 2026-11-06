@@ -150,6 +150,7 @@ pub(crate) enum Missing {
 }
 
 impl Missing {
+    /// The status and message a reference gets when its file can't be loaded.
     fn outcome(self, path: &str) -> (XrefStatus, String) {
         match self {
             Self::NotFound => {

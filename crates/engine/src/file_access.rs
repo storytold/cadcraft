@@ -316,6 +316,7 @@ mod tests {
         assert_eq!(roots.check(s(base.join("out/new/x.png")), Access::Write), Ok(()), "a normal save inside still works");
     }
 
+    /// `in2` starts like `in` and isn't inside it.
     #[test]
     fn a_sibling_with_the_same_prefix_is_outside() {
         let (base, roots) = folders("prefix");
@@ -324,6 +325,7 @@ mod tests {
         assert!(roots.check(format!("{}2/c.dxf", s(base.join("in"))), Access::Read).is_err());
     }
 
+    /// `..` is followed where it can be, and refused below a missing folder.
     #[test]
     fn parent_traversal_is_resolved_or_refused() {
         let (base, roots) = folders("dotdot");
@@ -338,6 +340,7 @@ mod tests {
         assert!(e.contains("parent traversal below a folder that doesn't exist") || e.contains("outside the write root"), "{e}");
     }
 
+    /// A relative path means the working directory, and an empty one is refused.
     #[test]
     fn relative_paths_resolve_against_the_working_directory() {
         let (_base, roots) = folders("relative");
@@ -346,6 +349,7 @@ mod tests {
         assert!(roots.check("", Access::Read).unwrap_err().contains("path is empty"));
     }
 
+    /// A root must be a folder that exists; no roots at all confines nothing.
     #[test]
     fn a_missing_root_is_an_error_and_none_is_no_confinement() {
         let (base, _) = folders("missing");
@@ -365,6 +369,7 @@ mod tests {
         assert!(e.contains("write authority is absent"), "{e}");
     }
 
+    /// Links are judged by where they lead, so a link out is refused and one inside is fine.
     #[test]
     fn links_are_followed_before_comparing() {
         let (base, roots) = folders("links");
@@ -408,6 +413,7 @@ mod tests {
         assert!(same(Path::new("/w/root"), Path::new("/w/root")));
     }
 
+    /// The superscript ports, `COM0`, `LPT0` and the `:` form are device names.
     #[test]
     fn device_names_include_the_superscript_ports() {
         for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.dxf", "NUL ", "COM¹", "lpt³.txt", "com²", "NUL:", "con:stream", "COM0", "lpt0.txt"] {
@@ -452,6 +458,7 @@ mod tests {
         assert_eq!(roots.check(base.join("out/new/deep/x.dxf"), Access::Write), Ok(()));
     }
 
+    /// On a real case-sensitive folder, `Root` beside the root `root` is outside it.
     #[cfg(windows)]
     #[test]
     fn a_case_sensitive_windows_folder_can_hold_a_sibling_of_the_root() {
@@ -472,6 +479,7 @@ mod tests {
         assert_eq!(roots.check(&s(base.join("root/new.dxf")), Access::Write), Ok(()));
     }
 
+    /// On an ordinary Windows folder any case finds the root, and device names are refused.
     #[cfg(windows)]
     #[test]
     fn windows_gives_a_root_its_real_spelling_and_refuses_devices() {
@@ -486,6 +494,7 @@ mod tests {
         assert_eq!(roots.check(&s(base.join("out/console.txt")), Access::Write), Ok(()));
     }
 
+    /// Roots end with their scope, also when a nested scope or a panic ends it.
     #[test]
     fn scopes_nest_and_restore_after_a_panic() {
         let (base, roots) = folders("scopes");
@@ -504,6 +513,7 @@ mod tests {
         assert_eq!(confine(None, || check_read(&outside)), Ok(()));
     }
 
+    /// The plain device names, and names that only look like them.
     #[test]
     fn device_names() {
         for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.svg", "NUL "] {

@@ -82,6 +82,7 @@ fn read_drawing(path: &str) -> Result<Drawing> {
     Err(last.unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
 }
 
+/// The bytes of the drawing to insert, held to the automation roots.
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {

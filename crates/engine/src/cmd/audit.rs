@@ -134,6 +134,7 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// Write the report to the `.adt` file beside the saved drawing, held to the automation roots.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     let (path_str, title) = match s.state() {
@@ -165,6 +166,7 @@ fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
+/// The bytes of the drawing at `path`, held to the automation roots.
 #[cfg(target_arch = "wasm32")]
 fn read_path(cmd: &str, _path: &str) -> Result<Vec<u8>> {
     Err(bad(cmd, "paths are not available on the web; pass `data`"))
