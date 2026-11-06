@@ -7,7 +7,7 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
+use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width, space_width_in, split_thai};
 
 /// Columns an MTEXT's text flows through, each as wide as the MTEXT's width.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -540,13 +540,7 @@ impl<'a> LineBuilder<'a> {
     /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
     fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width = self.word_width(segments);
-        let space_width = if index == 0 {
-            self.pending_space
-                .map(|format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let space_width = if index == 0 { self.pending_space.map(|format| space_width_in(self.format(format))).unwrap_or(0.0) } else { 0.0 };
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
