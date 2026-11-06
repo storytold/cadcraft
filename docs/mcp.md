@@ -26,6 +26,9 @@ that control port at a call that finds nothing, and waits for it:
 exits with an error instead of falling back to a headless session, so a client meant for the app
 never edits a separate drawing by mistake. If the app can't be reached, startup fails too.
 
+The Linux AppImage bundles the CLI: `CADCraft.AppImage cli <args>` runs `cadcraft-cli <args>`, so
+`/path/to/CADCraft.AppImage cli mcp` works wherever `cadcraft-cli mcp` appears here.
+
 Example client configuration (Claude Code / Claude Desktop):
 
 ```json
