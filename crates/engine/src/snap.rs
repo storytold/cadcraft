@@ -459,6 +459,14 @@ fn gather_in(
 }
 
 /// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
+///
+/// In order of preference:
+/// 1. the snap point within `aperture` of the cursor that scores best (see [`snap_score`]),
+///    perpendicular and tangent points from the base point included;
+/// 2. with a base point, a perpendicular or tangent on an object that passes within `aperture`,
+///    wherever its point lies (see [`from_base_on_object`]);
+/// 3. a deferred perpendicular or tangent (no base point yet);
+/// 4. Nearest.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     mut cands: Vec<(u32, Vec2)>,
@@ -470,24 +478,30 @@ fn finish(
     deferred: bool,
     clip: Option<Bounds2>,
 ) -> Option<SnapHit> {
-    // Perpendicular / tangent from the base point.
+    // Perpendicular / tangent from the base point, each with the index in `near_prims` of the
+    // object it lies on, for step 2.
+    let mut from_base: Vec<FromBase> = Vec::new();
     if let Some(bp) = base {
-        for p in near_prims {
+        for (prim, p) in near_prims.iter().enumerate() {
+            let mut found = |mode: u32, points: Vec<Vec2>| from_base.extend(points.into_iter().map(|point| FromBase { mode, point, prim }));
             if osmode & mode::PER != 0 {
-                match p {
-                    Prim::Seg(Segment::Line(l)) => cands.push((mode::PER, l.project(bp))),
+                let pts = match p {
+                    Prim::Seg(Segment::Line(l)) => vec![l.project(bp)],
                     // Both antipodes, filtered to the arc's sweep: a perpendicular in the gap is
                     // not offered, and the far side is still found.
                     Prim::Seg(Segment::Arc { arc, .. }) => {
-                        let curve = SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end };
-                        cands.extend(curve.perpendiculars(bp, bp).into_iter().map(|q| (mode::PER, q)));
+                        SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end }.perpendiculars(bp, bp)
                     }
-                    Prim::Circle(c) => cands.push((mode::PER, c.closest(bp))),
-                    Prim::Infinite { base: b0, dir, .. } => cands.push((mode::PER, *b0 + *dir * (bp - *b0).dot(*dir))),
-                    Prim::Ellipse(e) => cands.extend(curves::ellipse_perpendiculars(e, bp).into_iter().map(|q| (mode::PER, q))),
-                    Prim::Spline(s) => cands.extend(curves::spline_perpendiculars(s, bp).into_iter().map(|q| (mode::PER, q))),
-                    _ => {}
-                }
+                    // Both antipodes too, so a pick on the far side of the circle snaps there
+                    // rather than across it. From the centre every point is perpendicular: the
+                    // one under the cursor.
+                    Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius }.perpendiculars(bp, cursor),
+                    Prim::Infinite { base: b0, dir, .. } => vec![*b0 + *dir * (bp - *b0).dot(*dir)],
+                    Prim::Ellipse(e) => curves::ellipse_perpendiculars(e, bp),
+                    Prim::Spline(s) => curves::spline_perpendiculars(s, bp),
+                    _ => Vec::new(),
+                };
+                found(mode::PER, pts);
             }
             if osmode & mode::TAN != 0 {
                 let pts = match p {
@@ -502,9 +516,10 @@ fn finish(
                     Prim::Spline(s) => curves::spline_tangents(s, bp),
                     _ => Vec::new(),
                 };
-                cands.extend(pts.into_iter().map(|t| (mode::TAN, t)));
+                found(mode::TAN, pts);
             }
         }
+        cands.extend(from_base.iter().map(|f| (f.mode, f.point)));
     }
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
     let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
@@ -515,6 +530,9 @@ fn finish(
     });
     if let Some((m, p)) = best {
         return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
+    }
+    if let Some(h) = from_base_on_object(&from_base, near_prims, cursor, aperture, visible) {
+        return Some(h);
     }
     if base.is_none()
         && deferred
@@ -548,6 +566,55 @@ fn finish(
 
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
     point.dist(cursor) - if mode == mode::INT || mode == mode::END { aperture * 0.15 } else { 0.0 }
+}
+
+/// A perpendicular ([`mode::PER`]) or tangent ([`mode::TAN`]) point found from the base point,
+/// with the index in `near_prims` of the object it lies on.
+struct FromBase {
+    mode: u32,
+    point: Vec2,
+    prim: usize,
+}
+
+/// A perpendicular or tangent from the base point on an object that passes within `aperture` of
+/// the cursor, wherever the foot or tangent point lies (#2800).
+///
+/// These snaps name an object, not a spot on it: you can't know in advance where the foot of a
+/// perpendicular will be, so, as in AutoCAD, hovering anywhere over the object finds it and the
+/// point jumps there. [`finish`] asks for this only when no snap point lies within the aperture,
+/// so an endpoint, midpoint or intersection under the cursor still wins.
+///
+/// The object nearest the cursor wins; of several points on it (an arc's two antipodes, a
+/// circle's two tangents), the one nearest the cursor.
+fn from_base_on_object(found: &[FromBase], near_prims: &[Prim], cursor: Vec2, aperture: f64, visible: impl Fn(Vec2) -> bool) -> Option<SnapHit> {
+    if found.is_empty() {
+        return None;
+    }
+    // `near_prims` holds every object whose box comes near the cursor, so the true distance is
+    // checked here. It is measured once per object, and only for objects with a point to offer:
+    // an ellipse or a spline is measured on its tessellation.
+    let mut reach: Vec<Option<f64>> = vec![None; near_prims.len()];
+    // (distance from the cursor to the object, distance from the cursor to the point, the point)
+    let mut best: Option<(f64, f64, &FromBase)> = None;
+    for f in found.iter().filter(|f| visible(f.point)) {
+        let Some(slot) = reach.get_mut(f.prim) else { continue };
+        let to_object = *slot.get_or_insert_with(|| near_prims.get(f.prim).map_or(f64::INFINITY, |p| distance_to_prim(p, cursor)));
+        // A NaN distance (from a degenerate object) never qualifies.
+        if to_object.is_nan() || to_object > aperture {
+            continue;
+        }
+        let to_point = f.point.dist(cursor);
+        let better = best.is_none_or(|(o, d, _)| to_object.total_cmp(&o).then(to_point.total_cmp(&d)).is_lt());
+        if better {
+            best = Some((to_object, to_point, f));
+        }
+    }
+    best.map(|(_, _, f)| SnapHit { point: f.point, mode: f.mode, name: name_of(f.mode), viewport: None, deferred: None })
+}
+
+/// The distance from `cursor` to the nearest point of `p`, measured as Nearest measures it.
+fn distance_to_prim(p: &Prim, cursor: Vec2) -> f64 {
+    prim_segments(p).iter().map(|s| fix_circle(s).closest(cursor).dist(cursor)).fold(f64::INFINITY, f64::min)
 }
 
 /// Upper bound on the block-reference objects one snap query looks at (hostile files).
@@ -1110,6 +1177,70 @@ mod tests {
         let d = drawing();
         let h = osnap(&d, &Space::Model, Vec2::new(3.0, 0.2), 0.5, mode::PER, Some(Vec2::new(3.0, 4.0)), false).unwrap();
         assert!(h.point.near(Vec2::new(3.0, 0.0), 1e-9));
+    }
+
+    /// #2800: hovering anywhere over the line finds the perpendicular, though its foot (2,0) is
+    /// six units from the cursor; it used to snap only within the aperture of the foot.
+    #[test]
+    fn perpendicular_from_base_anywhere_on_the_line() {
+        let d = drawing();
+        let h = osnap(&d, &Space::Model, Vec2::new(8.0, 0.1), 0.5, mode::PER, Some(Vec2::new(2.0, 4.0)), false).unwrap();
+        assert!(h.point.near(Vec2::new(2.0, 0.0), 1e-9), "{h:?}");
+        assert_eq!(h.mode, mode::PER);
+    }
+
+    /// #2800: the tangent point is found from anywhere on the circle; of its two tangent points
+    /// from the base, the one nearer the cursor.
+    #[test]
+    fn tangent_from_base_anywhere_on_the_circle() {
+        let d = drawing();
+        // From (30,0), 10 from the centre (20,0) of the radius-2 circle: the tangent points are
+        // at cos = 2/10 from the line to the base, (20.4, ±1.9596).
+        let upper = Vec2::new(20.4, 2.0 * (1.0f64 - 0.04).sqrt());
+        let on_circle = Vec2::new(20.0 - 2.0 * std::f64::consts::FRAC_1_SQRT_2, 2.0 * std::f64::consts::FRAC_1_SQRT_2);
+        let h = osnap(&d, &Space::Model, on_circle, 0.5, mode::TAN, Some(Vec2::new(30.0, 0.0)), false).unwrap();
+        assert!(h.point.near(upper, 1e-9), "{h:?}");
+        let mirrored = Vec2::new(on_circle.x, -on_circle.y);
+        let h = osnap(&d, &Space::Model, mirrored, 0.5, mode::TAN, Some(Vec2::new(30.0, 0.0)), false).unwrap();
+        assert!(h.point.near(Vec2::new(upper.x, -upper.y), 1e-9), "{h:?}");
+    }
+
+    /// A circle offers both perpendicular points from the base, so a pick on its far side snaps
+    /// there, not to the near side across the circle (CodeRabbit on #2825).
+    #[test]
+    fn perpendicular_from_base_on_a_circle_takes_the_side_under_the_cursor() {
+        let d = drawing();
+        // The circle at (20,0), radius 2, seen from (30,0): perpendicular at (22,0) and (18,0).
+        let base = Some(Vec2::new(30.0, 0.0));
+        let far = osnap(&d, &Space::Model, Vec2::new(18.1, 0.1), 0.5, mode::PER, base, false).unwrap();
+        assert!(far.point.near(Vec2::new(18.0, 0.0), 1e-9), "{far:?}");
+        // Away from both points, at (19, √3) on the circle: 2 from (18,0) and √12 from (22,0).
+        let top = osnap(&d, &Space::Model, Vec2::new(19.0, 3.0f64.sqrt()), 0.5, mode::PER, base, false).unwrap();
+        assert!(top.point.near(Vec2::new(18.0, 0.0), 1e-9), "{top:?}");
+        let near = osnap(&d, &Space::Model, Vec2::new(21.9, 0.1), 0.5, mode::PER, base, false).unwrap();
+        assert!(near.point.near(Vec2::new(22.0, 0.0), 1e-9), "{near:?}");
+    }
+
+    /// With several objects under the aperture, the one nearest the cursor gives the
+    /// perpendicular, even when another object's foot is nearer.
+    #[test]
+    fn perpendicular_from_base_takes_the_object_nearest_the_cursor() {
+        let d = drawing();
+        // 0.4 above the horizontal line and 0.2 right of the vertical one: the vertical line wins,
+        // with its foot (5,4) farther from the cursor than the horizontal line's (2,0).
+        let h = osnap(&d, &Space::Model, Vec2::new(5.2, 0.4), 0.5, mode::PER, Some(Vec2::new(2.0, 4.0)), false).unwrap();
+        assert!(h.point.near(Vec2::new(5.0, 4.0), 1e-9), "{h:?}");
+    }
+
+    /// A snap point under the cursor still beats a perpendicular whose foot is away from it, and
+    /// an object outside the aperture gives none, though its box is near.
+    #[test]
+    fn perpendicular_from_base_yields_to_points_under_the_cursor() {
+        let d = drawing();
+        let base = Some(Vec2::new(2.0, 4.0));
+        let h = osnap(&d, &Space::Model, Vec2::new(9.9, 0.05), 0.5, mode::END | mode::PER, base, false).unwrap();
+        assert_eq!((h.point, h.mode), (Vec2::new(10.0, 0.0), mode::END));
+        assert!(osnap(&d, &Space::Model, Vec2::new(8.0, 0.7), 0.5, mode::PER, base, false).is_none());
     }
 
     #[test]

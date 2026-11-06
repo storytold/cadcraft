@@ -80,6 +80,23 @@ fn nothing_to_snap_to_rejects_the_point() {
     assert!(near(s.last_point, 10.0, 10.0));
 }
 
+/// #2800: a typed PER or TAN finds its point from a pick anywhere on the object, as in AutoCAD.
+/// The pick used to have to land within the aperture (0.125 here) of the foot or tangent point,
+/// which you can't know in advance; elsewhere it said "No Perpendicular found".
+#[test]
+fn typed_per_and_tan_snap_from_anywhere_on_the_object() {
+    let mut s = drawing();
+    // From (5,5), PER picked at (3,0) on the line 0,0–10,0: two units from the foot (5,0).
+    s.script("LINE 5,5 PER 3,0\n\n").unwrap();
+    let (a, b) = last_line(&s);
+    assert!(near(a, 5.0, 5.0) && near(b, 5.0, 0.0), "{a:?} {b:?}");
+    // From (30,20), TAN picked at the top of the circle (centre 20,20, radius 3): the tangent
+    // points are at cos = 3/10 from the line to the base, and the upper one is nearer the pick.
+    s.script("LINE 30,20 TAN 20,23\n\n").unwrap();
+    let (a, b) = last_line(&s);
+    assert!(near(a, 30.0, 20.0) && near(b, 20.9, 20.0 + 3.0 * 0.91f64.sqrt()), "{a:?} {b:?}");
+}
+
 #[test]
 fn from_nests_with_a_snap_override() {
     let mut s = drawing();
