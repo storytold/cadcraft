@@ -445,7 +445,17 @@ fn fill_from_between(b: f64, items: u32) -> Result<f64> {
     Ok(fill)
 }
 
+/// ARRAYEDIT applies its changes one after another; a request that fails part-way leaves the drawing as it was.
 fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
+    let saved = s.state()?.doc.clone();
+    let r = arrayedit_steps(s, p);
+    if r.is_err() {
+        s.state_mut()?.doc = saved;
+    }
+    r
+}
+
+fn arrayedit_steps(s: &mut Session, p: &Value) -> Result<Value> {
     let h = super::super::curves::handle_param(p, "handle").ok_or_else(|| bad("arrayedit", "`handle` (the array) is required"))?;
     refuse_while_editing(s)?;
     let (ins, blk, _) = array_of(s.doc()?, h)?;
