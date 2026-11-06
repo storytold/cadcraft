@@ -81,6 +81,11 @@ menu	Modify	Edita
 	Array	Serie
 	Attach	Associa
 	Attribute	Attributo
+	All layouts	Tutti i layout
+	Only this one	Solo questo
+	Plot several sheets	Stampa più fogli
+	{n} sheets in one PDF, each with its own page setup (change them in the Page Setup Manager):	{n} fogli in un solo PDF, ciascuno con la propria impostazione pagina (si modificano nel Gestore impostazioni pagina):
+	{n} sheets	{n} fogli
 	Attribute Definition	Definizione di attributo
 	Attribute Display	Visualizzazione attributi
 	Audit	Controlla
