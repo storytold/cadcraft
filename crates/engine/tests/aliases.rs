@@ -76,6 +76,48 @@ fn reinit_reads_the_alias_file_again() {
 }
 
 #[test]
+fn a_saved_alias_profile_restores_without_overriding_commands() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = Session::new();
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    s.execute("aliasedit", &json!({ "set": { "zzp": "qsave", "zzcmd": "line" } })).unwrap();
+    let saved = cadcraft_engine::cmd::file::alias_profile();
+    assert_eq!(saved["aliases"]["zzp"], json!("qsave"));
+
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("zzp"), "zzp");
+    cadcraft_engine::cmd::file::restore_aliases(&saved);
+    assert_eq!(resolve_alias("zzp"), "qsave");
+    assert_eq!(resolve_alias("zzcmd"), "line");
+    assert_eq!(resolve_alias("line"), "line", "command names win");
+    assert_eq!(resolve_alias("c"), "circle", "built-in aliases still resolve");
+
+    // Hostile saved entries are skipped, and an oversized set is capped without panicking.
+    let mut hostile = serde_json::Map::new();
+    for i in 0..12_000 {
+        hostile.insert(format!("ZZ{i}"), json!("line"));
+    }
+    hostile.insert("LINE".into(), json!("circle"));
+    hostile.insert("ZZLONG".into(), json!("x".repeat(5000)));
+    hostile.insert("ZZNUM".into(), json!(3));
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": hostile, "file": "mine.pgp" }));
+    assert_eq!(resolve_alias("line"), "line", "a restored alias never overrides a command name");
+    assert_eq!(resolve_alias("zzlong"), "zzlong");
+    assert_eq!(resolve_alias("zzn"), "zzn");
+    let listing = s.execute("aliasedit", &json!({})).unwrap();
+    let restored = listing["aliases"].as_object().map_or(0, serde_json::Map::len);
+    assert!(restored <= cadcraft_engine::cmd::file::MAX_ALIASES, "the restored set is capped, not {restored}");
+    assert!(restored > 9_000, "the valid entries restore, not just {restored}");
+    assert_eq!(listing["file"], json!("mine.pgp"));
+
+    // A malformed section is skipped without changing what ALIASEDIT holds.
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": { "zzchange": "circle" }, "file": 7 }));
+    assert_eq!(resolve_alias("zzchange"), "zzchange", "a malformed section restores nothing");
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("zz0"), "zz0", "clear still empties the restored set");
+}
+
+#[test]
 fn hostile_alias_files_never_panic() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = Session::new();

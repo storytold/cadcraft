@@ -161,6 +161,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             Some(f) => ui.label(crate::tf!("Alias file: {file}", file = f)),
             None => ui.label(crate::tl!("No alias file loaded. REINIT replaces these aliases with a file's.")),
         };
+        ui.label(RichText::new(crate::tl!("Aliases are saved in your CADCraft profile and survive restarts.")).small());
         ui.horizontal(|ui| {
             let label = ui.label(crate::tl!("Filter"));
             ui.text_edit_singleline(&mut st.filter).labelled_by(label.id);

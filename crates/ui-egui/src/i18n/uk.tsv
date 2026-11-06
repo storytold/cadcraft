@@ -1364,6 +1364,7 @@
 	More than {n} aliases.	Понад {n} псевдонімів.
 	Alias file: {file}	Файл псевдонімів: {file}
 	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонімів не завантажено. REINIT замінює ці псевдоніми псевдонімами з файлу.
+	Aliases are saved in your CADCraft profile and survive restarts.	Псевдоніми зберігаються в профілі CADCraft і не зникають після перезапуску.
 	Alias	Псевдонім
 	Command	Команда
 	overrides built-in	замінює вбудований

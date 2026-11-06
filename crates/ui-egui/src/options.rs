@@ -27,9 +27,9 @@
 //! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
 //! rather than in the profile.
 //!
-//! The profile variables and the interface preferences survive restarts: the host saves
-//! [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface prefs and restores it with
-//! [`CadApp::load_profile`].
+//! The profile variables, the user's ALIASEDIT aliases and the interface preferences survive
+//! restarts: the host saves [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface
+//! prefs and restores it with [`CadApp::load_profile`].
 
 mod dialog;
 
@@ -38,6 +38,8 @@ pub use dialog::dialog;
 use egui::Color32;
 use serde_json::{Map, Value, json};
 
+use cadcraft_engine::cmd::file::MAX_ALIAS_PROFILE_BYTES;
+
 use crate::CadApp;
 use crate::animation::AnimationPref;
 use crate::theme::{self, ThemePref};
@@ -45,8 +47,14 @@ use crate::theme::{self, ThemePref};
 /// The host storage key for [`CadApp::profile_json`].
 pub const PROFILE_KEY: &str = "cadcraft.profile";
 
-/// The largest saved profile [`CadApp::load_profile`] reads.
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
+/// The largest saved profile [`CadApp::load_profile`] reads: everything [`CadApp::profile_json`]
+/// writes — a full ALIASEDIT alias set (up to [`MAX_ALIAS_PROFILE_BYTES`]) and the profile
+/// variables, colours and interface preferences — plus the JSON around them. A valid profile is
+/// never refused; anything larger is corrupt or hostile.
+pub const MAX_PROFILE_BYTES: usize = MAX_ALIAS_PROFILE_BYTES + PROFILE_OVERHEAD_BYTES;
+
+/// Room for the profile variables, the interface preferences and the JSON around them.
+const PROFILE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 /// The longest SAVEFILEPATH the JSON form accepts.
 const MAX_PATH_CHARS: usize = 1024;
@@ -327,13 +335,14 @@ fn reset_ui(app: &mut CadApp) {
 
 impl CadApp {
     /// The user profile kept across restarts, as JSON for the host's storage ([`PROFILE_KEY`]):
-    /// the engine's profile variables and the interface preferences the interface prefs
-    /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
-    /// already keep.
+    /// the engine's profile variables, the user's aliases (ALIASEDIT, not drawing data) and the
+    /// interface preferences the interface prefs ([`CadApp::prefs_json`]) and the desktop
+    /// workspace file (panels, command line) do not already keep.
     pub fn profile_json(&self) -> String {
         json!({
             "version": 1,
             "sysvars": cadcraft_engine::cmd::options::profile(&self.session),
+            "aliases": cadcraft_engine::cmd::file::alias_profile(),
             "systemCursor": self.ui.system_cursor,
             "modelBackground": color_json(self.options.model_background),
             "paperBackground": color_json(self.options.paper_background),
@@ -354,6 +363,11 @@ impl CadApp {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
         if let Some(vars) = v.get("sysvars") {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
+        }
+        // The user's aliases (ALIASEDIT) are settings, not drawing data; a malformed section is
+        // skipped by the engine without touching the aliases already in use.
+        if let Some(aliases) = v.get("aliases") {
+            cadcraft_engine::cmd::file::restore_aliases(aliases);
         }
         let mut c = UiChanges::default();
         for key in
