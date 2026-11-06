@@ -55,6 +55,11 @@ pub(super) struct VpContent {
 }
 
 impl VpContent {
+    /// The contents are built and left block contents out ([`cadcraft_render::MAX_BLOCK_EXPANSION`]).
+    pub(super) fn truncated(&self) -> bool {
+        self.key.is_some() && self.list.truncated
+    }
+
     /// Where the contents are on paper at the viewport's current view.
     pub(super) fn paper_bounds(&self) -> Option<Bounds2> {
         let (k, b) = self.motion?;
