@@ -1,0 +1,1352 @@
+# Greek interface catalog for CADCraft. Original, AI-assisted translation by @Camthalion77 with ChatGPT.
+# context<TAB>English source<TAB>Greek translation. Preserve English keys and formatting.
+	  Cancel  	  Ακύρωση
+	  OK  	  Εντάξει
+	 or [	 ή [
+	% of all commits	% όλων των υποβολών κώδικα
+	* Wildcard Match	* Αντιστοίχιση με χαρακτήρες μπαλαντέρ
+	*VARIES*	*ΜΕΤΑΒΑΛΛΕΤΑΙ*
+	+  |  Top  |  2D Wireframe	+  |  Κάτοψη  |  2Δ συρμάτινο μοντέλο (Wireframe)
+	+Bin	+Δυαδικά αρχεία
+	+LOC	+Γραμμές κώδικα
+	1 Viewport	1 παράθυρο προβολής (Viewport)
+	2 Points	2 σημεία
+	2 Viewports	2 παράθυρα προβολής (Viewports)
+	2D Solid	2Δ συμπαγής επιφάνεια (Solid)
+	3 Points	3 σημεία
+	3 Viewports	3 παράθυρα προβολής (Viewports)
+	3D Face	3Δ έδρα
+	3D Mouse	Ποντίκι 3Δ
+	3D mouse busy, possibly 3DxWare or missing device permissions	Το ποντίκι 3Δ είναι απασχολημένο· πιθανώς εκτελείται το 3DxWare ή λείπουν δικαιώματα πρόσβασης
+	3D mouse connected	Το ποντίκι 3Δ συνδέθηκε
+	3D mouse disconnected	Το ποντίκι 3Δ αποσυνδέθηκε
+	3D mouse input could not be started	Δεν ήταν δυνατή η εκκίνηση του ποντικιού 3Δ
+	3D mouse input is unavailable on this platform	Η χρήση ποντικιού 3Δ δεν υποστηρίζεται σε αυτή την πλατφόρμα
+	3D Mouse Navigation	Πλοήγηση με ποντίκι 3Δ
+	3D Mouse...	Ποντίκι 3Δ...
+	3D Operations	Λειτουργίες 3Δ
+	3D Polyline	Τρισδιάστατη πολυγραμμή (3D Polyline)
+	4 Viewports	4 παράθυρα προβολής (Viewports)
+	< Less than	< Μικρότερο από
+	<> Not Equal	<> Διαφορετικό από
+	= Equals	= Ίσο με
+	> Greater than	> Μεγαλύτερο από
+	A built-in table: editing it keeps an edited copy in the drawing.	Ενσωματωμένος πίνακας: με την επεξεργασία του αποθηκεύεται τροποποιημένο αντίγραφο στο σχέδιο.
+	A drawing opened from a file keeps that file's format.	Ένα σχέδιο που ανοίγεται από αρχείο διατηρεί τη μορφή του αρχείου του.
+	A variable name starts with a letter and has only letters, digits and _	Το όνομα μιας μεταβλητής αρχίζει με γράμμα και περιέχει μόνο γράμματα, ψηφία και _
+	About	Πληροφορίες
+	About CADCraft	Πληροφορίες για το CADCraft
+	Absolute	Απόλυτο
+	Accessibility	Προσβασιμότητα
+	Add	Προσθήκη
+	Add Current Scale	Προσθήκη τρέχουσας κλίμακας
+	Add Leader	Προσθήκη γραμμής υπόδειξης (Leader)
+	Add to Working Set	Προσθήκη στο σύνολο εργασίας
+	Add Vertex	Προσθήκη κορυφής
+	Add/Delete Scales...	Προσθήκη/διαγραφή κλιμάκων...
+	Add: Pick points	Προσθήκη: επιλέξτε σημεία
+	Add: Select objects	Προσθήκη: επιλέξτε αντικείμενα
+	Additional angles	Πρόσθετες γωνίες
+	Align	Στοίχιση
+	Align Multileaders	Στοίχιση πολλαπλών γραμμών υπόδειξης (Multileaders)
+	Align Text	Στοίχιση κειμένου
+	Aligned	Στοιχισμένο
+	All	Όλα
+	All Annotation Objects	Όλα τα αντικείμενα σχολιασμού
+	All files	Όλα τα αρχεία
+	All Scales	Όλες οι κλίμακες
+	All Used Layers	Όλα τα χρησιμοποιούμενα επίπεδα (Layers)
+	An array that would create more objects than this is refused.	Απορρίπτεται η διάταξη επειδή θα δημιουργούσε περισσότερα αντικείμενα από το επιτρεπτό όριο.
+	Angle	Γωνία
+	Angular	Γωνιακό
+	Animation Effects	Εφέ κίνησης
+	Animation effects	Εφέ κίνησης
+	Annotation scale	Κλίμακα σχολιασμού
+	Annotation Visibility	Ορατότητα σχολιασμών
+	Annotative Object Scale	Κλίμακα αντικειμένου σχολιασμού
+	Annotative Update	Ενημέρωση σχολιασμών
+	Apparent Intersection	Φαινομενική τομή (Apparent Intersection)
+	Append to current selection set	Προσθήκη στο τρέχον σύνολο επιλογής
+	Apply	Εφαρμογή
+	Apply to:	Εφαρμογή σε:
+	Apply true color	Εφαρμογή πραγματικού χρώματος
+	Arc	Τόξο (Arc)
+	Arc Length	Μήκος τόξου
+	Area	Εμβαδόν
+	Arrange Panel	Τακτοποίηση πλαισίου
+	Array	Διάταξη (Array)
+	Associative	Συσχετισμένο (Associative)
+	Attach	Επισύναψη
+	Attach DWG...	Επισύναψη DWG...
+	Attribute	Ιδιότητα (Attribute)
+	Attribute Definition	Ορισμός ιδιότητας (Attribute Definition)
+	Attribute Display	Εμφάνιση ιδιοτήτων (Attributes)
+	Audit	Έλεγχος σχεδίου (Audit)
+	Auto (system language)	Αυτόματα (γλώσσα συστήματος)
+	Auto Constrain	Αυτόματοι γεωμετρικοί περιορισμοί (Auto Constrain)
+	AutoConstrain	Αυτόματοι γεωμετρικοί περιορισμοί (AutoConstrain)
+	Automatic save every	Αυτόματη αποθήκευση κάθε
+	Automatic save file location	Θέση αρχείων αυτόματης αποθήκευσης
+	Axis, End	Άξονας, τέλος
+	B	B
+	Base	Βάση
+	Baseline	Γραμμή βάσης (Baseline)
+	Batch Publish	Μαζική δημοσίευση
+	Batch Publish...	Μαζική δημοσίευση...
+	Binary assets added	Προστέθηκαν δυαδικά αρχεία
+	Binary assets removed	Αφαιρέθηκαν δυαδικά αρχεία
+	Bind	Σύνδεση (Bind)
+	Bind...	Σύνδεση (Bind)...
+	Blend	Ομαλή σύνδεση (Blend)
+	Block	Μπλοκ (Block)
+	Block Attribute Manager...	Διαχείριση ιδιοτήτων μπλοκ (Block Attributes)...
+	Block Description...	Περιγραφή μπλοκ...
+	Block Editor	Επεξεργαστής μπλοκ (Block Editor)
+	Block Reference	Αναφορά μπλοκ (Block Reference)
+	Block to create or edit	Μπλοκ προς δημιουργία ή επεξεργασία
+	Block...	Μπλοκ (Block)...
+	Blocks	Μπλοκ (Blocks)
+	Blue	Μπλε
+	Bold	Έντονα
+	Boolean	Λογική τιμή
+	Bottom left	Κάτω αριστερά
+	Bottom right	Κάτω δεξιά
+	Boundaries	Περιγράμματα
+	Boundaries picked: {n}	Επιλεγμένα περιγράμματα: {n}
+	Boundary	Περίγραμμα (Boundary)
+	Boundary...	Περίγραμμα (Boundary)...
+	Box	Κουτί (Box)
+	Break	Διακοπή (Break)
+	Break At Point	Διακοπή σε σημείο (Break at Point)
+	Bring Above Objects	Μεταφορά πάνω από τα αντικείμενα
+	Bring Annotations to Front	Μεταφορά σχολιασμών στο προσκήνιο
+	Bring to Front	Μεταφορά στο προσκήνιο
+	Bulleted list	Λίστα με κουκκίδες
+	ByBlock	Κατά μπλοκ (ByBlock)
+	ByColor	Κατά χρώμα (ByColor)
+	ByLayer	Κατά επίπεδο (ByLayer)
+	CADCraft	CADCraft
+	CADCraft Help	Βοήθεια CADCraft
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	Το CADCraft αποθηκεύει τις προτιμήσεις, τις λειτουργίες έλξης αντικειμένων και τους διακόπτες σχεδίασης στον λογαριασμό σας και τις επαναφέρει στην εκκίνηση.
+	Calibrate	Βαθμονόμηση
+	Calibrate 3D Mouse	Βαθμονόμηση ποντικιού 3Δ
+	Cancel	Ακύρωση
+	Cartesian (x, y)	Καρτεσιανές (x, y)
+	Center	Κέντρο
+	Center Line	Κεντρική γραμμή (Center Line)
+	Center Mark	Σήμανση κέντρου (Center Mark)
+	Center X	Κέντρο X
+	Center Y	Κέντρο Y
+	Center Z	Κέντρο Z
+	Center, Diameter	Κέντρο, διάμετρος
+	Center, Radius	Κέντρο, ακτίνα
+	Center, Start, Angle	Κέντρο, αρχή, γωνία
+	Center, Start, End	Κέντρο, αρχή, τέλος
+	Center, Start, Length	Κέντρο, αρχή, μήκος
+	Centered	Κεντραρισμένο
+	Chamfer	Λοξότμηση (Chamfer)
+	Change Space	Αλλαγή χώρου σχεδίασης
+	Change to Current Layer	Μεταφορά στο τρέχον επίπεδο (Layer)
+	Changed: {n}	Αλλαγές: {n}
+	Changes apply at once and are kept for next time.	Οι αλλαγές εφαρμόζονται αμέσως και διατηρούνται για την επόμενη φορά.
+	Circle	Κύκλος
+	Circumference	Περιφέρεια
+	Clear	Εκκαθάριση
+	Clear Command History	Εκκαθάριση ιστορικού εντολών
+	Clear History	Εκκαθάριση ιστορικού
+	Clear Recent Files	Εκκαθάριση πρόσφατων αρχείων
+	Click the ruler to add a tab stop, right-click to remove one	Κάντε κλικ στον χάρακα για προσθήκη στηλοθέτη ή δεξί κλικ για αφαίρεση
+	Click to set new origin	Κάντε κλικ για ορισμό νέας αρχής συντεταγμένων
+	Clip	Αποκοπή (Clip)
+	Clip Viewport	Αποκοπή παραθύρου προβολής (Clip Viewport)
+	Clipboard	Πρόχειρο
+	Close	Κλείσιμο
+	Close All	Κλείσιμο όλων
+	Close All Other Drawings	Κλείσιμο όλων των άλλων σχεδίων
+	Close Array Editing	Κλείσιμο επεξεργασίας διάταξης
+	Close Block Editor	Κλείσιμο επεξεργαστή μπλοκ
+	Close Comparison	Κλείσιμο σύγκρισης
+	Export Comparison	Εξαγωγή σύγκρισης
+	Closed	Κλειστό
+	Coincident	Σύμπτωση (Coincident)
+	Collapse Palettes	Σύμπτυξη παλετών
+	Collapse Tool Sets	Σύμπτυξη συνόλων εργαλείων
+	Collect	Συλλογή
+	Collect Multileaders	Συλλογή πολλαπλών γραμμών υπόδειξης
+	Collinear	Συγγραμμικό (Collinear)
+	Color	Χρώμα
+	Color 1	Χρώμα 1
+	Color 2	Χρώμα 2
+	Color 8	Χρώμα 8
+	Color 9	Χρώμα 9
+	Color Index	Δείκτης χρώματος
+	Color-dependent	Εξαρτώμενο από το χρώμα
+	Color...	Χρώμα...
+	Command Aliases	Ψευδώνυμα εντολών
+	Command History	Ιστορικό εντολών
+	Command Line	Γραμμή εντολών (Command Line)
+	Command line history	Ιστορικό γραμμής εντολών
+	Command Line History Lines	Γραμμές ιστορικού εντολών
+	Command Reference	Κατάλογος εντολών
+	Commits	Υποβολές κώδικα
+	Company	Εταιρεία
+	Compare Drawings...	Σύγκριση σχεδίων...
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Σχεδίαση με υπολογιστή: εφαρμογή CAD ανοιχτού κώδικα, υλοποιημένη ανεξάρτητα σε Rust.
+	Concentric	Ομόκεντρο (Concentric)
+	Cone	Κώνος
+	Constraint Bars	Γραμμές περιορισμών
+	Constraint Settings	Ρυθμίσεις περιορισμών
+	Construction Line	Βοηθητική ευθεία (Construction Line)
+	contains authoring elements. Open in Block Editor?	περιέχει στοιχεία δημιουργίας. Άνοιγμα στον επεξεργαστή μπλοκ;
+	Contents	Περιεχόμενα
+	Continue	Συνέχεια
+	Contributors	Συνεισφέροντες
+	Control Vertices	Κορυφές ελέγχου (Control Vertices)
+	Convert	Μετατροπή
+	Convert to Arc	Μετατροπή σε τόξο
+	Convert to Line	Μετατροπή σε γραμμή
+	Copy	Αντιγραφή
+	Copy as JSON	Αντιγραφή ως JSON
+	Copy Full File Path	Αντιγραφή πλήρους διαδρομής αρχείου
+	Copy History	Αντιγραφή ιστορικού
+	Copy Layout	Αντιγραφή διάταξης (Layout)
+	Copy Nested Objects	Αντιγραφή ένθετων αντικειμένων
+	Copy Selection	Αντιγραφή επιλογής
+	Copy with Base Point	Αντιγραφή με σημείο βάσης
+	Count	Καταμέτρηση
+	Count List	Λίστα καταμέτρησης
+	Count Table	Πίνακας καταμέτρησης
+	Create Block	Δημιουργία μπλοκ (Block)
+	Create separate hatches	Δημιουργία ξεχωριστών διαγραμμίσεων (Hatches)
+	Creates a user parameter	Δημιουργεί παράμετρο χρήστη
+	Crosshair size	Μέγεθος σταυρονήματος
+	Crossing selection color:	Χρώμα διασταυρούμενης επιλογής:
+	Ctrl+Enter to finish	Ctrl+Enter για ολοκλήρωση
+	Current layer	Τρέχον επίπεδο (Layer)
+	Current Scale Only	Μόνο η τρέχουσα κλίμακα
+	Current selection	Τρέχουσα επιλογή
+	Current: {color}	Τρέχον: {color}
+	Curved	Καμπύλο
+	Custom	Προσαρμοσμένο
+	Cut	Αποκοπή
+	Cut with Base Point	Αποκοπή με σημείο βάσης
+	Cyan	Κυανό
+	Cylinder	Κύλινδρος
+	Dark	Σκούρο
+	Data Extraction...	Εξαγωγή δεδομένων...
+	Data Link...	Σύνδεση δεδομένων...
+	Default	Προεπιλογή
+	Default Save Format	Προεπιλεγμένη μορφή αποθήκευσης
+	Default Save Version	Προεπιλεγμένη έκδοση αποθήκευσης
+	Default save version	Προεπιλεγμένη έκδοση αποθήκευσης
+	Default to boundary extents	Προεπιλογή ορίων περιγράμματος
+	Define Attributes	Ορισμός ιδιοτήτων (Attributes)
+	Define Attributes...	Ορισμός ιδιοτήτων (Attributes)...
+	Defined width	Καθορισμένο πλάτος
+	Degree	Μοίρα
+	Degrees of Freedom	Βαθμοί ελευθερίας (Degrees of Freedom)
+	Degrees of freedom: {n}	Βαθμοί ελευθερίας: {n}
+	Delete	Διαγραφή
+	Delete Column	Διαγραφή στήλης
+	Delete Constraints	Διαγραφή περιορισμών
+	Delete Current Scale	Διαγραφή τρέχουσας κλίμακας
+	Delete Dimension Style	Διαγραφή στυλ διαστάσεων
+	Delete Duplicate Objects	Διαγραφή διπλότυπων αντικειμένων
+	Delete Layer	Διαγραφή επιπέδου (Layer)
+	Delete Layer State	Διαγραφή κατάστασης επιπέδων
+	Delete Layout	Διαγραφή διάταξης (Layout)
+	Delete Row	Διαγραφή γραμμής
+	Delete Text Style	Διαγραφή στυλ κειμένου
+	Delta X	Μεταβολή X (Delta X)
+	Delta Y	Μεταβολή Y (Delta Y)
+	Description	Περιγραφή
+	Deselect All	Αποεπιλογή όλων
+	Detach	Αποσύνδεση
+	Diameter	Διάμετρος
+	Dim style	Στυλ διαστάσεων
+	Dimension	Διαστασιολόγηση (Dimension)
+	Dimension Break	Διακοπή γραμμής διάστασης (Dimension Break)
+	Dimension Edit	Επεξεργασία διάστασης
+	Dimension Objects Only	Μόνο αντικείμενα διαστασιολόγησης
+	Dimension Space	Διάστημα διαστάσεων
+	Dimension style	Στυλ διαστάσεων
+	Dimension Style Override	Παράκαμψη στυλ διαστάσεων
+	Dimension Style...	Στυλ διαστάσεων...
+	Dimension Text Edit	Επεξεργασία κειμένου διάστασης
+	Dimensional Constraint	Διαστασιακός περιορισμός (Dimensional Constraint)
+	Dimensional Constraint Parameters	Παράμετροι διαστασιακών περιορισμών
+	Dimensional Constraints	Διαστασιακοί περιορισμοί
+	Disassociate Dimensions	Κατάργηση συσχέτισης διαστάσεων
+	Display	Εμφάνιση
+	Display name	Εμφανιζόμενο όνομα
+	Display plot styles	Εμφάνιση στυλ εκτύπωσης
+	Distance	Απόσταση
+	Divide	Διαίρεση (Divide)
+	Do not plot (click: plot)	Να μην εκτυπωθεί (κλικ: εκτύπωση)
+	Donut	Δακτύλιος (Donut)
+	Double-click to edit the description	Διπλό κλικ για επεξεργασία της περιγραφής
+	Down	Κάτω
+	Drafting	Σχεδίαση
+	Drafting Settings	Ρυθμίσεις σχεδίασης
+	Drafting Settings...	Ρυθμίσεις σχεδίασης...
+	Drag Dynamic Grip	Σύρσιμο δυναμικής λαβής (Dynamic Grip)
+	Draw	Σχεδίαση
+	Draw Order	Σειρά σχεδίασης (Draw Order)
+	Drawing (DWG)	Σχέδιο (DWG)
+	Drawing (DXF)	Σχέδιο (DXF)
+	Drawing as bytes	Σχέδιο ως δυαδικά δεδομένα
+	Drawing Limits	Όρια σχεδίου
+	Drawing Recovery Manager...	Διαχείριση ανάκτησης σχεδίων...
+	Drawing Template (DWT)	Πρότυπο σχεδίου (DWT)
+	Drawing Utilities	Βοηθητικά εργαλεία σχεδίου
+	Drawings (DWG, DXF)	Σχέδια (DWG, DXF)
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Τα σχέδια που δεν έχουν ακόμη αρχείο αποθηκεύονται στην προεπιλεγμένη έκδοση. Η τιμή 0 λεπτά απενεργοποιεί την αυτόματη αποθήκευση.
+	DWG	DWG
+	DWG Reference...	Αναφορά DWG...
+	DXF	DXF
+	Dynamic	Δυναμικό
+	Dynamic Block Data	Δεδομένα δυναμικού μπλοκ
+	Dynamic Block Grips	Λαβές δυναμικού μπλοκ
+	Dynamic Block Reference	Αναφορά δυναμικού μπλοκ
+	Dynamic Dimensions	Δυναμικές διαστάσεις
+	Dynamic Input	Δυναμική εισαγωγή (Dynamic Input)
+	Dynamic Input (F12)	Δυναμική εισαγωγή (F12)
+	E	E
+	Edit	Επεξεργασία
+	Edit Array	Επεξεργασία διάταξης (Array)
+	Edit Attributes...	Επεξεργασία ιδιοτήτων (Attributes)...
+	Edit Block Definition	Επεξεργασία ορισμού μπλοκ
+	Edit Multileader	Επεξεργασία πολλαπλής γραμμής υπόδειξης (Multileader)
+	Edit Reference In-Place	Επεξεργασία αναφοράς επί τόπου (In-Place)
+	Edit Table Cell	Επεξεργασία κελιού πίνακα
+	Edit Text...	Επεξεργασία κειμένου...
+	Elevation	Υψόμετρο
+	Ellipse	Έλλειψη
+	Elliptical Arc	Ελλειπτικό τόξο
+	Enable 3D mouse navigation	Ενεργοποίηση πλοήγησης με ποντίκι 3Δ
+	Enable Dynamic Input (F12)	Ενεργοποίηση δυναμικής εισαγωγής (F12)
+	End angle	Τελική γωνία
+	End Object Isolation	Τερματισμός απομόνωσης αντικειμένων
+	End Width	Τελικό πλάτος
+	End X	Τελικό X
+	End Y	Τελικό Y
+	Endpoint	Τελικό σημείο (Endpoint)
+	Enter	Enter
+	Enter a fit data option	Εισαγάγετε επιλογή προσαρμογής καμπύλης
+	Enter a pattern name	Εισαγάγετε όνομα μοτίβου
+	Enter a vertex editing option	Εισαγάγετε επιλογή επεξεργασίας κορυφής
+	Enter an option	Εισαγάγετε επιλογή
+	Enter angle of xline	Εισαγάγετε γωνία βοηθητικής ευθείας
+	Enter angle of xline (0)	Εισαγάγετε γωνία βοηθητικής ευθείας (0)
+	Enter area of rectangle in current units	Εισαγάγετε το εμβαδόν ορθογωνίου στις τρέχουσες μονάδες
+	Enter attribute prompt	Εισαγάγετε μήνυμα προτροπής ιδιότητας
+	Enter attribute tag name	Εισαγάγετε όνομα ετικέτας ιδιότητας
+	Enter attribute value	Εισαγάγετε τιμή ιδιότητας
+	Enter block name	Εισαγάγετε όνομα μπλοκ
+	Enter constraint type	Εισαγάγετε τύπο περιορισμού
+	Enter continuity	Εισαγάγετε συνέχεια καμπύλης
+	Enter default attribute value	Εισαγάγετε προεπιλεγμένη τιμή ιδιότητας
+	Enter degree of spline	Εισαγάγετε βαθμό καμπύλης spline
+	Enter delta angle	Εισαγάγετε μεταβολή γωνίας
+	Enter delta length	Εισαγάγετε μεταβολή μήκους
+	Enter dimension text	Εισαγάγετε κείμενο διάστασης
+	Enter dimension text (<> = measurement)	Εισαγάγετε κείμενο διάστασης (<> = μέτρηση)
+	Enter dimension value or [name=expression]	Εισαγάγετε τιμή διάστασης ή [όνομα=έκφραση]
+	Enter dimension variable name to override	Εισαγάγετε όνομα μεταβλητής διάστασης για παράκαμψη
+	Enter justification type	Εισαγάγετε τύπο στοίχισης
+	Enter leader text	Εισαγάγετε κείμενο γραμμής υπόδειξης
+	Enter mline scale	Εισαγάγετε κλίμακα πολλαπλής γραμμής (Mline)
+	Enter mode	Εισαγάγετε λειτουργία
+	Enter name of block to insert	Εισαγάγετε όνομα μπλοκ για εισαγωγή
+	Enter new text	Εισαγάγετε νέο κείμενο
+	Enter next point	Εισαγάγετε επόμενο σημείο
+	Enter number of columns	Εισαγάγετε αριθμό στηλών
+	Enter number of data rows	Εισαγάγετε αριθμό γραμμών δεδομένων
+	Enter number of items	Εισαγάγετε αριθμό στοιχείων
+	Enter number of items along path	Εισαγάγετε αριθμό στοιχείων κατά μήκος διαδρομής
+	Enter number of sides	Εισαγάγετε αριθμό πλευρών
+	Enter number of turns	Εισαγάγετε αριθμό στροφών
+	Enter percentage length	Εισαγάγετε ποσοστό μήκους
+	Enter rectangle length	Εισαγάγετε μήκος ορθογωνίου
+	Enter rectangle width	Εισαγάγετε πλάτος ορθογωνίου
+	Enter scale factor	Εισαγάγετε συντελεστή κλίμακας
+	Enter text	Εισαγάγετε κείμενο
+	Enter text (use \P for new paragraphs)	Εισαγάγετε κείμενο (χρησιμοποιήστε \P για νέα παράγραφο)
+	Enter the number of segments	Εισαγάγετε αριθμό τμημάτων
+	Enter Top, Zero or Bottom.	Εισαγάγετε Top, Zero ή Bottom.
+	Enter twist direction of helix	Εισαγάγετε κατεύθυνση συστροφής έλικας
+	Entire drawing	Ολόκληρο το σχέδιο
+	Equal	Ίσο
+	Erase	Διαγραφή (Erase)
+	error	σφάλμα
+	Evaluate	Υπολογισμός
+	Evaluate LISP	Αξιολόγηση LISP
+	Exclude from new selection set	Εξαίρεση από το νέο σύνολο επιλογής
+	Exclude:	Εξαίρεση:
+	Explode	Διάσπαση (Explode)
+	Export	Εξαγωγή
+	Export Table	Εξαγωγή πίνακα
+	Export to PDF...	Εξαγωγή σε PDF...
+	Export...	Εξαγωγή...
+	Expression	Έκφραση
+	Extend	Επέκταση (Extend)
+	Extension	Προέκταση (Extension)
+	Extents	Όρια αντικειμένων (Extents)
+	External Reference	Εξωτερική αναφορά (Xref)
+	External References	Εξωτερικές αναφορές (Xrefs)
+	Extrude	Εξώθηση (Extrude)
+	File	Αρχείο
+	File Tab	Καρτέλα αρχείου
+	Fillet	Στρογγύλεμα γωνιών (Fillet)
+	Filter	Φίλτρο
+	Filters	Φίλτρα
+	Find and Replace	Εύρεση και αντικατάσταση
+	Find...	Εύρεση...
+	First	Πρώτο
+	First commit	Πρώτη υποβολή κώδικα
+	Fit Points	Σημεία προσαρμογής (Fit Points)
+	Fix	Σταθεροποίηση (Fix)
+	Flatten Objects	Ισοπέδωση αντικειμένων (Flatten)
+	Format	Μορφοποίηση
+	Freehand	Ελεύθερη σχεδίαση
+	Freeze	Πάγωμα (Freeze)
+	Freeze in new viewports	Πάγωμα σε νέα παράθυρα προβολής
+	Freeze Layer	Πάγωμα επιπέδου (Freeze Layer)
+	Freeze/Thaw	Πάγωμα/ξεπάγωμα (Freeze/Thaw)
+	Freeze/Thaw in all viewports	Πάγωμα/ξεπάγωμα σε όλα τα παράθυρα προβολής
+	Freeze/Thaw in the current viewport	Πάγωμα/ξεπάγωμα στο τρέχον παράθυρο προβολής
+	From	Από
+	From Template...	Από πρότυπο...
+	General	Γενικά
+	Geometric Center	Γεωμετρικό κέντρο
+	Geometric Constraint	Γεωμετρικός περιορισμός (Geometric Constraint)
+	Geometric Constraints	Γεωμετρικοί περιορισμοί
+	Geometry	Γεωμετρία
+	Get from the Drawing	Λήψη από το σχέδιο
+	Get Variable	Λήψη μεταβλητής
+	Get View	Λήψη όψης
+	Global	Καθολικό
+	Global width	Καθολικό πλάτος
+	Grab bag	Συλλογή διάφορων στοιχείων
+	Gradient	Διαβάθμιση (Gradient)
+	Gradient...	Διαβάθμιση (Gradient)...
+	Grayscale	Αποχρώσεις του γκρι
+	Green	Πράσινο
+	Grid (F7)	Πλέγμα (F7)
+	Grid Display	Εμφάνιση πλέγματος
+	Grid On (F7)	Πλέγμα ενεργό (F7)
+	Grid snap	Έλξη στο πλέγμα (Grid Snap)
+	Grid spacing	Βήμα πλέγματος
+	Grip Edit	Επεξεργασία με λαβές (Grip Edit)
+	Grip Mirror	Κατοπτρισμός με λαβές
+	Grip Option	Επιλογή λαβής
+	Grip Rotate	Περιστροφή με λαβές
+	Grip Scale	Κλιμάκωση με λαβές
+	Grip size	Μέγεθος λαβής
+	Grip Stretch	Επιμήκυνση με λαβές
+	Grips	Λαβές (Grips)
+	Group	Ομαδοποίηση (Group)
+	Group Edit	Επεξεργασία ομάδας
+	Group Options	Επιλογές ομάδας
+	Group Selection	Επιλογή ομάδας
+	Groups	Ομάδες
+	Hatch	Διαγράμμιση (Hatch)
+	Hatch and Gradient	Διαγράμμιση και διαβάθμιση
+	Hatch Edit	Επεξεργασία διαγράμμισης (Hatch Edit)
+	Hatch origin	Αρχή διαγράμμισης
+	Hatch Pattern	Μοτίβο διαγράμμισης (Hatch Pattern)
+	Hatch Patterns	Μοτίβα διαγράμμισης
+	Hatch Pick	Επιλογή περιοχής διαγράμμισης
+	Hatch...	Διαγράμμιση (Hatch)...
+	Hatches	Διαγραμμίσεις (Hatches)
+	Height	Ύψος
+	Height: {height}	Ύψος: {height}
+	Helix	Έλικα (Helix)
+	Help	Βοήθεια
+	Hemispherical	Ημισφαιρικό
+	Hide All	Απόκρυψη όλων
+	Hide All Constraint Bars	Απόκρυψη όλων των γραμμών περιορισμών
+	Hide All Dynamic Dimensions	Απόκρυψη όλων των δυναμικών διαστάσεων
+	Hide CADCraft	Απόκρυψη CADCraft
+	Hide Layer List	Απόκρυψη λίστας επιπέδων
+	Hide Objects	Απόκρυψη αντικειμένων
+	Hide Others	Απόκρυψη άλλων
+	Hide Palette	Απόκρυψη παλέτας
+	Hide Palettes	Απόκρυψη παλετών
+	History	Ιστορικό
+	Hold Shift to add to the selection	Κρατήστε πατημένο το Shift για προσθήκη στην επιλογή
+	Home	Αρχική
+	Horizontal	Οριζόντιο
+	HorizontalDistance	Οριζόντια απόσταση
+	How to apply:	Τρόπος εφαρμογής:
+	ID Point	Αναγνώριση σημείου (ID Point)
+	Ignore	Παράβλεψη
+	Import	Εισαγωγή
+	Import...	Εισαγωγή...
+	In	Μέσα
+	In-window Menu Bar	Γραμμή μενού στο παράθυρο
+	Include in new selection set	Συμπερίληψη στο νέο σύνολο επιλογής
+	Increment angle	Βήμα γωνίας
+	Index Color	Χρώμα δείκτη
+	Index color: {index}	Χρώμα δείκτη: {index}
+	Indicate selection area	Εμφάνιση περιοχής επιλογής
+	Infer Constraints	Αυτόματη αναγνώριση περιορισμών
+	Inquiry	Ερωτήματα σχεδίου (Inquiry)
+	Insert	Εισαγωγή
+	Insert Block	Εισαγωγή μπλοκ (Block)
+	Insert Column	Εισαγωγή στήλης
+	Insert Row	Εισαγωγή γραμμής
+	Insert tab	Εισαγωγή στηλοθέτη
+	Insert Table Formula	Εισαγωγή τύπου πίνακα
+	Insert this block	Εισαγωγή αυτού του μπλοκ
+	Insertion	Σημείο εισαγωγής
+	Insertion X	Εισαγωγή X
+	Insertion Y	Εισαγωγή Y
+	Insertion Z	Εισαγωγή Z
+	Inspect Constraints	Έλεγχος περιορισμών
+	Inspect Drawing	Έλεγχος σχεδίου
+	Inspection	Επιθεώρηση
+	Interface Language	Γλώσσα περιβάλλοντος
+	Interface language	Γλώσσα περιβάλλοντος
+	Interface Theme	Θέμα εμφάνισης
+	Interface theme	Θέμα εμφάνισης
+	Intersect	Τομή (Intersect)
+	Intersection	Σημείο τομής (Intersection)
+	Inverted	Αντεστραμμένο
+	Island detection	Ανίχνευση νησίδων (Island Detection)
+	Isolate	Απομόνωση
+	Isolate Layer	Απομόνωση επιπέδου (Layer)
+	Isolate Objects	Απομόνωση αντικειμένων
+	Isometric Drafting	Ισομετρική σχεδίαση
+	Isometric Plane	Ισομετρικό επίπεδο
+	Isometric snap	Ισομετρική έλξη (Isometric Snap)
+	Italic	Πλάγια
+	Jogged	Με παράκαμψη (Jogged)
+	Jogged Linear	Γραμμική διάσταση με παράκαμψη (Jogged Linear)
+	Join	Σύνδεση αντικειμένων (Join)
+	Join the ArtCraft Discord…	Ελάτε στο Discord του ArtCraft…
+	Join us on Discord	Ελάτε στο Discord
+	Justify	Στοίχιση
+	Keep an editable copy of this table in the drawing	Διατήρηση επεξεργάσιμου αντιγράφου του πίνακα στο σχέδιο
+	Keep the system cursor visible over the drawing area	Ο δείκτης του συστήματος να παραμένει ορατός στην περιοχή σχεδίασης
+	Language	Γλώσσα
+	Largest array	Μεγαλύτερη διάταξη
+	Last	Τελευταίο
+	Last commit	Τελευταία υποβολή κώδικα
+	Layer	Επίπεδο (Layer)
+	Layer contains objects (double-click to make current)	Το επίπεδο περιέχει αντικείμενα (διπλό κλικ για να γίνει τρέχον)
+	Layer Delete	Διαγραφή επιπέδου (Layer)
+	Layer is empty (double-click to make current)	Το επίπεδο είναι κενό (διπλό κλικ για να γίνει τρέχον)
+	Layer Match	Αντιστοίχιση επιπέδου (Layer Match)
+	Layer Merge	Συγχώνευση επιπέδων (Layer Merge)
+	Layer Off	Απενεργοποίηση επιπέδου (Layer Off)
+	Layer Properties	Ιδιότητες επιπέδου (Layer Properties)
+	Layer Properties Manager	Διαχείριση ιδιοτήτων επιπέδων
+	Layer Properties Manager — current viewport	Διαχείριση ιδιοτήτων επιπέδων — τρέχον παράθυρο προβολής
+	Layer State	Κατάσταση επιπέδων (Layer State)
+	Layer States Manager...	Διαχείριση καταστάσεων επιπέδων...
+	Layer Tools	Εργαλεία επιπέδων
+	Layers	Επίπεδα (Layers)
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	Εμφανιζόμενα επίπεδα: {shown} από {total}.   Τρέχον επίπεδο: {layer}
+	Layers Palette	Παλέτα επιπέδων
+	Layout	Διάταξη σελίδας (Layout)
+	Layout list	Λίστα διατάξεων
+	Layout paper	Χαρτί διάταξης
+	Layout {name}: {table}	Διάταξη {name}: {table}
+	Leader	Γραμμή υπόδειξης (Leader)
+	Leaders Only	Μόνο γραμμές υπόδειξης
+	Left	Αριστερά
+	Left device button: zoom extents. Right device button: calibrate.	Αριστερό πλήκτρο συσκευής: μεγέθυνση στα όρια. Δεξί πλήκτρο: βαθμονόμηση.
+	Length	Μήκος
+	Length X	Μήκος X
+	Length Y	Μήκος Y
+	Lengthen	Επιμήκυνση (Lengthen)
+	Light	Φωτεινό
+	Line	Γραμμή (Line)
+	Line delta	Μεταβολή γραμμής
+	Linear	Γραμμικό
+	Lines +/−	Γραμμές +/−
+	Lines added	Γραμμές που προστέθηκαν
+	Lines deleted	Γραμμές που διαγράφηκαν
+	Lines of Command History	Γραμμές ιστορικού εντολών
+	Linetype	Τύπος γραμμής (Linetype)
+	Linetype Scale	Κλίμακα τύπου γραμμής (Linetype Scale)
+	Linetype scale	Κλίμακα τύπου γραμμής
+	Linetype...	Τύπος γραμμής...
+	Lineweight	Πάχος γραμμής (Lineweight)
+	Lineweight...	Πάχος γραμμής...
+	List	Λίστα
+	List Blocks	Λίστα μπλοκ
+	List Dimension Styles	Λίστα στυλ διαστάσεων
+	List Groups	Λίστα ομάδων
+	List Layer States	Λίστα καταστάσεων επιπέδων
+	List Layouts	Λίστα διατάξεων
+	List System Variables	Λίστα μεταβλητών συστήματος
+	List Text Styles	Λίστα στυλ κειμένου
+	Load all	Φόρτωση όλων
+	Load Application...	Φόρτωση εφαρμογής...
+	Load...	Φόρτωση...
+	Loaded	Φορτωμένο
+	Loaded linetypes	Φορτωμένοι τύποι γραμμής
+	Lock	Κλείδωμα
+	Lock Layer	Κλείδωμα επιπέδου (Layer)
+	Lock viewport	Κλείδωμα παραθύρου προβολής
+	Lock/Unlock	Κλείδωμα/ξεκλείδωμα
+	Loft	Δημιουργία επιφάνειας από διατομές (Loft)
+	Ltscale	Κλίμακα τύπων γραμμής (Ltscale)
+	Magenta	Ματζέντα
+	Major line every	Κύρια γραμμή κάθε
+	Make Current	Ορισμός ως τρέχον
+	Make it a block of this drawing, keeping its layer names	Μετατροπή σε μπλοκ αυτού του σχεδίου, διατηρώντας τα ονόματα επιπέδων
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Μετατροπή σε μπλοκ αυτού του σχεδίου· τα επίπεδά του μετονομάζονται σε NAME$0$LAYER
+	Make Object's Layer Current	Ορισμός του επιπέδου του αντικειμένου ως τρέχοντος
+	Make...	Δημιουργία...
+	Match Layer	Αντιστοίχιση επιπέδου (Match Layer)
+	Match Properties	Αντιγραφή ιδιοτήτων (Match Properties)
+	Measure	Μέτρηση
+	Measure Distance	Μέτρηση απόστασης
+	Measure Geometry	Μέτρηση γεωμετρίας
+	Merge Cells	Συγχώνευση κελιών
+	Merged PRs	Συγχωνευμένα αιτήματα συνεισφοράς (PR)
+	Mid Between 2 Points	Μέσο μεταξύ 2 σημείων
+	Midpoint	Μέσο σημείο (Midpoint)
+	min	λεπτά
+	Mirror	Κατοπτρισμός (Mirror)
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	Άδεια MIT ή Apache-2.0. Δεν σχετίζεται με την Autodesk, Inc.
+	MODEL	ΜΟΝΤΕΛΟ
+	Model	Μοντέλο
+	Model background	Φόντο μοντέλου
+	Model Space (in viewport)	Χώρος μοντέλου (σε παράθυρο προβολής)
+	Modeling	Μοντελοποίηση
+	Models	Μοντέλα
+	Modify	Τροποποίηση
+	More toolbar commands	Περισσότερες εντολές γραμμής εργαλείων
+	Move	Μετακίνηση (Move)
+	Move sideways to pan; push/pull or twist to zoom.	Μετακινήστε τη συσκευή πλάγια για μετατόπιση της όψης· ωθήστε/τραβήξτε ή στρίψτε για μεγέθυνση.
+	MText	Πολυγραμμικό κείμενο (MText)
+	Multileader	Πολλαπλή γραμμή υπόδειξης (Multileader)
+	Multileader style	Στυλ πολλαπλής γραμμής υπόδειξης
+	Multileader Style...	Στυλ πολλαπλής γραμμής υπόδειξης...
+	Multiline	Πολλαπλή γραμμή (Multiline)
+	Multiline Style...	Στυλ πολλαπλών γραμμών...
+	Multiline Text	Κείμενο πολλαπλών γραμμών (MText)
+	Multiline text	Κείμενο πολλαπλών γραμμών
+	Multiline Text...	Κείμενο πολλαπλών γραμμών...
+	Multiline...	Πολλαπλή γραμμή (Multiline)...
+	Multiple	Πολλαπλό
+	Multiple Point	Πολλαπλά σημεία
+	My	Δικά μου
+	My properties: not available yet	Οι ιδιότητές μου: δεν είναι ακόμη διαθέσιμες
+	N	N
+	Name	Όνομα
+	Name (A–Z)	Όνομα (Α–Ω)
+	Named	Με όνομα
+	Named Viewports...	Αποθηκευμένα παράθυρα προβολής...
+	Named Views...	Αποθηκευμένες όψεις...
+	Nearest	Πλησιέστερο (Nearest)
+	New	Νέο
+	New (metric)	Νέο (μετρικό)
+	New block	Νέο μπλοκ
+	New CTB	Νέος πίνακας CTB
+	New Drawing	Νέο σχέδιο
+	New Drawing (⌘N)	Νέο σχέδιο (⌘N)
+	New Drawing...	Νέο σχέδιο...
+	New from Template...	Νέο από πρότυπο...
+	New Layer	Νέο επίπεδο (Layer)
+	New Layout	Νέα διάταξη (Layout)
+	New layout	Νέα διάταξη
+	New state name	Όνομα νέας κατάστασης
+	New STB	Νέος πίνακας STB
+	New style	Νέο στυλ
+	New Viewports...	Νέα παράθυρα προβολής...
+	New VP Freeze	Πάγωμα σε νέα παράθυρα προβολής (VP Freeze)
+	Next Change	Επόμενη αλλαγή
+	No	Όχι
+	No blocks defined in this drawing.	Δεν έχουν οριστεί μπλοκ σε αυτό το σχέδιο.
+	No contributor data was built into this copy.	Δεν περιλαμβάνονται δεδομένα συνεισφερόντων σε αυτή την έκδοση.
+	No external references are attached.	Δεν έχουν επισυναφθεί εξωτερικές αναφορές.
+	No model credits were built into this copy.	Δεν περιλαμβάνονται πιστώσεις μοντέλων σε αυτή την έκδοση.
+	No plot style tables.	Δεν υπάρχουν πίνακες στυλ εκτύπωσης.
+	No saved layer states	Δεν υπάρχουν αποθηκευμένες καταστάσεις επιπέδων
+	No selection	Καμία επιλογή
+	No supported 3D mouse found	Δεν βρέθηκε υποστηριζόμενο ποντίκι 3Δ
+	Node	Κόμβος (Node)
+	None	Κανένα
+	Normal	Κανονικό
+	Not a number or distance: {text}	Δεν είναι αριθμός ή απόσταση: {text}
+	Not available	Μη διαθέσιμο
+	Not available yet	Δεν είναι ακόμη διαθέσιμο
+	Not Found	Δεν βρέθηκε
+	Not loaded	Δεν φορτώθηκε
+	Numbered list	Αριθμημένη λίστα
+	Object	Αντικείμενο
+	Object grouping	Ομαδοποίηση αντικειμένων
+	Object selection limit for display of grips	Όριο πλήθους αντικειμένων για εμφάνιση λαβών
+	Object Snap	Έλξη σε σημεία αντικειμένων (Object Snap)
+	Object Snap (F3)	Έλξη σε σημεία αντικειμένων (F3)
+	Object snap aperture	Ακτίνα αναζήτησης έλξης αντικειμένων
+	Object snap marker size	Μέγεθος δείκτη έλξης αντικειμένων
+	Object Snap On (F3)	Έλξη αντικειμένων ενεργή (F3)
+	Object Snap Tracking	Παρακολούθηση έλξης αντικειμένων (Object Snap Tracking)
+	Object Snap Tracking (F11)	Παρακολούθηση έλξης αντικειμένων (F11)
+	Object Snap Tracking Settings	Ρυθμίσεις παρακολούθησης έλξης αντικειμένων
+	Object type:	Τύπος αντικειμένου:
+	objects	αντικείμενα
+	Objects on locked layers	Αντικείμενα σε κλειδωμένα επίπεδα
+	Oblique	Πλάγιο
+	Off	Ανενεργό
+	Offset	Παράλληλη μετατόπιση (Offset)
+	OK	Εντάξει
+	On	Ενεργό
+	On/Off	Ενεργό/ανενεργό
+	One of the Crafting Apps by the ArtCraft team and community.	Μία από τις εφαρμογές Crafting Apps της ομάδας και της κοινότητας ArtCraft.
+	Only in this drawing: {n}	Μόνο σε αυτό το σχέδιο: {n}
+	Only in {name}: {n}	Μόνο στο {name}: {n}
+	Oops	Επαναφορά διαγραμμένων αντικειμένων
+	Open	Άνοιγμα
+	Open (⌘O)	Άνοιγμα (⌘O)
+	Open a drawing first.	Ανοίξτε πρώτα ένα σχέδιο.
+	Open and Save	Άνοιγμα και αποθήκευση
+	Open in Block Editor	Άνοιγμα στον επεξεργαστή μπλοκ
+	Open Recent	Πρόσφατα αρχεία
+	Open Sample Drawing	Άνοιγμα δείγματος σχεδίου
+	Open sample drawing	Άνοιγμα δείγματος σχεδίου
+	Open Xref	Άνοιγμα εξωτερικής αναφοράς (Xref)
+	Open...	Άνοιγμα...
+	Operator:	Τελεστής:
+	Options	Επιλογές
+	Options...	Επιλογές...
+	Orbit	Περιστροφή όψης (Orbit)
+	Ordinate	Συντεταγμένη διάστασης (Ordinate)
+	Origin: {x}, {y}	Αρχή: {x}, {y}
+	Ortho (F8)	Ορθογώνια λειτουργία (Ortho, F8)
+	Ortho Mode	Ορθογώνια λειτουργία (Ortho)
+	Ortho Mode (F8)	Ορθογώνια λειτουργία (F8)
+	Osnap Settings...	Ρυθμίσεις έλξης αντικειμένων (Osnap)...
+	Out	Έξω
+	Outer	Εξωτερικό
+	Over-constrained	Υπερκαθορισμένο (Over-constrained)
+	Overlay	Επικάλυψη (Overlay)
+	Overline	Γραμμή πάνω από το κείμενο
+	Override	Παράκαμψη
+	Page Setup Manager	Διαχείριση διαμόρφωσης σελίδας
+	Page Setup Manager...	Διαχείριση διαμόρφωσης σελίδας...
+	Pan	Μετατόπιση όψης (Pan)
+	Pan Down	Μετατόπιση όψης κάτω
+	Pan Left	Μετατόπιση όψης αριστερά
+	Pan Right	Μετατόπιση όψης δεξιά
+	Pan sensitivity	Ευαισθησία μετατόπισης όψης
+	Pan Up	Μετατόπιση όψης πάνω
+	PAPER	ΧΑΡΤΙ
+	Paper Space	Χώρος χαρτιού (Paper Space)
+	Parallel	Παράλληλο
+	Parameters Manager	Διαχείριση παραμέτρων
+	Parametric	Παραμετρικό
+	Paste	Επικόλληση
+	Paste as Block	Επικόλληση ως μπλοκ (Block)
+	Paste to Command Line	Επικόλληση στη γραμμή εντολών
+	Paste to Original Coordinates	Επικόλληση στις αρχικές συντεταγμένες
+	Path Array	Διάταξη κατά διαδρομή (Path Array)
+	Pattern	Μοτίβο
+	Percent	Ποσοστό
+	Perpendicular	Κάθετο (Perpendicular)
+	Pickbox size	Μέγεθος πλαισίου επιλογής
+	Plot	Εκτύπωση (Plot)
+	Plot (click: do not plot)	Εκτύπωση (κλικ: χωρίς εκτύπωση)
+	Plot Preview	Προεπισκόπηση εκτύπωσης
+	Plot style	Στυλ εκτύπωσης
+	Plot style attached to	Στυλ εκτύπωσης συνδεδεμένο με
+	Plot Style Manager	Διαχείριση στυλ εκτύπωσης
+	Plot Style Manager...	Διαχείριση στυλ εκτύπωσης...
+	Plot style table	Πίνακας στυλ εκτύπωσης
+	Plot Style...	Στυλ εκτύπωσης...
+	Plot Styles...	Στυλ εκτύπωσης...
+	Plot table type	Τύπος πίνακα εκτύπωσης
+	Plot Window	Παράθυρο εκτύπωσης
+	Plotter Manager	Διαχείριση σχεδιογράφων
+	Plotter Manager...	Διαχείριση σχεδιογράφων...
+	Plus/minus	Συν/πλην
+	Point	Σημείο (Point)
+	Point Filters	Φίλτρα σημείων
+	Point Style...	Στυλ σημείου...
+	Polar (distance < angle)	Πολικές (απόσταση < γωνία)
+	Polar angle measurement	Μέτρηση πολικής γωνίας
+	Polar Array	Πολική διάταξη (Polar Array)
+	Polar distance	Πολική απόσταση
+	Polar Tracking	Πολική παρακολούθηση (Polar Tracking)
+	Polar Tracking (F10)	Πολική παρακολούθηση (F10)
+	Polar Tracking On (F10)	Πολική παρακολούθηση ενεργή (F10)
+	Polar: {distance} < {angle}°	Πολικές: {distance} < {angle}°
+	PolarSnap	Πολική έλξη (PolarSnap)
+	Polygon	Πολύγωνο
+	Polygonal	Πολυγωνικό
+	Polygonal Viewport	Πολυγωνικό παράθυρο προβολής
+	Polyline	Πολυγραμμή (Polyline)
+	Polyline Edit	Επεξεργασία πολυγραμμής (Polyline Edit)
+	Position X	Θέση X
+	Position Y	Θέση Y
+	Position Z	Θέση Z
+	Preview	Προεπισκόπηση
+	Previous	Προηγούμενο
+	Previous Change	Προηγούμενη αλλαγή
+	Previous Layer	Προηγούμενο επίπεδο (Layer)
+	Primitives	Βασικά γεωμετρικά στερεά
+	Print	Εκτύπωση
+	Print...	Εκτύπωση...
+	Profiles	Προφίλ
+	Properties	Ιδιότητες
+	Properties Inspector	Επιθεώρηση ιδιοτήτων
+	Properties:	Ιδιότητες:
+	Proxy	Αντικείμενο διαμεσολάβησης (Proxy)
+	PRs	Αιτήματα συνεισφοράς (PR)
+	Purge	Εκκαθάριση αχρησιμοποίητων στοιχείων (Purge)
+	Pyramid	Πυραμίδα
+	Quadrant	Τεταρτημόριο (Quadrant)
+	Query Entities	Ερώτημα οντοτήτων
+	Query Texts	Ερώτημα κειμένων
+	Quick	Γρήγορο
+	Quick Dimension	Γρήγορη διαστασιολόγηση
+	Quick Properties	Γρήγορες ιδιότητες
+	Quick Select	Γρήγορη επιλογή (Quick Select)
+	Quick Select Properties	Ιδιότητες γρήγορης επιλογής
+	Quick Select...	Γρήγορη επιλογή...
+	QuickCalc	Γρήγορη αριθμομηχανή (QuickCalc)
+	QuickCalc Pick	Επιλογή στη γρήγορη αριθμομηχανή
+	Quit CADCraft	Έξοδος από το CADCraft
+	Radius	Ακτίνα
+	Raster Image	Εικόνα ψηφίδων (Raster Image)
+	Ray	Ημιευθεία (Ray)
+	Read-only	Μόνο για ανάγνωση
+	Real name	Πραγματικό όνομα
+	Realtime	Σε πραγματικό χρόνο
+	Reassociate Dimensions	Επανασυσχέτιση διαστάσεων
+	Recalculate Table Formulas	Επανυπολογισμός τύπων πίνακα
+	Recent	Πρόσφατα
+	Recent Commands	Πρόσφατες εντολές
+	Recent Input	Πρόσφατη εισαγωγή
+	Recover...	Ανάκτηση...
+	Rectangle	Ορθογώνιο (Rectangle)
+	Rectangular	Ορθογώνιο
+	Rectangular Array	Ορθογωνική διάταξη (Rectangular Array)
+	Rectangular snap	Ορθογωνική έλξη
+	Red	Κόκκινο
+	Redo	Επανάληψη
+	Redo (⇧⌘Z)	Επανάληψη (⇧⌘Z)
+	Redraw	Επανασχεδίαση (Redraw)
+	Reference Manager	Διαχείριση αναφορών
+	Reference Name	Όνομα αναφοράς
+	References: {n}	Αναφορές: {n}
+	Regen	Αναγέννηση σχεδίου (Regen)
+	Regen All	Αναγέννηση όλων (Regen All)
+	Region	Περιοχή (Region)
+	Region/Mass Properties	Ιδιότητες περιοχής/μάζας
+	Reinitialize	Επανεκκίνηση αρχικοποίησης
+	Relative	Σχετικό
+	Relative to last segment	Σχετικά με το τελευταίο τμήμα
+	Release the 3D mouse to calibrate its resting position	Αφήστε το ποντίκι 3Δ για βαθμονόμηση της θέσης ηρεμίας του
+	Reload	Επαναφόρτωση
+	Reload All	Επαναφόρτωση όλων
+	Remove	Αφαίρεση
+	Remove Leader	Αφαίρεση γραμμής υπόδειξης
+	Remove the viewport override	Κατάργηση παράκαμψης παραθύρου προβολής
+	Remove Vertex	Αφαίρεση κορυφής
+	Rename Dimension Style	Μετονομασία στυλ διαστάσεων
+	Rename Layer	Μετονομασία επιπέδου
+	Rename Layer State	Μετονομασία κατάστασης επιπέδων
+	Rename Layout	Μετονομασία διάταξης
+	Rename Text Style	Μετονομασία στυλ κειμένου
+	Rename...	Μετονομασία...
+	Repeat {command}	Επανάληψη εντολής {command}
+	Replace Block...	Αντικατάσταση μπλοκ...
+	Requires a point (x,y, @dx,dy or @d<a).	Απαιτείται σημείο (x,y, @dx,dy ή @d<a).
+	Reset keeps the interface language.	Η επαναφορά διατηρεί τη γλώσσα του περιβάλλοντος.
+	Reset Palettes	Επαναφορά παλετών
+	Reset Panel Layout	Επαναφορά διάταξης πινάκων
+	Reset to Defaults	Επαναφορά προεπιλογών
+	Restore	Επαναφορά
+	Restore Layer State	Επαναφορά κατάστασης επιπέδων
+	Reverse	Αντιστροφή
+	Reverse the order	Αντιστροφή σειράς
+	Reverse zoom direction	Αντιστροφή κατεύθυνσης μεγέθυνσης
+	Revision Cloud	Σύννεφο αναθεώρησης (Revision Cloud)
+	Revolve	Περιστροφή για δημιουργία στερεού (Revolve)
+	Right	Δεξιά
+	Rotate	Περιστροφή (Rotate)
+	Rotation	Γωνία περιστροφής
+	Run Script...	Εκτέλεση σεναρίου...
+	S	S
+	Save	Αποθήκευση
+	Save (⌘S)	Αποθήκευση (⌘S)
+	Save As	Αποθήκευση ως
+	Save As...	Αποθήκευση ως...
+	Save Block	Αποθήκευση μπλοκ
+	Save Block As	Αποθήκευση μπλοκ ως
+	Save Layer State	Αποθήκευση κατάστασης επιπέδων
+	Save new drawings as	Αποθήκευση νέων σχεδίων ως
+	Save Reference Edits	Αποθήκευση αλλαγών αναφοράς
+	Save State	Αποθήκευση κατάστασης
+	Saved Path	Αποθηκευμένη διαδρομή
+	Scale	Κλίμακα (Scale)
+	Scale List...	Λίστα κλιμάκων...
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Οι μεγεθυντές οθόνης, οι αναγνώστες οθόνης και οι εφαρμογές εγγραφής ακολουθούν τον δείκτη του συστήματος.
+	Screening	Ποσοστό κάλυψης χρώματος
+	Search for layer	Αναζήτηση επιπέδου
+	Search for parameter	Αναζήτηση παραμέτρου
+	Search for pattern	Αναζήτηση μοτίβου
+	Second and next points:	Δεύτερο και επόμενα σημεία:
+	Select	Επιλογή
+	Select 2D polyline	Επιλέξτε δισδιάστατη πολυγραμμή
+	Select a 2D polyline.	Επιλέξτε μια δισδιάστατη πολυγραμμή.
+	Select a block reference.	Επιλέξτε αναφορά μπλοκ.
+	Select a circle or arc.	Επιλέξτε κύκλο ή τόξο.
+	Select a closed polyline	Επιλέξτε κλειστή πολυγραμμή
+	Select a closed polyline, circle, ellipse or closed spline.	Επιλέξτε κλειστή πολυγραμμή, κύκλο, έλλειψη ή κλειστή καμπύλη spline.
+	Select a closed polyline.	Επιλέξτε κλειστή πολυγραμμή.
+	Select a curve as the path.	Επιλέξτε καμπύλη ως διαδρομή.
+	Select a dimension constraint type	Επιλέξτε τύπο διαστασιακού περιορισμού
+	Select a line object	Επιλέξτε αντικείμενο γραμμής
+	Select a line object.	Επιλέξτε αντικείμενο γραμμής.
+	Select a line or an arc.	Επιλέξτε γραμμή ή τόξο.
+	Select a line or polyline segment	Επιλέξτε τμήμα γραμμής ή πολυγραμμής
+	Select a line, arc or open polyline.	Επιλέξτε γραμμή, τόξο ή ανοικτή πολυγραμμή.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Επιλέξτε γραμμή, τόξο, κύκλο, πολυγραμμή, έλλειψη ή spline ως διαδρομή.
+	Select a line, circle, arc or polyline segment.	Επιλέξτε γραμμή, κύκλο, τόξο ή τμήμα πολυγραμμής.
+	Select a line.	Επιλέξτε γραμμή.
+	Select a polyline.	Επιλέξτε πολυγραμμή.
+	Select a text, mtext, attribute definition or dimension.	Επιλέξτε κείμενο, πολυγραμμικό κείμενο, ορισμό ιδιότητας ή διάσταση.
+	Select All	Επιλογή όλων
+	Select an annotation object	Επιλέξτε αντικείμενο σχολιασμού
+	Select an arc or circle	Επιλέξτε τόξο ή κύκλο
+	Select an arc.	Επιλέξτε τόξο.
+	Select an object	Επιλέξτε αντικείμενο
+	Select an object to change	Επιλέξτε αντικείμενο για αλλαγή
+	Select an object to measure	Επιλέξτε αντικείμενο για μέτρηση
+	Select an object.	Επιλέξτε αντικείμενο.
+	Select an open curve.	Επιλέξτε ανοικτή καμπύλη.
+	Select an open line, arc, polyline, ellipse arc or spline.	Επιλέξτε ανοικτή γραμμή, τόξο, πολυγραμμή, ελλειπτικό τόξο ή καμπύλη spline.
+	Select arc or circle	Επιλέξτε τόξο ή κύκλο
+	Select arc or polyline arc segment	Επιλέξτε τόξο ή καμπύλο τμήμα πολυγραμμής
+	Select arc style	Επιλέξτε στυλ τόξου
+	Select arc, circle, line	Επιλέξτε τόξο, κύκλο ή γραμμή
+	Select at least two objects to join.	Επιλέξτε τουλάχιστον δύο αντικείμενα για σύνδεση.
+	Select circle or arc to add center mark	Επιλέξτε κύκλο ή τόξο για προσθήκη σήμανσης κέντρου
+	Select closed objects (regions, closed polylines, circles).	Επιλέξτε κλειστά αντικείμενα (περιοχές, κλειστές πολυγραμμές, κύκλους).
+	Select first line	Επιλέξτε πρώτη γραμμή
+	Select first line or arc	Επιλέξτε πρώτη γραμμή ή τόξο
+	Select first object	Επιλέξτε πρώτο αντικείμενο
+	Select first point	Επιλέξτε πρώτο σημείο
+	Select nested objects to copy	Επιλέξτε ένθετα αντικείμενα για αντιγραφή
+	Select object	Επιλέξτε αντικείμενο
+	Select object to dimension	Επιλέξτε αντικείμενο για διαστασιολόγηση
+	Select object to divide	Επιλέξτε αντικείμενο για διαίρεση
+	Select object to extend or shift-select to trim	Επιλέξτε αντικείμενο για επέκταση ή κρατήστε Shift για περικοπή
+	Select object to measure	Επιλέξτε αντικείμενο για μέτρηση
+	Select object to offset	Επιλέξτε αντικείμενο για παράλληλη μετατόπιση
+	Select object to trim or shift-select to extend	Επιλέξτε αντικείμενο για περικοπή ή κρατήστε Shift για επέκταση
+	Select Objects	Επιλογή αντικειμένων
+	Select objects	Επιλογή αντικειμένων
+	Select objects (crossing window first corner)	Επιλέξτε αντικείμενα (πρώτη γωνία περιοχής διασταυρούμενης επιλογής)
+	Select objects first, then choose a command	Επιλέξτε πρώτα αντικείμενα και έπειτα εντολή
+	Select objects to array.	Επιλέξτε αντικείμενα για διάταξη.
+	Select objects to stretch by crossing-window or crossing-polygon...	Επιλέξτε αντικείμενα για τάνυση με διασταυρούμενο παράθυρο ή πολύγωνο...
+	Select objects:	Επιλέξτε αντικείμενα:
+	Select one polyline (Multiple is available through the JSON form).	Επιλέξτε μία πολυγραμμή (η επιλογή Multiple διατίθεται μέσω JSON).
+	Select path curve	Επιλέξτε καμπύλη διαδρομής
+	Select point or object	Επιλέξτε σημείο ή αντικείμενο
+	Select polyline	Επιλέξτε πολυγραμμή
+	Select second line	Επιλέξτε δεύτερη γραμμή
+	Select second line or shift-select to apply corner	Επιλέξτε δεύτερη γραμμή ή κρατήστε Shift για εφαρμογή γωνίας
+	Select second object	Επιλέξτε δεύτερο αντικείμενο
+	Select second object or shift-select to apply corner	Επιλέξτε δεύτερο αντικείμενο ή κρατήστε Shift για εφαρμογή γωνίας
+	Select second point	Επιλέξτε δεύτερο σημείο
+	Select Similar	Επιλογή παρόμοιων αντικειμένων
+	Select spline	Επιλέξτε καμπύλη spline
+	Select symmetry line	Επιλέξτε άξονα συμμετρίας
+	Select two points	Επιλέξτε δύο σημεία
+	Selection	Επιλογή
+	Selection Area Effect	Εφέ περιοχής επιλογής
+	Selection area opacity:	Αδιαφάνεια περιοχής επιλογής:
+	Selection Cycling	Κυκλική εναλλαγή επιλογών (Selection Cycling)
+	Selection effect color	Χρώμα εφέ επιλογής
+	Selection modes	Τρόποι επιλογής
+	Selection preview	Προεπισκόπηση επιλογής
+	Selection Preview Filter	Φίλτρο προεπισκόπησης επιλογής
+	Send Hatches to Back	Μεταφορά διαγραμμίσεων στο παρασκήνιο
+	Send to Back	Μεταφορά στο παρασκήνιο
+	Send Under Objects	Μεταφορά κάτω από τα αντικείμενα
+	Services	Υπηρεσίες
+	Set Current	Ορισμός ως τρέχον
+	Set Current Dimension Style	Ορισμός τρέχοντος στυλ διαστάσεων
+	Set Current Text Style	Ορισμός τρέχοντος στυλ κειμένου
+	Set Current Viewport	Ορισμός τρέχοντος παραθύρου προβολής
+	Set Dynamic Property	Ορισμός δυναμικής ιδιότητας
+	Set Layer Properties	Ορισμός ιδιοτήτων επιπέδου
+	Set Properties	Ορισμός ιδιοτήτων
+	Set Table Cell	Ορισμός κελιού πίνακα
+	Set Table Cell Style	Ορισμός στυλ κελιού πίνακα
+	Set Variable	Ορισμός μεταβλητής
+	Set View	Ορισμός όψης
+	Settings...	Ρυθμίσεις...
+	Shape	Σχήμα
+	Share	Κοινοποίηση
+	Sheet Books to PDF...	Εξαγωγή συλλογών φύλλων σε PDF...
+	Show	Εμφάνιση
+	Show All	Εμφάνιση όλων
+	Show All Constraint Bars	Εμφάνιση όλων των γραμμών περιορισμών
+	Show All Dynamic Dimensions	Εμφάνιση όλων των δυναμικών διαστάσεων
+	Show and hide the tools of this category	Εμφάνιση και απόκρυψη εργαλείων αυτής της κατηγορίας
+	Show Annotative Objects	Εμφάνιση αντικειμένων σχολιασμού
+	Show command prompting near the crosshairs	Εμφάνιση προτροπών εντολών δίπλα στο σταυρόνημα
+	Show grips	Εμφάνιση λαβών
+	Show in Tool Sets	Εμφάνιση στα σύνολα εργαλείων
+	Show Layer List	Εμφάνιση λίστας επιπέδων
+	Show Quick Properties for selected objects	Εμφάνιση γρήγορων ιδιοτήτων για τα επιλεγμένα αντικείμενα
+	Show System Cursor	Εμφάνιση δείκτη συστήματος
+	Show/Hide Lineweight	Εμφάνιση/απόκρυψη πάχους γραμμής
+	Show/Hide Transparency	Εμφάνιση/απόκρυψη διαφάνειας
+	Single Line Text	Κείμενο μίας γραμμής
+	Single Point	Ένα σημείο
+	Single...	Μονή επιλογή...
+	Smooth	Ομαλό
+	Snap	Έλξη (Snap)
+	Snap and Grid	Έλξη και πλέγμα
+	Snap Mode	Λειτουργία έλξης (Snap Mode)
+	Snap Mode (F9)	Λειτουργία έλξης (F9)
+	Snap On (F9)	Έλξη ενεργή (F9)
+	Snap Overrides	Παρακάμψεις έλξης
+	Snap type	Τύπος έλξης
+	Snap X spacing	Βήμα έλξης X
+	Snap, grid, polar tracking and Dynamic Input:	Έλξη, πλέγμα, πολική παρακολούθηση και δυναμική εισαγωγή:
+	Solid	Στερεό (Solid)
+	Solid Editing	Επεξεργασία στερεών
+	Sort	Ταξινόμηση
+	Specified origin	Καθορισμένη αρχή συντεταγμένων
+	Specify a point	Καθορίστε σημείο
+	Specify a scale for the hatch pattern	Καθορίστε κλίμακα μοτίβου διαγράμμισης
+	Specify a second extension line origin	Καθορίστε αρχή δεύτερης γραμμής προέκτασης
+	Specify an angle for the hatch pattern	Καθορίστε γωνία μοτίβου διαγράμμισης
+	Specify angle end point	Καθορίστε τελικό σημείο γωνίας
+	Specify angle of dimension line	Καθορίστε γωνία γραμμής διάστασης
+	Specify angle of dimension text	Καθορίστε γωνία κειμένου διάστασης
+	Specify angle start point	Καθορίστε αρχικό σημείο γωνίας
+	Specify angle vertex	Καθορίστε κορυφή γωνίας
+	Specify angle vertex point	Καθορίστε σημείο κορυφής γωνίας
+	Specify arc length dimension location	Καθορίστε θέση διάστασης μήκους τόξου
+	Specify axis endpoint of ellipse	Καθορίστε τελικό σημείο άξονα έλλειψης
+	Specify base diameter	Καθορίστε διάμετρο βάσης
+	Specify base point	Καθορίστε σημείο βάσης
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Καθορίστε σημείο βάσης ή μετατόπιση (σύρετε με το μεσαίο πλήκτρο του ποντικιού για μετατόπιση όψης σε πραγματικό χρόνο)
+	Specify base radius	Καθορίστε ακτίνα βάσης
+	Specify center of donut	Καθορίστε κέντρο δακτυλίου
+	Specify center of ellipse	Καθορίστε κέντρο έλλειψης
+	Specify center of polygon	Καθορίστε κέντρο πολυγώνου
+	Specify center point for circle	Καθορίστε κεντρικό σημείο κύκλου
+	Specify center point of arc	Καθορίστε κεντρικό σημείο τόξου
+	Specify center point of array	Καθορίστε κεντρικό σημείο διάταξης
+	Specify center point of base	Καθορίστε κεντρικό σημείο βάσης
+	Specify corner of viewport	Καθορίστε γωνία παραθύρου προβολής
+	Specify corner of window, enter a scale factor (nX or nXP)	Καθορίστε γωνία παραθύρου ή συντελεστή κλίμακας (nX ή nXP)
+	Specify diameter of circle	Καθορίστε διάμετρο κύκλου
+	Specify dimension arc line location	Καθορίστε θέση καμπύλης γραμμής διάστασης
+	Specify dimension line location	Καθορίστε θέση γραμμής διάστασης
+	Specify distance between turns	Καθορίστε απόσταση μεταξύ στροφών
+	Specify distance to other axis	Καθορίστε απόσταση μέχρι τον άλλο άξονα
+	Specify end angle	Καθορίστε τελική γωνία
+	Specify end point of arc	Καθορίστε τελικό σημείο τόξου
+	Specify end point of arc (hold Ctrl to switch direction)	Καθορίστε τελικό σημείο τόξου (κρατήστε Ctrl για αλλαγή κατεύθυνσης)
+	Specify ending width	Καθορίστε τελικό πλάτος
+	Specify ending width for next segment	Καθορίστε τελικό πλάτος του επόμενου τμήματος
+	Specify endpoint of arc	Καθορίστε τελικό σημείο τόξου
+	Specify endpoint of axis	Καθορίστε τελικό σημείο άξονα
+	Specify endpoint of line	Καθορίστε τελικό σημείο γραμμής
+	Specify feature location	Καθορίστε θέση χαρακτηριστικού
+	Specify fillet radius	Καθορίστε ακτίνα στρογγυλέματος (Fillet)
+	Specify fillet radius for rectangles	Καθορίστε ακτίνα στρογγυλέματος για ορθογώνια
+	Specify first angle endpoint	Καθορίστε πρώτο τελικό σημείο γωνίας
+	Specify first chamfer distance	Καθορίστε πρώτη απόσταση λοξότμησης (Chamfer)
+	Specify first chamfer distance for rectangles	Καθορίστε πρώτη απόσταση λοξότμησης για ορθογώνια
+	Specify first constraint point	Καθορίστε πρώτο σημείο περιορισμού
+	Specify first corner	Καθορίστε πρώτη γωνία
+	Specify first corner point	Καθορίστε σημείο πρώτης γωνίας
+	Specify first destination point	Καθορίστε πρώτο σημείο προορισμού
+	Specify first end point of circle's diameter	Καθορίστε πρώτο άκρο διαμέτρου κύκλου
+	Specify first endpoint of edge	Καθορίστε πρώτο τελικό σημείο ακμής
+	Specify first extension line origin	Καθορίστε αρχή πρώτης γραμμής προέκτασης
+	Specify first point	Καθορίστε πρώτο σημείο
+	Specify first point of mirror line	Καθορίστε πρώτο σημείο άξονα κατοπτρισμού
+	Specify first point on circle	Καθορίστε πρώτο σημείο επάνω στον κύκλο
+	Specify first point on circle: _tan to	Καθορίστε πρώτο σημείο επάνω στον κύκλο: _tan προς
+	Specify first source point	Καθορίστε πρώτο σημείο προέλευσης
+	Specify height	Καθορίστε ύψος
+	Specify helix height	Καθορίστε ύψος έλικας
+	Specify included angle	Καθορίστε περιεχόμενη γωνία
+	Specify insertion base point	Καθορίστε σημείο βάσης εισαγωγής
+	Specify insertion point	Καθορίστε σημείο εισαγωγής
+	Specify inside diameter of donut	Καθορίστε εσωτερική διάμετρο δακτυλίου
+	Specify leader arrowhead location	Καθορίστε θέση αιχμής γραμμής υπόδειξης
+	Specify leader endpoint	Καθορίστε τελικό σημείο γραμμής υπόδειξης
+	Specify leader landing location	Καθορίστε θέση οριζόντιου τμήματος γραμμής υπόδειξης
+	Specify length for rectangles	Καθορίστε μήκος ορθογωνίων
+	Specify length of chord	Καθορίστε μήκος χορδής
+	Specify length of segment	Καθορίστε μήκος τμήματος
+	Specify line width for rectangles	Καθορίστε πλάτος γραμμής για ορθογώνια
+	Specify location for new vertex	Καθορίστε θέση νέας κορυφής
+	Specify minimum length of arc	Καθορίστε ελάχιστο μήκος τόξου
+	Specify new end point	Καθορίστε νέο τελικό σημείο
+	Specify new location for marked vertex	Καθορίστε νέα θέση της σημειωμένης κορυφής
+	Specify new width for all segments	Καθορίστε νέο πλάτος για όλα τα τμήματα
+	Specify next point	Καθορίστε επόμενο σημείο
+	Specify offset distance	Καθορίστε απόσταση παράλληλης μετατόπισης (Offset)
+	Specify opposite corner	Καθορίστε απέναντι γωνία
+	Specify other corner point	Καθορίστε το άλλο γωνιακό σημείο
+	Specify other endpoint of axis	Καθορίστε το άλλο τελικό σημείο άξονα
+	Specify outside diameter of donut	Καθορίστε εξωτερική διάμετρο δακτυλίου
+	Specify point	Καθορίστε σημείο
+	Specify point on object for first tangent of circle	Καθορίστε σημείο του αντικειμένου για την πρώτη εφαπτομένη κύκλου
+	Specify point on object for second tangent of circle	Καθορίστε σημείο του αντικειμένου για τη δεύτερη εφαπτομένη κύκλου
+	Specify point on side to offset	Καθορίστε σημείο στην πλευρά της παράλληλης μετατόπισης
+	Specify radius of arc	Καθορίστε ακτίνα τόξου
+	Specify radius of circle	Καθορίστε ακτίνα κύκλου
+	Specify rotation angle	Καθορίστε γωνία περιστροφής
+	Specify rotation angle of text	Καθορίστε γωνία περιστροφής κειμένου
+	Specify scale factor	Καθορίστε συντελεστή κλίμακας
+	Specify second angle endpoint	Καθορίστε δεύτερο τελικό σημείο γωνίας
+	Specify second break point	Καθορίστε δεύτερο σημείο διακοπής
+	Specify second chamfer distance for rectangles	Καθορίστε δεύτερη απόσταση λοξότμησης για ορθογώνια
+	Specify second constraint point	Καθορίστε δεύτερο σημείο περιορισμού
+	Specify second destination point	Καθορίστε δεύτερο σημείο προορισμού
+	Specify second end point of circle's diameter	Καθορίστε δεύτερο άκρο διαμέτρου κύκλου
+	Specify second endpoint of edge	Καθορίστε δεύτερο τελικό σημείο ακμής
+	Specify second extension line origin	Καθορίστε αρχή δεύτερης γραμμής προέκτασης
+	Specify second point	Καθορίστε δεύτερο σημείο
+	Specify second point of arc	Καθορίστε δεύτερο σημείο τόξου
+	Specify second point of mirror line	Καθορίστε δεύτερο σημείο άξονα κατοπτρισμού
+	Specify second point on circle	Καθορίστε δεύτερο σημείο επάνω στον κύκλο
+	Specify second point on circle: _tan to	Καθορίστε δεύτερο σημείο επάνω στον κύκλο: _tan προς
+	Specify second point or <use first point as displacement>	Καθορίστε δεύτερο σημείο ή <χρήση πρώτου σημείου ως μετατόπιση>
+	Specify second source point	Καθορίστε δεύτερο σημείο προέλευσης
+	Specify side to offset	Καθορίστε πλευρά παράλληλης μετατόπισης
+	Specify start angle	Καθορίστε αρχική γωνία
+	Specify start point	Καθορίστε αρχικό σημείο
+	Specify start point of arc	Καθορίστε αρχικό σημείο τόξου
+	Specify start point of polyline	Καθορίστε αρχικό σημείο πολυγραμμής
+	Specify start point of text	Καθορίστε αρχικό σημείο κειμένου
+	Specify starting width	Καθορίστε αρχικό πλάτος
+	Specify starting width for next segment	Καθορίστε αρχικό πλάτος του επόμενου τμήματος
+	Specify tangent direction for the start point of arc	Καθορίστε κατεύθυνση εφαπτομένης στο αρχικό σημείο τόξου
+	Specify the elevation for rectangles	Καθορίστε υψόμετρο ορθογωνίων
+	Specify thickness for rectangles	Καθορίστε πάχος ορθογωνίων
+	Specify third point on circle	Καθορίστε τρίτο σημείο επάνω στον κύκλο
+	Specify third point on circle: _tan to	Καθορίστε τρίτο σημείο επάνω στον κύκλο: _tan προς
+	Specify third source point or <continue>	Καθορίστε τρίτο σημείο προέλευσης ή <συνέχεια>
+	Specify through point	Καθορίστε σημείο διέλευσης
+	Specify top diameter	Καθορίστε άνω διάμετρο
+	Specify top radius	Καθορίστε άνω ακτίνα
+	Specify total angle	Καθορίστε συνολική γωνία
+	Specify total length	Καθορίστε συνολικό μήκος
+	Specify width for rectangles	Καθορίστε πλάτος ορθογωνίων
+	Sphere	Σφαίρα
+	Spherical	Σφαιρικό
+	Spline	Καμπύλη spline (Spline)
+	Spline Edit	Επεξεργασία καμπύλης spline (Spline Edit)
+	Stack (type 1/2 then select)	Στοίβαξη (πληκτρολογήστε 1/2 και επιλέξτε)
+	Standard	Τυπικό
+	Start	Έναρξη
+	Start angle	Αρχική γωνία
+	Start Width	Αρχικό πλάτος
+	Start X	Αρχικό X
+	Start Y	Αρχικό Y
+	Start, Center, Angle	Αρχή, κέντρο, γωνία
+	Start, Center, End	Αρχή, κέντρο, τέλος
+	Start, Center, Length	Αρχή, κέντρο, μήκος
+	Start, End, Angle	Αρχή, τέλος, γωνία
+	Start, End, Direction	Αρχή, τέλος, κατεύθυνση
+	Start, End, Radius	Αρχή, τέλος, ακτίνα
+	Status	Κατάσταση
+	Status Bar	Γραμμή κατάστασης
+	Stretch	Τάνυση (Stretch)
+	Stretch Vertex	Τάνυση κορυφής
+	Style: Standard	Στυλ: Τυπικό
+	Subtract	Αφαίρεση στερεών (Subtract)
+	SVG drawings (SVG, SVGZ)	Σχέδια SVG (SVG, SVGZ)
+	Sweep	Σάρωση διατομής κατά διαδρομή (Sweep)
+	Switch between model space in a viewport and paper space	Εναλλαγή μεταξύ χώρου μοντέλου στο παράθυρο προβολής και χώρου χαρτιού
+	Switch Drawing	Εναλλαγή σχεδίου
+	Switch Layout	Εναλλαγή διάταξης
+	Symmetric	Συμμετρικό
+	Synchronize Attributes	Συγχρονισμός ιδιοτήτων (Attributes)
+	Synchronize Multiple-scale Positions	Συγχρονισμός θέσεων πολλαπλών κλιμάκων
+	Table	Πίνακας
+	Table Breaks	Διακοπές πίνακα
+	Table Cell Style	Στυλ κελιού πίνακα
+	Table style	Στυλ πίνακα
+	Table Style...	Στυλ πίνακα...
+	Table...	Πίνακας...
+	Tables	Πίνακες
+	Tan, Tan, Radius	Εφαπτομένη, εφαπτομένη, ακτίνα
+	Tan, Tan, Tan	Εφαπτομένη, εφαπτομένη, εφαπτομένη
+	Tangent	Εφαπτομένη (Tangent)
+	Temporary track point	Προσωρινό σημείο παρακολούθησης
+	Text	Κείμενο
+	Text color	Χρώμα κειμένου
+	Text Editor	Επεξεργαστής κειμένου
+	Text Height	Ύψος κειμένου
+	Text height	Ύψος κειμένου
+	Text Objects Only	Μόνο αντικείμενα κειμένου
+	Text override	Παράκαμψη κειμένου
+	Text style	Στυλ κειμένου
+	Text Style...	Στυλ κειμένου...
+	Thaw All Layers	Ξεπάγωμα όλων των επιπέδων
+	Thaw Layer	Ξεπάγωμα επιπέδου (Thaw Layer)
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Η ακτίνα αναζήτησης καθορίζει πόσο κοντά σε ένα σημείο πρέπει να βρεθεί ο δείκτης για να το αναγνωρίσει η έλξη αντικειμένων.
+	There is nothing here yet.	Δεν υπάρχει ακόμη τίποτα εδώ.
+	Thickness	Πάχος
+	This drawing	Αυτό το σχέδιο
+	Time	Χρόνος
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Δεξί κλικ ανάλογα με τη διάρκειά του: σύντομο κλικ ισοδυναμεί με Enter, παρατεταμένο ανοίγει το μενού
+	To	Προς
+	To get started, create or open a drawing.	Για να ξεκινήσετε, δημιουργήστε ή ανοίξτε ένα σχέδιο.
+	Toggle PICKADD (off: each pick replaces the selection)	Εναλλαγή PICKADD (ανενεργό: κάθε επιλογή αντικαθιστά την προηγούμενη)
+	Toggle PICKADD (on: picks add to the selection)	Εναλλαγή PICKADD (ενεργό: οι νέες επιλογές προστίθενται)
+	Tolerance...	Ανοχές (Tolerance)...
+	Tool Bar	Γραμμή εργαλείων
+	Tool Sets	Σύνολα εργαλείων
+	Tools	Εργαλεία
+	TOP	ΚΑΤΟΨΗ
+	Top left	Πάνω αριστερά
+	Top right	Πάνω δεξιά
+	Torus	Τόρος (Torus)
+	Trace	Ίχνος (Trace)
+	Track orthogonally only	Παρακολούθηση μόνο ορθογώνια
+	Track using all polar angle settings	Παρακολούθηση με όλες τις ρυθμίσεις πολικών γωνιών
+	Transparency	Διαφάνεια
+	Trim	Περικοπή (Trim)
+	True Color	Πραγματικό χρώμα (True Color)
+	Turn All Layers On	Ενεργοποίηση όλων των επιπέδων
+	Turn Off Layer	Απενεργοποίηση επιπέδου
+	Turn On Layer	Ενεργοποίηση επιπέδου
+	Turn Quick Properties off (QPMODE)	Απενεργοποίηση γρήγορων ιδιοτήτων (QPMODE)
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Όταν είναι απενεργοποιημένο, το δεξί κλικ κατά την εκτέλεση εντολής ανοίγει πάντα το μενού συντομεύσεων.
+	Type	Τύπος
+	Type a command	Πληκτρολογήστε μια εντολή
+	Type text; Enter starts a new paragraph	Πληκτρολογήστε κείμενο· το Enter ξεκινά νέα παράγραφο
+	UCS Icon	Εικονίδιο συστήματος συντεταγμένων χρήστη (UCS)
+	Underline	Υπογράμμιση
+	Undo	Αναίρεση
+	Undo (⌘Z)	Αναίρεση (⌘Z)
+	Ungroup	Κατάργηση ομαδοποίησης
+	Union	Ένωση στερεών (Union)
+	Unisolate Layer	Κατάργηση απομόνωσης επιπέδου
+	Units Conversion	Μετατροπή μονάδων
+	Units...	Μονάδες...
+	Unload	Αποφόρτωση
+	Unloaded	Αποφορτωμένο
+	Unlock Layer	Ξεκλείδωμα επιπέδου
+	Unlock viewport	Ξεκλείδωμα παραθύρου προβολής
+	Unmerge Cells	Κατάργηση συγχώνευσης κελιών
+	Unreferenced	Χωρίς αναφορές
+	Unresolved	Μη επιλυμένο
+	Unsaved changes	Μη αποθηκευμένες αλλαγές
+	Unsaved Layer State	Μη αποθηκευμένη κατάσταση επιπέδων
+	Up	Πάνω
+	Update	Ενημέρωση
+	Update Data Links	Ενημέρωση συνδέσεων δεδομένων
+	Use current origin	Χρήση τρέχουσας αρχής συντεταγμένων
+	Use for this layout	Χρήση για αυτή τη διάταξη
+	Use object linetype	Χρήση τύπου γραμμής του αντικειμένου
+	Use object lineweight	Χρήση πάχους γραμμής του αντικειμένου
+	Use System Setting	Χρήση ρύθμισης συστήματος
+	User	Χρήστης
+	User Parameters	Παράμετροι χρήστη
+	User Preferences	Προτιμήσεις χρήστη
+	Username	Όνομα χρήστη
+	Value	Τιμή
+	Value:	Τιμή:
+	Variables	Μεταβλητές
+	Version	Έκδοση
+	Version 2000	Έκδοση 2000
+	Version 2004	Έκδοση 2004
+	Version 2007	Έκδοση 2007
+	Version 2010	Έκδοση 2010
+	Version 2013	Έκδοση 2013
+	Version 2018	Έκδοση 2018
+	Version {version}	Έκδοση {version}
+	Vertical	Κατακόρυφο
+	VerticalDistance	Κατακόρυφη απόσταση
+	View	Προβολή
+	ViewCube	Κύβος προβολής (ViewCube)
+	Viewport	Παράθυρο προβολής (Viewport)
+	Viewport is locked	Το παράθυρο προβολής είναι κλειδωμένο
+	Viewport Layer Freeze	Πάγωμα επιπέδου σε παράθυρο προβολής
+	Viewport Properties	Ιδιότητες παραθύρου προβολής
+	Viewport scale	Κλίμακα παραθύρου προβολής
+	Viewport {id}	Παράθυρο προβολής {id}
+	Viewports	Παράθυρα προβολής (Viewports)
+	Visual Effect Settings	Ρυθμίσεις οπτικών εφέ
+	Visual Effect Settings...	Ρυθμίσεις οπτικών εφέ...
+	Volume	Όγκος
+	VP Color	Χρώμα παραθύρου προβολής (VP Color)
+	VP Freeze	Πάγωμα σε παράθυρο προβολής (VP Freeze)
+	W	W
+	WCS	WCS
+	When a command is active	Όταν είναι ενεργή μια εντολή
+	When no command is active	Όταν δεν είναι ενεργή καμία εντολή
+	White	Λευκό
+	Width factor	Συντελεστής πλάτους
+	Window	Παράθυρο
+	Window selection color:	Χρώμα επιλογής παραθύρου:
+	Wipeout	Κάλυψη περιοχής (Wipeout)
+	Working Set	Σύνολο εργασίας (Working Set)
+	Workspace Switching	Εναλλαγή χώρου εργασίας
+	Write Block	Εγγραφή μπλοκ (Write Block)
+	X	X
+	Xline	Βοηθητική ευθεία (Xline)
+	Xref and Block In-place Editing	Επιτόπια επεξεργασία εξωτερικών αναφορών και μπλοκ
+	Xrefs	Εξωτερικές αναφορές (Xrefs)
+	Y	Y
+	Yellow	Κίτρινο
+	Yes	Ναι
+	Zoom	Μεγέθυνση (Zoom)
+	Zoom All	Μεγέθυνση όλου του σχεδίου
+	Zoom Dynamic	Δυναμική μεγέθυνση
+	Zoom Extents	Μεγέθυνση στα όρια (Zoom Extents)
+	Zoom In	Μεγέθυνση
+	Zoom Object	Μεγέθυνση σε αντικείμενο
+	Zoom Out	Σμίκρυνση
+	Zoom Previous	Προηγούμενη μεγέθυνση
+	Zoom Realtime	Μεγέθυνση σε πραγματικό χρόνο
+	Zoom sensitivity	Ευαισθησία μεγέθυνσης
+	Zoom Window	Μεγέθυνση περιοχής παραθύρου
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (περιορισμός {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} περιορισμός {name} = {expression}  (διπλό κλικ για επεξεργασία)
+	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	ƒx  New User Parameter	ƒx  Νέα παράμετρος χρήστη
+	ΔLOC	ΔΓΚ
+	−Bin	−Δυαδικά αρχεία
+	−LOC	−Γραμμές κώδικα
+	⌘↩ to finish	⌘↩ για ολοκλήρωση
+@plural	{n} commit	{n} υποβολή κώδικα|{n} υποβολές κώδικα
+@plural	{n} contributor	{n} συνεισφέρων|{n} συνεισφέροντες
+menu	Dimension	Διαστασιολόγηση
+menu	Draw	Σχεδίαση
+menu	Modify	Τροποποίηση
+menu	View	Προβολή
+	Check for Updates…	Έλεγχος για ενημερώσεις…
+	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
+	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Find All	Find All
+	Find what:	Find what:
+	Match case	Match case
+	Replace	Replace
+	Replace All	Replace All
+	Replace with:	Replace with:
+	Replacement text	Replacement text
+	Results	Results
+	Searches the current space.	Searches the current space.
+	Text to find	Text to find
+	Whole words	Whole words
+	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
