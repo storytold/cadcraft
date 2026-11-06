@@ -270,11 +270,19 @@ impl EntityKind {
 
     /// Apply a 2D affine transform (move/rotate/uniform scale/mirror). Non-uniform scale turns
     /// circles into ellipses only where the kind supports it; otherwise radii use the mean scale.
+    /// Z coordinates pass through untouched; for a translation along Z see `transform_dz`.
     pub fn transform(&mut self, m: &Mat3) {
+        self.transform_dz(m, 0.0);
+    }
+
+    /// [`EntityKind::transform`] with an additional translation along Z (MOVE/COPY with a Z
+    /// delta). Planar operations (ROTATE/SCALE/MIRROR) pass 0 and leave Z untouched.
+    pub fn transform_dz(&mut self, m: &Mat3, dz: f64) {
         let t3 = |p: &mut Vec3| {
             let q = m.apply(p.xy());
             p.x = q.x;
             p.y = q.y;
+            p.z += dz;
         };
         let s = m.scale_factor();
         let rot = m.rotation();
@@ -349,9 +357,9 @@ impl EntityKind {
                 t3(&mut r.base);
                 r.dir = m.apply_vec(r.dir.xy()).normalized().to3(0.0);
             }
-            EntityKind::Text(t) => transform_text(t, m, s, rot, mirror),
+            EntityKind::Text(t) => transform_text(t, m, s, rot, mirror, dz),
             EntityKind::AttDef(a) => {
-                transform_text(&mut a.text, m, s, rot, mirror);
+                transform_text(&mut a.text, m, s, rot, mirror, dz);
                 a.transform_multiline(m);
             }
             EntityKind::MText(t) => {
@@ -378,7 +386,7 @@ impl EntityKind {
                     i.col_spacing = -i.col_spacing;
                 }
                 for a in &mut i.attribs {
-                    transform_text(&mut a.text, m, s, rot, false);
+                    transform_text(&mut a.text, m, s, rot, false, dz);
                     a.transform_multiline(m);
                 }
                 i.col_spacing *= s;
@@ -644,14 +652,16 @@ impl EntityKind {
     }
 }
 
-fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
+fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool, dz: f64) {
     let q = m.apply(t.insert.xy());
     t.insert.x = q.x;
     t.insert.y = q.y;
+    t.insert.z += dz;
     if let Some(a) = &mut t.align_pt {
         let q = m.apply(a.xy());
         a.x = q.x;
         a.y = q.y;
+        a.z += dz;
     }
     t.height *= s;
     // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right.
