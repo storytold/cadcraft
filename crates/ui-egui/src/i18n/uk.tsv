@@ -1290,6 +1290,7 @@
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Креслення, що ще не мають файлу, зберігаються в типовій версії. 0 хвилин вимикає автозбереження.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Клік правою кнопкою з урахуванням часу: швидкий клік — Enter, утримання відкриває меню
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Якщо вимкнено, клік правою кнопкою під час команди завжди відкриває контекстне меню.
+	Turned off (AutoCAD's default), a right-click opens the shortcut menu when the prompt has options and is otherwise Enter.	Якщо вимкнено (типово, як в AutoCAD), клік правою кнопкою відкриває контекстне меню, коли запит має параметри, а інакше — Enter.
 	Hatch Pattern	Зразок штрихування
 	Search for pattern	Пошук зразка
 	Run Script...	Виконати сценарій...

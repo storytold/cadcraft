@@ -16,7 +16,7 @@
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
+//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu; `false` (the default, as in AutoCAD): the menu opens when the prompt has options and the click is otherwise Enter |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
@@ -69,20 +69,23 @@ pub struct UiOptions {
     /// The selection highlight colour; `None` keeps the theme's.
     pub selection_color: Option<Color32>,
     /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
-    /// (AutoCAD's time-sensitive right-click). Off: a right-click always opens the menu.
+    /// (AutoCAD's time-sensitive right-click). Off (AutoCAD's default): a right-click opens the
+    /// menu when the prompt has options and is otherwise Enter.
     pub time_sensitive_right_click: bool,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
 }
 
 impl Default for UiOptions {
+    /// The defaults, AutoCAD's where it matters: time-sensitive right-click is off, so a
+    /// right-click at a prompt with options opens the menu and one without options is Enter.
     fn default() -> Self {
         UiOptions {
             model_background: None,
             paper_background: None,
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
-            time_sensitive_right_click: true,
+            time_sensitive_right_click: false,
             interface_scale: 1.0,
         }
     }
@@ -115,6 +118,7 @@ pub fn parse_hex(s: &str) -> Option<Color32> {
     Some(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
 }
 
+/// A colour as `"#rrggbb"`, or JSON null when unset.
 fn color_json(c: Option<Color32>) -> Value {
     c.map_or(Value::Null, |c| json!(hex(c)))
 }
@@ -153,6 +157,7 @@ struct UiChanges {
     interface_scale: Option<f32>,
 }
 
+/// A `"#rrggbb"` parameter (null for unset), refused with a message naming `key`.
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
     match v {
         Value::Null => Ok(None),
@@ -161,6 +166,8 @@ fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
     }
 }
 
+/// Apply one interface preference from the JSON form to `c`: `Ok(false)` when `key` belongs to
+/// the engine's variables instead, an error naming the expected value when it is malformed.
 fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
     let text = || v.as_str().ok_or_else(|| format!("{key} must be text"));
     match key {
@@ -392,6 +399,8 @@ impl CadApp {
 mod tests {
     use super::*;
 
+    /// Lower- and upper-case hex round-trip; short, long and non-ASCII forms are refused with
+    /// `None` (never a panic).
     #[test]
     fn hex_colours_round_trip_and_bad_ones_are_refused() {
         let c = Color32::from_rgb(0x12, 0xab, 0xff);
@@ -400,5 +409,23 @@ mod tests {
         for bad in ["#+f+0+0", "", "#fff", "#gggggg", "#12345678", "#ééé", "#1234567"] {
             assert_eq!(parse_hex(bad), None, "{bad}");
         }
+    }
+
+    /// Every label typed with `crate::tl!` in the Options dialog has a Ukrainian translation
+    /// (file format names excepted), so no English text leaks into the translated dialog.
+    #[test]
+    fn dialog_labels_have_ukrainian_translations() {
+        let sources = [include_str!("dialog.rs")];
+        let mut missing: Vec<String> = dialog::TABS.iter().filter(|(_, l)| crate::i18n::tr("uk", l) == *l).map(|(_, l)| l.to_string()).collect();
+        for source in sources {
+            for rest in source.split("crate::tl!(").skip(1) {
+                let Some(text) = rest.strip_prefix('"').and_then(|r| r.split('"').next()) else { continue };
+                // File format names read the same in every language.
+                if crate::i18n::tr("uk", text) == text && !["DXF", "DWG"].contains(&text) {
+                    missing.push(text.to_string());
+                }
+            }
+        }
+        assert!(missing.is_empty(), "missing translations: {missing:?}");
     }
 }

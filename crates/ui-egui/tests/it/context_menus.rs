@@ -9,6 +9,7 @@ use serde_json::json;
 
 /// (label, id, enabled) of the items, with submenu items prefixed by "Sub/".
 fn flatten(groups: &[Vec<Entry>]) -> Vec<(String, String, bool)> {
+    /// Push `es` into `out`, submenu items prefixed with their label and `/`.
     fn walk(prefix: &str, es: &[Entry], out: &mut Vec<(String, String, bool)>) {
         for e in es {
             match e {
@@ -24,14 +25,17 @@ fn flatten(groups: &[Vec<Entry>]) -> Vec<(String, String, bool)> {
     out
 }
 
+/// The labels of the menu groups' flattened items.
 fn labels(groups: &[Vec<Entry>]) -> Vec<String> {
     flatten(groups).into_iter().map(|(l, _, _)| l).collect()
 }
 
+/// The ids of the menu groups' flattened items.
 fn ids(groups: &[Vec<Entry>]) -> Vec<String> {
     flatten(groups).into_iter().map(|(_, id, _)| id).collect()
 }
 
+/// An app with an empty drawing and default services.
 fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
@@ -42,11 +46,17 @@ fn select_all(app: &mut CadApp) {
     app.session.set_selection(all);
 }
 
+/// Type `text` at the command line and submit it, as a user would (so commands and their prompts
+/// run exactly as typed).
 fn type_line(app: &mut CadApp, text: &str) {
     app.cmd.buffer = text.into();
     cmdline::submit(app);
 }
 
+/// The command menu lists Enter, Cancel, Recent Input (newest first, command names excluded), the
+/// prompt's keyword options, Snap Overrides at point prompts and transparent Pan/Zoom; choosing
+/// each gives the command the same input as typing it, and a chosen snap override is typed at the
+/// point prompt.
 #[test]
 fn command_menu_offers_enter_cancel_options_snaps_and_views() {
     let mut app = app();
@@ -88,6 +98,8 @@ fn command_menu_offers_enter_cancel_options_snaps_and_views() {
     assert!(app.session.running.is_none());
 }
 
+/// Snap Overrides appears only where a point is wanted; ERASE's Select objects prompt does not
+/// offer it (the regression: it was listed there and typed a modifier nothing could use).
 #[test]
 fn snap_overrides_only_at_point_prompts() {
     let mut app = app();
@@ -98,6 +110,9 @@ fn snap_overrides_only_at_point_prompts() {
     assert!(!l.iter().any(|x| x.starts_with("Snap Overrides/")), "Select objects isn't a point prompt: {l:?}");
 }
 
+/// The idle menu shows Repeat and Recent Commands (newest first), adds the selection commands only
+/// with a selection, runs a chosen one on it, and leaves out commands that are not registered
+/// rather than stubbing them; a mixed selection offers no object-type edit commands.
 #[test]
 fn idle_menu_lists_recent_commands_and_selection_commands() {
     let mut app = app();
@@ -130,6 +145,9 @@ fn idle_menu_lists_recent_commands_and_selection_commands() {
     assert!(app.session.doc().unwrap().model.handles().is_empty());
 }
 
+/// Each selected object type offers its own edit command — Edit Text, Polyline Edit, Spline Edit —
+/// in the selection menu and the idle menu, with the label AutoCAD uses rather than the command's
+/// bare name.
 #[test]
 fn selection_menu_has_the_object_types_edit_commands() {
     let cases = [
@@ -166,6 +184,8 @@ fn selection_menu_has_the_object_types_edit_commands() {
     assert_eq!(labels(&[context_menu::object_entries(&pline)]), ["Polyline Edit"]);
 }
 
+/// A selected block reference offers Block Editor and Edit Reference In-Place; inside the Block
+/// Editor the idle menu instead offers saving and closing the block.
 #[test]
 fn a_selected_block_reference_offers_the_block_editor() {
     let mut app = app();
@@ -183,8 +203,42 @@ fn a_selected_block_reference_offers_the_block_editor() {
     assert_eq!(app.session.state().unwrap().block_editor(), None);
 }
 
+/// Every idle, selection, command and snap menu label has a Ukrainian translation (typed values,
+/// point filters and the "Repeat LINE" template excepted, since they are not catalog keys).
+#[test]
+fn every_menu_label_has_a_ukrainian_translation() {
+    let mut app = app();
+    app.cmdline("LINE 0,0 10,0");
+    app.cmdline("");
+    app.run("pline", json!({ "vertices": [[0, 0], [10, 0]] })).unwrap();
+    select_all(&mut app);
+    let mut all = flatten(&context_menu::entries(&app));
+    let line = app.session.doc().unwrap().model.handles()[0];
+    app.session.set_selection(app.session.doc().unwrap().model.handles().into_iter().filter(|h| *h != line).collect());
+    all.extend(flatten(&context_menu::entries(&app)));
+    all.extend(flatten(&context_menu::snap_entries(&app)));
+    type_line(&mut app, "LINE");
+    type_line(&mut app, "0,0");
+    all.extend(flatten(&context_menu::command_entries(&app).unwrap()));
+    let mut missing = Vec::new();
+    for (label, id, _) in &all {
+        let segments: Vec<&str> = label.split('/').collect();
+        // The item itself is user text when it types a value, or a command name (Recent Commands).
+        let user_text = (id.starts_with(context_menu::TYPE) && !id.contains('\'')) || segments.first() == Some(&"Recent Commands");
+        let n = segments.len() - usize::from(user_text);
+        for s in &segments[..n] {
+            // Point filters (.X) and "Repeat LINE" (a template) aren't catalog keys.
+            if !s.starts_with('.') && !s.starts_with("Repeat ") && cadcraft_ui_egui::i18n::tr("uk", s) == *s {
+                missing.push(s.to_string());
+            }
+        }
+    }
+    assert!(missing.is_empty(), "untranslated menu labels: {missing:?}");
+}
+
 /// The text painted in one frame at `time` (seconds).
 fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) -> String {
+    /// Append every text shape in the frame, one line each.
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {
             egui::Shape::Text(s) => {
@@ -210,10 +264,25 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time
     text
 }
 
-/// A quick right-click during a command is Enter; holding the button opens the command menu.
+/// A secondary-button press (`pressed`) or release at `at`.
+fn button(at: egui::Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE }
+}
+
+/// Press at `at`, keep the button still past [`context_menu::HOLD_SECS`] and release there.
+fn hold(app: &mut CadApp, ctx: &egui::Context, at: egui::Pos2, t0: f64) {
+    painted(app, ctx, vec![egui::Event::PointerMoved(at)], t0);
+    painted(app, ctx, vec![button(at, true)], t0 + 0.02);
+    painted(app, ctx, Vec::new(), t0 + 0.02 + context_menu::HOLD_SECS + 0.05);
+    painted(app, ctx, vec![button(at, false)], t0 + 0.02 + context_menu::HOLD_SECS + 0.1);
+}
+
+/// A quick right-click during a command is Enter; holding the button opens the command menu
+/// (time-sensitive right-click, off by default as in AutoCAD; see [`context_menu::in_command`]).
 #[test]
 fn time_sensitive_right_click() {
     let mut app = app();
+    app.options.time_sensitive_right_click = true;
     let ctx = egui::Context::default();
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), 0.0);
@@ -240,4 +309,67 @@ fn time_sensitive_right_click() {
     painted(&mut app, &ctx, Vec::new(), 3.1);
     assert!(app.session.running.is_none(), "a quick right-click is Enter: {}", app.session.prompt_text());
     assert_eq!(app.session.doc().unwrap().model.handles().len(), 1);
+}
+
+/// The command menu opens only at prompts with options when time-sensitive right-click is off
+/// (AutoCAD's default): a stationary hold at a prompt without options is still Enter, so the
+/// command moves on instead of showing a menu it would not have shown on a quick click.
+#[test]
+fn a_hold_at_a_prompt_without_options_is_enter_when_time_sensitive_is_off() {
+    let mut app = app();
+    assert!(!app.options.time_sensitive_right_click, "the default is AutoCAD's time-sensitive right-click off");
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE");
+    assert!(app.session.current_prompt().is_some_and(|p| p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    assert!(!text.contains("Cancel"), "no command menu at a prompt without options:\n{text}");
+    assert!(app.session.current_prompt().is_none_or(|p| p.message != "Specify first point"), "the hold was not Enter: {}", app.session.prompt_text());
+}
+
+/// With time-sensitive right-click off, a prompt with options still opens the command menu on a
+/// right-click, held or not, and the hold is not Enter.
+#[test]
+fn a_hold_at_a_prompt_with_options_opens_the_menu_when_time_sensitive_is_off() {
+    let mut app = app();
+    assert!(!app.options.time_sensitive_right_click, "the default is AutoCAD's time-sensitive right-click off");
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE 0,0");
+    assert!(app.session.current_prompt().is_some_and(|p| !p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    for l in ["Cancel", "Undo"] {
+        assert!(text.contains(l), "{l} missing from the menu at the options prompt:\n{text}");
+    }
+    assert!(app.session.prompt_text().contains("next point"), "the hold was Enter: {}", app.session.prompt_text());
+}
+
+/// Time-sensitive right-click on is unchanged: holding the button opens the command menu even at a
+/// prompt without options (a quick click there is Enter).
+#[test]
+fn time_sensitive_right_click_opens_the_menu_at_a_prompt_without_options() {
+    let mut app = app();
+    app.options.time_sensitive_right_click = true;
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE");
+    assert!(app.session.current_prompt().is_some_and(|p| p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    assert!(text.contains("Cancel"), "a hold opens the menu with time-sensitive right-click on:\n{text}");
+    assert!(app.session.prompt_text().contains("first point"), "the hold was Enter: {}", app.session.prompt_text());
 }

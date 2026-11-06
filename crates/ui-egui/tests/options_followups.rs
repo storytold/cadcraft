@@ -7,11 +7,14 @@ use cadcraft_engine::autosave;
 use cadcraft_ui_egui::{CadApp, Services};
 use serde_json::json;
 
+/// An app with an empty drawing and default services.
 fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
 
+/// The text of every text shape across the clipped shapes of a frame.
 fn painted_text(shapes: &[egui::epaint::ClippedShape]) -> String {
+    /// Append every text shape in `shape`, one line each.
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {
             egui::Shape::Text(s) => {
@@ -41,6 +44,9 @@ fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: 
     painted_text(&output.shapes)
 }
 
+/// OPTIONS reports and sets SAVETIME, SAVEFILEPATH, saveVersion and timeSensitiveRightClick. The
+/// default is AutoCAD's (time-sensitive off, so a prompt with options gets the menu); the setting
+/// survives a profile round trip, and reset restores the default.
 #[test]
 fn autosave_save_version_and_right_click_in_options() {
     let mut a = app();
@@ -48,13 +54,13 @@ fn autosave_save_version_and_right_click_in_options() {
     for key in ["SAVETIME", "SAVEFILEPATH", "saveVersion", "timeSensitiveRightClick"] {
         assert!(all.get(key).is_some(), "{key} is reported");
     }
-    assert_eq!(all["timeSensitiveRightClick"], json!(true));
+    assert_eq!(all["timeSensitiveRightClick"], json!(false), "AutoCAD's default: no time-sensitive right-click");
 
     let r = a
-        .run("options", json!({"SAVETIME": 25, "savefilepath": " /tmp/cc-autosave ", "saveVersion": 2010, "timeSensitiveRightClick": false}))
+        .run("options", json!({"SAVETIME": 25, "savefilepath": " /tmp/cc-autosave ", "saveVersion": 2010, "timeSensitiveRightClick": true}))
         .unwrap();
     assert_eq!((r["SAVETIME"].clone(), r["SAVEFILEPATH"].clone()), (json!(25), json!("/tmp/cc-autosave")));
-    assert_eq!((r["saveVersion"].clone(), r["timeSensitiveRightClick"].clone()), (json!("2010"), json!(false)));
+    assert_eq!((r["saveVersion"].clone(), r["timeSensitiveRightClick"].clone()), (json!("2010"), json!(true)));
     assert_eq!((autosave::savetime(), autosave::savefilepath()), (25, "/tmp/cc-autosave".to_string()));
     assert_eq!(a.run("ui.saveversion", json!({})).unwrap()["saveVersion"], "2010", "the same setting as File ▸ Default Save Format");
 
@@ -77,9 +83,9 @@ fn autosave_save_version_and_right_click_in_options() {
     // The right-click setting survives a restart; reset puts it and the save version back.
     let mut b = app();
     b.load_profile(&a.profile_json());
-    assert!(!b.options.time_sensitive_right_click);
+    assert!(b.options.time_sensitive_right_click);
     let r = b.run("options", json!({"reset": true})).unwrap();
-    assert_eq!((r["timeSensitiveRightClick"].clone(), r["saveVersion"].clone()), (json!(true), json!("2018")));
+    assert_eq!((r["timeSensitiveRightClick"].clone(), r["saveVersion"].clone()), (json!(false), json!("2018")));
 
     // The tabs show the settings.
     let ctx = egui::Context::default();
@@ -95,6 +101,7 @@ fn autosave_save_version_and_right_click_in_options() {
 
     // Turned off, a quick right-click during a command opens the menu instead of acting as Enter.
     a.ui.dialog = None;
+    a.run("options", json!({"timeSensitiveRightClick": false})).unwrap();
     let ctx = egui::Context::default();
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let at = egui::pos2(800.0, 500.0);
@@ -108,6 +115,9 @@ fn autosave_save_version_and_right_click_in_options() {
     assert!(a.session.prompt_text().contains("next point"), "no Enter: {}", a.session.prompt_text());
 }
 
+/// OPTIONS takes an interface scale from 0.5 to 3, applies it as egui's zoom factor, refuses an
+/// out-of-range or non-numeric value all or nothing, keeps it across a profile round trip (skipping
+/// a bad saved value), resets to 1.0, and shows the percentage on the Display tab.
 #[test]
 fn interface_scale_in_options() {
     let mut a = app();
