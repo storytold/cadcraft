@@ -214,6 +214,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 {
                     d.header.set("SNAPBASE", HVal::Point(Vec3::new(x, y, 0.0)));
                 }
+                ucsicon(d, &t);
                 if let Some(a) = t.f(50).filter(|a| a.is_finite()) {
                     d.header.set_f64("SNAPANG", a);
                 }
@@ -314,8 +315,18 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
             "LAYER" => {
                 rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
             }
+            "UCS" => {
+                rx.ucss.insert(handle.trim().to_ascii_uppercase(), name);
+            }
             _ => {}
         }
+    }
+}
+
+/// The `*ACTIVE` VPORT's UCSICON setting (group 74: bit 1 the icon shown, bit 2 at the UCS origin).
+fn ucsicon(d: &mut Drawing, t: &T) {
+    if let Some(v) = t.i(74) {
+        d.header.set_i64("UCSICON", v.clamp(0, 3));
     }
 }
 

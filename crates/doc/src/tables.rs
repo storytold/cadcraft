@@ -848,6 +848,14 @@ pub struct Layout {
     /// Saved paper-space view (centre, height).
     #[serde(default)]
     pub view: Option<(Vec2, f64)>,
+    /// The layout's current paper-space UCS (the LAYOUT object's groups 13, 16, 17 and 345);
+    /// `None`: the World UCS. Its name is empty when it isn't a named UCS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ucs: Option<Ucs>,
+    /// The layout's earlier UCSs for UCS Previous, oldest first: they go with the layout when it
+    /// is renamed and with it when it is deleted. Never written to a file.
+    #[serde(skip)]
+    pub ucs_previous: Vec<Ucs>,
     /// The layout's limits (LAYOUT groups 10/11, lower left and upper right) as the file had
     /// them; `None` for a layout CADCraft made, written as 0,0 to 12,9 (#2109).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -856,7 +864,16 @@ pub struct Layout {
 
 impl Layout {
     pub fn new(name: &str, tab_order: u32) -> Self {
-        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None, limits: None }
+        Layout {
+            name: name.into(),
+            tab_order,
+            page: PageSetup::default(),
+            entities: EntityStore::new(),
+            view: None,
+            ucs: None,
+            ucs_previous: Vec::new(),
+            limits: None,
+        }
     }
 }
 
