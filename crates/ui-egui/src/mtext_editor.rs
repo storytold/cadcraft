@@ -175,7 +175,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             // keeps it for an empty answer, and for one left unchanged (no undo step).
             let textedit = app.session.running.as_ref().is_some_and(|r| r.id == "textedit");
             let contents = st.fmt.to_contents();
-            if !st.fmt.is_empty() && !(textedit && contents == mt.contents) {
+            let unchanged = textedit && Formatted::leaves_unchanged(&mt.contents, Some(mt.height), &contents);
+            if !st.fmt.is_empty() && !unchanged {
                 let _ = app.session.input(cadcraft_engine::Input::Text(contents));
             } else if textedit {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);

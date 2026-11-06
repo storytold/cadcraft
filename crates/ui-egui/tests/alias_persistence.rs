@@ -173,4 +173,5 @@ fn a_loaded_alias_file_survives_with_its_path_and_reinit_rereads_it() {
     b.run("reinit", json!({})).unwrap();
     assert_eq!(resolve_alias("zzprofile"), "circle", "REINIT re-reads the restored file");
     a.run("aliasedit", json!({ "clear": true })).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
 }

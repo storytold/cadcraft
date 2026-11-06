@@ -117,6 +117,13 @@ impl Formatted {
         Self::parse(contents, None).1
     }
 
+    /// Whether `edited`, what the editor gives back for `original` (a text `height` high), is the
+    /// text as it was: the same, or what opening it and pressing OK without an edit gives (a
+    /// non-canonical `{\fArial|b1;first}` comes back written another way).
+    pub fn leaves_unchanged(original: &str, height: Option<f64>, edited: &str) -> bool {
+        edited == original || edited == Self::from_contents_with_height(original, height).to_contents()
+    }
+
     /// The parse, and whether it took in all of `contents`.
     fn parse(contents: &str, height: Option<f64>) -> (Formatted, bool) {
         let mut f = Formatted::default();
@@ -125,22 +132,30 @@ impl Formatted {
         let mut cur = CharFmt::default();
         let mut props = ParaProps::default();
         f.paras = vec![props.clone()];
-        // Cleared when a paragraph or a kept code doesn't fit.
+        // Cleared when a paragraph, a kept code or a nesting level doesn't fit.
         let mut whole = true;
+        // Groups opened past the 64 levels kept: their closing braces pop nothing.
+        let mut unkept = 0usize;
         let mut i = 0;
         while let Some(&c) = chars.get(i) {
-            if f.fmt.len() >= MAX_CHARS {
+            // Braces after the last character the editor holds add no text.
+            if f.fmt.len() >= MAX_CHARS && !matches!(c, '{' | '}' | '\r') {
                 return (f, false);
             }
             match c {
                 '{' => {
                     if stack.len() < 64 {
                         stack.push(cur.clone());
+                    } else {
+                        unkept = unkept.saturating_add(1);
+                        whole = false;
                     }
                     i += 1;
                 }
                 '}' => {
-                    if let Some(p) = stack.pop() {
+                    if unkept > 0 {
+                        unkept -= 1;
+                    } else if let Some(p) = stack.pop() {
                         cur = p;
                     }
                     i += 1;
@@ -637,5 +652,16 @@ mod tests {
         assert!(!Formatted::fits(&"a\n".repeat(MAX_PARAS)));
         assert!(!Formatted::fits(&"\\A1;".repeat(MAX_ATOMS + 1)));
         assert!(Formatted::fits(&"\\A1;".repeat(MAX_ATOMS)));
+        // A full formatted run's closing brace adds no text: it still fits.
+        assert!(Formatted::fits(&format!("{{\\L{}}}", "x".repeat(MAX_CHARS))));
+        assert!(!Formatted::fits(&format!("{{\\L{}}}y", "x".repeat(MAX_CHARS))));
+        // OK without an edit leaves a text alone, also one the editor writes another way.
+        let odd = "{\\fArial|b1;first}";
+        assert!(Formatted::leaves_unchanged(odd, Some(2.5), &Formatted::from_contents_with_height(odd, Some(2.5)).to_contents()));
+        assert!(Formatted::leaves_unchanged(odd, Some(2.5), odd));
+        assert!(!Formatted::leaves_unchanged(odd, Some(2.5), "second"));
+        // Nesting past the 64 levels the editor keeps doesn't fit.
+        assert!(Formatted::fits(&format!("{}a{}", "{".repeat(64), "}".repeat(64))));
+        assert!(!Formatted::fits(&format!("{}a{}", "{".repeat(65), "}".repeat(65))));
     }
 }

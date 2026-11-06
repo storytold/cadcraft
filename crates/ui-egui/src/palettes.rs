@@ -768,8 +768,10 @@ fn selection_memo(ui: &egui::Ui, app: &CadApp, sel: &[cadcraft_engine::doc::Hand
 /// 5.000000000000001) from reading as a difference.
 const EXACT_SEP: char = '\u{1f}';
 
-/// `shown`, tagged with the number `v` it was formatted from.
+/// `shown`, tagged with the number `v` it was formatted from. Round-off next to zero (a Delta Y
+/// of 1.2e-16 on a level line) is tagged as zero, since 12 significant digits of it are noise.
 fn exact(shown: String, v: f64) -> String {
+    let v = if v.abs() < 1e-12 { 0.0 } else { v };
     format!("{shown}{EXACT_SEP}{:.11e}", v + 0.0)
 }
 
@@ -1588,6 +1590,14 @@ mod tests {
     /// Values the display rounds alike still count as different: two dimensions whose text heights
     /// differ by a millionth show `*VARIES*`, as do two circles whose radii do. Float noise (a
     /// ten-trillionth) is not a difference.
+    #[test]
+    fn round_off_next_to_zero_is_no_difference() {
+        let tag = |v: f64| super::exact("0.0000".into(), v);
+        assert_eq!(tag(0.0), tag(1.2e-16));
+        assert_eq!(tag(0.0), tag(-3e-15));
+        assert_ne!(tag(0.0), tag(1e-6), "a real difference below the display precision still shows");
+    }
+
     #[test]
     fn values_that_differ_below_the_display_precision_still_vary() {
         let mut app = CadApp::new(Session::default(), Services::default());
