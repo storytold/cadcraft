@@ -361,6 +361,22 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
         let (hw, hh) = (w / 2.0 + gap, h / 2.0 + gap);
         g.text_fill = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)].into_iter().map(|(px, py)| text_mid + x * px + y * py).collect();
     }
+    // DIMGAP below 0: a frame around the text and the arc symbol over it, widened by |DIMGAP| on
+    // every side. A DIMINSPECT frame takes its place.
+    if st.text_gap < 0.0 && !g.mtext.is_empty() && d.marks.inspect.as_ref().is_none_or(|ins| ins.shape >= 2) {
+        let (w, h) = measure(&g.mtext);
+        let (x, y) = (Vec2::from_angle(text_angle), Vec2::from_angle(text_angle).perp());
+        // DIMARCSYM 1: the arc symbol's half width and how far its top is above the text's middle.
+        let arc_over =
+            (matches!(d.kind, DimKind::ArcLength) && st.arc_symbol == 1).then(|| ((w / 2.0).max(th / 2.0), h / 2.0 + gap / 2.0 + th * 0.35));
+        let (hw, top) = arc_over.map_or((w / 2.0, h / 2.0), |(half, peak)| ((w / 2.0).max(half), (h / 2.0).max(peak)));
+        let (hw, top, bottom) = (hw + gap, top + gap, h / 2.0 + gap);
+        let corners: Vec<Vec2> =
+            [(-hw, -bottom), (hw, -bottom), (hw, top), (-hw, top)].into_iter().map(|(px, py)| text_mid + x * px + y * py).collect();
+        for (a, b) in corners.iter().zip(corners.iter().cycle().skip(1)) {
+            g.text_mark(vec![*a, *b]);
+        }
+    }
     g.value = decode_value(&cadcraft_fonts::plain_mtext(&g.mtext));
     if !g.mtext.is_empty() {
         let l = cadcraft_fonts::layout_mtext_with(&g.mtext, &params(text_mid, text_angle));
