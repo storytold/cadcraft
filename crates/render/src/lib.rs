@@ -32,7 +32,7 @@ use pen::Pen;
 
 pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, dimension_geometry, dimension_geometry_with, format_linear_value};
 pub use fill::triangulate_evenodd;
-pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
+pub use hatch::{fill_loop_indices as hatch_fill_loop_indices, fill_loops as hatch_fill_loops, pattern_swatch, probe as hatch_loop_probe};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
 pub use tolerance::{gdt_points, tolerance_in};
 
