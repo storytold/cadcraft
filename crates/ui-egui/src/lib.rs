@@ -40,6 +40,8 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+// The Edit Text window, opened from the shortcut menu's Edit Text entry.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
 
@@ -640,7 +642,8 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
-                self.canvas.zoom_pending = true;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
                     self.remember_recent(path);
