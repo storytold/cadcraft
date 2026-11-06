@@ -3,7 +3,9 @@
 //!
 //! egui turns Cmd/Ctrl+C, X and V into `Copy`, `Cut` and `Paste(text)` events instead of key
 //! presses, so the clipboard shortcuts are read from those. A `Paste` arrives only when the system
-//! clipboard holds text; every copy therefore puts its DXF text there.
+//! clipboard holds text; every copy therefore puts its DXF text there. When another program has
+//! since put an image there instead (a screenshot), Ctrl+V arrives as `PasteImage`: it pastes the
+//! drawing clipboard, as the shortcut menu's Paste does, rather than doing nothing (#2793).
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -43,8 +45,12 @@ pub fn mirror(app: &CadApp, ctx: &egui::Context) {
 /// own last copy (another CADCraft's) becomes the clipboard first.
 pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
     let (events, shift) = ctx.input(|i| {
-        let ev: Vec<egui::Event> =
-            i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
+        let ev: Vec<egui::Event> = i
+            .events
+            .iter()
+            .filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::PasteImage(_)))
+            .cloned()
+            .collect();
         (ev, i.modifiers.shift)
     });
     let mut out = Vec::new();
@@ -59,6 +65,9 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
                 }
                 out.push(if shift { "pasteblock" } else { "pasteclip" });
             }
+            // An image holds no drawing to load: paste the drawing clipboard as it is, as the
+            // shortcut menu's Paste does. Images aren't pasted as objects (yet).
+            egui::Event::PasteImage(_) => out.push(if shift { "pasteblock" } else { "pasteclip" }),
             _ => {}
         }
     }
