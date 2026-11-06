@@ -195,17 +195,22 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("close", "Close", run_close).menu(&["File", "Close"]).key("Cmd+W").params("{index?}").noundo(),
         CommandSpec::new("closeall", "Close All", run_closeall).menu(&["File", "Close All"]).enabled(always).noundo(),
-        CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
+        CommandSpec::new("qsave", "Save", run_qsave_reporting)
+            .menu(&["File", "Save"])
+            .key("Cmd+S")
+            .alias(&["save"])
+            .params("{path?, lossPolicy?: allow|abort (abort refuses a save that drops DWG/DXF content)}")
+            .noundo(),
         CommandSpec::new("saveas", "Save As...", run_saveas_reporting)
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
             .params(
-                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file)}",
+                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file), lossPolicy?: allow|abort}",
             )
             .noundo(),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
         CommandSpec::new("document.bytes", "Drawing as bytes", run_bytes)
-            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool} → {data: base64}")
+            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool, lossPolicy?: allow|abort} → {data: base64}")
             .noundo(),
         CommandSpec::new("script", "Run Script...", run_script)
             .menu(&["Tools", "Run Script..."])
@@ -746,7 +751,9 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let fmt = str_param(p, "format").unwrap_or("dxf");
     let opts = save_options("document.bytes", p)?;
     let version = opts.version.unwrap_or_else(|| drawing_version(s, &format!("drawing.{fmt}")));
-    let lost = not_saved_as(s.doc()?, version);
+    let drawing = s.state()?.drawing();
+    let lost = loss_for_format(drawing, &format!("drawing.{fmt}"), version);
+    check_loss_policy("document.bytes", p, &lost)?;
     let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
@@ -798,6 +805,21 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
             *n = n.saturating_add(1);
         }
     }
+    // The DWG bridge also drops some 2D metadata even if every graphical entity is known.
+    // Count affected records/entities rather than individual tags, so the warning is useful
+    // on drawings with large xdata and reactor lists. DXF preserves these extras.
+    let record_xdata = d.foreign.records.values().filter(|extra| !extra.xdata.is_empty()).count();
+    if record_xdata > 0 {
+        out.insert("TABLE/BLOCK XDATA".into(), record_xdata);
+    }
+    let entity_reactors = d.foreign.entities.values().filter(|extra| !extra.reactors.is_empty()).count();
+    if entity_reactors > 0 {
+        out.insert("ENTITY REACTORS".into(), entity_reactors);
+    }
+    let entity_color_books = d.foreign.entities.values().filter(|extra| extra.color_book.is_some()).count();
+    if entity_color_books > 0 {
+        out.insert("ENTITY COLOR BOOKS".into(), entity_color_books);
+    }
     out
 }
 
@@ -808,9 +830,37 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
     }
     let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
     Some(format!(
-        "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them, solids only when saved as 2010 or earlier): {}",
+        "Not saved in the DWG file (its writer can't write some object types or metadata; DXF keeps them, solids only when saved as 2010 or earlier): {}",
         list.join(", ")
     ))
+}
+
+/// The losses specific to the requested format: DWG drops some entity types and metadata;
+/// DXF 2013+ cannot carry SAT text without a data-store record. Other formats aren't drawings.
+fn loss_for_format(d: &Drawing, path: &str, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if is_dxf_file(path) {
+        if version >= Version::R2013 { cadcraft_doc::foreign::sat_text_dropped(d) } else { Default::default() }
+    } else if drops_unknown(path) {
+        not_saved_as(d, version)
+    } else {
+        Default::default()
+    }
+}
+
+/// Programmatic callers may refuse lossy saves without waiting for a desktop prompt. The
+/// default stays `allow` for compatibility; the interactive UI has its own confirmation.
+fn check_loss_policy(cmd: &str, p: &Value, lost: &std::collections::BTreeMap<String, usize>) -> Result<()> {
+    let abort = match p.get("lossPolicy") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(v)) if v.eq_ignore_ascii_case("allow") => false,
+        Some(Value::String(v)) if v.eq_ignore_ascii_case("abort") => true,
+        _ => return Err(bad(cmd, "`lossPolicy` must be \"allow\" or \"abort\"")),
+    };
+    if abort && !lost.is_empty() {
+        let summary = lost.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ");
+        return Err(bad(cmd, format!("save refused to prevent data loss: {summary}; save as a compatible DXF or use lossPolicy \"allow\" after reviewing the risk")));
+    }
+    Ok(())
 }
 
 /// What saving the active drawing to `path` would leave out, before anything is written: empty
@@ -818,14 +868,8 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
     let version = drawing_version(s, path);
-    if is_dxf_file(path) && version >= Version::R2013 {
-        // The drawing a file holds: the host while the Block Editor is open.
-        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
-    }
-    if !drops_unknown(path) {
-        return Default::default();
-    }
-    s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
+    // The drawing a file holds: the host while the Block Editor is open.
+    s.state().map(|st| loss_for_format(st.drawing(), path, version)).unwrap_or_default()
 }
 
 /// Report what the file `path`, just written at the drawing's own version, left out.
@@ -906,12 +950,13 @@ pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::colle
 }
 
 /// Save, then report the entities the file couldn't keep (nothing is dropped silently).
-fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
+fn save_reporting(s: &mut Session, p: &Value, cmd: &str, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
     // What the file will hold depends on the version it is saved as (the data store from 2013).
     // QSAVE takes no `version` and keeps the drawing's own; SAVEAS writes the one asked for.
     let path = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone())).unwrap_or_default();
     let version = asked.unwrap_or_else(|| drawing_version(s, &path));
-    let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
+    let lost = s.state().map(|st| loss_for_format(st.drawing(), &path, version)).unwrap_or_default();
+    check_loss_policy(cmd, p, &lost)?;
     let folder = new_folder(&path);
     let mut r = run(s, p)?;
     report_new_folder(s, &mut r, folder);
@@ -958,12 +1003,12 @@ fn report_fonts(s: &mut Session, r: &mut Value) {
 }
 
 fn run_qsave_reporting(s: &mut Session, p: &Value) -> Result<Value> {
-    save_reporting(s, p, run_save, None)
+    save_reporting(s, p, "qsave", run_save, None)
 }
 
 fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
     let asked = save_options("saveas", p)?.version;
-    save_reporting(s, p, run_saveas, asked)
+    save_reporting(s, p, "saveas", run_saveas, asked)
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

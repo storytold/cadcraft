@@ -59,6 +59,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod ribbon;
 pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
@@ -94,6 +95,10 @@ pub struct UiState {
     pub show_toolsets: bool,
     pub show_palettes: bool,
     pub show_toolbar: bool,
+    /// Show the familiar tabbed drafting ribbon in place of the left Tool Sets panel.
+    pub autocad_ribbon: bool,
+    /// Selected tab of the drafting ribbon. Kept with the workspace preferences.
+    pub ribbon_tab: String,
     pub show_file_tabs: bool,
     pub show_status_bar: bool,
     pub show_command_line: bool,
@@ -185,9 +190,11 @@ impl Default for UiState {
             docking: docking::default_workspace(),
 
             interface_language: i18n::Preference::default(),
-            show_toolsets: true,
+            show_toolsets: false,
             show_palettes: true,
             show_toolbar: true,
+            autocad_ribbon: true,
+            ribbon_tab: "home".into(),
             show_file_tabs: true,
             show_status_bar: true,
             show_command_line: true,
@@ -892,6 +899,7 @@ impl CadApp {
         if self.ui.in_window_menu {
             menus::menu_bar(self, ui);
         }
+        ribbon::show(self, ui);
         if self.ui.show_status_bar {
             chrome::status_bar(self, ui);
         }

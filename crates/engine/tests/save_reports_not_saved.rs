@@ -29,7 +29,7 @@ fn save_lists_the_entities_the_file_does_not_keep() {
     let r = s.execute("saveas", &json!({ "path": path.to_string_lossy() })).unwrap();
     let _ = std::fs::remove_file(&path);
     assert_eq!(r["notSaved"], json!({ "3DSOLID": 1, "MLINE": 2, "REGION": 1 }));
-    let msg = "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them, solids only when saved as 2010 or earlier): 1 3DSOLID, 2 MLINE, 1 REGION";
+    let msg = "Not saved in the DWG file (its writer can't write some object types or metadata; DXF keeps them, solids only when saved as 2010 or earlier): 1 3DSOLID, 2 MLINE, 1 REGION";
     assert!(s.log.iter().any(|l| l == msg), "{:?}", s.log);
 
     // DXF keeps them.
@@ -50,6 +50,67 @@ fn save_lists_the_entities_the_file_does_not_keep() {
     let n = s.log.len();
     let r = s.execute("document.bytes", &json!({})).unwrap();
     assert!(r.get("notSaved").is_none() && s.log.len() == n);
+}
+
+#[test]
+fn dwg_loss_audit_includes_2d_metadata_and_dxf_does_not() {
+    use cadcraft_engine::cmd::file::{Version, loss_on_save, not_saved_as};
+    use cadcraft_engine::doc::foreign::{Foreign, ForeignExtra};
+
+    let mut d = Drawing::new_imperial();
+    let h = d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Line(cadcraft_engine::doc::Line { a: cadcraft_engine::doc::Vec3::ZERO, b: cadcraft_engine::doc::Vec3::new(10.0, 0.0, 0.0) }),
+    ).unwrap();
+    let extra = ForeignExtra {
+        reactors: vec![h],
+        color_book: Some(("Office Book".into(), "Office Red".into())),
+        ..ForeignExtra::default()
+    };
+    let record = ForeignExtra {
+        xdata: vec![RawTag { code: 1001, value: "OFFICE_APP".into() }],
+        ..ForeignExtra::default()
+    };
+    let mut foreign = Foreign::default();
+    foreign.entities.insert(h, extra);
+    foreign.records.insert(("LAYER".into(), "WALLS".into()), record);
+    d.foreign = std::sync::Arc::new(foreign);
+
+    assert_eq!(
+        not_saved_as(&d, Version::R2018),
+        [
+            ("ENTITY COLOR BOOKS".into(), 1),
+            ("ENTITY REACTORS".into(), 1),
+            ("TABLE/BLOCK XDATA".into(), 1),
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    let mut s = Session::empty();
+    s.open_drawing(d, "office.dwg", None);
+    assert_eq!(loss_on_save(&s, "office.dwg").len(), 3);
+    assert!(loss_on_save(&s, "office.dxf").is_empty(), "DXF keeps the 2D foreign metadata");
+}
+
+#[test]
+fn loss_policy_abort_refuses_dwg_without_touching_the_file() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), unknown("ACME_DOOR")).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "office.dxf", None);
+
+    let path = std::env::temp_dir().join(format!("cadcraft-safe-dwg-{}.dwg", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let path_text = path.to_string_lossy().to_string();
+    let refused = s.execute("saveas", &json!({ "path": path_text, "lossPolicy": "abort" }));
+    assert!(refused.is_err(), "DWG save must refuse unmodelled content");
+    assert!(!path.exists(), "no target DWG may be created when refusing the save");
+    let saved = s.execute("saveas", &json!({ "path": path_text, "lossPolicy": "allow" })).unwrap();
+    assert_eq!(saved["notSaved"], json!({ "ACME_DOOR": 1 }));
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

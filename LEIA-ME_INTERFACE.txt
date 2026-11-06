@@ -1,0 +1,48 @@
+CADCraft - Interface personalizada para Gabriel
+================================================
+
+Esta e uma primeira adaptacao da interface do CADCraft nativo para
+uma organizacao de ferramentas inspirada no AutoCAD 2026.
+
+O que foi modificado:
+- Faixa de opcoes horizontal com abas Inicio, Inserir, Anotar,
+  Parametrico, Vista, Gerenciar, Saida e 3D.
+- Botoes associados aos comandos reais do CADCraft (desenhar,
+  modificar, cotas, camadas, blocos, impressao etc.).
+- Interface original mantida como alternativa.
+- Nova opcao no menu Janela > Faixa de opcoes de desenho.
+- Configuracao inicial com a faixa de opcoes habilitada e o
+  painel esquerdo de ferramentas recolhido.
+- Traducao dessa opcao para portugues brasileiro.
+
+Limites:
+- Esta e uma PRIMEIRA VERSAO de personalizacao, e ainda nao e uma
+  reproducao visual exata do AutoCAD 2026.
+- Os icones e os demais elementos graficos sao originais do CADCraft.
+- A geometria e o motor 3D nao foram alterados. Comandos ausentes no
+  CADCraft nao passam a existir so por causa da nova interface.
+- A rotina de salvamento 2D recebeu uma auditoria mais abrangente de
+  dados estrangeiros que podem ser perdidos no formato DWG.
+- QSAVE, SAVEAS e document.bytes aceitam "lossPolicy": "abort" em
+  chamadas JSON para recusar uma gravacao que descarte dados conhecidos.
+- A correcao evita perda acidental em certos casos, mas NAO torna a
+  leitura e a gravacao DWG totalmente compativeis com o AutoCAD.
+- O codigo adicional de salvamento nao pode ser compilado/testado neste
+  ambiente de entrega; execute os testes indicados em ALTERACOES_2D.md
+  no Windows antes de utilizar esta versao com arquivos reais.
+- O codigo foi verificado com `cargo check` em Linux, mas o executavel
+  Windows precisa ser compilado em um ambiente Windows.
+
+Como gerar o .exe no Windows:
+1. Instale o Rust (https://rustup.rs/) e o Visual Studio Build Tools,
+   selecionando "Desenvolvimento para desktop com C++" e Windows SDK.
+2. Extraia todos os arquivos deste pacote em uma pasta.
+3. Execute COMPILAR_WINDOWS.bat.
+4. Quando terminar, abra target\release\cadcraft.exe.
+
+IMPORTANTE: mantenha sua instalacao original e seus desenhos como
+estao. Teste primeiro a nova versao em arquivos de copia.
+
+Projeto original: https://github.com/storytold/cadcraft
+Licenca do projeto: MIT OU Apache-2.0, a escolha do usuario.
+Esta adaptacao nao inclui arquivos, fontes, icones ou marcas da Autodesk.
