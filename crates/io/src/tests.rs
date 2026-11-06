@@ -2885,7 +2885,7 @@ fn svg_shapes_become_entities_in_millimetres() {
     let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
     assert!((c.radius - 2.0).abs() < 1e-9 && (c.center.x - 10.0).abs() < 1e-9 && (c.center.y - 5.0).abs() < 1e-9, "{c:?}");
     let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
-    let major = Vec2::new(e.major.x - e.center.x, e.major.y - e.center.y);
+    let major = Vec2::new(e.major.x, e.major.y);
     assert!((major.len() - 4.0).abs() < 1e-9 && (e.ratio - 0.5).abs() < 1e-9, "{e:?}");
     let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
     assert!((l.a.y - 10.0).abs() < 1e-9 && (l.b.y).abs() < 1e-9, "{l:?}");
@@ -2911,6 +2911,45 @@ fn svg_path_lines_curves_and_arcs() {
     assert!(arc.closed && arc.vertices.len() == 2, "{arc:?}");
     let bulge = arc.vertices[0].bulge;
     assert!((bulge.abs() - 1.0).abs() < 1e-6, "semicircle bulge is ±1, got {bulge}");
+}
+
+#[test]
+fn svg_ellipse_major_is_relative_and_arcs_follow_the_spec() {
+    // Off-origin ellipse: the major axis is a vector from the centre, not an absolute point.
+    let svg = format!("{SVG_PAGE}<ellipse cx=\"10\" cy=\"5\" rx=\"4\" ry=\"2\"/></svg>");
+    let d = read(svg.as_bytes(), "e.svg").unwrap();
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    assert!((e.major.x - 4.0).abs() < 1e-9 && e.major.y.abs() < 1e-9, "{e:?}");
+
+    // Unequal radii must not collapse into a circular bulge: the end must still be reached.
+    let svg = format!("{SVG_PAGE}<path d=\"M2 5 A4 2 0 0 1 10 5\"/></svg>");
+    let d = read(svg.as_bytes(), "a.svg").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 2 && p.vertices.iter().all(|v| v.bulge == 0.0), "{p:?}");
+    let top = p.vertices.iter().map(|v| v.p.y).fold(f64::MIN, f64::max);
+    assert!((top - 7.0).abs() < 0.1, "half ellipse rises by ry, got {top}");
+
+    // Radii too small for the chord are scaled up, so the flattened arc still ends at the endpoint.
+    let svg = format!("{SVG_PAGE}<path d=\"M2 5 A1 1 0 0 1 10 5\"/><path d=\"M2 5 A1 0.5 0 0 1 10 5\"/></svg>");
+    let d = read(svg.as_bytes(), "s.svg").unwrap();
+    let end = Vec2::new(10.0, 5.0);
+    let mut seen = 0;
+    for e in d.model.iter() {
+        if let EntityKind::LwPolyline(p) = &e.kind
+            && p.vertices.len() > 2
+        {
+            seen += 1;
+            let last = p.vertices[p.vertices.len() - 1].p;
+            assert!((last - end).len() < 1e-6, "arc ends at {last:?}");
+        }
+    }
+    assert_eq!(seen, 1, "only the elliptical arc is flattened");
+
+    // A zero radius draws a straight line to the endpoint.
+    let svg = format!("{SVG_PAGE}<path d=\"M2 5 A0 3 0 0 1 10 5\"/></svg>");
+    let d = read(svg.as_bytes(), "z.svg").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() == 2 && (p.vertices[1].p - Vec2::new(10.0, 5.0)).len() < 1e-9, "{p:?}");
 }
 
 #[test]

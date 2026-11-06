@@ -435,7 +435,7 @@ impl Parser {
             v / l
         };
         let ratio = (l_min.max(0.0).sqrt() / s_max).clamp(1e-9, 1.0);
-        let major = center + axis * s_max;
+        let major = axis * s_max;
         self.add(EntityKind::Ellipse(Ellipse { center: v3(center), major: v3(major), ratio, start: 0.0, end: std::f64::consts::TAU }))
     }
 
@@ -479,8 +479,9 @@ impl Parser {
 
     /// Emit one subpath: runs of lines and arcs become an `LWPOLYLINE` (an arc becomes a
     /// bulge vertex, exactly like DXF's polyline bulge), runs of Bézier curves become a
-    /// `SPLINE`. Under a non-uniform transform a circular arc is no longer circular, so it
-    /// is flattened into line vertices instead.
+    /// `SPLINE`. Only a circular arc (`rx == ry`) under a uniform transform is a bulge; an
+    /// elliptical arc, or any arc under a non-uniform transform, is flattened into line
+    /// vertices instead. A zero radius draws a straight line to the endpoint.
     fn emit_subpath(&mut self, sp: &Subpath) -> Result<()> {
         let m = self.cur();
         let det = m.det();
@@ -521,12 +522,20 @@ impl Parser {
                     }
                 }
                 Seg::Arc { rx, ry, rot, large, sweep, end } => {
-                    if uniform && scale > 0.0 {
+                    if (*end - cur_user).len() <= 0.0 {
+                        // Coincident endpoints: the arc is omitted.
+                    } else if *rx <= 0.0 || *ry <= 0.0 {
+                        // A zero radius turns the arc into a straight line (SVG F.6.6).
+                        if run.is_empty() {
+                            run.push(PolyVertex::new(cur));
+                        }
+                        cur = m.apply(*end);
+                        run.push(PolyVertex::new(cur));
+                        cur_user = *end;
+                    } else if uniform && scale > 0.0 && (rx - ry).abs() <= 1e-9 * (rx + ry) {
                         let r = rx * scale;
                         let flipped = det < 0.0;
-                        if r > 0.0
-                            && let Some((_, delta)) = arc_center_circular(cur, m.apply(*end), r, *large, *sweep != flipped)
-                        {
+                        if let Some((_, delta)) = arc_center_circular(cur, m.apply(*end), r, *large, *sweep != flipped) {
                             if run.is_empty() {
                                 run.push(PolyVertex::new(cur));
                             }
@@ -537,7 +546,7 @@ impl Parser {
                             cur = m.apply(*end);
                             cur_user = *end;
                         }
-                    } else if *rx > 0.0 && *ry > 0.0 {
+                    } else {
                         self.flush_run(&mut run, false)?;
                         self.flush_ctrl(&mut ctrl)?;
                         for p in flatten_arc(&m, cur_user, *end, (*rx, *ry), *rot, *large, *sweep)? {
@@ -1018,7 +1027,7 @@ fn pick_sweep(ccw: f64, large: bool, sweep: bool) -> f64 {
 /// Flatten a general elliptical arc (any `rx`/`ry`/rotation) from `p0` to `p1` in user
 /// space, then map every sample through `m`.
 fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, (rx, ry): (f64, f64), rot_deg: f64, large: bool, sweep: bool) -> Result<Vec<Vec2>> {
-    let (c, theta, delta) = elliptical_params(p0, p1, rx, ry, rot_deg.to_radians(), large, sweep)
+    let (c, theta, delta, rx, ry) = elliptical_params(p0, p1, rx, ry, rot_deg.to_radians(), large, sweep)
         .ok_or_else(|| IoError::Format("SVG: elliptical arc cannot be converted".into()))?;
     let axes = Mat3::rotate(rot_deg.to_radians());
     let rmax = rx.max(ry);
@@ -1040,8 +1049,8 @@ fn flatten_arc(m: &Mat3, p0: Vec2, p1: Vec2, (rx, ry): (f64, f64), rot_deg: f64,
 
 /// Endpoint → centre parameterisation for a rotated elliptical arc (SVG F.6.5), in the
 /// frame the points are given in. Returns the centre, the start parameter and the signed
-/// sweep.
-fn elliptical_params(p0: Vec2, p1: Vec2, rx: f64, ry: f64, phi: f64, large: bool, sweep: bool) -> Option<(Vec2, f64, f64)> {
+/// sweep, followed by the radii after the F.6.6 scale-up for radii too small to span the chord.
+fn elliptical_params(p0: Vec2, p1: Vec2, rx: f64, ry: f64, phi: f64, large: bool, sweep: bool) -> Option<(Vec2, f64, f64, f64, f64)> {
     if rx <= 0.0 || ry <= 0.0 {
         return None;
     }
@@ -1075,7 +1084,7 @@ fn elliptical_params(p0: Vec2, p1: Vec2, rx: f64, ry: f64, phi: f64, large: bool
     let (vx, vy) = ((-x1 - cxp) / rx, (-y1 - cyp) / ry);
     let theta = angle(1.0, 0.0, ux, uy);
     let ccw = angle(ux, uy, vx, vy).rem_euclid(std::f64::consts::TAU);
-    Some((center, theta, pick_sweep(ccw, large, sweep)))
+    Some((center, theta, pick_sweep(ccw, large, sweep), rx, ry))
 }
 
 #[cfg(test)]
