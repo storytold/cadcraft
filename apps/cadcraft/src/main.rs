@@ -159,29 +159,63 @@ pub fn install_io() {
 
 fn services() -> Services {
     Services {
-        pick_open: Some(Box::new(|| {
-            rfd::FileDialog::new()
-                .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
-                .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
-                .add_filter(i18n::t("All files"), &["*"])
-                .pick_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
-        pick_save: Some(Box::new(|name: &str| {
-            filters_for_save(name)
-                .iter()
-                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
-                .save_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_open: Some(Box::new(|| open_dialog().pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| save_dialog(name).save_file().map(|p| p.to_string_lossy().to_string()))),
+        start_pick: start_pick(),
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
-        pick_lisp: Some(Box::new(|dir: &str| {
-            let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
-            let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
-            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_lisp: Some(Box::new(|dir: &str| lisp_dialog(dir).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
     }
+}
+
+fn open_dialog() -> rfd::FileDialog {
+    rfd::FileDialog::new()
+        .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
+        .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
+        .add_filter(i18n::t("All files"), &["*"])
+}
+
+fn lisp_dialog(dir: &str) -> rfd::FileDialog {
+    let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
+    if dir.is_empty() { dialog } else { dialog.set_directory(dir) }
+}
+
+fn save_dialog(name: &str) -> rfd::FileDialog {
+    filters_for_save(name).iter().fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
+}
+
+/// On macOS the Open and Save panels must not run inside the window's event handler: resizing a
+/// panel run modally there sends the window's events back into that handler, and winit aborts
+/// the app (#1527). The dialog is started from a thread instead; rfd runs the panel on the main
+/// thread from the run loop, outside the handler, and the app acts on the answer when it arrives.
+#[cfg(target_os = "macos")]
+fn start_pick() -> Option<cadcraft_ui_egui::StartPick> {
+    use cadcraft_ui_egui::Pick;
+    Some(Box::new(|pick: Pick, done: Box<dyn FnOnce(Option<String>) + Send>| {
+        // Built here: the interface language's labels are read on this thread.
+        let dialog = match &pick {
+            Pick::Open => open_dialog(),
+            Pick::Save(name) => save_dialog(name),
+            Pick::Lisp(dir) => lisp_dialog(dir),
+        };
+        let spawned = std::thread::Builder::new().name("file-dialog".into()).spawn(move || {
+            let path = match pick {
+                Pick::Open | Pick::Lisp(_) => dialog.pick_file(),
+                Pick::Save(_) => dialog.save_file(),
+            };
+            done(path.map(|p| p.to_string_lossy().to_string()));
+        });
+        if let Err(e) = spawned {
+            log::warn!("file dialog: {e}");
+        }
+    }))
+}
+
+/// Elsewhere the dialogs run where they are asked for: Windows runs the window's events without
+/// re-entering the handler.
+#[cfg(not(target_os = "macos"))]
+fn start_pick() -> Option<cadcraft_ui_egui::StartPick> {
+    None
 }
 
 /// File types for the Save dialog, the suggested name's type first: Windows adds the first
