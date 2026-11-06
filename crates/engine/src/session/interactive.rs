@@ -18,6 +18,29 @@ impl Session {
             || self.lisp_command(&lower).is_some()
     }
 
+    /// The alias or LISP command that is the Greek word `name` in another case or accent (λινε for
+    /// c:ΛΙΝΕ): those lookups fold ASCII only.
+    fn greek_command_name(&self, name: &str) -> Option<String> {
+        let bare = name.trim_start_matches(['_', '.', '-']);
+        crate::keyboard::greek_fold(bare)?;
+        let lisp = || self.lisp_commands().into_iter().find(|c| crate::keyboard::same_greek_word(c, bare) && self.lisp_command(c).is_some());
+        cmd::file::greek_alias(bare).or_else(lisp)
+    }
+
+    /// Whether the Greek word `name` is a command of its own, which [`Session::start`] runs instead
+    /// of the Latin name its keys type.
+    pub fn greek_word_is_a_command(&self, name: &str) -> bool {
+        self.names_a_command(name) || self.greek_command_name(name).is_some()
+    }
+
+    /// The existing block that is the Greek word `word`: as spelled, else in another case or accent
+    /// (μ for Μ).
+    pub(super) fn greek_block_name(&self, word: &str) -> Option<String> {
+        crate::keyboard::greek_fold(word)?;
+        let blocks = &self.doc().ok()?.blocks;
+        blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| crate::keyboard::same_greek_word(k, word))).cloned()
+    }
+
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;
@@ -28,9 +51,10 @@ impl Session {
             None => (false, name),
         };
         // A name typed with the Greek keyboard layout active (ΛΙΝΕ for LINE) is the Latin name's keys,
-        // unless it is a command, alias or LISP function of its own.
+        // unless it is a command, alias or LISP function of its own, in any case or accent.
         let typed = name;
-        let latin = crate::keyboard::latin_keys(name).filter(|_| !self.names_a_command(name));
+        let latin =
+            crate::keyboard::latin_keys(name).filter(|_| !self.names_a_command(name)).map(|latin| self.greek_command_name(name).unwrap_or(latin));
         let name = latin.as_deref().unwrap_or(name);
         let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
         // A command-line form with an id of its own (-ATTEDIT) is not the command it prefixes.
@@ -193,13 +217,15 @@ impl Session {
         // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is looked up as its
         // Latin keys. Only the lookup is: text that is no selection word (a block name at BEDIT's prompt,
         // which also takes a selection) reaches the command as typed. So does the name of an existing
-        // block at a prompt that takes a name: a block called Μ is that block there, not Multiple.
-        let takes_name = prompt.accept.text;
+        // block at a prompt that takes a name, in any case: a block called Μ is that block there, not Multiple.
+        let block = match &input {
+            Input::Text(t) if prompt.accept.text => self.greek_block_name(t.trim()),
+            _ => None,
+        };
+        let is_block = block.is_some();
+        let input = block.map_or(input, Input::Text);
         let word = match &input {
-            Input::Text(t) => {
-                let is_block = takes_name && self.doc().is_ok_and(|d| d.block(t.trim()).is_some());
-                Some(crate::keyboard::latin_keys(t.trim()).filter(|_| !is_block).unwrap_or_else(|| t.clone()))
-            }
+            Input::Text(t) => Some(crate::keyboard::latin_keys(t.trim()).filter(|_| !is_block).unwrap_or_else(|| t.clone())),
             Input::Keyword(k) => Some(k.clone()),
             _ => None,
         };

@@ -102,6 +102,10 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The prompt takes a block's name as well as its keywords: a Greek word that is an existing
+    /// block's name is that block, not a keyword read from its Latin keys.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub takes_block: bool,
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -134,6 +138,11 @@ impl Prompt {
     /// The visual chooser the UI can show (the `picker` field).
     pub fn picker(mut self, p: Picker) -> Self {
         self.picker = Some(p);
+        self
+    }
+    /// Takes a block's name besides its keywords (the `takes_block` field).
+    pub fn takes_block(mut self) -> Self {
+        self.takes_block = true;
         self
     }
     pub fn kw(mut self, k: &[&str]) -> Self {
@@ -219,14 +228,13 @@ impl Prompt {
         // the prompt offers that spelling itself (a Greek keyword in a LISP program's list): its word,
         // shortcut or prefix as typed (ΘΝ for ΘΝΔΟ, not UN for Undo) is read before the Latin keys.
         if let Some(latin) = crate::keyboard::latin_keys(t) {
-            // Greek letters have case too, which the ASCII-only folding above does not see.
-            let typed = t.to_lowercase();
-            return self
-                .keywords
-                .iter()
-                .find(|k| k.to_lowercase() == typed)
-                .cloned()
-                .or_else(|| self.match_latin_keyword(&tl))
+            // Greek letters have case, accents and a final sigma, which the ASCII-only folding above does not see.
+            let typed = crate::keyboard::greek_fold(t).unwrap_or_else(|| latin.clone());
+            let greek = || self.keywords.iter().filter_map(|k| crate::keyboard::greek_fold(k).map(|fold| (k, fold)));
+            return greek()
+                .find(|(_, k)| *k == typed)
+                .or_else(|| greek().find(|(_, k)| k.starts_with(&typed)))
+                .map(|(k, _)| k.clone())
                 .or_else(|| self.match_latin_keyword(&latin));
         }
         self.match_latin_keyword(&tl)
@@ -422,6 +430,10 @@ mod tests {
         assert_eq!(both.match_keyword("Undo").as_deref(), Some("Undo"));
         // A prefix of the Greek word as typed (ΘΝ) is that keyword, not the Latin prefix UN of Undo.
         assert_eq!(both.match_keyword("ΘΝ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θν").as_deref(), Some("ΘΝΔΟ"), "in either case");
+        assert_eq!(both.match_keyword("θνδό").as_deref(), Some("ΘΝΔΟ"), "with an accent");
+        let sigma = Prompt::new("", Accept::TEXT).kw(&["Last", "ΛΑΣΤ"]);
+        assert_eq!(sigma.match_keyword("λας").as_deref(), Some("ΛΑΣΤ"), "a final sigma folds too");
         let latin = Prompt::new("", Accept::TEXT).kw(&["Undo"]);
         assert_eq!(latin.match_keyword("ΘΝ").as_deref(), Some("Undo"));
         assert_eq!(latin.match_keyword("ΘΝΔΟ").as_deref(), Some("Undo"));

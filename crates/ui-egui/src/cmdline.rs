@@ -118,15 +118,15 @@ pub struct Suggestion {
     pub label: &'static str,
 }
 
-/// [`suggestions`] for what the active drawing of `session` can run: a command its LISP defines names
-/// itself (the drawing's LISP names are only read for a Greek-layout word).
+/// [`suggestions`] for what `session` can run: a Greek word that is a command of its own there (an
+/// alias, a command the drawing's LISP defines) stays as typed.
 fn suggestions_in(session: &cadcraft_engine::Session, prefix: &str) -> Vec<Suggestion> {
-    suggestions(prefix, &|word| session.lisp_commands().iter().any(|name| name.eq_ignore_ascii_case(word)))
+    suggestions(prefix, &|word| session.greek_word_is_a_command(word))
 }
 
-/// Matching command names/aliases for AutoComplete. `is_lisp_command` tells whether a word is a
-/// command the drawing's LISP defines.
-fn suggestions(prefix: &str, is_lisp_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
+/// Matching command names/aliases for AutoComplete. `is_own_command` tells whether a Greek-layout
+/// word is a command of its own rather than the Latin name its keys type.
+fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
@@ -136,7 +136,7 @@ fn suggestions(prefix: &str, is_lisp_command: &dyn Fn(&str) -> bool) -> Vec<Sugg
     let p = if cadcraft_engine::cmd::find_command(&cadcraft_engine::cmd::resolve_alias(&typed)).is_some() {
         typed
     } else {
-        cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_lisp_command(prefix)).unwrap_or(typed)
+        cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_own_command(prefix)).unwrap_or(typed)
     };
 
     let mut out: Vec<Suggestion> = Vec::new();
@@ -799,7 +799,9 @@ mod tests {
         // command, so Tab must not replace the word with LINE.
         let mut session = Session::new();
         session.cmdline("(defun c:ΛΙΝΕ () (princ))").unwrap();
-        assert!(suggestions_in(&session, "ΛΙΝΕ").is_empty(), "{:?}", suggestions_in(&session, "ΛΙΝΕ"));
+        for word in ["ΛΙΝΕ", "λινε", "λίνε"] {
+            assert!(suggestions_in(&session, word).is_empty(), "{word}: {:?}", suggestions_in(&session, word));
+        }
         // Another word of the same keys is still read as Latin: Enter would start LINE for it too.
         assert!(suggestions_in(&session, "ΛΙΝ").iter().any(|s| s.id == "LINE"));
         // Without the definition ΛΙΝΕ completes as LINE.

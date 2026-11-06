@@ -538,9 +538,12 @@ fn pattern_exists(name: &str) -> bool {
     cadcraft_doc::library::pattern(name).is_some() || patfile::user_pattern(name).is_some()
 }
 
-/// Whether `name`, typed at the pattern prompt, is an existing pattern (the prompt reads it upper-cased).
-pub(crate) fn names_pattern(name: &str) -> bool {
-    pattern_exists(&name.trim().to_ascii_uppercase())
+/// The existing pattern `name` means, typed at the pattern prompt: read upper-cased, else a loaded
+/// pattern's own name when only its Greek spelling differs in case or accent (σολιδ for ΣΟΛΙΔ).
+pub(crate) fn pattern_named(name: &str) -> Option<String> {
+    let name = name.trim();
+    let up = name.to_ascii_uppercase();
+    if pattern_exists(&up) { Some(up) } else { patfile::user_pattern_name(name) }
 }
 
 /// The origin sub-prompt's keywords (a point sets a new origin).

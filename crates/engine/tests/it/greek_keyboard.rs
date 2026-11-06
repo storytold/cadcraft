@@ -128,11 +128,58 @@ fn a_loaded_pattern_named_like_the_greek_keys_of_solid_is_that_pattern_at_the_pa
     s.cancel();
     // A pattern file that defines a pattern of that name: typing the name chooses that pattern, which asks its scale.
     s.execute("hatch.patterns", &json!({ "text": "*ΣΟΛΙΔ, test\n0,0,0,0,1\n" })).unwrap();
-    s.start("hatch").unwrap();
-    s.input(cadcraft_engine::Input::Keyword("Pattern".into())).unwrap();
-    s.cmdline("ΣΟΛΙΔ").unwrap();
-    let asked = s.prompt_text();
-    s.cancel();
+    let asked = ["ΣΟΛΙΔ", "σολιδ", "σολίδ"].map(|typed| {
+        s.start("hatch").unwrap();
+        s.input(cadcraft_engine::Input::Keyword("Pattern".into())).unwrap();
+        s.cmdline(typed).unwrap();
+        let asked = s.prompt_text();
+        s.cancel();
+        asked
+    });
     s.execute("hatch.patterns", &json!({ "clear": true })).unwrap();
-    assert!(asked.contains("scale"), "the loaded pattern: {asked}");
+    assert!(asked.iter().all(|a| a.contains("scale")), "the loaded pattern, in any spelling: {asked:?}");
+}
+
+#[test]
+fn a_greek_lisp_command_runs_in_any_case_or_accent() {
+    for typed in ["ΛΙΝΕ", "λινε", "λίνε"] {
+        let mut s = Session::new();
+        s.cmdline("(defun c:ΛΙΝΕ () (command \"_.CIRCLE\" '(0 0) 5) (princ))").unwrap();
+        s.cmdline(typed).unwrap();
+        let circles = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+        assert_eq!((circles, lines(&s)), (1, 0), "{typed}: {}", s.prompt_text());
+    }
+}
+
+#[test]
+fn a_block_opens_in_any_case_or_accent_at_a_prompt_that_also_takes_a_selection() {
+    for typed in ["\u{39c}", "\u{3bc}"] {
+        let mut s = Session::new();
+        let l = s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap()["handles"][0].clone();
+        s.execute("block", &json!({ "name": "\u{39c}", "base": [0, 0], "handles": [l] })).unwrap();
+        s.start("BEDIT").unwrap();
+        s.cmdline(typed).unwrap();
+        let open = s.state().unwrap().block_editor().map(str::to_string);
+        assert_eq!(open.as_deref(), Some("\u{39c}"), "{typed}: {}", s.prompt_text());
+    }
+}
+
+#[test]
+fn a_block_named_like_the_keys_of_select_is_that_block_at_blockreplace() {
+    let mut s = Session::new();
+    // Σ is the S key: the Select option of BLOCKREPLACE, while no block has that name.
+    s.start("BLOCKREPLACE").unwrap();
+    s.cmdline("Σ").unwrap();
+    assert!(s.prompt_text().contains("Select a block reference"), "{}", s.prompt_text());
+    s.cancel();
+    let l = s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap()["handles"][0].clone();
+    s.execute("block", &json!({ "name": "Σ", "base": [0, 0], "handles": [l] })).unwrap();
+    s.execute("insert", &json!({ "name": "Σ", "at": [0, 0] })).unwrap();
+    for typed in ["Σ", "σ"] {
+        s.start("BLOCKREPLACE").unwrap();
+        s.cmdline(typed).unwrap();
+        let asked = s.prompt_text();
+        s.cancel();
+        assert!(asked.contains("replacement block for Σ"), "{typed}: {asked}");
+    }
 }

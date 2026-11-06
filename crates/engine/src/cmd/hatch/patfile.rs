@@ -28,6 +28,12 @@ pub(crate) fn user_pattern(name: &str) -> Option<UserPattern> {
     store().iter().find(|p| p.name.eq_ignore_ascii_case(name)).cloned()
 }
 
+/// The name of the user pattern that is the Greek word `name` in another case or accent
+/// ([`user_pattern`] folds ASCII only).
+pub(crate) fn user_pattern_name(name: &str) -> Option<String> {
+    store().iter().find(|p| crate::keyboard::same_greek_word(&p.name, name)).map(|p| p.name.clone())
+}
+
 /// The line families a new hatch of pattern `name` carries: a user pattern's, else none (the
 /// library's patterns are drawn and saved from the library).
 pub(crate) fn lines_for(name: &str) -> Vec<PatternLine> {

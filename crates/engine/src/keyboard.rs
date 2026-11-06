@@ -80,9 +80,31 @@ pub fn latin_keys(word: &str) -> Option<String> {
     greek.then_some(out)
 }
 
+/// `word` with its case, accents and final sigma folded away, when it is Greek-layout typing: every
+/// spelling of one Greek word gives the same string.
+pub fn greek_fold(word: &str) -> Option<String> {
+    latin_keys(&word.to_uppercase())
+}
+
+/// Whether `a` and `b` are one Greek word, whatever their case, accents or final sigma.
+pub fn same_greek_word(a: &str, b: &str) -> bool {
+    greek_fold(a).is_some_and(|fold| greek_fold(b).as_ref() == Some(&fold))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::latin_keys;
+    use super::{latin_keys, same_greek_word};
+
+    #[test]
+    fn one_greek_word_is_the_same_in_any_case_accent_or_final_sigma() {
+        for (a, b) in [("ΣΟΛΙΔ", "σολιδ"), ("ΣΟΛΙΔ", "σολίδ"), ("ΛΑΣ", "λας"), ("ΛΑΣ", "λασ"), ("ΛΙ\u{301}ΝΕ", "λινε")]
+        {
+            assert!(same_greek_word(a, b), "{a} {b}");
+        }
+        for (a, b) in [("ΣΟΛΙΔ", "ΣΟΛΙ"), ("ΣΟΛΙΔ", "solid"), ("solid", "SOLID")] {
+            assert!(!same_greek_word(a, b), "{a} {b}");
+        }
+    }
 
     #[test]
     fn greek_layout_commands_read_as_their_latin_keys() {
