@@ -40,6 +40,71 @@ const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
     &[(Icon::Help, "ui.dialog.about", "Help", None)],
 ];
 
+const LAYER_BAR_WIDTH: f32 = 334.0;
+const LAYER_BAR_HEIGHT: f32 = 82.0;
+
+fn layer_bar_width(app: &CadApp) -> f32 {
+    LAYER_BAR_WIDTH + if app.host_panel.enabled { 104.0 } else { 0.0 }
+}
+
+/// The ribbon's layer controls dispatch the same commands as the palette and menus.
+fn layer_bar(app: &mut CadApp, ui: &mut egui::Ui, in_overflow: bool) {
+    use crate::docking::Panel;
+    let t = Tokens::get();
+    ui.horizontal_top(|ui| {
+        let (rect, response) = ui.allocate_exact_size(vec2(82.0, LAYER_BAR_HEIGHT), Sense::click());
+        ui.painter().rect_filled(rect, 3.0, if response.hovered() { t.control_hover } else { t.control });
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.top() + 22.0), vec2(30.0, 30.0)), Icon::LayerProps, false);
+        let label = crate::tl!("Layer Properties");
+        let text = ui.painter().layout(label.to_string(), crate::theme::body(), t.text, rect.width() - 8.0);
+        ui.painter().galley(pos2(rect.center().x - text.size().x / 2.0, rect.top() + 42.0), text, t.text);
+        icons::describe_control(ui, &response, label, Some(app.ui.docking.layout.contains(&Panel::Layers)), false);
+        if response.on_hover_text(label).clicked() {
+            let operation = if app.ui.docking.layout.contains(&Panel::Layers) { "close" } else { "open" };
+            let _ = app.run("ui.dock", json!({"operation":operation, "panel":"layers"}));
+        }
+        ui.allocate_ui_with_layout(vec2(244.0, LAYER_BAR_HEIGHT), egui::Layout::top_down(egui::Align::Min), |ui| {
+            if in_overflow {
+                crate::layers::current_layer_menu(app, ui, "toolbar_layer_menu");
+            } else {
+                crate::layers::current_layer_combo(app, ui, "toolbar_layer_combo");
+            }
+            for row in [
+                [
+                    (Icon::LayerOff, "layoff", crate::tl!("Off")),
+                    (Icon::LayerIso, "layiso", crate::tl!("Isolate")),
+                    (Icon::LayerFreeze, "layfrz", crate::tl!("Freeze")),
+                    (Icon::LayerLock, "laylck", crate::tl!("Lock")),
+                    (Icon::MakeCurrent, "laymcur", crate::tl!("Make Current")),
+                ],
+                [
+                    (Icon::Bulb, "layon", crate::tl!("Turn All Layers On")),
+                    (Icon::LayerPrev, "layuniso", crate::tl!("Unisolate")),
+                    (Icon::Sun, "laythw", crate::tl!("Thaw All Layers")),
+                    (Icon::Unlock, "layulk", crate::tl!("Unlock")),
+                    (Icon::LayerMatch, "laymch", crate::tl!("Match Layer")),
+                ],
+            ] {
+                ui.horizontal(|ui| {
+                    for (icon, command, label) in row {
+                        let tip = format!("{label} ({command})");
+                        if icons::button(ui, icon, 25.0, &tip, false).clicked() {
+                            app.start(command);
+                        }
+                    }
+                });
+            }
+        });
+        if app.host_panel.enabled
+            && ui
+                .add_enabled(app.host_panel.model.is_some(), egui::Button::new(crate::tl!("Parameters")).min_size(vec2(96.0, LAYER_BAR_HEIGHT)))
+                .clicked()
+        {
+            let _ = app.run("ui.dock", json!({"operation":"activate", "panel":"host"}));
+        }
+    });
+}
+
 /// Height of the macOS integrated title row (#161). AppKit draws the traffic lights itself,
 /// centred in the standard 28 pt title-bar band at the top of the window; moving them would take
 /// AppKit calls (`unsafe`, which the workspace forbids). So the title row is that band, and what
@@ -65,7 +130,14 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
-    let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
+    let has_layers = app.session.doc().is_ok();
+    let tb_h = if !app.ui.show_toolbar {
+        0.0
+    } else if has_layers {
+        LAYER_BAR_HEIGHT + 8.0
+    } else {
+        34.0
+    };
     egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
         if title_h > 0.0 {
@@ -87,7 +159,10 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             let size = 26.0;
             let mut clicked = None;
             let mac = ui.ctx().os().is_mac();
-            let widths: Vec<_> = TOOLBAR.iter().map(|group| group.len() as f32 * (size + 6.0) - 6.0).collect();
+            let mut widths: Vec<_> = TOOLBAR.iter().map(|group| group.len() as f32 * (size + 6.0) - 6.0).collect();
+            if has_layers {
+                widths.push(layer_bar_width(app));
+            }
             let available = (row.right() - 12.0 - x).max(0.0);
             let Some(fit) = craft_ui::layout::fit_toolbar(&widths, available, 24.0, 30.0) else {
                 // Very small windows still expose the complete command row by scrolling.
@@ -102,6 +177,9 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                                 }
                                 ui.add_space(18.0);
                             }
+                            if has_layers {
+                                layer_bar(app, ui, false);
+                            }
                         });
                     });
                 });
@@ -111,6 +189,12 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 return;
             };
             for (index, _) in &fit.shown {
+                if *index == TOOLBAR.len() {
+                    let rect = Rect::from_min_size(pos2(x, row.top() + 4.0), vec2(layer_bar_width(app), LAYER_BAR_HEIGHT));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| layer_bar(app, ui, false));
+                    x += layer_bar_width(app) + 24.0;
+                    continue;
+                }
                 let Some(group) = TOOLBAR.get(*index) else { continue };
                 for (icon, cmd, label, shortcut) in group.iter() {
                     let br = Rect::from_min_size(pos2(x, row.center().y - size / 2.0), vec2(size, size));
@@ -143,6 +227,17 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 icons::describe_control(ui, &response, "More toolbar commands", None, false);
                 egui::Popup::menu(&response).show(|ui| {
                     for (position, index) in fit.overflow.iter().enumerate() {
+                        if *index == TOOLBAR.len() {
+                            ui.separator();
+                            egui::ScrollArea::horizontal().id_salt("layer_bar_overflow").show(ui, |ui| {
+                                ui.allocate_ui_with_layout(
+                                    vec2(layer_bar_width(app), LAYER_BAR_HEIGHT),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| layer_bar(app, ui, true),
+                                );
+                            });
+                            continue;
+                        }
                         let Some(group) = TOOLBAR.get(*index) else { continue };
                         if position > 0 {
                             ui.separator();

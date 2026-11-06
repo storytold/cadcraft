@@ -405,54 +405,12 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     }
     ui.add_space(4.0);
-    // Current layer combo.
+    crate::layers::current_layer_combo(app, ui, "palette_layer_combo");
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
     let layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
-    let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        let w = ui.available_width() - 10.0;
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
-        let p = ui.painter();
-        p.rect_filled(rect, 3.0, t.control);
-        if let Some((name, on, frozen, locked, color)) = &cur_info {
-            let mut x = rect.left() + 6.0;
-            for icon in [
-                if *on { Icon::Bulb } else { Icon::BulbOff },
-                if *locked { Icon::Lock } else { Icon::Unlock },
-                if *frozen { Icon::Snowflake } else { Icon::Sun },
-            ] {
-                icons::paint(p, Rect::from_min_size(pos2(x, rect.top() + 4.0), vec2(16.0, 16.0)), icon, false);
-                x += 18.0;
-            }
-            swatch(p, Rect::from_min_size(pos2(x + 2.0, rect.top() + 7.0), vec2(10.0, 10.0)), *color);
-            p.text(pos2(x + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, name, crate::theme::body(), t.text);
-        }
-        icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
-        egui::Popup::from_toggle_button_response(&resp).width(w).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            for (name, on, frozen, locked, color) in &layers {
-                ui.horizontal(|ui| {
-                    if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
-                        toggle = Some((name.clone(), "on", !*on));
-                    }
-                    if icons::button(ui, if *frozen { Icon::Snowflake } else { Icon::Sun }, 18.0, "Freeze/Thaw", false).clicked() {
-                        toggle = Some((name.clone(), "frozen", !*frozen));
-                    }
-                    if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
-                        toggle = Some((name.clone(), "locked", !*locked));
-                    }
-                    let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                    swatch(ui.painter(), sr, *color);
-                    if ui.selectable_label(name.eq_ignore_ascii_case(&cur), name).clicked() {
-                        set_current = Some(name.clone());
-                    }
-                });
-            }
-        });
-    });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
