@@ -44,6 +44,11 @@ pub use store::EntityStore;
 pub use tables::*;
 pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
 
+/// Handles at or above this are not followed: a file may name one (an object's handle, or its
+/// `$HANDSEED`), and the four billion handles above the limit stay free for the drawing's own
+/// growth. A file's handles keep their identity, however high they are (#913, #939).
+pub const HANDLE_LIMIT: u64 = u64::MAX - 0xFFFF_FFFF;
+
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
 pub mod foreign;
@@ -216,9 +221,13 @@ impl Drawing {
         h
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
+    ///
+    /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not
+    /// followed, so a new object is never given the top handle and the file's object is never
+    /// replaced (#913). The handles above the limit are the drawing's room to grow.
     pub fn bump_handseed(&mut self, h: Handle) {
-        if h.0 >= self.handseed {
-            self.handseed = h.0.saturating_add(1);
+        if h.0 >= self.handseed && h.0 < HANDLE_LIMIT {
+            self.handseed = h.0 + 1;
         }
     }
 
