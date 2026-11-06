@@ -56,7 +56,7 @@ pub enum Preference {
 }
 
 impl Preference {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -226,7 +226,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 19] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {

@@ -1485,3 +1485,19 @@ menu	View	Näytä
 	Specify helix height	Määritä kierukan korkeus
 	Specify top radius	Määritä yläpään säde
 	Specify total length	Määritä kokonaispituus
+	Ctrl+Enter to apply	Käytä painamalla Ctrl+Enter
+	Edit Text	Muokkaa tekstiä
+	The drawing changed. Close the window and open it again.	Piirustus muuttui. Sulje ikkuna ja avaa se uudelleen.
+	Xref	Ulkoinen viittaus
+	Clip Xref	Leikkaa ulkoinen viittaus
+	Xref Clip Frame	Ulkoisen viittauksen leikkauskehys
+	Saving {name} will remove content	Tiedoston {name} tallentaminen poistaa sisältöä
+	This format can't keep these objects yet: {objects}.	Tämä tiedostomuoto ei vielä säilytä näitä objekteja: {objects}.
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 ja vanhemmat säilyttävät ne. Säilytä ne piirustuksessa valitsemalla Tallenna nimellä.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF säilyttää ne. Säilytä ne piirustuksessa valitsemalla Tallenna nimellä.
+	The current file is kept as {name} until the next save.	Nykyinen tiedosto säilytetään nimellä {name} seuraavaan tallennukseen asti.
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Nykyinen tiedosto ei näytä ehjältä, joten {name} jätetään ennalleen ja nykyinen tiedosto korvataan.
+	Backup copies are off, so the current file will be replaced.	Varmuuskopiot ovat pois päältä, joten nykyinen tiedosto korvataan.
+	Save Anyway	Tallenna silti
+	Save cancelled: {path} was not changed.	Tallennus peruttiin: tiedostoa {path} ei muutettu.
+	{count} more types	{count} muuta tyyppiä

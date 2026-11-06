@@ -75,7 +75,7 @@ Görünüm Penceresi); the running app was reviewed by a native speaker, and lin
 proofreading is still to do. The bundled
 egui fonts cover `Ç Ğ İ Ö Ş Ü ç ğ ı ö ş ü`.
 
-Finnish has 1,476 catalog rows: the union of the existing catalogs, including the Ukrainian
+Finnish has 1,492 catalog rows: the union of the existing catalogs, including the Ukrainian
 reference, four contextual menu headings and two count templates. Its plural rule is `one|other`
 like English; after any number but 1 Finnish uses the partitive singular (`1 osallistuja`,
 `2 osallistujaa`). The menu headings **Muokkaa** (Edit) and **Muuta** (Modify) are kept apart, and
