@@ -412,6 +412,10 @@ struct LineBuilder<'a> {
     line: PLine,
     paragraph: usize,
     pending_space: Option<usize>,
+    /// Width of the spaces beyond the first of a run, and of those that start a paragraph's first
+    /// line (a soft-wrapped line drops them).
+    extra: f64,
+    soft_wrapped: bool,
     last_format: usize,
 }
 
@@ -428,6 +432,8 @@ impl<'a> LineBuilder<'a> {
             line: PLine { width: (first.left + first.first).max(0.0), ..Default::default() },
             paragraph: 0,
             pending_space: None,
+            extra: 0.0,
+            soft_wrapped: false,
             last_format: 0,
         }
     }
@@ -447,13 +453,21 @@ impl<'a> LineBuilder<'a> {
     fn push_atom(&mut self, atom: &Atom) {
         match atom {
             Atom::Space(format) => {
+                let w = self.space_width(*format);
                 if !self.line.items.is_empty() || self.pending_space.is_some() {
+                    if self.pending_space.is_some() {
+                        self.extra += w;
+                    }
                     self.pending_space = Some(*format);
+                } else if !self.soft_wrapped {
+                    self.extra += w;
                 }
                 self.last_format = *format;
             }
             Atom::Para(format) => {
                 self.pending_space = None;
+                self.extra = 0.0;
+                self.soft_wrapped = false;
                 let next_start = self.first_start(self.paragraph + 1);
                 self.last_format = *format;
                 self.finish(true, next_start);
@@ -490,6 +504,7 @@ impl<'a> LineBuilder<'a> {
 
     fn push_tab(&mut self, parts: &[Part], index: usize) {
         self.pending_space = None;
+        self.extra = 0.0;
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
@@ -506,6 +521,7 @@ impl<'a> LineBuilder<'a> {
         };
         if x > available + 1e-9 && !self.line.items.is_empty() {
             self.finish(false, left);
+            self.soft_wrapped = true;
         } else {
             self.line.width = x;
             self.line.text.push(' ');
@@ -540,20 +556,15 @@ impl<'a> LineBuilder<'a> {
     /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
     fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width = self.word_width(segments);
-        let space_width = if index == 0 {
-            self.pending_space
-                .map(|format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let space_width = if index == 0 { self.pending_space.map(|format| self.space_width(format)).unwrap_or(0.0) + self.extra } else { 0.0 };
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
         };
         if self.width > 0.0 && !self.line.items.is_empty() && self.line.width + space_width + word_width > available + 1e-9 {
             self.finish(false, left);
-        } else if index == 0 && (!self.line.items.is_empty() || self.pending_space.is_some()) {
+            self.soft_wrapped = true;
+        } else if index == 0 && (!self.line.items.is_empty() || self.pending_space.is_some() || self.extra > 0.0) {
             self.line.width += space_width;
             if self.pending_space.is_some() {
                 self.line.text.push(' ');
@@ -561,6 +572,7 @@ impl<'a> LineBuilder<'a> {
             }
         }
         self.pending_space = None;
+        self.extra = 0.0;
         for (segment, format) in segments {
             let segment_width = seg_width(segment, self.format(*format));
             self.line.max_h = self.line.max_h.max(self.format(*format).height);
@@ -569,6 +581,10 @@ impl<'a> LineBuilder<'a> {
             self.line.width += segment_width;
             self.last_format = *format;
         }
+    }
+
+    fn space_width(&self, format: usize) -> f64 {
+        crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf)
     }
 
     fn available_width(&self, props: &ParaProps) -> f64 {
