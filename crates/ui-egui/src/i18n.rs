@@ -45,6 +45,8 @@ pub enum Preference {
     Hungarian,
     #[serde(rename = "tr")]
     Turkish,
+    #[serde(rename = "ka")]
+    Georgian,
     #[serde(rename = "bs")]
     Bosnian,
     #[serde(rename = "vi")]
@@ -72,6 +74,7 @@ impl Preference {
         Self::Arabic,
         Self::Hungarian,
         Self::Turkish,
+        Self::Georgian,
         Self::Bosnian,
         Self::Vietnamese,
         Self::Finnish,
@@ -122,6 +125,7 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Finnish => "fi",
@@ -153,6 +157,15 @@ impl Preference {
             Self::Arabic => "العربية",
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
+            // Georgian letters come from the craft-fonts Georgian face; a build without it shows
+            // the English name (as Korean does) and keeps the interface in English.
+            Self::Georgian => {
+                if crate::theme::can_show("ka") {
+                    "ქართული"
+                } else {
+                    "Georgian"
+                }
+            }
             Self::Bosnian => "Bosanski",
             // Its letters need a font egui doesn't bundle ([`crate::theme::vietnamese_font`]).
             Self::Vietnamese => {
@@ -193,6 +206,7 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Finnish => "fi",
@@ -259,6 +273,11 @@ pub static LANGUAGES: [Language; 19] = [
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
     Language { code: "tr", name: "Türkçe", source: include_str!("i18n/tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // Georgian keeps a noun singular after a numeral ("5 კომიტი"), so one form, the Korean rule.
+    // Its letters come from the craft-fonts `Geor` face (`theme::can_show`).
+    Language {
+        code: "ka", name: "ქართული", source: include_str!("i18n/ka.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
+    },
     // Bosnian (Latin script, Ijekavian): one (1, 21), few (2–4, 22–24, not 12–14), other — the
     // Ukrainian rule for integer counts.
     Language { code: "bs", name: "Bosanski", source: include_str!("i18n/bs.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
