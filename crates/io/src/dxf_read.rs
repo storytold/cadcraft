@@ -73,7 +73,8 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
 type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);
 
 /// A layout read from OBJECTS: name, tab order, paper block handle and page setup.
-type LayoutDef = (String, u32, String, PageSetup);
+/// A LAYOUT object: name, tab order, block record, page setup and its limits (groups 10/11).
+type LayoutDef = (String, u32, String, PageSetup, Option<(Vec2, Vec2)>);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
 fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
@@ -138,6 +139,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    crate::dxf_clip::read(&mut d);
     d.skipped_records = skipped;
     Ok(d)
 }

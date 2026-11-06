@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **繁體中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **繁體中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), **ქართული** (Georgian), or **Tiếng Việt** (Vietnamese).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,7 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. For Chinese, explicit script wins over region: `zh-TW` and `zh-HK` → `zh-Hant`,
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`. For Chinese, explicit script wins over region: `zh-TW` and `zh-HK` → `zh-Hant`,
 `zh-Hant` → `zh-Hant`, while `zh-Hans-TW` and bare `zh` → `zh`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
@@ -23,7 +23,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `zh-Hant`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `zh-Hant`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka`, and `vi`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -47,8 +47,8 @@ The translations are original, AI-assisted Korean CAD terminology (for example, 
 치수, 모깎기, 모따기, 간격띄우기 and 객체 스냅). Independent native proofreading and
 platform-specific layout/IME validation remain follow-up work.
 
-Brazilian Portuguese has 1,231 catalog rows and also covers the reference catalog and every marked UI
-literal: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
+Brazilian Portuguese has 1,447 catalog rows and also covers the reference catalog, every marked UI
+literal and the strings the sibling catalogs translate: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
 Preferences; its gaps are now zero. Its plural rule is `one|other` (0 and 1 are `one`), as CLDR defines
 for `pt`, and the catalog's accented letters (`Á Â Í Ó Ú à á â ã ç é ê í ó ô õ ú`) render in the
 bundled fonts. The original catalog was contributed by @WladmirJunior; the remaining rows were completed
@@ -102,6 +102,12 @@ catalog, the saved `ko` preference is kept but the interface falls back to Engli
 command reports that a font is needed, and the picker uses the readable label **Korean** wherever
 Hangul can't be shown. This change does not fix platform IME issues or localize engine output.
 
+The bundled egui fonts have no Georgian letters. Georgian is drawn with the Noto Sans Georgian face
+(`Geor`) of the craft-fonts build input, which release builds embed (`craft-fonts-ref` in the
+workflows, and `web-craft-fonts` for the web build, whose embedded faces include it). The face loads
+in every interface language, so Georgian text (file, layout and layer names, labels) draws. A build
+without craft-fonts has no Georgian face.
+
 ## Greek (`el`) interface
 
 The Greek translation covers all **1,330** distinct source keys collected from the existing
@@ -118,6 +124,26 @@ drawing content, names of user objects and file formats remain unchanged. The tr
 original AI-assisted work contributed by @Camthalion77 with language review; it is not sourced
 from Autodesk localization files. Independent native proofreading and visual checks remain
 follow-up work.
+
+## Georgian (`ka`) interface
+
+Georgian has **1,458 rows**: 1,452 ordinary labels, four contextual menu headings (**ზომების
+დატანა** for the Dimension menu, **ზომა** for the object; **ხატვა** for Draw) and two single-form
+count templates, since a Georgian noun stays singular after a numeral ("5 კომიტი"). It covers the
+union of the existing catalogs, and no marked UI literal falls back to English. Commands are verbal
+nouns (**შენახვა**, **შემობრუნება**); prompts read "მიუთითეთ …" for Specify, "შეიყვანეთ …" for
+Enter and "მონიშნეთ …" for Select, and clickable keywords keep the spelling the engine accepts.
+Georgian has no letter case, so nothing is capitalised, and Mtavruli (a display style, not upper
+case) never appears; a test checks that. The translation is original: written with Claude Code from
+the meaning of each English string, with Georgian technical-drawing vocabulary (შრე, დაშტრიხვა,
+მომრგვალება, ფასკა, წანაცვლება, ობიექტზე მიბმა, ხედვის არე); terminology and doubtful strings
+were decided by a native Georgian speaker (@devius). No other product's localization was consulted.
+
+egui's bundled faces have no Georgian letters, so Georgian is drawn with the craft-fonts Noto Sans
+Georgian (`Geor`) face, which loads in every interface language when a build embeds it; the picker
+then shows **ქართული**. A build without that face keeps the saved `ka` choice but shows the interface
+in English, names the language **Georgian** in the picker, and the language command reports that a
+Georgian font is needed.
 
 ## Adding translations
 
@@ -164,9 +190,20 @@ wins over the system locale. Auto recognizes `zh-Hant` and unscripted `zh-TW`, `
 region and does not select Traditional Chinese; bare `zh` and explicit `Hans` select Simplified Chinese (`zh`). BCP 47
 extensions do not change script selection.
 
-The Traditional Chinese catalog contains 1357 entries after seven supplemental entries
-from @icec8c8. Against upstream `7cee285`, the Ukrainian reference contains 1368 entries;
-11 reference keys still fall back to English. This is not complete interface coverage. The earlier
+For the 2026-11-06 local repair integrating PR head `e7c9802` with the fixed upstream
+base `1b39fbbabeb55dfd28f9ac9a297f868ae5a095b0`, the Traditional Chinese catalog has
+1,353 rows against 1,382 Ukrainian reference rows: 29 reference-key fallbacks and
+0 stale keys. The integrated registry has 21 preferences and 20 languages.
+Of the original key/value pairs, 1,343 are unchanged; 10 keys receive the necessary
+upstream prompt-key migration, removing only the trailing ` or` and its translated
+`，或`. Four obsolete long-key rows duplicate existing short-key translations and are
+removed. All seven supplemental rows from @icec8c8 remain verbatim; no translation
+is added. These counts describe this fixed integration, not future upstream versions.
+
+Historical snapshot against upstream `7cee285` (snapshot date not established):
+1,357 catalog entries after the seven supplemental entries, 1,368 Ukrainian reference
+entries and 11 reference-key fallbacks. This is historical, not the repaired catalog's
+current coverage. Neither snapshot establishes complete interface coverage. The earlier
 integration from `b275021` to `9bfecc7` added 29 keys and removed the obsolete `WCS ⌄`
 key, increasing the catalog from 1322 to 1350 entries. Commands, accepted English
 keywords, CLI/MCP/control labels, drawing text and user names retain their source spelling.
@@ -188,9 +225,10 @@ Chinese preference remains intact. No font files are added by this contribution.
 Regression tests cover script/region selection, saved preferences, plural templates,
 unchanged automation/user data, font ordering and stale reference keys. Missing translations
 remain non-fatal and are reported by `translation_gaps` through `cargo xtask i18n`.
-The current integration and supplement received static source/catalog checks only; no
+The 2026-11-06 local repair received static source/catalog and documentation checks only; no
 automated or simulated repository tests were run. Compilation, cargo xtask ci,
-native/embedded-font rendering, DPI, layout and persistence remain unverified here.
+Rust/cargo execution, official CI, GUI, native/embedded-font rendering, DPI, layout
+and persistence remain unverified here.
 The shared glyph test installs CJK fonts for `zh-Hant`; without an available font it
 prints a skip message and leaves glyph coverage unverified. Existing dedicated glyph
 and live-switch tests can also return early without CJK fonts, so a passing test count

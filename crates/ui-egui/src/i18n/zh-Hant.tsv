@@ -219,7 +219,7 @@
 	Enter a vertex editing option	輸入頂點編輯選項
 	Enter an option	輸入選項
 	Enter angle of xline	輸入建構線角度
-	Enter angle of xline (0) or	輸入建構線角度（0），或
+	Enter angle of xline (0)	輸入建構線角度（0）
 	Enter area of rectangle in current units	以目前單位輸入矩形面積
 	Enter attribute prompt	輸入屬性提示
 	Enter attribute tag name	輸入屬性標籤名稱
@@ -230,7 +230,7 @@
 	Enter default attribute value	輸入預設屬性值
 	Enter degree of spline	輸入雲形線次數
 	Enter delta angle	輸入角度增量
-	Enter delta length or	輸入長度增量，或
+	Enter delta length	輸入長度增量
 	Enter dimension text	輸入標註文字
 	Enter dimension text (<> = measurement)	輸入標註文字（<> = 量測值）
 	Enter dimension value or [name=expression]	輸入標註值，或 [name=expression]
@@ -638,8 +638,8 @@
 	Select an arc or circle	選取圓弧或圓
 	Select an arc.	選取一條圓弧。
 	Select an object	選取物件
-	Select an object to change or	選取要變更的物件，或
-	Select an object to measure or	選取要量測的物件，或
+	Select an object to change	選取要變更的物件
+	Select an object to measure	選取要量測的物件
 	Select an object.	選取一個物件。
 	Select an open curve.	選取一條開放曲線。
 	Select an open line, arc, polyline, ellipse arc or spline.	選取開放的直線、圓弧、聚合線、橢圓弧或雲形線。
@@ -653,9 +653,8 @@
 	Select first line	選取第一條直線
 	Select first line or arc	選取第一條直線或圓弧
 	Select first object	選取第一個物件
-	Select first object or	選取第一個物件，或
 	Select first point	選取第一點
-	Select nested objects to copy or	選取要複製的巢狀物件，或
+	Select nested objects to copy	選取要複製的巢狀物件
 	Select object	選取物件
 	Select object to dimension	選取要標註的物件
 	Select object to divide	選取要等分的物件
@@ -671,7 +670,7 @@
 	Select one polyline (Multiple is available through the JSON form).	選取一條聚合線（Multiple 可透過 JSON 形式使用）。
 	Select path curve	選取路徑曲線
 	Select point or object	選取點或物件
-	Select polyline or	選取聚合線，或
+	Select polyline	選取聚合線
 	Select second line	選取第二條直線
 	Select second line or shift-select to apply corner	選取第二條直線，或按住 Shift 選取以套用尖角
 	Select second object	選取第二個物件
@@ -726,9 +725,8 @@
 	Specify axis endpoint of ellipse	指定橢圓軸端點
 	Specify base diameter	指定底面直徑
 	Specify base point	指定基準點
-	Specify base point or	指定基準點，或
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基準點或位移（拖曳滑鼠中鍵以即時平移）
-	Specify base radius or	指定底面半徑，或
+	Specify base radius	指定底面半徑
 	Specify center of donut	指定圓環中心
 	Specify center of ellipse	指定橢圓中心
 	Specify center of polygon	指定多邊形中心
@@ -770,7 +768,7 @@
 	Specify first point on circle: _tan to	指定圓上第一點：_tan 至
 	Specify first source point	指定第一個來源點
 	Specify height	指定高度
-	Specify helix height or	指定螺旋線高度，或
+	Specify helix height	指定螺旋線高度
 	Specify included angle	指定夾角
 	Specify insertion base point	指定插入基準點
 	Specify insertion point	指定插入點
@@ -789,7 +787,6 @@
 	Specify new width for all segments	指定所有線段的新寬度
 	Specify next point	指定下一點
 	Specify offset distance	指定偏移距離
-	Specify offset distance or	指定偏移距離，或
 	Specify opposite corner	指定對角點
 	Specify other corner point	指定另一角點
 	Specify other endpoint of axis	指定軸的另一端點
@@ -802,7 +799,6 @@
 	Specify radius of circle	指定圓半徑
 	Specify rotation angle	指定旋轉角度
 	Specify rotation angle of text	指定文字旋轉角度
-	Specify rotation angle or	指定旋轉角度，或
 	Specify scale factor	指定比例係數
 	Specify second angle endpoint	指定第二個角度端點
 	Specify second break point	指定第二個斷開點
@@ -835,9 +831,9 @@
 	Specify third source point or <continue>	指定第三個來源點，或 <continue>
 	Specify through point	指定通過點
 	Specify top diameter	指定頂面直徑
-	Specify top radius or	指定頂面半徑，或
+	Specify top radius	指定頂面半徑
 	Specify total angle	指定總角度
-	Specify total length or	指定總長度，或
+	Specify total length	指定總長度
 	Specify width for rectangles	指定矩形寬度
 	Sphere	球體
 	Spline	雲形線
