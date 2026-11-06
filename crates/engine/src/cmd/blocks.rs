@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?, multiline? (default is multiline text contents: \\P starts a new line)}")
+            .params("{tag, prompt?, default?, at, height?, invisible?, multiline?: bool (a multiline attribute: `default` is read as multiline text, \\P starting a new line; at most 65536 bytes)}")
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -437,7 +437,7 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "multiline", false)
         && let EntityKind::AttDef(a) = &mut k
     {
-        a.multiline = Some(attdef::multiline(&mut a.text));
+        a.multiline = Some(attdef::multiline(&mut a.text).map_err(|e| bad("attdef", e))?);
     }
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }

@@ -29,7 +29,7 @@ pub(super) fn dash_attedit_spec() -> CommandSpec {
     CommandSpec::new("-attedit", "Global", run_global)
         .menu(&["Modify", "Object", "Attribute", "Global"])
         .alias(&["-ate", "atte"])
-        .params("{find?, replace?, position?: [x,y], height?, angle? (degrees), style? (find or one of position / height / angle / style is required), block?, tag?, value? (wildcard specifications, default *), handles? (default: every block reference in the current space)} → {changed}")
+        .params("{find?, replace?, position?: [x,y] (the attribute's justification point), height?: positive number, angle? (degrees), style?: text style name (find, or one of position / height / angle / style, is required; coordinates and heights up to 1e12), block?, tag?, value? (wildcard specifications, default *), handles? (default: every block reference in the current space)} → {changed}")
         .interactive(|_| Ok(Box::new(DashAtteditM::default())))
 }
 
@@ -185,17 +185,55 @@ enum Reshape {
     Style(String),
 }
 
-/// Apply `r` to attribute `a`: its text and, for a multiline attribute, its multiline text.
-fn reshape(a: &mut Attrib, r: &Reshape) {
+/// Largest coordinate, height or angle (radians) a typed or JSON -ATTEDIT change may give, in
+/// drawing units: the 1e12 bound other commands put on input-derived sizes (thickness, multiline
+/// scale, helix height).
+const MAX_SIZE: f64 = 1e12;
+
+/// `r` when its numbers are finite and within [`MAX_SIZE`] (a height positive), with an angle
+/// taken to 0 up to a full turn; else the message refusing it.
+fn checked(r: Reshape) -> std::result::Result<Reshape, String> {
+    let ok = |v: f64| v.is_finite() && v.abs() <= MAX_SIZE;
+    match r {
+        Reshape::Position(p) if !(ok(p.x) && ok(p.y)) => Err(format!("Requires a point with coordinates within {MAX_SIZE:e}.")),
+        Reshape::Height(h) if !(ok(h) && h > 0.0) => Err(format!("Requires a positive height up to {MAX_SIZE:e}.")),
+        Reshape::Angle(a) if !ok(a) => Err("Requires an angle.".into()),
+        Reshape::Angle(a) => Ok(Reshape::Angle(a.rem_euclid(std::f64::consts::TAU))),
+        r => Ok(r),
+    }
+}
+
+/// Whether every coordinate of `a`'s text (and multiline text) is finite and within [`MAX_SIZE`].
+fn in_range(a: &Attrib) -> bool {
+    let ok = |v: cadcraft_geom::Vec3| v.x.is_finite() && v.y.is_finite() && v.x.abs() <= MAX_SIZE && v.y.abs() <= MAX_SIZE;
+    ok(a.text.insert) && a.text.align_pt.is_none_or(ok) && a.multiline.as_ref().is_none_or(|m| ok(m.mtext.insert))
+}
+
+/// Apply `r` to attribute `a`: its text and, for a multiline attribute, its multiline text. A
+/// change that would put a point out of range is refused and leaves `a` as it was.
+fn reshape(a: &mut Attrib, r: &Reshape) -> std::result::Result<(), String> {
+    let was = a.clone();
+    reshape_unchecked(a, r);
+    // Refused when it takes a point out of range; an attribute read out of range can still get
+    // a new height, angle or style.
+    let moved = matches!(r, Reshape::Position(_));
+    if in_range(a) || !(moved || in_range(&was)) {
+        return Ok(());
+    }
+    *a = was;
+    Err(match r {
+        Reshape::Position(_) => "The attribute cannot be moved that far.".into(),
+        _ => "The attribute's end point would be out of range.".into(),
+    })
+}
+
+fn reshape_unchecked(a: &mut Attrib, r: &Reshape) {
     let t = &mut a.text;
     let m = a.multiline.as_mut().map(|m| &mut m.mtext);
     match r {
         Reshape::Position(p) => {
             let at = t.justify_point();
             let (dx, dy) = (p.x - at.x, p.y - at.y);
-            if !(dx.is_finite() && dy.is_finite()) {
-                return;
-            }
             t.insert.x += dx;
             t.insert.y += dy;
             if let Some(ap) = &mut t.align_pt {
@@ -220,11 +258,8 @@ fn reshape(a: &mut Attrib, r: &Reshape) {
                 && let Some(ap) = &mut t.align_pt
             {
                 let len = t.insert.xy().dist(ap.xy());
-                let (x, y) = (t.insert.x + len * r.cos(), t.insert.y + len * r.sin());
-                if x.is_finite() && y.is_finite() {
-                    ap.x = x;
-                    ap.y = y;
-                }
+                ap.x = t.insert.x + len * r.cos();
+                ap.y = t.insert.y + len * r.sin();
             }
             t.rotation = *r;
             if let Some(m) = m {
@@ -241,19 +276,19 @@ fn reshape(a: &mut Attrib, r: &Reshape) {
     rebase(t);
 }
 
-/// Apply `r` to attribute `k` of block reference `h`; returns whether it changed.
-fn reshape_at(s: &mut Session, (h, k): (Handle, usize), r: &Reshape) -> Result<bool> {
-    let mut changed = false;
+/// Apply `r` to attribute `k` of block reference `h`; returns whether it changed, or the
+/// message refusing it (the attribute then stays as it was).
+fn reshape_at(s: &mut Session, (h, k): (Handle, usize), r: &Reshape) -> Result<std::result::Result<bool, String>> {
+    let mut out = Ok(false);
     s.doc_mut()?.modify_entity(h, |e| {
         if let EntityKind::Insert(ins) = &mut e.kind
             && let Some(a) = ins.attribs.get_mut(k)
         {
             let before = (a.text.clone(), a.multiline.clone());
-            reshape(a, r);
-            changed = before != (a.text.clone(), a.multiline.clone());
+            out = reshape(a, r).map(|()| before != (a.text.clone(), a.multiline.clone()));
         }
     })?;
-    Ok(changed)
+    Ok(out)
 }
 
 /// The text of attribute `k` of block reference `h`.
@@ -278,18 +313,16 @@ fn json_reshapes(s: &Session, p: &Value) -> Result<Vec<Reshape>> {
         v.push(Reshape::Position(point_param(p, "position").ok_or_else(|| bad(cmd, "`position` must be a point [x, y]"))?));
     }
     if let Some(h) = p.get("height") {
-        let h = h.as_f64().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| bad(cmd, "`height` must be a positive number"))?;
-        v.push(Reshape::Height(h));
+        v.push(Reshape::Height(h.as_f64().ok_or_else(|| bad(cmd, "`height` must be a positive number"))?));
     }
     if let Some(a) = p.get("angle") {
-        let a = a.as_f64().map(f64::to_radians).filter(|a| a.is_finite()).ok_or_else(|| bad(cmd, "`angle` must be a number of degrees"))?;
-        v.push(Reshape::Angle(a));
+        v.push(Reshape::Angle(a.as_f64().map(f64::to_radians).ok_or_else(|| bad(cmd, "`angle` must be a number of degrees"))?));
     }
     if let Some(n) = p.get("style") {
         let n = n.as_str().ok_or_else(|| bad(cmd, "`style` must be a text style name"))?;
         v.push(Reshape::Style(style_named(s, n).map_err(|e| bad(cmd, e.to_string()))?));
     }
-    Ok(v)
+    v.into_iter().map(|r| checked(r).map_err(|e| bad(cmd, e))).collect()
 }
 
 /// The layer and colour attribute `k` of block reference `h` is drawn with: its own, else its
@@ -344,6 +377,8 @@ fn run_global(s: &mut Session, p: &Value) -> Result<Value> {
     let specs = Specs { block: spec("block"), tag: spec("tag"), value: spec("value") };
     let hs = if p.get("handles").is_some() || p.get("handle").is_some() { targets(s, p)? } else { all_in_space(s)? };
     let items = matching(s, &hs, &specs, true)?;
+    // A refused change leaves every attribute as it was.
+    let before = s.state()?.doc.clone();
     let mut n = 0usize;
     for it in &items {
         let mut changed = match &find {
@@ -351,7 +386,13 @@ fn run_global(s: &mut Session, p: &Value) -> Result<Value> {
             None => false,
         };
         for r in &reshapes {
-            changed |= reshape_at(s, *it, r)?;
+            match reshape_at(s, *it, r)? {
+                Ok(c) => changed |= c,
+                Err(msg) => {
+                    s.state_mut()?.doc = before;
+                    return Err(bad("-attedit", msg));
+                }
+            }
         }
         n += usize::from(changed);
     }
@@ -658,15 +699,9 @@ impl Interactive for DashAtteditM {
                     (Stage::Style, Input::Text(t)) => Some(Reshape::Style(style_named(s, t)?)),
                     _ => return Ok(Step::Continue),
                 };
-                match &r {
-                    Some(Reshape::Height(h)) if !(h.is_finite() && *h > 0.0) => {
-                        return Err(EngineError::Other("Requires a positive height.".into()));
-                    }
-                    Some(Reshape::Angle(a)) if !a.is_finite() => return Err(EngineError::Other("Requires an angle.".into())),
-                    _ => {}
-                }
                 if let (Some(r), Some(it)) = (r, self.items.get(self.cur).copied()) {
-                    reshape_at(s, it, &r)?;
+                    let r = checked(r).map_err(EngineError::Other)?;
+                    reshape_at(s, it, &r)?.map_err(EngineError::Other)?;
                 }
                 self.stage = Stage::Option;
             }

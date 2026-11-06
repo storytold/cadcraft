@@ -116,7 +116,7 @@ impl AttdefM {
             halign: h,
             valign: v,
         };
-        let multiline = (self.flags & MULTILINE != 0).then(|| multiline(&mut text));
+        let multiline = if self.flags & MULTILINE != 0 { Some(multiline(&mut text).map_err(crate::EngineError::Other)?) } else { None };
         s.add_entity(EntityKind::AttDef(Attrib {
             tag: self.tag.to_uppercase(),
             text,
@@ -131,21 +131,22 @@ impl AttdefM {
     }
 }
 
-/// Longest multiline attribute contents (bytes) the plain text is made from.
+/// Longest multiline attribute contents (bytes); longer ones are refused.
 const MAX_CONTENTS: usize = 65_536;
+
+fn too_long() -> String {
+    format!("Multiline attribute contents are limited to {MAX_CONTENTS} bytes.")
+}
 
 /// Make `text` a multiline attribute's: its value, read as multiline text contents (`\P` a new
 /// line), becomes the multiline text placed at its point with its justification, height,
-/// rotation and style; the value keeps the plain text. Returns the multiline text.
-pub(in crate::cmd) fn multiline(text: &mut Text) -> MultilineAttrib {
-    let mut contents = std::mem::take(&mut text.value);
-    if contents.len() > MAX_CONTENTS {
-        let mut end = MAX_CONTENTS;
-        while !contents.is_char_boundary(end) {
-            end = end.saturating_sub(1);
-        }
-        contents.truncate(end);
+/// rotation and style; the value keeps the plain text. Returns the multiline text, or why the
+/// contents are refused (longer than [`MAX_CONTENTS`]; `text` is then unchanged).
+pub(in crate::cmd) fn multiline(text: &mut Text) -> std::result::Result<MultilineAttrib, String> {
+    if text.value.len() > MAX_CONTENTS {
+        return Err(too_long());
     }
+    let contents = std::mem::take(&mut text.value);
     let plain = cadcraft_fonts::plain_mtext(&contents);
     text.value = plain.clone();
     // MTEXT attachment 1..=9: TL TC TR ML MC MR BL BC BR.
@@ -171,7 +172,7 @@ pub(in crate::cmd) fn multiline(text: &mut Text) -> MultilineAttrib {
         line_spacing_exact: false,
         columns: None,
     };
-    MultilineAttrib { mtext, read_as: plain }
+    Ok(MultilineAttrib { mtext, read_as: plain })
 }
 
 /// The justification's name in "Current text style: … Justify: …".
@@ -256,6 +257,10 @@ impl Interactive for AttdefM {
                     self.prompt = t;
                     self.ask = Ask::Value;
                 } else {
+                    if self.flags & MULTILINE != 0 && t.len() > MAX_CONTENTS {
+                        s.echo(too_long());
+                        return Ok(Step::Continue);
+                    }
                     self.value = t;
                     self.echo_style(s)?;
                     self.ask = Ask::Point;

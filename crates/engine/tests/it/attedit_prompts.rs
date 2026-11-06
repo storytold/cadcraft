@@ -111,9 +111,9 @@ fn dash_attedit_one_at_a_time_changes_position_height_angle_and_style() {
     // Height: a refused answer asks again; a distance is taken.
     s.cmdline("h").unwrap();
     assert!(s.prompt_text().contains("Specify new height <"), "{}", s.prompt_text());
-    type_lines(&mut s, &["0", "-2", "x"]);
+    type_lines(&mut s, &["0", "-2", "x", "10000000000000"]);
     assert!(s.prompt_text().contains("Specify new height"), "{}", s.prompt_text());
-    assert!(s.log.iter().any(|l| l.contains("Requires a positive height.")), "{:?}", s.log);
+    assert!(s.log.iter().filter(|l| l.contains("Requires a positive height up to")).count() >= 3, "{:?}", s.log);
     s.cmdline("4.5").unwrap();
     // Angle, as AUNITS shows it.
     s.cmdline("a").unwrap();
@@ -167,6 +167,82 @@ fn dash_attedit_moves_justified_text_by_its_alignment_point() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let t = text(&s, h, "MC");
     assert_eq!((t.justify_point().x, t.justify_point().y), (200.0, 50.0));
+}
+
+/// Make attribute T of `h` aligned text from its start point to `end`.
+fn make_aligned(s: &mut Session, h: Handle, end: (f64, f64)) {
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            let EntityKind::Insert(i) = &mut e.kind else { return };
+            let t = &mut i.attribs.iter_mut().find(|a| a.tag == "T").unwrap().text;
+            t.halign = cadcraft_doc::HAlign::Aligned;
+            t.align_pt = Some(cadcraft_engine::geom::Vec3::new(end.0, end.1, 0.0));
+        })
+        .unwrap();
+}
+
+#[test]
+fn dash_attedit_moves_and_turns_aligned_text_by_both_end_points() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    make_aligned(&mut s, h, (110.0, 1.0));
+    // Position: the start point goes to the point, the end point with it.
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "p", "200,50"]);
+    let t = text(&s, h, "T");
+    let end = t.align_pt.unwrap();
+    assert_eq!((t.insert.x, t.insert.y, end.x, end.y), (200.0, 50.0, 210.0, 50.0));
+    // Angle: the end point turns about the start point, the length kept.
+    type_lines(&mut s, &["a", "90", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let t = text(&s, h, "T");
+    let end = t.align_pt.unwrap();
+    assert!((end.x - 200.0).abs() < 1e-9 && (end.y - 60.0).abs() < 1e-9, "{t:?}");
+    assert_eq!((t.insert.x, t.insert.y), (200.0, 50.0));
+    assert!((t.rotation - 90f64.to_radians()).abs() < 1e-12);
+}
+
+#[test]
+fn dash_attedit_refuses_huge_and_out_of_range_changes() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    // Aligned text whose end point is 5e11 from its start point.
+    make_aligned(&mut s, h, (5e11, 1.0));
+    let before = text(&s, h, "T");
+    // At the prompt: a huge point, height or angle is refused and asked again; so is a move that
+    // would take the end point out of range.
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "p", "10000000000000,0"]);
+    assert!(s.prompt_text().contains("Specify new text insertion point"), "{}", s.prompt_text());
+    s.cmdline("900000000000,0").unwrap();
+    assert!(s.prompt_text().contains("Specify new text insertion point"), "{}", s.prompt_text());
+    assert!(s.log.iter().any(|l| l.contains("cannot be moved that far")), "{:?}", s.log);
+    type_lines(&mut s, &["", "h", "10000000000000"]);
+    assert!(s.prompt_text().contains("Specify new height"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "a", "1e300"]);
+    assert!(s.prompt_text().contains("Specify new rotation angle"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(text(&s, h, "T"), before);
+    // The JSON form refuses them as errors, never `changed: 0`, and changes nothing.
+    let b = handle(&insert(&mut s, 200.0, json!({"T": "b"})));
+    let b_before = text(&s, b, "T");
+    let undo = s.state().unwrap().undo.len();
+    for bad in [
+        json!({"tag": "T", "position": [1e13, 0]}),
+        json!({"tag": "T", "position": [0, -1e13]}),
+        json!({"tag": "T", "height": 1e13}),
+        json!({"tag": "T", "angle": 1e300}),
+        // The other reference moves first; the refused one puts it back too.
+        json!({"handles": [b.hex(), h.hex()], "tag": "T", "position": [9e11, 0]}),
+    ] {
+        let e = s.execute("-attedit", &bad).unwrap_err();
+        assert!(!e.to_string().is_empty(), "{bad}");
+        assert_eq!((text(&s, h, "T"), text(&s, b, "T")), (before.clone(), b_before.clone()), "{bad}");
+    }
+    assert_eq!(s.state().unwrap().undo.len(), undo, "nothing to undo");
+    // Up to the bound is taken.
+    let r = s.execute("-attedit", &json!({"handles": [b.hex()], "tag": "T", "position": [1e12, -1e12], "height": 1e12})).unwrap();
+    assert_eq!(r["changed"], 1);
 }
 
 #[test]

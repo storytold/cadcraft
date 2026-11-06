@@ -135,6 +135,45 @@ fn plot_styles_rename_with_their_layers_objects_and_the_current_style() {
     assert_eq!(plot_styles(s.doc().unwrap()).1, ["Bold", "Thin"]);
 }
 
+/// The plot styles of the objects in Layout1 and in block definition B.
+fn layout_and_block_styles(d: &Drawing) -> (Vec<String>, Vec<String>) {
+    let layout = d.layout("Layout1").unwrap().entities.iter().map(|e| e.common.plot_style.clone()).collect();
+    let block = d.block("B").unwrap().entities.iter().map(|e| e.common.plot_style.clone()).collect();
+    (layout, block)
+}
+
+#[test]
+fn plot_style_rename_reaches_layouts_and_block_definitions_and_undoes() {
+    let mut s = plot_styled();
+    // A line in block definition B and a circle in Layout1 use Heavy too.
+    s.execute("line", &json!({ "points": [[50, 50], [60, 50]] })).unwrap();
+    let l = s.doc().unwrap().model.last().unwrap().handle.hex();
+    s.execute("plotstyle", &json!({ "name": "Heavy", "handles": [l.clone()] })).unwrap();
+    s.execute("block", &json!({ "name": "B", "base": [50, 50], "handles": [l], "keep": "delete" })).unwrap();
+    s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    s.execute("circle", &json!({ "center": [1, 1], "radius": 1 })).unwrap();
+    let c = s.doc().unwrap().layout("Layout1").unwrap().entities.last().unwrap().handle.hex();
+    s.execute("plotstyle", &json!({ "name": "Heavy", "handles": [c] })).unwrap();
+    s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
+    let before = layout_and_block_styles(s.doc().unwrap());
+    assert!(before.0.iter().any(|n| n == "Heavy") && before.1 == ["Heavy"], "{before:?}");
+
+    s.execute("rename", &json!({ "table": "plotstyle", "from": "Heavy", "to": "Bold" })).unwrap();
+    let (layout, block) = layout_and_block_styles(s.doc().unwrap());
+    assert!(layout.iter().any(|n| n == "Bold") && !layout.iter().any(|n| n == "Heavy"), "{layout:?}");
+    assert_eq!(block, ["Bold"]);
+    s.undo().unwrap();
+    assert_eq!(layout_and_block_styles(s.doc().unwrap()), before, "undo restores layouts and block definitions");
+    assert_eq!(plot_styles(s.doc().unwrap()).1, ["Heavy", "Thin"]);
+
+    // A rename that only changes the case changes it everywhere.
+    s.execute("rename", &json!({ "table": "plotstyle", "from": "Heavy", "to": "heavy" })).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(plot_styles(d), ("heavy".to_string(), vec!["heavy".to_string(), "Thin".to_string()], "heavy".to_string()));
+    assert_eq!(layout_and_block_styles(d).1, ["heavy"]);
+    assert!(layout_and_block_styles(d).0.iter().any(|n| n == "heavy"));
+}
+
 #[test]
 fn named_viewport_configurations_rename() {
     let mut s = Session::new();

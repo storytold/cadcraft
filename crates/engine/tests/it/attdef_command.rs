@@ -209,6 +209,23 @@ fn multiple_lines_makes_a_multiline_definition() {
             assert_eq!((a.text.value.as_str(), m.mtext.contents.as_str()), (plain, contents), "{name}");
         }
     }
+    // Top-right: attached top right.
+    s.cmdline("(command \"_.-ATTDEF\" \"\" \"TOPR\" \"Hoi\" \"X\\\\PY\" \"_J\" \"_TR\" '(6.0 7.0) 2.5 0)").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    multiline_check(&attdefs(&s)[3], "X\\PY", "X\nY", (6.0, 7.0), 3);
+    // Contents over 64 KB are refused, not cut short: the JSON form errs, the prompt asks again.
+    let huge = "A".repeat(65_537);
+    assert!(s.execute("attdef", &json!({ "tag": "BIG", "default": huge, "at": [0, 0], "multiline": true })).is_err());
+    let at_limit = "B".repeat(65_536);
+    s.execute("attdef", &json!({ "tag": "FULL", "default": at_limit, "at": [0, 0], "multiline": true })).unwrap();
+    assert_eq!(attdefs(&s)[4].multiline.as_ref().unwrap().mtext.contents.len(), 65_536);
+    for typed in ["-attdef", "", "BIG", "Hoi", huge.as_str()] {
+        s.cmdline(typed).unwrap();
+    }
+    assert!(s.log.iter().any(|l| l.contains("limited to 65536 bytes")), "{:?}", &s.log[s.log.len().saturating_sub(3)..]);
+    assert!(s.prompt_text().ends_with("Enter default attribute value:"), "{}", s.prompt_text());
+    s.cancel();
+    assert_eq!(attdefs(&s).len(), 5);
     // Annotative still says it is not available, and changes no mode.
     s.cmdline("-attdef").unwrap();
     s.cmdline("_A").unwrap();
