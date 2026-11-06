@@ -419,11 +419,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 return Some(Ok(Value::Null));
             }
             let dir = app.ui.last_lisp_dir.clone().unwrap_or_default();
-            return app.pick_then(Pick::Lisp(dir), |app, path| {
+            let was_prompting = app.session.prompting();
+            return app.pick_then(Pick::Lisp(dir), move |app, path| {
                 if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
                     app.ui.last_lisp_dir = Some(dir.to_string());
                 }
-                app.session.start("appload").map_err(|e| e.to_string())?;
+                app.start_after_pick("appload", was_prompting)?;
                 app.cmdline(&path);
                 Ok(Value::Null)
             });

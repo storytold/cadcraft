@@ -20,9 +20,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "xref" => Some(open_palette(app)),
         "xattach" => {
             app.services.pick_open.as_ref()?;
-            app.pick_then(Pick::Open, |app, picked| {
+            let was_prompting = app.session.prompting();
+            app.pick_then(Pick::Open, move |app, picked| {
                 let path = relative_to_host(app, &picked);
-                app.session.start("xattach").map_err(|e| e.to_string())?;
+                app.start_after_pick("xattach", was_prompting)?;
                 // Submit the picked filename as literal text, not through the command line: a
                 // path is attacker-controlled (the file picker returns whatever the user
                 // selected), and `cmdline` interprets command syntax, so a name like `'closeall`

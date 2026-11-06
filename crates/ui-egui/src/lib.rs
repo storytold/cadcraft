@@ -258,6 +258,9 @@ struct PendingPick {
     /// read it, and so on, whichever drawing is active when the answer arrives. `None` for the
     /// dialogs that open a drawing (Open, New from Template, Recover).
     doc: Option<u64>,
+    /// The close prompt's Save is waiting for this dialog: its other answers wait too
+    /// ([`closing`]).
+    for_close: bool,
     then: PickDone,
 }
 
@@ -424,15 +427,15 @@ impl CadApp {
     /// [`Services::start_pick`] the dialog opens and this returns `Ok(Null)` at once: `then` runs
     /// in a later frame ([`Self::logic`]) with that drawing made active again (if something else
     /// was switched to meanwhile, such as a control-channel `document.switch`), and not at all if
-    /// the drawing was closed. Its error, if any, shows in the status bar. While one dialog is
-    /// open, no other is shown.
+    /// the drawing was closed. Its error, if any, shows in the status bar. With no drawing open
+    /// it refuses without showing a dialog. While one dialog is open, no other is shown: the
+    /// request is refused with an error, also shown in the status bar.
     pub fn pick_then(
         &mut self,
         pick: Pick,
         then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
     ) -> Option<Result<Value, String>> {
-        let doc = self.session.state().ok().map(|s| s.uid);
-        self.pick_for(pick, doc, Box::new(then))
+        self.pick_for(pick, true, Box::new(then))
     }
 
     /// [`Self::pick_then`] for a dialog that opens a drawing (Open, New from Template, Recover):
@@ -443,10 +446,11 @@ impl CadApp {
         pick: Pick,
         then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
     ) -> Option<Result<Value, String>> {
-        self.pick_for(pick, None, Box::new(then))
+        self.pick_for(pick, false, Box::new(then))
     }
 
-    fn pick_for(&mut self, pick: Pick, doc: Option<u64>, then: PickDone) -> Option<Result<Value, String>> {
+    /// Show the dialog `pick` for `then`, bound to the active drawing when `bound`.
+    fn pick_for(&mut self, pick: Pick, bound: bool, then: PickDone) -> Option<Result<Value, String>> {
         let available = match pick {
             Pick::Open => self.services.pick_open.is_some(),
             Pick::Save(_) => self.services.pick_save.is_some(),
@@ -456,8 +460,17 @@ impl CadApp {
             return None;
         }
         if self.pending_pick.is_some() {
-            return Some(Ok(Value::Null));
+            return Some(Err(self.refuse_pick("A file dialog is already open; answer it first.".into())));
         }
+        // A bound answer must not land on a drawing created or opened while the dialog is up.
+        let doc = match (bound, self.session.state()) {
+            (false, _) => None,
+            (true, Ok(st)) => Some(st.uid),
+            (true, Err(e)) => {
+                let why = e.to_string();
+                return Some(Err(self.refuse_pick(why)));
+            }
+        };
         if let Some(start) = &self.services.start_pick {
             let (tx, answer) = std::sync::mpsc::channel();
             start(
@@ -466,7 +479,7 @@ impl CadApp {
                     let _ = tx.send(path);
                 }),
             );
-            self.pending_pick = Some(PendingPick { answer, doc, then });
+            self.pending_pick = Some(PendingPick { answer, doc, for_close: false, then });
             return Some(Ok(Value::Null));
         }
         let path = match &pick {
@@ -480,12 +493,37 @@ impl CadApp {
         })
     }
 
+    /// A file dialog that is not shown: the reason goes to the status bar too, since a typed or
+    /// menu command's result is not shown ([`Self::start`]).
+    fn refuse_pick(&mut self, why: String) -> String {
+        self.set_status(why.clone());
+        why
+    }
+
+    /// Start the interactive command `id` with a dialog's answer. `was_prompting`: whether a
+    /// command was running when the dialog was asked for. Starting cancels the running command,
+    /// so a command started while the dialog was open (a control request, say) is kept and this
+    /// one refused instead; one that was already running is cancelled as when the dialog answers
+    /// at once.
+    pub fn start_after_pick(&mut self, id: &str, was_prompting: bool) -> Result<(), String> {
+        if !was_prompting && self.session.prompting() {
+            return Err(format!("{}: another command started while the file dialog was open; run it again.", id.to_ascii_uppercase()));
+        }
+        self.session.start(id).map_err(|e| e.to_string())
+    }
+
     /// Act on the answer of a dialog started with [`Services::start_pick`], once it arrives.
     fn finish_pick(&mut self, ctx: &egui::Context) {
         let Some(pending) = &self.pending_pick else { return };
         match pending.answer.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) | Ok(None) => self.pending_pick = None,
+            Ok(None) => self.pending_pick = None,
+            // The host dropped the answer without giving one: the dialog never opened (its
+            // thread could not start) or failed.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_pick = None;
+                self.set_status("The file dialog could not be shown.");
+            }
             Ok(Some(path)) => {
                 if let Some(PendingPick { doc, then, .. }) = self.pending_pick.take()
                     && let Err(e) = self.make_active(doc, &path).and_then(|()| then(self, path))

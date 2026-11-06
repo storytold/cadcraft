@@ -207,6 +207,7 @@ mod tests {
         let services = Services {
             pick_open: Some(Box::new(|| None)),
             pick_save: Some(Box::new(|_: &str| None)),
+            pick_lisp: Some(Box::new(|_: &str| None)),
             start_pick: Some(Box::new(move |pick, done| {
                 log.borrow_mut().push(pick);
                 *slot.borrow_mut() = Some(done);
@@ -214,6 +215,10 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked, answer)
+    }
+
+    fn status(app: &CadApp) -> &str {
+        app.status.as_ref().map(|(s, _)| s.as_str()).unwrap_or_default()
     }
 
     fn uid(app: &CadApp) -> u64 {
@@ -235,10 +240,16 @@ mod tests {
         assert!(app.pending_pick.is_none());
 
         app.start("imp");
-        app.start("publish");
-        assert_eq!(asked.borrow().len(), 2, "no second dialog while one is open");
         app.finish_pick(&ctx);
         assert!(app.pending_pick.is_some() && app.status.is_none(), "nothing runs before the answer");
+        // A second dialog is refused, and says so: in the status bar for a typed or menu
+        // command, and as an error for a programmatic call.
+        app.start("publish");
+        assert!(status(&app).contains("already open"), "{:?}", app.status);
+        let e = app.run("ui.open", json!(null)).unwrap_err();
+        assert!(e.contains("already open"), "{e}");
+        assert_eq!(asked.borrow().len(), 2, "no second dialog while one is open");
+        app.status = None;
         let missing = std::env::temp_dir().join(format!("cadcraft-missing-{}.dxf", std::process::id()));
         answer.borrow_mut().take().unwrap()(Some(missing.to_string_lossy().to_string()));
         app.finish_pick(&ctx);
@@ -302,5 +313,51 @@ mod tests {
         answer.borrow_mut().take().unwrap()(Some("c.dxf".into()));
         app.finish_pick(&ctx);
         assert_eq!(*ran.borrow(), 1, "OPEN goes on whichever drawing closed meanwhile");
+    }
+
+    /// The host dropped the answer (its dialog thread could not start): the status bar says
+    /// the dialog could not be shown, unlike a cancelled dialog, and the next one may open.
+    #[test]
+    fn a_dialog_that_never_answers_is_reported() {
+        let services =
+            Services { pick_save: Some(Box::new(|_: &str| None)), start_pick: Some(Box::new(|_, done| drop(done))), ..Services::default() };
+        let mut app = CadApp::new(Session::new(), services);
+        app.start("export");
+        app.finish_pick(&egui::Context::default());
+        assert!(app.pending_pick.is_none());
+        assert!(status(&app).contains("could not be shown"), "{:?}", app.status);
+    }
+
+    /// With no drawing open, a dialog bound to the active drawing is not shown: its answer could
+    /// otherwise save or export a drawing opened while it was up.
+    #[test]
+    fn a_bound_dialog_needs_an_open_drawing() {
+        let (mut app, asked, _) = deferred_app();
+        app.run("close", json!({ "index": 0 })).unwrap();
+        assert!(app.session.state().is_err());
+        app.start("ui.saveas");
+        let r = app.run("ui.saveas", json!(null));
+        assert!(asked.borrow().is_empty(), "no dialog");
+        assert!(app.pending_pick.is_none());
+        assert!(r.is_err() && app.status.is_some(), "{r:?} {:?}", app.status);
+        // OPEN needs no drawing.
+        app.start("ui.open");
+        assert_eq!(*asked.borrow(), [Pick::Open]);
+    }
+
+    /// A command started while APPLOAD's dialog was open (a control request, say) keeps
+    /// running; APPLOAD is refused and says to run it again.
+    #[test]
+    fn appload_does_not_cancel_a_command_started_meanwhile() {
+        let (mut app, asked, answer) = deferred_app();
+        let ctx = egui::Context::default();
+        app.start("appload");
+        assert!(matches!(asked.borrow().as_slice(), [Pick::Lisp(_)]));
+        app.start("line");
+        assert!(app.session.prompting());
+        answer.borrow_mut().take().unwrap()(Some("routine.lsp".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"), "LINE was not cancelled");
+        assert!(status(&app).starts_with("APPLOAD: another command started"), "{:?}", app.status);
     }
 }

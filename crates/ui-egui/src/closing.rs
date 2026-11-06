@@ -88,6 +88,11 @@ impl CadApp {
     /// Answer the open close prompt (no-op without one).
     pub fn answer_close(&mut self, choice: Choice) {
         let Some(uid) = self.closing.as_ref().and_then(|c| c.asking) else { return };
+        // Its Save dialog is open (macOS): Save again or Don't Save would race it.
+        if choice != Choice::Cancel && self.pending_pick.as_ref().is_some_and(|p| p.for_close) {
+            self.set_status("Answer the Save dialog first.");
+            return;
+        }
         let i = match (choice, self.doc_index(uid)) {
             (Choice::Cancel, _) => {
                 self.closing = None;
@@ -122,11 +127,15 @@ impl CadApp {
                 // saved and the prompt goes on with the next drawing.
                 if !waiting && let Some(mut pending) = self.pending_pick.take() {
                     let then = pending.then;
+                    pending.for_close = true;
                     pending.then = Box::new(move |app: &mut CadApp, path| {
                         let r = then(app, path);
                         // Unless the prompt was answered otherwise meanwhile.
                         if app.closing.as_ref().and_then(|c| c.asking) == Some(uid) {
-                            app.close_after_save(uid, r.clone());
+                            // It reports the outcome itself; an error returned here would
+                            // replace its message in the status bar.
+                            app.close_after_save(uid, r);
+                            return Ok(Value::Null);
                         }
                         r
                     });
@@ -285,6 +294,44 @@ mod tests {
 
     fn titles(app: &CadApp) -> Vec<String> {
         app.session.docs.iter().map(|d| d.title.clone()).collect()
+    }
+
+    type Done = Box<dyn FnOnce(Option<String>) + Send>;
+
+    /// The host shows its Save dialog without waiting (macOS): the callback that answers it.
+    fn deferred_save(app: &mut CadApp) -> std::rc::Rc<std::cell::RefCell<Option<Done>>> {
+        let slot: std::rc::Rc<std::cell::RefCell<Option<Done>>> = std::rc::Rc::default();
+        let s = slot.clone();
+        app.services = Services {
+            pick_save: Some(Box::new(|_: &str| None)),
+            start_pick: Some(Box::new(move |_, done| *s.borrow_mut() = Some(done))),
+            ..Services::default()
+        };
+        slot
+    }
+
+    /// While the prompt's Save dialog is open, Don't Save (or Save again) does not race it; when
+    /// the save then fails, the prompt's own "was not saved" message is what the status bar shows.
+    #[test]
+    fn the_close_prompt_waits_for_its_save_dialog() {
+        let mut app = app_with(&["A", "B"]);
+        let answer = deferred_save(&mut app);
+        dirty(&mut app, 0);
+        app.request_close(Some(0));
+        app.answer_close(Choice::Save);
+        assert!(answer.borrow().is_some(), "the Save dialog is open");
+        app.answer_close(Choice::Discard);
+        app.answer_close(Choice::Save);
+        assert_eq!(titles(&app), ["A", "B"], "Don't Save waits for the Save dialog");
+        assert_eq!(app.close_prompt(), Some("A"));
+
+        let nowhere = std::env::temp_dir().join(format!("cadcraft-no-such-dir-{}", std::process::id())).join("A.dxf");
+        answer.borrow_mut().take().unwrap()(Some(nowhere.to_string_lossy().to_string()));
+        app.finish_pick(&egui::Context::default());
+        assert_eq!(titles(&app), ["A", "B"], "not saved, so not closed");
+        assert!(app.session.docs[0].is_dirty());
+        let status = app.status.as_ref().map(|(s, _)| s.as_str()).unwrap_or_default();
+        assert!(status.starts_with("A was not saved") && status.ends_with("it stays open."), "{status}");
     }
 
     #[test]
