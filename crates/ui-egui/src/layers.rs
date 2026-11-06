@@ -211,7 +211,9 @@ fn status_icon(p: &egui::Painter, r: Rect, current: bool, used: bool) {
     }
 }
 
-fn natural_lower(s: &str) -> String {
+/// The key layer lists sort by: the name, ignoring case (the Layer Properties Manager and the
+/// Layers palette list layers in the same order, #2858).
+pub(crate) fn natural_lower(s: &str) -> String {
     s.to_lowercase()
 }
 
