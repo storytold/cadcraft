@@ -14,4 +14,4 @@
 
 mod room;
 
-pub use room::{Applied, Op, OpKind, Outcome, Reject, Room, RoomError};
+pub use room::{Applied, CommitFormat, Committed, Op, OpKind, Outcome, Reject, Room, RoomError, Snapshot};

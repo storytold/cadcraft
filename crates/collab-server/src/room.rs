@@ -1,10 +1,11 @@
 //! One room: the authoritative drawing, the order of operations and the answers they get.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use cadcraft_collab::{Change, OpContext, TableRegistry, TableRenames, diff_all};
 use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
+use cadcraft_io::{SaveOptions, read, write_with};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -84,10 +85,58 @@ pub enum Outcome {
 }
 
 /// Why the room could not answer at all (as opposed to rejecting an operation).
+/// A room's state at one version, as a drawing file.
+///
+/// The snapshot is DXF (ADR-0005): the writer keeps the data CADCraft does not model (unknown
+/// entities, other applications' objects and xdata) through its raw pass, and entity handles
+/// survive the round trip, so a journal tail still names the same objects after a restore.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    /// The drawing's version at the moment it was written.
+    pub version: u64,
+    /// The DXF bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// The file format a commit writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitFormat {
+    /// DXF, the native path (ASCII, the drawing's version).
+    Dxf,
+    /// DWG through the bridge, which runs in a child process and needs a native build.
+    Dwg,
+}
+
+impl CommitFormat {
+    fn path(self) -> &'static str {
+        match self {
+            CommitFormat::Dxf => "commit.dxf",
+            CommitFormat::Dwg => "commit.dwg",
+        }
+    }
+}
+
+/// The file a commit produced, with what the format could not keep.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Committed {
+    /// The drawing's version the file was written from.
+    pub version: u64,
+    /// The file bytes.
+    pub bytes: Vec<u8>,
+    /// What the format leaves out, by object type: the cabinet warns, keeps the previous version
+    /// and writes this to the audit (ADR-0009).
+    pub not_saved: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RoomError {
     #[error("the room has no drawing")]
     NoDrawing,
+    #[error("the drawing could not be saved or read back: {0}")]
+    Io(String),
 }
 
 /// The authoritative drawing and the order of operations applied to it.
@@ -165,6 +214,41 @@ impl Room {
         let applied = Applied { op_id: op.op_id.clone(), version: self.version, actor: op.actor.clone(), changes };
         self.remember(applied.clone());
         Ok(Outcome::Applied(applied))
+    }
+
+    /// Write the authoritative drawing as a DXF snapshot at the current version.
+    pub fn snapshot(&self) -> Result<Snapshot, RoomError> {
+        let bytes = write_with(self.drawing()?, "snapshot.dxf", &SaveOptions::default()).map_err(|e| RoomError::Io(e.to_string()))?;
+        Ok(Snapshot { version: self.version, bytes })
+    }
+
+    /// A room restored from a snapshot; the journal tail is applied on top of it.
+    pub fn restore(snapshot: &Snapshot) -> Result<Self, RoomError> {
+        let drawing = read(&snapshot.bytes, "snapshot.dxf").map_err(|e| RoomError::Io(e.to_string()))?;
+        let mut room = Room::new(drawing)?;
+        room.version = snapshot.version;
+        Ok(room)
+    }
+
+    /// Apply a journal tail (operations after the snapshot) in order, ignoring the answers.
+    pub fn replay(&mut self, ops: &[Op]) -> Result<(), RoomError> {
+        for op in ops {
+            self.apply(op)?;
+        }
+        Ok(())
+    }
+
+    /// Write the drawing as the file the cabinet stores.
+    ///
+    /// The loss is counted **before** anything is written (`loss_on_save`) and returned with the
+    /// bytes: DXF keeps what CADCraft does not model through its raw pass, DWG through the bridge
+    /// drops custom-class entities and some foreign data (ADR-0009). The caller must keep the
+    /// previous version and show the list.
+    pub fn commit(&self, format: CommitFormat) -> Result<Committed, RoomError> {
+        let path = format.path();
+        let not_saved = cadcraft_engine::cmd::file::loss_on_save(&self.session, path);
+        let bytes = write_with(self.drawing()?, path, &SaveOptions::default()).map_err(|e| RoomError::Io(e.to_string()))?;
+        Ok(Committed { version: self.version, bytes, not_saved })
     }
 
     /// The journal of applied operations, oldest first.
@@ -307,6 +391,37 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_restores_the_drawing_and_the_version() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let Outcome::Applied(_) = room.apply(&line_op("a", 0.0)).unwrap() else { panic!() };
+        let snapshot = room.snapshot().unwrap();
+        assert_eq!(snapshot.version, 1);
+
+        let restored = Room::restore(&snapshot).unwrap();
+        assert_eq!(restored.version(), room.version());
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        let names = |room: &Room| room.drawing().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&restored), names(&room));
+    }
+
+    #[test]
+    fn a_journal_tail_replays_on_top_of_a_snapshot() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let Outcome::Applied(_) = room.apply(&line_op("a", 0.0)).unwrap() else { panic!() };
+        let snapshot = room.snapshot().unwrap();
+        let after = [line_op("b", 3.0), line_op("c", 6.0)];
+        for op in &after {
+            let Outcome::Applied(_) = room.apply(op).unwrap() else { panic!() };
+        }
+
+        let mut restored = Room::restore(&snapshot).unwrap();
+        restored.replay(&after).unwrap();
+
+        assert_eq!(restored.version(), room.version());
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
     fn a_layer_rename_is_one_change() {
         let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
         let mut replica = room.drawing().unwrap().clone();
@@ -328,5 +443,33 @@ mod tests {
             room.drawing().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>()
         );
         assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+    use cadcraft_doc::Space;
+
+    #[test]
+    fn a_commit_writes_dxf_that_reopens_to_the_same_drawing() {
+        let mut room = Room::new(cadcraft_doc::Drawing::new_metric()).unwrap();
+        let op = Op {
+            op_id: "a".into(),
+            actor: "u".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: serde_json::json!({ "points": [[0.0, 0.0], [5.0, 5.0]] }),
+            context: OpContext::in_space(Space::Model),
+        };
+        let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!() };
+
+        let committed = room.commit(CommitFormat::Dxf).unwrap();
+        assert_eq!(committed.version, 1);
+        assert!(committed.not_saved.is_empty(), "a synthetic DXF keeps everything");
+
+        let reopened = cadcraft_io::read(&committed.bytes, "commit.dxf").unwrap();
+        assert_eq!(reopened.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
     }
 }

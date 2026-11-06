@@ -676,6 +676,7 @@ dependencies = [
  "cadcraft-collab",
  "cadcraft-doc",
  "cadcraft-engine",
+ "cadcraft-io",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
