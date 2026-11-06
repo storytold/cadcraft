@@ -32,6 +32,30 @@ in the app, or headless:
 cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 ```
 
+As in AutoCAD, a line end ends an input, and so does a space. Three things keep their spaces: a
+command's free-text prompt (TEXT or MTEXT contents) takes the rest of the line, a
+`command {json}` call takes the rest of its line, and a LISP expression keeps the spaces inside
+its parentheses. A LISP routine's text prompt still splits at spaces. An empty input (an empty
+line, two spaces in a row, a space at the end of a line) is Enter. A command that keeps prompting
+after its last input, such as LINE or PLINE, needs that Enter once it's done, or the next line
+answers its prompt:
+
+```
+LINE 0,0 @30,0
+
+CIRCLE 15,15 6
+```
+
+Without the empty line, `CIRCLE` would be refused as a point and `15,15` and `6` would become more
+segments of the line. Script text sent as a string (`--script`, the MCP `script` tool) needs the
+empty line's own line end too: `"LINE 0,0 @30,0\n\n"` ends LINE, but a single trailing `\n` adds no
+empty line, and empty text runs nothing.
+
+If anything still waits for input at the end of a `cadcraft-cli run` (a command, or a LISP routine
+in a `get…` function), the CLI notes it with its prompt. It checks once, after the last step, so
+input an earlier `--script` left waiting that a later `--script` answers gets no note. The MCP
+`script` tool's result shows what waits after each call in `state.prompt`.
+
 ## Command aliases
 
 ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases for the rest of

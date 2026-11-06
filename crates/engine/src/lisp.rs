@@ -216,6 +216,12 @@ impl Session {
         self.running.is_some() || self.lisp_prompt().is_some()
     }
 
+    /// A LISP routine waits in a `get…` function. Its prompt is the active one, shown by
+    /// [`Session::prompt_text`], even while a command the routine started is still running.
+    pub fn lisp_waiting_for_input(&self) -> bool {
+        self.lisp_prompt().is_some()
+    }
+
     /// A routine is stopped, waiting for input or for a frame.
     pub(crate) fn lisp_waiting(&self) -> bool {
         self.lisp.run.is_some()

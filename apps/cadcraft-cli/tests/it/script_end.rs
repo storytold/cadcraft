@@ -1,0 +1,49 @@
+//! A script that ends with a command still waiting for input says so (#2711). In a script, as in
+//! AutoCAD's, a command that keeps prompting (LINE, PLINE) ends only at an empty input, so without
+//! one the next line answers its prompt and the drawing comes out different with no error.
+
+/// `cadcraft-cli` with `args`: its exit code and standard error.
+fn run(args: &[&str]) -> (i32, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = cadcraft_cli::run(args, &mut out, &mut err);
+    (code, String::from_utf8_lossy(&err).into_owned())
+}
+
+#[test]
+fn a_command_left_waiting_at_the_end_is_reported() {
+    let (code, err) = run(&["run", "--metric", "--script", "line 0,0 @30,0"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("note: the script ended while waiting for input: LINE"), "{err}");
+    assert!(err.contains("if the command is done, an empty line (Enter) ends it"), "{err}");
+}
+
+/// A LISP routine waiting in `getpoint` has a prompt but no command running: it is reported too,
+/// with what the script has to give it (CodeRabbit on #2828).
+#[test]
+fn a_lisp_routine_left_waiting_at_the_end_is_reported() {
+    let (code, err) = run(&["run", "--metric", "--script", "(getpoint \"Pick a corner: \")"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("note: the script ended while waiting for input: Pick a corner:"), "{err}");
+    assert!(err.contains("a LISP routine is waiting for this value"), "{err}");
+    assert!(!err.contains("an empty line (Enter)"), "{err}");
+}
+
+/// A routine that started LINE and then waits in `getpoint`: its prompt is the active one, so the
+/// advice is the LISP one even though a command is running (CodeRabbit on #2828).
+#[test]
+fn a_lisp_prompt_over_a_running_command_gets_the_lisp_advice() {
+    let (code, err) = run(&["run", "--metric", "--script", "(progn (command \"line\" \"0,0\") (getpoint \"Pick: \"))"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("note: the script ended while waiting for input: Pick:"), "{err}");
+    assert!(err.contains("a LISP routine is waiting for this value"), "{err}");
+}
+
+#[test]
+fn a_script_that_ends_its_commands_gives_no_note() {
+    // An empty line, or a space at the end of the line, is the Enter that ends LINE.
+    for script in ["line 0,0 @30,0\n\ncircle 15,15 6", "line 0,0 @30,0 \ncircle 15,15 6"] {
+        let (code, err) = run(&["run", "--metric", "--script", script]);
+        assert_eq!(code, 0, "{err}");
+        assert!(!err.contains("note:"), "{script:?}: {err}");
+    }
+}
