@@ -132,49 +132,58 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
         return Err(EngineError::Other("An object is on a locked layer.".into()));
     }
     let d = s.doc()?;
-    let mut segs: Vec<Segment> = Vec::new();
-    // Source entity of each segment in `segs`, so only entities that end up in the chain are removed.
-    let mut owners: Vec<Handle> = Vec::new();
+    // Each object as one piece, its segments in order. A piece joins the chain only at its own two
+    // ends, so an object is joined whole or left as it is: a polyline that another object touches
+    // at a middle vertex is never split, which used to delete its part the chain didn't reach.
+    let mut pieces: Vec<(Handle, Vec<Segment>)> = Vec::new();
     let mut common = None;
     for h in hs {
         let Some(e) = d.entity(*h) else { continue };
         common.get_or_insert_with(|| e.common.clone());
-        match &e.kind {
-            EntityKind::Line(l) => segs.push(Segment::Line(Line::new(l.a.xy(), l.b.xy()))),
-            EntityKind::Arc(a) => segs.push(Segment::Arc { arc: Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }),
-            EntityKind::LwPolyline(p) if !p.closed => segs.extend(Polyline { vertices: p.vertices.clone(), closed: false }.segments()),
-            _ => {}
+        let segs = match &e.kind {
+            EntityKind::Line(l) => vec![Segment::Line(Line::new(l.a.xy(), l.b.xy()))],
+            EntityKind::Arc(a) => vec![Segment::Arc { arc: Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }],
+            EntityKind::LwPolyline(p) if !p.closed => Polyline { vertices: p.vertices.clone(), closed: false }.segments(),
+            _ => continue,
+        };
+        if !segs.is_empty() {
+            pieces.push((*h, segs));
         }
-        owners.resize(segs.len(), *h);
     }
-    if segs.len() < 2 {
+    if pieces.iter().map(|(_, segs)| segs.len()).sum::<usize>() < 2 {
         return Err(EngineError::Other("Select at least two objects to join.".into()));
     }
-    // Chain greedily from the first segment.
-    let mut chain = vec![segs.remove(0)];
-    let mut used = vec![owners.remove(0)];
+    // Chain greedily from the first piece.
+    let (first, mut chain) = pieces.remove(0);
+    let mut used = vec![first];
     let tol = 1e-6;
     loop {
         let start = chain.first().map(Segment::start).unwrap_or_default();
         let end = chain.last().map(Segment::end).unwrap_or_default();
-        let Some(i) =
-            segs.iter().position(|s| s.start().near(end, tol) || s.end().near(end, tol) || s.start().near(start, tol) || s.end().near(start, tol))
+        let ends = |segs: &[Segment]| segs.first().map(Segment::start).zip(segs.last().map(Segment::end));
+        let Some(i) = pieces
+            .iter()
+            .position(|(_, segs)| ends(segs).is_some_and(|(a, b)| a.near(end, tol) || b.near(end, tol) || a.near(start, tol) || b.near(start, tol)))
         else {
             break;
         };
-        let s0 = segs.remove(i);
-        used.push(owners.remove(i));
-        if s0.start().near(end, tol) {
-            chain.push(s0);
-        } else if s0.end().near(end, tol) {
-            chain.push(s0.reversed());
-        } else if s0.end().near(start, tol) {
-            chain.insert(0, s0);
+        let (owner, piece) = pieces.remove(i);
+        let Some((a, b)) = ends(&piece) else { continue };
+        used.push(owner);
+        // A piece that runs the other way is turned round whole: its segments in reverse order,
+        // each reversed.
+        let turned = || piece.iter().rev().map(Segment::reversed).collect::<Vec<_>>();
+        if a.near(end, tol) {
+            chain.extend(piece.iter().copied());
+        } else if b.near(end, tol) {
+            chain.extend(turned());
+        } else if b.near(start, tol) {
+            chain.splice(0..0, piece.iter().copied());
         } else {
-            chain.insert(0, s0.reversed());
+            chain.splice(0..0, turned());
         }
     }
-    if chain.len() < 2 {
+    if used.len() < 2 {
         return Err(EngineError::Other("Objects are not connected.".into()));
     }
     let closed = chain.first().zip(chain.last()).is_some_and(|(a, b)| a.start().near(b.end(), tol));
