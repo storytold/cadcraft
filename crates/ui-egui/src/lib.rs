@@ -855,7 +855,7 @@ impl CadApp {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         let language = self.language();
-        let names = (self.name_scripts(), theme::fonts_generation());
+        let names = (self.name_scripts(), theme::fonts_generation(ctx));
         if self.fonts_language != Some(language) || self.fonts_names != Some(names) {
             theme::install_fonts_for(ctx, language, names.0);
             self.fonts_language = Some(language);

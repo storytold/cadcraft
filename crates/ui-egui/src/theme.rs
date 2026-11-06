@@ -430,7 +430,7 @@ impl Scripts {
     pub fn of_char(c: char) -> Scripts {
         match u32::from(c) {
             0x0590..=0x05FF | 0xFB1D..=0xFB4F => Scripts::HEBREW,
-            // The Arabic blocks only: not Syriac, Thaana, NKo, Samaritan or Mandaic (0700-089F), and
+            // The Arabic blocks only: not the intervening Syriac, Thaana, NKo, Samaritan or Mandaic blocks, and
             // not U+FEFF (the byte order mark, which can lead any name).
             0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFE => Scripts::ARABIC,
             0x0900..=0x097F | 0xA8E0..=0xA8FF => Scripts::DEVANAGARI,
@@ -486,6 +486,8 @@ struct NameFonts {
     /// Scripts no installed font showed, and when that was found out. They are looked for again
     /// after [`UNFOUND_RETRY`], so a font installed meanwhile is found.
     unfound: Vec<(Scripts, std::time::Instant)>,
+    /// Expired misses need a fresh font-table scan, performed by the loader thread.
+    rescan: bool,
     /// Scripts being looked for off the UI thread.
     loading: Scripts,
 }
@@ -505,6 +507,14 @@ fn same_primary(a: &Option<std::sync::Arc<egui::FontData>>, b: &Option<std::sync
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NameFonts {
+    fn expire_unfound(&mut self, now: std::time::Instant) -> bool {
+        let before = self.unfound.len();
+        self.unfound.retain(|(_, at)| now.saturating_duration_since(*at) < UNFOUND_RETRY);
+        let expired = self.unfound.len() != before;
+        self.rescan |= expired;
+        expired
+    }
+
     /// Forget what was worked out against another interface font.
     fn use_primary(&mut self, primary: &Option<std::sync::Arc<egui::FontData>>) {
         if !same_primary(&self.primary, primary) {
@@ -519,13 +529,18 @@ impl NameFonts {
 /// Clears a search's scripts from `loading` when it ends, also when the loader panics, so they are
 /// looked for again instead of staying "loading" for good.
 #[cfg(not(target_arch = "wasm32"))]
-struct LoadingGuard(Scripts);
+struct LoadingGuard(Scripts, Option<egui::Context>);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for LoadingGuard {
     fn drop(&mut self) {
         let mut c = name_fonts();
         c.loading = c.loading.without(self.0);
+        drop(c);
+        NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
+        if let Some(ctx) = &self.1 {
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -540,7 +555,23 @@ fn name_fonts() -> std::sync::MutexGuard<'static, NameFonts> {
 static NAME_FONTS_LOADED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Changes when faces for names' scripts finished loading since they were asked for.
-pub fn fonts_generation() -> u64 {
+pub fn fonts_generation(ctx: &egui::Context) -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = std::time::Instant::now();
+        let mut c = name_fonts();
+        if c.expire_unfound(now) {
+            NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+        let retry = c.unfound.iter().map(|(_, at)| UNFOUND_RETRY.saturating_sub(now.saturating_duration_since(*at))).min();
+        drop(c);
+        // Rearm from each frame: egui coalesces a worker's delayed request with its immediate wake.
+        if let Some(after) = retry {
+            ctx.request_repaint_after(after);
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = ctx;
     NAME_FONTS_LOADED.load(std::sync::atomic::Ordering::Acquire)
 }
 
@@ -617,7 +648,7 @@ fn name_faces(
     let mut c = name_fonts();
     c.use_primary(&primary);
     let now = std::time::Instant::now();
-    c.unfound.retain(|(_, at)| now.duration_since(*at) < UNFOUND_RETRY);
+    c.expire_unfound(now);
     let (mut shown, mut missing) = (Vec::new(), Scripts::NONE);
     for (s, _) in Scripts::SAMPLES {
         if !needed.contains(s) {
@@ -635,15 +666,18 @@ fn name_faces(
     c.loading |= missing;
     drop(c);
     if !missing.is_empty() {
-        let ctx = ctx.clone();
+        let worker_ctx = ctx.clone();
         let spawned = std::thread::Builder::new().name("ui-fonts".into()).spawn(move || {
+            let _loading = LoadingGuard(missing, Some(worker_ctx));
             load_name_faces(missing, primary);
-            ctx.request_repaint();
         });
         if let Err(e) = spawned {
             log::warn!("interface fonts for other scripts not loaded: {e}");
             let mut c = name_fonts();
             c.loading = c.loading.without(missing);
+            drop(c);
+            NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
     }
     out
@@ -654,7 +688,10 @@ fn name_faces(
 #[cfg(not(target_arch = "wasm32"))]
 fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontData>>) {
     use cadcraft_fonts::ttf::{Face, fallback_for};
-    let _loading = LoadingGuard(missing);
+    let rescan = std::mem::take(&mut name_fonts().rescan);
+    if rescan {
+        cadcraft_fonts::ttf::rescan();
+    }
     let face_of_primary = primary.as_deref().and_then(|d| Face::new(std::sync::Arc::new(d.bytes().to_vec()), d.index));
     // For each script: `Ok(None)` the UI font has it, `Ok(Some)` a face that does, `Err` none does.
     let mut found: Vec<(Scripts, Result<Option<Face>, ()>)> = Vec::new();
@@ -676,7 +713,6 @@ fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontDa
         return;
     }
     let mut ids: Vec<(Face, usize)> = Vec::new();
-    let mut added = false;
     for (s, face) in found {
         match face {
             Err(()) => c.unfound.push((s, std::time::Instant::now())),
@@ -691,17 +727,12 @@ fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontDa
                         c.faces.push(std::sync::Arc::new(egui::FontData::from_blob(bytes.clone(), index)));
                         let i = c.faces.len() - 1;
                         ids.push((f, i));
-                        added = true;
                         i
                     }
                 };
                 c.resolved.push((s, Some(i)));
             }
         }
-    }
-    drop(c);
-    if added {
-        NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -1115,6 +1146,7 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    use super::Scripts;
     /// The system interface font loaded: the first installed one, and for Vietnamese the first
     /// installed one with its letters (a later one when the first lacks them).
     #[test]
@@ -1158,7 +1190,6 @@ mod tests {
     /// for Latin or CJK text (every interface loads CJK faces already).
     #[test]
     fn scripts_of_names() {
-        use super::Scripts;
         assert_eq!(Scripts::of("Floor plan 2"), Scripts::NONE);
         assert_eq!(Scripts::of("图纸A図面"), Scripts::NONE, "CJK is loaded for every language");
         assert_eq!(Scripts::of("도면"), Scripts::HANGUL);
@@ -1209,18 +1240,31 @@ mod tests {
         assert!(c.resolved.is_empty() && c.unfound.is_empty() && c.faces.is_empty(), "another primary starts over");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_unfound_font_is_retried_when_its_deadline_expires() {
+        let now = std::time::Instant::now();
+        let mut c = super::NameFonts::default();
+        c.unfound.push((Scripts::THAI, now));
+        assert!(!c.expire_unfound(now));
+        assert!(c.expire_unfound(now + super::UNFOUND_RETRY));
+        assert!(c.unfound.is_empty());
+        assert!(c.rescan, "the font table also caches misses, so the worker must refresh it");
+    }
+
     /// A loader that panics must not leave its scripts "loading" for good (review on #768).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_dropped_font_loader_clears_loading() {
-        // A script no other test asks about, so the shared cache is left as it was.
-        super::name_fonts().loading |= Scripts::DEVANAGARI;
+        // An unused mask bit cannot collide with another test's real font request.
+        let pending = Scripts(1 << 7);
+        super::name_fonts().loading |= pending;
         let r = std::panic::catch_unwind(|| {
-            let _loading = super::LoadingGuard(Scripts::DEVANAGARI);
+            let _loading = super::LoadingGuard(pending, None);
             panic!("the loader died");
         });
         assert!(r.is_err());
-        assert!(!super::name_fonts().loading.contains(Scripts::DEVANAGARI));
+        assert!(!super::name_fonts().loading.contains(pending));
     }
 
     #[test]
