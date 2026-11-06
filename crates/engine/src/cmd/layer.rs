@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::machines::SelectRun;
 use super::{CommandSpec, bad, bool_or, ok, str_param, targets};
 
-use crate::{Result, Session};
+use crate::{EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -292,14 +292,23 @@ fn run_layerp(s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layer.delete", "`name` is required"))?.to_string();
     let d = s.doc_mut()?;
-    if name == "0" || name.eq_ignore_ascii_case("Defpoints") || d.header.str("CLAYER", "0").eq_ignore_ascii_case(&name) {
-        return Err(bad("layer.delete", "cannot delete layer 0, Defpoints or the current layer"));
+    // A refusal is a sentence the Layer Properties Manager shows as it is (#2860), so it names
+    // the layer and the reason, not the command and its parameters.
+    let refuse = |why: &str| Err(EngineError::Other(format!("Layer \"{name}\" was not deleted: {why}.")));
+    if name == "0" {
+        return refuse("layer 0 can't be deleted");
+    }
+    if name.eq_ignore_ascii_case("Defpoints") {
+        return refuse("the Defpoints layer can't be deleted");
+    }
+    if d.header.str("CLAYER", "0").eq_ignore_ascii_case(&name) {
+        return refuse("it is the current layer");
     }
     let used = d.model.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name))
         || d.layouts.iter().any(|l| l.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)))
         || d.blocks.values().any(|b| b.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)));
     if used {
-        return Err(bad("layer.delete", "layer has objects on it"));
+        return refuse("it has objects on it");
     }
     d.layers.retain(|l| !l.name.eq_ignore_ascii_case(&name));
     merge::forget_in_viewports(d, &std::collections::HashSet::from([name.to_ascii_lowercase()]));
@@ -539,8 +548,21 @@ mod tests {
         s.execute("block", &json!({ "name": "B", "base": [0, 0], "handles": [l], "keep": "delete" })).unwrap();
         s.execute("layer.current", &json!({ "name": "0" })).unwrap();
         s.execute("insert", &json!({ "name": "B", "at": [5, 5] })).unwrap();
-        assert!(s.execute("layer.delete", &json!({ "name": "A" })).is_err());
+        let e = s.execute("layer.delete", &json!({ "name": "A" })).unwrap_err();
+        assert_eq!(e.to_string(), "Layer \"A\" was not deleted: it has objects on it.");
         s.execute("purge", &json!({})).unwrap();
+        assert!(s.doc().unwrap().layer("A").is_some());
+    }
+
+    /// #2860: each refusal names the layer and says why, as the Layer Properties Manager shows it.
+    #[test]
+    fn delete_says_which_layer_was_kept_and_why() {
+        let mut s = Session::new();
+        s.execute("layer.new", &json!({ "name": "A", "current": true })).unwrap();
+        let why = |s: &mut Session, name: &str| s.execute("layer.delete", &json!({ "name": name })).unwrap_err().to_string();
+        assert_eq!(why(&mut s, "0"), "Layer \"0\" was not deleted: layer 0 can't be deleted.");
+        assert_eq!(why(&mut s, "defpoints"), "Layer \"defpoints\" was not deleted: the Defpoints layer can't be deleted.");
+        assert_eq!(why(&mut s, "a"), "Layer \"a\" was not deleted: it is the current layer.");
         assert!(s.doc().unwrap().layer("A").is_some());
     }
 
