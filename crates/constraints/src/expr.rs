@@ -284,7 +284,14 @@ impl Env {
     pub fn new() -> Self {
         Env::default()
     }
+    /// Add or replace a named expression. Text longer than [`MAX_LEN`] could never parse, so
+    /// only a bounded prefix of it is kept: it still fails (as too long), without the environment
+    /// holding or copying the whole text.
     pub fn insert(&mut self, name: &str, expr: &str) {
+        let expr = match expr.char_indices().map(|(i, _)| i).find(|i| *i > MAX_LEN) {
+            Some(end) => expr.get(..end).unwrap_or(expr),
+            None => expr,
+        };
         self.exprs.insert(name.to_string(), expr.to_string());
         self.cache.clear();
     }
@@ -309,8 +316,9 @@ impl Env {
         if stack.len() >= MAX_DEPTH {
             return Err(ExprError::TooDeep);
         }
-        let text = self.exprs.get(name).cloned().ok_or_else(|| ExprError::Unknown(name.to_string()))?;
-        let e = parse(&text)?;
+        // Parse the stored text in place: `parse` refuses an oversized expression before reading
+        // it, so a long imported expression referenced many times is never copied (CWE-400).
+        let e = parse(self.exprs.get(name).ok_or_else(|| ExprError::Unknown(name.to_string()))?)?;
         stack.push(name.to_string());
         let r = eval_at_depth(&e, &mut |n, depth| self.value_inner(n, stack, depth), depth);
         stack.pop();
@@ -398,6 +406,22 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    /// An oversized named expression is kept only as a bounded prefix and still fails, however
+    /// often it is referenced.
+    #[test]
+    fn oversized_named_expression_is_bounded_and_fails() {
+        let mut env = Env::new();
+        let long = format!("1+{}", "é".repeat(500_000));
+        env.insert("big", &long);
+        assert!(env.exprs.get("big").is_some_and(|t| t.len() > MAX_LEN && t.len() <= MAX_LEN + 4));
+        assert_eq!(env.value("big"), Err(ExprError::TooDeep));
+        for _ in 0..200 {
+            assert_eq!(env.eval("big"), Err(ExprError::TooDeep));
+        }
+        env.insert("ok", "1+1+1");
+        assert_eq!(env.value("ok"), Ok(3.0));
     }
 
     #[test]

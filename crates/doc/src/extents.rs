@@ -94,25 +94,48 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
 
 /// The box of what `e` draws (block contents on layers turned off left out).
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
-    bounds_of(d, e, depth, false)
+    bounds_of(d, e, depth, false, &mut HashMap::new())
 }
 
 /// The box `e` takes in the drawing's extents: as [`entity_bounds`], but block contents on a layer
 /// turned off count, as AutoCAD 2024's ZOOM Extents counts them (a frozen layer's do not).
 pub fn extent_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
-    bounds_of(d, e, 0, true)
+    bounds_of(d, e, 0, true, &mut HashMap::new())
 }
 
-fn bounds_of(d: &Drawing, e: &Entity, depth: usize, off_counts: bool) -> Bounds2 {
+/// The bounds of block contents measured so far, kept across the entities of one unchanged
+/// drawing. Measuring many entities with [`entity_bounds_cached`] or [`extent_bounds_cached`]
+/// and one cache measures each block definition once per depth for all of them; a fresh cache per
+/// entity would measure a block again for every reference to it, R references to a block of B
+/// entities costing R x B (CWE-407). Use a cache only while the drawing it measured is unchanged.
+#[derive(Default)]
+pub struct BlockBoundsCache<'a> {
+    /// By block name and depth, block contents on layers turned off left out ([`entity_bounds`]).
+    drawn: HashMap<(&'a str, usize), Bounds2>,
+    /// The same with those contents counted ([`extent_bounds`]).
+    extents: HashMap<(&'a str, usize), Bounds2>,
+}
+
+/// [`entity_bounds`] reusing the block bounds `cache` holds from earlier calls on drawing `d`.
+pub fn entity_bounds_cached<'a>(d: &'a Drawing, e: &Entity, depth: usize, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
+    bounds_of(d, e, depth, false, &mut cache.drawn)
+}
+
+/// [`extent_bounds`] reusing the block bounds `cache` holds from earlier calls on drawing `d`.
+pub fn extent_bounds_cached<'a>(d: &'a Drawing, e: &Entity, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
+    bounds_of(d, e, 0, true, &mut cache.extents)
+}
+
+fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blocks: &mut HashMap<(&'a str, usize), Bounds2>) -> Bounds2 {
     // A top-level annotative object measures as it draws at the current annotation scale.
     if depth == 0 {
         match d.anno_draw(e) {
             crate::AnnoDraw::Plain => {}
             crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
-            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, &mut HashMap::new(), off_counts),
+            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, blocks, off_counts),
         }
     }
-    bounds_in(d, e, depth, &mut HashMap::new(), off_counts)
+    bounds_in(d, e, depth, blocks, off_counts)
 }
 
 /// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
@@ -156,11 +179,23 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                     }
                 };
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
+                // XCLIP: the reference app takes the boundary's box, also where it reaches past the
+                // block or misses it (an inverted clip can show anything, so it keeps the block's).
+                if let Some(c) = ins.clip.as_ref().filter(|c| c.active() && !c.inverted)
+                    && !b.is_empty()
+                {
+                    b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
+                }
                 if ins.cols > 1 || ins.rows > 1 {
-                    let off =
-                        Vec2::new(ins.col_spacing * f64::from(ins.cols.saturating_sub(1)), ins.row_spacing * f64::from(ins.rows.saturating_sub(1)))
-                            .rotate(ins.rotation);
-                    b = b.union(&Bounds2::from_points(b.corners().map(|c| c + off)));
+                    // The grid's four corner copies (as many as are drawn): turned, the far corner
+                    // alone misses the side ones.
+                    let (cols, rows) =
+                        (f64::from(ins.cols.clamp(1, 10_000).saturating_sub(1)), f64::from(ins.rows.clamp(1, 10_000).saturating_sub(1)));
+                    let one = b;
+                    for (c, r) in [(cols, 0.0), (0.0, rows), (cols, rows)] {
+                        let off = Vec2::new(ins.col_spacing * c, ins.row_spacing * r).rotate(ins.rotation);
+                        b = b.union(&Bounds2::from_points(one.corners().map(|p| p + off)));
+                    }
                 }
             }
             for a in &ins.attribs {
@@ -212,6 +247,10 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                         inner
                     }
                 };
+                // The block draws translated by the insertion point (group 12), so its bounds
+                // move with it (#2634); the cache above keeps the block's own bounds.
+                let off = dm.insertion_point.xy();
+                let inner = if off == Vec2::ZERO { inner } else { Bounds2 { min: inner.min + off, max: inner.max + off } };
                 b = b.union(&inner);
             }
             b
@@ -437,5 +476,86 @@ mod tests {
         let mut empty = ml;
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
         assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+    }
+
+    #[test]
+    fn a_shared_block_cache_measures_as_a_fresh_one_for_each_entity() {
+        let line = |a: (f64, f64), b: (f64, f64), layer: &str| {
+            let mut e = Entity::new(crate::Handle(1), EntityKind::Line(crate::Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) }));
+            e.common.layer = layer.into();
+            e
+        };
+        let ins = |block: &str, at: f64| {
+            Entity::new(
+                crate::Handle(2),
+                EntityKind::Insert(crate::Insert {
+                    block: block.into(),
+                    insert: Vec3::new(at, at, 0.0),
+                    scale: Vec3::new(1.0, 1.0, 1.0),
+                    rotation: 0.0,
+                    attribs: Vec::new(),
+                    cols: 1,
+                    rows: 1,
+                    col_spacing: 0.0,
+                    row_spacing: 0.0,
+                    clip: None,
+                }),
+            )
+        };
+        let mut d = Drawing::new_imperial();
+        d.ensure_layer("OFF");
+        if let Some(l) = d.layer_mut("OFF") {
+            l.on = false;
+        }
+        // A block with a part on a layer turned off (left out when drawn, counted in extents),
+        // and a block that nests it.
+        let mut b = crate::Block::new("B");
+        b.entities.push(line((0.0, 0.0), (1.0, 1.0), "0"));
+        b.entities.push(line((0.0, 0.0), (5.0, 5.0), "OFF"));
+        d.blocks.insert("B".into(), std::sync::Arc::new(b));
+        let mut n = crate::Block::new("N");
+        n.entities.push(ins("B", 10.0));
+        d.blocks.insert("N".into(), std::sync::Arc::new(n));
+        let ents: Vec<Entity> = (0..50).map(|i| ins(if i % 2 == 0 { "B" } else { "N" }, f64::from(i))).collect();
+        // One cache for both kinds of measure, interleaved: neither may answer for the other.
+        let mut cache = BlockBoundsCache::default();
+        for e in &ents {
+            let (drawn, extents) = (entity_bounds_cached(&d, e, 0, &mut cache), extent_bounds_cached(&d, e, &mut cache));
+            let (want_drawn, want_extents) = (entity_bounds(&d, e, 0), extent_bounds(&d, e));
+            assert_eq!((drawn.min, drawn.max), (want_drawn.min, want_drawn.max));
+            assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
+            assert!(extents.width() > drawn.width());
+        }
+    }
+
+    /// A turned array of references reaches its side copies, not only the first and the last;
+    /// a hostile count measures only the copies that are drawn.
+    #[test]
+    fn a_rotated_array_counts_every_corner_copy() {
+        let mut d = Drawing::new_metric();
+        let mut b = crate::Block::new("B");
+        b.entities.push(Entity::new(crate::Handle(1), EntityKind::Line(crate::Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })));
+        d.blocks.insert("B".into(), std::sync::Arc::new(b));
+        let array = |cols: u32, rows: u32, rotation: f64| {
+            let ins = crate::Insert {
+                block: "B".into(),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation,
+                cols,
+                rows,
+                col_spacing: 10.0,
+                row_spacing: 10.0,
+                ..crate::Insert::default()
+            };
+            Entity::new(crate::Handle(2), EntityKind::Insert(ins))
+        };
+        // Turned 45°: the copies sit at (0, 0), (7.07, 7.07), (-7.07, 7.07) and (0, 14.14).
+        let b = entity_bounds(&d, &array(2, 2, std::f64::consts::FRAC_PI_4), 0);
+        let side = 10.0 * std::f64::consts::FRAC_1_SQRT_2;
+        assert!((b.min.x + side).abs() < 1e-9 && b.max.x >= side, "{b:?}");
+        assert!((b.max.y - 2.0 * side - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9, "{b:?}");
+        // The renderer draws at most 10,000 columns.
+        let b = entity_bounds(&d, &array(u32::MAX, 1, 0.0), 0);
+        assert!((b.max.x - (10.0 * 9_999.0 + 1.0)).abs() < 1e-6, "{b:?}");
     }
 }

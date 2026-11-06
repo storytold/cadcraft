@@ -614,7 +614,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cadcraft"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -632,6 +632,7 @@ dependencies = [
  "muda",
  "objc2-app-kit 0.3.2",
  "rfd",
+ "ron",
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",
@@ -643,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-cli"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -659,14 +660,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-color"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-constraints"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-doc",
  "cadcraft-geom",
@@ -676,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-doc"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
@@ -687,14 +688,15 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-dwg"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "acadrust",
+ "log",
 ]
 
 [[package]]
 name = "cadcraft-dxf"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "encoding_rs",
  "log",
@@ -703,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-engine"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-constraints",
@@ -724,9 +726,10 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-fonts"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-geom",
+ "encoding_rs",
  "harfrust 0.14.0",
  "icu_segmenter",
  "skrifa 0.48.0",
@@ -735,14 +738,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-geom"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-io"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "acadrust",
  "cadcraft-color",
@@ -753,6 +756,7 @@ dependencies = [
  "cadcraft-geom",
  "cadcraft-render",
  "craft-pdf",
+ "image",
  "miniz_oxide 0.9.1",
  "quick-xml 0.42.0",
  "serde",
@@ -763,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-mcp"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -772,11 +776,12 @@ dependencies = [
  "getrandom 0.4.3",
  "log",
  "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]
 name = "cadcraft-render"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -790,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-ui-egui"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -804,6 +809,7 @@ dependencies = [
  "craft-window",
  "egui",
  "egui-wgpu",
+ "egui_extras",
  "egui_kittest",
  "image",
  "log",
@@ -816,11 +822,13 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-web"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "cadcraft-engine",
+ "cadcraft-fonts",
  "cadcraft-io",
  "cadcraft-ui-egui",
+ "craft-web-host",
  "eframe",
  "egui",
  "log",
@@ -1225,6 +1233,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-web-host"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=2e2312ddaf21bc3d85cd3395d0955c7d239306f6#2e2312ddaf21bc3d85cd3395d0955c7d239306f6"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "craft-window"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
@@ -1509,6 +1526,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_extras"
+version = "0.37.0"
+source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
+dependencies = [
+ "ahash",
+ "egui",
+ "enum-map",
+ "itertools",
+ "log",
+ "profiling",
+]
+
+[[package]]
 name = "egui_glow"
 version = "0.37.0"
 source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
@@ -1575,6 +1605,26 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "enum-map"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4532960034c15ba2f55e9eee631040ecc473c32e6c4b200828c759840f13a06"
+dependencies = [
+ "enum-map-derive",
+]
+
+[[package]]
+name = "enum-map-derive"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7127272f64b3e098f7d81f350d672081b879bff896d219c42370dc858b1af9ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "enumflags2"
@@ -5927,7 +5977,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "chrono",
  "serde_json",
@@ -6242,23 +6292,3 @@ dependencies = [
  "syn 3.0.9",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "egui_demo_lib"
-version = "0.37.0"
-source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
-
-[[patch.unused]]
-name = "egui_extras"
-version = "0.37.0"
-source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
-
-[[patch.unused]]
-name = "egui_inspection"
-version = "0.37.0"
-source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
-
-[[patch.unused]]
-name = "egui_system_font_provider"
-version = "0.37.0"
-source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
