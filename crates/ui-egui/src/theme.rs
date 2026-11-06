@@ -322,7 +322,7 @@ pub fn mono() -> FontId {
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
     crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
-    // Faces for scripts the Latin faces lack (CJK, Arabic, Hangul), added after them below.
+    // Faces for scripts the Latin faces lack (CJK, Arabic, Georgian, Hangul), added after them below.
     let mut added: Vec<(String, egui::FontData)> = Vec::new();
     #[cfg(not(target_arch = "wasm32"))]
     let chinese = language.starts_with("zh");
