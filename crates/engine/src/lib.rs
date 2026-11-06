@@ -27,6 +27,7 @@ pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
 mod recent;
+pub mod render_look;
 pub mod sample;
 pub mod select;
 pub mod settings_dir;
@@ -50,7 +51,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
 
 mod doc_state;
 mod error;
