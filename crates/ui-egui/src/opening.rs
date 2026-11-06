@@ -3,6 +3,7 @@
 //! a spinner and the elapsed time and keeps painting. The finished drawing is added to the session
 //! on the UI thread. The web build has no threads and opens synchronously.
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,7 @@ use crate::theme::Tokens;
 type Outcome = Result<ReadFile, String>;
 
 struct Job {
-    path: String,
+    path: PathBuf,
     started: Instant,
     rx: Receiver<Outcome>,
 }
@@ -26,20 +27,20 @@ pub struct Opening {
 
 impl Opening {
     /// Start reading `path` on a worker thread.
-    pub fn start(&mut self, path: &str) {
+    pub fn start(&mut self, path: &Path) {
         let (tx, rx) = channel();
-        let p = path.to_string();
+        let p = path.to_path_buf();
         let spawned = std::thread::Builder::new().name("cadcraft-open".into()).spawn(move || {
             let _ = tx.send(read_file(&p));
         });
         if spawned.is_err() {
             // No thread to read on: report it like any other failed open.
             let (tx, rx2) = channel();
-            let _ = tx.send(Err(format!("open: {path}: could not start a reader thread")));
-            self.jobs.push(Job { path: path.to_string(), started: Instant::now(), rx: rx2 });
+            let _ = tx.send(Err(format!("open: {}: could not start a reader thread", path.display())));
+            self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx: rx2 });
             return;
         }
-        self.jobs.push(Job { path: path.to_string(), started: Instant::now(), rx });
+        self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx });
     }
 
     /// Whether any file is still being read.
@@ -48,7 +49,7 @@ impl Opening {
     }
 
     /// The finished reads, as (path, result). A reader that died without answering is an error.
-    pub fn poll(&mut self) -> Vec<(String, Outcome)> {
+    pub fn poll(&mut self) -> Vec<(PathBuf, Outcome)> {
         let mut done = Vec::new();
         self.jobs.retain(|j| match j.rx.try_recv() {
             Ok(r) => {
@@ -57,7 +58,7 @@ impl Opening {
             }
             Err(TryRecvError::Empty) => true,
             Err(TryRecvError::Disconnected) => {
-                done.push((j.path.clone(), Err(format!("open: {}: the file could not be read", j.path))));
+                done.push((j.path.clone(), Err(format!("open: {}: the file could not be read", j.path.display()))));
                 false
             }
         });
@@ -67,7 +68,7 @@ impl Opening {
     /// The text of the card: the file and how long it has taken, or how many files are queued.
     fn label(&self) -> Option<String> {
         let first = self.jobs.first()?;
-        let name = std::path::Path::new(&first.path).file_name().map_or_else(|| first.path.clone(), |n| n.to_string_lossy().to_string());
+        let name = first.path.file_name().unwrap_or(first.path.as_os_str()).to_string_lossy();
         let secs = first.started.elapsed().as_secs_f32();
         let more = self.jobs.len() - 1;
         Some(if more == 0 { format!("Opening {name}... {secs:.0} s") } else { format!("Opening {name} and {more} more... {secs:.0} s") })
@@ -77,7 +78,7 @@ impl Opening {
     pub fn show(&self, ctx: &egui::Context) {
         let Some(label) = self.label() else { return };
         let t = Tokens::get();
-        egui::Area::new(egui::Id::new("cc_opening"))
+        egui::Area::new(egui::Id::unique("cc_opening"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .interactable(false)
@@ -100,6 +101,7 @@ impl Opening {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use cadcraft_engine::Session;
@@ -114,7 +116,7 @@ mod tests {
         let before = app.session.docs.len();
         let missing = std::env::temp_dir().join(format!("cadcraft-missing-{}.dxf", std::process::id()));
         let p = missing.to_string_lossy().to_string();
-        app.open_path(&p);
+        app.open_path(&missing);
         assert!(app.opening.busy() || app.status.is_some(), "the read starts in the background");
         let t = Instant::now();
         while app.opening.busy() && t.elapsed() < Duration::from_secs(10) {
@@ -133,8 +135,8 @@ mod tests {
     fn card_text_names_the_file_and_counts_queued_ones() {
         let mut o = super::Opening::default();
         assert!(o.label().is_none());
-        o.start("/nonexistent/dir/a.dxf");
-        o.start("/nonexistent/dir/b.dxf");
+        o.start(Path::new("/nonexistent/dir/a.dxf"));
+        o.start(Path::new("/nonexistent/dir/b.dxf"));
         let l = o.label().unwrap_or_default();
         assert!(l.starts_with("Opening a.dxf and 1 more"), "{l}");
     }

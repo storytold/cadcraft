@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds};
+use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds_cached};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{AABB, RTree};
@@ -44,6 +44,8 @@ struct ChunkIx {
 impl ChunkIx {
     fn build(d: &Drawing, key: usize, items: &[Arc<Entity>]) -> ChunkIx {
         let mut infinite = Vec::new();
+        // One block-bounds cache for the chunk: references to the same block measure it once.
+        let mut cache = BlockBoundsCache::default();
         let bounds = items
             .iter()
             .enumerate()
@@ -51,7 +53,7 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds(d, e, 0)
+                entity_bounds_cached(d, e, 0, &mut cache)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -94,6 +96,28 @@ fn hidden_layers(d: &Drawing) -> impl Iterator<Item = &str> {
     d.layers.iter().filter(|l| !l.visible()).map(|l| l.name.as_str())
 }
 
+/// A copy of `tree` with `removed` taken out and `inserted` added, or `None` when the caller must
+/// bulk-load instead. rstar 0.13 can panic ("This is a bug in rstar.") when inserting after removals
+/// in a bulk-loaded tree (#2468), and picking is outside the command guard, so that panic would end
+/// the app. The web build can't catch a panic, so it always bulk-loads.
+fn patch_tree(tree: &RTree<Item>, removed: impl Iterator<Item = Item>, inserted: impl Iterator<Item = Item>) -> Option<RTree<Item>> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut tree = tree.clone();
+        for it in removed {
+            tree.remove(&it);
+        }
+        for it in inserted {
+            tree.insert(it);
+        }
+        tree
+    }))
+    .map_err(|_| log::warn!("spatial index: rstar failed to patch the tree; rebuilding it"))
+    .ok()
+}
+
 impl SpatialIndex {
     /// Build an index over a store (no caching).
     pub fn build(d: &Drawing, store: &EntityStore) -> SpatialIndex {
@@ -127,23 +151,11 @@ impl SpatialIndex {
             offset = offset.saturating_add(n);
         }
         // Patch the previous tree when most of it survives; otherwise bulk-load.
-        let tree = match prev {
-            Some(p) if kept.len() * 2 >= chunks.len().max(1) => {
-                let mut tree = p.tree.clone();
-                for (_, c) in p.chunks.iter().filter(|(_, c)| !kept.contains(&c.serial)) {
-                    for it in c.items() {
-                        tree.remove(&it);
-                    }
-                }
-                for c in &fresh {
-                    for it in c.items() {
-                        tree.insert(it);
-                    }
-                }
-                tree
-            }
-            _ => RTree::bulk_load(chunks.iter().flat_map(|(_, c)| c.items()).collect()),
-        };
+        let patched = prev.filter(|_| kept.len() * 2 >= chunks.len().max(1)).and_then(|p| {
+            let removed = p.chunks.iter().filter(|(_, c)| !kept.contains(&c.serial)).flat_map(|(_, c)| c.items());
+            patch_tree(&p.tree, removed, fresh.iter().flat_map(|c| c.items()))
+        });
+        let tree = patched.unwrap_or_else(|| RTree::bulk_load(chunks.iter().flat_map(|(_, c)| c.items()).collect()));
         let offsets = chunks.iter().map(|(off, c)| (c.serial, *off)).collect();
         let infinite = chunks.iter().flat_map(|(off, c)| c.infinite.iter().map(move |i| off + i)).collect();
         SpatialIndex {
@@ -190,7 +202,7 @@ impl SpatialIndex {
         let (c, l) = self.locate(i)?;
         c.ents.get(l)
     }
-    /// The bounds of the entity at draw index `i` (as [`entity_bounds`] computes them).
+    /// The bounds of the entity at draw index `i` (as [`cadcraft_doc::entity_bounds`] computes them).
     pub fn bounds(&self, i: u32) -> Bounds2 {
         self.locate(i).and_then(|(c, l)| c.bounds.get(l).copied()).unwrap_or(Bounds2::EMPTY)
     }
@@ -208,7 +220,7 @@ impl SpatialIndex {
         let pad = (b.width() + b.height()) * 1e-9 + (b.min.x.abs() + b.min.y.abs() + b.max.x.abs() + b.max.y.abs()) * 1e-12 + 1e-300;
         let env = AABB::from_corners([b.min.x - pad, b.min.y - pad], [b.max.x + pad, b.max.y + pad]);
         let mut out: Vec<u32> =
-            self.tree.locate_in_envelope_intersecting(&env).filter_map(|it| self.offsets.get(&it.data.0).map(|off| off + it.data.1)).collect();
+            self.tree.locate_in_envelope_intersecting(env).filter_map(|it| self.offsets.get(&it.data.0).map(|off| off + it.data.1)).collect();
         if with_infinite {
             out.extend_from_slice(&self.infinite);
         }
@@ -352,6 +364,7 @@ mod tests {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 }),
                 8 if i % 40 == 8 => EntityKind::XLine(cadcraft_doc::RayLine { base: v3(x, y), dir: v3(r.r(-1.0, 1.0), 1.0) }),
                 8 if i % 40 == 18 => EntityKind::Ray(cadcraft_doc::RayLine { base: v3(x, y), dir: v3(1.0, r.r(-1.0, 1.0)) }),
@@ -365,6 +378,40 @@ mod tests {
 
     fn forced(d: &Drawing) -> Option<Arc<SpatialIndex>> {
         Some(Arc::new(SpatialIndex::build(d, &d.model)))
+    }
+
+    /// The edits of #2468, on rstar alone: its insert panics for seed 8. A failed patch falls back
+    /// to a bulk load, and every tree holds exactly the live items.
+    #[test]
+    fn rstar_patch_failures_fall_back_to_a_rebuild() {
+        fn item(r: &mut Rng, s: u32, i: u32) -> Item {
+            let (x, y, w, h) = (r.f() * 1000.0, r.f() * 1000.0, r.f() * 50.0, r.f() * 50.0);
+            GeomWithData::new(Rectangle::from_corners([x, y], [x + w, y + h]), (s, i))
+        }
+        for seed in 1..=10u64 {
+            let mut r = Rng(seed * 7919);
+            let n_chunks = 4 + (r.f() * 20.0) as u32;
+            let mut chunks: Vec<Vec<Item>> = (0..n_chunks)
+                .map(|s| {
+                    let n = 1 + (r.f() * 60.0) as u32;
+                    (0..n).map(|i| item(&mut r, s, i)).collect()
+                })
+                .collect();
+            let mut tree = RTree::bulk_load(chunks.iter().flatten().cloned().collect());
+            for serial in (n_chunks..).take(300) {
+                let c = (r.f() * chunks.len() as f64) as usize;
+                let n = (chunks[c].len() as i64 + if r.f() < 0.5 { -1 } else { 1 }).max(0) as u32;
+                let fresh: Vec<Item> = (0..n).map(|i| item(&mut r, serial, i)).collect();
+                let patched = patch_tree(&tree, chunks[c].iter().cloned(), fresh.iter().cloned());
+                chunks[c] = fresh;
+                tree = patched.unwrap_or_else(|| RTree::bulk_load(chunks.iter().flatten().cloned().collect()));
+                let mut held: Vec<(u32, u32)> = tree.iter().map(|it| it.data).collect();
+                let mut live: Vec<(u32, u32)> = chunks.iter().flatten().map(|it| it.data).collect();
+                held.sort_unstable();
+                live.sort_unstable();
+                assert_eq!(held, live, "seed {seed}, serial {serial}");
+            }
+        }
     }
 
     #[test]
@@ -500,6 +547,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
         let small = Bounds2::new(Vec2::new(-2.0, -2.0), Vec2::new(2.0, 2.0));
