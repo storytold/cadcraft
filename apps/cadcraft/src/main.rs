@@ -180,6 +180,13 @@ fn services() -> Services {
             let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        pick_image: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter(i18n::t("Raster images (PNG, JPEG, BMP, TIFF)"), &["png", "jpg", "jpeg", "bmp", "tif", "tiff"])
+                .add_filter(i18n::t("All files"), &["*"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
         no_file_system: false,
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);

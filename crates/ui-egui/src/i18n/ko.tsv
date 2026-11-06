@@ -254,6 +254,7 @@
 	Drawing Template (DWT)	도면 템플릿(DWT)
 	Drawing Utilities	도면 유틸리티
 	Drawings (DWG, DXF)	도면(DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	래스터 이미지(PNG, JPEG, BMP, TIFF)
 	SVG drawings (SVG, SVGZ)	SVG 도면(SVG, SVGZ)
 	Dynamic	동적
 	Dynamic Dimensions	동적 치수

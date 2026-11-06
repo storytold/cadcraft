@@ -300,6 +300,7 @@
 	Drawing Template (DWT)	Πρότυπο σχεδίου (DWT)
 	Drawing Utilities	Βοηθητικά εργαλεία σχεδίου
 	Drawings (DWG, DXF)	Σχέδια (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	Εικόνες ψηφίδων (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Τα σχέδια που δεν έχουν ακόμη αρχείο αποθηκεύονται στην προεπιλεγμένη έκδοση. Η τιμή 0 λεπτά απενεργοποιεί την αυτόματη αποθήκευση.
 	DWG	DWG
 	DWG Reference...	Αναφορά DWG...
