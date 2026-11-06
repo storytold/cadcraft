@@ -133,6 +133,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -211,6 +213,7 @@ impl Default for UiState {
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -227,6 +230,8 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
 }
 
 pub struct CadApp {
@@ -490,6 +495,9 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
         prefs.to_string()
     }
 
@@ -522,6 +530,9 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
         }
     }
 

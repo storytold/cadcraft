@@ -34,15 +34,18 @@ cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 
 ## Command aliases
 
-ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases. Lines that
-would start external programs are skipped. From a script or the control channel:
-`aliasedit {"file": "/path/to/aliases.pgp"}`.
+ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines); its aliases replace the ones you
+had. Lines that would start external programs are skipped. From a script or the control channel:
+`aliasedit {"file": "/path/to/aliases.pgp"}`. The Command Aliases dialog's **Import…** button picks
+a `.pgp` file, loads it the same way, shows its path and warnings, and remembers the folder it came
+from; on the web (no native file dialog) type `ALIASEDIT` with the file's contents in its `text`
+parameter instead.
 
 Aliases are user settings, never part of a drawing. The desktop and web apps keep them, and the
-file REINIT reads, in the user profile (`cadcraft.profile`), so aliases added, edited or removed in
+file REINIT reads, with your other preferences, so aliases added, edited, imported or removed in
 the Command Aliases dialog (or with ALIASEDIT's `set`, `remove` and `clear`) are there after a
-restart, and REINIT reads the same file again. The headless CLI has no user profile: there, aliases
-last for that run.
+restart, and REINIT reads the same file again. The headless CLI keeps no preferences: there,
+aliases last for that run.
 
 ## Driving CADCraft from another program
 
