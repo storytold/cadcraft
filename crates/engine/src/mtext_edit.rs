@@ -111,8 +111,8 @@ impl Formatted {
         Self::parse(contents, height).0
     }
 
-    /// Whether the editor holds all of `contents`: past [`MAX_CHARS`] characters the rest would
-    /// be cut off, and saving would shorten the text.
+    /// Whether the editor holds all of `contents`: past [`MAX_CHARS`] characters, [`MAX_PARAS`]
+    /// paragraphs or [`MAX_ATOMS`] kept codes the rest would be dropped, and saving would lose it.
     pub fn fits(contents: &str) -> bool {
         Self::parse(contents, None).1
     }
@@ -125,6 +125,8 @@ impl Formatted {
         let mut cur = CharFmt::default();
         let mut props = ParaProps::default();
         f.paras = vec![props.clone()];
+        // Cleared when a paragraph or a kept code doesn't fit.
+        let mut whole = true;
         let mut i = 0;
         while let Some(&c) = chars.get(i) {
             if f.fmt.len() >= MAX_CHARS {
@@ -148,6 +150,8 @@ impl Formatted {
                     if f.paras.len() < MAX_PARAS {
                         f.push_char('\n', &cur);
                         f.paras.push(props.clone());
+                    } else {
+                        whole = false;
                     }
                     i += 1;
                 }
@@ -160,6 +164,7 @@ impl Formatted {
                             f.push_char('\n', &cur);
                             f.paras.push(props.clone());
                         }
+                        Some('P') => whole = false,
                         Some(c @ ('\\' | '{' | '}')) => f.push_char(c, &cur),
                         Some('L') => cur.underline = true,
                         Some('l') => cur.underline = false,
@@ -197,6 +202,7 @@ impl Formatted {
                                 code.extend(chars.get(i..=end.min(chars.len().saturating_sub(1))).unwrap_or_default().iter());
                                 i = end + 1;
                             }
+                            whole &= f.atoms.len() < MAX_ATOMS;
                             f.push_atom(code, &cur);
                         }
                     }
@@ -207,7 +213,7 @@ impl Formatted {
                 }
             }
         }
-        (f, true)
+        (f, whole)
     }
 
     fn push_char(&mut self, c: char, fmt: &CharFmt) {
@@ -620,5 +626,16 @@ mod tests {
         let _ = f.paragraph_of(usize::MAX);
         let _ = f.fmt_at(usize::MAX);
         let _ = Formatted::from_contents(&"{".repeat(100_000));
+    }
+
+    /// A text with more paragraphs or kept codes than the editor holds doesn't fit, so TEXTEDIT
+    /// leaves it to the command line instead of dropping the rest on save.
+    #[test]
+    fn too_many_paragraphs_or_codes_do_not_fit() {
+        assert!(Formatted::fits("one\\Ptwo\\A1;three"));
+        assert!(!Formatted::fits(&"a\\P".repeat(MAX_PARAS)));
+        assert!(!Formatted::fits(&"a\n".repeat(MAX_PARAS)));
+        assert!(!Formatted::fits(&"\\A1;".repeat(MAX_ATOMS + 1)));
+        assert!(Formatted::fits(&"\\A1;".repeat(MAX_ATOMS)));
     }
 }

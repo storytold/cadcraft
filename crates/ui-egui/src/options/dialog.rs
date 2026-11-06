@@ -571,7 +571,7 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
-    hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    hint(ui, crate::tl!("Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode."));
     if ui.button(crate::tl!("Right-Click Customization...")).clicked() {
         right_click = true;
     }

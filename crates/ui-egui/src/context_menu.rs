@@ -319,14 +319,16 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
     // Right-Click Customization: with nothing selected (Default mode) or a selection (Edit mode),
-    // a right-click may repeat the last command instead of opening the menu.
+    // a right-click may repeat the last command instead of opening the menu. With no last command
+    // yet, it opens the menu.
     let o = &app.options;
     let mode =
         if o.right_click_default == o.right_click_edit || app.session.selection().is_empty() { o.right_click_default } else { o.right_click_edit };
-    if !snap && mode == crate::options::IdleClick::Repeat {
-        if resp.secondary_clicked()
-            && let Some(last) = app.session.last_command.clone()
-        {
+    if !snap
+        && mode == crate::options::IdleClick::Repeat
+        && let Some(last) = app.session.last_command.clone()
+    {
+        if resp.secondary_clicked() {
             app.start(&last);
         }
         return;

@@ -172,10 +172,12 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ctx.data_mut(|d| d.remove::<State>(state_id()));
             // The editor holds the whole contents: one input, then Enter ends MTEXT's text entry.
             // Emptied while editing an existing MTEXT: it keeps its text (Enter), as TEXTEDIT
-            // keeps it for an empty answer.
-            if !st.fmt.is_empty() {
-                let _ = app.session.input(cadcraft_engine::Input::Text(st.fmt.to_contents()));
-            } else if app.session.running.as_ref().is_some_and(|r| r.id == "textedit") {
+            // keeps it for an empty answer, and for one left unchanged (no undo step).
+            let textedit = app.session.running.as_ref().is_some_and(|r| r.id == "textedit");
+            let contents = st.fmt.to_contents();
+            if !st.fmt.is_empty() && !(textedit && contents == mt.contents) {
+                let _ = app.session.input(cadcraft_engine::Input::Text(contents));
+            } else if textedit {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);
             }
             if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {
@@ -626,8 +628,16 @@ mod tests {
     /// Clicking Diameter inserts U+2300 into both the formatted text and `to_contents()`, selects it, and leaves no unnamed widget.
     #[test]
     fn diameter_insertion_keeps_real_text_and_renders_without_optional_fonts() {
-        let state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
+        let state = State {
+            fmt: Formatted::default(),
+            typing: CharFmt::default(),
+            typing_at: 0,
+            top: 70.0,
+            sel: (0, 0),
+            caret: None,
+            focused: false,
+            target: None,
+        };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).with_context_setup(install_diameter_glyph).build_ui_state(
             |ui, state| {
                 toolbar(ui, state, 2.5);
@@ -648,8 +658,16 @@ mod tests {
     /// take it back.
     #[test]
     fn an_empty_editor_leaves_the_focus_on_the_height_field() {
-        let state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
+        let state = State {
+            fmt: Formatted::default(),
+            typing: CharFmt::default(),
+            typing_at: 0,
+            top: 70.0,
+            sel: (0, 0),
+            caret: None,
+            focused: false,
+            target: None,
+        };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 300.0)).build_ui_state(
             |ui, state| {
                 toolbar(ui, state, 2.5);
@@ -668,8 +686,16 @@ mod tests {
     /// The ten toolbar controls listed in the test are found by semantic name under the harness's default bundled fonts, and no toolbar widget is unnamed.
     #[test]
     fn the_whole_toolbar_uses_bundled_glyphs_and_names_its_controls() {
-        let mut state =
-            State { fmt: Formatted::default(), typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None, focused: false, target: None };
+        let mut state = State {
+            fmt: Formatted::default(),
+            typing: CharFmt::default(),
+            typing_at: 0,
+            top: 70.0,
+            sel: (0, 0),
+            caret: None,
+            focused: false,
+            target: None,
+        };
         let mut harness = Harness::builder().with_size(vec2(1100.0, 120.0)).build_ui(move |ui| toolbar(ui, &mut state, 2.5));
         harness.run();
         for name in ["Left", "Center", "Right", "Justify", "Bulleted list", "Numbered list", "Insert tab", "Diameter", "Text color", "Font"] {

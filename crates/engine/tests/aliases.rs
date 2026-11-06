@@ -110,6 +110,15 @@ fn a_saved_alias_profile_restores_without_overriding_commands() {
     assert!(restored > 9_000, "the valid entries restore, not just {restored}");
     assert_eq!(listing["file"], json!("mine.pgp"));
 
+    // Skipped entries don't use up the cap: invalid ones sorted first leave a full valid set.
+    let mut first_bad = serde_json::Map::new();
+    for i in 0..cadcraft_engine::cmd::file::MAX_ALIASES {
+        first_bad.insert(format!("A{i:05}"), json!("nosuchcommand"));
+        first_bad.insert(format!("B{i:05}"), json!("line"));
+    }
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": first_bad, "file": null }));
+    let listing = s.execute("aliasedit", &json!({})).unwrap();
+    assert_eq!(listing["aliases"].as_object().map_or(0, serde_json::Map::len), cadcraft_engine::cmd::file::MAX_ALIASES);
     // A malformed section is skipped without changing what ALIASEDIT holds.
     cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": { "zzchange": "circle" }, "file": 7 }));
     assert_eq!(resolve_alias("zzchange"), "zzchange", "a malformed section restores nothing");

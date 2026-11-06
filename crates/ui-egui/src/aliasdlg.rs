@@ -38,6 +38,13 @@ pub struct AliasDlgState {
     pub warnings: Vec<String>,
     /// ALIASEDIT typed again while open: bring the window to the front on the next frame.
     pub raise: bool,
+    /// Import… was clicked over aliases of the user's own: the dialog asks before a file replaces them.
+    pub confirm_import: bool,
+}
+
+/// Whether Import… asks first: the file would replace the user's aliases or the edits not applied yet.
+pub fn import_replaces_something(st: &AliasDlgState) -> bool {
+    !st.user.is_empty() || !st.applied.is_empty()
 }
 
 /// The user aliases and alias file ALIASEDIT holds now.
@@ -230,6 +237,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let built = built_in();
     let warn = Tokens::get().warn;
     let (mut ok, mut cancel, mut apply_clicked, mut import_clicked) = (false, false, false, false);
+    // Without a native file picker (the web) Import… can't open one; ALIASEDIT's `text` form loads a file there.
+    let can_pick = app.services.pick_pgp.is_some();
     let Some(st) = app.alias_dlg.as_mut() else { return };
     let id = egui::Id::unique("aliasedit_dialog");
     if std::mem::take(&mut st.raise) {
@@ -301,10 +310,31 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             {
                 st.user.remove(s);
             }
-            if ui.button(crate::tl!("Import…")).clicked() {
-                import_clicked = true;
+            let import = ui
+                .add_enabled(can_pick, egui::Button::new(crate::tl!("Import…")))
+                .on_disabled_hover_text(crate::tl!("Run ALIASEDIT with the file's contents using its text parameter."));
+            if import.clicked() {
+                if import_replaces_something(st) {
+                    st.confirm_import = true;
+                } else {
+                    import_clicked = true;
+                }
             }
         });
+        if st.confirm_import {
+            ui.group(|ui| {
+                ui.label(crate::tf!("Importing a file replaces your {n} aliases, and any changes not applied yet.", n = st.user.len()));
+                ui.horizontal(|ui| {
+                    if ui.button(crate::tl!("Import and replace")).clicked() {
+                        st.confirm_import = false;
+                        import_clicked = true;
+                    }
+                    if ui.button(crate::tl!("Keep my aliases")).clicked() {
+                        st.confirm_import = false;
+                    }
+                });
+            });
+        }
         let mut save = false;
         let mut discard = false;
         if let Some(form) = st.form.as_mut() {
@@ -451,6 +481,20 @@ mod tests {
 
         clear(&mut app);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Import… asks first when a file would replace aliases of the user's own or unapplied edits;
+    /// with neither it opens the picker at once.
+    #[test]
+    fn import_asks_before_replacing_the_users_aliases() {
+        let mut st = super::AliasDlgState::default();
+        assert!(!super::import_replaces_something(&st));
+        st.user.insert("xxl".into(), "line".into());
+        assert!(super::import_replaces_something(&st), "an edit not applied yet");
+        st.applied = st.user.clone();
+        assert!(super::import_replaces_something(&st), "an applied user alias");
+        st.user.clear();
+        assert!(super::import_replaces_something(&st), "a removal not applied yet");
     }
 
     #[test]

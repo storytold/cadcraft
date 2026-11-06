@@ -1,8 +1,8 @@
 //! The user's command alias file (the publicly documented `.pgp` format: `ALIAS, *COMMAND` lines,
 //! `;` comments): ALIASEDIT and REINIT.
 //!
-//! A loaded file adds aliases or overrides the built-in ones for the rest of the session, for
-//! every drawing; command names themselves always win. Lines that define external commands
+//! A loaded file replaces the user aliases, which add to or override the built-in ones for every
+//! drawing; command names themselves always win. Lines that define external commands
 //! (programs the file would have the application start) are never run: they are skipped with a
 //! note. CADCraft ships no alias file; the aliases built into the command catalog stay the
 //! defaults.
@@ -63,7 +63,13 @@ pub(crate) fn user_alias(name: &str) -> Option<String> {
 /// `{"aliases": {alias: command}, "file": path or null}`. Not drawing data.
 pub fn alias_profile() -> Value {
     let st = store();
-    json!({ "aliases": st.map, "file": st.file })
+    // A path [`restore_aliases`] would refuse is left out, so it can't grow the profile either.
+    json!({ "aliases": st.map, "file": st.file.as_deref().filter(|f| keepable_path(f)) })
+}
+
+/// Whether the profile keeps an alias file path: short enough, and no control characters.
+fn keepable_path(f: &str) -> bool {
+    f.chars().count() <= MAX_ALIAS_FILE_CHARS && !f.chars().any(char::is_control)
 }
 
 /// Restore aliases saved by [`alias_profile`], replacing the user aliases and the file.
@@ -75,14 +81,18 @@ pub fn restore_aliases(saved: &Value) {
     let Some(obj) = saved.as_object() else { return };
     let file = match obj.get("file") {
         None | Some(Value::Null) => None,
-        Some(Value::String(f)) if f.chars().count() <= MAX_ALIAS_FILE_CHARS && !f.chars().any(char::is_control) => Some(f.clone()),
+        Some(Value::String(f)) if keepable_path(f) => Some(f.clone()),
         Some(Value::String(_)) => None,
         // A file entry that is not a path makes the section malformed: keep the aliases as they are.
         Some(_) => return,
     };
     let Some(map) = obj.get("aliases").and_then(Value::as_object) else { return };
     let mut aliases = BTreeMap::new();
-    for (alias, target) in map.iter().take(MAX_ALIASES) {
+    // Entries that are skipped don't use up the cap.
+    for (alias, target) in map {
+        if aliases.len() >= MAX_ALIASES {
+            break;
+        }
         let Ok(name) = alias_name(alias) else { continue };
         let Some(id) = target.as_str().and_then(command_id) else { continue };
         aliases.insert(name, id);
@@ -262,5 +272,13 @@ mod tests {
         for spec in crate::cmd::command_specs() {
             assert!(spec.id.chars().count() <= MAX_COMMAND_ID_CHARS, "`{}` exceeds the alias profile bound", spec.id);
         }
+    }
+
+    /// An alias file path the profile couldn't restore isn't saved in it.
+    #[test]
+    fn only_paths_the_profile_restores_are_saved() {
+        assert!(super::keepable_path("C:\\support\\mine.pgp"));
+        assert!(!super::keepable_path(&"x".repeat(super::MAX_ALIAS_FILE_CHARS + 1)));
+        assert!(!super::keepable_path("mine\n.pgp"));
     }
 }

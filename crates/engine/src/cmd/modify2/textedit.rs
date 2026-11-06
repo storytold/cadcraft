@@ -96,6 +96,10 @@ impl Interactive for TextEditM {
         match (&self.h, i) {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
+                // Refused when picked, not after the new text has been typed.
+                if curves::is_locked(s, h) {
+                    return Err(other("The object is on a locked layer."));
+                }
                 let kind = curves::entity(s, h)?.kind;
                 let old = text_of(&kind).ok_or_else(|| other("Select a text, mtext, multileader, attribute definition or dimension."))?;
                 self.mtext = match kind {
@@ -104,10 +108,11 @@ impl Interactive for TextEditM {
                     EntityKind::MLeader(m) => m.text,
                     _ => None,
                 };
-                // The editor would cut a text this long short, and saving would shorten it.
+                // The editor would drop part of a text this long, and saving would lose it: the
+                // command line asks for it instead.
                 if self.mtext.as_ref().is_some_and(|m| !crate::mtext_edit::Formatted::fits(&m.contents)) {
                     self.mtext = None;
-                    return Err(other("This text is too long to edit; it is left as it is."));
+                    s.echo("This text is too long for the editor; enter the new text at the command line.");
                 }
                 self.h = Some((h, old));
                 Ok(Step::Continue)

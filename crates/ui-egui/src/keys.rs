@@ -638,6 +638,15 @@ mod tests {
         assert_eq!(c.ui.shortcuts, UserKeys::from([("arc".to_string(), "Cmd+K".to_string()), ("circle".to_string(), "Cmd+J".to_string())]));
     }
 
+    /// Window ▸ Reset Palettes puts the palettes back, not the user's shortcuts.
+    #[test]
+    fn reset_palettes_keeps_the_users_shortcuts() {
+        let mut app = app();
+        let _ = app.run("ui.shortcuts", json!({"set": {"line": "Cmd+L"}}));
+        app.run("ui.resetpalettes", json!({})).unwrap();
+        assert_eq!(app.ui.shortcuts, UserKeys::from([("line".to_string(), "Cmd+L".to_string())]));
+    }
+
     #[test]
     fn the_menus_show_the_shortcut_in_force() {
         let mut app = app();
