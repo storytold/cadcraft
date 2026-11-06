@@ -422,6 +422,7 @@ impl Scripts {
     pub const ARABIC: Scripts = Scripts(1 << 3);
     pub const HEBREW: Scripts = Scripts(1 << 4);
     /// Each script with a character a font must have to show it.
+    #[cfg(not(target_arch = "wasm32"))]
     const SAMPLES: [(Scripts, char); 5] =
         [(Scripts::HANGUL, '한'), (Scripts::THAI, 'ก'), (Scripts::DEVANAGARI, 'क'), (Scripts::ARABIC, 'ع'), (Scripts::HEBREW, 'א')];
 
@@ -429,7 +430,9 @@ impl Scripts {
     pub fn of_char(c: char) -> Scripts {
         match u32::from(c) {
             0x0590..=0x05FF | 0xFB1D..=0xFB4F => Scripts::HEBREW,
-            0x0600..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => Scripts::ARABIC,
+            // The Arabic blocks only: not Syriac, Thaana, NKo, Samaritan or Mandaic (0700-089F), and
+            // not U+FEFF (the byte order mark, which can lead any name).
+            0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFE => Scripts::ARABIC,
             0x0900..=0x097F | 0xA8E0..=0xA8FF => Scripts::DEVANAGARI,
             0x0E00..=0x0E7F => Scripts::THAI,
             0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF => Scripts::HANGUL,
@@ -450,6 +453,7 @@ impl Scripts {
         self.0 == 0
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn without(self, other: Scripts) -> Scripts {
         Scripts(self.0 & !other.0)
     }
@@ -474,11 +478,55 @@ impl std::ops::BitOrAssign for Scripts {
 #[derive(Default)]
 struct NameFonts {
     faces: Vec<std::sync::Arc<egui::FontData>>,
-    /// Scripts looked for, with the face that shows them (`None`: the UI font has them, or no
-    /// installed font does).
+    /// The interface font `resolved` was worked out against: whether the UI font has a script
+    /// depends on it, so a new one (another interface language) starts the answers over.
+    primary: Option<std::sync::Arc<egui::FontData>>,
+    /// Scripts looked for, with the face that shows them (`None`: the UI font has them).
     resolved: Vec<(Scripts, Option<usize>)>,
+    /// Scripts no installed font showed, and when that was found out. They are looked for again
+    /// after [`UNFOUND_RETRY`], so a font installed meanwhile is found.
+    unfound: Vec<(Scripts, std::time::Instant)>,
     /// Scripts being looked for off the UI thread.
     loading: Scripts,
+}
+
+/// How long a script no installed font showed stays unsearched.
+#[cfg(not(target_arch = "wasm32"))]
+const UNFOUND_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn same_primary(a: &Option<std::sync::Arc<egui::FontData>>, b: &Option<std::sync::Arc<egui::FontData>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NameFonts {
+    /// Forget what was worked out against another interface font.
+    fn use_primary(&mut self, primary: &Option<std::sync::Arc<egui::FontData>>) {
+        if !same_primary(&self.primary, primary) {
+            self.primary = primary.clone();
+            self.resolved.clear();
+            self.unfound.clear();
+            self.faces.clear();
+        }
+    }
+}
+
+/// Clears a search's scripts from `loading` when it ends, also when the loader panics, so they are
+/// looked for again instead of staying "loading" for good.
+#[cfg(not(target_arch = "wasm32"))]
+struct LoadingGuard(Scripts);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for LoadingGuard {
+    fn drop(&mut self) {
+        let mut c = name_fonts();
+        c.loading = c.loading.without(self.0);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -558,14 +606,18 @@ fn name_faces(
     primary: Option<std::sync::Arc<egui::FontData>>,
 ) -> Vec<(String, std::sync::Arc<egui::FontData>)> {
     let mut needed = names;
-    // Hangul first: the first `cjk_covers_hangul` reads the whole CJK collection.
-    if needed.contains(Scripts::HANGUL) && (language == "ko" || cjk_covers_hangul()) {
+    // The Korean interface's own fonts have Hangul. Whether the CJK fonts of the other interfaces
+    // do reads the whole collection, so the loader thread finds that out.
+    if language == "ko" {
         needed = needed.without(Scripts::HANGUL);
     }
     if language == "ar" {
         needed = needed.without(Scripts::ARABIC);
     }
     let mut c = name_fonts();
+    c.use_primary(&primary);
+    let now = std::time::Instant::now();
+    c.unfound.retain(|(_, at)| now.duration_since(*at) < UNFOUND_RETRY);
     let (mut shown, mut missing) = (Vec::new(), Scripts::NONE);
     for (s, _) in Scripts::SAMPLES {
         if !needed.contains(s) {
@@ -574,6 +626,7 @@ fn name_faces(
         match c.resolved.iter().find(|(k, _)| *k == s) {
             Some((_, Some(i))) if !shown.contains(i) => shown.push(*i),
             Some(_) => {}
+            None if c.unfound.iter().any(|(k, _)| *k == s) => {}
             None => missing |= s,
         }
     }
@@ -584,7 +637,7 @@ fn name_faces(
     if !missing.is_empty() {
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new().name("ui-fonts".into()).spawn(move || {
-            load_name_faces(missing, primary.as_deref());
+            load_name_faces(missing, primary);
             ctx.request_repaint();
         });
         if let Err(e) = spawned {
@@ -596,48 +649,60 @@ fn name_faces(
     out
 }
 
-/// Look for faces for `missing` (off the UI thread) and record them in the cache.
+/// Look for faces for `missing` (off the UI thread) and record them in the cache. `primary` is the
+/// interface font the search is for; if the interface changed meanwhile the answers are dropped.
 #[cfg(not(target_arch = "wasm32"))]
-fn load_name_faces(missing: Scripts, primary: Option<&egui::FontData>) {
+fn load_name_faces(missing: Scripts, primary: Option<std::sync::Arc<egui::FontData>>) {
     use cadcraft_fonts::ttf::{Face, fallback_for};
-    let primary = primary.and_then(|d| Face::new(std::sync::Arc::new((*d.font).as_ref().to_vec()), d.index));
-    let mut found: Vec<(Scripts, Option<Face>)> = Vec::new();
+    let _loading = LoadingGuard(missing);
+    let face_of_primary = primary.as_deref().and_then(|d| Face::new(std::sync::Arc::new(d.bytes().to_vec()), d.index));
+    // For each script: `Ok(None)` the UI font has it, `Ok(Some)` a face that does, `Err` none does.
+    let mut found: Vec<(Scripts, Result<Option<Face>, ()>)> = Vec::new();
     for (s, sample) in Scripts::SAMPLES {
         if !missing.contains(s) {
             continue;
         }
-        let face = if primary.as_ref().is_some_and(|p| p.has_glyph(sample)) {
-            None
-        } else if let Some(f) = found.iter().filter_map(|(_, f)| f.as_ref()).find(|f| f.has_glyph(sample)) {
-            Some(f.clone())
+        let face = if face_of_primary.as_ref().is_some_and(|p| p.has_glyph(sample)) || (s == Scripts::HANGUL && cjk_covers_hangul()) {
+            Ok(None)
+        } else if let Some(f) = found.iter().filter_map(|(_, f)| f.as_ref().ok()?.as_ref()).find(|f| f.has_glyph(sample)) {
+            Ok(Some(f.clone()))
         } else {
-            fallback_for(sample)
+            fallback_for(sample).map(Some).ok_or(())
         };
         found.push((s, face));
     }
     let mut c = name_fonts();
-    let mut ids: Vec<(Face, usize)> = Vec::new();
-    for (s, face) in found {
-        let i = face.map(|f| match ids.iter().find(|(g, _)| *g == f) {
-            Some((_, i)) => *i,
-            None => {
-                let (bytes, index) = f.data();
-                // A file read here has no other owner, so its bytes move to egui; one from the font
-                // table (shared with drawing text) is copied.
-                let font = std::sync::Arc::try_unwrap(bytes.clone()).unwrap_or_else(|shared| shared.to_vec());
-                let mut data = egui::FontData::from_owned(font);
-                data.index = index;
-                c.faces.push(std::sync::Arc::new(data));
-                let i = c.faces.len() - 1;
-                ids.push((f, i));
-                i
-            }
-        });
-        c.resolved.push((s, i));
+    if !same_primary(&c.primary, &primary) {
+        return;
     }
-    c.loading = c.loading.without(missing);
+    let mut ids: Vec<(Face, usize)> = Vec::new();
+    let mut added = false;
+    for (s, face) in found {
+        match face {
+            Err(()) => c.unfound.push((s, std::time::Instant::now())),
+            Ok(None) => c.resolved.push((s, None)),
+            Ok(Some(f)) => {
+                let i = match ids.iter().find(|(g, _)| *g == f) {
+                    Some((_, i)) => *i,
+                    None => {
+                        // The bytes are shared with the font table, not copied (a CJK collection is
+                        // tens of megabytes).
+                        let (bytes, index) = f.data();
+                        c.faces.push(std::sync::Arc::new(egui::FontData::from_blob(bytes.clone(), index)));
+                        let i = c.faces.len() - 1;
+                        ids.push((f, i));
+                        added = true;
+                        i
+                    }
+                };
+                c.resolved.push((s, Some(i)));
+            }
+        }
+    }
     drop(c);
-    NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
+    if added {
+        NAME_FONTS_LOADED.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// The system interface fonts [`install_fonts`] looks for, in order; it loads the first installed
@@ -1104,6 +1169,58 @@ mod tests {
         let mixed = Scripts::of("Plan 도면 תוכנית");
         assert!(mixed.contains(Scripts::HANGUL) && mixed.contains(Scripts::HEBREW) && !mixed.contains(Scripts::THAI));
         assert!(Scripts::of("").is_empty());
+    }
+
+    /// A byte order mark can lead any name; it is not Arabic (review on #768).
+    #[test]
+    fn a_bom_in_a_layer_name_is_not_arabic() {
+        assert_eq!(Scripts::of("\u{FEFF}Layer1"), Scripts::NONE);
+        assert_eq!(Scripts::of("\u{FEFF}\u{0639}"), Scripts::ARABIC);
+        assert_eq!(Scripts::of_char('\u{FE70}'), Scripts::ARABIC);
+        assert_eq!(Scripts::of_char('\u{FEFE}'), Scripts::ARABIC);
+    }
+
+    /// Syriac, Thaana and NKo sit between the Arabic blocks; they need their own fonts (review on
+    /// #768).
+    #[test]
+    fn syriac_is_not_arabic() {
+        for c in ['\u{0710}', '\u{0780}', '\u{07C0}', '\u{0840}', '\u{0860}'] {
+            assert_eq!(Scripts::of_char(c), Scripts::NONE, "{c:?}");
+        }
+        for c in ['\u{0600}', '\u{06FF}', '\u{0750}', '\u{077F}', '\u{08A0}', '\u{08FF}', '\u{FB50}', '\u{FDFF}'] {
+            assert_eq!(Scripts::of_char(c), Scripts::ARABIC, "{c:?}");
+        }
+    }
+
+    /// Whether the interface font has a script depends on which font it is: answers worked out for
+    /// one are dropped when another takes over, not reused (review on #768).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn name_font_cache_is_cleared_when_the_primary_face_changes() {
+        let a = Some(std::sync::Arc::new(egui::FontData::from_static(b"a")));
+        let b = Some(std::sync::Arc::new(egui::FontData::from_static(b"b")));
+        let mut c = super::NameFonts::default();
+        c.use_primary(&a);
+        c.resolved.push((Scripts::THAI, None));
+        c.unfound.push((Scripts::HEBREW, std::time::Instant::now()));
+        c.use_primary(&a);
+        assert_eq!(c.resolved.len(), 1, "the same primary keeps its answers");
+        c.use_primary(&b);
+        assert!(c.resolved.is_empty() && c.unfound.is_empty() && c.faces.is_empty(), "another primary starts over");
+    }
+
+    /// A loader that panics must not leave its scripts "loading" for good (review on #768).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_dropped_font_loader_clears_loading() {
+        // A script no other test asks about, so the shared cache is left as it was.
+        super::name_fonts().loading |= Scripts::DEVANAGARI;
+        let r = std::panic::catch_unwind(|| {
+            let _loading = super::LoadingGuard(Scripts::DEVANAGARI);
+            panic!("the loader died");
+        });
+        assert!(r.is_err());
+        assert!(!super::name_fonts().loading.contains(Scripts::DEVANAGARI));
     }
 
     #[test]
