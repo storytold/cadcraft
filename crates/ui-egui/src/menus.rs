@@ -8,6 +8,59 @@ use crate::CadApp;
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
 
+/// The reference menu tree (feature names, four spaces per level): the order every menu lists
+/// its items in. The same file is `cargo xtask parity`'s oracle.
+const REFERENCE_TREE: &str = include_str!("../../../xtask/data/menu-catalog.txt");
+
+/// A menu of the reference tree: its label and its items, in order.
+struct Reference {
+    label: &'static str,
+    children: Vec<Reference>,
+}
+
+/// The reference tree's top-level menus.
+fn reference() -> &'static [Reference] {
+    static TREE: std::sync::OnceLock<Vec<Reference>> = std::sync::OnceLock::new();
+    TREE.get_or_init(|| {
+        // The menus being read, outermost first; a line closes every menu deeper than its indent.
+        let mut open = vec![Reference { label: "", children: Vec::new() }];
+        let close = |open: &mut Vec<Reference>| {
+            if let Some(done) = open.pop()
+                && let Some(parent) = open.last_mut()
+            {
+                parent.children.push(done);
+            }
+        };
+        for line in REFERENCE_TREE.lines().filter(|l| !l.trim().is_empty()) {
+            let depth = (line.len() - line.trim_start_matches(' ').len()) / 4;
+            while open.len() > depth + 1 {
+                close(&mut open);
+            }
+            open.push(Reference { label: line.trim(), children: Vec::new() });
+        }
+        while open.len() > 1 {
+            close(&mut open);
+        }
+        open.pop().map(|root| root.children).unwrap_or_default()
+    })
+}
+
+/// Put `entries` in `reference`'s order: the items the reference lists first, as it lists them,
+/// then the rest in registration order. Submenus the reference has are ordered the same way.
+fn order(entries: &mut [Entry], reference: &[Reference]) {
+    let position = |label: &str| reference.iter().position(|r| r.label == label).unwrap_or(usize::MAX);
+    entries.sort_by_key(|e| match e {
+        Entry::Item { label, .. } | Entry::Sub { label, .. } => position(label),
+    });
+    for e in entries {
+        if let Entry::Sub { label, children } = e
+            && let Some(r) = reference.iter().find(|r| r.label == *label)
+        {
+            order(children, &r.children);
+        }
+    }
+}
+
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
@@ -632,6 +685,11 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
         file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
     }
+    for (menu, entries) in &mut out {
+        if let Some(r) = reference().iter().find(|r| r.label == menu) {
+            order(entries, &r.children);
+        }
+    }
     out
 }
 
@@ -1002,6 +1060,70 @@ mod tests {
         app.start("exportpdf");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod reference_order_tests {
+    use cadcraft_engine::Session;
+
+    use super::{Entry, Reference, reference, tree};
+    use crate::{CadApp, Services};
+
+    fn label(e: &Entry) -> &str {
+        match e {
+            Entry::Item { label, .. } | Entry::Sub { label, .. } => label,
+        }
+    }
+
+    /// Every item the reference lists comes in the reference's order, at every level, and the
+    /// items the reference lacks follow them.
+    fn check(path: &str, entries: &[Entry], reference: &[Reference], failures: &mut Vec<String>) {
+        let known = |e: &Entry| reference.iter().any(|r| r.label == label(e));
+        let listed: Vec<&str> = entries.iter().filter(|e| known(e)).map(label).collect();
+        let expected: Vec<&str> = reference.iter().map(|r| r.label).filter(|l| listed.contains(l)).collect();
+        if listed != expected {
+            failures.push(format!("{path}: {listed:?} should be {expected:?}"));
+        }
+        if let (Some(unlisted), Some(last)) = (entries.iter().position(|e| !known(e)), entries.iter().rposition(known))
+            && unlisted < last
+        {
+            failures.push(format!("{path}: {} comes before the reference's items", entries.get(unlisted).map_or("?", label)));
+        }
+        for e in entries {
+            if let Entry::Sub { label, children } = e
+                && let Some(r) = reference.iter().find(|r| r.label == *label)
+            {
+                check(&format!("{path} > {label}"), children, &r.children, failures);
+            }
+        }
+    }
+
+    #[test]
+    fn menus_follow_the_reference_tree() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let mut failures = Vec::new();
+        for (menu, entries) in tree(&app) {
+            let r = reference().iter().find(|r| r.label == menu).unwrap_or_else(|| panic!("{menu} is not in the reference tree"));
+            check(&menu, &entries, &r.children, &mut failures);
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn reference_tree_is_nested_by_indentation() {
+        assert_eq!(reference().iter().map(|r| r.label).collect::<Vec<_>>(), super::MENUS);
+        let draw = reference().iter().find(|r| r.label == "Draw").unwrap();
+        let circle = draw.children.iter().find(|r| r.label == "Circle").unwrap();
+        assert_eq!(circle.children.first().map(|r| r.label), Some("Center, Radius"));
+    }
+
+    #[test]
+    fn open_recent_stays_after_open() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let file = tree(&app).into_iter().find(|(m, _)| m == "File").map(|(_, e)| e).unwrap_or_default();
+        let open = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).unwrap();
+        assert_eq!(file.get(open + 1).map(label), Some(super::OPEN_RECENT));
     }
 }
 
