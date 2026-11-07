@@ -87,7 +87,7 @@ percentages below are from 2026-10-11 and were not re-measured. Remaining: **≈
 |---|---|---|
 | Ortho (F8) | yes, Shift overrides it while held | yes; holding Shift turns it on or off while held (`Session::snap_cursor`, `snap/tracking.rs`) |
 | Polar tracking increment | yes | yes, measured from ANGBASE; dotted path and "Polar: d < a°" tooltip (`snap/tracking.rs`, `canvas.rs` `draw_tracking`) |
-| Additional polar angles, relative to last segment | yes | additional angles yes (POLARADDANG); relative to the last segment with POLARMODE bit 4 (`snap/tracking.rs`, #450) |
+| Additional polar angles, relative to last segment | yes | additional angles yes (POLARADDANG); relative to the last segment with POLARMODE bit 1 (`snap/tracking.rs`, #450) |
 | Polar distance snap (PolarSnap) | yes | yes: SNAPTYPE 1 steps along the tracking paths by POLARDIST (#450; also over the isometric snap, #633) (`snap/tracking.rs` `polar_snap`) |
 | **Object snap tracking** (acquire points, alignment paths, intersections of paths) | yes, F11 | yes (#379): resting on a snap point acquires it (`+`), resting again releases it, seven at most; horizontal/vertical paths, or every polar angle with POLARMODE 2; Shift to acquire with POLARMODE 8; crossings of two paths, a path and an object, and a path and a polar path snap; tooltip names each path; a typed distance (direct distance entry) runs along the path the cursor is on, measured from the point the path comes from. Engine: `Session::snap_cursor`, `snap/tracking.rs`; AUTOSNAP bits 8 and 16 |
 | Grid (rectangular, major lines, adaptive, limits) | yes | rectangular and isometric (30°, 90° and 150° lines), major lines, adaptive display |

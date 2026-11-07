@@ -21,7 +21,7 @@ is ≈ 600–930 h away.
 
 | Number | Value | Kind |
 |---|---|---|
-| Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
+| Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491 at the 2026-10-10 re-measure, including UI-only commands; not re-measured since; the generated checklist counts engine commands only and now reads 298 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
 | Ready for real work | **≈ 38%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
 | Mainstream practitioner (2D drafter) | **≈ 28%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
 | Essentials user | **≈ 46%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |

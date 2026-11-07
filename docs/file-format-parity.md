@@ -31,7 +31,7 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 AutoCAD 2027 opens every DWG version from R2.0 onward and saves 2018 (AC1032, still the current
 DWG format), 2013, 2010, 2007, 2004, 2000 and R14. CADCraft reads DWG by converting it to DXF
-with the `acadrust` 0.6.5 crate (failsafe mode since 0.6.4: a damaged DWG opens with the unreadable records left out and a note saying so, #859) and reading that DXF; it saves by writing its own R2000 DXF and
+with the `acadrust` 0.6.6 crate (failsafe mode since 0.6.4: an object record it can't decode is left out and a note says so, #859; if the file's header or section map can't be read, or it isn't a DWG, the file is rejected) and reading that DXF; it saves by writing its own R2000 DXF and
 converting it to a DWG of the chosen version (#421): SAVEAS `version`, else the drawing's own
 version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 2000 is asked for.
 The bridge repairs two acadrust gaps in 2010+ DWG (measured with 0.6.3): merged table cells and table-style
@@ -51,7 +51,7 @@ title/header suppression.
 | Web build | — | — | **no** (error: "save as DXF") | no | — |
 
 Everything lost in the DXF read/write paths below is also lost through DWG, plus whatever
-`acadrust`'s own DXF output omits (proxy objects, ACIS data, custom objects: not measured). User
+`acadrust`'s own DXF output omits (proxy objects and custom objects: not measured; ACIS data of solids is kept, #781). User
 report #57: a 10 MB DWG failed after about two minutes; limits now stop runaway conversions
 early (#175), but the throughput problem remains. DGN line style components that no line style
 definition uses (leftovers of DGN imports, hundreds of thousands in some drawings) are left out

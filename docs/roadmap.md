@@ -20,7 +20,7 @@ Opus 5.5 agent-hours.
 5. ~~**Unstub the prompt options** of the most-used commands (F1).~~ Done (#397, #408, #547, #558, #559); the stubs left are listed in F1.
 6. ~~**Autosave, recovery, AUDIT, RECOVER** (F4).~~ Done on the desktop (#406, #416); F4 lists the web-build leftovers.
 7. **The rest of the alpha gate:** ~~block editor and REFEDIT, xref attach (F2, F3), and plot styles
-   with a plot dialog and preview (F14)~~ landed (#824, #818, #525, #410, #160, #186); left: dynamic-block authoring, XCLIP, editing an xref in place (F2, F3), and printing beyond files (F14, H3). ≈ 50–80 h.
+   with a plot dialog and preview (F14)~~ landed (#824, #818, #525, #410, #160, #186); left: the precise-drafting gaps (approximate ellipse and spline intersections, prompt options that still print "not available yet"; U4, F1), dynamic-block authoring, XCLIP, editing an xref in place (F2, F3), and printing beyond files (F14, H3). ≈ 50–80 h.
 
 Items 2 and 7 are the open [alpha gate](#alpha-gate) rows.
 
