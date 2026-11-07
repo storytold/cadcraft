@@ -181,6 +181,10 @@ fn pagesetup_paper_sets_the_layout_paper_units() {
     assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 in millimetres");
     s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
     assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D in the drawing's inches");
+    // A custom size replaces the named paper in the same call and keeps the layout's units.
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
+    assert_eq!(r["page"]["paperMm"], false);
+    assert_eq!(size(&s), (20.0, 10.0, 25.4), "the custom size in the layout's inches");
 }
 
 #[test]
