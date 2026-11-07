@@ -236,11 +236,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
-        EntityKind::PdfUnderlay(u) => {
-            for pts in underlay_frames(b, ctx, u) {
-                stroke(b, &pts);
-            }
-        }
+        EntityKind::PdfUnderlay(u) => underlay_frames(b, ctx, u).iter().for_each(|pts| stroke(b, pts)),
         kind => {
             for prim in kind.prims() {
                 match prim {
