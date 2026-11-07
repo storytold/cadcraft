@@ -603,7 +603,6 @@
 	On	Ativado
 	On/Off	Ativar/desativar
 	One of the Crafting Apps by the ArtCraft team and community.	Um dos Crafting Apps da equipe e da comunidade ArtCraft.
-	Oops	Restaurar objetos eliminados
 	Only in this drawing: {n}	Somente neste desenho: {n}
 	Only in {name}: {n}	Somente em {name}: {n}
 	Open	Abrir
@@ -1281,7 +1280,7 @@
 	Copy all XData as text to clipboard	Copiar todos os XData como texto para a área de transferência
 	✓ XData text copied to clipboard	✓ Texto XData copiado para a área de transferência
 	AppID (1001):	AppID (1001):
-	New AppID (e.g. Lumi_KLIC)	Novo AppID (ex. Lumi_KLIC)
+	New AppID (e.g. CAD_XDATA)	Novo AppID (ex. CAD_XDATA)
 	+ Add AppID	+ Adicionar AppID
 	🗑 Delete AppID	🗑 Eliminar AppID
 	Remove this Application and its XData from the entity	Remover esta aplicação e os seus XData da entidade
@@ -1295,7 +1294,7 @@
 	Smart Key=Value Columns	Colunas inteligentes Chave=Valor
 	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Dividir 'KEY=VALUE' ou 'Key: Value' em campos editáveis separados de Chave e Valor
 	This object currently has no user XData.	Este objeto não tem XData de utilizador de momento.
-	+ Create Lumi_KLIC Application	+ Criar aplicação Lumi_KLIC
+	+ Create CAD_XDATA Application	+ Criar aplicação CAD_XDATA
 	DXF Code	Código DXF
 	Property / Key ⇔	Propriedade / Chave ⇔
 	Value (Selectable & Editable) ⇔	Valor (Selecionável e Editável) ⇔
@@ -1606,17 +1605,13 @@
 	Could not check for updates.	Não foi possível verificar atualizações.
 	Font	Tipo de letra
 	Save Layout as Template	Guardar apresentação como modelo
-
-
-	Save changes to block "{name}"?	Guardar alterações no bloco "{name}"?
+	Oops	Restaurar objetos eliminados
 menu	View	Ver
 menu	Draw	Desenhar
 menu	Dimension	Cota
 menu	Modify	Modificar
 	Backup copy	Cópia de segurança
 	Create backup copy with each save	Criar cópia de segurança ao guardar
-	New AppID (e.g. CAD_XDATA)	Novo AppID (ex. CAD_XDATA)
-	+ Create CAD_XDATA Application	+ Criar aplicação CAD_XDATA
 	Enter angle of xline (0)	Introduza o ângulo da linha de construção (0)
 	Enter delta length	Introduza o comprimento delta
 	Multiple Insert	Inserção múltipla
@@ -1628,6 +1623,7 @@ menu	Modify	Modificar
 	Specify helix height	Especifique a altura da hélice
 	Specify top radius	Especifique o raio superior
 	Specify total length	Especifique o comprimento total
+	Save changes to block "{name}"?	Guardar alterações no bloco "{name}"?
 	Find All	Localizar tudo
 	Find what:	Localizar:
 	Match case	Maiúsculas/minúsculas
@@ -1640,13 +1636,34 @@ menu	Modify	Modificar
 	Text to find	Texto a localizar
 	Whole words	Palavras inteiras
 	Nothing found	Nada encontrado
-	Change	Alterar
-	Clip Xref	Recortar refex
-	DView	Vista dinâmica
-	Raster Images	Imagens raster
-	Units	Unidades
-	Xref	Refex
-	Xref Clip Frame	Moldura de recorte de refex
 	Ctrl+Enter to apply	Ctrl+Enter para aplicar
 	Edit Text	Editar texto
 	The drawing changed. Close the window and open it again.	O desenho foi alterado. Feche a janela e abra-a novamente.
+	Import…	Importar…
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Importar: não existe diálogo de ficheiros aqui; execute ALIASEDIT com o conteúdo do ficheiro no parâmetro text.
+	{n} more warnings; see the command line.	Mais {n} avisos; consulte a linha de comandos.
+	Alias files (PGP)	Ficheiros de alias (PGP)
+	Keyboard Shortcuts...	Atalhos de teclado...
+	Keyboard Shortcuts	Atalhos de teclado
+	Replaces the shortcut of {commands}	Substitui o atalho de {commands}
+	Needs Ctrl, Alt or a function key	Requer Ctrl, Alt ou uma tecla de função
+	Press the keys	Prima as teclas
+	Back to CADCraft's shortcut	Repor o atalho do CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Um atalho definido por si prevalece sobre o do CADCraft. As alterações aplicam-se de imediato e são guardadas.
+	Right-Click Customization...	Personalização do botão direito...
+	Right-Click Customization	Personalização do botão direito
+	Turn on time-sensitive right-click	Ativar clique direito sensível ao tempo
+	Longer click duration:	Duração do clique longo:
+	milliseconds	milissegundos
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Durante um comando, um clique rápido equivale a Enter e um clique longo abre o menu de contexto.
+	Default Mode	Modo predefinido
+	No objects selected and no command running:	Nenhum objeto selecionado e nenhum comando ativo:
+	Edit Mode	Modo de edição
+	Objects selected and no command running:	Objetos selecionados e nenhum comando ativo:
+	Repeat last command	Repetir o último comando
+	Shortcut Menu	Menu de contexto
+	Command Mode	Modo de comando
+	While a command runs:	Durante a execução de um comando:
+	ENTER	ENTER
+	Shortcut Menu: always enabled	Menu de contexto: sempre ativo
+	Shortcut Menu: enabled when command options are present	Menu de contexto: ativo quando existem opções de comando

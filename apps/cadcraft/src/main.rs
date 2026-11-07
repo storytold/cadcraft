@@ -25,6 +25,8 @@ mod logging;
 mod native_menu;
 mod spacemouse;
 mod system_animations;
+#[cfg(target_os = "windows")]
+mod windows_theme;
 mod workspace;
 
 use cadcraft_engine::Session;
@@ -48,6 +50,11 @@ struct App {
     /// The `movable` flag last set on the main window.
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
+    current_title: String,
+    #[cfg(target_os = "windows")]
+    hwnd: Option<isize>,
+    #[cfg(target_os = "windows")]
+    windows_theme_applied: Option<egui::Theme>,
 }
 
 impl App {
@@ -87,6 +94,27 @@ impl eframe::App for App {
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
+        #[cfg(target_os = "windows")]
+        if let Some(hwnd) = self.hwnd {
+            let current = self.cad.shown_theme();
+            if self.windows_theme_applied != Some(current) {
+                windows_theme::apply(hwnd, current != egui::Theme::Light);
+                self.windows_theme_applied = Some(current);
+            }
+        }
+        let title = match self.cad.session.state() {
+            Ok(st) if !self.cad.ui.start_tab => {
+                let ro = if st.read_only { " [Read-Only]" } else { "" };
+                let lower = st.title.to_ascii_lowercase();
+                let ext = if lower.ends_with(".dwg") || lower.ends_with(".dxf") { "" } else { ".dwg" };
+                format!("CADCraft - {}{ext}{ro}", st.title)
+            }
+            _ => "CADCraft".to_string(),
+        };
+        if self.current_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.current_title = title;
+        }
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -219,6 +247,14 @@ fn services() -> Services {
                 .map(|p| p.to_string_lossy().to_string())
         })),
         start_control: None,
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);
+            let dialog = match dir {
+                Some(dir) => dialog.set_directory(dir),
+                None => dialog,
+            };
+            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 
@@ -248,16 +284,19 @@ fn restores_window() -> bool {
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred.
 fn window_options(restoring: bool) -> eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("CADCraft")
+        .with_inner_size([1600.0, 1000.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true)
+        .with_app_id(APP_ID);
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(APP_ID),
+        viewport,
         // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
         // restored window on the monitors that are connected now.
         persist_window: true,
@@ -452,6 +491,20 @@ fn main() -> eframe::Result {
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
             let ctx = cc.egui_ctx.clone();
             let system_animations = system_animations::SystemAnimations::start(move || ctx.request_repaint());
+            #[cfg(target_os = "windows")]
+            let shown_theme = app.shown_theme();
+            #[cfg(target_os = "windows")]
+            let hwnd = {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let hwnd = cc.window_handle().ok().and_then(|h| match h.as_raw() {
+                    RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+                    _ => None,
+                });
+                if let Some(h) = hwnd {
+                    windows_theme::apply(h, shown_theme != egui::Theme::Light);
+                }
+                hwnd
+            };
             Ok(Box::new(App {
                 desktop_theme,
                 system_animations,
@@ -465,6 +518,11 @@ fn main() -> eframe::Result {
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
                 movable: None,
+                current_title: "CADCraft".to_string(),
+                #[cfg(target_os = "windows")]
+                hwnd,
+                #[cfg(target_os = "windows")]
+                windows_theme_applied: Some(shown_theme),
             }))
         }),
     )

@@ -28,6 +28,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
         "vbaide" => crate::lisp_ide::dialog(app, ctx, &mut open),
         "xdedit" => crate::xdedit::dialog(app, ctx, &mut open),
+        crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),

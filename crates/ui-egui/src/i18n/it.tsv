@@ -1381,6 +1381,23 @@ menu	Modify	Edita
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Il disegno è cambiato. Chiudere la finestra e riaprirla.
+	Right-Click Customization...	Personalizzazione pulsante destro...
+	Right-Click Customization	Personalizzazione pulsante destro
+	Turn on time-sensitive right-click	Attiva clic destro sensibile al tempo
+	Longer click duration:	Durata clic lungo:
+	milliseconds	millisecondi
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Durante un comando un clic rapido equivale a Invio, un clic più lungo apre il menu di scelta rapida.
+	Default Mode	Modalità predefinita
+	No objects selected and no command running:	Nessun oggetto selezionato e nessun comando in corso:
+	Edit Mode	Modalità modifica
+	Objects selected and no command running:	Oggetti selezionati e nessun comando in corso:
+	Repeat last command	Ripeti ultimo comando
+	Shortcut Menu	Menu di scelta rapida
+	Command Mode	Modalità comando
+	While a command runs:	Durante un comando:
+	ENTER	INVIO
+	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
+	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
 	Copy All	Copia tutto
 	Copy history output to clipboard	Copia cronologia negli appunti
 	Close History Window (F2)	Chiudi finestra cronologia (F2)
@@ -1420,7 +1437,7 @@ menu	Modify	Edita
 	Copy all XData as text to clipboard	Copia tutti gli XData come testo negli appunti
 	✓ XData text copied to clipboard	✓ Testo XData copiato negli appunti
 	AppID (1001):	AppID (1001):
-	New AppID (e.g. Lumi_KLIC)	Nuovo AppID (es. Lumi_KLIC)
+	New AppID (e.g. CAD_XDATA)	Nuovo AppID (es. CAD_XDATA)
 	+ Add AppID	+ Aggiungi AppID
 	🗑 Delete AppID	🗑 Elimina AppID
 	Remove this Application and its XData from the entity	Rimuovi questa applicazione e i suoi XData dall'entità
@@ -1434,7 +1451,7 @@ menu	Modify	Edita
 	Smart Key=Value Columns	Colonne intelligenti Chiave=Valore
 	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Dividi 'KEY=VALUE' o 'Key: Value' in campi Chiave e Valore separati
 	This object currently has no user XData.	Questo oggetto non contiene attualmente XData utente.
-	+ Create Lumi_KLIC Application	+ Crea applicazione Lumi_KLIC
+	+ Create CAD_XDATA Application	+ Crea applicazione CAD_XDATA
 	DXF Code	Codice DXF
 	Property / Key ⇔	Proprietà / Chiave ⇔
 	Value (Selectable & Editable) ⇔	Valore (Selezionabile e Modificabile) ⇔
@@ -1630,14 +1647,3 @@ menu	Modify	Edita
 	no [CommandMethod] found	nessun [CommandMethod] trovato
 	Font	Carattere
 	Save Layout as Template	Salva layout come modello
-	Save changes to block "{name}"?	Salvare le modifiche al blocco "{name}"?
-	New AppID (e.g. CAD_XDATA)	Nuovo AppID (es. CAD_XDATA)
-	+ Create CAD_XDATA Application	+ Crea applicazione CAD_XDATA
-	Backup copy	Copia di backup
-	Create backup copy with each save	Crea copia di backup a ogni salvataggio
-	Change	Cambia
-	DView	VistaD
-	Multiple Insert	Inserimento multiplo
-	Raster Images	Immagini raster
-	Units	Unità
-	Xref	RifEst

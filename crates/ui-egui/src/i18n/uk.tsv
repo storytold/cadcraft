@@ -1364,12 +1364,17 @@
 	More than {n} aliases.	Понад {n} псевдонімів.
 	Alias file: {file}	Файл псевдонімів: {file}
 	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонімів не завантажено. REINIT замінює ці псевдоніми псевдонімами з файлу.
+	Aliases are saved in your CADCraft profile and survive restarts.	Псевдоніми зберігаються в профілі CADCraft і не зникають після перезапуску.
 	Alias	Псевдонім
 	Command	Команда
 	overrides built-in	замінює вбудований
 	built-in	вбудований
 	Add…	Додати…
 	Edit…	Змінити…
+	Import…	Імпортувати…
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Імпорт: тут немає діалогу вибору файлів; запустіть ALIASEDIT із вмістом файлу в параметрі text.
+	{n} more warnings; see the command line.	Ще {n} попереджень; див. командний рядок.
+	Alias files (PGP)	Файли псевдонімів (PGP)
 	Save alias	Зберегти псевдонім
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
@@ -1393,6 +1398,44 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Креслення змінилося. Закрийте вікно та відкрийте його знову.
+	Keyboard Shortcuts...	Комбінації клавіш...
+	Keyboard Shortcuts	Комбінації клавіш
+	Replaces the shortcut of {commands}	Замінює комбінацію клавіш команди: {commands}
+	Needs Ctrl, Alt or a function key	Потрібна клавіша Ctrl, Alt або функціональна клавіша
+	Press the keys	Натисніть клавіші
+	Back to CADCraft's shortcut	Повернути комбінацію CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Ваша комбінація клавіш має перевагу над комбінацією CADCraft. Зміни застосовуються одразу й зберігаються.
+	Right-Click Customization...	Налаштування правої кнопки...
+	Right-Click Customization	Налаштування правої кнопки
+	Turn on time-sensitive right-click	Увімкнути залежне від часу клацання правою кнопкою
+	Longer click duration:	Тривалість довгого клацання:
+	milliseconds	мілісекунд
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Під час команди коротке клацання — Enter, довше відкриває контекстне меню.
+	Default Mode	Режим за замовчуванням
+	No objects selected and no command running:	Нічого не вибрано й команда не виконується:
+	Edit Mode	Режим редагування
+	Objects selected and no command running:	Об'єкти вибрано, команда не виконується:
+	Repeat last command	Повторити останню команду
+	Shortcut Menu	Контекстне меню
+	Command Mode	Режим команди
+	While a command runs:	Під час виконання команди:
+	ENTER	Клавіша Enter
+	Shortcut Menu: always enabled	Контекстне меню: завжди
+	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Enter angle of xline (0) or	Введіть кут допоміжної прямої (0) або
+	Enter delta length or	Введіть зміну довжини або
+	Select an object to change or	Виберіть об'єкт для зміни або
+	Select an object to measure or	Виберіть об'єкт для вимірювання або
+	Select first object or	Виберіть перший об'єкт або
+	Select nested objects to copy or	Виберіть вкладені об'єкти для копіювання або
+	Select polyline or	Виберіть полілінію або
+	Specify base point or	Укажіть базову точку або
+	Specify base radius or	Укажіть радіус основи або
+	Specify helix height or	Укажіть висоту спіралі або
+	Specify offset distance or	Укажіть відстань зміщення або
+	Specify rotation angle or	Укажіть кут повороту або
+	Specify top radius or	Укажіть радіус вершини або
+	Specify total length or	Укажіть загальну довжину або
 	List Xdata	Список розширених даних (XData)
 	Edit Xdata	Редагувати розширені дані (XData)
 	Edit Xdata (XDEDIT)	Редагувати розширені дані (XDEDIT)
@@ -1423,7 +1466,7 @@
 	Copy all XData as text to clipboard	Копіювати всі XData як текст до буфера обміну
 	✓ XData text copied to clipboard	✓ Текст XData скопійовано до буфера обміну
 	AppID (1001):	AppID (1001):
-	New AppID (e.g. Lumi_KLIC)	Новий AppID (напр. Lumi_KLIC)
+	New AppID (e.g. CAD_XDATA)	Новий AppID (напр. CAD_XDATA)
 	+ Add AppID	+ Додати AppID
 	🗑 Delete AppID	🗑 Видалити AppID
 	Remove this Application and its XData from the entity	Видалити цей застосунок та його XData з об’єкта
@@ -1437,7 +1480,7 @@
 	Smart Key=Value Columns	Розумні стовпці Ключ=Значення
 	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Розділяти 'KEY=VALUE' або 'Key: Value' на окремі поля ключа та значення
 	This object currently has no user XData.	Цей об’єкт наразі не має користувацьких XData.
-	+ Create Lumi_KLIC Application	+ Створити застосунок Lumi_KLIC
+	+ Create CAD_XDATA Application	+ Створити застосунок CAD_XDATA
 	DXF Code	Код DXF
 	Property / Key ⇔	Властивість / Ключ ⇔
 	Value (Selectable & Editable) ⇔	Значення (доступне для вибору та редагування) ⇔
@@ -1634,9 +1677,3 @@
 	Save Layout as Template	Зберегти аркуш як шаблон
 	📋 Copy All	📋 Копіювати все
 	🗑 Clear	🗑 Очистити
-	New AppID (e.g. CAD_XDATA)	Новий AppID (напр. CAD_XDATA)
-	+ Create CAD_XDATA Application	+ Створити застосунок CAD_XDATA
-	Change	Змінити
-	Multiple Insert	Багаторазова вставка
-	Units	Одиниці
-	Xref	Зовнішнє посилання

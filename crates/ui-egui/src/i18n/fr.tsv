@@ -1029,6 +1029,13 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Le dessin a changé. Fermez la fenêtre et rouvrez-la.
+	Keyboard Shortcuts...	Raccourcis clavier...
+	Keyboard Shortcuts	Raccourcis clavier
+	Replaces the shortcut of {commands}	Remplace le raccourci de : {commands}
+	Needs Ctrl, Alt or a function key	Il faut Ctrl, Alt ou une touche de fonction
+	Press the keys	Appuyez sur les touches
+	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
 	Clear Command History	Effacer l'historique des commandes
 	Copy All	Tout copier
 	Copy history output to clipboard	Copier l'historique dans le presse-papiers
@@ -1069,7 +1076,7 @@
 	Copy all XData as text to clipboard	Copier toutes les XData en texte dans le presse-papiers
 	✓ XData text copied to clipboard	✓ Texte XData copié dans le presse-papiers
 	AppID (1001):	AppID (1001) :
-	New AppID (e.g. Lumi_KLIC)	Nouvel AppID (ex. Lumi_KLIC)
+	New AppID (e.g. CAD_XDATA)	Nouvel AppID (ex. CAD_XDATA)
 	+ Add AppID	+ Ajouter AppID
 	🗑 Delete AppID	🗑 Supprimer AppID
 	Remove this Application and its XData from the entity	Supprimer cette application et ses XData de l'objet
@@ -1083,7 +1090,7 @@
 	Smart Key=Value Columns	Colonnes intelligentes Clé=Valeur
 	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Séparer 'KEY=VALUE' ou 'Key: Value' en champs Clé et Valeur distincts
 	This object currently has no user XData.	Cet objet ne contient actuellement aucune XData utilisateur.
-	+ Create Lumi_KLIC Application	+ Créer l'application Lumi_KLIC
+	+ Create CAD_XDATA Application	+ Créer l'application CAD_XDATA
 	DXF Code	Code DXF
 	Property / Key ⇔	Propriété / Clé ⇔
 	Value (Selectable & Editable) ⇔	Valeur (Sélectionnable & Modifiable) ⇔
@@ -1623,16 +1630,3 @@
 	Font	Police
 	Save Layout as Template	Enregistrer la présentation comme gabarit
 	Export Comparison	Exporter la comparaison
-	Save changes to block "{name}"?	Enregistrer les modifications apportées au bloc « {name} » ?
-	New AppID (e.g. CAD_XDATA)	Nouvel AppID (ex. CAD_XDATA)
-	+ Create CAD_XDATA Application	+ Créer l'application CAD_XDATA
-	Backup copy	Copie de sauvegarde
-	Create backup copy with each save	Créer une copie de sauvegarde à chaque enregistrement
-	Change	Changer
-	Clip Xref	Délimiter Xréf
-	DView	VueD
-	Multiple Insert	Insertion multiple
-	Raster Images	Images tramées
-	Units	Unités
-	Xref	Xréf
-	Xref Clip Frame	Cadre de délimitation Xréf

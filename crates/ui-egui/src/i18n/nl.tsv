@@ -581,7 +581,6 @@
 	On	Aan
 	On/Off	Aan/Uit
 	One of the Crafting Apps by the ArtCraft team and community.	Een van de Crafting Apps door het ArtCraft-team en de community.
-	Oops	Verwijderde objecten herstellen
 	Only in this drawing: {n}	Alleen in deze tekening: {n}
 	Only in {name}: {n}	Alleen in {name}: {n}
 	Open (⌘O)	Openen (⌘O)
@@ -1372,7 +1371,7 @@ menu	Modify	Wijzigen
 	Copy all XData as text to clipboard	Kopieer alle XData als tekst naar klembord
 	✓ XData text copied to clipboard	✓ XData-tekst gekopieerd naar klembord
 	AppID (1001):	AppID (1001):
-	New AppID (e.g. Lumi_KLIC)	Nieuwe AppID (bijv. Lumi_KLIC)
+	New AppID (e.g. CAD_XDATA)	Nieuwe AppID (bijv. CAD_XDATA)
 	+ Add AppID	+ AppID toevoegen
 	🗑 Delete AppID	🗑 AppID verwijderen
 	Remove this Application and its XData from the entity	Verwijder deze applicatie en bijbehorende XData van het object
@@ -1386,7 +1385,7 @@ menu	Modify	Wijzigen
 	Smart Key=Value Columns	Slimme Key=Value kolommen
 	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Splits 'KEY=VALUE' of 'Key: Value' in losse bewerkbare Key- en Value-velden
 	This object currently has no user XData.	Dit object heeft momenteel geen gebruikers-XData.
-	+ Create Lumi_KLIC Application	+ Lumi_KLIC applicatie aanmaken
+	+ Create CAD_XDATA Application	+ CAD_XDATA applicatie aanmaken
 	DXF Code	DXF-code
 	Property / Key ⇔	Property / Key ⇔
 	Value (Selectable & Editable) ⇔	Value (Selecteerbaar & Bewerkbaar) ⇔
@@ -1610,13 +1609,9 @@ menu	Modify	Wijzigen
 	Error	Fout
 	Font	Lettertype
 	Save Layout as Template	Lay-out opslaan als sjabloon
-
-
-	Save changes to block "{name}"?	Wijzigingen opslaan in blok "{name}"?
+	Oops	Verwijderde objecten herstellen
 	Backup copy	Reservekopie
 	Create backup copy with each save	Maak een reservekopie bij elk opslaan
-	New AppID (e.g. CAD_XDATA)	Nieuwe AppID (bijv. CAD_XDATA)
-	+ Create CAD_XDATA Application	+ CAD_XDATA applicatie aanmaken
 	Enter angle of xline (0)	Voer hoek van constructielijn in (0)
 	Enter delta length	Voer deltalengte in
 	Multiple Insert	Meervoudig invoegen
@@ -1628,6 +1623,7 @@ menu	Modify	Wijzigen
 	Specify helix height	Geef spiraalhoogte op
 	Specify top radius	Geef bovenstraal op
 	Specify total length	Geef totale lengte op
+	Save changes to block "{name}"?	Wijzigingen in blok "{name}" opslaan?
 	Find All	Alles zoeken
 	Find what:	Zoeken naar:
 	Match case	Hoofdlettergevoelig
@@ -1640,13 +1636,34 @@ menu	Modify	Wijzigen
 	Text to find	Te zoeken tekst
 	Whole words	Hele woorden
 	Nothing found	Niets gevonden
-	Change	Wijzigen
-	Clip Xref	Xref bijsnijden
-	DView	DWeergave
-	Raster Images	Rasterafbeeldingen
-	Units	Eenheden
-	Xref	Externe referentie
-	Xref Clip Frame	Xref-bijsnijdkader
 	Ctrl+Enter to apply	Ctrl+Enter om toe te passen
 	Edit Text	Tekst bewerken
 	The drawing changed. Close the window and open it again.	De tekening is gewijzigd. Sluit het venster en open het opnieuw.
+	Import…	Importeren…
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Importeren: er is hier geen bestandsdialoog; voer ALIASEDIT uit met de inhoud van het bestand in de parameter text.
+	{n} more warnings; see the command line.	Nog {n} waarschuwingen; zie de opdrachtregel.
+	Alias files (PGP)	Aliasbestanden (PGP)
+	Keyboard Shortcuts...	Sneltoetsen...
+	Keyboard Shortcuts	Sneltoetsen
+	Replaces the shortcut of {commands}	Vervangt de sneltoets van {commands}
+	Needs Ctrl, Alt or a function key	Vereist Ctrl, Alt of een functietoets
+	Press the keys	Druk op de toetsen
+	Back to CADCraft's shortcut	Terug naar de sneltoets van CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Een zelfgekozen sneltoets heeft voorrang op die van CADCraft. Wijzigingen gelden direct en blijven bewaard.
+	Right-Click Customization...	Rechtermuisknop aanpassen...
+	Right-Click Customization	Rechtermuisknop aanpassen
+	Turn on time-sensitive right-click	Tijdsafhankelijke rechtermuisklik inschakelen
+	Longer click duration:	Duur van langere klik:
+	milliseconds	milliseconden
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Tijdens een opdracht is een korte klik Enter en opent een langere klik het snelmenu.
+	Default Mode	Standaardmodus
+	No objects selected and no command running:	Geen objecten geselecteerd en geen actieve opdracht:
+	Edit Mode	Bewerkmodus
+	Objects selected and no command running:	Objecten geselecteerd en geen actieve opdracht:
+	Repeat last command	Laatste opdracht herhalen
+	Shortcut Menu	Snelmenu
+	Command Mode	Opdrachtmodus
+	While a command runs:	Tijdens een actieve opdracht:
+	ENTER	ENTER
+	Shortcut Menu: always enabled	Snelmenu: altijd ingeschakeld
+	Shortcut Menu: enabled when command options are present	Snelmenu: ingeschakeld wanneer opdrachtopties beschikbaar zijn
