@@ -370,6 +370,39 @@ fn a_saved_underlay_reopens_at_its_size_and_finds_its_pdf_beside_the_drawing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A relative path given to PDFATTACH is from the drawing's folder. A drawing without a file has
+/// none, so the path is refused with what to do, typed or not, instead of being read from the
+/// folder CADCraft was started in.
+#[test]
+fn a_relative_path_is_from_the_drawings_folder_and_needs_a_saved_drawing() {
+    hooks();
+    real_io();
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let e = s.execute("pdfattach", &json!({"path": "sub/Relative.pdf"})).unwrap_err().to_string();
+    assert!(e.contains("save the drawing first, or give a full path"), "{e}");
+    s.cmdline("pdfattach").unwrap();
+    s.cmdline("sub/Relative.pdf").unwrap();
+    assert!(s.running.is_some(), "asked again");
+    assert!(s.log.iter().any(|l| l.contains("save the drawing first")), "{:?}", s.log);
+    s.cancel();
+
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-relative-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let pdf = dir.join("sub").join("Relative.pdf");
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    s.execute("saveas", &json!({"path": dir.join("Host.dxf").to_string_lossy()})).unwrap();
+    let r = s.execute("pdfattach", &json!({"path": "sub/Relative.pdf"})).unwrap();
+    assert_eq!(r["path"], pdf.to_string_lossy().as_ref(), "stored as the full path it names");
+    s.cmdline("pdfattach").unwrap();
+    for line in ["sub/Relative.pdf", "", "", "", ""] {
+        s.cmdline(line).unwrap();
+    }
+    assert!(s.running.is_none());
+    assert_eq!(the_underlay(&s).path, pdf.to_string_lossy());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn pdfattach_typed_asks_page_point_scale_and_rotation() {
     hooks();
