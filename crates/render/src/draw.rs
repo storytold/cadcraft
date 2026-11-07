@@ -66,9 +66,6 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if !visible {
         return;
     }
-    if let EntityKind::PdfUnderlay(u) = &e.kind {
-        underlay_page(b, ctx, e.handle, u);
-    }
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
     }
@@ -236,7 +233,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
-        EntityKind::PdfUnderlay(u) => underlay_frames(b, ctx, u).iter().for_each(|pts| stroke(b, pts)),
+        // The page, then its frame over it.
+        EntityKind::PdfUnderlay(u) => {
+            underlay_page(b, ctx, e.handle, u);
+            underlay_frames(b, ctx, u).iter().for_each(|pts| stroke(b, pts));
+        }
         kind => {
             for prim in kind.prims() {
                 match prim {
