@@ -207,6 +207,9 @@ fn assert_additional_locale_aliases() {
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("zh", &["zh", "zh-CN"]),
+        // Norwegian is reported as nb by Windows/macOS/browsers and as no (or nn for
+        // Nynorsk) by POSIX; all three select the same Bokmål catalog.
+        ("nb", &["nb", "nb-NO", "nb_NO.UTF-8", "NB-no", " nb-NO ", "no", "no-NO", "no_NO.UTF-8", "nn", "nn-NO"]),
     ] {
         for tag in tags {
             assert_eq!(locale_language(tag), Some(code), "{tag}");
@@ -280,6 +283,16 @@ fn locale_and_saved_preference_resolution() {
     }
     assert!(serde_json::from_str::<Preference>("\"unsupported\"").is_err());
     assert_eq!(serde_json::from_value::<crate::UiState>(json!({})).unwrap().interface_language, Preference::Auto);
+}
+
+#[test]
+fn norwegian_preference_round_trips_through_its_code() {
+    assert_eq!(Preference::parse("nb"), Some(Preference::Norwegian));
+    assert_eq!(Preference::Norwegian.code(), "nb");
+    assert_eq!(Preference::Norwegian.name(), "Norsk");
+    assert_eq!(Preference::Norwegian.resolve(&[]), "nb");
+    assert_eq!(Preference::Norwegian.resolve(&["en-US".into()]), "nb");
+    assert_ne!(Preference::Norwegian, Preference::Auto);
 }
 
 #[test]
