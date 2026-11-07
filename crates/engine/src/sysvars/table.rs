@@ -65,6 +65,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),
     ("OFFSETERASE", Kind::Choice(&[0, 1]), Def::Int(0)),
     ("OFFSETLAYER", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // The width a new polyline starts at; PLINE's Width and Halfwidth answers set it.
+    ("PLINEWID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("POLYSIDES", Kind::Int(3, 1024), Def::Int(4)),
     ("PROJMODE", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     ("REVCLOUDARCLEN", Kind::Real { min: 0.0, strict: true }, Def::Units(0.5, 15.0)),
