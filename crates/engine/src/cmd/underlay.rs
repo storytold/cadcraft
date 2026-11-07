@@ -88,14 +88,12 @@ pub fn turn_lightness(rgba: &mut [u8]) {
 pub fn read_pdf(path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::io::Read;
-        let f = std::fs::File::open(path).map_err(|e| bad("pdfattach", format!("{path}: {e}")))?;
-        let mut bytes = Vec::new();
-        f.take(MAX_PDF_BYTES.saturating_add(1)).read_to_end(&mut bytes).map_err(|e| bad("pdfattach", format!("{path}: {e}")))?;
-        if bytes.len() as u64 > MAX_PDF_BYTES {
-            return Err(bad("pdfattach", format!("{path}: the file is larger than {} MB", MAX_PDF_BYTES / (1024 * 1024))));
-        }
-        Ok(bytes)
+        // A pipe or a device is refused without waiting on it, and no more than the cap is read.
+        let cap = usize::try_from(MAX_PDF_BYTES).unwrap_or(usize::MAX);
+        crate::capped_read::read_capped(std::path::Path::new(path), cap).map_err(|e| match e.kind() {
+            std::io::ErrorKind::InvalidData => bad("pdfattach", format!("{path}: the file is larger than {} MB", MAX_PDF_BYTES / (1024 * 1024))),
+            _ => bad("pdfattach", format!("{path}: {e}")),
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -427,5 +425,39 @@ pub fn mm_per_unit(d: &Drawing) -> f64 {
         14 => 100.0,
         _ if d.header.i64("MEASUREMENT", 0) == 1 => 1.0,
         _ => 25.4,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_pdf;
+
+    /// A folder is refused as not a regular file.
+    #[test]
+    fn a_folder_is_not_read_as_a_pdf() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-pdf-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = read_pdf(&dir.to_string_lossy()).unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    /// A named pipe with no writer is refused at once instead of blocking the app, and an endless
+    /// device is refused before anything is buffered.
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_or_a_device_is_refused_at_once() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-pdf-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("plan.pdf");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let started = std::time::Instant::now();
+        let err = read_pdf(&fifo.to_string_lossy()).unwrap_err().to_string();
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("not a regular file"), "{err}");
+        if std::path::Path::new("/dev/zero").exists() {
+            assert!(read_pdf("/dev/zero").is_err());
+        }
     }
 }
