@@ -806,6 +806,10 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
                 let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
+                if app.canvas.snap.is_none() && context.xf.cam.is_edge_on_xy() {
+                    app.session.echo("Cannot place an unconstrained point on the XY plane in an edge-on view; snap to an object, enter coordinates, or orbit the view.");
+                    continue;
+                }
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
                     None => app.session.input(Input::Point(w)),
@@ -955,12 +959,19 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
-            let result = match app.canvas.snap {
-                Some(hit) => app.session.input_snapped(hit),
-                None => app.session.input(Input::Point(p)),
-            };
-            if let Err(e) = result {
-                app.session.echo(e.to_string());
+            let point_prompt = app.session.current_prompt().is_some_and(|pr| cadcraft_engine::pointmod::accepts(&pr))
+                && app.session.pending_window.is_none()
+                && !app.session.realtime_zoom_active();
+            if point_prompt && app.canvas.snap.is_none() && xf.cam.is_edge_on_xy() {
+                app.session.echo("Cannot place an unconstrained point on the XY plane in an edge-on view; snap to an object, enter coordinates, or orbit the view.");
+            } else {
+                let result = match app.canvas.snap {
+                    Some(hit) => app.session.input_snapped(hit),
+                    None => app.session.input(Input::Point(p)),
+                };
+                if let Err(e) = result {
+                    app.session.echo(e.to_string());
+                }
             }
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);

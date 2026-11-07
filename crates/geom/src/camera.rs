@@ -84,6 +84,21 @@ impl Camera3D {
             && (self.y.y - 1.0).abs() < 1e-6
     }
 
+    /// Apply a 2D plan-view `twist` (radians counterclockwise) when in Top plan view.
+    pub fn with_twist(self, twist: f64) -> Self {
+        if self.is_top_plan() && twist != 0.0 && twist.is_finite() {
+            self.roll_in_plane(-twist.to_degrees())
+        } else {
+            self
+        }
+    }
+
+    /// True when the camera's viewing direction is nearly parallel to the world XY plane (`|z.z| <= 1e-2`),
+    /// such as in Front, Back, Left or Right views.
+    pub fn is_edge_on_xy(&self) -> bool {
+        self.z.z.abs() <= 1e-2
+    }
+
     /// True when looking along one of the 6 principal world axes (+/-X, +/-Y, +/-Z).
     pub fn is_orthogonal(&self) -> bool {
         self.z.x.abs().max(self.z.y.abs()).max(self.z.z.abs()) > 0.999
@@ -309,16 +324,24 @@ impl Camera3D {
     }
 
     /// Intersect a camera ray through camera-plane offset `uv` with the world XY plane (`Z = 0`),
-    /// ported from MATCAD `intersectRayPlane.m`. Falls back to in-plane projection when viewing edge-on.
-    pub fn unproject_to_xy(&self, uv: Vec2, center: Vec2) -> Vec2 {
+    /// returning `None` in edge-on views (`|z.z| <= 1e-2`) where rays are parallel to the XY plane.
+    pub fn try_unproject_to_xy(&self, uv: Vec2, center: Vec2) -> Option<Vec2> {
+        if self.is_edge_on_xy() {
+            return None;
+        }
         let target = Vec3::new(center.x, center.y, 0.0);
         let ray_o = target + self.x * uv.x + self.y * uv.y - self.z * 100.0;
-        if self.z.z.abs() > 1e-2
-            && let Some(hit) = intersect_ray_plane(ray_o, self.z, target, Vec3::Z)
-        {
-            return hit.xy();
+        intersect_ray_plane(ray_o, self.z, target, Vec3::Z).map(Vec3::xy)
+    }
+
+    /// Intersect a camera ray through camera-plane offset `uv` with the world XY plane (`Z = 0`),
+    /// ported from MATCAD `intersectRayPlane.m`. Falls back to in-plane projection when viewing edge-on.
+    pub fn unproject_to_xy(&self, uv: Vec2, center: Vec2) -> Vec2 {
+        if let Some(hit) = self.try_unproject_to_xy(uv, center) {
+            return hit;
         }
         // Edge-on view (Front/Back/Left/Right): map directly onto the active horizontal/vertical axes.
+        let target = Vec3::new(center.x, center.y, 0.0);
         let p = target + self.x * uv.x + self.y * uv.y;
         Vec2::new(p.x, p.y)
     }

@@ -241,7 +241,7 @@ fn hit_beveled_cube(center: Pos2, cam: &Camera3D, p: Pos2) -> Option<&'static st
 /// Paint the 3D Beveled ViewCube, rotating compass ring, roll buttons, directional triangles
 /// and Home button, and handle clicks and orbit drags.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
-    let cam = app.session.state().map(|st| st.camera).unwrap_or_default();
+    let cam = app.session.state().map(|st| st.camera.with_twist(st.view().twist)).unwrap_or_default();
     let resp = ui.interact(l.bounds, ui.scope_id().with("viewcube"), Sense::click_and_drag());
     let part = resp.hover_pos().and_then(|p| l.part_at_cam(p, &cam));
     let p = ui.painter_at(l.bounds.union(l.pill));
@@ -550,7 +550,8 @@ fn directional_triangles(center: Pos2) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos
 }
 
 /// The 4 directional navigation triangles rotated with the active orthogonal cube face
-/// (ported from MATCAD `createViewCubeGraphics.m` & `synchronize_viewcube.m`).
+/// (and any active plan-view twist via `Camera3D::with_twist`), ported from MATCAD
+/// `createViewCubeGraphics.m` & `synchronize_viewcube.m`.
 fn directional_triangles_for_cam(center: Pos2, cam: &Camera3D) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos2; 3]) {
     let face = match cam.view_name() {
         "Bottom" => "bottom",

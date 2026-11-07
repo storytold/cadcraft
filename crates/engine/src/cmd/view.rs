@@ -317,7 +317,8 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
     let daz = f64_or(p, "daz", 0.0);
     let del = f64_or(p, "del", 0.0);
     let clamp = bool_or(p, "clamp", true);
-    st.camera = st.camera.orbit(daz, del, clamp);
+    let base_cam = st.camera.with_twist(st.view().twist);
+    st.camera = base_cam.orbit(daz, del, clamp);
     ok()
 }
 
@@ -326,10 +327,11 @@ fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
     let angle = f64_or(p, "angle", 90.0);
     let in_plane = bool_or(p, "inPlane", false);
     let st = s.state_mut()?;
+    let base_cam = st.camera.with_twist(st.view().twist);
     st.camera = if in_plane {
-        st.camera.roll_in_plane(angle)
+        base_cam.roll_in_plane(angle)
     } else {
-        st.camera.roll_world_z(angle)
+        base_cam.roll_world_z(angle)
     };
     ok()
 }
@@ -360,7 +362,8 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             "right" | "e" => "right",
             _ => return Err(bad("view.set", "unknown neighbor direction")),
         };
-        new_cam = Some(s.state()?.camera.orthogonal_neighbor(dir));
+        let st = s.state()?;
+        new_cam = Some(st.camera.with_twist(st.view().twist).orthogonal_neighbor(dir));
     }
     if let Some(preset) = str_param(p, "preset") {
         new_cam = Some(cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?);
