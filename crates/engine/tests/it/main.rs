@@ -86,6 +86,7 @@ mod minsert;
 mod mirror_degenerate_line;
 mod mleader_content;
 mod mleader_remember;
+mod mleader_text_edit;
 mod mline;
 mod mocoro;
 mod modify_curves;
