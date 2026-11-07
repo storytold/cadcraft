@@ -55,16 +55,15 @@ pub struct Xf {
 }
 
 impl Xf {
-    /// A world offset from `center` in the screen's frame (y up): turned by the twist.
+    /// A world offset from `center` in the screen's frame (y up): turned by the 3D camera or view twist.
     fn turn(&self, v: Vec2) -> Vec2 {
+        if !self.cam.is_top_plan() {
+            return self.cam.project_xy(v, Vec2::ZERO);
+        }
         if self.twist == 0.0 { v } else { v.rotate(self.twist) }
     }
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
-        if !self.cam.is_top_plan() {
-            let uv = self.cam.project_xy(p, self.center);
-            return pos2(c.x + (uv.x * self.scale) as f32, c.y - (uv.y * self.scale) as f32);
-        }
         let q = self.turn(p - self.center);
         pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
@@ -78,22 +77,24 @@ impl Xf {
     }
     /// The world offset a screen offset `d` (points, y down) covers: a pan moves the view by it.
     pub fn screen_delta_to_world(&self, d: egui::Vec2) -> Vec2 {
+        if !self.cam.is_top_plan() {
+            if self.cam.z.z.abs() > 0.15 {
+                let c = self.rect.center();
+                return self.to_world(c + d) - self.center;
+            }
+            let du = f64::from(d.x) / self.scale;
+            let dv = -f64::from(d.y) / self.scale;
+            return (self.cam.x * du + self.cam.y * dv).xy();
+        }
         let q = Vec2::new(f64::from(d.x) / self.scale, -f64::from(d.y) / self.scale);
         if self.twist == 0.0 { q } else { q.rotate(-self.twist) }
     }
     /// The world box holding everything on screen (in a twisted view, the box of the rect's
-    /// four corners).
+    /// four corners; in a 3D view, the rotation-invariant camera volume box around `center`).
     pub fn world_bounds(&self) -> Bounds2 {
         if !self.cam.is_top_plan() {
-            let mut b = Bounds2::from_points([
-                self.to_world(self.rect.left_bottom()),
-                self.to_world(self.rect.right_bottom()),
-                self.to_world(self.rect.right_top()),
-                self.to_world(self.rect.left_top()),
-            ]);
-            let half = f64::from(self.rect.width().hypot(self.rect.height())) / self.scale.max(1e-12);
-            b = b.union(&Bounds2::new(self.center - Vec2::new(half, half), self.center + Vec2::new(half, half)));
-            return b;
+            let half = f64::from(self.rect.width().hypot(self.rect.height())) * 0.75 / self.scale.max(1e-12);
+            return Bounds2::new(self.center - Vec2::new(half, half), self.center + Vec2::new(half, half));
         }
         let r = self.rect;
         Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|p| self.to_world(p)))
@@ -101,26 +102,12 @@ impl Xf {
     /// The GPU transform ([`crate::gpu::CanvasCallback::xform`]) that draws vertex data built at
     /// `origin`, moved by `m` (a drag; [`Mat3::IDENTITY`] for the drawing), in this view: the
     /// shader takes `L·p + e + (origin − center)` to the screen frame, which must be
-    /// `R(m(origin + p) − center)` with `R` the twist, so `L = R·m` and
+    /// `R(m(origin + p) − center)` with `R` the twist/camera projection, so `L = R·m` and
     /// `e = R(m(origin) − center) − (origin − center)`.
     pub(crate) fn gpu_xform(&self, origin: Vec2, m: Mat3) -> [f32; 6] {
-        if !self.cam.is_top_plan() {
-            return [
-                self.cam.x.x as f32, self.cam.y.x as f32,
-                self.cam.x.y as f32, self.cam.y.y as f32,
-                0.0, 0.0,
-            ];
-        }
         let (a, b) = (self.turn(Vec2::new(m.a, m.b)), self.turn(Vec2::new(m.c, m.d)));
         let e = self.turn(m.apply(origin) - self.center) - (origin - self.center);
         [a.x as f32, a.y as f32, b.x as f32, b.y as f32, e.x as f32, e.y as f32]
-    }
-    pub(crate) fn gpu_offset(&self, origin: Vec2) -> [f32; 2] {
-        if !self.cam.is_top_plan() {
-            let uv = self.cam.project_xy(origin, self.center);
-            return [uv.x as f32, uv.y as f32];
-        }
-        [(origin.x - self.center.x) as f32, (origin.y - self.center.y) as f32]
     }
 }
 
@@ -396,18 +383,8 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
                 && let Ok(st) = app.session.state_mut()
             {
                 let view = st.view();
-                let world_delta = if nav.xf.cam.is_top_plan() {
-                    nav.xf.screen_delta_to_world(at - last)
-                } else if nav.xf.cam.z.z.abs() > 0.15 {
-                    nav.xf.to_world(at) - nav.xf.to_world(last)
-                } else {
-                    let delta = at - last;
-                    let du = f64::from(delta.x) / nav.xf.scale;
-                    let dv = -f64::from(delta.y) / nav.xf.scale;
-                    (nav.xf.cam.x * du + nav.xf.cam.y * dv).xy()
-                };
                 st.set_view_quiet(cadcraft_engine::View {
-                    center: view.center - world_delta,
+                    center: view.center - nav.xf.screen_delta_to_world(at - last),
                     height: view.height,
                     twist: view.twist,
                 });

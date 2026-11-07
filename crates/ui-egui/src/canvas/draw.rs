@@ -186,17 +186,18 @@ pub(super) fn draw_highlight_gpu(
         *hl_key = Some(key);
         *hl_origin = origin;
     }
+    let o = *hl_origin;
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
         crate::gpu::CanvasCallback {
             key,
             slot: hl_slot.clone(),
-            offset: xf.gpu_offset(*hl_origin),
+            offset: [(o.x - xf.center.x) as f32, (o.y - xf.center.y) as f32],
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_HIGHLIGHT,
-            xform: xf.gpu_xform(*hl_origin, Mat3::IDENTITY),
+            xform: xf.gpu_xform(o, Mat3::IDENTITY),
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
         },
@@ -256,7 +257,7 @@ pub(super) fn draw_drag_gpu(
         crate::gpu::CanvasCallback {
             key,
             slot: c.drag_slot.clone(),
-            offset: xf.gpu_offset(o),
+            offset: [(o.x - xf.center.x) as f32, (o.y - xf.center.y) as f32],
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
@@ -293,17 +294,18 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_ms = crate::now_ms() - t0;
     }
     super::images::draw(p, xf, list);
+    let o = c.mesh_origin;
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
         crate::gpu::CanvasCallback {
             key,
             slot: c.mesh_slot.clone(),
-            offset: xf.gpu_offset(c.mesh_origin),
+            offset: [(o.x - xf.center.x) as f32, (o.y - xf.center.y) as f32],
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAWING,
-            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
+            xform: xf.gpu_xform(o, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
