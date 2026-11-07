@@ -348,7 +348,8 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
     };
     let memo = retained_objects(&objects, &ents, &ids, &by_handle, root.as_deref(), &root_entries, &xdict_of);
-    let mut f = Foreign::default();
+    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
+    let mut f = Foreign { appids: appids.take(MAX_OBJECTS).collect(), ..Foreign::default() };
     let mut kept: HashSet<String> = HashSet::new();
     for (i, (kind, _, t)) in objects.iter().enumerate() {
         if memo.get(&i) != Some(&true) || f.objects.len() >= MAX_OBJECTS {
@@ -991,7 +992,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         }
         record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
     }
-    add_appids(&mut out);
+    add_appids(&mut out, &f.appids);
     let top = max_handle(&out).saturating_add(1);
     if let Some(t) = seed_index(&out).and_then(|i| out.get_mut(i))
         && Handle::parse_hex(&t.str()).is_none_or(|h| h.0 < top)
@@ -1201,9 +1202,13 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
     }
 }
 
-/// APPID records for every application with xdata in the file, added to the APPID table.
-fn add_appids(out: &mut Vec<Tag>) {
-    let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+/// APPID records for every application with xdata in the file and every one the file read had
+/// (`kept`), added to the APPID table.
+fn add_appids(out: &mut Vec<Tag>, kept: &[String]) {
+    let mut used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+    for name in kept.iter().filter(|n| !n.is_empty()) {
+        used.entry(up(name)).or_insert_with(|| name.clone());
+    }
     let recs = written_records(out);
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
