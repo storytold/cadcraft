@@ -15,8 +15,11 @@
 //! - `ui.click {x, y, shift?, ctrl?}`, `ui.move {x, y}`: real egui pointer input in screen points
 //! - `ui.key {key, cmd?, shift?, alt?}`, `ui.text {text}`: synthetic keyboard input
 //! - `ui.set {...UiState fields}`, `ui.resize {width, height}`
-//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?}`: headless
-//!   render of the drawing (no window needed; fits the drawing unless `fit` is false; replies `pngBase64`)
+//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?, window?,
+//!   background?, plot_style?}`: headless render of the drawing (no window needed; fits the drawing
+//!   unless `fit` is false or a `window` is given; on the dark canvas unless `background` is
+//!   `white`, `paper` or `#rrggbb`; `plot_style` names a plot style table, which plots on white
+//!   unless `background` is given, or is `none`; replies `pngBase64`)
 //! - `app.open {path}`, `app.save {path?}`, `app.quit`
 //! - `control.methods`: this list, with params and a description; `ping`: replies `"pong"`
 
@@ -211,7 +214,7 @@ const METHODS: &[(&str, &str, &str)] = &[
     ("ui.resize", "{width, height}", "Resize the window."),
     ("ui.focus", "", "Activate the native window."),
     ("ui.screenshot", "{path?}", "PNG of the window (needs a presented frame)."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Headless render of the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?, window?, background?, plot_style?}", "Headless render of the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("app.quit", "", "Quit without the unsaved-changes prompt."),
@@ -453,7 +456,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 }
             }
             match serde_json::from_value::<crate::UiState>(cur) {
-                Ok(u) => {
+                Ok(mut u) => {
+                    // Shortcuts are checked as the preferences check them.
+                    u.shortcuts = crate::keys::from_prefs(&json!(u.shortcuts));
                     if let Err(error) = crate::docking::validate(&u.docking) {
                         return err(error);
                     }
@@ -475,7 +480,17 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Ok(st) = app.session.state() else { return err("no drawing") };
             // `window`: just that area, at the size given or matching its shape.
             let window = render_window(p);
-            let opts = cadcraft_render::Options { view: window, transparency: app.session.settings.transparency_display, ..Default::default() };
+            // `background` and `plot_style` (#803), read as the headless MCP backend reads them.
+            let look = match cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p) {
+                Ok(look) => look,
+                Err(e) => return err(e),
+            };
+            let opts = cadcraft_render::Options {
+                view: window,
+                transparency: app.session.settings.transparency_display,
+                plot_style_table: look.plot_style_table.clone(),
+                ..Default::default()
+            };
             let list = cadcraft_render::build(&st.doc, &st.space, &opts);
             let v = st.view();
             let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
@@ -484,7 +499,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 None => render_view(&list.bounds, v.center, v.height, fit, w, h),
             };
             let (w, h) = (view.width, view.height);
-            let Some(png) = cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()) else {
+            let Some(png) = cadcraft_render::raster::render_png(&list, &view, &look.raster()) else {
                 return err("render failed");
             };
             #[cfg(not(target_arch = "wasm32"))]
@@ -833,5 +848,68 @@ mod tests {
         assert_eq!(r["truncated"], false);
         assert!(render_reply(b"abc", 7, 5, None, true).get("path").is_none());
         assert_eq!(render_reply(b"abc", 7, 5, None, true)["truncated"], true);
+    }
+
+    /// The reply to a `ui.render` request in an app showing one line along y = 0: colour 7, or
+    /// red on a red layer.
+    fn render_line(red: bool, params: Value) -> Value {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.session.new_drawing(false);
+        if red {
+            app.session.execute("layer.new", &json!({"name": "Red", "color": "red", "current": true})).unwrap();
+        }
+        app.session.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        let (req, _rx) = ControlRequest::new("ui.render", params);
+        match handle(&mut app, &egui::Context::default(), &req) {
+            Outcome::Done(v) => v,
+            Outcome::Screenshot { .. } => panic!("ui.render must not take a screenshot"),
+        }
+    }
+
+    /// The RGB of a reply's corner pixel and of its middle column's darkest pixel.
+    fn corner_and_darkest(reply: &Value) -> ([u8; 3], [u8; 3]) {
+        let png = cadcraft_engine::cmd::file::base64_decode(reply["result"]["pngBase64"].as_str().unwrap_or_default()).unwrap();
+        let img = image::load_from_memory(&png).unwrap().to_rgb8();
+        let corner = img.get_pixel(0, 0).0;
+        let darkest = (0..img.height()).map(|y| img.get_pixel(img.width() / 2, y).0).min_by_key(|p| p.iter().map(|&c| u32::from(c)).sum::<u32>());
+        (corner, darkest.unwrap_or_default())
+    }
+
+    /// Guards #803 in the app: `ui.render` takes `background` and `plot_style` as the headless MCP
+    /// backend does (colour 7 drawn dark on white, a red line black with `monochrome.ctb`, white
+    /// by default with a plot style), keeps the dark canvas by default and refuses unknown values.
+    #[test]
+    fn render_takes_a_background_and_a_plot_style() {
+        // The line runs along the middle of pixel row 20 of the 120 x 40 image.
+        let window = json!([[-1.0, -1.95], [11.0, 2.05]]);
+        let render = |red: bool, mut p: Value| {
+            p["window"] = window.clone();
+            p["width"] = json!(120);
+            p["height"] = json!(40);
+            let r = render_line(red, p.clone());
+            assert_eq!(r["ok"], true, "{p}: {}", r["error"]);
+            corner_and_darkest(&r)
+        };
+        assert_eq!(render(false, json!({})).0, [33, 40, 48], "the default stays the dark canvas");
+        let (corner, ink) = render(false, json!({"background": "white"}));
+        assert_eq!(corner, [255, 255, 255]);
+        assert!(ink.iter().all(|&c| c < 128), "colour 7 is drawn dark on white: {ink:?}");
+        // A red line stays red without a plot style and plots black with monochrome.ctb, on white
+        // unless `background` says otherwise.
+        let (_, [r, g, b]) = render(true, json!({"background": "paper"}));
+        assert!(r > 200 && g < 100 && b < 100, "red without a plot style: {:?}", [r, g, b]);
+        for (p, bg) in [
+            (json!({"plot_style": "monochrome.ctb"}), [255, 255, 255]),
+            (json!({"plot_style": "monochrome.ctb", "background": "#336699"}), [0x33, 0x66, 0x99]),
+        ] {
+            let (corner, [r, g, b]) = render(true, p.clone());
+            assert_eq!(corner, bg, "{p}");
+            assert!(r < 100 && r == g && g == b, "{p}: red plots black: {:?}", [r, g, b]);
+        }
+        for p in [json!({"background": "purple"}), json!({"background": 7}), json!({"plot_style": "nope.ctb"})] {
+            let r = render_line(false, p.clone());
+            assert_eq!(r["ok"], false, "{p} must be refused");
+            assert!(r.get("result").is_none(), "{p}");
+        }
     }
 }
