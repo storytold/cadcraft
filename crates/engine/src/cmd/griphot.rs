@@ -275,6 +275,7 @@ impl GripEdit {
                 let m = self.matrix(p);
                 self.edit(s, p, m)
             }
+            Input::Point3(_) => Err(other("Grip editing does not accept a 3D point.")),
             Input::Deferred(d) => {
                 let m = self.matrix(d.at);
                 self.edit(s, d.at, m)
