@@ -20,7 +20,7 @@ impl CycleList {
 /// A click while selection cycling's list is open picks the row under it (anywhere else just
 /// closes the list); otherwise a click over overlapping objects that a pick would choose between
 /// opens the list (SELECTIONCYCLING 2). True when the click was used up here.
-pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world: Option<Vec2>, shift: bool) -> bool {
+pub(super) fn cycle_click(app: &mut CadApp, ctx: &egui::Context, xf: &Xf, hover: Option<Pos2>, world: Option<Vec2>, shift: bool) -> bool {
     // Only where a click picks objects; a click that places a point goes through.
     let picks = app.session.click_picks();
     if let Some((_, hs, i)) = app.canvas.hover_cycle.take()
@@ -40,7 +40,8 @@ pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world:
         return true;
     }
     let (Some(hp), Some(w)) = (hover, world) else { return false };
-    if crate::dyngrips::at(app, xf, hover).is_some() || grip_at(app, xf, hover).is_some() {
+    // Grips, and the Block Editor's parameters, actions and their grips, take the click first.
+    if crate::dyngrips::at(app, xf, hover).is_some() || grip_at(app, xf, hover).is_some() || super::blockedit::target(app, ctx, xf, hover).is_some() {
         return false;
     }
     let hs = app.session.cycling_candidates(w);
