@@ -152,6 +152,19 @@ fn fit_spline(s: &mut Session) -> String {
 }
 
 #[test]
+fn close_gives_a_closed_fit_its_own_tangent() {
+    // SPLINEDIT Close refits the fit points closed: the open ends' tangents don't carry over, the
+    // closed curve takes its own where it closes, as SPLINE ... Close builds it.
+    let mut s = Session::new();
+    let fit = json!([[0, 0], [4, 0], [6, 3], [1, 4]]);
+    let sp = h(&s.execute("spline", &json!({ "fit": fit, "startTangent": [0, 1] })).unwrap());
+    s.execute("splinedit", &json!({ "handle": sp, "option": "close" })).unwrap();
+    let closed = spline(&s, &sp);
+    let own = h(&s.execute("spline", &json!({ "fit": fit, "closed": true })).unwrap());
+    assert_eq!(closed, spline(&s, &own));
+}
+
+#[test]
 fn fit_data_options_at_the_command_line() {
     let mut s = Session::new();
     let sp = fit_spline(&mut s);
@@ -281,9 +294,10 @@ fn control_edits_drop_fit_data_and_keep_closed_splines_closed() {
     let x = spline(&s, &sp);
     assert!(x.fit.is_empty() && x.control[1] == Vec2::new(1.0, 5.0));
 
-    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true })).unwrap());
+    // Control points that wrap round (uniform knots): the first `degree` repeat at the end.
+    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true, "knots": "uniform" })).unwrap());
     let before = spline(&s, &c);
-    assert!(before.is_periodic());
+    assert!(before.wraps() && before.is_periodic());
     let u = before.control.len() - before.degree;
     s.execute("splinedit", &json!({ "handle": c, "option": "vertexmove", "index": 0, "to": [-1, -1] })).unwrap();
     let x = spline(&s, &c);
@@ -297,6 +311,23 @@ fn control_edits_drop_fit_data_and_keep_closed_splines_closed() {
     let (lo, hi) = x.domain();
     assert!(x.eval(lo).near(x.eval(hi), 1e-9), "still closed");
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 99 })).is_err());
+
+    // Clamped (chord-length knots, as AutoCAD 2024 builds a closed fit spline): only the first
+    // control point repeats, at the end. Moving it leaves a corner where the curve closes.
+    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true })).unwrap());
+    let before = spline(&s, &c);
+    assert!(before.is_periodic() && !before.wraps());
+    let last = before.control.len() - 1;
+    s.execute("splinedit", &json!({ "handle": c, "option": "vertexmove", "index": 0, "to": [-1, -1] })).unwrap();
+    let x = spline(&s, &c);
+    assert_eq!((x.control[0], x.control[last]), (Vec2::new(-1.0, -1.0), Vec2::new(-1.0, -1.0)), "both ends move");
+    assert!(x.closed && !x.is_periodic(), "a corner where it closes");
+    s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 2 })).unwrap();
+    let x = spline(&s, &c);
+    assert!(x.is_valid() && x.closed && x.control.len() == before.control.len() - 1);
+    let (lo, hi) = x.domain();
+    assert!(x.eval(lo).near(x.eval(hi), 1e-9), "still closed");
+    assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 0 })).is_err(), "the start point stays");
 }
 
 /// Largest distance from samples of `a` to the curve `b` (a shape comparison).

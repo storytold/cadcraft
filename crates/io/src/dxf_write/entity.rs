@@ -207,20 +207,31 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
             let flags = 8 | i64::from(s.closed) | if s.is_periodic() { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
+            // AutoCAD 2024 rebuilds a spline with fit data from its fit points and end tangents,
+            // whatever its flags say. A closed one starts at its first fit point, has it again at
+            // the end and its tangent where it closes at both ends: without the point AutoCAD
+            // opens it, and without the tangents its ends are free. A closed spline without a
+            // stored tangent (periodic knots, a fit tolerance, a kink where it closes) gives the
+            // curve's own.
+            let closing = s.closed && s.fit.len() > 2 && !s.fit.first().zip(s.fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12));
             w.i(70, flags);
             w.i(71, s.degree as i64);
             w.i(72, s.knots.len() as i64);
             w.i(73, s.control.len() as i64);
-            w.i(74, s.fit.len() as i64);
+            w.i(74, (s.fit.len() + usize::from(closing)) as i64);
             w.f(42, 1e-10);
             w.f(43, 1e-10);
             // Fit data: tolerance and end tangents (the knot parametrisation is implied by the knots).
             if !s.fit.is_empty() {
                 w.f(44, s.fit_opts.tolerance);
-                if let Some(t) = s.fit_opts.start_tangent {
+                let (lo, hi) = s.domain();
+                let seam = |t: f64| Some(s.unit_tangent(t)).filter(|d| *d != Vec2::ZERO);
+                let (t0, t1) = (s.fit_opts.start_tangent, s.fit_opts.end_tangent);
+                let (t0, t1) = if s.closed { (t0.or_else(|| seam(lo)), t1.or_else(|| seam(hi))) } else { (t0, t1) };
+                if let Some(t) = t0 {
                     w.p(12, t.to3(0.0));
                 }
-                if let Some(t) = s.fit_opts.end_tangent {
+                if let Some(t) = t1 {
                     w.p(13, t.to3(0.0));
                 }
             }
@@ -233,7 +244,7 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                     w.f(41, *wt);
                 }
             }
-            for f in &s.fit {
+            for f in s.fit.iter().chain(s.fit.first().filter(|_| closing)) {
                 w.p(11, f.to3(0.0));
             }
         }
