@@ -426,22 +426,60 @@ fn given_points(p: &Value, cmd: &str) -> Result<Option<Vec<Vec2>>> {
 }
 
 fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
-    let (a, per) = if let Some(pts) = given_points(p, "area")? {
-        area_of(&pts)
+    let (a, per, around) = if let Some(pts) = given_points(p, "area")? {
+        let (a, per) = area_of(&pts);
+        (a, per, Around::Perimeter)
     } else {
         let h = targets(s, p)?.first().copied().ok_or_else(|| bad("area", "`points` or `handle` is required"))?;
-        object_area(s, h)?
+        let (a, per) = object_area(s, h)?;
+        (a, per, around_of(s, h))
     };
     if let Some(what) = too_large(a, per) {
         return Err(bad("area", format!("the {what} is too large")));
     }
     s.area = a;
     s.perimeter = per;
-    Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
+    Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per, around) }))
 }
 
-fn area_text(s: &Session, a: f64, per: f64) -> String {
-    format!("Area = {}, Perimeter = {}", fmt_d(s, a), fmt_d(s, per))
+/// What AREA calls the distance around what it measured (#2894), as AutoCAD's AREA help
+/// describes it. The figure is the same either way; only the word in the report changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Around {
+    /// A closed outline: a closed polyline or spline, a hatch, a region, or picked points.
+    Perimeter,
+    /// A circle or a full ellipse.
+    Circumference,
+    /// An open polyline or spline: the area is closed by a straight segment from its end back
+    /// to its start, but that segment isn't part of the length.
+    Length,
+}
+
+impl Around {
+    fn label(self) -> &'static str {
+        match self {
+            Around::Perimeter => "Perimeter",
+            Around::Circumference => "Circumference",
+            Around::Length => "Length",
+        }
+    }
+}
+
+/// How AREA names the distance around the object `h` (see [`Around`]). An object that isn't
+/// there, or that [`object_area`] doesn't measure, is a perimeter; the caller has already
+/// measured it, so this only picks the word.
+fn around_of(s: &Session, h: Handle) -> Around {
+    let Some(e) = s.doc().ok().and_then(|d| d.entity(h)) else { return Around::Perimeter };
+    match &e.kind {
+        EntityKind::Circle(_) | EntityKind::Ellipse(_) => Around::Circumference,
+        EntityKind::LwPolyline(pl) if !pl.closed => Around::Length,
+        EntityKind::Spline(sp) if !sp.closed => Around::Length,
+        _ => Around::Perimeter,
+    }
+}
+
+fn area_text(s: &Session, a: f64, per: f64, around: Around) -> String {
+    format!("Area = {}, {} = {}", fmt_d(s, a), around.label(), fmt_d(s, per))
 }
 
 /// MEASUREGEOM's Volume option: the area of a polygon of three or more points, or of a 2D object
@@ -1087,7 +1125,8 @@ impl AreaM {
                 for h in hs {
                     match object_area(s, h) {
                         Ok((a, per)) => {
-                            if self.measured(s, a, per) == Step::Done {
+                            let around = around_of(s, h);
+                            if self.measured(s, a, per, around) == Step::Done {
                                 return Step::Done;
                             }
                             // A single volume takes the first object with an area.
@@ -1137,7 +1176,8 @@ impl AreaM {
     /// Report an area (and the running total in add/subtract mode); ends the command in single mode.
     /// In volume mode the area waits for its height instead.
     /// An area, perimeter or total past f64's range is not reported or added to the total.
-    fn measured(&mut self, s: &mut Session, a: f64, per: f64) -> Step {
+    /// `around` names the distance around it in the report.
+    fn measured(&mut self, s: &mut Session, a: f64, per: f64, around: Around) -> Step {
         if self.volume {
             if !a.is_finite() {
                 s.echo("The area is too large.");
@@ -1151,7 +1191,7 @@ impl AreaM {
             s.echo(format!("The {what} is too large."));
             return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
-        s.echo(area_text(s, a, per));
+        s.echo(area_text(s, a, per, around));
         // AREA: this area, or in Add and Subtract mode the running total; PERIMETER: this area's.
         s.perimeter = per;
         if self.mode == AreaMode::Single {
@@ -1179,7 +1219,8 @@ impl AreaM {
         } else {
             area_of(&pts)
         };
-        self.measured(s, a, per)
+        // Picked points always close back to the first one.
+        self.measured(s, a, per, Around::Perimeter)
     }
 }
 
