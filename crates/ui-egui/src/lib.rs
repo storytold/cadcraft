@@ -51,6 +51,7 @@ pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
+pub mod keys;
 pub mod layers;
 pub mod managers;
 pub mod menus;
@@ -119,6 +120,8 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The user's keyboard shortcuts ([`keys`]).
+    pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
@@ -133,6 +136,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -205,12 +210,14 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -227,6 +234,8 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
 }
 
 pub struct CadApp {
@@ -490,6 +499,12 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
+        if !self.ui.shortcuts.is_empty() {
+            prefs["shortcuts"] = json!(self.ui.shortcuts);
+        }
         prefs.to_string()
     }
 
@@ -522,6 +537,12 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
+            self.ui.shortcuts = keys::from_prefs(keys);
         }
     }
 
