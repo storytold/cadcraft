@@ -116,6 +116,8 @@ fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => v.as_f64().filter(|r| r.is_finite()).ok_or_else(|| bad(ID, "`rotation` must be a number of degrees"))?,
     };
     let document = s.state().ok().and_then(|st| st.path.clone());
+    let file = chosen_file(path, document.as_deref())?;
+    let path = file.as_str();
     let stored = stored_path(path, document.as_deref(), str_param(p, "pathType").unwrap_or("full")).map_err(|e| bad(ID, e))?;
     let adjust = adjust_params(ID, p)?;
     let bytes = read_pdf(path)?;
@@ -166,6 +168,23 @@ fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
         "path": stored,
         "message": message,
     }))
+}
+
+/// The file of the PDF `path` given to PDFATTACH in the drawing saved at `document` (`None` for a
+/// drawing without a file): a relative path is from the drawing's folder. A drawing without a
+/// file has no folder, so a relative path is refused rather than read from the folder CADCraft
+/// was started in.
+pub fn chosen_file(path: &str, document: Option<&str>) -> Result<String> {
+    let given = std::path::Path::new(path);
+    if given.is_absolute() {
+        return Ok(path.to_string());
+    }
+    let dir = document.filter(|d| !d.is_empty()).map(std::path::Path::new).and_then(std::path::Path::parent);
+    let Some(dir) = dir else {
+        return Err(bad("pdfattach", format!("{path}: a relative path needs a saved drawing (save the drawing first, or give a full path)")));
+    };
+    let joined = dir.join(given);
+    Ok(std::path::absolute(&joined).unwrap_or(joined).to_string_lossy().to_string())
 }
 
 /// The path to store for the PDF `chosen` (a full path) in the drawing saved at `document`:
@@ -228,9 +247,11 @@ pub fn start_attach(s: &mut Session, preset: AttachPreset) -> Result<()> {
     r
 }
 
-/// The number of pages of the PDF at `path` (a path the user chose).
-pub fn pdf_pages(path: &str) -> Result<usize> {
+/// The number of pages of the PDF at `path` (a path the user chose, see [`chosen_file`]) in the
+/// drawing saved at `document`.
+pub fn pdf_pages(path: &str, document: Option<&str>) -> Result<usize> {
     let hooks = pdf().ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build"))?;
+    let path = &chosen_file(path, document)?;
     let bytes = read_pdf(path)?;
     (hooks.page)(&bytes, 1).map(|(n, ..)| n).map_err(|e| bad("pdfattach", format!("{path}: {e}")))
 }
@@ -272,8 +293,10 @@ impl AttachM {
         let mut m = AttachM { scale: 1.0, ..AttachM::default() };
         let Some(p) = s.attach_preset.clone() else { return m };
         let first = p.pages.first().copied().unwrap_or(1);
-        let Ok((pages, size)) = m.page_size(&p.path, first) else { return m };
-        m.path = p.path;
+        let document = s.state().ok().and_then(|st| st.path.clone());
+        let Ok(path) = chosen_file(&p.path, document.as_deref()) else { return m };
+        let Ok((pages, size)) = m.page_size(&path, first) else { return m };
+        m.path = path;
         m.pages = pages;
         m.size = size;
         m.page = first;
@@ -294,7 +317,15 @@ impl AttachM {
     }
     /// The file is chosen: read its page count and first page's size.
     fn file(&mut self, s: &mut Session, path: &str) -> Result<Step> {
-        let path = path.trim().trim_matches('"');
+        let document = s.state().ok().and_then(|st| st.path.clone());
+        let path = match chosen_file(path.trim().trim_matches('"'), document.as_deref()) {
+            Ok(p) => p,
+            Err(e) => {
+                s.echo(e.to_string());
+                return Ok(Step::Continue);
+            }
+        };
+        let path = path.as_str();
         match self.page_size(path, 1) {
             Ok((pages, size)) => {
                 self.path = path.to_string();
