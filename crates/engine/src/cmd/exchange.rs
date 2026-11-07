@@ -65,10 +65,6 @@ pub fn specs() -> Vec<CommandSpec> {
         })
         .params("not available yet")
         .noundo(),
-        CommandSpec::new("3dorbit", "Orbit", |_, _| Err(EngineError::Other("3DORBIT is not available yet: CADCraft draws in 2D (plan view) only".into())))
-            .alias(&["3do", "orbit"])
-            .params("not available yet")
-            .noundo(),
     ]
 }
 
@@ -925,9 +921,12 @@ mod tests {
     #[test]
     fn attach_share_and_orbit_say_they_are_not_available_yet() {
         let mut s = session();
-        for c in ["attach", "share", "3dorbit", "orbit"] {
+        for c in ["attach", "share"] {
             let e = s.execute(&resolve_alias(c), &Value::Null).unwrap_err().to_string();
             assert!(e.contains("not available yet"), "{c}: {e}");
+        }
+        for c in ["3dorbit", "orbit"] {
+            assert!(s.execute(&resolve_alias(c), &Value::Null).is_ok(), "{c} should succeed");
         }
     }
 }

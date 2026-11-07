@@ -336,6 +336,11 @@ fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Execute `view.set`: set a 3D camera preset, orthogonal neighbor, custom direction/up, or 2D center/height/twist.
 fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
+    let has_center = p.get("center").is_some();
+    let has_height = p.get("height").is_some();
+    if has_center != has_height {
+        return Err(bad("view.set", "center and height must be given together"));
+    }
     if let Some(neighbor) = str_param(p, "neighbor") {
         let dir = match neighbor.trim().to_ascii_lowercase().as_str() {
             "top" | "up" | "n" => "top",

@@ -232,8 +232,9 @@ pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Po
             cadcraft_geom::Vec3::new(0.0, 0.0, 1.0),
         ] {
             let uv = cam.project_point(axis, Vec2::ZERO);
-            let dir = vec2(uv.x as f32, -(uv.y as f32)).normalized();
-            if dir.length_sq() > 0.01 {
+            let raw = vec2(uv.x as f32, -(uv.y as f32));
+            if raw.length() > 0.08 {
+                let dir = raw.normalized();
                 p.line_segment([at - dir * len, at - dir * gap], st);
                 p.line_segment([at + dir * gap, at + dir * len], st);
             }
