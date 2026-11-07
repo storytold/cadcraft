@@ -141,7 +141,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Feature | AutoCAD | CADCraft |
 |---|---|---|
-| AutoComplete (commands, sysvars, mid-string, synonyms) | yes | command list with Tab to accept (`cmdline.rs:30,176,317`), commands LISP routines define (`c:` functions) included; no sysvar or mid-string search confirmed |
+| AutoComplete (commands, sysvars, mid-string, synonyms) | yes | command list with Tab to accept (`cmdline.rs:30,176,317`); no sysvar or mid-string search confirmed |
 | Aliases | about 250 in `acad.pgp` | 144 aliases across the commands (counted from source) |
 | History (F2), Up/Down recall | yes | yes |
 | Transparent commands (`'zoom`, `'pan`, `'osnap`) | yes | yes (`lib.rs:496-503`) |
@@ -194,7 +194,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 - Right-click on the canvas is Enter while a command runs; holding it (250 ms, AutoCAD's
   time-sensitive right-click) opens the command menu: Enter, Cancel, Recent Input, the prompt's
   options, Snap Overrides, Pan/Zoom. Otherwise it opens a shortcut menu (Repeat, Recent Commands,
-  LISP Commands ▸ with the commands the drawing's LISP defines, Clipboard ▸, Isolate ▸, the selection's editing commands, Draw Order ▸, Group, the selected
+  Clipboard ▸, Isolate ▸, the selection's editing commands, Draw Order ▸, Group, the selected
   object type's edit commands, Select Similar, Deselect All, Undo/Redo, Pan/Zoom; #325, #512).
   The command line, drawing tabs, layout tabs, Layers palette rows and the Properties palette
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
