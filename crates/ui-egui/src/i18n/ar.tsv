@@ -406,7 +406,7 @@
 	Grip Option	خيار المقبض
 	Grip Rotate	تدوير بالمقبض
 	Grip Scale	تحجيم بالمقبض
-	Grip Stretch	مط بالمقبض
+	Grip Stretch	تمطيط بالمقبض
 	Grip size	حجم المقبض
 	Group	تجميع
 	Group Edit	تحرير المجموعة
@@ -880,7 +880,7 @@
 	Select objects (crossing window first corner)	حدد كائنات (الزاوية الأولى لنافذة التقاطع)
 	Select objects first, then choose a command	حدد الكائنات أولاً ثم اختر أمراً
 	Select objects to array.	حدد كائنات لتكوين مصفوفة.
-	Select objects to stretch by crossing-window or crossing-polygon...	حدد كائنات لمطها بنافذة التقاطع أو مضلع التقاطع...
+	Select objects to stretch by crossing-window or crossing-polygon...	حدد كائنات لتمطيطها بنافذة التقاطع أو مضلع التقاطع...
 	Select objects:	حدد كائنات:
 	Select one polyline (Multiple is available through the JSON form).	حدد متعدد خطوط واحداً (يتوفر الوضع المتعدد عبر نموذج JSON).
 	Select path curve	حدد منحنى المسار
@@ -1083,8 +1083,8 @@
 	Start, End, Radius	بداية، نهاية، نصف قطر
 	Status	الحالة
 	Status Bar	شريط الحالة
-	Stretch	مط
-	Stretch Vertex	مط رأس
+	Stretch	تمطيط
+	Stretch Vertex	تمطيط رأس
 	Style: Standard	النمط: Standard
 	Subtract	طرح
 	Sweep	كنس
