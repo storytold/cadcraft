@@ -110,7 +110,7 @@ fn a_scale_action_survives_a_dwg_save() {
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
     let d = read_dxf(dxf(&with_scale_action()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();
-    assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale)), "{:?}", before.actions);
+    assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale { .. })), "{:?}", before.actions);
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
 
     let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
