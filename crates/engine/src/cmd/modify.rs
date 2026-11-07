@@ -37,7 +37,7 @@ use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::{holds_ole_frame, ole_refusal, refuse_ole_frames, transform_entities};
 use transform::{run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
-pub(crate) use trim::{Edges, extend, trim};
+pub(crate) use trim::{CUT_ONCE, Edges, extend, trim};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Trim"])
             .alias(&["tr"])
             .params(
-                "{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\"} → {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing)",
+                "{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex] (default: every object; a polyline that is one of them, or every object in Standard mode, also cuts itself at its vertices and crossings), edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\"} → {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing)",
             )
             .interactive(|_| Ok(Box::new(TrimM::new(false)))),
         CommandSpec::new("extend", "Extend", trimextend::run_extend)
