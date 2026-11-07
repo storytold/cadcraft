@@ -25,6 +25,7 @@ fn end_near(frame: i64, p: Vec2) -> Option<Vec2> {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     d.header.set_i64("PDFFRAME", frame);
