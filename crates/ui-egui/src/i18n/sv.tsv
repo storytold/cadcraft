@@ -1483,3 +1483,44 @@ menu	Modify	Ändra
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+	DView	DView
+	Keyboard Shortcuts...	Kortkommandon...
+	Multiple Insert	Infoga flera
+	Raster Image Reference...	Rasterbildsreferens...
+	Raster Images	Rasterbilder
+	Clip Xref	Beskär xref
+	Xref	Xref
+	Xref Clip Frame	Beskärningsram för xref
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Ett kortkommando du anger går före CADCrafts eget. Ändringar gäller direkt och sparas till nästa gång.
+	Alias files (PGP)	Aliasfiler (PGP)
+	Aliases are saved in your CADCraft profile and survive restarts.	Alias sparas i din CADCraft-profil och finns kvar efter omstart.
+	Back to CADCraft's shortcut	Tillbaka till CADCrafts kortkommando
+	Command Mode	Kommandoläge
+	Default Mode	Standardläge
+	Edit Mode	Redigeringsläge
+	ENTER	ENTER
+	Import and replace	Importera och ersätt
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Importera: det finns ingen fildialogruta här; kör ALIASEDIT med filens innehåll i dess textparameter.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Om du importerar en fil ersätts dina {n} alias och alla ändringar du inte har använt än.
+	Import…	Importera…
+	Keep my aliases	Behåll mina alias
+	Keyboard Shortcuts	Kortkommandon
+	Longer click duration:	Längd för längre klick:
+	milliseconds	millisekunder
+	Needs Ctrl, Alt or a function key	Kräver Ctrl, Alt eller en funktionstangent
+	No objects selected and no command running:	Inga objekt markerade och inget kommando körs:
+	Objects selected and no command running:	Objekt markerade och inget kommando körs:
+	Press the keys	Tryck på tangenterna
+	Repeat last command	Upprepa senaste kommandot
+	Replaces the shortcut of {commands}	Ersätter kortkommandot för {commands}
+	Right-Click Customization	Anpassning av högerklick
+	Right-Click Customization...	Anpassning av högerklick...
+	Run ALIASEDIT with the file's contents using its text parameter.	Kör ALIASEDIT med filens innehåll i dess textparameter.
+	Shortcut Menu	Snabbmeny
+	Shortcut Menu: always enabled	Snabbmeny: alltid aktiverad
+	Shortcut Menu: enabled when command options are present	Snabbmeny: aktiverad när det finns kommandoalternativ
+	Turn on time-sensitive right-click	Slå på tidskänsligt högerklick
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	När det är avstängt gör ett högerklick under ett pågående kommando det som Anpassning av högerklick anger för kommandoläget.
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Medan ett kommando körs är ett snabbt klick Enter och ett längre klick öppnar snabbmenyn.
+	While a command runs:	Medan ett kommando körs:
+	{n} more warnings; see the command line.	{n} varningar till; se kommandoraden.
