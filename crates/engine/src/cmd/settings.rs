@@ -201,7 +201,7 @@ impl Interactive for SetvarM {
         match &self.name {
             None => Prompt::new("Enter variable name", accept).kw(&["?"]),
             Some(n) => {
-                let p = Prompt::new(format!("Enter new value for {n}"), accept);
+                let p = Prompt::with_values("Enter new value for {name}", [("name", n.clone())], accept);
                 match crate::sysvars::get(s, n) {
                     Some(v) => p.default(show_value(&v)),
                     None => p,

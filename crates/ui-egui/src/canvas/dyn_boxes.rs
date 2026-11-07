@@ -16,6 +16,7 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
         }
     };
     let Some(prompt) = app.session.current_prompt() else { return };
+    let shown = crate::i18n::prompt(&prompt).into_owned();
     // DYNPROMPT = 0: no prompt beside the cursor (the value boxes stay).
     let show_prompt = app.session.settings.dynprompt;
     let options = show_prompt && !prompt.keywords.is_empty();
@@ -24,7 +25,7 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
         && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
         && let Some(c) = app.canvas.cursor
     {
-        let message = if show_prompt { crate::i18n::t(&prompt.message) } else { "" };
+        let message = if show_prompt { shown.as_str() } else { "" };
         let r = dynamic_input_boxes(p, at, message, &f, &e, c, app.cmd.second_locked(), options, length_units(&app.session));
         options_menu(app, p, r, hover);
         return;
@@ -32,20 +33,15 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
     if !show_prompt {
         return;
     }
-    let mut text = crate::i18n::t(&prompt.message).to_string();
+    let mut text = shown.clone();
     if fields {
         // The field shows the distance and what is typed.
     } else if !app.cmd.buffer.is_empty() {
-        text = format!("{}: {}", crate::i18n::t(&prompt.message), app.cmd.buffer);
+        text = format!("{shown}: {}", app.cmd.buffer);
     } else if let (Some(base), Some(c)) = (prompt.base, app.canvas.cursor) {
-        text = format!(
-            "{}   {}  <  {}°",
-            crate::i18n::t(&prompt.message),
-            distance_text(&app.session, base.dist(c)),
-            (base.angle_to(c).to_degrees() * 10.0).round() / 10.0
-        );
+        text = format!("{shown}   {}  <  {}°", distance_text(&app.session, base.dist(c)), (base.angle_to(c).to_degrees() * 10.0).round() / 10.0);
     } else if let Some(c) = app.canvas.cursor {
-        text = format!("{}   {}, {}", crate::i18n::t(&prompt.message), distance_text(&app.session, c.x), distance_text(&app.session, c.y));
+        text = format!("{shown}   {}, {}", distance_text(&app.session, c.x), distance_text(&app.session, c.y));
     }
     let t = Tokens::get();
     let galley = p.layout_no_wrap(text, crate::theme::small(), t.text);

@@ -62,7 +62,7 @@ impl SplineAsk {
             SplineAsk::Tolerance => Prompt::new("Specify a fit tolerance", Accept::NUMBER).default(format!("{:.4}", opts.tolerance)),
             SplineAsk::Object(sel) => {
                 let p = sel.prompt();
-                if sel.removing { p } else { Prompt { message: "Select spline-fit polylines to convert".into(), ..p } }
+                if sel.removing { p } else { p.reworded("Select spline-fit polylines to convert") }
             }
         }
     }

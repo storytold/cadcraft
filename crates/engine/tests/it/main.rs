@@ -114,6 +114,7 @@ mod polyface_explode;
 mod post_command_passes;
 mod prompt_keywords;
 mod prompt_or_once;
+mod prompt_templates;
 mod properties_set_locked;
 mod props_bad_lineweight;
 mod props_insert_scale_attribs;

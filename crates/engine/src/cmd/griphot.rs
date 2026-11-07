@@ -352,14 +352,16 @@ impl Interactive for GripEdit {
             Ask::RefNew(_) if self.mode == GripMode::Rotate => Prompt::new("Specify new angle", Accept::POINT_OR_NUMBER).base(base),
             Ask::RefNew(_) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).base(base),
             Ask::Action(a) => {
+                // The option's title and what it asks, as one message so it can be translated whole.
                 let (msg, accept) = match a {
-                    GripAction::AddVertex => ("Specify new vertex point", Accept::POINT),
-                    GripAction::ToArc => ("Specify a point on the arc", Accept::POINT),
-                    GripAction::Lengthen => ("Specify end point or length change", Accept::POINT_OR_NUMBER),
-                    GripAction::Radius => ("Specify radius", Accept::POINT_OR_NUMBER),
-                    GripAction::RemoveVertex | GripAction::ToLine => ("", Accept::POINT),
+                    GripAction::AddVertex => ("** ADD VERTEX ** Specify new vertex point", Accept::POINT),
+                    GripAction::ToArc => ("** CONVERT TO ARC ** Specify a point on the arc", Accept::POINT),
+                    GripAction::Lengthen => ("** LENGTHEN ** Specify end point or length change", Accept::POINT_OR_NUMBER),
+                    GripAction::Radius => ("** RADIUS ** Specify radius", Accept::POINT_OR_NUMBER),
+                    GripAction::RemoveVertex => ("** REMOVE VERTEX ** ", Accept::POINT),
+                    GripAction::ToLine => ("** CONVERT TO LINE ** ", Accept::POINT),
                 };
-                Prompt::new(format!("{} {msg}", a.title()), accept).kw(&["eXit"]).base(base)
+                Prompt::new(msg, accept).kw(&["eXit"]).base(base)
             }
             Ask::Mode => {
                 let (msg, accept, kw): (&str, Accept, &[&str]) = match self.mode {

@@ -397,9 +397,11 @@ impl Interactive for BattmanM {
         let yes_no = |v: bool| if v { "Yes" } else { "No" };
         match self.stage {
             Stage::Block => Prompt::new("Enter name of block to manage", Accept::TEXT).kw(&["?"]),
-            Stage::Option => Prompt::new(format!("Block {}: enter an option", self.block), KW).kw(OPTIONS).default("eXit"),
+            Stage::Option => Prompt::with_values("Block {block}: enter an option", [("block", self.block.clone())], KW).kw(OPTIONS).default("eXit"),
             Stage::Tag(_) => Prompt::new("Enter attribute tag", Accept::TEXT),
-            Stage::Prop => Prompt::new(format!("Attribute {}: enter property to change", self.tag), KW).kw(PROPS).default("eXit"),
+            Stage::Prop => {
+                Prompt::with_values("Attribute {tag}: enter property to change", [("tag", self.tag.clone())], KW).kw(PROPS).default("eXit")
+            }
             Stage::Value(p) => {
                 let a = self.current(s);
                 let text = |f: fn(&Attrib) -> String| a.as_ref().map(f).unwrap_or_default();

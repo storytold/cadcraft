@@ -146,7 +146,7 @@ impl Interactive for DescriptionM {
         match &self.block {
             Some(name) => {
                 let cur = current(s, name);
-                let p = Prompt::new(format!("Enter description for block \"{name}\""), Accept::TEXT);
+                let p = Prompt::with_values("Enter description for block \"{name}\"", [("name", name.clone())], Accept::TEXT);
                 if cur.is_empty() { p } else { p.default(cur) }
             }
             None => Prompt::new(

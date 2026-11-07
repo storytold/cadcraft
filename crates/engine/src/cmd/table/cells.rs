@@ -447,7 +447,7 @@ impl Interactive for TableEditM {
                     .and_then(|e| if let EntityKind::Table(t) = &e.kind { t.cells.get(r).and_then(|row| row.get(c)).cloned() } else { None })
                     .map(|c| c.formula.unwrap_or(c.text))
                     .unwrap_or_default();
-                let p = Prompt::new(format!("Enter text for cell {} (=formula)", cell_name(r, c)), Accept::TEXT);
+                let p = Prompt::with_values("Enter text for cell {cell} (=formula)", [("cell", cell_name(r, c))], Accept::TEXT);
                 if cur.is_empty() { p } else { p.default(cur) }
             }
         }
@@ -642,7 +642,8 @@ impl Interactive for CellStyleM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match (&self.cell, self.option) {
-            (None, _) => Prompt::new(format!("Enter cell style name of table style {}", self.style), Accept::TEXT).default(CellStyle::DATA),
+            (None, _) => Prompt::with_values("Enter cell style name of table style {style}", [("style", self.style.clone())], Accept::TEXT)
+                .default(CellStyle::DATA),
             (Some(_), None) => Prompt::new("Enter an option", Accept::TEXT).kw(OPTIONS).default("eXit"),
             (Some(_), Some(o)) => {
                 let msg = match o {
