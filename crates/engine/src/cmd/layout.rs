@@ -681,6 +681,11 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         page.paper = ps.name.into();
         page.width_mm = ps.width_mm;
         page.height_mm = ps.height_mm;
+        // The paper's own units become the layout's paper units: millimetres for a metric paper,
+        // else the drawing's MEASUREMENT. Otherwise ISO A0 in a new (imperial) drawing's layout
+        // is 33.11 x 46.81 units (#2836). Only a saved page setup changes units; a one-off plot's
+        // `paper` keeps the layout's, so its objects stay the size they were drawn.
+        page.paper_mm = !ps.imperial;
     }
     let mm = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0 && *v <= 5080.0);
     match (mm("width"), mm("height")) {
