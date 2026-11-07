@@ -517,6 +517,7 @@ fn retained_objects(
     // hundreds of thousands of groups) would be read once per child (#862).
     let mut xdict_memo: HashMap<usize, bool> = HashMap::new();
     let mut is_xdict = |index: usize| *xdict_memo.entry(index).or_insert_with(|| is_xdict(index));
+    let hard_owners = hard_owners(objects.iter().map(|(_, _, t)| *t));
     let mut retained = HashMap::new();
     for index in 0..objects.len() {
         let mut path = Vec::new();
@@ -531,7 +532,8 @@ fn retained_objects(
             path.push(current);
             let Some((_, _, tags)) = objects.get(current) else { break false };
             let header = head(tags);
-            let (Some(handle), Some(owner)) = (header.handle, header.owner) else { break false };
+            let Some(handle) = header.handle else { break false };
+            let Some(owner) = owner_of(header.owner, &handle, &hard_owners) else { break false };
             if by_handle.get(&handle) != Some(&current) {
                 break false;
             }
@@ -555,6 +557,25 @@ fn retained_objects(
         }
     }
     retained
+}
+
+/// The object that owns each object by a hard owner reference (group 360), the first one
+/// to name it: `child handle → owner handle`.
+fn hard_owners<'a>(objects: impl Iterator<Item = &'a [Tag]>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for t in objects {
+        let Some(h) = head(t).handle else { continue };
+        for c in t.iter().take_while(|g| g.code < 1000).filter(|g| g.code == 360) {
+            out.entry(norm(&c.str())).or_insert_with(|| h.clone());
+        }
+    }
+    out
+}
+
+/// An object's owner: its group 330, or for one whose owner is null (another application's
+/// proxy that another proxy holds) the object that hard-owns it ([`hard_owners`]).
+fn owner_of(owner: Option<String>, handle: &str, hard: &HashMap<String, String>) -> Option<String> {
+    owner.filter(|o| o != "0").or_else(|| hard.get(handle).cloned())
 }
 
 /// Proxy records (DXF Reference, ACAD_PROXY_OBJECT and ACAD_PROXY_ENTITY): another application's
@@ -901,10 +922,17 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     let objs: HashMap<String, &ForeignObject> = f.objects.iter().map(|o| (o.handle.hex(), o)).collect();
     let dict_entries: HashMap<String, &str> = f.dictionary.iter().map(|(k, h)| (h.hex(), k.as_str())).collect();
     let nod = f.targets.iter().filter(|(_, k)| k.0 == "NOD" && k.1.is_empty()).map(|(h, _)| h.hex()).collect::<HashSet<_>>();
+    let kept_tags: Vec<Vec<Tag>> = f.objects.iter().map(|o| o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect()).collect();
+    let hard = hard_owners(kept_tags.iter().map(Vec::as_slice));
     let owners: HashMap<String, String> = f
         .objects
         .iter()
-        .filter_map(|o| Some((o.handle.hex(), head(&o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect::<Vec<_>>()).owner?)))
+        .zip(&kept_tags)
+        .filter_map(|(o, t)| {
+            let h = o.handle.hex();
+            let owner = owner_of(head(t).owner, &h, &hard)?;
+            Some((h, owner))
+        })
         .collect();
     let mut alive_memo: HashMap<String, bool> = HashMap::new();
     for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
