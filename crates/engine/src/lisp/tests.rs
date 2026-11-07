@@ -467,6 +467,15 @@ fn getvar_drawing_and_session_variables() {
     assert_eq!(ok(&mut s, "(getvar \"DWGTITLED\")"), "1");
 }
 
+/// CDATE and DATE read the clock as reals instead of nil (part of #1715).
+#[test]
+fn getvar_cdate_and_date_are_reals() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (type (getvar \"CDATE\")) (type (getvar \"DATE\")))"), "(REAL REAL)");
+    // After 2026-01-01, whichever form the clock is read in.
+    assert_eq!(ok(&mut s, "(list (> (getvar \"CDATE\") 20260101.0) (> (getvar \"DATE\") 2461041.0))"), "(T T)");
+}
+
 /// CECOLOR is a string in AutoCAD, whatever it was set from (#1999).
 #[test]
 fn getvar_cecolor_is_a_string() {
