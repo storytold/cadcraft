@@ -185,7 +185,9 @@ pub fn sat_version(tags: &[RawTag]) -> Option<u32> {
         if r.code == 100 {
             in_modeler = r.value.trim().eq_ignore_ascii_case("AcDbModelerGeometry");
         } else if in_modeler && r.code == 1 {
-            return r.value.split_whitespace().next()?.parse().ok();
+            let first = r.value.split_whitespace().next()?;
+            // DXF before 2007 encodes SAT text: each character but a space is 159 minus it ("hoo" is 700).
+            return first.parse().ok().or_else(|| first.bytes().map(|b| char::from(159u8.wrapping_sub(b))).collect::<String>().parse().ok());
         }
     }
     None
