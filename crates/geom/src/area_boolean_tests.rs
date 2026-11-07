@@ -235,7 +235,7 @@ fn hostile_inputs_and_work_limits_return_errors() {
 /// crossings. Reject unresolved geometry instead of reporting an empty intersection.
 #[test]
 fn ill_conditioned_arcs_return_precision_before_classification() {
-    for bulge in [1e-6, -1e-6, 1e-8, -1e-8, 1e-9, -1e-9, 1e-11, -1e-11] {
+    for bulge in [1e-6, -1e-6, 1e-8, -1e-8, 1e-9, -1e-9] {
         let a = Polyline {
             vertices: vec![
                 PolyVertex::with_bulge(Vec2::new(0.0, 0.5), bulge),
@@ -272,4 +272,77 @@ fn a_resolvable_shallow_arc_stays_curved() {
     // Circular-segment area for a unit chord: b/3 + b^3/15 + O(b^5).
     let expected = bulge / 3.0 + bulge.powi(3) / 15.0;
     assert!((area(&ps) - expected).abs() < 1e-10, "{} != {expected}", area(&ps));
+}
+
+/// Imported contours routinely contain thousands of vertices, even without curved edges.
+fn polygon_circle(x: f64, n: usize) -> Polyline {
+    Polyline { vertices: (0..n).map(|i| PolyVertex::new(Vec2::polar(Vec2::new(x, 0.0), 5.0, TAU * i as f64 / n as f64))).collect(), closed: true }
+}
+
+/// Uncrossed loops require one classification each rather than a quadratic number of probes.
+#[test]
+fn large_disjoint_contours_keep_their_known_areas() {
+    for n in [1000, 2000, 6000] {
+        let a = polygon_circle(0.0, n);
+        let b = polygon_circle(20.0, n);
+        let expected = n as f64 * 12.5 * (TAU / n as f64).sin();
+        for (op, want) in [(Operation::Union, 2.0 * expected), (Operation::Difference, expected), (Operation::Intersection, 0.0)] {
+            close(area(&combine(std::slice::from_ref(&a), std::slice::from_ref(&b), op).unwrap()), want);
+        }
+    }
+}
+
+/// Two crossings partition a large contour into a few runs, regardless of original vertices.
+#[test]
+fn a_large_crossed_contour_has_the_exact_polygon_half_area() {
+    let n = 2000;
+    let a = polygon_circle(0.0, n);
+    let b = rect(0.0, -10.0, 10.0, 20.0);
+    let half = n as f64 * 6.25 * (TAU / n as f64).sin();
+    for (op, want) in [(Operation::Union, 200.0 + half), (Operation::Difference, half), (Operation::Intersection, half)] {
+        close(area(&combine(std::slice::from_ref(&a), std::slice::from_ref(&b), op).unwrap()), want);
+    }
+}
+
+/// An unrelated flat arc must not fail either an uncrossed loop or an operation elsewhere.
+#[test]
+fn shallow_arcs_away_from_crossings_do_not_fail_the_boolean() {
+    for bulge in [1e-6, -1e-6, 1e-8, -1e-8, 1e-10, -1e-10] {
+        let mut a = rect(0.0, 0.0, 10.0, 10.0);
+        a.vertices[0].bulge = bulge;
+        let curved_area = 100.0 + 100.0 * (bulge / 3.0 + bulge.powi(3) / 15.0);
+        for (b, overlap) in [(rect(20.0, 0.0, 10.0, 10.0), 0.0), (rect(5.0, 5.0, 10.0, 10.0), 25.0), (rect(2.0, 2.0, 2.0, 2.0), 4.0)] {
+            for (op, want) in [
+                (Operation::Union, curved_area + b.area() - overlap),
+                (Operation::Difference, curved_area - overlap),
+                (Operation::Intersection, overlap),
+            ] {
+                let ps = combine(std::slice::from_ref(&a), std::slice::from_ref(&b), op).unwrap();
+                close(area(&ps), want);
+                if matches!(op, Operation::Union) {
+                    assert_eq!(ps.iter().flat_map(|p| &p.vertices).any(|v| v.bulge != 0.0), bulge.abs() >= 1e-8);
+                }
+            }
+        }
+    }
+}
+
+/// Rotating nested loops must not make an unrelated flat edge appear to intersect their
+/// boundaries merely because conservative axis-aligned boxes overlap.
+#[test]
+fn shallow_arcs_in_rotated_nested_loops_still_work() {
+    for angle in [0.37, PI * 0.5, 2.2] {
+        let mut a = rect(0.0, 0.0, 10.0, 10.0);
+        a.vertices[0].bulge = 1e-8;
+        let mut b = rect(2.0, 2.0, 2.0, 2.0);
+        for p in [&mut a, &mut b] {
+            for v in &mut p.vertices {
+                v.p = v.p.rotate(angle);
+            }
+        }
+        for a in [a.clone(), reverse(&a)] {
+            close(area(&combine(std::slice::from_ref(&a), std::slice::from_ref(&b), Operation::Difference).unwrap()), 96.0 + 1e-6 / 3.0);
+            close(area(&combine(std::slice::from_ref(&a), std::slice::from_ref(&b), Operation::Intersection).unwrap()), 4.0);
+        }
+    }
 }

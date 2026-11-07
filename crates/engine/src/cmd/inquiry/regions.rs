@@ -57,6 +57,8 @@ fn regions(s: &Session, hs: &[Handle]) -> Result<Vec<(Handle, Region)>> {
 }
 
 /// Combine without mutating the drawing: a failed geometric operation leaves both inputs.
+/// Region loops reuse the hatch loop type, but regions have no boundary associativity:
+/// regions do not refill from those `sources` handles, so rebuilt loops clear them.
 fn combine(a: &Region, b: &Region, op: Operation) -> Result<Region> {
     // Check before cloning input-sized polylines (the geometry kernel has the same edge cap).
     let count = a.loops.iter().chain(&b.loops).try_fold(0usize, |n, l| n.checked_add(l.vertices.len()));

@@ -351,3 +351,68 @@ fn unresolved_arc_booleans_keep_the_drawing_and_history() {
         assert!(region(&s, b).bounds().min.near(Vec2::new(0.01, 1.0), 1e-9));
     }
 }
+
+/// Build an imported polygon contour without involving spline tessellation in the oracle.
+fn polygon_region(s: &mut Session, x: f64, n: usize) -> Handle {
+    let vertices = (0..n).map(|i| cadcraft_geom::PolyVertex::new(Vec2::polar(Vec2::new(x, 0.0), 5.0, 2.0 * PI * i as f64 / n as f64))).collect();
+    s.doc_mut().unwrap().add(&Space::Model, Default::default(), EntityKind::Region(Region::from_loop(vertices))).unwrap()
+}
+
+/// Check one imported-contour command against the analytic polygon or clipped half-area.
+fn check_large_region_boolean(n: usize, crossed: bool, command: &str) {
+    let polygon_area = n as f64 * 12.5 * (2.0 * PI / n as f64).sin();
+    let mut s = Session::new();
+    let a = polygon_region(&mut s, 0.0, n);
+    let b = if crossed { rect_region(&mut s, [0.0, -10.0], [10.0, 10.0]) } else { polygon_region(&mut s, 20.0, n) };
+    let overlap = if crossed { polygon_area * 0.5 } else { 0.0 };
+    let other_area = if crossed { 200.0 } else { polygon_area };
+    let want = match command {
+        "union" => polygon_area + other_area - overlap,
+        "subtract" => polygon_area - overlap,
+        _ => overlap,
+    };
+    let params = if command == "subtract" { json!({"from": [a.hex()], "remove": [b.hex()]}) } else { json!({"handles": [a.hex(), b.hex()]}) };
+    let result = s.execute(command, &params).unwrap();
+    if want == 0.0 {
+        assert!(result["handle"].is_null());
+    } else {
+        assert!(near(region(&s, a).area(), want), "{n}, {crossed}, {command}");
+    }
+    assert!(s.doc().unwrap().entity(b).is_none());
+}
+
+/// Large imported contours retain their analytic areas, both disjoint and crossed by a square.
+#[test]
+fn large_region_booleans_keep_the_expected_areas() {
+    for n in [1000, 2000] {
+        for crossed in [false, true] {
+            for command in ["union", "subtract", "intersect"] {
+                check_large_region_boolean(n, crossed, command);
+            }
+        }
+    }
+}
+
+/// A shallow imported bulge does not invalidate booleans whose crossings are elsewhere.
+#[test]
+fn a_distant_shallow_arc_does_not_fail_region_commands() {
+    for bulge in [1e-6, 1e-8, 1e-10] {
+        for crossed in [false, true] {
+            let mut s = Session::new();
+            let a = rect_region(&mut s, [0.0, 0.0], [10.0, 10.0]);
+            s.doc_mut()
+                .unwrap()
+                .modify_entity(a, |e| {
+                    if let EntityKind::Region(r) = &mut e.kind {
+                        r.loops[0].vertices[0].bulge = bulge;
+                    }
+                })
+                .unwrap();
+            let b = if crossed { rect_region(&mut s, [5.0, 5.0], [15.0, 15.0]) } else { rect_region(&mut s, [20.0, 0.0], [30.0, 10.0]) };
+            s.execute("union", &json!({"handles": [a.hex(), b.hex()]})).unwrap();
+            let expected = if crossed { 175.0 } else { 200.0 } + 100.0 * bulge / 3.0;
+            assert!(near(region(&s, a).area(), expected));
+            assert!(s.doc().unwrap().entity(b).is_none());
+        }
+    }
+}
