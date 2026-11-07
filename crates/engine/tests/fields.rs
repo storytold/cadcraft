@@ -64,7 +64,7 @@ fn drawing_properties_filename_and_system_variables() {
     let f = s.execute("field", &json!({"at": [0, 2], "field": "filename"})).unwrap();
     assert!(!f["value"].as_str().unwrap().is_empty());
     let v = s.execute("field", &json!({"at": [0, 3], "field": "ltscale"})).unwrap();
-    assert_eq!(v["value"], "1.0000");
+    assert_eq!(v["value"], "1.000000");
     // DWGPROPS at the command line, then UPDATEFIELD over everything.
     s.cmdline("dwgprops t").unwrap();
     s.cmdline("Plate").unwrap();
@@ -181,4 +181,45 @@ fn spell_never_uses_a_dictionary_path_from_the_drawing() {
     let r = s.execute("spell", &json!({"dictionary": good.to_string_lossy()})).unwrap();
     assert_eq!(r["unknown"].as_array().unwrap().len(), 0);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A formula field with a field nested in it (the LTSCALE case of #551) is computed: the nested
+/// field gets its value, the formula the result in the format asked for.
+#[test]
+fn formula_field_with_a_nested_field_is_evaluated() {
+    let mut s = Session::new();
+    let code = "Double: %<\\AcExpr (%<\\AcVar LTSCALE>%*2) \\f \"%lu2\">%";
+    let m = s.execute("mtext", &json!({"at": [0, 0], "text": code, "height": 2.5, "width": 80})).unwrap();
+    let h = m["handle"].as_str().unwrap().to_string();
+    assert_eq!(shown(&s, &h), "Double: ####");
+    s.execute("updatefield", &json!({})).unwrap();
+    assert_eq!(shown(&s, &h), "Double: 2.0000");
+    let c = contents(&s, &h);
+    assert!(c.contains("\\AcVar LTSCALE \\CcValue \"1.000000\""), "{c}");
+    // The formula follows the variable.
+    s.execute("setvar", &json!({"name": "LTSCALE", "value": 2.5})).unwrap();
+    s.execute("updatefield", &json!({})).unwrap();
+    assert_eq!(shown(&s, &h), "Double: 5.0000");
+    // The precision comes from the format.
+    s.execute("mtext", &json!({"at": [0, 5], "text": "%<\\AcExpr (1+2)/8 \\f \"%lu2%pr3\">%", "height": 2.5, "width": 80})).unwrap();
+    s.execute("updatefield", &json!({})).unwrap();
+    let texts: Vec<String> = s
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::MText(t) = &e.kind { Some(fields::display(&t.contents).into_owned()) } else { None })
+        .collect();
+    assert!(texts.contains(&"0.375".to_string()), "{texts:?}");
+}
+
+/// A formula that cannot be computed keeps the value it had, and never divides by zero.
+#[test]
+fn formula_that_cannot_be_computed_keeps_its_value() {
+    let mut s = Session::new();
+    let m =
+        s.execute("mtext", &json!({"at": [0, 0], "text": "%<\\AcExpr (1/0) \\f \"%lu2\" \\CcValue \"7.00\">%", "height": 2.5, "width": 80})).unwrap();
+    let h = m["handle"].as_str().unwrap().to_string();
+    s.execute("updatefield", &json!({})).unwrap();
+    assert_eq!(shown(&s, &h), "7.00");
 }

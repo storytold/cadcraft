@@ -228,6 +228,9 @@ pub(crate) fn evaluate(s: &Session, f: &Field, now: Option<f64>) -> Option<Strin
                     Value::String(t) => Some(t),
                     Value::Number(x) => match (x.as_i64(), x.as_f64()) {
                         (Some(i), _) => Some(i.to_string()),
+                        // A real without a format shows six decimals, as the value cached for a
+                        // formula to compute with; a `%luN%prN` format is the drawing's units.
+                        (None, Some(v)) if format.is_none() => Some(format!("{v:.6}")),
                         (None, Some(v)) => format_number(s, v, format),
                         _ => None,
                     },
@@ -236,8 +239,91 @@ pub(crate) fn evaluate(s: &Session, f: &Field, now: Option<f64>) -> Option<Strin
             }
         },
         FieldKind::ObjProp { handle, property } => object_value(s, (*handle)?, property, format),
+        // A formula that cannot be computed keeps the value it had.
+        FieldKind::Expr(e) => calc(e).and_then(|v| format_number(s, v, format)).or_else(|| f.value.clone()),
         FieldKind::Other => f.value.clone(),
     }
+}
+
+/// The value of a formula: numbers, `+ - * / ^`, a sign and parentheses (`None`: not a formula
+/// of numbers, a division by zero or a result that is not finite).
+fn calc(e: &str) -> Option<f64> {
+    struct P<'a> {
+        b: &'a [u8],
+        i: usize,
+    }
+    impl P<'_> {
+        fn skip(&mut self) {
+            while self.b.get(self.i) == Some(&b' ') {
+                self.i += 1;
+            }
+        }
+        fn eat(&mut self, c: u8) -> bool {
+            self.skip();
+            let hit = self.b.get(self.i) == Some(&c);
+            if hit {
+                self.i += 1;
+            }
+            hit
+        }
+        fn sum(&mut self, depth: usize) -> Option<f64> {
+            let mut v = self.product(depth)?;
+            loop {
+                if self.eat(b'+') {
+                    v += self.product(depth)?;
+                } else if self.eat(b'-') {
+                    v -= self.product(depth)?;
+                } else {
+                    return Some(v);
+                }
+            }
+        }
+        fn product(&mut self, depth: usize) -> Option<f64> {
+            let mut v = self.power(depth)?;
+            loop {
+                if self.eat(b'*') {
+                    v *= self.power(depth)?;
+                } else if self.eat(b'/') {
+                    let d = self.power(depth)?;
+                    if d == 0.0 {
+                        return None;
+                    }
+                    v /= d;
+                } else {
+                    return Some(v);
+                }
+            }
+        }
+        fn power(&mut self, depth: usize) -> Option<f64> {
+            let base = self.unary(depth)?;
+            if self.eat(b'^') { Some(base.powf(self.power(depth)?)) } else { Some(base) }
+        }
+        fn unary(&mut self, depth: usize) -> Option<f64> {
+            if depth > 32 {
+                return None;
+            }
+            if self.eat(b'-') {
+                return self.unary(depth + 1).map(|v| -v);
+            }
+            if self.eat(b'+') {
+                return self.unary(depth + 1);
+            }
+            if self.eat(b'(') {
+                let v = self.sum(depth + 1)?;
+                return self.eat(b')').then_some(v);
+            }
+            self.skip();
+            let start = self.i;
+            while self.b.get(self.i).is_some_and(|c| c.is_ascii_digit() || *c == b'.') {
+                self.i += 1;
+            }
+            std::str::from_utf8(self.b.get(start..self.i)?).ok()?.parse().ok()
+        }
+    }
+    let mut p = P { b: e.as_bytes(), i: 0 };
+    let v = p.sum(0)?;
+    p.skip();
+    (p.i == p.b.len() && v.is_finite()).then_some(v)
 }
 
 /// The texts of an object that can hold fields, changed by `f`; returns the number of fields.

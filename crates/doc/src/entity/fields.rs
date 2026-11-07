@@ -30,6 +30,9 @@ pub enum FieldKind {
     /// `\AcObjProp Object(%<\_ObjId id>%).Property`: a property of the object with handle `id`
     /// (`None`: no valid id).
     ObjProp { handle: Option<Handle>, property: String },
+    /// `\AcExpr (…)`: a formula. The text is the expression with each field nested in it
+    /// replaced by its cached value (or [`NO_VALUE`]).
+    Expr(String),
     /// Any other field: kept as it is and shown with its cached value.
     Other,
 }
@@ -201,6 +204,23 @@ fn word_after<'a>(inner: &'a str, key: &str) -> Option<&'a str> {
     rest.get(..end).filter(|w| !w.is_empty())
 }
 
+/// The formula of an `\AcExpr` code: the text up to the first option, with the fields nested in
+/// it replaced by their cached values.
+fn expression(code: &str) -> String {
+    let rest = code.strip_prefix("\\AcExpr").unwrap_or("");
+    let nested = nested_ranges(rest);
+    let end = rest.char_indices().find(|(i, c)| *c == '\\' && !nested.iter().any(|r| r.contains(i))).map_or(rest.len(), |(i, _)| i);
+    let mut out = String::new();
+    let mut last = 0;
+    for sp in find(rest.get(..end).unwrap_or("")) {
+        out.push_str(rest.get(last..sp.range.start).unwrap_or(""));
+        out.push_str(sp.field.value.as_deref().unwrap_or(NO_VALUE));
+        last = sp.range.end;
+    }
+    out.push_str(rest.get(last..end).unwrap_or(""));
+    out.trim().to_string()
+}
+
 /// Parse the code between `%<` and `>%`.
 pub fn parse(inner: &str) -> Field {
     let format = quoted_opt(inner, "\\f").map(|(f, _)| f);
@@ -221,6 +241,8 @@ pub fn parse(inner: &str) -> Field {
             .unwrap_or("")
             .to_string();
         FieldKind::ObjProp { handle, property }
+    } else if t.starts_with("\\AcExpr") {
+        FieldKind::Expr(expression(t))
     } else {
         FieldKind::Other
     };
@@ -254,7 +276,13 @@ pub fn with_value(code: &str, value: &str) -> String {
 
 /// Store each field's new value in the text: `value` returns the value of a field (`None`: no
 /// value, shown as [`NO_VALUE`]). Returns the new text and the number of fields.
+///
+/// The fields nested in a field's code are set first, so a formula sees their new values.
 pub fn set_values(s: &str, mut value: impl FnMut(&Field) -> Option<String>) -> (String, usize) {
+    set_values_dyn(s, &mut value)
+}
+
+fn set_values_dyn(s: &str, value: &mut dyn FnMut(&Field) -> Option<String>) -> (String, usize) {
     let spans = find(s);
     if spans.is_empty() {
         return (s.to_string(), 0);
@@ -266,7 +294,14 @@ pub fn set_values(s: &str, mut value: impl FnMut(&Field) -> Option<String>) -> (
         let inner = s.get(sp.range.start + 2..sp.range.end - 2).unwrap_or("");
         // The code without its old value.
         let mut code = split_value(inner).0;
-        if let Some(v) = value(&sp.field) {
+        let mut field = sp.field.clone();
+        if code.contains("%<") {
+            code = set_values_dyn(&code, value).0;
+            let value = field.value.take();
+            field = parse(&code);
+            field.value = value;
+        }
+        if let Some(v) = value(&field) {
             code = with_value(&code, &v);
         }
         out.push_str("%<");
@@ -356,10 +391,23 @@ mod tests {
         assert_eq!(value.as_deref(), Some("2.0000"));
         assert_eq!(code, "\\AcExpr (%<\\AcVar LTSCALE \\CcValue \"1.0\">%*2) \\f \"%lu2\"");
         assert_eq!(with_value(&code, "2.0000"), inner);
-        // A new value goes to the outer field; the nested one is kept.
-        let (v, _) = set_values(&s, |_| Some("6".into()));
+        // The nested field is set first and the formula sees its new value.
+        let mut seen = Vec::new();
+        let (v, n) = set_values(&s, |f| {
+            if let FieldKind::Expr(e) = &f.kind {
+                seen.push(e.clone());
+                return Some("6".into());
+            }
+            Some("3.000000".into())
+        });
+        assert_eq!(n, 1);
+        assert_eq!(seen, ["(3.000000*2)"]);
         assert_eq!(display(&v), "x 6");
-        assert!(v.contains("\\CcValue \"1.0\""));
+        assert!(v.contains("\\AcVar LTSCALE \\CcValue \"3.000000\""));
+        // A nested field without a value reaches the formula as no value.
+        let bare = "%<\\AcExpr (%<\\AcVar LTSCALE>%*2) \\f \"%lu2\">%";
+        assert_eq!(find(bare)[0].field.kind, FieldKind::Expr(format!("({NO_VALUE}*2)")));
+        assert_eq!(find(bare)[0].field.format.as_deref(), Some("%lu2"));
     }
 
     #[test]
