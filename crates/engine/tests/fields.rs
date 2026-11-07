@@ -223,3 +223,18 @@ fn formula_that_cannot_be_computed_keeps_its_value() {
     s.execute("updatefield", &json!({})).unwrap();
     assert_eq!(shown(&s, &h), "7.00");
 }
+
+/// Formula edge cases: a sign binds looser than `^`, and a long `^` chain is refused, not a stack overflow.
+#[test]
+fn formula_precedence_and_hostile_chains() {
+    let mut s = Session::new();
+    let chain = "2^".repeat(5000);
+    let texts = ["%<\\AcExpr -2^2 \\f \"%lu2%pr1\">%".to_string(), format!("%<\\AcExpr {chain}2 \\f \"%lu2\" \\CcValue \"9\">%")];
+    let hs: Vec<String> = texts
+        .iter()
+        .map(|t| s.execute("mtext", &json!({"at": [0, 0], "text": t, "height": 2.5, "width": 80})).unwrap()["handle"].as_str().unwrap().to_string())
+        .collect();
+    s.execute("updatefield", &json!({})).unwrap();
+    assert_eq!(shown(&s, &hs[0]), "-4.0");
+    assert_eq!(shown(&s, &hs[1]), "9");
+}

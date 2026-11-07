@@ -296,14 +296,18 @@ fn calc(e: &str) -> Option<f64> {
         }
         fn power(&mut self, depth: usize) -> Option<f64> {
             let base = self.unary(depth)?;
-            if self.eat(b'^') { Some(base.powf(self.power(depth)?)) } else { Some(base) }
+            if depth > 32 {
+                return None;
+            }
+            if self.eat(b'^') { Some(base.powf(self.power(depth + 1)?)) } else { Some(base) }
         }
         fn unary(&mut self, depth: usize) -> Option<f64> {
             if depth > 32 {
                 return None;
             }
             if self.eat(b'-') {
-                return self.unary(depth + 1).map(|v| -v);
+                // A sign binds looser than `^`: -2^2 is -4.
+                return self.power(depth + 1).map(|v| -v);
             }
             if self.eat(b'+') {
                 return self.unary(depth + 1);
