@@ -190,9 +190,16 @@ impl Camera3D {
     ///
     /// Keeps `x` strictly in the world XY plane (`x.z == 0`) so turntable rotation never
     /// introduces camera roll / gimbal ("gumball") twist.
+    ///
+    /// Because callers evaluate `cam0.orbit(daz_deg, del_deg, clamp)` from the camera state `cam0`
+    /// captured at drag start, the yaw sign is locked to `self` (`cam0`) for the entire drag
+    /// stroke and only flips when a new drag is started on the negative Z side of the XY plane
+    /// (`self.z.z > 1e-6`, e.g. in Bottom view), keeping screen-space rotation direction consistent
+    /// with Top view without ever flipping mid-stroke.
     pub fn orbit(&self, daz_deg: f64, del_deg: f64, clamp: bool) -> Self {
         let world_up = Vec3::Z;
-        let daz = rad(-daz_deg);
+        let yaw_sign = if self.z.z > 1e-6 { 1.0 } else { -1.0 };
+        let daz = rad(yaw_sign * daz_deg);
         let del = rad(del_deg);
 
         // 1) YAW about worldUp = (0, 0, 1).
@@ -509,5 +516,19 @@ mod tests {
         for q in &quads {
             assert!(Camera3D::preset(q.part).is_some(), "missing preset for {}", q.part);
         }
+    }
+
+    #[test]
+    fn bottom_view_orbit_matches_top_view_screen_direction_on_new_stroke() {
+        let top0 = Camera3D::TOP;
+        let bot0 = Camera3D::preset("bottom").unwrap_or_default();
+        assert!(bot0.z.z > 0.999);
+
+        // Starting a new drag in Top vs Bottom with the same horizontal mouse motion (daz = 30°)
+        // rotates the camera's local screen frame (x0, y0) in the exact same screen direction.
+        let top1 = top0.orbit(30.0, 0.0, true);
+        let bot1 = bot0.orbit(30.0, 0.0, true);
+        assert!((top1.y.dot(top0.x) - bot1.y.dot(bot0.x)).abs() < 1e-12);
+        assert!((top1.y.dot(top0.y) - bot1.y.dot(bot0.y)).abs() < 1e-12);
     }
 }
