@@ -369,3 +369,54 @@ fn edit_vertex_add_and_elevate_order_keep_the_shape() {
     }
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexadd" })).is_err());
 }
+
+#[test]
+fn elevate_order_takes_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Enter new order <4>:" on a cubic: +5, 05 and the LISP real 5.0 make it order
+    // 5, and 4 keeps it; 5.0, 5., 1e1, 4.5, 3, 27 and a point from LISP get "Requires an integer
+    // between 4 and 26." and the prompt again. At order 5 the range starts at 5 (measured).
+    let control = json!({ "control": [[0, 0], [2, 3], [4, 0], [6, 3], [8, 0]] });
+    let refused = |s: &mut Session, bad: &str, message: &str| {
+        let asked = s.prompt_text();
+        let logged = s.log.len();
+        s.cmdline(bad).unwrap();
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, [message], "{bad}");
+        assert_eq!(s.prompt_text(), asked, "{bad}");
+    };
+    for typed in ["+5", "05", "(+ 2.5 2.5)"] {
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        s.cmdline("splinedit 0,0 e e").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter new order <4>:"));
+        for bad in ["5.0", "5.", "1e1", "4.5", "3", "27", "(list 1 2)"] {
+            refused(&mut s, bad, "Requires an integer between 4 and 26.");
+        }
+        assert_eq!(spline(&s, &sp).degree, 3);
+        s.cmdline(typed).unwrap();
+        assert_eq!(spline(&s, &sp).degree, 4, "{typed}");
+        assert!(s.prompt_text().contains("vertex editing option"), "{}", s.prompt_text());
+        // Now order 5: 4 is below it, 5 keeps it.
+        s.cmdline("e").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter new order <5>:"));
+        refused(&mut s, "4", "Requires an integer between 5 and 26.");
+        s.cmdline("5").unwrap();
+        assert_eq!(spline(&s, &sp).degree, 4, "{typed}");
+        assert!(s.prompt_text().contains("vertex editing option"), "{typed}: {}", s.prompt_text());
+    }
+    // 26 is the highest order (AutoCAD 2024: taken, degree 25).
+    let mut s = Session::new();
+    let sp = h(&s.execute("spline", &control).unwrap());
+    s.cmdline("splinedit 0,0 e e 26").unwrap();
+    assert_eq!(spline(&s, &sp).degree, 25);
+    // 4 keeps a cubic as it is, and so does Enter.
+    for keep in ["4", ""] {
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        let before = spline(&s, &sp);
+        s.cmdline("splinedit 0,0 e e").unwrap();
+        s.cmdline(keep).unwrap();
+        assert!(s.prompt_text().contains("vertex editing option"), "{keep:?}: {}", s.prompt_text());
+        assert_eq!(spline(&s, &sp).control, before.control, "{keep:?}");
+    }
+}
