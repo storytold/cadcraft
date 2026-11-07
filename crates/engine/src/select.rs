@@ -97,7 +97,7 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
+    if (filled && pick_bounds(d, e).contains(p)) || in_text(d, e, p) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
@@ -159,8 +159,45 @@ fn selectable(d: &Drawing, e: &Entity) -> bool {
 /// Entities to test, in the order to test them, each with its bounds when already known.
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
+/// Whether an MTEXT's contents draw nothing (empty, or only spaces and `\~`): it has no glyph
+/// strokes, and the document's bounds for it are empty so it stays out of the drawing extents.
+fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
+    t.contents.replace(r"\~", " ").chars().all(char::is_whitespace)
+}
+
+/// The box a blank MTEXT is picked in (#2810): its width (the text height when it has none) by its
+/// text height, placed by its attachment point and turned by its rotation about the insertion
+/// point. `None` for any other entity, or a blank MTEXT without a usable size or position.
+pub(crate) fn blank_mtext_box(e: &Entity) -> Option<Bounds2> {
+    let EntityKind::MText(t) = &e.kind else { return None };
+    if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
+        return None;
+    }
+    let w = if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
+    let h = t.height;
+    let dx = match t.attach {
+        2 | 5 | 8 => -w / 2.0,
+        3 | 6 | 9 => -w,
+        _ => 0.0,
+    };
+    let top = match t.attach {
+        4..=6 => h / 2.0,
+        7..=9 => h,
+        _ => 0.0,
+    };
+    let corners = [Vec2::new(dx, top), Vec2::new(dx + w, top), Vec2::new(dx + w, top - h), Vec2::new(dx, top - h)];
+    Some(Bounds2::from_points(corners.map(|c| t.insert.xy() + c.rotate(t.rotation))))
+}
+
+/// The box `e` is selected by: its drawn bounds, or for a blank MTEXT (whose drawn bounds are
+/// empty) the box it is picked in.
+pub(crate) fn pick_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
+    let b = entity_bounds(d, e, 0);
+    if b.is_empty() { blank_mtext_box(e).unwrap_or(b) } else { b }
+}
+
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| entity_bounds(d, e, 0))
+    known.unwrap_or_else(|| pick_bounds(d, e))
 }
 
 pub(crate) fn is_infinite(e: &Entity) -> bool {
@@ -512,6 +549,89 @@ mod tests {
         assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
         // Only one within reach: that one, whatever the order.
         assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
+    }
+
+    fn mtext_at(contents: &str, attach: u8, rotation: f64) -> EntityKind {
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            height: 2.5,
+            width: 10.0,
+            attach,
+            rotation,
+            style: "Standard".into(),
+            contents: contents.into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        })
+    }
+
+    /// A blank MTEXT has no strokes and empty drawn bounds, but it is still an object: a click
+    /// inside its width x height box picks it, and a click outside does not (#2810).
+    #[test]
+    fn a_blank_mtext_is_picked_inside_its_box() {
+        for contents in ["", "   ", r"\~ "] {
+            let mut d = Drawing::new_metric();
+            let h = d.add(&Space::Model, Common::default(), mtext_at(contents, 1, 0.0)).unwrap();
+            let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.1);
+            assert_eq!(at(5.0, -1.0), Some(h), "{contents:?}");
+            assert_eq!(at(0.5, -2.0), Some(h), "{contents:?}");
+            assert_eq!(at(5.0, 3.0), None, "above the box, {contents:?}");
+            assert_eq!(at(12.0, -1.0), None, "right of the box, {contents:?}");
+            assert_eq!(pick_all(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.1), vec![h]);
+            let w = Bounds2::new(Vec2::new(4.0, -2.0), Vec2::new(6.0, -1.0));
+            assert_eq!(select_window(&d, &Space::Model, w, true), vec![h], "crossing {contents:?}");
+        }
+    }
+
+    /// The box follows the attachment point and the rotation, and a width of 0 falls back to the
+    /// text height.
+    #[test]
+    fn a_blank_mtext_box_follows_attachment_and_rotation() {
+        let mut d = Drawing::new_metric();
+        // Middle-centre: the box spans x -5..5, y -1.25..1.25.
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 5, 0.0)).unwrap();
+        let at = |d: &Drawing, x: f64, y: f64| pick(d, &Space::Model, Vec2::new(x, y), 0.05);
+        assert_eq!(at(&d, -4.0, 1.0), Some(h));
+        assert_eq!(at(&d, 4.0, -1.0), Some(h));
+        assert_eq!(at(&d, 4.0, 2.0), None);
+        // Turned a quarter turn about the insertion point: the box spans x -1.25..1.25, y -5..5.
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 5, std::f64::consts::FRAC_PI_2)).unwrap();
+        assert_eq!(at(&d, 1.0, 4.0), Some(h));
+        assert_eq!(at(&d, 4.0, 1.0), None);
+        // No width: as wide as the text is high.
+        let mut d = Drawing::new_metric();
+        let EntityKind::MText(mut t) = mtext_at("", 1, 0.0) else { panic!("mtext") };
+        t.width = 0.0;
+        let h = d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        assert_eq!(at(&d, 2.0, -1.0), Some(h));
+        assert_eq!(at(&d, 5.0, -1.0), None);
+    }
+
+    /// A drawing large enough for the spatial index must still offer a blank MTEXT as a candidate.
+    #[test]
+    fn a_blank_mtext_is_picked_in_an_indexed_drawing() {
+        let mut d = Drawing::new_metric();
+        for i in 0..(crate::spatial::MIN_INDEXED + 10) {
+            let y = 100.0 + i as f64;
+            let l = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(50.0, y, 0.0), b: Vec3::new(60.0, y, 0.0) });
+            d.add(&Space::Model, Common::default(), l).unwrap();
+        }
+        let h = d.add(&Space::Model, Common::default(), mtext_at("", 1, 0.0)).unwrap();
+        assert!(spatial::index(&d, &Space::Model).is_some());
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.1), Some(h));
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(5.0, 3.0), 0.1), None);
+    }
+
+    /// Text with words is still picked by its drawn box only.
+    #[test]
+    fn a_click_far_from_a_normal_mtext_misses() {
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at("AB", 1, 0.0)).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(1.0, -1.0), 0.1), Some(h));
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(8.0, -1.0), 0.1), None);
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(1.0, 5.0), 0.1), None);
     }
 
     /// An OLE2FRAME draws as its frame, so a click on an edge picks it (review on #2587); a click in

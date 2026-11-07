@@ -53,7 +53,8 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds_cached(d, e, 0, &mut cache)
+                let b = entity_bounds_cached(d, e, 0, &mut cache);
+                if b.is_empty() { crate::select::blank_mtext_box(e).unwrap_or(b) } else { b }
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
