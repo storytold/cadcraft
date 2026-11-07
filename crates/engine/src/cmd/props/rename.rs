@@ -93,6 +93,8 @@ pub(super) fn simple(s: &mut Session, table: &str, from: &str, to: &str) -> Resu
         "tablestyle" => d.table_styles.iter_mut().map(|t| &mut t.name).collect(),
         "view" => d.views.iter_mut().map(|t| &mut t.name).collect(),
         "ucs" => d.ucss.iter_mut().map(|t| &mut t.name).collect(),
+        // A saved viewport configuration, every tile of it; never the one shown (`*Active`).
+        "vport" => d.vports.iter_mut().filter(|v| !v.is_active()).map(|t| &mut t.name).collect(),
         _ => return Err(bad("rename", "unsupported table")),
     };
     if !to.eq_ignore_ascii_case(from) && names.iter().any(|n| n.eq_ignore_ascii_case(&to)) {
@@ -134,10 +136,16 @@ const TYPES: &[(&str, Option<&str>, &str)] = &[
     ("Plotstyle", None, "plot style"),
     ("textStyle", Some("style"), "text style"),
     ("Tablestyle", Some("tablestyle"), "table style"),
-    ("Ucs", Some("ucs"), "UCS"),
+    ("Ucs", Some("ucs"), "ucs"),
     ("VIew", Some("view"), "view"),
-    ("VPort", None, "viewport configuration"),
+    ("VPort", Some("vport"), "viewport configuration"),
 ];
+
+/// The noun in "Cannot find …" and "Invalid … name.": AutoCAD 2024 writes "UCS" there, "ucs" in
+/// its prompts and in "A ucs named … already exists." (measured).
+fn title(noun: &str) -> &str {
+    if noun == "ucs" { "UCS" } else { noun }
+}
 
 /// Keyword-only: spaces separate inputs.
 const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
@@ -159,6 +167,7 @@ fn exists(d: &Drawing, table: &str, name: &str) -> bool {
         "tablestyle" => any_named(d.table_styles.iter().map(|t| &t.name), name),
         "view" => any_named(d.views.iter().map(|t| &t.name), name),
         "ucs" => any_named(d.ucss.iter().map(|t| &t.name), name),
+        "vport" => any_named(d.vports.iter().filter(|v| !v.is_active()).map(|t| &t.name), name),
         _ => true,
     }
 }
@@ -199,6 +208,15 @@ impl Interactive for RenameM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // No new name is an invalid one (AutoCAD 2024, measured for layers, blocks, views and
+        // viewport configurations).
+        if i == Input::Enter
+            && let Stage::New(t, _) = &self.stage
+            && let Some((_, Some(_), noun)) = TYPES.get(*t)
+        {
+            s.echo(format!("Invalid {} name.", title(noun)));
+            return Ok(Step::Done);
+        }
         if matches!(i, Input::Cancel | Input::Enter) {
             return Ok(if i == Input::Cancel { Step::Cancel } else { Step::Done });
         }
@@ -217,11 +235,17 @@ impl Interactive for RenameM {
                     self.stage = Stage::Old(t);
                     return Ok(Step::Continue);
                 };
+                // AutoCAD 2024 ends -RENAME on a name it can't take (measured): "*Active" is not a
+                // name a viewport configuration can be renamed from.
+                if *table == Some("vport") && name.starts_with('*') {
+                    s.echo(format!("Invalid {} name.", title(noun)));
+                    return Ok(Step::Done);
+                }
                 if let Some(table) = table
                     && !exists(s.doc()?, table, &name)
                 {
-                    self.stage = Stage::Old(t);
-                    return Err(EngineError::Other(format!("No {noun} named \"{name}\".")));
+                    s.echo(format!("Cannot find {} \"{name}\".", title(noun)));
+                    return Ok(Step::Done);
                 }
                 self.stage = Stage::New(t, name);
                 Ok(Step::Continue)
@@ -235,6 +259,19 @@ impl Interactive for RenameM {
                     s.echo(format!("Renaming a {noun} is not available yet."));
                     return Ok(Step::Done);
                 };
+                // AutoCAD 2024's messages, each ending the command (measured).
+                if !valid_name(&name) {
+                    s.echo(format!("Invalid {} name.", title(noun)));
+                    return Ok(Step::Done);
+                }
+                if !name.eq_ignore_ascii_case(&old) && exists(s.doc()?, table, &name) {
+                    s.echo(format!("A {noun} named \"{name}\" already exists."));
+                    s.echo("*Invalid*");
+                    return Ok(Step::Done);
+                }
+                if name == old {
+                    return Ok(Step::Done);
+                }
                 match super::run_rename(s, &json!({ "table": table, "from": old, "to": name })) {
                     Ok(_) => Ok(Step::Done),
                     Err(e) => {
