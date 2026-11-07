@@ -117,7 +117,28 @@ impl Spline {
         if !self.is_valid() {
             return self.control.clone();
         }
-        self.samples(self.sample_count(tol)).collect()
+        let n = self.sample_count(tol);
+        let spans = self.knot_spans().count();
+        if spans == 0 || spans > MAX_SAMPLES {
+            return self.samples(n).collect();
+        }
+        // Sample each knot span on its own grid, its ends included, so a corner at a repeated
+        // knot (C0 when the multiplicity reaches the degree) is a vertex of the result. The `n`
+        // segments are shared out by span length, at least one per span; when that would pass
+        // `MAX_SAMPLES` the share shrinks to keep within it.
+        let (lo, hi) = self.domain();
+        // The span's share of the domain first, so huge knots do not overflow the product.
+        let segments = |budget: usize, (a, b): (f64, f64)| 1usize.max((budget as f64 * ((b - a) / (hi - lo))).round() as usize);
+        let budget = if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES - spans };
+        let mut out = Vec::with_capacity(n + spans + 1);
+        out.push(self.eval_valid(lo, lo, hi));
+        for (a, b) in self.knot_spans() {
+            let seg = segments(budget, (a, b));
+            for i in 1..=seg {
+                out.push(self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi));
+            }
+        }
+        out
     }
 
     /// How many segments a tessellation at `tol` takes: the control-polygon length guides it,
