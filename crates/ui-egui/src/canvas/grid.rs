@@ -57,6 +57,11 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         p.extend(lines);
     }
     // Axes through the origin.
+    if !xf.cam.is_top_plan() {
+        p.line_segment([xf.to_screen(Vec2::new(wb.min.x, 0.0)), xf.to_screen(Vec2::new(wb.max.x, 0.0))], Stroke::new(1.0, t.axis_x));
+        p.line_segment([xf.to_screen(Vec2::new(0.0, wb.min.y)), xf.to_screen(Vec2::new(0.0, wb.max.y))], Stroke::new(1.0, t.axis_y));
+        return;
+    }
     if (wb.min.y..=wb.max.y).contains(&0.0) {
         p.line_segment([xf.to_screen(Vec2::new(wb.min.x, 0.0)), xf.to_screen(Vec2::new(wb.max.x, 0.0))], Stroke::new(1.0, t.axis_x));
     }
