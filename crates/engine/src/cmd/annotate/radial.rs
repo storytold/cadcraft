@@ -1,4 +1,4 @@
-use super::common::{DimText, add_dim, circle_of, dim, pick_at, text_at};
+use super::common::{DimText, add_dim, circle_at, circle_of, dim, text_at};
 use super::{Accept, DimKind, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Value, Vec2, bad, json, point_param, targets};
 
 fn radial(s: &mut Session, p: &Value, diameter: bool) -> Result<Value> {
@@ -75,7 +75,7 @@ impl Interactive for RadialM {
         }
         match (self.target, i) {
             (None, Input::Point(p)) => {
-                match pick_at(s, p).and_then(|h| circle_of(s, h)) {
+                match circle_at(s, p) {
                     Some(t) => self.target = Some(t),
                     None => s.echo("Object selected is not a circle or arc."),
                 }
