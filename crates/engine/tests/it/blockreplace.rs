@@ -40,6 +40,7 @@ fn drawing() -> (Session, Handle) {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     s.doc_mut().unwrap().add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Insert(ins)).unwrap();
     (s, Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap())
