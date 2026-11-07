@@ -102,7 +102,7 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
+    } else if let Some(s) = suggest(app, &app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
 }
@@ -118,8 +118,21 @@ pub struct Suggestion {
     pub label: &'static str,
 }
 
-/// Matching command names/aliases for AutoComplete.
-fn suggestions(prefix: &str) -> Vec<Suggestion> {
+/// The label AutoComplete shows for a command a LISP routine defines.
+const LISP_LABEL: &str = "LISP command";
+
+/// AutoComplete for the command line's text: [`suggestions`] with the commands the active
+/// drawing's LISP defines.
+fn suggest(app: &CadApp, prefix: &str) -> Vec<Suggestion> {
+    if prefix.is_empty() || prefix.contains(' ') {
+        return Vec::new();
+    }
+    suggestions(prefix, &app.session.lisp_commands())
+}
+
+/// Matching command names/aliases for AutoComplete; `lisp` are the names of the commands LISP
+/// routines define (`c:` functions), listed after the registered commands whose name matches.
+fn suggestions(prefix: &str, lisp: &[String]) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
@@ -148,7 +161,17 @@ fn suggestions(prefix: &str) -> Vec<Suggestion> {
         seen_ids.insert(c.id);
     }
 
-    // 3. Command alias prefix matches (for commands not yet added).
+    // 3. Commands LISP defines, by name (a registered command of the same name wins).
+    let mut lisp_matches: Vec<String> =
+        lisp.iter().map(|n| n.to_ascii_lowercase()).filter(|n| n.starts_with(&p) && cadcraft_engine::cmd::find_command(n).is_none()).collect();
+    lisp_matches.sort_by(|a, b| (a.len(), a).cmp(&(b.len(), b)));
+    lisp_matches.dedup();
+    for n in lisp_matches {
+        let id = n.to_ascii_uppercase();
+        out.push(Suggestion { display: id.clone(), id, label: LISP_LABEL });
+    }
+
+    // 4. Command alias prefix matches (for commands not yet added).
     let mut alias_matches: Vec<(&'static str, &'static cadcraft_engine::CommandSpec)> = Vec::new();
     for c in cadcraft_engine::command_specs() {
         if c.id.contains('.') || seen_ids.contains(c.id) {
@@ -444,7 +467,7 @@ pub fn submit(app: &mut CadApp) {
         return;
     }
     // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
-    let completion = if app.session.prompting() { None } else { suggestions(text.trim()).into_iter().next() };
+    let completion = if app.session.prompting() { None } else { suggest(app, text.trim()).into_iter().next() };
     app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
 }
 
@@ -585,7 +608,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     );
     // AutoComplete list.
     if !app.session.prompting() {
-        let sug = suggestions(&app.cmd.buffer);
+        let sug = suggest(app, &app.cmd.buffer);
         if !sug.is_empty() {
             let rh = 20.0;
             let lr = Rect::from_min_size(
@@ -647,7 +670,7 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
     let mut all = bar.union(grip);
     if !app.session.prompting() {
-        let k = suggestions(&app.cmd.buffer).len();
+        let k = suggest(app, &app.cmd.buffer).len();
         if k > 0 {
             let above = if n == 0 { 0.0 } else { LINE_H * n as f32 + 6.0 };
             all = all.union(Rect::from_min_size(pos2(bar.left(), bar.top() - 6.0 - 20.0 * k as f32 - above), vec2(bar.width(), 1.0)));
@@ -890,7 +913,7 @@ mod autocomplete_tests {
 
     #[test]
     fn exact_alias_is_first_suggestion_with_alias_display() {
-        let rec = suggestions("rec");
+        let rec = suggestions("rec", &[]);
         assert!(!rec.is_empty());
         assert_eq!(rec[0].id, "RECTANG");
         assert_eq!(rec[0].display, "REC (RECTANG)");
@@ -900,28 +923,43 @@ mod autocomplete_tests {
         assert_eq!(rec[1].id, "RECOVER");
         assert_eq!(rec[1].display, "RECOVER");
 
-        let l = suggestions("l");
+        let l = suggestions("l", &[]);
         assert_eq!(l[0].id, "LINE");
         assert_eq!(l[0].display, "L (LINE)");
 
-        let c = suggestions("c");
+        let c = suggestions("c", &[]);
         assert_eq!(c[0].id, "CIRCLE");
         assert_eq!(c[0].display, "C (CIRCLE)");
 
-        let co = suggestions("co");
+        let co = suggestions("co", &[]);
         assert_eq!(co[0].id, "COPY");
         assert_eq!(co[0].display, "CO (COPY)");
     }
 
     #[test]
     fn prefix_without_alias_shows_command_id() {
-        let rect = suggestions("rect");
+        let rect = suggestions("rect", &[]);
         assert_eq!(rect[0].id, "RECTANG");
         assert_eq!(rect[0].display, "RECTANG");
 
-        let line = suggestions("line");
+        let line = suggestions("line", &[]);
         assert_eq!(line[0].id, "LINE");
         assert_eq!(line[0].display, "LINE");
+    }
+
+    #[test]
+    fn lisp_commands_are_suggested_after_registered_ones() {
+        let lisp = ["PIDLINEA".to_string(), "PIDINST".to_string(), "LINE".to_string(), "PP".to_string()];
+        let pid = suggestions("pid", &lisp);
+        assert_eq!(pid.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["PIDINST", "PIDLINEA"]);
+        assert!(pid.iter().all(|s| s.label == LISP_LABEL && s.display == s.id));
+        // A registered command of the same name is listed once, as the registered command.
+        let line = suggestions("line", &lisp);
+        assert_eq!(line.iter().filter(|s| s.id == "LINE").count(), 1);
+        assert_ne!(line[0].label, LISP_LABEL);
+        // Typed in any case; nothing without a prefix.
+        assert_eq!(suggestions("PidI", &lisp).first().map(|s| s.id.as_str()), Some("PIDINST"));
+        assert!(suggestions("", &lisp).is_empty());
     }
 
     #[test]

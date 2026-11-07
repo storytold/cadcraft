@@ -18,3 +18,17 @@ fn recent_commands_newest_first_without_repeats() {
     s.echo("Command: NOSUCHCOMMAND");
     assert_eq!(s.recent_commands(5), ["zoom", "line", "circle"]);
 }
+
+#[test]
+fn recent_commands_include_the_drawings_lisp_commands() {
+    let mut s = Session::new();
+    s.cmdline("(defun c:pidhola () (princ))").unwrap();
+    for line in ["LINE 0,0 10,0", "", "PIDHOLA", "pidhola"] {
+        s.cmdline(line).unwrap();
+    }
+    assert!(s.is_lisp_command("PIDHOLA") && s.is_lisp_command("pidhola") && !s.is_lisp_command("line"));
+    assert_eq!(s.recent_commands(5), ["pidhola", "line"]);
+    // Once the drawing no longer defines it, it leaves the list.
+    s.cmdline("(setq c:pidhola nil)").unwrap();
+    assert_eq!(s.recent_commands(5), ["line"]);
+}

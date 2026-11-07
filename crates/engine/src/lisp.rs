@@ -670,6 +670,13 @@ impl Session {
         names
     }
 
+    /// Whether the active drawing's LISP defines command `name` (a `c:` function), in any case.
+    pub fn is_lisp_command(&self, name: &str) -> bool {
+        let Ok(uid) = self.state().map(|s| s.uid) else { return false };
+        let Some(env) = self.lisp.envs.get(&uid) else { return false };
+        !name.is_empty() && matches!(env.get(&format!("C:{}", name.to_ascii_uppercase())), Value::Func(_) | Value::Subr(_))
+    }
+
     /// A `c:` function for a command name typed at the command line.
     pub(crate) fn lisp_command(&self, name: &str) -> Option<Value> {
         if self.lisp.active {
