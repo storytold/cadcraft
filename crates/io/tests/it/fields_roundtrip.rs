@@ -1,9 +1,8 @@
 //! Fields are written the way AutoCAD writes them (#551): an `ACAD_FIELD` extension dictionary
 //! on the MTEXT, a `_text` FIELD with one child FIELD per field code, the shown value in the
-//! MTEXT contents and a FIELDLIST of all FIELD objects. `data/autocad_fields.dxf` holds the
-//! relevant parts (the three MTEXT, their dictionaries, the 8 FIELD objects and the FIELDLIST)
-//! of an AutoCAD 2023 sample ASCII DXF R2010 that a contributor of #551 made and shared for this
-//! purpose.
+//! MTEXT contents and a FIELDLIST of all FIELD objects. [`hand_written`] writes such a file by hand
+//! (the three MTEXT, their dictionaries, the 8 FIELD objects and the FIELDLIST) from the layout a
+//! tester of #551 described; no file produced by AutoCAD is part of the repository.
 
 use std::collections::HashMap;
 
@@ -12,17 +11,244 @@ use cadcraft_doc::{Common, Drawing, EntityKind, MText, Space};
 use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
 
-const SAMPLE: &[u8] = include_bytes!("../data/autocad_fields.dxf");
+/// One FIELD object: evaluator, code (children as `%<\_FldIdx n>%`), the child handles, the
+/// variable name for an `AcVar`, the format and the value (`real`: stored as a real).
+struct F {
+    handle: u32,
+    owner: u32,
+    evaluator: &'static str,
+    code: &'static str,
+    children: &'static [u32],
+    variable: Option<&'static str>,
+    format: &'static str,
+    value: &'static str,
+    real: Option<&'static str>,
+}
+
+/// The groups of one FIELD object. A `_text` field also has a persistent reactor on the
+/// dictionary that holds it.
+fn field_groups(f: &F) -> Vec<(i32, String)> {
+    let mut g: Vec<(i32, String)> = Vec::new();
+    let mut put = |code: i32, v: &str| g.push((code, v.to_string()));
+    put(0, "FIELD");
+    put(5, &format!("{:X}", f.handle));
+    if f.evaluator == "_text" {
+        for (c, v) in [(102, "{ACAD_REACTORS"), (330, &format!("{:X}", f.owner)), (102, "}")] {
+            put(c, v);
+        }
+    }
+    put(330, &format!("{:X}", f.owner));
+    put(100, "AcDbField");
+    put(1, f.evaluator);
+    put(2, f.code);
+    put(90, &f.children.len().to_string());
+    for c in f.children {
+        put(360, &format!("{c:X}"));
+    }
+    let is_date = f.variable == Some("Date");
+    let text = f.evaluator == "_text";
+    for (c, v) in
+        [(97, "0"), (91, if is_date { "32" } else { "63" }), (92, "0"), (94, if text { "13" } else { "59" }), (95, "2"), (96, "0"), (300, "")]
+    {
+        put(c, v);
+    }
+    match f.variable {
+        Some(v) => {
+            for (c, val) in [(93, "1"), (6, "Variable"), (93, "2"), (90, "4"), (1, v), (94, "0"), (300, ""), (302, ""), (304, "ACVALUE_END")] {
+                put(c, val);
+            }
+        }
+        None => put(93, "0"),
+    }
+    put(7, "ACFD_FIELD_VALUE");
+    if f.value.is_empty() {
+        for (c, v) in [(93, "3"), (90, "0")] {
+            put(c, v);
+        }
+    } else if let Some(r) = f.real {
+        for (c, v) in [(93, "4"), (90, "2"), (140, r)] {
+            put(c, v);
+        }
+    } else {
+        for (c, v) in [(93, "4"), (90, "4"), (1, f.value)] {
+            put(c, v);
+        }
+    }
+    for (c, v) in [(94, "0"), (300, f.format), (302, f.value), (304, "ACVALUE_END"), (301, f.value)] {
+        put(c, v);
+    }
+    put(98, &f.value.chars().count().to_string());
+    g
+}
+
+/// The groups of a DXF written by hand: three MTEXT (a date with a format, two fields in one
+/// text, a formula with a field nested in it), each with an `ACAD_FIELD` extension dictionary, a
+/// `_text` FIELD with one child FIELD per code, and the FIELDLIST of all of them.
+fn hand_written() -> Vec<u8> {
+    let mut g: Vec<(i32, String)> = Vec::new();
+    let mut put = |code: i32, v: &str| g.push((code, v.to_string()));
+    for (c, v) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1024"), (9, "$HANDSEED"), (5, "7FF"), (0, "ENDSEC")] {
+        put(c, v);
+    }
+    put(0, "SECTION");
+    put(2, "CLASSES");
+    for (name, cpp, n) in [("FIELD", "AcDbField", "8"), ("FIELDLIST", "AcDbFieldList", "1")] {
+        for (c, v) in [(0, "CLASS"), (1, name), (2, cpp), (3, "ObjectDBX Classes"), (90, "1152"), (91, n), (280, "0"), (281, "0")] {
+            put(c, v);
+        }
+    }
+    put(0, "ENDSEC");
+    // (mtext, its extension dictionary, the ACAD_FIELD dictionary, the `_text` field, text shown, y)
+    let texts: [(u32, u32, u32, u32, &str, f64); 3] = [
+        (0x400, 0x410, 0x411, 0x413, "Date : 03/11/2026", 0.0),
+        (0x401, 0x420, 0x421, 0x423, "Fichier plan.dxf du 03/11/2026", -10.0),
+        (0x402, 0x430, 0x431, 0x433, "Double de LTSCALE : 2.0000", -20.0),
+    ];
+    put(0, "SECTION");
+    put(2, "ENTITIES");
+    for (m, xd, _, _, shown, y) in texts {
+        for (c, v) in [(0, "MTEXT"), (5, &format!("{m:X}")), (102, "{ACAD_XDICTIONARY"), (360, &format!("{xd:X}")), (102, "}")] {
+            put(c, v);
+        }
+        for (c, v) in [(330, "1F"), (100, "AcDbEntity"), (8, "0"), (100, "AcDbMText"), (10, "0.0"), (20, &y.to_string()), (30, "0.0")] {
+            put(c, v);
+        }
+        for (c, v) in [(40, "2.5"), (41, "120.0"), (46, "0.0"), (71, "1"), (72, "5"), (1, shown), (73, "1"), (44, "1.0")] {
+            put(c, v);
+        }
+    }
+    put(0, "ENDSEC");
+    put(0, "SECTION");
+    put(2, "OBJECTS");
+    for (c, v) in [(0, "DICTIONARY"), (5, "C"), (330, "0"), (100, "AcDbDictionary"), (281, "1"), (3, "ACAD_FIELDLIST"), (350, "440")] {
+        put(c, v);
+    }
+    let list: [u32; 8] = [0x413, 0x414, 0x423, 0x424, 0x425, 0x433, 0x434, 0x435];
+    for (m, xd, af, text, _, _) in texts {
+        for (c, v) in [(0, "DICTIONARY"), (5, &format!("{xd:X}")), (330, &format!("{m:X}")), (100, "AcDbDictionary"), (280, "1"), (281, "1")] {
+            put(c, v);
+        }
+        for (c, v) in [(3, "ACAD_FIELD"), (360, &format!("{af:X}"))] {
+            put(c, v);
+        }
+        for (c, v) in [(0, "DICTIONARY"), (5, &format!("{af:X}"))] {
+            put(c, v);
+        }
+        for (c, v) in [(102, "{ACAD_REACTORS"), (330, &format!("{xd:X}")), (102, "}"), (330, &format!("{xd:X}"))] {
+            put(c, v);
+        }
+        for (c, v) in [(100, "AcDbDictionary"), (280, "1"), (281, "1"), (3, "TEXT"), (360, &format!("{text:X}"))] {
+            put(c, v);
+        }
+    }
+    for (c, v) in [(0, "FIELDLIST"), (5, "440"), (102, "{ACAD_REACTORS"), (330, "C"), (102, "}"), (330, "C"), (100, "AcDbIdSet"), (90, "8")] {
+        put(c, v);
+    }
+    for h in list {
+        put(330, &format!("{h:X}"));
+    }
+    put(100, "AcDbFieldList");
+    let date = |h, owner| F {
+        handle: h,
+        owner,
+        evaluator: "AcVar",
+        code: "\\AcVar Date \\f \"dd/MM/yyyy\"",
+        children: &[],
+        variable: Some("Date"),
+        format: "dd/MM/yyyy",
+        value: "03/11/2026",
+        real: None,
+    };
+    let objects = [
+        F {
+            handle: 0x413,
+            owner: 0x411,
+            evaluator: "_text",
+            code: "Date : %<\\_FldIdx 0>%",
+            children: &[0x414],
+            variable: None,
+            format: "",
+            value: "",
+            real: None,
+        },
+        date(0x414, 0x413),
+        F {
+            handle: 0x423,
+            owner: 0x421,
+            evaluator: "_text",
+            code: "Fichier %<\\_FldIdx 0>% du %<\\_FldIdx 1>%",
+            children: &[0x424, 0x425],
+            variable: None,
+            format: "",
+            value: "",
+            real: None,
+        },
+        F {
+            handle: 0x424,
+            owner: 0x423,
+            evaluator: "AcVar",
+            code: "\\AcVar DWGNAME",
+            children: &[],
+            variable: Some("DWGNAME"),
+            format: "",
+            value: "plan.dxf",
+            real: None,
+        },
+        date(0x425, 0x423),
+        F {
+            handle: 0x433,
+            owner: 0x431,
+            evaluator: "_text",
+            code: "Double de LTSCALE : %<\\_FldIdx 0>%",
+            children: &[0x434],
+            variable: None,
+            format: "",
+            value: "",
+            real: None,
+        },
+        F {
+            handle: 0x434,
+            owner: 0x433,
+            evaluator: "AcExpr",
+            code: "\\AcExpr (%<\\_FldIdx 0>%*2) \\f \"%lu2\"",
+            children: &[0x435],
+            variable: None,
+            format: "%lu2",
+            value: "2.0000",
+            real: Some("2.0"),
+        },
+        F {
+            handle: 0x435,
+            owner: 0x434,
+            evaluator: "AcVar",
+            code: "\\AcVar LTSCALE",
+            children: &[],
+            variable: Some("LTSCALE"),
+            format: "",
+            value: "1.000000",
+            real: None,
+        },
+    ];
+    let fields: Vec<(i32, String)> = objects.iter().flat_map(field_groups).collect();
+    drop(put);
+    g.extend(fields);
+    g.extend([(0, "ENDSEC".to_string()), (0, "EOF".to_string())]);
+    g.iter()
+        .fold(String::new(), |mut s, (c, v)| {
+            s.push_str(&format!("{c:>3}\r\n{v}\r\n"));
+            s
+        })
+        .into_bytes()
+}
 
 /// The three texts of the sample as AutoCAD shows them.
 const DATE: &str = "Date : 03/11/2026";
-const TWO: &str = "Fichier champs_551_r2010.dxf du 03/11/2026";
+const TWO: &str = "Fichier plan.dxf du 03/11/2026";
 const EXPR: &str = "Double de LTSCALE : 2.0000";
 
 /// The same texts as CADCraft holds them: the field codes with their last values.
 const DATE_CODE: &str = "Date : %<\\AcVar Date \\f \"dd/MM/yyyy\" \\CcValue \"03/11/2026\">%";
-const TWO_CODE: &str =
-    "Fichier %<\\AcVar DWGNAME \\CcValue \"champs_551_r2010.dxf\">% du %<\\AcVar Date \\f \"dd/MM/yyyy\" \\CcValue \"03/11/2026\">%";
+const TWO_CODE: &str = "Fichier %<\\AcVar DWGNAME \\CcValue \"plan.dxf\">% du %<\\AcVar Date \\f \"dd/MM/yyyy\" \\CcValue \"03/11/2026\">%";
 const EXPR_CODE: &str = "Double de LTSCALE : %<\\AcExpr (%<\\AcVar LTSCALE \\CcValue \"1.000000\">%*2) \\f \"%lu2\" \\CcValue \"2.0000\">%";
 
 fn contents(d: &Drawing) -> Vec<String> {
@@ -184,12 +410,12 @@ fn list_tags(recs: &[Rec]) -> Vec<Tag> {
     recs.iter().find(|(k, _)| k == "FIELDLIST").map(|(_, t)| t.clone()).unwrap_or_default()
 }
 
-/// The file as AutoCAD saved it, read and saved again: the field objects stay as they were.
+/// The hand-written file, read and saved again: the field objects stay as they were.
 #[test]
-fn autocad_sample_saves_unchanged() {
-    let sample = cadcraft_dxf::parse(SAMPLE).unwrap();
+fn sample_saves_unchanged() {
+    let sample = cadcraft_dxf::parse(&hand_written()).unwrap();
     assert_eq!(canonical(&sample).len(), 8 + 6 + 1);
-    let d = cadcraft_io::read(SAMPLE, "sample.dxf").unwrap();
+    let d = cadcraft_io::read(&hand_written(), "sample.dxf").unwrap();
     let saved = write_tags(&d);
     assert_eq!(canonical(&saved), canonical(&sample));
     assert_eq!(mtext_groups(&saved).len(), 3);
@@ -201,8 +427,8 @@ fn autocad_sample_saves_unchanged() {
 /// The sample's texts are field codes inside CADCraft: the kind, format and last value of each
 /// field, and the formula's operand with its own value.
 #[test]
-fn autocad_sample_reads_as_field_codes() {
-    let d = cadcraft_io::read(SAMPLE, "sample.dxf").unwrap();
+fn sample_reads_as_field_codes() {
+    let d = cadcraft_io::read(&hand_written(), "sample.dxf").unwrap();
     assert_eq!(contents(&d), [DATE_CODE, TWO_CODE, EXPR_CODE]);
     let date = &fields::find(DATE_CODE)[0].field;
     assert_eq!(
@@ -228,7 +454,7 @@ fn autocad_sample_reads_as_field_codes() {
 fn written_fields_have_the_layout_of_the_sample() {
     let d = drawing_with(&[DATE_CODE, TWO_CODE, EXPR_CODE]);
     let saved = write_tags(&d);
-    let sample = cadcraft_dxf::parse(SAMPLE).unwrap();
+    let sample = cadcraft_dxf::parse(&hand_written()).unwrap();
     assert_eq!(summary(&saved), summary(&sample));
     let mut shown = mtext_groups(&saved);
     shown.sort();
@@ -279,7 +505,7 @@ fn field_without_value_roundtrips() {
 /// Changing the text of a text read from AutoCAD writes new objects, not the old ones.
 #[test]
 fn edited_text_gets_new_objects() {
-    let mut d = cadcraft_io::read(SAMPLE, "sample.dxf").unwrap();
+    let mut d = cadcraft_io::read(&hand_written(), "sample.dxf").unwrap();
     let h = d.model.iter().find(|e| matches!(&e.kind, EntityKind::MText(t) if t.contents == DATE_CODE)).unwrap().handle;
     let new = "Heure %<\\AcVar Date \\f \"HH:mm\" \\CcValue \"21:13\">%";
     d.model.modify(h, |e| {
@@ -300,7 +526,7 @@ fn edited_text_gets_new_objects() {
 /// its objects.
 #[test]
 fn deleted_or_plain_text_drops_objects() {
-    let mut d = cadcraft_io::read(SAMPLE, "sample.dxf").unwrap();
+    let mut d = cadcraft_io::read(&hand_written(), "sample.dxf").unwrap();
     let hs: Vec<_> = d.model.iter().map(|e| e.handle).collect();
     // The date text has 2 FIELD objects (`_text` and its child).
     let date = d.model.iter().find(|e| matches!(&e.kind, EntityKind::MText(t) if t.contents == DATE_CODE)).unwrap().handle;
