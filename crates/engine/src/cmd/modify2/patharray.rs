@@ -26,7 +26,13 @@ pub(crate) fn arraypath(
         return Err(other("Select objects to array."));
     }
     let (n, step) = match (count, spacing) {
-        (_, Some(sp)) if sp.is_finite() && sp > 0.0 => (((l / sp).floor() as usize).saturating_add(1), sp),
+        // As AutoCAD 2024 fills a path by distance: floor(length / spacing) items on a closed path,
+        // so none lands on or near the first where the path closes, and one more, at the end, on
+        // an open one (measured). The 1e-9 lets a length that comes out a hair short still fit.
+        (_, Some(sp)) if sp.is_finite() && sp > 0.0 => {
+            let fit = (l / sp + 1e-9).floor() as usize;
+            (if c.closed { fit.max(1) } else { fit.saturating_add(1) }, sp)
+        }
         (Some(n), _) => {
             let n = n.max(1);
             (n, if c.closed { l / n as f64 } else { l / (n.max(2) - 1) as f64 })
