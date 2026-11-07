@@ -4,7 +4,8 @@
 
 use cadcraft_doc::{Common, Entity, EntityKind, Handle, LwPolyline, MAX_BLOCK_DEPTH, Space};
 use cadcraft_geom::{
-    Arc, Ellipse, Line, Mat3, PolyVertex, Polyline, Segment, Spline, TAU, Vec2, ccw_sweep, intersect_ext, line_circle, line_line_infinite, norm_angle,
+    Arc, Ellipse, Line, Mat3, PolyVertex, Polyline, Segment, Spline, TAU, Vec2, Vec3, ccw_sweep, intersect_ext, line_circle, line_line_infinite,
+    norm_angle,
 };
 use serde_json::{Value, json};
 
@@ -120,6 +121,44 @@ pub(crate) fn as_lwpoly(k: &EntityKind) -> Option<LwPolyline> {
         }
         _ => None,
     }
+}
+
+/// The polyline PEDIT turns a line or an arc into, and the normal it faces, as AutoCAD 2024 makes
+/// them (measured): at the line's height or the arc's centre height, the way the arc faces, and
+/// up for a line whatever its normal; the thickness stays the object's. A sloped line still comes
+/// out at elevation 0: AutoCAD makes a polyline in the line's vertical plane, which a CADCraft
+/// polyline can't be. A polyline is returned as it is.
+pub(crate) fn polyline_of(e: &Entity) -> Option<(LwPolyline, Vec3)> {
+    let mut pl = as_lwpoly(&e.kind)?;
+    let normal = e.common.extrusion;
+    match &e.kind {
+        EntityKind::Line(l) => {
+            if (l.a.z - l.b.z).abs() < 1e-9 {
+                pl.elevation = l.a.z;
+            }
+            Some((pl, Vec3::Z))
+        }
+        // The arc's centre is in world coordinates; a polyline's elevation runs along its normal.
+        // A mirrored arc runs clockwise in plan, and so does its polyline (AutoCAD 2024 starts it
+        // at the arc's start in the arc's own coordinates).
+        EntityKind::Arc(a) => {
+            pl.elevation = if normal.z < 0.0 { -a.center.z } else { a.center.z };
+            if normal.z < 0.0 {
+                pl.vertices = curves::reverse_vertices(&pl.vertices, false);
+            }
+            Some((pl, normal))
+        }
+        _ => Some((pl, normal)),
+    }
+}
+
+/// Puts the polyline `pl`, facing `normal`, in place of the object `h`.
+fn set_polyline(s: &mut Session, h: Handle, pl: LwPolyline, normal: Vec3) -> Result<()> {
+    s.doc_mut()?.modify_entity(h, |e| {
+        e.kind = EntityKind::LwPolyline(pl);
+        e.common.extrusion = normal;
+    })?;
+    Ok(())
 }
 
 mod pedit_multi;
