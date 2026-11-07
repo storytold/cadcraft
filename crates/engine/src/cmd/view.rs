@@ -374,8 +374,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             s.state_mut()?.camera = cam;
             return ok();
         }
-        let _ = point_req("view.set", p, "center")?;
-        return Err(bad("view.set", "height is required"));
+        return Err(bad("view.set", "center and height, or a camera (preset, dir, neighbor), is required"));
     };
     let twist = match p.get("twist") {
         Some(t) => t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad("view.set", "twist must be a number of degrees"))?.to_radians(),
