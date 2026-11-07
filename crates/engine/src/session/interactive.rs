@@ -529,6 +529,12 @@ impl Session {
         out
     }
 
+    /// The value the cursor would give at the active command's prompt (see
+    /// [`Interactive::live_value`]).
+    pub fn live_value(&self, cursor: Vec2) -> Option<String> {
+        self.running.as_ref()?.machine.live_value(self, cursor)
+    }
+
     /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
     /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
     /// `None`: the drawing.
