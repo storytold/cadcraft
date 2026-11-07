@@ -483,6 +483,21 @@ fn copy_and_rotate_drag_as_a_transform_of_the_selection() {
     let EntityKind::Text(t) = &extra[1].kind else { panic!("expected the text") };
     assert!(t.insert.xy().near(Vec2::new(-2.0, 2.0), 1e-9) && t.rotation.abs() < 1e-9, "mirrored, still reading left to right");
 
+    // At "Erase source objects?" the copy stays mirrored in the picked line, wherever the cursor
+    // goes, and the rubber band is gone (#2667).
+    s.cmdline("0,1").unwrap();
+    assert!(s.prompt_text().contains("Erase source objects?"));
+    let (d, extra) = s.drag(Vec2::new(7.0, -3.0)).expect("MIRROR still shows the mirrored copy");
+    assert_eq!(d.handles.len(), 1);
+    assert!(d.matrix.apply(Vec2::new(1.0, 0.0)).near(Vec2::new(-1.0, 0.0), 1e-9), "mirrored in the line from 0,0 to 0,1");
+    assert_eq!(extra.len(), 1, "only the text, no line to the cursor");
+    let preview = s.preview(Vec2::new(7.0, -3.0));
+    assert!(
+        preview.iter().any(|e| matches!(&e.kind, EntityKind::Line(l) if l.b.xy().near(Vec2::new(-1.0, 0.0), 1e-9))),
+        "the preview without a GPU shows the mirrored line too"
+    );
+    assert_eq!(preview.len(), 2, "the line and the text, no rubber band");
+
     // PASTECLIP drags the clipboard.
     let mut s = Session::new();
     let l = s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
