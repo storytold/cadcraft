@@ -187,6 +187,7 @@ fn edit_style(cmd: &str, st: &mut PlotStyle, v: &Value) -> Result<()> {
     Ok(())
 }
 
+/// List, read, change, load and export plot style tables; any file is held to the automation roots.
 fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "stylesmanager";
     let action = str_param(p, "action").unwrap_or("list").to_ascii_lowercase();
@@ -303,6 +304,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::file_access::check_read(_path).map_err(|e| bad(cmd, e))?;
                         let meta = std::fs::metadata(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
                             return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
@@ -333,6 +335,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::file_access::check_write(_path).map_err(|e| bad(cmd, e))?;
                         crate::atomic_write::write_atomic(std::path::Path::new(_path), text.as_bytes())
                             .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         Ok(json!({ "name": name, "path": _path, "bytes": text.len() }))

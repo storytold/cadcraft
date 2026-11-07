@@ -285,6 +285,7 @@ fn oops_brings_back_what_it_erased_where_it_was() {
     assert_eq!(order, [a, b, c]);
 }
 
+/// A refused -WBLOCK leaves OOPS as it was.
 #[test]
 fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
     let (mut s, a, b, c) = drawing();
@@ -300,4 +301,28 @@ fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
     // OOPS still has C, the last erase that stood.
     s.execute("oops", &json!({})).unwrap();
     assert!(alive(&s, c));
+}
+
+/// Outside the automation roots the prompt doesn't say whether a file is there.
+#[test]
+fn the_replace_prompt_says_nothing_about_a_file_outside_the_roots() {
+    let (mut s, ..) = drawing();
+    let dir = TempDir::new("dash-wblock-roots");
+    for d in ["in", "out", "outside"] {
+        std::fs::create_dir(dir.join(d)).unwrap();
+    }
+    let there = dir.join("outside/there.dwg");
+    std::fs::write(&there, "old").unwrap();
+    // Without roots the same file gets the prompt, so its absence below is the check's doing.
+    let (mut free, ..) = drawing();
+    free.cmdline("-wblock").unwrap();
+    free.cmdline(&there.display().to_string()).unwrap();
+    assert!(free.prompt_text().contains("already exists"), "{}", free.prompt_text());
+    let write = dir.join("out");
+    let roots = cadcraft_engine::file_access::AutomationRoots::new(Some(&dir.join("in")), Some(&write)).unwrap();
+    cadcraft_engine::file_access::confine(roots.as_ref(), || {
+        s.cmdline("-wblock").unwrap();
+        s.cmdline(&there.display().to_string()).unwrap();
+        assert!(!s.prompt_text().contains("already exists"), "{}", s.prompt_text());
+    });
 }

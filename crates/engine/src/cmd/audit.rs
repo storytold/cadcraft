@@ -134,6 +134,7 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// Write the report to the `.adt` file beside the saved drawing, held to the automation roots.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     let (path_str, title) = match s.state() {
@@ -143,6 +144,10 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     // An unsaved drawing has no folder of its own to hold the log.
     let Some(path) = &path_str else { return };
     let adt_path = std::path::PathBuf::from(path).with_extension("adt");
+    if let Err(e) = crate::file_access::check_write(&adt_path) {
+        log::warn!("AUDITCTL: not writing audit log {}: {e}", adt_path.display());
+        return;
+    }
     let content = report.format_adt(&title, path_str.as_deref());
     // Write through an exclusively-created temporary and rename over the companion path, so a
     // planted `.adt` symlink beside the drawing cannot redirect the report onto another file
@@ -157,9 +162,11 @@ fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
+    crate::file_access::check_read(path).map_err(|e| bad(cmd, e))?;
     std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
+/// The bytes of the drawing at `path`, held to the automation roots.
 #[cfg(target_arch = "wasm32")]
 fn read_path(cmd: &str, _path: &str) -> Result<Vec<u8>> {
     Err(bad(cmd, "paths are not available on the web; pass `data`"))

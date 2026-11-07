@@ -145,9 +145,12 @@ pub(crate) enum Missing {
     NotFound,
     /// The saved path isn't followed, and there is no file of its name beside the host.
     Refused(Refused),
+    /// The automation roots don't reach the file ([`crate::file_access`]).
+    OutsideRoots,
 }
 
 impl Missing {
+    /// The status and message a reference gets when its file can't be loaded.
     fn outcome(self, path: &str) -> (XrefStatus, String) {
         match self {
             Self::NotFound => {
@@ -155,6 +158,9 @@ impl Missing {
                 (XrefStatus::NotFound, format!("{path}: {why}"))
             }
             Self::Refused(r) => (XrefStatus::Unresolved, format!("{path}: not opened, {r}")),
+            Self::OutsideRoots => {
+                (XrefStatus::Unresolved, format!("{path}: not opened, automation path rejected: outside the read root (or the write root)"))
+            }
         }
     }
 }
@@ -208,14 +214,17 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
         return Err(Missing::NotFound);
     }
     let (files, refused) = candidates(path, host, chosen);
+    // Outside the automation roots a place isn't even looked at, so the answer can't tell whether a
+    // file is there. A match found by ignoring case is checked again: it can be a link leading out.
+    let allowed = |p: &PathBuf| crate::file_access::check_read(p).is_ok();
+    let looked_for = files.len();
+    let files: Vec<PathBuf> = files.into_iter().filter(allowed).collect();
+    let outside = files.len() < looked_for;
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p)));
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p))).filter(allowed);
     #[cfg(target_arch = "wasm32")]
-    let found: Option<PathBuf> = {
-        let _ = files;
-        None
-    };
-    found.ok_or(refused.map_or(Missing::NotFound, Missing::Refused))
+    let found: Option<PathBuf> = None;
+    found.ok_or(if outside { Missing::OutsideRoots } else { refused.map_or(Missing::NotFound, Missing::Refused) })
 }
 
 /// Upper bound on directory entries scanned per path component by [`case_insensitive`].
@@ -261,6 +270,7 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
+        crate::file_access::check_read(file)?;
         let left = MAX_XREF_TOTAL_BYTES.saturating_sub(cx.bytes);
         let limit = MAX_XREF_BYTES.min(left);
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;

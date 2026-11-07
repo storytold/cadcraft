@@ -32,6 +32,68 @@ Example client configuration (Claude Code / Claude Desktop):
 { "mcpServers": { "cadcraft": { "command": "cadcraft-cli", "args": ["mcp"] } } }
 ```
 
+## Confining file access
+
+```sh
+cadcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
+```
+
+The two flags (PhotoCraft, VectorCraft and the other Craft apps take the same ones, so one client
+configuration works across the suite) keep the agent to the folders you give it:
+
+- Every file a command **reads** must lie inside the **read root or the write root**: `open`,
+  `recover`, `compare`, `script`, `import`, `insert`, `xattach` and every xref it loads, `new`
+  templates, `appload` and LISP `load`/`open`, support files (`linetype`, `hatch.patterns`,
+  `aliasedit`, `reinit`), data links, plot style and plotter configuration files named by a path,
+  and the shared plotter settings folder.
+- Every file a command **writes** must lie inside the **write root**: `save`/`qsave`/`saveas`
+  (including the temporary file and `.bak` written beside the destination), `export`, `plot`, `publish`,
+  `pdfbook`, `wblock`, data extraction, table export, plot style and plotter saves, the shared
+  plotter settings folder, and `render {path}`. The write root itself is refused: a save's
+  temporary file would sit beside it, outside the root.
+- Give the same folder twice for both. A root left out grants none of its *own* access: a read
+  root allows no writes, while a write root still allows reads inside it (files the agent wrote it
+  can read back). Without either flag nothing changes.
+- A path is made absolute against the server's working directory, then its links are followed: a
+  file or folder link that leads out of a root is outside it. For a file that doesn't exist yet,
+  its nearest existing folder's links are followed and the rest must be plain names, so `..` below
+  a folder that doesn't exist is refused, as is a link that leads nowhere. The result is compared
+  with the root by whole folder names, exactly: `/work2/x` is not inside `/work`, and on Windows
+  a folder's own case comes from the file system, so a case-sensitive folder's `Root` is not
+  `root`. On Windows a UNC path (`\\server\share`, `\\?\UNC\...`, including `\\host@SSL\...`), a
+  device path (`\\.\...`) or a verbatim path that isn't a disk is refused before it is opened,
+  unless a root is already on that same server and share. Device names (`CON`, `NUL`, `COM1`,
+  `LPT¹`…) are refused too.
+- A path you write must also stand under the write root: a link outside it pointing in is refused,
+  because a drawing's `.bak` goes beside the link and a delete removes the link.
+- A refused path is an ordinary tool error with `isError: true` that the agent can read and
+  correct, for example `automation path rejected: outside the write root
+  /work/project/out: /etc/x.png`, `automation path rejected: outside the read root (or the write
+  root): /etc/x.png`, `automation path rejected: the write root itself cannot be written:
+  /work/project/out`, `automation path rejected: UNC paths are refused unless a root is on the
+  same server and share: \\203.0.113.5\s\x.dwg`, or `automation filesystem access is not granted:
+  write authority is absent: /work/project/out/x.png`.
+- A file a drawing names is held to the roots too: an image or xref saved with a path outside them
+  stays unloaded, and the answer doesn't say whether the file exists.
+- A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):
+  one nobody classified is refused, whatever it does. `drawingrecovery` is refused, and SAVEFILEPATH
+  can't be changed, because both work on the server's autosave folder.
+- SHX fonts beside an opened drawing are searched only if every `.shx` in that folder stays inside
+  the roots: one link leading out and the folder is skipped.
+- The server itself still reads the system's fonts, from the system font folders and
+  `CADCRAFT_SHXPATH`. Their paths come from the server's setup, never from the agent, but a font file
+  named by a drawing can decide which of them is read.
+- The roots must be existing folders; a missing one stops the server with an error. Each flag is
+  given once (`--flag <dir>` or `--flag=<dir>`).
+
+The flags confine the headless server. `--connect` with them is an error, since the server would
+otherwise talk to an app that isn't confined; the app's control channel does not take them yet
+(#1585). Without `--connect` the server writes the files itself, so every check happens here.
+
+A path is checked, then opened: another program on the computer that swaps in a link between the two
+can still win that race, and a hard link can't be told from a file. Use the operating system's
+sandbox as well if other programs can change these folders.
+
 ## Tools
 
 | Tool | What it does |

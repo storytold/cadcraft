@@ -286,6 +286,7 @@ pub fn format_angle_list(angles: &[f64]) -> String {
     angles.iter().map(|a| format!("{}", (a.to_degrees() * 1e6).round() / 1e6)).collect::<Vec<_>>().join(";")
 }
 
+/// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
     if is_read_only(&n) {
@@ -382,6 +383,10 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "SAVETIME" => crate::autosave::set_savetime(
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),
+        // A folder autosave and recovery would use without any further check.
+        "SAVEFILEPATH" if crate::file_access::current().is_some() => {
+            return Err(EngineError::Other("SAVEFILEPATH cannot be changed under the automation roots".into()));
+        }
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
         "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
