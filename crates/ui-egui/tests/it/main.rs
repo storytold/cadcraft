@@ -26,6 +26,7 @@ mod options_dialog;
 mod options_right_click;
 mod parameters_rename;
 mod pickdrag;
+mod press_first_clicks;
 mod properties_units;
 mod rapid_clicks;
 mod selection_cycling;

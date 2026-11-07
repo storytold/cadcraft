@@ -83,13 +83,11 @@ fn drag_is_disabled_but_two_clicks_still_complete_the_window() {
         button(&mut h, a, true);
         button(&mut h, a, false);
         assert!(h.state().session.pending_window.is_some());
-        // A held-button movement after the first click must not consume the second corner.
-        drag(&mut h, a, b);
-        assert!(h.state().session.pending_window.is_some());
-        assert!(h.state().session.selection().is_empty());
-        h.run_steps(30); // Separate deliberate clicks from egui's double-click interval.
-        button(&mut h, b, true);
-        button(&mut h, b, false);
+        // The second corner is where the button goes down (#1001): a drag on from there, let go
+        // elsewhere, changes nothing.
+        h.run_steps(30); // Separate deliberate clicks from the double-click interval.
+        let away = xf.to_screen(Vec2::new(30.0, 8.0));
+        drag(&mut h, b, away);
         assert!(h.state().session.pending_window.is_none());
         assert_eq!(h.state().session.selection().len(), 1);
     }
