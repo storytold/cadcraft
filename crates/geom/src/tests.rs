@@ -364,3 +364,16 @@ fn open_polyline_centroid_ignores_last_bulge() {
     let after = pl.centroid().unwrap();
     assert!(before.near(after, 1e-9), "{before:?} -> {after:?}");
 }
+
+#[test]
+fn tiny_arc_sweep_is_not_a_full_circle() {
+    for x in [0.0, 1.0, 5.5] {
+        assert!(close(ccw_sweep(x, x), TAU));
+    }
+    assert!((ccw_sweep(0.0, 5e-10) - 5e-10).abs() < 1e-15, "{}", ccw_sweep(0.0, 5e-10));
+    let a = Arc::new(Vec2::new(0.0, 0.0), 1e6, 0.0, 5e-10);
+    assert!((a.len() - 5e-4).abs() < 1e-6, "{}", a.len());
+    assert!(a.contains_angle(2.5e-10));
+    assert!(!a.contains_angle(1.0));
+    assert!(a.mid_point().near(Vec2::new(1e6, 0.0), 1e-2));
+}

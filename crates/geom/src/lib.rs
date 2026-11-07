@@ -44,9 +44,10 @@ pub fn norm_angle(a: f64) -> f64 {
 }
 
 /// Counter-clockwise sweep from `start` to `end`, in `(0, 2π]`.
+/// Only (numerically) equal angles give a full turn; tiny genuine sweeps are kept.
 pub fn ccw_sweep(start: f64, end: f64) -> f64 {
     let s = norm_angle(end - start);
-    if s <= EPS { TAU } else { s }
+    if s <= 1e-14 { TAU } else { s }
 }
 
 /// True when angle `a` lies on the CCW sweep from `start` to `end` (inclusive, with tolerance).
