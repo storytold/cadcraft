@@ -8,7 +8,7 @@ use serde_json::json;
 use super::super::curves;
 use super::super::machines::{SelOutcome, SelectPhase, number};
 use super::pedit::{PPhase, PeditM, clear_widths, pedit_apply, pedit_join, yes_no};
-use super::{as_lwpoly, other, set_kind};
+use super::{other, polyline_of, set_kind, set_polyline};
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// Most option steps Undo can take back.
@@ -78,13 +78,13 @@ impl PeditM {
                 let no = !yes_no(&i)?;
                 let mut kept = Vec::new();
                 for h in std::mem::take(&mut self.multi) {
-                    let kind = curves::entity(s, h)?.kind;
-                    match kind {
+                    let e = curves::entity(s, h)?;
+                    match e.kind {
                         EntityKind::LwPolyline(_) => kept.push(h),
                         _ if no => {}
-                        k => {
-                            if let Some(pl) = as_lwpoly(&k) {
-                                set_kind(s, h, EntityKind::LwPolyline(pl))?;
+                        _ => {
+                            if let Some((pl, normal)) = polyline_of(&e) {
+                                set_polyline(s, h, pl, normal)?;
                                 kept.push(h);
                             }
                         }
@@ -219,7 +219,7 @@ impl PeditM {
             let open = matches!(curves::entity(s, h)?.kind, EntityKind::LwPolyline(p) if !p.closed);
             if open {
                 // A polyline that took on segments no longer goes back past the Join on Decurve.
-                if pedit_join(s, h, &rest, fuzz)? > 0 {
+                if pedit_join(s, h, &rest, fuzz, false)? > 0 {
                     self.morig.remove(&h);
                 }
                 rest.retain(|o| s.doc().is_ok_and(|d| d.entity(*o).is_some()));
