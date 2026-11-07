@@ -119,6 +119,29 @@ mod native {
         }))
         .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
+            // A drawing whose ASCII DXF passes the limit (a site plan held in huge
+            // block definitions) is tried again as binary DXF, which holds the same data in far
+            // fewer bytes and which the DXF reader reads as well. Drawings under the limit never
+            // take this path, so they read exactly as before.
+            out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
+            let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new_binary(&doc).write_to_writer(&mut out)))
+                .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+            if !out.exceeded {
+                written.map_err(|e| format!("DWG→DXF: {e}"))?;
+                // The header variables go in after the capped write: the result must still fit.
+                let binary = add_header_vars_binary(std::mem::take(&mut out.buf), &doc.header);
+                if binary.len() <= limits.max_dxf_bytes {
+                    notes.push(format!(
+                        "DWG: read through binary DXF ({}), its text form being larger than the {} limit",
+                        mb(binary.len() as u64),
+                        mb(limits.max_dxf_bytes as u64)
+                    ));
+                    return Ok((binary, notes));
+                }
+                out.exceeded = true;
+            }
+        }
+        if out.exceeded {
             return Err(format!(
                 "DWG: converting this {} file produced more than {} of drawing data (the limit); \
                  the file is probably damaged, or uses objects the DWG reader misreads",
@@ -621,6 +644,45 @@ mod native {
             }
         }
         dxf.splice(end..end, add.into_bytes());
+        dxf
+    }
+
+    /// [`add_header_vars`] for acadrust's binary DXF: the same variables, added before the
+    /// HEADER section's ENDSEC with two-byte group codes, values as 8-byte doubles (codes 40, 50)
+    /// or 2-byte integers (code 70), little-endian; a variable already written is left alone.
+    /// Data of another layout (no sentinel, or a HEADER section not first) is returned unchanged.
+    fn add_header_vars_binary(mut dxf: Vec<u8>, h: &acadrust::document::HeaderVariables) -> Vec<u8> {
+        const START: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0\0\0SECTION\0\x02\0HEADER\0";
+        const END: &[u8] = b"\0\0ENDSEC\0";
+        if !dxf.starts_with(START) {
+            return dxf;
+        }
+        let Some(end) = dxf.windows(END.len()).position(|w| w == END) else { return dxf };
+        let section = dxf.get(..end).unwrap_or_default();
+        let mut add = Vec::new();
+        for (name, code, value) in unwritten_header_vars(h) {
+            let mut key = vec![9u8, 0];
+            key.extend_from_slice(name.as_bytes());
+            key.push(0);
+            if section.windows(key.len()).any(|w| w == key.as_slice()) {
+                continue;
+            }
+            let Ok(v) = value.parse::<f64>() else { continue };
+            let bytes = match code {
+                // Integer codes hold whole values in range; anything else is not written.
+                70 if v.fract() == 0.0 && (f64::from(i16::MIN)..=f64::from(i16::MAX)).contains(&v) => {
+                    i16::try_from(v as i64).ok().map(|n| n.to_le_bytes().to_vec())
+                }
+                70 => None,
+                _ if v.is_finite() => Some(v.to_le_bytes().to_vec()),
+                _ => None,
+            };
+            let (Some(bytes), Ok(code)) = (bytes, u16::try_from(code)) else { continue };
+            add.extend_from_slice(&key);
+            add.extend_from_slice(&code.to_le_bytes());
+            add.extend_from_slice(&bytes);
+        }
+        dxf.splice(end..end, add);
         dxf
     }
 
