@@ -145,9 +145,17 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
+///
+/// A drawing with no kept version (a new one, or one from a DXF without `$ACADVER`) that has field
+/// texts gets FIELD objects in the groups of AutoCAD 2010 ([`dxf_field::OBJECT_VERSION`]): read as
+/// R2000, acadrust drops a FIELD's flags, cached value and format (#551). The bridge's text is
+/// ASCII with `\U+XXXX` escapes, which this acadrust decodes for every version; a newer one that
+/// does not (acadrust#213, CADCraft #2851) would leave the escapes in non-ASCII field text.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
     let bridge = dxf_write::dwg_bridge(d, version);
-    cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
+    let kept =
+        d.foreign.version.as_deref().or_else(|| (version >= Version::R2004 && dxf_field::writes_fields(d)).then_some(dxf_field::OBJECT_VERSION));
+    cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), kept).map_err(IoError::Format)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

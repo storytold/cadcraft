@@ -429,6 +429,14 @@ fn drop_objects(f: &mut Foreign, handle: Handle, keep_empty: bool) {
     }
 }
 
+/// The DXF version whose FIELD groups [`plan`] writes (AutoCAD 2010).
+pub(crate) const OBJECT_VERSION: &str = "AC1024";
+
+/// Whether saving the drawing (as 2004 or later) writes FIELD objects for its texts.
+pub(crate) fn writes_fields(d: &Drawing) -> bool {
+    every_entity(d).any(|e| matches!(&e.kind, EntityKind::MText(t) if tree(&t.contents).is_some()))
+}
+
 /// The file's field objects for the drawing's MTEXTs.
 pub(crate) fn plan(d: &Drawing) -> Plan {
     let mut plan = Plan::default();
