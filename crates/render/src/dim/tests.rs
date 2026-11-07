@@ -426,24 +426,32 @@ fn jogged_radius_with_nan_radius_draws_no_lines() {
     assert!(g.lines.is_empty() && g.fills.is_empty(), "{:?}", g.lines);
 }
 
-/// #1645: the MTEXT contents give back the dimension's text when decoded, with the diameter
-/// sign as `%%c` (no SHX font has U+2300) and a `%` that would start a code escaped.
+/// #1645, #2854: the block's and EXPLODE's MTEXT contents are the formatted text the dimension
+/// is drawn from, so stacks and height codes stay, with a typed diameter sign as `%%c` (no SHX
+/// font has U+2300) and a lone `%` before it escaped. `%%` codes already there are kept, and the
+/// contents read back as the text the dimension shows.
 #[test]
-fn mtext_contents_write_the_diameter_sign_as_a_code() {
-    let with = |v: &str| DimGeometry { value: v.into(), ..DimGeometry::default() };
-    for (value, contents) in [
+fn mtext_contents_keep_the_formatting_and_write_the_diameter_sign_as_a_code() {
+    let with = |m: &str| DimGeometry { mtext: m.into(), ..DimGeometry::default() };
+    let shown = |m: &str| decode_value(&cadcraft_fonts::plain_mtext(m));
+    for (mtext, contents) in [
         ("⌀60", "%%c60"),
+        ("%%c60", "%%c60"),
         ("2x ⌀8.5 THRU", "2x %%c8.5 THRU"),
         ("R3.0", "R3.0"),
-        ("36.9° ±0.1", "36.9° ±0.1"),
+        ("36.9%%d %%p0.1", "36.9%%d %%p0.1"),
         ("50%", "50%"),
         ("5%⌀6", "5%%%%%c6"),
-        ("%%", "%%%%"),
+        ("%%%%%%", "%%%%%%"),
+        ("%%⌀6", "%%%%%%%%c6"),
+        ("50%%", "50%%"),
+        (r"10\S+0.1^-0.1;", r"10\S+0.1^-0.1;"),
+        (r"2,81{\H0.7x;\S5^ ;}", r"2,81{\H0.7x;\S5^ ;}"),
         ("", ""),
     ] {
-        let g = with(value);
-        assert_eq!(g.mtext_contents(), contents, "{value:?}");
-        assert_eq!(decode_value(&g.mtext_contents()), value, "{value:?} reads back");
-        assert!(!g.mtext_contents().contains('⌀'));
+        let written = with(mtext).mtext_contents();
+        assert_eq!(written, contents, "{mtext:?}");
+        assert!(!written.contains('⌀'));
+        assert_eq!(shown(&written), shown(mtext), "{mtext:?} reads back as the text shown");
     }
 }
