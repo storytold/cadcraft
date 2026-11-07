@@ -2,7 +2,7 @@ use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
-use super::text_entity::{mtext, place_text_entity};
+use super::text_entity::{field_text_background, mtext, place_text_entity};
 use super::{
     Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
     mline, point, table, tolerance, wide,
@@ -110,7 +110,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             } else {
                 t
             };
-            let (sh, _) = place_text_entity(ctx.d, t, &t.value);
+            let shown = cadcraft_doc::fields::display(&t.value);
+            field_text_background(b, ctx, t, &shown);
+            let (sh, _) = place_text_entity(ctx.d, t, &shown);
             b.shaped(ctx, rgb, lw, &sh);
         }
         EntityKind::AttDef(a) => {

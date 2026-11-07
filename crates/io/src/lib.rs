@@ -8,6 +8,7 @@ mod dxf_raw;
 /// XCLIP boundaries as SPATIAL_FILTER objects.
 mod dxf_clip;
 mod dxf_ext;
+mod dxf_field;
 mod dxf_image;
 mod dxf_mleader;
 mod dxf_read;

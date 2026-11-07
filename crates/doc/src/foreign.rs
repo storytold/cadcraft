@@ -75,6 +75,11 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// MTEXT contents (with their field codes) as they were rebuilt from the file's field
+    /// objects, by the MTEXT's handle: while an MTEXT's contents still equal them, saving writes
+    /// the file's own field objects back (they hold data CADCraft does not model, such as a
+    /// date's time); once they differ, the field objects are written again from the contents.
+    pub fields: BTreeMap<Handle, String>,
     /// The `$ACADVER` of the file all this was read from: its groups are in that version's form.
     /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
     /// later save must not take it for this one (#2471).
@@ -97,6 +102,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.fields.is_empty()
     }
 
     /// The entities with a geometry record in the data store: an `ACDSRECORD` naming the entity

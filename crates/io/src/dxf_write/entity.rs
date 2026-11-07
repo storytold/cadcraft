@@ -319,7 +319,13 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Drawing direction: 5, by style.
             w.i(72, 5);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
-            let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&t.contents).chars().collect();
+            // A text whose fields are written as objects goes out as shown (#551).
+            let shown = if cx.fields.contains(&e.handle) {
+                cadcraft_doc::fields::display_mtext(&t.contents)
+            } else {
+                std::borrow::Cow::Borrowed(t.contents.as_str())
+            };
+            let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&shown).chars().collect();
             let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
             let n = chunks.len();
             for (i, c) in chunks.iter().enumerate() {
