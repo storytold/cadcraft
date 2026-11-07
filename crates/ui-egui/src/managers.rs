@@ -314,30 +314,366 @@ struct Style {
     fields: Vec<Field>,
 }
 
+fn cached_used_text_styles(ctx: &egui::Context, key: (u64, u64), d: &cadcraft_doc::Drawing) -> std::sync::Arc<std::collections::HashSet<String>> {
+    type Entry = ((u64, u64), std::sync::Arc<std::collections::HashSet<String>>);
+    if let Some((k, used)) = temp::<Entry>(ctx, "style_used_cache")
+        && k == key
+    {
+        return used;
+    }
+    let used = std::sync::Arc::new(
+        cadcraft_engine::cmd::text_styles_in_use(d)
+            .into_iter()
+            .map(|s| s.to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect::<std::collections::HashSet<String>>(),
+    );
+    set_temp(ctx, "style_used_cache", (key, used.clone()));
+    used
+}
+
+fn draw_text_style_preview(p: &egui::Painter, rect: egui::Rect, style: &cadcraft_doc::TextStyle, t: &Tokens) {
+    p.rect_filled(rect, 2.0, t.control);
+    p.rect_stroke(rect, 2.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let font = cadcraft_fonts::TextFont::resolve(&style.font);
+    let params = cadcraft_fonts::TextParams {
+        height: 1.0,
+        width_factor: style.width_factor.clamp(0.1, 10.0),
+        oblique: style.oblique,
+        backwards: style.backwards,
+        upside_down: style.upside_down,
+        ..cadcraft_fonts::TextParams::new(cadcraft_geom::Vec2::ZERO, 1.0)
+    };
+    let (sh, bb) = cadcraft_fonts::place(&font, "AaBb123", &params);
+    if bb.is_empty() || bb.width() <= 0.0 || bb.height() <= 0.0 {
+        return;
+    }
+    let inner = rect.shrink2(vec2(10.0, 10.0));
+    if inner.width() <= 4.0 || inner.height() <= 4.0 {
+        return;
+    }
+    let scale = (f64::from(inner.width()) / bb.width()).min(f64::from(inner.height()) / bb.height()).min(36.0);
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let center = bb.center();
+    let to_screen = |pt: cadcraft_geom::Vec2| -> egui::Pos2 {
+        egui::pos2(inner.center().x + ((pt.x - center.x) * scale) as f32, inner.center().y - ((pt.y - center.y) * scale) as f32)
+    };
+    let clipped = p.with_clip_rect(rect.shrink(2.0));
+    let stroke = Stroke::new(1.4, t.text);
+    for s in &sh.strokes {
+        for pair in s.windows(2) {
+            if let [a, b] = pair {
+                clipped.line_segment([to_screen(*a), to_screen(*b)], stroke);
+            }
+        }
+    }
+    if !sh.glyphs.is_empty() {
+        let mut mesh = egui::Mesh::default();
+        for g in &sh.glyphs {
+            let tris = cadcraft_render::triangulate_evenodd(g);
+            for tri in tris.as_chunks::<3>().0 {
+                let Ok(base) = u32::try_from(mesh.vertices.len()) else { break };
+                for &pt in tri {
+                    mesh.vertices.push(egui::epaint::Vertex { pos: to_screen(pt), uv: egui::epaint::WHITE_UV, color: t.text });
+                }
+                mesh.indices.extend_from_slice(&[base, base + 1, base + 2]);
+            }
+        }
+        if !mesh.indices.is_empty() {
+            clipped.add(egui::Shape::mesh(mesh));
+        }
+    }
+}
+
 fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
-    let Ok(d) = app.session.doc() else {
+    let t = Tokens::get();
+    let Ok(st) = app.session.state() else {
         no_drawing(ctx, "Text Style", open);
         return None;
     };
-    let mut styles: Vec<Style> = d
-        .text_styles
-        .iter()
-        .map(|s| Style {
-            name: s.name.clone(),
-            fields: vec![
-                Field::Num("height", "Height (0 = ask)", s.height),
-                Field::Num("widthFactor", "Width factor", s.width_factor),
-                Field::Bool("backwards", "Backwards", s.backwards),
-                Field::Bool("upsideDown", "Upside down", s.upside_down),
-            ],
-        })
-        .collect();
-    if styles.is_empty() {
-        let s = cadcraft_doc::TextStyle::default();
-        styles.push(Style { name: s.name, fields: Vec::new() });
+    let d = &st.doc;
+    let available = cadcraft_fonts::ttf::available_fonts();
+    let mut all_styles: Vec<cadcraft_doc::TextStyle> = d.text_styles.clone();
+    if all_styles.is_empty() {
+        all_styles.push(cadcraft_doc::TextStyle::default());
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
-    style_manager(ctx, open, "Text Style", "style", &current, &styles)
+    let used_styles = cached_used_text_styles(ctx, (st.uid, st.revision), d);
+    let sel_key = "style_sel";
+    let new_key = "style_new";
+    let filter_key = "style_filter_in_use";
+    let mut sel =
+        temp::<String>(ctx, sel_key).filter(|s| all_styles.iter().any(|x| x.name.eq_ignore_ascii_case(s))).unwrap_or_else(|| current.clone());
+    let mut new_name = temp::<String>(ctx, new_key).unwrap_or_default();
+    let mut only_in_use = temp::<bool>(ctx, filter_key).unwrap_or(false);
+    let mut action = None;
+    let mut close = false;
+
+    egui::Window::new("Text Style").open(open).default_size(vec2(610.0, 350.0)).resizable(true).show(ctx, |ui| {
+        ui.label(RichText::new(format!("Current text style: {current}")).color(t.text_dim));
+        ui.add_space(4.0);
+        let selected = all_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&sel)).or_else(|| all_styles.first()).cloned().unwrap_or_default();
+        sel = selected.name.clone();
+
+        let trimmed = selected.font.trim();
+        let clean_font = if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("txt")
+            || trimmed.len() > 128
+            || !trimmed.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+        {
+            cadcraft_fonts::BUILTIN_FONT.to_string()
+        } else {
+            trimmed.to_string()
+        };
+        let described = cadcraft_fonts::ttf::describe_font(&clean_font);
+        let is_ttf = described.is_some() || cadcraft_fonts::ttf::find(&clean_font).is_some();
+        let (family_display, style_display, style_choices) = match described {
+            Some((fam, st, choices)) => (fam, st, choices),
+            None => (clean_font.clone(), "Regular".to_string(), vec!["Regular".to_string()]),
+        };
+        let mut fonts = available.clone();
+        if !fonts.iter().any(|f| f.eq_ignore_ascii_case(&family_display)) {
+            fonts.insert(0, family_display.clone());
+        }
+
+        ui.horizontal_top(|ui| {
+            // Left column: Styles list, filter dropdown, and live Preview box.
+            ui.vertical(|ui| {
+                ui.set_width(155.0);
+                ui.label("Styles:");
+                egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                    ui.set_width(145.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("textstyle_list")
+                        .max_height(130.0)
+                        .min_scrolled_height(115.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for s in &all_styles {
+                                if only_in_use
+                                    && !s.name.eq_ignore_ascii_case(&current)
+                                    && !s.name.eq_ignore_ascii_case(&sel)
+                                    && !used_styles.contains(&s.name.to_ascii_lowercase())
+                                {
+                                    continue;
+                                }
+                                let mut label = RichText::new(&s.name);
+                                if s.name.eq_ignore_ascii_case(&current) {
+                                    label = label.strong();
+                                }
+                                let r = ui.selectable_label(s.name.eq_ignore_ascii_case(&sel), label);
+                                if r.clicked() {
+                                    sel = s.name.clone();
+                                }
+                                if r.double_clicked() {
+                                    action = Some(("style.current", json!({ "name": s.name })));
+                                }
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                let filter_text = if only_in_use { "Styles in use" } else { "All styles" };
+                let filter_combo = craft_ui::ComboBox::from_id_salt("textstyle_filter").selected_text(filter_text).width(155.0).show_ui(ui, |ui| {
+                    if ui.selectable_label(!only_in_use, "All styles").clicked() {
+                        only_in_use = false;
+                    }
+                    if ui.selectable_label(only_in_use, "Styles in use").clicked() {
+                        only_in_use = true;
+                    }
+                });
+                filter_combo.response.accessible_name("Style filter");
+                ui.add_space(4.0);
+                ui.label(RichText::new("Preview").color(t.text_dim));
+                let (rect, _) = ui.allocate_exact_size(vec2(155.0, 68.0), Sense::hover());
+                draw_text_style_preview(ui.painter(), rect, &selected, &t);
+            });
+
+            ui.add_space(6.0);
+
+            // Middle column: Font, Size, and Effects groups.
+            ui.vertical(|ui| {
+                ui.set_width(310.0);
+                egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                    ui.set_width(296.0);
+                    ui.label(RichText::new("Font").strong());
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            let fn_lbl = ui.label("Font Name:");
+                            let mut picked_fam = None;
+                            let combo = craft_ui::ComboBox::from_id_salt("textstyle_font_name")
+                                .selected_text(family_display.as_str())
+                                .width(175.0)
+                                .show_ui(ui, |ui| {
+                                    for c in &fonts {
+                                        let same = c.eq_ignore_ascii_case(&family_display);
+                                        if ui.selectable_label(same, c).clicked() && !same {
+                                            picked_fam = Some(c.clone());
+                                        }
+                                    }
+                                });
+                            combo.response.labelled_by(fn_lbl.id);
+                            if let Some(fam) = picked_fam {
+                                let next_font = match cadcraft_fonts::ttf::describe_font(&fam) {
+                                    Some((canon_fam, _, styles)) => {
+                                        let keep = styles
+                                            .iter()
+                                            .find(|s| s.eq_ignore_ascii_case(&style_display))
+                                            .cloned()
+                                            .unwrap_or_else(|| "Regular".to_string());
+                                        cadcraft_fonts::ttf::compose_font(&canon_fam, &keep)
+                                    }
+                                    None => fam,
+                                };
+                                action = Some(("style", json!({ "name": selected.name, "font": next_font, "current": false })));
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            let fs_lbl = ui.label("Font Style:");
+                            let mut picked_style = None;
+                            ui.add_enabled_ui(is_ttf && style_choices.len() > 1, |ui| {
+                                let combo = craft_ui::ComboBox::from_id_salt("textstyle_font_style")
+                                    .selected_text(style_display.as_str())
+                                    .width(105.0)
+                                    .show_ui(ui, |ui| {
+                                        for st in &style_choices {
+                                            let same = st.eq_ignore_ascii_case(&style_display);
+                                            if ui.selectable_label(same, st).clicked() && !same {
+                                                picked_style = Some(st.clone());
+                                            }
+                                        }
+                                    });
+                                combo.response.labelled_by(fs_lbl.id);
+                            });
+                            if let Some(st) = picked_style {
+                                let next_font = cadcraft_fonts::ttf::compose_font(&family_display, &st);
+                                action = Some(("style", json!({ "name": selected.name, "font": next_font, "current": false })));
+                            }
+                        });
+                    });
+                    let mut use_big = !selected.big_font.trim().is_empty();
+                    if ui.add_enabled(!is_ttf, egui::Checkbox::new(&mut use_big, "Use Big Font")).changed() {
+                        let big = if use_big { "bigfont.shx" } else { "" };
+                        action = Some(("style", json!({ "name": selected.name, "bigFont": big, "current": false })));
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                    ui.set_width(296.0);
+                    ui.label(RichText::new("Size").strong());
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(175.0);
+                            let mut annotative = selected.annotative;
+                            if ui.checkbox(&mut annotative, "Annotative").changed() {
+                                action = Some(("style", json!({ "name": selected.name, "annotative": annotative, "current": false })));
+                            }
+                            let mut match_orient = false;
+                            ui.add_enabled(false, egui::Checkbox::new(&mut match_orient, "Match text orientation to layout"));
+                        });
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            let h_lbl = ui.label("Height");
+                            if let Some(v) = num_field(ui, ("style", &selected.name, "height"), selected.height, Some(h_lbl.id)).filter(|v| *v >= 0.0)
+                            {
+                                action = Some(("style", json!({ "name": selected.name, "height": v, "current": false })));
+                            }
+                        });
+                    });
+                });
+
+                ui.add_space(6.0);
+
+                egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                    ui.set_width(296.0);
+                    ui.label(RichText::new("Effects").strong());
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(175.0);
+                            let mut upside_down = selected.upside_down;
+                            if ui.checkbox(&mut upside_down, "Upside down").changed() {
+                                action = Some(("style", json!({ "name": selected.name, "upsideDown": upside_down, "current": false })));
+                            }
+                            let mut backwards = selected.backwards;
+                            if ui.checkbox(&mut backwards, "Backwards").changed() {
+                                action = Some(("style", json!({ "name": selected.name, "backwards": backwards, "current": false })));
+                            }
+                            let mut vertical = selected.vertical;
+                            if ui.add_enabled(!is_ttf, egui::Checkbox::new(&mut vertical, "Vertical")).changed() {
+                                action = Some(("style", json!({ "name": selected.name, "vertical": vertical, "current": false })));
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            let wf_lbl = ui.label("Width Factor:");
+                            if let Some(v) = num_field(ui, ("style", &selected.name, "widthFactor"), selected.width_factor, Some(wf_lbl.id))
+                                .filter(|v| *v > 0.0 && *v <= 100.0)
+                            {
+                                action = Some(("style", json!({ "name": selected.name, "widthFactor": v, "current": false })));
+                            }
+                            let ob_lbl = ui.label("Oblique Angle:");
+                            let ob_deg = selected.oblique.to_degrees();
+                            if let Some(v) = num_field(ui, ("style", &selected.name, "oblique"), ob_deg, Some(ob_lbl.id)).filter(|v| v.abs() <= 85.0)
+                            {
+                                action = Some(("style", json!({ "name": selected.name, "oblique": v, "current": false })));
+                            }
+                        });
+                    });
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Right column: Set Current, New, and Delete actions.
+            ui.vertical(|ui| {
+                ui.set_width(95.0);
+                ui.add_space(18.0);
+                let is_cur = selected.name.eq_ignore_ascii_case(&current);
+                if ui.add_enabled(!is_cur, egui::Button::new("Set Current").min_size(vec2(90.0, 0.0))).clicked() {
+                    action = Some(("style.current", json!({ "name": selected.name })));
+                }
+                ui.add_space(6.0);
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(90.0))
+                    .accessible_name("New style name")
+                    .on_hover_text("New style name");
+                let candidate = new_name.trim().to_string();
+                let can_new = !candidate.is_empty() && !all_styles.iter().any(|s| s.name.eq_ignore_ascii_case(&candidate));
+                if ui.add_enabled(can_new, egui::Button::new("New...").min_size(vec2(90.0, 0.0))).clicked() {
+                    action = Some(("style", json!({ "name": candidate, "current": false })));
+                    sel = candidate;
+                    new_name.clear();
+                }
+                ui.add_space(6.0);
+                let can_delete = !selected.name.eq_ignore_ascii_case("Standard")
+                    && !selected.name.eq_ignore_ascii_case(&current)
+                    && !used_styles.contains(&selected.name.to_ascii_lowercase());
+                if ui.add_enabled(can_delete, egui::Button::new("Delete").min_size(vec2(90.0, 0.0))).clicked() {
+                    action = Some(("style.delete", json!({ "name": selected.name })));
+                    sel = current.clone();
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Close").clicked() {
+                close = true;
+            }
+        });
+    });
+
+    if close {
+        *open = false;
+    }
+    set_temp(ctx, sel_key, sel);
+    set_temp(ctx, new_key, new_name);
+    set_temp(ctx, filter_key, only_in_use);
+    action
 }
 
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
@@ -424,7 +760,9 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                 action = Some((cmd, json!({ "name": sel })));
             }
             left.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0)).on_hover_text("New style name");
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0))
+                    .accessible_name("New style name")
+                    .on_hover_text("New style name");
                 let name = new_name.trim().to_string();
                 let ok = !name.is_empty() && !styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name));
                 if ui.add_enabled(ok, egui::Button::new("New")).clicked() {
@@ -448,15 +786,17 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                             ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
                         }
                         Field::Choice(key, label, v, choices) => {
-                            ui.label(*label);
+                            let field_label = ui.label(*label);
                             let mut picked = None;
-                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                            let combo = craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
                                 for c in choices {
-                                    if ui.selectable_label(c == v, c).clicked() && c != v {
+                                    let same = c.eq_ignore_ascii_case(v);
+                                    if ui.selectable_label(same, c).clicked() && !same {
                                         picked = Some(c.clone());
                                     }
                                 }
                             });
+                            combo.response.labelled_by(field_label.id);
                             picked.map(|c| (*key, json!(c)))
                         }
                     };
