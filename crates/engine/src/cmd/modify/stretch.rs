@@ -3,6 +3,7 @@ use super::{
     Accept, Entity, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, SelectKind, SelectMode, Session, Step, Value, Vec2, bad, json,
     line, points_param,
 };
+use cadcraft_geom::Arc;
 
 /// An area whose vertices STRETCH moves: a window's box, or a polygon closed back to its first
 /// point.
@@ -37,6 +38,18 @@ fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space,
     }
 }
 
+/// The bulge that keeps an arc's height (bulge × chord / 2) when its chord changes length; none
+/// once the chord collapses to a point, which has no arc left to keep.
+fn keep_height(bulge: f64, old_chord: f64, new_chord: f64) -> f64 {
+    if new_chord.is_nan() || new_chord <= 1e-12 {
+        0.0
+    } else if old_chord.is_finite() {
+        bulge * old_chord / new_chord
+    } else {
+        bulge
+    }
+}
+
 /// Move the vertices of `e` that lie inside any of the areas `wins` by `d` (STRETCH).
 fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
     let inside = |p: Vec2| wins.iter().any(|a| a.contains(p));
@@ -52,18 +65,56 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
             mv(&mut l.b);
         }
         EntityKind::LwPolyline(pl) => {
+            let old: Vec<Vec2> = pl.vertices.iter().map(|v| v.p).collect();
             for v in &mut pl.vertices {
                 if inside(v.p) {
                     v.p += d;
                 }
             }
+            // An arc segment keeps its height (bulge × chord / 2) as its ends move, as in AutoCAD.
+            let n = pl.vertices.len();
+            let segs = if pl.closed { n } else { n.saturating_sub(1) };
+            for i in 0..segs {
+                let j = (i + 1) % n;
+                let (Some(a0), Some(b0), Some(b1)) = (old.get(i), old.get(j), pl.vertices.get(j).map(|v| v.p)) else { continue };
+                if let Some(v) = pl.vertices.get_mut(i)
+                    && v.bulge != 0.0
+                {
+                    v.bulge = keep_height(v.bulge, a0.dist(*b0), v.p.dist(b1));
+                }
+            }
         }
         EntityKind::MLine(m) => m.vertices.iter_mut().for_each(|v| mv(&mut v.p)),
         EntityKind::Arc(a) => {
-            // Arcs keep their shape: move when the centre is inside.
-            if inside(a.center.xy()) {
-                a.center.x += d.x;
-                a.center.y += d.y;
+            // AutoCAD moves the ends inside the area and keeps the arc's height (bulge × chord / 2);
+            // the centre alone moves nothing. An end stretched onto the other leaves the arc as it
+            // was: AutoCAD collapses it into a zero-radius arc at that point (radius 6e-16, start
+            // 180°, end 0°), an object nothing can draw or pick, which CADCraft does not make.
+            let g = Arc::new(a.center.xy(), a.radius, a.start, a.end);
+            let (s0, e0) = (g.start_point(), g.end_point());
+            let (s_in, e_in) = (inside(s0), inside(e0));
+            let (s1, e1) = (if s_in { s0 + d } else { s0 }, if e_in { e0 + d } else { e0 });
+            if s_in && e_in {
+                // Both ends move: the arc moves whole (a full sweep has no chord to rebuild from).
+                (a.center.x, a.center.y) = (a.center.x + d.x, a.center.y + d.y);
+            } else if (s_in || e_in)
+                && let Some((r, _)) =
+                    cadcraft_geom::bulge_to_arc(s1, e1, keep_height(cadcraft_geom::arc_to_bulge(g.sweep()), s0.dist(e0), s1.dist(e1)))
+            {
+                (a.center.x, a.center.y) = (r.center.x, r.center.y);
+                (a.radius, a.start, a.end) = (r.radius, r.start, r.end);
+            }
+        }
+        // Control points inside the area move (AutoCAD).
+        EntityKind::Spline(sp) if sp.fit.is_empty() => sp.control.iter_mut().filter(|p| inside(**p)).for_each(|p| *p += d),
+        // A spline built from fit points: the fit points inside the area move and it is fitted
+        // through them again, its fit data kept (AutoCAD 2024). All of them inside, it moves.
+        EntityKind::Spline(sp) => {
+            if sp.fit.iter().all(|p| inside(*p)) {
+                sp.transform(&Mat3::translate(d));
+            } else if sp.fit.iter().any(|p| inside(*p)) {
+                let fit: Vec<Vec2> = sp.fit.iter().map(|p| if inside(*p) { *p + d } else { *p }).collect();
+                *sp = sp.refit(&fit, sp.closed);
             }
         }
         EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(mv),
