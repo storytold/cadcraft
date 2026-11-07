@@ -206,6 +206,16 @@ fn device_paper<'a>(dev: &'a PlotterConfig, name: &str) -> Option<&'a DevicePape
     dev.paper(name).or_else(|| dev.paper(cadcraft_render::paper_size(name)?.name))
 }
 
+/// Whether `name` is an AutoCAD `.pc3` or system PDF printer name stored in a drawing's page setup.
+fn is_foreign_pdf_device(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower.ends_with(".pc3")
+        || lower == "microsoft print to pdf"
+        || lower == "adobe pdf"
+        || lower.starts_with("dwg to pdf")
+        || lower.starts_with("autocad pdf")
+}
+
 fn set_paper(page: &mut PageSetup, p: &DevicePaper) {
     page.paper = p.name.clone();
     page.width_mm = p.width;
@@ -233,7 +243,14 @@ pub fn page_device(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
             page.device = NO_DEVICE.into();
             return Ok(false);
         }
-        Some(n) => Some(find_device(n).ok_or_else(|| unknown_device(cmd, n))?),
+        Some(n) => match find_device(n) {
+            Some(d) => Some(d),
+            None if page.device.eq_ignore_ascii_case(n) || is_foreign_pdf_device(n) => {
+                page.device = n.into();
+                return Ok(false);
+            }
+            None => return Err(unknown_device(cmd, n)),
+        },
         None => find_device(&page.device),
     };
     let Some(dev) = dev else { return Ok(false) };
@@ -287,7 +304,11 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     };
     let dev = match given {
         Some(n) if n.is_empty() || n.eq_ignore_ascii_case(NO_DEVICE) => None,
-        Some(n) => Some(find_device(n).ok_or_else(|| unknown_device(cmd, n))?),
+        Some(n) => match find_device(n) {
+            Some(d) => Some(d),
+            None if layout.as_ref().is_some_and(|pg| pg.device.eq_ignore_ascii_case(n)) || is_foreign_pdf_device(n) => None,
+            None => return Err(unknown_device(cmd, n)),
+        },
         None => layout.as_ref().and_then(|pg| find_device(&pg.device)),
     };
     let mut out = if p.is_object() { p.clone() } else { json!({}) };
@@ -320,8 +341,11 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
         return Err(bad(cmd, format!("`output` is {}, but the path asks for {}", asked.as_str(), want.as_str())));
     }
     let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else {
-        if let (Some(want), Some(o)) = (by_path, out.as_object_mut()) {
-            o.insert("output".into(), json!(want.as_str()));
+        if let Some(o) = out.as_object_mut() {
+            o.remove("device");
+            if let Some(want) = by_path {
+                o.insert("output".into(), json!(want.as_str()));
+            }
         }
         return Ok(out);
     };
@@ -332,6 +356,10 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     let paper = match str_param(p, "paper") {
         Some(name) => match device_paper(&dev, name) {
             Some(pp) => Some(pp),
+            None if layout.as_ref().is_some_and(|pg| pg.paper.eq_ignore_ascii_case(name)) => {
+                o.remove("paper");
+                None
+            }
             None => {
                 let known: Vec<&str> = dev.papers.iter().map(|x| x.name.as_str()).take(50).collect();
                 return Err(bad(cmd, format!("plotter `{}` has no paper `{name}` (papers: {})", dev.name, known.join(", "))));

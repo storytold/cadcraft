@@ -25,6 +25,8 @@ mod logging;
 mod native_menu;
 mod spacemouse;
 mod system_animations;
+#[cfg(target_os = "windows")]
+mod windows_theme;
 mod workspace;
 
 use cadcraft_engine::Session;
@@ -48,6 +50,11 @@ struct App {
     /// The `movable` flag last set on the main window.
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
+    current_title: String,
+    #[cfg(target_os = "windows")]
+    hwnd: Option<isize>,
+    #[cfg(target_os = "windows")]
+    windows_theme_applied: Option<egui::Theme>,
 }
 
 impl App {
@@ -87,6 +94,27 @@ impl eframe::App for App {
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
+        #[cfg(target_os = "windows")]
+        if let Some(hwnd) = self.hwnd {
+            let current = self.cad.shown_theme();
+            if self.windows_theme_applied != Some(current) {
+                windows_theme::apply(hwnd, current != egui::Theme::Light);
+                self.windows_theme_applied = Some(current);
+            }
+        }
+        let title = match self.cad.session.state() {
+            Ok(st) if !self.cad.ui.start_tab => {
+                let ro = if st.read_only { " [Read-Only]" } else { "" };
+                let lower = st.title.to_ascii_lowercase();
+                let ext = if lower.ends_with(".dwg") || lower.ends_with(".dxf") { "" } else { ".dwg" };
+                format!("CADCraft - {}{ext}{ro}", st.title)
+            }
+            _ => "CADCraft".to_string(),
+        };
+        if self.current_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.current_title = title;
+        }
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -155,12 +183,42 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    cadcraft_engine::lisp::input::set_file_dialog(|title, default, ext, flags| {
+        let mut d = rfd::FileDialog::new();
+        if !title.is_empty() {
+            d = d.set_title(title);
+        }
+        if !default.is_empty() {
+            let p = std::path::Path::new(default);
+            if p.is_dir() {
+                d = d.set_directory(p);
+            } else {
+                if let Some(dir) = p.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+                    d = d.set_directory(dir);
+                }
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    d = d.set_file_name(name);
+                }
+            }
+        }
+        let exts: Vec<&str> = ext.split([';', ',']).map(str::trim).filter(|e| !e.is_empty()).collect();
+        if !exts.is_empty() {
+            d = d.add_filter(ext, &exts);
+        }
+        d = d.add_filter("All files", &["*"]);
+        let picked = if flags & 1 != 0 { d.save_file() } else { d.pick_file() };
+        picked.map(|p| p.to_string_lossy().into_owned())
+    });
 }
 
+/// Build host file-picker and on-demand control services for the desktop UI.
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
+                .add_filter(i18n::t("Drawings & Plugins (DWG, DXF, DLL, LSP, VB, CS)"), &["dwg", "dxf", "dwt", "dll", "lsp", "vb", "cs"])
+                .add_filter(i18n::t(".NET Plugin / AutoLISP (DLL, LSP, VB, CS)"), &["dll", "lsp", "vb", "cs"])
+                .add_filter(i18n::t("AutoLISP Routine (LSP)"), &["lsp"])
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
                 .add_filter(i18n::t("All files"), &["*"])
@@ -181,6 +239,14 @@ fn services() -> Services {
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         no_file_system: false,
+        pick_image: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter(i18n::t("Raster Images (PNG, JPG, BMP, WEBP, TIFF)"), &["png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff", "gif"])
+                .add_filter(i18n::t("All files"), &["*"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
+        start_control: None,
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);
             let dialog = match dir {
@@ -218,16 +284,19 @@ fn restores_window() -> bool {
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred.
 fn window_options(restoring: bool) -> eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("CADCraft")
+        .with_inner_size([1600.0, 1000.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true)
+        .with_app_id(APP_ID);
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(APP_ID),
+        viewport,
         // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
         // restored window on the monitors that are connected now.
         persist_window: true,
@@ -403,6 +472,9 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
+            } else {
+                let ctx = cc.egui_ctx.clone();
+                app.services.start_control = Some(Box::new(move || control_server::start(0, ctx.clone())));
             }
             if sample {
                 let _ = app.run("ui.sample", serde_json::json!({}));
@@ -419,6 +491,20 @@ fn main() -> eframe::Result {
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
             let ctx = cc.egui_ctx.clone();
             let system_animations = system_animations::SystemAnimations::start(move || ctx.request_repaint());
+            #[cfg(target_os = "windows")]
+            let shown_theme = app.shown_theme();
+            #[cfg(target_os = "windows")]
+            let hwnd = {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                let hwnd = cc.window_handle().ok().and_then(|h| match h.as_raw() {
+                    RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+                    _ => None,
+                });
+                if let Some(h) = hwnd {
+                    windows_theme::apply(h, shown_theme != egui::Theme::Light);
+                }
+                hwnd
+            };
             Ok(Box::new(App {
                 desktop_theme,
                 system_animations,
@@ -432,6 +518,11 @@ fn main() -> eframe::Result {
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
                 movable: None,
+                current_title: "CADCraft".to_string(),
+                #[cfg(target_os = "windows")]
+                hwnd,
+                #[cfg(target_os = "windows")]
+                windows_theme_applied: Some(shown_theme),
             }))
         }),
     )

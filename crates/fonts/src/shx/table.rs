@@ -206,7 +206,14 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
+        let dirs: Vec<PathBuf> = t
+            .drawing_dirs
+            .iter()
+            .chain(t.font_dirs.iter())
+            .chain(t.search_path.iter())
+            .cloned()
+            .chain(portable_exe_font_dirs())
+            .collect();
         (t.provider.clone(), dirs, t.generation)
     };
     let font = provider
@@ -238,13 +245,25 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_DIR_ENTRIES: usize = 10_000;
 
+/// Portable `<exe_dir>/fonts`, `<exe_dir>/Fonts` and `<exe_dir>` directories next to the executable.
+fn portable_exe_font_dirs() -> Vec<PathBuf> {
+    #[cfg(not(any(target_arch = "wasm32", test)))]
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        return vec![parent.join("fonts"), parent.join("Fonts"), parent.to_path_buf()];
+    }
+    Vec::new()
+}
+
 /// The SHX fonts in the user's font folders ([`set_font_dirs`]) and the registered ones, by file
 /// stem, sorted without repeats (for font lists). Not read: only their names are listed.
 pub fn installed() -> Vec<String> {
-    let (dirs, mut out): (Vec<PathBuf>, Vec<String>) = {
+    let (mut dirs, mut out): (Vec<PathBuf>, Vec<String>) = {
         let t = table();
         (t.font_dirs.clone(), t.registered.keys().map(|k| k.trim_end_matches(".shx").to_string()).collect())
     };
+    dirs.extend(portable_exe_font_dirs());
     #[cfg(not(target_arch = "wasm32"))]
     for d in &dirs {
         let Ok(entries) = std::fs::read_dir(d) else { continue };

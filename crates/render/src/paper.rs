@@ -67,13 +67,25 @@ impl PaperSize {
 }
 
 /// Look up a paper size by canonical name or alias (case- and space-insensitive).
+/// Also matches AutoCAD full-bleed / expand media names such as
+/// `"ISO full bleed A3 (297.00 x 420.00 MM)"` or `"ISO expand A3 (420.00 x 297.00 MM)"`.
 pub fn paper_size(name: &str) -> Option<&'static PaperSize> {
     let norm = |s: &str| s.chars().filter(|c| !c.is_whitespace() && *c != '_' && *c != '-').collect::<String>().to_ascii_lowercase();
     let n = norm(name);
     if n.is_empty() {
         return None;
     }
-    PAPER_SIZES.iter().find(|p| norm(p.name) == n || p.aliases.iter().any(|a| norm(a) == n))
+    let stripped = n.replace("fullbleed", "").replace("expand", "");
+    let before_paren = if name.contains('(') { stripped.split('(').next().unwrap_or("") } else { "" };
+    PAPER_SIZES.iter().find(|p| {
+        let pn = norm(p.name);
+        pn == n
+            || pn == stripped
+            || p.aliases.iter().any(|a| {
+                let an = norm(a);
+                an == n || an == stripped || (!before_paren.is_empty() && an == before_paren)
+            })
+    })
 }
 
 /// Millimetres per paper-space unit for a drawing (1 for metric, 25.4 for imperial).

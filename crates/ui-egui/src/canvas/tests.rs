@@ -26,7 +26,7 @@ fn dragged_objects_keep_their_transparency() {
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
     let mut alpha = |transparency: bool| {
-        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency);
+        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency, cadcraft_render::Orbit3d::default());
         let mesh = c.drag_slot.lock().unwrap().take().unwrap();
         // The first line vertex's colour alpha (after its 2 × f32 position).
         mesh.lines[11]
@@ -56,7 +56,7 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     // Built with transparency, the preview would take CLAYER's 40 %.
     let with = cadcraft_render::build_entities(doc, ents.iter(), &cadcraft_render::Options { transparency: true, ..preview_options(1.0) });
     assert!(with.prims.iter().all(|p| p.transparency == 40));
-    let list = rebuilt_preview(doc, ents.iter(), 1.0);
+    let list = rebuilt_preview(doc, ents.iter(), 1.0, cadcraft_render::Orbit3d::default());
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
     s.cancel();
     // MOVE's base-to-cursor rubber band (a drag extra).
@@ -67,7 +67,7 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     s.cmdline("0,0").unwrap();
     let (_, extra) = s.drag(Vec2::new(4.0, 4.0)).unwrap();
     assert!(!extra.is_empty());
-    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0);
+    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0, cadcraft_render::Orbit3d::default());
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
 }
 
@@ -229,4 +229,64 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
+}
+
+/// Verifies that command object-selection prompts draw only the pickbox square while idle and
+/// point prompts draw the crosshair lines.
+#[test]
+fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+    let at = pos2(400.0, 300.0);
+    let paint = |app: &CadApp| {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter_at(rect);
+            let picking = app.session.picking_objects() && app.session.pending_window.is_none();
+            draw_crosshair(app, &painter, rect, at, picking, Color32::WHITE);
+        });
+        out.textures_delta.clear();
+        let mut lines = 0usize;
+        let mut rects = 0usize;
+        for clipped in &out.shapes {
+            match &clipped.shape {
+                Shape::LineSegment { .. } => lines += 1,
+                Shape::Rect(r) if r.rect.center() == at => rects += 1,
+                _ => {}
+            }
+        }
+        (lines, rects)
+    };
+
+    // 1. Idle with PICKFIRST on: crosshair lines (4 segments) + pickbox square (1 rect).
+    assert_eq!(paint(&app), (4, 1), "idle with PICKFIRST on");
+
+    // 2. Idle with SELECTIONPREVIEW = 0: pickbox still drawn while PICKFIRST is on.
+    app.session.settings.selectionpreview = 0;
+    assert_eq!(paint(&app), (4, 1), "idle with SELECTIONPREVIEW = 0");
+    app.session.settings.selectionpreview = 3;
+
+    // 3. Command asking for points (LINE): crosshair lines only (4 segments, 0 rects).
+    app.session.cmdline("line").unwrap();
+    assert_eq!(paint(&app), (4, 0), "point prompt (LINE)");
+    app.session.cancel();
+
+    // 4. Command asking to select objects (ERASE): pickbox square only (0 segments, 1 rect).
+    app.session.cmdline("erase").unwrap();
+    assert_eq!(paint(&app), (0, 1), "object selection prompt (ERASE)");
+
+    // 5. Even when PICKBOX = 0, a command object-selection prompt keeps a minimal visible pickbox.
+    app.session.settings.pickbox = 0.0;
+    assert_eq!(paint(&app), (0, 1), "object selection prompt with PICKBOX = 0");
+    app.session.settings.pickbox = 3.0;
+
+    // 6. While picking the second corner of a selection window, the crosshair lines return.
+    app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
+    assert_eq!(paint(&app), (4, 0), "selection window second corner");
+    app.session.pending_window = None;
+    app.session.cancel();
+
+    // 7. STRETCH's "Remove objects" prompt also draws the pickbox-only cursor.
+    app.session.cmdline("stretch r").unwrap();
+    assert_eq!(paint(&app), (0, 1), "STRETCH Remove objects prompt");
 }
