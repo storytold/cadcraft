@@ -81,6 +81,7 @@ mod lisp_undo_in_routine;
 mod malformed_handles;
 mod matchprop;
 mod measure_distance_snapping;
+mod measure_quick;
 mod metric_linetypes;
 mod minsert;
 mod mirror_degenerate_line;

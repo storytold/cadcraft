@@ -31,9 +31,23 @@ pub fn specs() -> Vec<CommandSpec> {
                  {matches: [{handle, type, count, snippet, hit, hitLen}], total, message}",
         ),
         CommandSpec::new("measuregeom", "Measure Geometry", run_measuregeom)
-            .params("{mode: distance|radius|angle|area|volume, ...}")
+            .params(
+                "{mode: distance|radius|angle|area|volume|quick, ...} (quick: {at: [x,y]} → {axes, readings: [{type: length|radius|gap|angle, ...}]} \
+                 | {areas: [[x,y],...]} → {areas: [{area, perimeter}], area, perimeter})",
+            )
             .noundo()
             .interactive(|_| Ok(Box::<MeasureM>::default())),
+        CommandSpec::new("measure.quick", "Quick Measure", |s, p| {
+            let mut q = p.clone();
+            if let Some(o) = q.as_object_mut() {
+                o.insert("mode".into(), json!("quick"));
+            }
+            run_measuregeom(s, &q)
+        })
+        .menu(&["Tools", "Inquiry", "Quick Measure"])
+        .params("{at: [x,y]} | {areas: [[x,y],...]} (as MEASUREGEOM's quick mode)")
+        .noundo()
+        .interactive(|_| Ok(Box::new(MeasureM::quick()))),
         CommandSpec::new("radius.measure", "Radius", run_radius)
             .menu(&["Tools", "Inquiry", "Radius"])
             .params("{handle, point?}")
@@ -474,16 +488,41 @@ fn run_measuregeom(s: &mut Session, p: &Value) -> Result<Value> {
         "angle" | "a" => run_angle(s, p),
         "area" | "ar" => s.execute("area", p),
         "volume" | "v" => super::inquiry::run_volume(s, p),
-        _ => Err(bad("measuregeom", "mode must be distance, radius, angle, area or volume")),
+        "quick" | "q" => quick::run(s, p),
+        _ => Err(bad("measuregeom", "mode must be distance, radius, angle, area, volume or quick")),
     }
 }
 
-/// MEASUREGEOM typed or picked: choose what to measure, then continue as DIST, AREA, a radius pick or an angle pick.
+mod quick;
+
+/// MEASUREGEOM typed or picked: choose what to measure, then continue as DIST, AREA, a radius
+/// pick, an angle pick or Quick. While Quick measures, its other options switch to them.
 #[derive(Default)]
 struct MeasureM {
     inner: Option<Box<dyn Interactive>>,
     /// Waiting for the arc or circle of the Radius option.
     radius: bool,
+    /// `inner` is Quick.
+    quick: bool,
+}
+
+impl MeasureM {
+    /// MEASUREGEOM already in its Quick option (Tools > Inquiry > Quick Measure).
+    fn quick() -> MeasureM {
+        MeasureM { inner: Some(Box::<quick::QuickM>::default()), radius: false, quick: true }
+    }
+    /// Start option `k` (a keyword of the option prompt).
+    fn choose(&mut self, k: &str) {
+        self.quick = k == "Quick";
+        match k {
+            "Radius" => self.radius = true,
+            "Angle" => self.inner = Some(Box::<AngleM>::default()),
+            "ARea" => self.inner = Some(Box::new(super::inquiry::AreaM::default())),
+            "Volume" => self.inner = Some(Box::new(super::inquiry::AreaM::volume())),
+            "Quick" => self.inner = Some(Box::<quick::QuickM>::default()),
+            _ => self.inner = Some(Box::new(super::inquiry::DistM::default())),
+        }
+    }
 }
 
 impl Interactive for MeasureM {
@@ -495,11 +534,21 @@ impl Interactive for MeasureM {
             Some(m) => m.prompt(s),
             None if self.radius => Prompt::new("Select arc or circle", Accept::POINT),
             None => Prompt::new("Enter an option", Accept { point: false, number: false, text: false, select: false, enter: true })
-                .kw(&["Distance", "Radius", "Angle", "ARea", "Volume"])
+                .kw(&["Distance", "Radius", "Angle", "ARea", "Volume", "Quick"])
                 .default("Distance"),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // Quick's prompt offers the other options: one of them leaves Quick for it.
+        if self.quick
+            && let Input::Keyword(k) = &i
+            && !matches!(k.as_str(), "Quick" | "eXit")
+        {
+            let k = k.clone();
+            self.inner = None;
+            self.choose(&k);
+            return Ok(Step::Continue);
+        }
         if let Some(m) = &mut self.inner {
             return m.input(s, i);
         }
@@ -508,19 +557,16 @@ impl Interactive for MeasureM {
         }
         match i {
             Input::Enter => self.inner = Some(Box::new(super::inquiry::DistM::default())),
-            Input::Keyword(k) => match k.as_str() {
-                "Radius" => self.radius = true,
-                "Angle" => self.inner = Some(Box::<AngleM>::default()),
-                "ARea" => self.inner = Some(Box::new(super::inquiry::AreaM::default())),
-                "Volume" => self.inner = Some(Box::new(super::inquiry::AreaM::volume())),
-                _ => self.inner = Some(Box::new(super::inquiry::DistM::default())),
-            },
+            Input::Keyword(k) => self.choose(&k),
             _ => {}
         }
         Ok(Step::Continue)
     }
     fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
         self.inner.as_ref().map(|m| m.preview(s, cursor)).unwrap_or_default()
+    }
+    fn preview_objects(&self, s: &Session, cursor: Vec2) -> Vec<cadcraft_doc::Entity> {
+        self.inner.as_ref().map(|m| m.preview_objects(s, cursor)).unwrap_or_default()
     }
 }
 
