@@ -45,6 +45,15 @@
   <a href="https://getartcraft.com/apps">All Crafting Apps</a>
 </p>
 
+> [!IMPORTANT]
+> **This is the Traditional Chinese (Taiwan) test fork** (`Vik1n9/cadcraft`): upstream CADCraft
+> plus a `zh-TW` interface. The Windows test package for native CAD users — with
+> 源流明體 GenRyuMin2 TW (月版) embedded — is on
+> **[Releases](https://github.com/Vik1n9/cadcraft/releases/latest)**; installing, switching the
+> interface language and reporting are described in
+> [繁體中文測試說明](docs/testing/windows-zh-tw.md). Upstream project:
+> [storytold/cadcraft](https://github.com/storytold/cadcraft).
+
 <br>
 
 <p align="center">
@@ -118,7 +127,7 @@ numbers):
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski) and Georgian (ქართული), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Traditional Chinese (繁體中文, with an installed or embedded CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski) and Georgian (ქართული), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -150,7 +159,9 @@ input (`CRAFT_FONTS_DIR=<absolute path to a checkout> cargo build --release`) al
 fonts: BIZ UDPGothic, BIZ UDMincho and Shippori Mincho (Japanese) and Noto Sans Arabic (the web
 build, which has no system fonts, only BIZ UDPGothic Regular and Noto Sans Arabic). A text style
 can use them by family name, and they draw characters a text's font lacks when no installed
-wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded. SHX
+wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded. A
+Traditional Chinese (`zh-TW`) interface puts an embedded `Hant` face ahead of the installed CJK
+fonts — the Windows test package in this fork embeds 源流明體 GenRyuMin2 TW that way. SHX
 fonts (including big fonts such as `chineset.shx`) aren't read yet: text in an SHX style is drawn
 with our own stroke font, and any character a text's font lacks (CJK, for example) is drawn from
 an installed font that has it, preferring wide-coverage fonts such as Noto Sans CJK, Source Han

@@ -307,6 +307,13 @@ pub fn mono() -> FontId {
     FontId::new(12.0, FontFamily::Monospace)
 }
 
+/// Whether the interface takes a face this build embedded ahead of the installed fonts: a
+/// Traditional Chinese interface with an embedded `Hant` face (a font pack built with
+/// `CRAFT_FONTS_DIR`, e.g. 源流明體 TW), whose glyph forms the interface is written in.
+fn embedded_leads(faces: &[&cadcraft_fonts::CraftFont], language: &str) -> bool {
+    language == "zh-TW" && faces.first().is_some_and(|f| f.scripts.contains(&"Hant"))
+}
+
 /// Load a system UI font at run time when one is installed (not bundled), else keep egui's
 /// bundled bounded Latin/icon faces (`default_fonts` + `monochrome_emoji_fonts`, enabled in the
 /// workspace manifest for native and web); then CJK fonts after the Latin ones, so Latin text
@@ -316,13 +323,21 @@ pub fn mono() -> FontId {
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
 /// Arabic font follows. The embedded Georgian face loads in every language, so the language
 /// picker can show ქართული. A font embedded from craft-fonts comes
-/// last, for systems without any (and the web build, which has no system fonts). A Korean
+/// last, for systems without any (and the web build, which has no system fonts) — except in a
+/// Traditional Chinese interface, where an embedded `Hant` face leads the installed CJK fonts
+/// ([`embedded_leads`]). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
     crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
     let mut added: Vec<(String, std::sync::Arc<egui::FontData>)> = Vec::new();
+    let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
+    let ui_faces = embedded_ui_faces(&embedded, language);
+    let embedded_first = embedded_leads(&ui_faces, language);
+    if embedded_first {
+        added.extend(ui_faces.iter().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
@@ -349,7 +364,7 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         if !chinese {
             paths.extend(japanese_font());
         }
-        paths.extend(cjk_font());
+        paths.extend(cjk_font_for(language));
         paths.dedup();
         added.extend(
             paths
@@ -366,12 +381,9 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
     }
-    let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
-    added.extend(
-        embedded_ui_faces(&embedded, language)
-            .into_iter()
-            .map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))),
-    );
+    if !embedded_first {
+        added.extend(ui_faces.iter().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    }
     // Korean: Noto Sans CJK and most CJK fonts above already cover Hangul; else a Hangul font.
     if language == "ko"
         && !cjk_covers_hangul()
@@ -482,7 +494,8 @@ pub fn shows_vietnamese(language: &str) -> bool {
 /// face, because file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513), with the interface's own face leading. A sans-serif face reads best, and a
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
-/// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
+/// shares most ideographs but lacks the simplified-only ones (图 园 测), and a Traditional
+/// interface wants the Traditional forms (麵 後 骨) rather than the Simplified face's.
 /// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
 /// the picker names the language ქართული); العربية adds its Arabic face after those.
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
@@ -490,7 +503,10 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
     out.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
     if language.starts_with("zh") {
-        out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
+        // A Traditional Chinese interface wants the Traditional face first; a Simplified one the
+        // Simplified face (the drop order is stable, so the rest keeps its order).
+        let own = if language == "zh-TW" { "Hant" } else { "Hans" };
+        out.sort_by_key(|f| !f.scripts.contains(&own));
     }
     out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
     if language == "ar" {
@@ -519,34 +535,78 @@ fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
 /// An installed font with Chinese characters, for the Chinese interface; fonts are never bundled
 /// (only looked for where the OS or common packages put them). Checked once.
 pub fn cjk_font() -> Option<&'static std::path::Path> {
+    cjk_font_for("zh")
+}
+
+/// An installed Chinese font for `language`: a Traditional Chinese interface takes a Traditional
+/// face where the OS installs one (it shows the Traditional glyph forms 骨 過 說), a Simplified one
+/// the Simplified face; either falls back to the other. Checked once per kind.
+pub fn cjk_font_for(language: &str) -> Option<&'static std::path::Path> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-        FOUND
-            .get_or_init(|| {
-                let candidates: &[&str] = if cfg!(target_os = "macos") {
-                    &["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"]
-                } else if cfg!(windows) {
-                    &["C:\\Windows\\Fonts\\msyh.ttc", "C:\\Windows\\Fonts\\msyh.ttf", "C:\\Windows\\Fonts\\simsun.ttc"]
-                } else {
-                    &[
-                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-                        "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
-                        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-                        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
-                        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-                        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-                    ]
-                };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
-            })
-            .as_deref()
+        static FOUND: std::sync::OnceLock<[Option<std::path::PathBuf>; 2]> = std::sync::OnceLock::new();
+        let found = FOUND.get_or_init(|| {
+            [false, true].map(|traditional| cjk_candidates(traditional).into_iter().map(std::path::PathBuf::from).find(|p| p.is_file()))
+        });
+        found[usize::from(is_traditional(language))].as_deref()
     }
     #[cfg(target_arch = "wasm32")]
-    None
+    {
+        let _ = language;
+        None
+    }
+}
+
+/// Whether `language` is a Traditional Chinese interface (`zh-TW`, the only one
+/// [`crate::i18n`] offers; `zh-Hant`/`zh-HK`/`zh-MO` map to it).
+#[cfg(not(target_arch = "wasm32"))]
+fn is_traditional(language: &str) -> bool {
+    language == "zh-TW"
+}
+
+/// The font paths tried for a Chinese interface, the Traditional ones first when
+/// `traditional`. macOS's PingFang covers both scripts with the requested forms, so it has one
+/// list; Windows and Linux have separate Traditional and Simplified faces. On Linux the
+/// language-neutral Noto CJK collection starts with the Japanese face, so the Traditional face
+/// comes before it for a Traditional Chinese interface.
+#[cfg(not(target_arch = "wasm32"))]
+fn cjk_candidates(traditional: bool) -> Vec<&'static str> {
+    const MACOS: &[&str] =
+        &["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"];
+    const WINDOWS: &[&str] = &["C:\\Windows\\Fonts\\msyh.ttc", "C:\\Windows\\Fonts\\msyh.ttf", "C:\\Windows\\Fonts\\simsun.ttc"];
+    const WINDOWS_TRADITIONAL: &[&str] = &["C:\\Windows\\Fonts\\msjh.ttc", "C:\\Windows\\Fonts\\msjh.ttf", "C:\\Windows\\Fonts\\mingliu.ttc"];
+    const LINUX: &[&str] = &[
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ];
+    const LINUX_TRADITIONAL: &[&str] = &[
+        "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJKtc-Regular.otf",
+        "/usr/share/fonts/noto-cjk/NotoSansCJKtc-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJKtc-Regular.otf",
+        "/usr/local/share/fonts/noto/NotoSansCJKtc-Regular.otf",
+    ];
+    let (own, fallback) = if cfg!(target_os = "macos") {
+        (MACOS, &[][..])
+    } else if cfg!(windows) {
+        if traditional { (WINDOWS_TRADITIONAL, WINDOWS) } else { (WINDOWS, &[][..]) }
+    } else if traditional {
+        (LINUX_TRADITIONAL, LINUX)
+    } else {
+        (LINUX, &[][..])
+    };
+    let mut candidates = own.to_vec();
+    candidates.extend_from_slice(fallback);
+    candidates.dedup();
+    candidates
 }
 
 /// An installed font with Arabic glyphs, for the العربية interface; fonts are never bundled
@@ -739,7 +799,7 @@ pub fn can_show(language: &str) -> bool {
         "vi" => vietnamese_font().is_some(),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
         "ka" => embedded_script("Geor"),
-        l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
+        l if l.starts_with("zh") => cjk_font_for(l).is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
 }
@@ -840,6 +900,48 @@ mod tests {
         for bytes in [vec![], vec![0xff; 32], vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] {
             assert!(super::korean_face(std::sync::Arc::new(bytes)).is_none());
         }
+    }
+
+    /// A Traditional Chinese interface looks for the Traditional faces first, keeps the
+    /// Simplified ones as a fallback, and never shrinks the Simplified list. macOS's PingFang
+    /// covers both with the requested glyph forms, so it has one list.
+    #[test]
+    fn traditional_chinese_prefers_traditional_faces() {
+        let simplified = super::cjk_candidates(false);
+        let traditional = super::cjk_candidates(true);
+        assert!(traditional.len() >= simplified.len());
+        assert!(simplified.iter().all(|path| traditional.contains(path)));
+        assert!(super::is_traditional("zh-TW"));
+        assert!(!super::is_traditional("zh") && !super::is_traditional("zh-Hans"));
+        let at = |list: &[&'static str], needle: &str| list.iter().position(|path| path.contains(needle));
+        if cfg!(windows) {
+            // Microsoft JhengHei is installed with every Windows that ships Traditional Chinese.
+            assert!(at(&traditional, "msjh").is_some_and(|jheng| at(&traditional, "msyh").is_some_and(|yahei| jheng < yahei)));
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(traditional, simplified);
+        } else {
+            // The language-neutral collection starts with the Japanese face, so the Traditional
+            // face comes before it for a Traditional Chinese interface.
+            assert!(at(&traditional, "CJKtc").is_some_and(|tc| at(&traditional, "CJK-Regular").is_some_and(|neutral| tc < neutral)));
+        }
+    }
+
+    /// A Traditional Chinese interface takes the build's own `Hant` face ahead of the installed
+    /// fonts (a font pack such as 源流明體 TW); other interfaces keep embedded faces as fallback.
+    #[test]
+    fn embedded_traditional_face_leads_only_for_traditional_chinese() {
+        let hant = face("GenRyuMin2 TW", &["Hant", "Latn"]);
+        let hans = face("Han Test Face", &["Hans", "Latn"]);
+        let faces = super::embedded_ui_faces(&[&hant, &hans], "zh-TW");
+        assert_eq!(families(&faces), ["GenRyuMin2 TW", "Han Test Face"]);
+        assert!(super::embedded_leads(&faces, "zh-TW"));
+        assert!(!super::embedded_leads(&faces, "zh") && !super::embedded_leads(&faces, "en"));
+        let simplified = super::embedded_ui_faces(&[&hant, &hans], "zh");
+        assert_eq!(families(&simplified), ["Han Test Face", "GenRyuMin2 TW"]);
+        // Without an embedded Traditional face the installed font keeps the lead.
+        let hans_only = super::embedded_ui_faces(&[&hans], "zh-TW");
+        assert!(!super::embedded_leads(&hans_only, "zh-TW"));
+        assert!(!super::embedded_leads(&[], "zh-TW"));
     }
 
     /// The interface's own script leads the embedded faces it loads, and العربية adds its face.
