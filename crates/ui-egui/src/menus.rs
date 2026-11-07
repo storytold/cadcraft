@@ -134,6 +134,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
     ("ui.dialog.find", "Find and Replace", &[], Some("Cmd+F")),
+    ("ui.shortcuts", "Keyboard Shortcuts...", &["Tools", "Customize", "Keyboard Shortcuts..."], None),
     ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
@@ -160,6 +161,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     }
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
+    }
+    if id == "ui.shortcuts" {
+        return Some(crate::keys::command(app, params));
     }
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", params));
@@ -490,6 +494,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
             let system_cursor = app.system_cursor_default;
+            // The user's shortcuts and import folder are preferences, not palette layout.
+            let (shortcuts, last_pgp_dir) = (std::mem::take(&mut app.ui.shortcuts), app.ui.last_pgp_dir.take());
             app.ui = crate::UiState {
                 in_window_menu: menu,
                 theme,
@@ -498,6 +504,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 save_format,
                 save_version,
                 system_cursor,
+                shortcuts,
+                last_pgp_dir,
                 ..Default::default()
             };
             Ok(Value::Null)
@@ -651,6 +659,7 @@ pub enum Entry {
 /// The full menu tree from the command registry plus UI commands, in registration order.
 pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     let mut out: Vec<(String, Vec<Entry>)> = MENUS.iter().map(|m| (m.to_string(), Vec::new())).collect();
+    let user = &app.ui.shortcuts;
     let mut add = |path: &[&str], label: &str, id: &str, shortcut: Option<&str>, enabled: bool| {
         let Some((top, rest)) = path.split_first() else { return };
         let Some((_, entries)) = out.iter_mut().find(|(m, _)| m == top) else { return };
@@ -661,7 +670,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
                 cur.push(Entry::Item {
                     label: if seg.is_empty() { label.to_string() } else { seg.to_string() },
                     id: id.to_string(),
-                    shortcut: shortcut.map(str::to_string),
+                    shortcut: crate::keys::shown(user, id, shortcut),
                     enabled,
                 });
             } else {
@@ -913,33 +922,40 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
     ]
 }
 
-/// Keyboard shortcuts and function keys.
+/// Keyboard shortcuts and function keys: the user's ([`crate::keys`]) and CADCraft's own.
 pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     use egui::{Key, KeyboardShortcut, Modifiers};
-    let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
-    let cmd = Modifiers::COMMAND;
-    let pairs = builtin_shortcuts();
+    // A recording ends with the dialog it was started in; while it lasts the keys are its own.
+    if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
+        crate::keys::stop_recording(ctx);
+    }
+    if crate::keys::recording(ctx) {
+        return;
+    }
+    let pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
     crate::clipboard::mirror(app, ctx);
     if app.closing.is_some() {
         return;
     }
     // A palette toggle is global even while its expression field owns keyboard focus.
-    if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Num8))) {
+    let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
+    if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
         run_transparent(app, "ui.toggle.quickcalc");
     }
     if ctx.egui_wants_keyboard_input() {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire = crate::clipboard::shortcut_commands(app, ctx);
+    let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
             if i.consume_shortcut(s) && !fire.contains(id) {
-                fire.push(*id);
+                fire.push(id.clone());
             }
         }
     });
     for id in fire {
+        let id = id.as_str();
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {
