@@ -1,0 +1,736 @@
+From bed7a8ac7f795ba16507a4b13ad322e13753daaf Mon Sep 17 00:00:00 2001
+From: CADCraft contributor <contributor@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 13:34:38 +0100
+Subject: [PATCH] Tool Sets of your own: tabs read from support/toolsets/*.json
+
+Each .json file in the toolsets folder of the support folder adds a Tool Sets
+tab after Drafting and Modeling. A tool is a button that submits its `input` at
+the command line as if typed (a command, a LISP command or a LISP expression),
+after cancelling the running command. Its icon is a block of the current
+drawing, drawn from the block definition (attribute definitions and objects on
+layers that are off left out), so a symbol library needs no image files; a tool
+can list several block names and the first one the drawing defines is drawn.
+
+- crates/ui-egui/src/user_toolsets.rs: file format, capped parsing (16 files of
+  256 KB, 32 groups of 128 tools, 40-character names), block icons cached per
+  drawing revision, tab body with collapsible groups; no file system on wasm.
+- Tool Sets tabs narrow to fit when user tabs are added.
+- ui.toolsets.reload reads the files again and returns the tab names.
+- The workspace remembers built-in tabs only; reading still refuses others.
+- docs/customization.md: "Tool Sets of your own".
+- Tests: parsing, caps, hostile input, file loading and name clashes, a tool
+  submitting its lines and cancelling a running command.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JVB75jtBGotQfPRfcHAZhc
+---
+ apps/cadcraft/src/workspace.rs      |  12 +-
+ crates/ui-egui/src/i18n/es.tsv      |   1 +
+ crates/ui-egui/src/i18n/zh.tsv      |   1 +
+ crates/ui-egui/src/lib.rs           |   4 +
+ crates/ui-egui/src/menus.rs         |   4 +
+ crates/ui-egui/src/palettes.rs      |  38 ++-
+ crates/ui-egui/src/user_toolsets.rs | 460 ++++++++++++++++++++++++++++
+ docs/customization.md               |  34 ++
+ 8 files changed, 543 insertions(+), 11 deletions(-)
+ create mode 100644 crates/ui-egui/src/user_toolsets.rs
+
+diff --git a/apps/cadcraft/src/workspace.rs b/apps/cadcraft/src/workspace.rs
+index b75c9bc..95bcc02 100644
+--- a/apps/cadcraft/src/workspace.rs
++++ b/apps/cadcraft/src/workspace.rs
+@@ -25,9 +25,9 @@ pub struct Workspace {
+ 
+ fn snapshot(ui: &UiState) -> Result<Value, String> {
+     cadcraft_ui_egui::docking::validate(&ui.docking)?;
+-    if !matches!(ui.toolset_tab.as_str(), "Drafting" | "Modeling") {
+-        return Err("toolsetTab must be Drafting or Modeling".into());
+-    }
++    // A tab read from the support folder (`user_toolsets`) may be gone next session: the
++    // workspace remembers the built-in tabs only, and a user tab opens on Drafting.
++    let toolset_tab = if matches!(ui.toolset_tab.as_str(), "Drafting" | "Modeling") { ui.toolset_tab.as_str() } else { "Drafting" };
+     if ui.collapsed_groups.len() > 64 || ui.collapsed_groups.iter().any(|name| name.len() > 256) {
+         return Err("collapsedGroups exceeds the workspace size limit".into());
+     }
+@@ -46,7 +46,7 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
+         "showViewcube": ui.show_viewcube,
+         "showUcsIcon": ui.show_ucs_icon,
+         "showLayerList": ui.show_layer_list,
+-        "toolsetTab": ui.toolset_tab,
++        "toolsetTab": toolset_tab,
+         "collapsedGroups": ui.collapsed_groups,
+         "propertiesAll": ui.properties_all,
+         "inWindowMenu": ui.in_window_menu,
+@@ -91,6 +91,10 @@ fn read(path: &Path) -> Result<Option<UiState>, String> {
+     // Old or hand-edited files cannot reopen a dialog or replace the active drawing view.
+     ui.dialog = None;
+     ui.start_tab = false;
++    // Saved workspaces hold a built-in tab only (`snapshot`).
++    if !matches!(ui.toolset_tab.as_str(), "Drafting" | "Modeling") {
++        return Err(format!("{}: toolsetTab must be Drafting or Modeling", path.display()));
++    }
+     snapshot(&ui).map_err(|error| format!("{}: {error}", path.display()))?;
+     Ok(Some(ui))
+ }
+diff --git a/crates/ui-egui/src/i18n/es.tsv b/crates/ui-egui/src/i18n/es.tsv
+index 229156b..b98ea24 100644
+--- a/crates/ui-egui/src/i18n/es.tsv
++++ b/crates/ui-egui/src/i18n/es.tsv
+@@ -699,6 +699,7 @@
+ 	Relative to last segment	Relativo al último segmento
+ 	Reload	Volver a cargar
+ 	Reload All	Volver a cargar todas
++	Reload Tool Sets	Volver a cargar los conjuntos de herramientas
+ 	Remove Vertex	Eliminar vértice
+ 	Reset Panel Layout	Restablecer disposición de paneles
+ 	Reset keeps the interface language.	Restablecer conserva el idioma de la interfaz.
+diff --git a/crates/ui-egui/src/i18n/zh.tsv b/crates/ui-egui/src/i18n/zh.tsv
+index 5ec4cb7..5261072 100644
+--- a/crates/ui-egui/src/i18n/zh.tsv
++++ b/crates/ui-egui/src/i18n/zh.tsv
+@@ -1245,6 +1245,7 @@
+ 	Close Array Editing	关闭阵列编辑
+ 	Version 2018	2018 版
+ 	Reload All	全部重新加载
++	Reload Tool Sets	重新加载工具集
+ 	objects	个对象
+ 	Set Table Cell Style	设置表格单元格样式
+ 	Snap Overrides	捕捉替代
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 1b68264..0b35336 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -66,6 +66,7 @@ pub mod shortcut_menus;
+ pub mod theme;
+ #[cfg(not(target_arch = "wasm32"))]
+ pub mod updates_ui;
++pub mod user_toolsets;
+ pub mod viewcube;
+ pub mod vpscale;
+ 
+@@ -320,6 +321,8 @@ pub struct CadApp {
+     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+     /// The Edit Block Definition dialog ([`bedit`]).
+     pub bedit: bedit::State,
++    /// Tool Sets tabs read from the support folder ([`user_toolsets`]).
++    pub user_toolsets: user_toolsets::Store,
+     /// The startup update check and its prompt (desktop; [`updates_ui`]).
+     #[cfg(not(target_arch = "wasm32"))]
+     pub updates_rt: updates_ui::Runtime,
+@@ -378,6 +381,7 @@ impl CadApp {
+             alias_dlg: None,
+             hatch_dlg: None,
+             bedit: bedit::State::default(),
++            user_toolsets: user_toolsets::Store::default(),
+             #[cfg(not(target_arch = "wasm32"))]
+             updates_rt: updates_ui::Runtime::default(),
+         }
+diff --git a/crates/ui-egui/src/menus.rs b/crates/ui-egui/src/menus.rs
+index 5d9f021..9cf25ed 100644
+--- a/crates/ui-egui/src/menus.rs
++++ b/crates/ui-egui/src/menus.rs
+@@ -82,6 +82,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
+     ("ui.spacemouse.navigate", "3D Mouse Navigation", &[], None),
+     ("ui.dock", "Arrange Panel", &[], None),
+     ("ui.dock.reset", "Reset Panel Layout", &["Window", "Reset Panel Layout"], None),
++    ("ui.toolsets.reload", "Reload Tool Sets", &[], None),
+     ("ui.open", "Open...", &[], Some("Cmd+O")),
+     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
+     ("ui.saveas", "Save As...", &[], None),
+@@ -161,6 +162,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
+     if let Some(r) = crate::managers::route(app, id, params) {
+         return Some(r);
+     }
++    if id == "ui.toolsets.reload" {
++        return Some(crate::user_toolsets::reload(app));
++    }
+     if matches!(id, "ui.dock" | "ui.dock.reset") {
+         return Some(crate::docking::command(app, id == "ui.dock.reset", params));
+     }
+diff --git a/crates/ui-egui/src/palettes.rs b/crates/ui-egui/src/palettes.rs
+index 7e01a15..0117628 100644
+--- a/crates/ui-egui/src/palettes.rs
++++ b/crates/ui-egui/src/palettes.rs
+@@ -145,23 +145,33 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
+     egui::Frame::NONE.fill(t.panel).show(ui, |ui| {
+         let r = ui.max_rect();
+         let p = ui.painter().clone();
+-        // Tabs.
++        // Tabs: the built-in ones, then the user's (`user_toolsets`), narrower when they don't fit.
++        let support = app.session.lisp_support_dir().map(std::path::Path::to_path_buf);
++        app.user_toolsets.ensure(support.as_deref());
++        crate::user_toolsets::report_errors(app);
++        let mut tabs: Vec<String> = crate::user_toolsets::BUILT_IN.iter().map(|s| s.to_string()).collect();
++        tabs.extend(app.user_toolsets.sets.iter().map(|s| s.name.clone()));
++        if !tabs.contains(&app.ui.toolset_tab) {
++            app.ui.toolset_tab = "Drafting".into();
++        }
+         let tab_h = 28.0;
+         let mut x = r.left();
+-        for name in ["Drafting", "Modeling"] {
+-            let w = 92.0;
+-            let tr = Rect::from_min_size(pos2(x, r.top()), vec2(w, tab_h));
++        let w = ((r.width() - 28.0) / tabs.len() as f32).clamp(40.0, 92.0);
++        let tab_gap = if w < 92.0 { 2.0 } else { 0.0 };
++        for name in tabs.iter().map(String::as_str) {
++            let tr = Rect::from_min_size(pos2(x, r.top()), vec2(w - tab_gap, tab_h));
+             let active = app.ui.toolset_tab == name;
+             let resp = ui.interact(tr, ui.scope_id().with(("ts", name)), Sense::click());
+             p.rect_filled(tr, 0.0, if active { t.tab_active } else { t.chrome });
++            let shown = if crate::user_toolsets::BUILT_IN.contains(&name) { crate::i18n::t(name).to_string() } else { name.to_string() };
+             p.text(
+                 tr.center(),
+                 egui::Align2::CENTER_CENTER,
+-                crate::i18n::t(name),
+-                egui::FontId::proportional(13.5),
++                &shown,
++                egui::FontId::proportional(if w < 92.0 { 12.0 } else { 13.5 }),
+                 if active { t.text } else { t.text_dim },
+             );
+-            icons::describe_control(ui, &resp, crate::i18n::t(name), Some(active), true);
++            icons::describe_control(ui, &resp, &shown, Some(active), true);
+             if resp.clicked() {
+                 app.ui.toolset_tab = name.into();
+             }
+@@ -180,6 +190,20 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
+         let mut toggle_group = None;
+         let mut tool_visible: Option<(String, bool)> = None;
+         let mut restore: Vec<String> = Vec::new();
++        let user_tab = (!crate::user_toolsets::BUILT_IN.contains(&app.ui.toolset_tab.as_str())).then(|| app.ui.toolset_tab.clone());
++        if let Some(tab) = user_tab {
++            let mut input = None;
++            ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
++                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
++                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
++                    input = crate::user_toolsets::body(app, ui, &tab);
++                });
++            });
++            if let Some(text) = input {
++                crate::user_toolsets::run_tool(app, &text);
++            }
++            return;
++        }
+         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+diff --git a/crates/ui-egui/src/user_toolsets.rs b/crates/ui-egui/src/user_toolsets.rs
+new file mode 100644
+index 0000000..92681da
+--- /dev/null
++++ b/crates/ui-egui/src/user_toolsets.rs
+@@ -0,0 +1,460 @@
++//! Tool Sets of your own: extra Tool Sets tabs read from `.json` files in the `toolsets` folder of
++//! the support folder (`<settings>/support/toolsets`, next to `acad.lsp`). Each tool is a button
++//! that submits command-line text, as if typed: a command, a LISP command (`PIDVALV`) or a LISP
++//! expression (`(my:tool "GATE")`). A tool can show a block of the current drawing as its icon,
++//! drawn from the block definition, so a symbol library needs no image files.
++//!
++//! ```json
++//! { "name": "P&ID",
++//!   "groups": [ { "name": "Valves",
++//!                 "tools": [ { "label": "Gate valve", "input": "(pid:tool \"VLV_GATE\")",
++//!                              "block": ["PIP_VLV_GATE", "ISA_VLV_GATE"] } ] } ] }
++//! ```
++//!
++//! `block` is a block name or a list of them; the first one the drawing defines is drawn. A tool
++//! without one (or whose blocks the drawing lacks) shows its label. Files are read when the Tool
++//! Sets first show and again with `ui.toolsets.reload`. Every size is capped: the files are user
++//! input. Nothing here touches the file system on the web.
++
++use std::collections::HashMap;
++use std::path::{Path, PathBuf};
++use std::sync::Arc;
++
++use cadcraft_color::Rgb;
++use cadcraft_doc::EntityKind;
++use cadcraft_geom::Vec2;
++use cadcraft_render::DisplayList;
++use egui::{Rect, Sense, Stroke, pos2, vec2};
++use serde::Deserialize;
++use serde_json::{Value, json};
++
++use crate::CadApp;
++use crate::canvas::Xf;
++use crate::theme::Tokens;
++
++/// The folder, under the support folder, the tool set files are read from.
++pub const FOLDER: &str = "toolsets";
++/// Most tool set files read.
++const MAX_FILES: usize = 16;
++/// Largest tool set file read (bytes).
++const MAX_FILE_BYTES: u64 = 256 * 1024;
++/// Most groups in a tool set, and tools in a group.
++const MAX_GROUPS: usize = 32;
++const MAX_TOOLS: usize = 128;
++/// Longest name, label and command-line input kept (characters).
++const MAX_NAME: usize = 40;
++const MAX_INPUT: usize = 1024;
++/// Most block names a tool lists.
++const MAX_BLOCKS: usize = 8;
++/// Most lines one tool submits.
++const MAX_LINES: usize = 16;
++/// Side of a tool button (points), and how many fit a row.
++const TILE: f32 = 46.0;
++
++/// One user tab of the Tool Sets.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct ToolSet {
++    pub name: String,
++    pub groups: Vec<Group>,
++}
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Group {
++    pub name: String,
++    pub tools: Vec<Tool>,
++}
++
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct Tool {
++    pub label: String,
++    /// Command-line text submitted when the tool is clicked; lines are submitted one by one.
++    pub input: String,
++    /// Blocks to draw as the icon; the first one the drawing defines is used.
++    pub blocks: Vec<String>,
++}
++
++/// The tool sets read, where from, and the block icons built for the current drawing.
++#[derive(Default)]
++pub struct Store {
++    pub sets: Vec<ToolSet>,
++    /// Problems found reading the files (shown once on the command line).
++    pub errors: Vec<String>,
++    /// The folder the sets were read from (`None`: not read yet).
++    loaded_from: Option<Option<PathBuf>>,
++    /// Block icons by (drawing uid, revision, block name).
++    icons: HashMap<(u64, u64, String), Option<Arc<DisplayList>>>,
++}
++
++// ---------------------------------------------------------------- file format
++
++#[derive(Deserialize)]
++struct FileSet {
++    #[serde(default)]
++    name: String,
++    #[serde(default)]
++    groups: Vec<FileGroup>,
++}
++
++#[derive(Deserialize)]
++struct FileGroup {
++    #[serde(default)]
++    name: String,
++    #[serde(default)]
++    tools: Vec<FileTool>,
++}
++
++#[derive(Deserialize)]
++struct FileTool {
++    #[serde(default)]
++    label: String,
++    #[serde(default)]
++    input: String,
++    #[serde(default)]
++    block: Option<Value>,
++}
++
++fn clip(s: &str, n: usize) -> String {
++    s.trim().chars().filter(|c| !c.is_control() || *c == '\n').take(n).collect()
++}
++
++/// Parse one tool set file. Unknown fields are ignored; sizes are capped; a set without a name
++/// or without tools is refused.
++pub fn parse(text: &str) -> Result<ToolSet, String> {
++    let f: FileSet = serde_json::from_str(text).map_err(|e| format!("not a tool set: {e}"))?;
++    let name = clip(&f.name, MAX_NAME).replace('\n', " ");
++    if name.is_empty() {
++        return Err("the tool set has no \"name\"".into());
++    }
++    let mut groups = Vec::new();
++    for g in f.groups.into_iter().take(MAX_GROUPS) {
++        let tools: Vec<Tool> = g
++            .tools
++            .into_iter()
++            .take(MAX_TOOLS)
++            .filter_map(|t| {
++                let input = clip(&t.input, MAX_INPUT);
++                if input.is_empty() {
++                    return None;
++                }
++                let blocks = match t.block {
++                    Some(Value::String(s)) => vec![s],
++                    Some(Value::Array(a)) => a.into_iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
++                    _ => Vec::new(),
++                };
++                let blocks = blocks.iter().map(|b| clip(b, 255).replace('\n', "")).filter(|b| !b.is_empty()).take(MAX_BLOCKS).collect();
++                let label = clip(&t.label, MAX_NAME).replace('\n', " ");
++                Some(Tool { label: if label.is_empty() { input.lines().next().unwrap_or_default().to_string() } else { label }, input, blocks })
++            })
++            .collect();
++        if !tools.is_empty() {
++            groups.push(Group { name: clip(&g.name, MAX_NAME).replace('\n', " "), tools });
++        }
++    }
++    if groups.is_empty() {
++        return Err(format!("the tool set \"{name}\" has no tools"));
++    }
++    Ok(ToolSet { name, groups })
++}
++
++/// Read the `.json` files of `dir`, in name order. Built-in tab names and repeated names are
++/// refused.
++#[cfg(not(target_arch = "wasm32"))]
++pub fn load_dir(dir: &Path) -> (Vec<ToolSet>, Vec<String>) {
++    let mut sets: Vec<ToolSet> = Vec::new();
++    let mut errors = Vec::new();
++    let Ok(rd) = std::fs::read_dir(dir) else { return (sets, errors) };
++    let mut files: Vec<PathBuf> = rd
++        .filter_map(|e| e.ok().map(|e| e.path()))
++        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")) && p.is_file())
++        .collect();
++    files.sort();
++    if files.len() > MAX_FILES {
++        errors.push(format!("Tool Sets: only the first {MAX_FILES} files of {} are read", dir.display()));
++        files.truncate(MAX_FILES);
++    }
++    for p in files {
++        let shown = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
++        let text = match std::fs::metadata(&p) {
++            Ok(m) if m.len() > MAX_FILE_BYTES => {
++                errors.push(format!("Tool Sets: {shown} is larger than {} KB", MAX_FILE_BYTES / 1024));
++                continue;
++            }
++            Ok(_) => match std::fs::read(&p) {
++                Ok(b) => String::from_utf8_lossy(&b).into_owned(),
++                Err(e) => {
++                    errors.push(format!("Tool Sets: {shown}: {e}"));
++                    continue;
++                }
++            },
++            Err(e) => {
++                errors.push(format!("Tool Sets: {shown}: {e}"));
++                continue;
++            }
++        };
++        match parse(&text) {
++            Ok(s) if BUILT_IN.iter().any(|b| b.eq_ignore_ascii_case(&s.name)) || sets.iter().any(|o| o.name.eq_ignore_ascii_case(&s.name)) => {
++                errors.push(format!("Tool Sets: {shown}: the name \"{}\" is already used", s.name));
++            }
++            Ok(s) => sets.push(s),
++            Err(e) => errors.push(format!("Tool Sets: {shown}: {e}")),
++        }
++    }
++    (sets, errors)
++}
++
++#[cfg(target_arch = "wasm32")]
++pub fn load_dir(_dir: &Path) -> (Vec<ToolSet>, Vec<String>) {
++    (Vec::new(), Vec::new())
++}
++
++/// The built-in tabs, which user sets may not replace.
++pub const BUILT_IN: [&str; 2] = ["Drafting", "Modeling"];
++
++impl Store {
++    /// Read the sets from `support/toolsets` unless they were read from there already.
++    pub fn ensure(&mut self, support: Option<&Path>) {
++        let dir = support.map(|s| s.join(FOLDER));
++        if self.loaded_from.as_ref() == Some(&dir) {
++            return;
++        }
++        let (sets, errors) = dir.as_deref().map(load_dir).unwrap_or_default();
++        self.sets = sets;
++        self.errors = errors;
++        self.loaded_from = Some(dir);
++        self.icons.clear();
++    }
++
++    /// Forget what was read, so the next frame reads the files again.
++    pub fn reload(&mut self) {
++        self.loaded_from = None;
++    }
++
++    pub fn get(&self, name: &str) -> Option<&ToolSet> {
++        self.sets.iter().find(|s| s.name == name)
++    }
++}
++
++/// `ui.toolsets.reload`: read the tool set files again → `{toolsets: [names], errors}`.
++pub fn reload(app: &mut CadApp) -> Result<Value, String> {
++    app.user_toolsets.reload();
++    let support = app.session.lisp_support_dir().map(Path::to_path_buf);
++    app.user_toolsets.ensure(support.as_deref());
++    report_errors(app);
++    let names: Vec<&str> = app.user_toolsets.sets.iter().map(|s| s.name.as_str()).collect();
++    Ok(json!({ "toolsets": names, "folder": support.map(|s| s.join(FOLDER).display().to_string()) }))
++}
++
++/// Echo reading problems once.
++pub fn report_errors(app: &mut CadApp) {
++    for e in std::mem::take(&mut app.user_toolsets.errors) {
++        app.session.echo(e);
++    }
++}
++
++/// Submit a tool's input: cancel what is running, then each line as typed.
++pub fn run_tool(app: &mut CadApp, input: &str) {
++    app.cmd.buffer.clear();
++    if app.session.prompting() {
++        app.session.cancel();
++    }
++    for line in input.lines().take(MAX_LINES) {
++        let _ = app.cmdline(line);
++    }
++}
++
++// ---------------------------------------------------------------- icons
++
++/// The icon of `tool` for the current drawing: the first listed block it defines.
++fn icon(app: &mut CadApp, tool: &Tool) -> Option<Arc<DisplayList>> {
++    let st = app.session.state().ok()?;
++    let name = tool.blocks.iter().find(|b| st.doc.block(b).is_some())?;
++    let key = (st.uid, st.revision, name.to_ascii_uppercase());
++    if let Some(v) = app.user_toolsets.icons.get(&key) {
++        return v.clone();
++    }
++    if app.user_toolsets.icons.len() > 4096 {
++        app.user_toolsets.icons.clear();
++    }
++    let built = st.doc.block(name).map(|b| {
++        // What an inserted block shows: no attribute definitions, nothing on layers that are off.
++        let ents: Vec<_> =
++            b.entities.iter().map(|e| e.as_ref()).filter(|e| !matches!(e.kind, EntityKind::AttDef(_)) && st.doc.is_visible(e)).collect();
++        let rough = cadcraft_render::build_entities(&st.doc, ents.iter().copied(), &cadcraft_render::Options::default());
++        let size = rough.bounds.width().max(rough.bounds.height());
++        let opts = cadcraft_render::Options { tolerance: (size / 120.0).max(1e-9), ..Default::default() };
++        Arc::new(if rough.bounds.is_empty() { rough } else { cadcraft_render::build_entities(&st.doc, ents.iter().copied(), &opts) })
++    });
++    let built = built.filter(|l| !l.bounds.is_empty() && !l.prims.is_empty());
++    app.user_toolsets.icons.insert(key, built.clone());
++    built
++}
++
++/// One tool button: the block drawn fitted into the tile, or its label.
++fn tool_button(ui: &mut egui::Ui, list: Option<&DisplayList>, tool: &Tool, id: egui::Id) -> egui::Response {
++    let t = Tokens::get();
++    let (rect, _) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::hover());
++    let resp = ui.interact(rect, id, Sense::click());
++    let p = ui.painter_at(rect);
++    let fill = if resp.hovered() { t.control } else { t.panel };
++    p.rect_filled(rect.shrink(1.0), 4.0, fill);
++    if resp.hovered() {
++        p.rect_stroke(rect.shrink(1.0), 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
++    }
++    match list {
++        Some(l) => {
++            let b = l.bounds;
++            let inner = rect.shrink(8.0);
++            let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
++            let scale = (f64::from(inner.width()) / w).min(f64::from(inner.height()) / h);
++            let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale, twist: 0.0 };
++            crate::canvas::draw_list(&p, &xf, l, Rgb(fill.r(), fill.g(), fill.b()), false);
++        }
++        None => {
++            let short: String = tool.label.chars().take(10).collect();
++            p.text(rect.center(), egui::Align2::CENTER_CENTER, short, egui::FontId::proportional(9.5), t.text);
++        }
++    }
++    crate::icons::describe_control(ui, &resp, &tool.label, None, false);
++    resp.on_hover_text(&tool.label)
++}
++
++/// The body of a user tab: its groups, collapsible like the built-in ones, tools in rows.
++/// Returns the input of the tool clicked.
++pub fn body(app: &mut CadApp, ui: &mut egui::Ui, set_name: &str) -> Option<String> {
++    let t = Tokens::get();
++    let set = app.user_toolsets.get(set_name)?.clone();
++    let mut clicked = None;
++    let mut toggle = None;
++    for (gi, g) in set.groups.iter().enumerate() {
++        let key = format!("{set_name}/{}", g.name);
++        let collapsed = app.ui.collapsed_groups.contains(&key);
++        let (hr, hresp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
++        let pp = ui.painter();
++        crate::icons::paint(
++            pp,
++            Rect::from_center_size(pos2(hr.left() + 11.0, hr.center().y), vec2(11.0, 11.0)),
++            if collapsed { crate::icons::Icon::ChevronRight } else { crate::icons::Icon::ChevronDown },
++            false,
++        );
++        pp.text(pos2(hr.left() + 22.0, hr.center().y), egui::Align2::LEFT_CENTER, &g.name, egui::FontId::proportional(12.5), t.text);
++        crate::icons::describe_control(ui, &hresp, &g.name, Some(!collapsed), false);
++        if hresp.clicked() {
++            toggle = Some(key);
++        }
++        if !collapsed {
++            ui.add_space(2.0);
++            let per_row = (((ui.available_width() - 12.0) / (TILE + 2.0)).floor() as usize).max(1);
++            for (ri, row) in g.tools.chunks(per_row).enumerate() {
++                ui.horizontal(|ui| {
++                    ui.add_space(8.0);
++                    ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
++                    for (ti, tool) in row.iter().enumerate() {
++                        let list = icon(app, tool);
++                        let id = ui.scope_id().with(("user_tool", set_name, gi, ri, ti));
++                        if tool_button(ui, list.as_deref(), tool, id).clicked() {
++                            clicked = Some(tool.input.clone());
++                        }
++                    }
++                });
++                ui.add_space(2.0);
++            }
++            ui.add_space(4.0);
++        }
++        let (sr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
++        ui.painter().hline(sr.x_range().shrink(6.0), sr.center().y, Stroke::new(1.0, t.border));
++    }
++    if let Some(k) = toggle {
++        if let Some(i) = app.ui.collapsed_groups.iter().position(|x| *x == k) {
++            app.ui.collapsed_groups.remove(i);
++        } else {
++            app.ui.collapsed_groups.push(k);
++        }
++    }
++    clicked
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn parses_a_set_and_its_blocks() {
++        let s = parse(
++            r#"{"name":"P&ID","groups":[{"name":"Valves","tools":[
++                {"label":"Gate","input":"(pid:tool \"VLV_GATE\")","block":["PIP_VLV_GATE","ISA_VLV_GATE"]},
++                {"input":"PIDINST","block":"PIP_INST_FIELD"},
++                {"label":"nothing to run"}]}]}"#,
++        )
++        .unwrap();
++        assert_eq!(s.name, "P&ID");
++        assert_eq!(s.groups.len(), 1);
++        let tools = &s.groups[0].tools;
++        assert_eq!(tools.len(), 2, "a tool without input is dropped");
++        assert_eq!(tools[0].blocks, ["PIP_VLV_GATE", "ISA_VLV_GATE"]);
++        assert_eq!(tools[1].label, "PIDINST", "a tool without a label is labelled by its input");
++        assert_eq!(tools[1].blocks, ["PIP_INST_FIELD"]);
++    }
++
++    #[test]
++    fn refuses_sets_without_name_or_tools_and_never_panics() {
++        assert!(parse("{}").is_err());
++        assert!(parse(r#"{"name":"X","groups":[]}"#).is_err());
++        assert!(parse(r#"{"name":"X","groups":[{"name":"G","tools":[]}]}"#).is_err());
++        for hostile in ["", "[", "null", "1e999", r#"{"name":1}"#, r#"{"name":"X","groups":{"a":1}}"#, "\u{0}"] {
++            let _ = parse(hostile);
++        }
++    }
++
++    #[test]
++    fn caps_sizes() {
++        let tools: Vec<String> =
++            (0..500).map(|_| format!(r#"{{"label":"{}","input":"LINE","block":[{}]}}"#, "L".repeat(500), r#""B","#.repeat(40) + r#""B""#)).collect();
++        let text = format!(r#"{{"name":"{}","groups":[{{"name":"G","tools":[{}]}}]}}"#, "N".repeat(500), tools.join(","));
++        let s = parse(&text).unwrap();
++        assert_eq!(s.name.chars().count(), MAX_NAME);
++        assert_eq!(s.groups[0].tools.len(), MAX_TOOLS);
++        assert_eq!(s.groups[0].tools[0].label.chars().count(), MAX_NAME);
++        assert_eq!(s.groups[0].tools[0].blocks.len(), MAX_BLOCKS);
++    }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    #[test]
++    fn loads_json_files_in_order_and_refuses_built_in_or_repeated_names() {
++        let dir = std::env::temp_dir().join(format!("cc-toolsets-{}", std::process::id()));
++        let _ = std::fs::remove_dir_all(&dir);
++        std::fs::create_dir_all(&dir).unwrap();
++        let set = |n: &str| format!(r#"{{"name":"{n}","groups":[{{"name":"G","tools":[{{"input":"LINE"}}]}}]}}"#);
++        std::fs::write(dir.join("b.json"), set("Second")).unwrap();
++        std::fs::write(dir.join("a.json"), set("First")).unwrap();
++        std::fs::write(dir.join("c.json"), set("drafting")).unwrap();
++        std::fs::write(dir.join("d.json"), set("first")).unwrap();
++        std::fs::write(dir.join("e.json"), "not json").unwrap();
++        std::fs::write(dir.join("f.txt"), set("Ignored")).unwrap();
++        let (sets, errors) = load_dir(&dir);
++        let names: Vec<&str> = sets.iter().map(|s| s.name.as_str()).collect();
++        assert_eq!(names, ["First", "Second"]);
++        assert_eq!(errors.len(), 3, "{errors:?}");
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn a_tool_submits_its_lines_as_typed_and_cancels_a_running_command() {
++        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
++        app.cmdline("line");
++        assert!(app.session.prompting());
++        run_tool(&mut app, "circle 0,0 5\ncircle 10,0 2");
++        let st = app.session.state().unwrap();
++        let circles = st.doc.model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
++        assert_eq!(circles, 2);
++        assert!(!app.session.prompting());
++    }
++
++    #[test]
++    fn a_missing_folder_reads_nothing() {
++        let mut store = Store::default();
++        store.ensure(Some(Path::new("/nonexistent/cadcraft-support")));
++        assert!(store.sets.is_empty() && store.errors.is_empty());
++        store.ensure(None);
++        assert!(store.sets.is_empty());
++    }
++}
+diff --git a/docs/customization.md b/docs/customization.md
+index 33d1f8a..c46a1c7 100644
+--- a/docs/customization.md
++++ b/docs/customization.md
+@@ -8,6 +8,7 @@ and what is not there yet.
+ | LISP routines (`.lsp`) | Run with APPLOAD or `(load "name")`. The core language, `command`, entity lists, selection sets, `get…` input and `c:` commands work. | [autolisp.md](autolisp.md) |
+ | Startup LISP (`acad.lsp`, `acaddoc.lsp`) | Loaded from the support folder at startup and for each drawing. | [autolisp.md](autolisp.md#at-startup) |
+ | Scripts (`.scr`) | SCRIPT (Tools > Run Script...), `cadcraft-cli run --script-file`, and script text over MCP and the control channel. | below |
++| Tool palettes of your own | Tool Sets tabs read from `.json` files in `support/toolsets`: groups of buttons that run commands, LISP commands or LISP expressions, with a block of the drawing as the icon. | below |
+ | Command aliases (`.pgp`) | ALIASEDIT `{file}` loads an alias file for the session; REINIT reads it again. | below |
+ | Compiled plug-ins (C++, .NET) | Not supported. A plug-in API is planned, for plug-ins written in Rust and compiled to WebAssembly. | [gaps.md](gaps.md) (E4) |
+ | Programs that drive the CAD program from outside | The JSON control channel, the MCP server and `cadcraft-cli`. Any language that can open a TCP socket or start a process can use them. | below |
+@@ -32,6 +33,39 @@ in the app, or headless:
+ cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
+ ```
+ 
++## Tool Sets of your own
++
++Each `.json` file in the `toolsets` folder of the support folder (on Windows
++`%APPDATA%\CADCraft\support\toolsets`, on macOS `~/Library/Application Support/CADCraft/support/toolsets`,
++on Linux `~/.config/cadcraft/support/toolsets`) adds a tab to the Tool Sets, after Drafting and
++Modeling. A tool is a button that submits its `input` at the command line, as if typed, after
++cancelling the command that is running: a command (`LINE`), a LISP command (`MYCMD`) or a LISP
++expression (`(my:tool "GATE")`); several lines are submitted one after another. `block` names a
++block, or lists several, whose definition in the current drawing is drawn as the button's icon
++(the first one the drawing defines); attribute definitions and objects on layers that are off are
++left out, as an inserted block shows them. A tool without a block the drawing defines shows its
++label.
++
++```json
++{
++  "name": "P&ID",
++  "groups": [
++    { "name": "Valves",
++      "tools": [
++        { "label": "Gate valve", "input": "(pid:tool \"VLV_GATE\")", "block": ["PIP_VLV_GATE", "ISA_VLV_GATE"] },
++        { "label": "Instrument", "input": "PIDINST", "block": "PIP_INST_FIELD" }
++      ] }
++  ]
++}
++```
++
++The files are read when the Tool Sets first show; `ui.toolsets.reload` reads them again and
++returns the tab names. Files are read in name order; a tab named like a built-in one or like an
++earlier file is skipped, and problems are reported on the command line. Sizes are capped (16
++files of 256 KB, 32 groups of 128 tools, 40-character names). The workspace remembers the
++built-in tabs only: a user tab shown when CADCraft closes opens on Drafting next time. There is no
++support folder on the web, so no user tabs there.
++
+ ## Command aliases
+ 
+ ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases for the rest of
+-- 
+2.43.0
+
