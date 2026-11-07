@@ -185,7 +185,7 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::options::route(app, id, params) {
         return Some(r);
     }
-    None
+    run_wblock_command(app, id, params)
 }
 
 fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, String>> {
@@ -375,9 +375,13 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
-/// A user's WBLOCK: ask where to write the selection. With nothing selected it says so instead of
-/// writing an empty drawing.
-fn run_wblock_command(app: &mut CadApp) -> Option<Result<Value, String>> {
+/// WBLOCK from the menu or typed: ask where to write the selection. With nothing selected it says
+/// so instead of writing an empty drawing. JSON calls carry `path` (and `name` or `handles`) and
+/// never open a dialog.
+fn run_wblock_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if !matches!(id, "wblock" | "w") || !params.is_null() || app.session.state().is_err() {
+        return None;
+    }
     if app.session.selection().is_empty() {
         app.session.echo("WBLOCK: select the objects to write first");
         return Some(Ok(Value::Null));
@@ -493,9 +497,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             });
             r
         }
-        // WBLOCK from the menu or typed: see `run_wblock_command`. JSON calls carry `path` (and
-        // `name` or `handles`) and never open a dialog.
-        "wblock" | "w" if params.is_null() && app.session.state().is_ok() => return run_wblock_command(app),
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
             app.session.open_drawing(d, "Bracket", None);
