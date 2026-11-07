@@ -207,4 +207,38 @@ mod tests {
         let e = app.run("share", json!({})).unwrap_err();
         assert!(e.contains("not available yet"), "{e}");
     }
+
+    #[test]
+    fn typed_wblock_asks_for_the_file() {
+        let (mut app, asked) = app();
+        // Nothing selected: no dialog, no empty file.
+        app.start("wblock");
+        assert!(asked.borrow().is_empty());
+        assert!(app.session.log.iter().any(|l| l.contains("select the objects")));
+        let l = app.session.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone();
+        app.session.execute("select", &json!({ "handles": [l] })).unwrap();
+        assert!(!app.session.selection().is_empty());
+        app.start("wblock");
+        app.cmdline("w");
+        assert_eq!(*asked.borrow(), ["Drawing1.dwg", "Drawing1.dwg"]);
+        let e = app.run("wblock", json!({})).unwrap_err();
+        assert!(e.contains("`path` is required"), "{e}");
+        assert_eq!(asked.borrow().len(), 2, "JSON calls never open a file dialog");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn typed_wblock_writes_the_selection_to_the_chosen_file() {
+        let path = std::env::temp_dir().join(format!("cadcraft-wblock-{}.dwg", std::process::id()));
+        let chosen = path.to_string_lossy().to_string();
+        let services = Services { pick_save: Some(Box::new(move |_: &str| Some(chosen.clone()))), ..Services::default() };
+        let mut app = CadApp::new(Session::new(), services);
+        let l = app.session.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone();
+        app.session.execute("select", &json!({ "handles": [l] })).unwrap();
+        app.start("wblock");
+        let written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+        assert!(written > 0, "the chosen file is written");
+        assert!(app.session.log.iter().any(|l| l.contains("Wrote 1 objects to")), "{:?}", app.session.log);
+    }
 }
