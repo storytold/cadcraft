@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(
                 "{handle, option: close|open|join|reverse|refit|purge|polyline|move|fitmove|fitadd|fitdelete|kink|tangents|tolerance|vertexadd|vertexmove|vertexdelete|weight|elevate, \
                  handles2? (join), fit?, index?, to?, before?: bool (fitadd), at? (kink, vertexadd), start?, end? (tangent directions; null = default), tolerance?, weight?, \
-                 order? (elevate), precision?}",
+                 order? (elevate), precision?: 0..99 (polyline, default 10)}",
             )
             .interactive(|_| Ok(Box::new(SplineditM::default()))),
         CommandSpec::new("lengthen", "Lengthen", run_lengthen)
