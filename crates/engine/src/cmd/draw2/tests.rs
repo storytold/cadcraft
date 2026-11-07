@@ -601,6 +601,25 @@ fn measure_spline_by_its_own_parameter() {
     assert!(pts.len() == 3 && [7.0, 4.0, 1.0].iter().all(|x| pts.iter().any(|p| near(*p, *x, 0.0))), "{pts:?}");
 }
 
+/// A pick a hair outside an arc's sweep beside its start is at its start, for an arc and for a
+/// polyline's arc span alike: MEASURE runs from there (round the circle it was the far end).
+#[test]
+fn measure_from_a_pick_a_hair_before_an_arcs_start() {
+    let curves = [
+        ("arc", json!({"center": [0, 0], "radius": 1, "start": 0, "end": 180})),
+        ("pline", json!({"vertices": [{"p": [1, 0], "bulge": 1}, [-1, 0]]})),
+    ];
+    for (cmd, args) in curves {
+        let mut s = Session::new();
+        let e = h(&s.execute(cmd, &args).unwrap());
+        s.execute("measure", &json!({"handle": e, "length": 1, "from": [1, -1e-13]})).unwrap();
+        let pts: Vec<Vec2> =
+            s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Point(p) = &e.kind { Some(p.p.xy()) } else { None }).collect();
+        // From (1, 0), a point every radian.
+        assert!(pts.len() == 3 && [1.0f64, 2.0, 3.0].iter().all(|a| pts.iter().any(|p| near(*p, a.cos(), a.sin()))), "{cmd}: {pts:?}");
+    }
+}
+
 /// MEASURE counts every vertex in a polyline's parameter, coincident ones too (AutoCAD's polyline
 /// parameter is the vertex index; the chain drops zero-length spans), and picks an ellipse's end
 /// by the ellipse parameter like any other curve: AutoCAD 2024 runs both measured cases below from
