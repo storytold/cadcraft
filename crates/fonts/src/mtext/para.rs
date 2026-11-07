@@ -7,7 +7,10 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
+use super::{
+    Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, run_width, seg_plain, seg_shape, seg_trail, seg_width, space_width_in,
+    split_thai,
+};
 
 /// Columns an MTEXT's text flows through, each as wide as the MTEXT's width.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -361,6 +364,8 @@ struct PLine {
     items: Vec<Item>,
     /// Right end of the content.
     width: f64,
+    /// Tracking owed after the last segment (`seg_trail`), added once something follows it.
+    trail: f64,
     max_h: f64,
     text: String,
     gaps: usize,
@@ -494,20 +499,23 @@ impl<'a> LineBuilder<'a> {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
         };
-        let (stop, kind) = next_tab(self.line.width, self.paragraphs.props(self.paragraph), self.height);
+        // The tab follows the last character, tracked like any step after it.
+        let from = self.line.width + self.line.trail;
+        let (stop, kind) = next_tab(from, self.paragraphs.props(self.paragraph), self.height);
         let next_width: f64 = match parts.get(index + 1) {
-            Some(Part::Text(segments)) => segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum(),
+            Some(Part::Text(segments)) => self.word_width(segments),
             _ => 0.0,
         };
         let x = match kind {
             TabKind::Left => stop,
-            TabKind::Center => (stop - next_width / 2.0).max(self.line.width),
-            TabKind::Right | TabKind::Decimal => (stop - next_width).max(self.line.width),
+            TabKind::Center => (stop - next_width / 2.0).max(from),
+            TabKind::Right | TabKind::Decimal => (stop - next_width).max(from),
         };
         if x > available + 1e-9 && !self.line.items.is_empty() {
             self.finish(false, left);
         } else {
             self.line.width = x;
+            self.line.trail = 0.0;
             self.line.text.push(' ');
         }
     }
@@ -533,27 +541,28 @@ impl<'a> LineBuilder<'a> {
 
     /// Width of a word's segments, each in its format.
     fn word_width(&self, segments: &[(Seg, usize)]) -> f64 {
-        segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum()
+        run_width(segments, |format| self.format(format))
+    }
+
+    /// Something follows the last segment on the line: its tracking now counts.
+    fn settle(&mut self) {
+        self.line.width += self.line.trail;
+        self.line.trail = 0.0;
     }
 
     /// Put a word, or a piece of one, on the current line after any pending space, or start a
     /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
     fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width = self.word_width(segments);
-        let space_width = if index == 0 {
-            self.pending_space
-                .map(|format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let space_width = if index == 0 { self.pending_space.map(|format| space_width_in(self.format(format))).unwrap_or(0.0) } else { 0.0 };
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
         };
-        if self.width > 0.0 && !self.line.items.is_empty() && self.line.width + space_width + word_width > available + 1e-9 {
+        if self.width > 0.0 && !self.line.items.is_empty() && self.line.width + self.line.trail + space_width + word_width > available + 1e-9 {
             self.finish(false, left);
         } else if index == 0 && (!self.line.items.is_empty() || self.pending_space.is_some()) {
+            self.settle();
             self.line.width += space_width;
             if self.pending_space.is_some() {
                 self.line.text.push(' ');
@@ -562,7 +571,9 @@ impl<'a> LineBuilder<'a> {
         }
         self.pending_space = None;
         for (segment, format) in segments {
+            self.settle();
             let segment_width = seg_width(segment, self.format(*format));
+            self.line.trail = seg_trail(segment, self.format(*format));
             self.line.max_h = self.line.max_h.max(self.format(*format).height);
             self.line.text.push_str(&seg_plain(segment));
             self.line.items.push(Item { seg: segment.clone(), fmt: *format, x: self.line.width, gap: self.line.gaps });

@@ -160,6 +160,8 @@ struct Fmt {
     under: bool,
     over: bool,
     wf: f64,
+    /// `\T` tracking: each character's advance times this (0.75 to 4, the format's range); 1 is normal.
+    tracking: f64,
     oblique: f64,
     /// `\A`: vertical alignment of tolerance stacks (`^`) on the line: 0 bottom, 1 centre, 2 top.
     valign: u8,
@@ -184,6 +186,9 @@ enum Atom {
 const MAX_ATOMS: usize = 200_000;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
+/// The tracking (`\T`) the MTEXT format allows, as a factor of the normal spacing.
+const MIN_TRACKING: f64 = 0.75;
+const MAX_TRACKING: f64 = 4.0;
 
 fn arg(chars: &[char], from: usize) -> (String, usize) {
     let mut j = from;
@@ -264,6 +269,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             under: false,
             over: false,
             wf: 1.0,
+            tracking: 1.0,
             oblique: 0.0,
             valign: 1,
         });
@@ -352,6 +358,15 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                             derive(&mut fmts, &mut cur, &|f| f.wf = v);
                         }
                     }
+                    'T' => {
+                        // Tracking, as a factor of the normal spacing ("\T1.55;", also "\T1.55x;").
+                        // The format allows 0.75 to 4; a value outside is held to that range.
+                        let (a, n) = arg(&chars, i);
+                        i = n;
+                        if let Some(v) = num(a.trim_end_matches(['x', 'X'])).filter(|v| *v > 0.0) {
+                            derive(&mut fmts, &mut cur, &|f| f.tracking = v.clamp(MIN_TRACKING, MAX_TRACKING));
+                        }
+                    }
                     'Q' => {
                         let (a, n) = arg(&chars, i);
                         i = n;
@@ -382,7 +397,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                         }
                     }
                     _ => {
-                        // \T, \p and unknown codes: argument up to ';'.
+                        // \p and unknown codes: argument up to ';'.
                         let (_, n) = arg(&chars, i);
                         i = n;
                     }
@@ -482,9 +497,84 @@ fn split_thai(word: Vec<(Seg, usize)>) -> Vec<Vec<(Seg, usize)>> {
     pieces
 }
 
+/// Whether `t` is spread by `f`'s tracking. Right-to-left text is shaped as a whole, so it keeps
+/// its normal spacing.
+fn tracked(f: &Fmt, t: &str) -> bool {
+    (f.tracking - 1.0).abs() > 1e-9 && !crate::bidi::has_rtl(t)
+}
+
+/// `t` cut where tracking spreads it: each piece is a character with the combining marks and
+/// invisible format characters after it, so a mark stays on its letter.
+fn track_clusters(t: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0;
+    for (at, c) in t.char_indices().skip(1) {
+        if !crate::bidi::is_mark(c) && !crate::bidi::is_format_control(c) {
+            out.push(&t[start..at]);
+            start = at;
+        }
+    }
+    if start < t.len() {
+        out.push(&t[start..]);
+    }
+    out
+}
+
+/// Each cluster's normal advance in `f`: what it adds to the width of the text when followed by
+/// the next one, so the spacing a font puts between characters (and any kerning) counts. The
+/// last cluster adds its own width. Linear in the clusters: two widths are measured per cluster.
+fn track_advances(f: &Fmt, clusters: &[&str]) -> Vec<f64> {
+    let width = |s: &str| text_width(&f.font, s, f.height, f.wf);
+    clusters
+        .iter()
+        .enumerate()
+        .map(|(i, c)| match clusters.get(i + 1) {
+            Some(next) => width(&format!("{c}{next}")) - width(next),
+            None => width(c),
+        })
+        .collect()
+}
+
+/// The width of text `t` in format `f`: with tracking, the step from each character to the next is
+/// its advance times the factor (the characters keep their shapes, and the last one its width).
+fn text_width_in(f: &Fmt, t: &str) -> f64 {
+    if !tracked(f, t) {
+        return text_width(&f.font, t, f.height, f.wf);
+    }
+    let advances = track_advances(f, &track_clusters(t));
+    match advances.split_last() {
+        Some((last, steps)) => steps.iter().sum::<f64>() * f.tracking + last,
+        None => 0.0,
+    }
+}
+
+/// The width of a space between words in format `f`, tracked like any character.
+fn space_width_in(f: &Fmt) -> f64 {
+    crate::space_width(&f.font, f.height, f.wf) * f.tracking
+}
+
+/// What tracking adds after the last character of `seg` when something follows it on the line (a
+/// space, a tab or the next segment of the word): the step from that character to the next one is
+/// its advance times the factor, as it is inside the text. [`seg_width`] ends at the character's
+/// own width, so a line still ends where its last character does.
+fn seg_trail(seg: &Seg, f: &Fmt) -> f64 {
+    match seg {
+        Seg::Text(t) if tracked(f, t) => track_clusters(t).last().map_or(0.0, |c| text_width(&f.font, c, f.height, f.wf) * (f.tracking - 1.0)),
+        _ => 0.0,
+    }
+}
+
+/// The width of a word's segments set one after the other, each in its format: the tracking after
+/// every segment but the last counts.
+fn run_width<'f>(segments: &[(Seg, usize)], fmt: impl Fn(usize) -> &'f Fmt) -> f64 {
+    let widths: f64 = segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum();
+    let trails: f64 = segments.iter().rev().skip(1).map(|(segment, format)| seg_trail(segment, fmt(*format))).sum();
+    widths + trails
+}
+
 fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     match seg {
-        Seg::Text(t) => text_width(&f.font, t, f.height, f.wf),
+        Seg::Text(t) => text_width_in(f, t),
         Seg::Stack(top, bottom, sep) => {
             let hs = f.height * STACK_SCALE;
             let wt = text_width(&f.font, top, hs, f.wf);
@@ -512,6 +602,15 @@ fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
     };
     let w = seg_width(seg, f);
     match seg {
+        Seg::Text(t) if tracked(f, t) => {
+            // Each character where its tracked advance puts it.
+            let clusters = track_clusters(t);
+            let mut at = x;
+            for (c, advance) in clusters.iter().zip(track_advances(f, &clusters)) {
+                out.extend(put(c, h, Vec2::new(at, 0.0)));
+                at += advance * f.tracking;
+            }
+        }
         Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
             let hs = h * STACK_SCALE;
@@ -574,6 +673,8 @@ struct Item {
 struct Line {
     items: Vec<Item>,
     width: f64,
+    /// Tracking owed after the last segment ([`seg_trail`]), added once something follows it.
+    trail: f64,
     max_h: f64,
     text: String,
     /// Running character count of `text`, kept incrementally so appending a segment need not
@@ -628,6 +729,14 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
         line.para = paragraph;
         lines.push(std::mem::take(line));
     };
+    // Something follows the last segment on the line: its tracking now counts.
+    let settle = |line: &mut Line| {
+        if let Some(last) = line.items.last_mut() {
+            last.w += line.trail;
+            line.width += line.trail;
+        }
+        line.trail = 0.0;
+    };
 
     for atom in atoms {
         match atom {
@@ -644,8 +753,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 last_fmt = *format;
             }
             Atom::Word(word) => {
-                let word_width =
-                    |segments: &[(Seg, usize)]| -> f64 { segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum() };
+                let word_width = |segments: &[(Seg, usize)]| -> f64 { run_width(segments, fmt) };
                 // Wider than the column: Thai breaks between its words (see `split_thai`).
                 let split;
                 let pieces = if width > 0.0 && word_width(word) > width + 1e-9 {
@@ -656,11 +764,11 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 };
                 for segments in pieces {
                     let word_width = word_width(segments);
-                    let space_width =
-                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
-                    if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                    let space_width = pending_space.map(|format| space_width_in(fmt(format))).unwrap_or(0.0);
+                    if width > 0.0 && !line.items.is_empty() && line.width + line.trail + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                     } else if !line.items.is_empty() || pending_space.is_some() {
+                        settle(&mut line);
                         if let Some(format) = pending_space {
                             let at = line.chars;
                             line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
@@ -671,7 +779,9 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                     }
                     pending_space = None;
                     for (segment, format) in segments {
+                        settle(&mut line);
                         let segment_width = seg_width(segment, fmt(*format));
+                        line.trail = seg_trail(segment, fmt(*format));
                         line.max_h = line.max_h.max(fmt(*format).height);
                         let at = line.chars;
                         let plain = seg_plain(segment);
@@ -696,7 +806,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let wf = if p.width_factor.is_finite() && p.width_factor > 0.0 { p.width_factor } else { 1.0 };
     let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
     let rotation = if p.rotation.is_finite() { p.rotation } else { 0.0 };
-    let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, oblique: p.oblique, valign: 1 };
+    let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, tracking: 1.0, oblique: p.oblique, valign: 1 };
     if para::needed(contents, p) {
         return para::layout(contents, p, &base);
     }
@@ -790,6 +900,90 @@ mod tests {
         let l = layout_mtext("alpha beta gamma", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
         assert_eq!(l.lines.len(), 1, "no wrap width: one line");
         assert_eq!(l.lines[0], "alpha beta gamma");
+    }
+
+    /// `\T` tracking spreads the characters: each one's advance is the factor times its normal
+    /// advance, its shape unchanged (#2827). Four equal characters: the last one starts three
+    /// tracked advances after the first, so the run is `3 · advance · (factor − 1)` wider.
+    #[test]
+    fn tracking_multiplies_each_characters_advance() {
+        // An H's advance: what a second H adds, with the spacing the font puts between them.
+        let advance = crate::text_width(&TextFont::Stroke, "HH", 1.0, 1.0) - crate::text_width(&TextFont::Stroke, "H", 1.0, 1.0);
+        let width = |s: &str| {
+            let b = lay(s, 0.0).bounds;
+            b.max.x - b.min.x
+        };
+        let normal = width("HHHH");
+        for t in [1.55, 0.8, 3.0] {
+            let tracked = width(&format!("\\T{t};HHHH"));
+            assert!((tracked - normal - 3.0 * advance * (t - 1.0)).abs() < 1e-6, "\\T{t}: {tracked} vs {normal}");
+        }
+        assert!((width("\\T1.55x;HHHH") - width("\\T1.55;HHHH")).abs() < 1e-9, "an x suffix reads the same");
+        // Only the text after the code, up to the end of its group, is tracked.
+        let grouped = width("{\\T2;HH}HH");
+        assert!(width("{HH}HH") < grouped && grouped < width("\\T2;HHHH"), "{grouped}");
+    }
+
+    /// Tracked text takes more room, so it wraps sooner; spaces between words are tracked too.
+    #[test]
+    fn tracked_text_wraps_by_its_tracked_width() {
+        let one_line = lay("HHH HHH HHH", 0.0).bounds;
+        let column = (one_line.max.x - one_line.min.x) * 1.1;
+        assert_eq!(lay("HHH HHH HHH", column).lines.len(), 1);
+        assert!(lay("\\T2;HHH HHH HHH", column).lines.len() > 1, "twice as wide, it no longer fits");
+    }
+
+    /// Tracking spreads every step from one character to the next, also the steps out of a text
+    /// segment: from the last letter of a word to the space after it, and across a format change
+    /// inside a word. Only the line's last character keeps its own width, so a line is
+    /// `(factor − 1) · (width − last character's width)` wider. In both layouts (the paragraph
+    /// one runs for `\p` codes).
+    #[test]
+    fn tracking_spreads_the_steps_between_words_and_across_format_changes() {
+        let h = crate::text_width(&TextFont::Stroke, "H", 1.0, 1.0);
+        let width = |s: &str| {
+            let b = lay(s, 0.0).bounds;
+            b.max.x - b.min.x
+        };
+        for para in ["", "\\pxi0;"] {
+            for text in ["HHH HHH", "HH{\\C1;H}H", "H{\\C1;H} H"] {
+                for t in [2.0, 0.8] {
+                    let normal = width(&format!("{para}{text}"));
+                    let tracked = width(&format!("{para}\\T{t};{text}"));
+                    assert!((tracked - normal - (t - 1.0) * (normal - h)).abs() < 1e-6, "{para}{text} \\T{t}: {tracked} vs {normal}");
+                }
+            }
+        }
+    }
+
+    /// The format allows tracking from 0.75 to 4 times: a value outside is held to the nearest end, and
+    /// one that isn't a positive number is ignored.
+    #[test]
+    fn tracking_is_held_to_the_formats_range() {
+        let width = |s: &str| {
+            let b = lay(s, 0.0).bounds;
+            b.max.x - b.min.x
+        };
+        assert!((width("\\T10;HHHH") - width("\\T4;HHHH")).abs() < 1e-9);
+        assert!((width("\\T0.1;HHHH") - width("\\T0.75;HHHH")).abs() < 1e-9);
+        for ignored in ["\\T0;HHHH", "\\T-2;HHHH", "\\Tabc;HHHH", "\\TNaN;HHHH"] {
+            assert!((width(ignored) - width("HHHH")).abs() < 1e-9, "{ignored}");
+        }
+    }
+
+    /// Tracking moves letters, not the marks on them: a combining mark stays with its letter, and
+    /// right-to-left text, shaped as a whole, keeps its normal spacing.
+    #[test]
+    fn tracking_keeps_marks_on_their_letters_and_leaves_right_to_left_text() {
+        assert_eq!(track_clusters("e\u{301}x\u{200D}y"), ["e\u{301}", "x\u{200D}", "y"]);
+        assert_eq!(track_clusters("a"), ["a"]);
+        assert!(track_clusters("").is_empty());
+        let base =
+            Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, tracking: 2.0, oblique: 0.0, valign: 1 };
+        let hebrew = "\u{5E9}\u{5DC}\u{5D5}\u{5DD}";
+        assert!(!tracked(&base, hebrew));
+        assert!((text_width_in(&base, hebrew) - text_width(&base.font, hebrew, 1.0, 1.0)).abs() < 1e-12);
+        assert!(tracked(&base, "HH"));
     }
 
     #[test]
@@ -999,7 +1193,8 @@ mod tests {
         // as wide as the word laid out in one piece (up to kerning).
         let pieces = split_thai(vec![(Seg::Text(text.to_string()), 0)]);
         if one.pieces.iter().any(|p| !p.shaped.glyphs.is_empty()) {
-            let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, oblique: 0.0, valign: 1 };
+            let base =
+                Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, tracking: 1.0, oblique: 0.0, valign: 1 };
             let sum: f64 = pieces.iter().flatten().map(|(seg, _)| seg_width(seg, &base)).sum();
             assert!((sum - wide).abs() < 0.01 * wide, "{sum} {wide}");
         }
