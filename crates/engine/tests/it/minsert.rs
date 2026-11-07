@@ -118,6 +118,42 @@ fn the_prompts_follow_autocad_2024() {
 }
 
 #[test]
+fn the_column_spacing_takes_two_points() {
+    // AutoCAD 2024 at "Specify distance between columns (|||):": a point asks "Specify second
+    // point:", and the two points' distance is the spacing, 0 included; x and Enter there, and
+    // Enter or 5 at the second point, get "Requires numeric distance or two points." (measured).
+    let to_spacing = |s: &mut Session| {
+        let l = handle(&s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap());
+        s.execute("-block", &json!({"name": "B", "base": [0, 0], "handles": [l]})).unwrap();
+        for input in ["minsert", "B", "10,0", "1", "", "0", "2", "2", "10"] {
+            s.cmdline(input).unwrap();
+        }
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Specify distance between columns (|||):"));
+    };
+    for (second, spacing) in [("6,8", 5.0), ("3,4", 0.0)] {
+        let mut s = Session::new();
+        to_spacing(&mut s);
+        s.cmdline("3,4").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Specify second point:"));
+        s.cmdline(second).unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let [i] = inserts(&s).try_into().unwrap();
+        assert_eq!(grid(&i), (2, 2, spacing, 10.0), "{second}");
+    }
+    for bad in [&["x"][..], &[""], &["3,4", ""], &["3,4", "5"]] {
+        let mut s = Session::new();
+        to_spacing(&mut s);
+        let logged = s.log.len();
+        for input in bad {
+            s.cmdline(input).unwrap();
+        }
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, ["Requires numeric distance or two points."], "{bad:?}");
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Specify distance between columns (|||):"), "{bad:?}");
+    }
+}
+
+#[test]
 fn counts_run_from_1_to_32767() {
     // AutoCAD 2024: "Requires an integer between 1 and 32767."
     let mut s = Session::new();
