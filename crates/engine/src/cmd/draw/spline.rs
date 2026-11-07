@@ -113,7 +113,11 @@ impl Interactive for SplineM {
         }
         match i {
             Input::Point(p) => {
-                self.pts.push(p);
+                // The same point again is not a further fit point (AutoCAD 2024 leaves it out),
+                // nor a kink.
+                if self.pts.last() != Some(&p) {
+                    self.pts.push(p);
+                }
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Undo" => {
@@ -163,6 +167,8 @@ impl Interactive for SplineM {
             }
             Some(crate::cmd::spline_opts::SplineAsk::EndTangent) => opts.end_tangent = self.pts.last().map(|l| c - *l).filter(|d| d.len() > 1e-12),
             Some(_) => {}
+            // The cursor on the last point adds nothing, as a click there doesn't.
+            None if pts.last() == Some(&c) => {}
             None => pts.push(c),
         }
         if pts.len() < 2 {
