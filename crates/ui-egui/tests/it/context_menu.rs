@@ -215,7 +215,8 @@ fn middle_button_pans_or_opens_the_snap_menu_by_mbuttonpan() {
     let middle = |at, pressed| button(egui::PointerButton::Middle, at, pressed);
     let (at, to) = (egui::pos2(800.0, 500.0), egui::pos2(900.0, 560.0));
     // A middle drag from `at` to `to` during LINE. Returns the app and its context, so the menu
-    // can be clicked, the texts painted after the drag, and whether the view's centre moved.
+    // can be clicked, the texts painted on the frame after the press (the pointer still at `at`)
+    // and after the drag, and whether the view's centre moved.
     let drag = |mbuttonpan: &str| {
         let mut app = CadApp::new(Session::new(), Services::default());
         let ctx = egui::Context::default();
@@ -226,19 +227,27 @@ fn middle_button_pans_or_opens_the_snap_menu_by_mbuttonpan() {
         let before = app.session.state().unwrap().view().center;
         painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], none);
         painted(&mut app, &ctx, vec![middle(at, true)], none);
+        let pressed = painted_texts(&mut app, &ctx, Vec::new(), none);
         painted(&mut app, &ctx, vec![egui::Event::PointerMoved(to)], none);
         painted(&mut app, &ctx, vec![middle(to, false)], none);
         let texts = painted_texts(&mut app, &ctx, Vec::new(), none);
         let moved = app.session.state().unwrap().view().center.dist(before) > 1e-9;
-        (app, ctx, texts, moved)
+        (app, ctx, pressed, texts, moved)
     };
     let has = |texts: &[(String, egui::Rect)], label: &str| texts.iter().any(|(text, _)| text == label);
 
-    let (mut app, ctx, texts, moved) = drag("0");
+    let (mut app, ctx, pressed, texts, moved) = drag("0");
     for l in ["From", "Mid Between 2 Points", "Endpoint", "Osnap Settings..."] {
         assert!(has(&texts, l), "{l} missing from the painted menu:\n{texts:?}");
     }
     assert!(!moved, "MBUTTONPAN 0: the middle button doesn't pan");
+    // The menu opens at the press, as #2720 asks, and stays there while the pointer moves on to
+    // `to` (100 px right). Only its left edge is checked against `at`: a menu this tall opens
+    // above the pointer when it doesn't fit below, as egui places it.
+    let from = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == "From").map(|(_, rect)| rect.min);
+    let (opened, kept) = (from(&pressed).unwrap(), from(&texts).unwrap());
+    assert!((0.0..=24.0).contains(&(opened.x - at.x)), "the menu opens at the press {at:?}, not at {opened:?}");
+    assert!(opened.distance(kept) < 0.5, "the menu stays where it opened ({opened:?}), not following the pointer ({kept:?})");
     assert!(app.session.prompt_text().contains("Specify next point"), "the command keeps its prompt: {}", app.session.prompt_text());
 
     // Clicking Endpoint in the menu sets the override; the click doesn't reach LINE as a point.
@@ -251,7 +260,7 @@ fn middle_button_pans_or_opens_the_snap_menu_by_mbuttonpan() {
     assert!(app.session.prompt_text().ends_with("Endpoint of:"), "{}", app.session.prompt_text());
     assert!(!has(&after, "Mid Between 2 Points"), "choosing an item closes the menu:\n{after:?}");
 
-    let (_, _, texts, moved) = drag("1");
+    let (_, _, _, texts, moved) = drag("1");
     assert!(!has(&texts, "Mid Between 2 Points"), "MBUTTONPAN 1 opens no menu:\n{texts:?}");
     assert!(moved, "MBUTTONPAN 1: the middle button pans");
 }
