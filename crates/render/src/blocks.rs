@@ -1,7 +1,52 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{Builder, Clip, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, append_clipped_keep, clip};
+
+/// What drawing the references of one block needs from its definition, worked out once per
+/// display list rather than for every reference or MINSERT copy.
+pub(crate) struct BlockPlan {
+    /// The block's entities a copy draws, in drawing order: all but its attribute definitions,
+    /// which only give attributes their properties.
+    drawn: Vec<Arc<Entity>>,
+    /// The block's first attribute definition with each tag (lower case).
+    defs: HashMap<String, Arc<Entity>>,
+}
+
+impl BlockPlan {
+    fn of(blk: &cadcraft_doc::Block) -> Self {
+        let mut plan = BlockPlan { drawn: Vec::with_capacity(blk.entities.len()), defs: HashMap::new() };
+        for be in blk.entities.iter() {
+            match &be.kind {
+                EntityKind::AttDef(d) => {
+                    plan.defs.entry(d.tag.to_ascii_lowercase()).or_insert_with(|| be.clone());
+                }
+                _ => plan.drawn.push(be.clone()),
+            }
+        }
+        plan
+    }
+}
+
+/// The plans of the blocks a display list has referenced so far, keyed by the block definition's
+/// address in the drawing: the definition a reference resolves to, not its name, since two
+/// entries of `Drawing::blocks` may hold blocks with the same name. The drawing is borrowed for
+/// the whole build, so the addresses stay valid and distinct.
+pub(crate) type Plans = HashMap<usize, Arc<BlockPlan>>;
+
+/// The plan of `blk`, worked out at its first reference in this list.
+fn block_plan(b: &mut Builder, blk: &cadcraft_doc::Block) -> Arc<BlockPlan> {
+    let key = std::ptr::from_ref(blk) as usize;
+    if let Some(plan) = b.blocks.get(&key) {
+        return plan.clone();
+    }
+    let plan = Arc::new(BlockPlan::of(blk));
+    b.blocks.insert(key, plan.clone());
+    plan
+}
 
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
@@ -44,7 +89,13 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
     }
-    if let Some(blk) = ctx.d.block(&ins.block) {
+    let blk = ctx.d.block(&ins.block);
+    let plan = blk.map(|blk| block_plan(b, blk));
+    // A block with nothing a copy draws (only attribute definitions, or nothing) has no copies to
+    // make, however many a MINSERT asks for.
+    if let (Some(blk), Some(plan)) = (blk, &plan)
+        && !plan.drawn.is_empty()
+    {
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
         'copies: for r in 0..rows {
@@ -58,22 +109,25 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 // XCLIP: the copy is drawn on its own, then cut to the boundary.
                 let clip = xclip_region(ins, &sub.xf);
                 let mut part = clip.as_ref().map(|_| b.part());
+                // The part borrows the list's block plans and gives them back below, so nested
+                // references in a clipped copy reuse them instead of working them out per copy
+                // (unbudgeted work a clipped MINSERT would otherwise repeat for every copy).
+                if let Some(p) = part.as_mut() {
+                    p.blocks = std::mem::take(&mut b.blocks);
+                }
                 let target = part.as_mut().unwrap_or(&mut *b);
                 let mut stop = false;
-                for be in blk.entities.iter() {
-                    // Every visit is charged, drawn or not, so a block of definitions can't make
-                    // the copies loop free.
+                // Only what a copy draws is visited, each charged once: attribute definitions
+                // (attributes draw instead) cost no budget and no time, however many there are.
+                for be in &plan.drawn {
                     if !target.expand() {
                         stop = true;
                         break;
                     }
-                    // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
-                    if matches!(be.kind, EntityKind::AttDef(_)) {
-                        continue;
-                    }
                     entity(target, &sub, be);
                 }
                 if let (Some(part), Some((region, inverted))) = (part, &clip) {
+                    b.blocks = part.blocks;
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
                     append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
@@ -88,7 +142,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     // Attributes are cut by the reference's clip too.
     let attr_clip = ctx.d.block(&ins.block).and_then(|blk| xclip_region(ins, &ctx.xf.then_before(ins.transform(blk.base.xy()))));
     let mut part = attr_clip.as_ref().map(|_| b.part());
-    attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, rgb);
+    attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, plan.as_deref(), rgb);
     if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
         append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
     }
@@ -119,24 +173,14 @@ fn xclip_frame(b: &mut Builder, ctx: &Ctx, region: &clip::PolyClip, rgb: Ink) {
     b.polyline(&top, rgb, 0.0, &frame);
 }
 
-/// The attributes of block reference `e` (`ins`).
-fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
+/// The attributes of block reference `e` (`ins`), with `plan` its block's plan (`None` when the
+/// block is missing), where each attribute finds its definition's properties.
+fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, plan: Option<&BlockPlan>, rgb: Ink) {
     if b.opts.text {
         // ATTMODE (ATTDISP): 0 shows no attributes, 1 the visible ones, 2 all of them.
         let attmode = ctx.d.header.i64("ATTMODE", 1);
         // The reference's transparency; each attribute draws with its own.
         let reference = b.transparency;
-        // The block's first definition per tag (without case), built once for all the attributes.
-        let mut defs: std::collections::HashMap<String, &Entity> = std::collections::HashMap::new();
-        if !ins.attribs.is_empty()
-            && let Some(blk) = ctx.d.block(&ins.block)
-        {
-            for be in blk.entities.iter() {
-                if let EntityKind::AttDef(d) = &be.kind {
-                    defs.entry(d.tag.to_ascii_lowercase()).or_insert(be.as_ref());
-                }
-            }
-        }
         for a in &ins.attribs {
             if attmode == 0 || (a.invisible && attmode != 2) {
                 continue;
@@ -147,7 +191,8 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
-            let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
+            // The block's first definition with the attribute's tag, any case (from its plan).
+            let def = plan.and_then(|plan| plan.defs.get(&a.tag.to_ascii_lowercase())).map(|be| be.as_ref());
             let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
