@@ -447,8 +447,7 @@ fn paint_home(p: &egui::Painter, r: Rect, hot: bool) {
 }
 
 /// Project the localized main-face label directly onto the 3D cube face plane (`q.centroid`, `u_3d`, `v_3d`)
-/// using crisp 3D vector strokes (ported from MATCAD `drawCubeLetterStrokes.m`) so the text never
-/// blurs or aliases under 3D foreshortening.
+/// with a view-invariant 3D scale using the clean, thin proportional UI font.
 fn paint_face_text(
     p: &egui::Painter,
     center: Pos2,
@@ -472,57 +471,69 @@ fn paint_face_text(
     let label = crate::i18n::t(key);
     let (u_3d, v_3d) = cadcraft_geom::face_text_axes(q.part);
 
-    let run = cadcraft_fonts::layout_line(label, 1.0, 1.0, 0.0);
-    let mut min_x = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    for stroke_pts in &run.strokes {
-        for pt in stroke_pts {
-            min_x = min_x.min(pt.x);
-            max_x = max_x.max(pt.x);
-            min_y = min_y.min(pt.y);
-            max_y = max_y.max(pt.y);
+    let alpha = ((facing - 0.20) / 0.15).clamp(0.0, 1.0);
+    let text_col = Color32::from_rgba_unmultiplied(0x22, 0x26, 0x2c, (240.0 * alpha) as u8);
+    // Base font size of 13.0 pt matches the on-screen size closely, avoiding heavy downsampling blur.
+    let base_font_size = 13.0_f32;
+    let galley = p.layout_no_wrap(label.to_owned(), egui::FontId::proportional(base_font_size), text_col);
+    let [tex_w, tex_h] = p.ctx().fonts_mut(|f| f.font_image_size());
+    if tex_w == 0 || tex_h == 0 {
+        return;
+    }
+    let inv_w = 1.0 / (tex_w as f32);
+    let inv_h = 1.0 / (tex_h as f32);
+
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for row in &galley.rows {
+        for v in &row.visuals.mesh.vertices {
+            let gx = row.pos.x + v.pos.x;
+            let gy = row.pos.y + v.pos.y;
+            min_x = min_x.min(gx);
+            max_x = max_x.max(gx);
+            min_y = min_y.min(gy);
+            max_y = max_y.max(gy);
         }
     }
     if !min_x.is_finite() || !min_y.is_finite() {
         return;
     }
 
-    let span_x = (max_x - min_x).max(1e-3);
+    let span_x = (max_x - min_x).max(1.0);
     let cx = (min_x + max_x) * 0.5;
     let cy = (min_y + max_y) * 0.5;
 
     // Constant 3D scale on the cube face (independent of camera angle):
-    // 6.8 3D units nominal cap height, clamped so long labels (e.g. BOTTOM, HINTEN, RECHTS)
-    // never exceed 80% of the 3D inner face width (`inner_span`).
-    let inner_span = 2.0 * (1.0 - CUBE_BEVEL) * CUBE_HALF;
-    let base_scale = 6.8_f64;
-    let max_w = inner_span * 0.80;
+    // 9.8 3D units nominal font size, clamped so long labels (e.g. BOTTOM, HINTEN, RECHTS)
+    // never exceed 86% of the 3D inner face width (`inner_span`).
+    let inner_span = (2.0 * (1.0 - CUBE_BEVEL) * CUBE_HALF) as f32;
+    let base_scale = 9.8 / base_font_size;
+    let max_w = inner_span * 0.86;
     let scale = base_scale.min(max_w / span_x);
 
-    let alpha = ((facing - 0.20) / 0.15).clamp(0.0, 1.0);
-    let a_u8 = (235.0 * alpha) as u8;
-    let text_col = Color32::from_rgba_unmultiplied(0x18, 0x1c, 0x22, a_u8);
-    let stroke_w = (1.35_f32 * (facing as f32).sqrt().clamp(0.75, 1.0)).max(1.0_f32);
-    let stroke = Stroke::new(stroke_w, text_col);
-
-    for stroke_pts in &run.strokes {
-        for seg in stroke_pts.windows(2) {
-            if let [a, b] = seg {
-                let p3_a = q.centroid + u_3d * ((a.x - cx) * scale) + v_3d * ((a.y - cy) * scale);
-                let p3_b = q.centroid + u_3d * ((b.x - cx) * scale) + v_3d * ((b.y - cy) * scale);
-                let uv_a = cam.project_point(p3_a, Vec2::ZERO);
-                let uv_b = cam.project_point(p3_b, Vec2::ZERO);
-                p.line_segment(
-                    [
-                        pos2(center.x + uv_a.x as f32, center.y - uv_a.y as f32),
-                        pos2(center.x + uv_b.x as f32, center.y - uv_b.y as f32),
-                    ],
-                    stroke,
-                );
-            }
+    let mut mesh = egui::Mesh::default();
+    for row in &galley.rows {
+        let row_mesh = &row.visuals.mesh;
+        let base_idx = mesh.vertices.len() as u32;
+        mesh.indices.extend(row_mesh.indices.iter().map(|i| base_idx + *i));
+        for v in &row_mesh.vertices {
+            let gx = row.pos.x + v.pos.x;
+            let gy = row.pos.y + v.pos.y;
+            let lx = (gx - cx) * scale;
+            let ly = -(gy - cy) * scale;
+            let p3 = q.centroid + u_3d * f64::from(lx) + v_3d * f64::from(ly);
+            let uv_screen = cam.project_point(p3, Vec2::ZERO);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: pos2(center.x + uv_screen.x as f32, center.y - uv_screen.y as f32),
+                uv: pos2(v.uv.x * inv_w, v.uv.y * inv_h),
+                color: text_col,
+            });
         }
+    }
+    if !mesh.is_empty() {
+        p.add(Shape::mesh(mesh));
     }
 }
 
@@ -842,7 +853,7 @@ mod tests {
             assert_eq!(crate::i18n::t("RIGHT"), "RECHTS");
         });
 
-        // Verify 3D-projected face quad meshes and vector stroke labels render inside the cube
+        // Verify 3D-projected face quad meshes and proportional face text meshes render inside the cube
         for preset in ["top", "bottom", "top_front_right"] {
             let _ = app.run("view.set", json!({"preset": preset}));
             let raw = egui::RawInput {
@@ -855,30 +866,31 @@ mod tests {
             });
             out.textures_delta.clear();
             let mut quad_meshes = 0;
-            let mut label_segments = 0;
+            let mut text_meshes = 0;
             for cs in &out.shapes {
-                match &cs.shape {
-                    Shape::Mesh(mesh) => {
-                        if mesh.vertices.len() == 4
-                            && mesh.vertices.iter().all(|v| (v.pos - l.center).length() < 48.0)
-                        {
-                            quad_meshes += 1;
+                if let Shape::Mesh(mesh) = &cs.shape {
+                    if mesh.vertices.len() == 4
+                        && mesh.vertices.iter().all(|v| (v.pos - l.center).length() < 48.0)
+                    {
+                        quad_meshes += 1;
+                    } else if mesh.vertices.len() > 4
+                        && mesh.vertices.iter().all(|v| (v.pos - l.center).length() < 35.0)
+                    {
+                        text_meshes += 1;
+                        for v in &mesh.vertices {
+                            assert!(
+                                v.uv.x > 0.0 && v.uv.x <= 1.0 && v.uv.y >= 0.0 && v.uv.y <= 1.0,
+                                "UV must be normalized in [0, 1]: {:?}",
+                                v.uv
+                            );
                         }
                     }
-                    Shape::LineSegment { points, stroke } => {
-                        if (points[0] - l.center).length() < 26.0
-                            && (points[1] - l.center).length() < 26.0
-                            && stroke.width > 0.95
-                        {
-                            label_segments += 1;
-                        }
-                    }
-                    _ => {}
                 }
             }
             let expected_quads = if preset == "top_front_right" { 27 } else { 9 };
+            let expected_text = if preset == "top_front_right" { 3 } else { 1 };
             assert_eq!(quad_meshes, expected_quads, "Preset {preset} should paint {expected_quads} cube quad meshes");
-            assert!(label_segments >= 6, "Preset {preset} should paint vector stroke segments for face labels (got {label_segments})");
+            assert_eq!(text_meshes, expected_text, "Preset {preset} should paint {expected_text} face text meshes");
         }
     }
 
