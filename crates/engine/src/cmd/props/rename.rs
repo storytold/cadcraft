@@ -152,24 +152,29 @@ const KW: Accept = Accept { point: false, number: false, text: false, select: fa
 /// A name: Space ends the input.
 const NAME: Accept = Accept { number: true, ..Accept::TEXT };
 
-fn any_named<'a>(mut names: impl Iterator<Item = &'a String>, name: &str) -> bool {
-    names.any(|n| n.eq_ignore_ascii_case(name))
+fn any_named<'a>(mut names: impl Iterator<Item = &'a String>, name: &str) -> Option<String> {
+    names.find(|n| n.eq_ignore_ascii_case(name)).cloned()
 }
 
-fn exists(d: &Drawing, table: &str, name: &str) -> bool {
+/// The name as the drawing spells it of the `table` entry named `name` (without regard to case).
+fn stored(d: &Drawing, table: &str, name: &str) -> Option<String> {
     match table {
-        "block" => d.block(name).is_some(),
-        "layer" => d.layer(name).is_some(),
-        "linetype" => d.linetype(name).is_some(),
-        "style" => d.text_style(name).is_some(),
-        "dimstyle" => d.dim_style(name).is_some(),
+        "block" => d.block(name).map(|t| t.name.clone()),
+        "layer" => d.layer(name).map(|t| t.name.clone()),
+        "linetype" => d.linetype(name).map(|t| t.name.clone()),
+        "style" => d.text_style(name).map(|t| t.name.clone()),
+        "dimstyle" => d.dim_style(name).map(|t| t.name.clone()),
         "mleaderstyle" => any_named(d.mleader_styles.iter().map(|t| &t.name), name),
         "tablestyle" => any_named(d.table_styles.iter().map(|t| &t.name), name),
         "view" => any_named(d.views.iter().map(|t| &t.name), name),
         "ucs" => any_named(d.ucss.iter().map(|t| &t.name), name),
         "vport" => any_named(d.vports.iter().filter(|v| !v.is_active()).map(|t| &t.name), name),
-        _ => true,
+        _ => Some(name.to_string()),
     }
+}
+
+fn exists(d: &Drawing, table: &str, name: &str) -> bool {
+    stored(d, table, name).is_some()
 }
 
 #[derive(Default)]
@@ -235,18 +240,41 @@ impl Interactive for RenameM {
                     self.stage = Stage::Old(t);
                     return Ok(Step::Continue);
                 };
-                // AutoCAD 2024 ends -RENAME on a name it can't take (measured): "*Active" is not a
-                // name a viewport configuration can be renamed from.
-                if *table == Some("vport") && name.starts_with('*') {
+                // AutoCAD 2024 ends -RENAME on an old name it won't rename (measured): "Invalid … name."
+                // for a viewport configuration or block whose name starts with "*" (*Active,
+                // *Model_Space, an anonymous block's *U0) and for linetypes ByLayer and ByBlock;
+                // "Cannot rename …" and "*Invalid*" for layer 0 and linetype Continuous.
+                let invalid = match *table {
+                    Some("vport" | "block") => name.starts_with('*'),
+                    Some("linetype") => name.eq_ignore_ascii_case("bylayer") || name.eq_ignore_ascii_case("byblock"),
+                    _ => false,
+                };
+                if invalid {
                     s.echo(format!("Invalid {} name.", title(noun)));
                     return Ok(Step::Done);
                 }
-                if let Some(table) = table
-                    && !exists(s.doc()?, table, &name)
-                {
-                    s.echo(format!("Cannot find {} \"{name}\".", title(noun)));
+                let fixed = match *table {
+                    Some("layer") => name == "0",
+                    Some("linetype") => name.eq_ignore_ascii_case("continuous"),
+                    _ => false,
+                };
+                if fixed {
+                    s.echo(format!("Cannot rename {} \"{name}\".", title(noun)));
+                    s.echo("*Invalid*");
                     return Ok(Step::Done);
                 }
+                // The old name as the drawing spells it: a new name in another case than that is a
+                // rename, even when it is the old name as typed (AutoCAD 2024, measured).
+                let name = match table {
+                    Some(table) => match stored(s.doc()?, table, &name) {
+                        Some(n) => n,
+                        None => {
+                            s.echo(format!("Cannot find {} \"{name}\".", title(noun)));
+                            return Ok(Step::Done);
+                        }
+                    },
+                    None => name,
+                };
                 self.stage = Stage::New(t, name);
                 Ok(Step::Continue)
             }

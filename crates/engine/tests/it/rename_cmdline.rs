@@ -122,6 +122,27 @@ fn rename_ends_on_a_name_it_cannot_take_with_autocads_messages() {
     assert!(s.doc().unwrap().layer("A1").is_some());
     said(&mut s, "-RENAME LA A1 B1\n");
     assert!(s.doc().unwrap().layer("B1").is_some() && s.doc().unwrap().layer("A1").is_none());
+    // The old name in another case than stored, and the new name as typed: a rename to that case
+    // (AutoCAD 2024, measured: LAY1 typed lay1, new name lay1, gives lay1).
+    said(&mut s, "-RENAME LA b1 b1\n");
+    assert!(s.doc().unwrap().layers.iter().any(|l| l.name == "b1"));
+    // Old names AutoCAD 2024 won't rename (measured), each ending the command before the new name.
+    let lines = |s: &Session| s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count();
+    for (script, message) in [
+        ("-RENAME LA 0\n", "Cannot rename layer \"0\"."),
+        ("-RENAME LT continuous\n", "Cannot rename linetype \"continuous\"."),
+        ("-RENAME LT ByLayer\n", "Invalid linetype name."),
+        ("-RENAME LT byblock\n", "Invalid linetype name."),
+        ("-RENAME LT CONTINUOUS\n", "Cannot rename linetype \"CONTINUOUS\"."),
+        ("-RENAME B *Model_Space\n", "Invalid block name."),
+        ("-RENAME B *U1\n", "Invalid block name."),
+    ] {
+        let n = lines(&s);
+        let log = said(&mut s, &format!("{script}LINE 0,0 4,0\n\n"));
+        assert!(says(&log, message), "{script}: {log:?}");
+        assert_eq!(says(&log, "*Invalid*"), message.starts_with("Cannot"), "{script}: {log:?}");
+        assert_eq!(lines(&s), n + 1, "{script}: the next input starts a command");
+    }
     // A UCS is "ucs" in the prompts and in "A ucs named", "UCS" in the other two.
     for name in ["U1", "U2"] {
         let ucs = cadcraft_engine::doc::Ucs { name: name.into(), origin: Default::default(), x_axis: Default::default(), y_axis: Default::default() };
@@ -159,6 +180,13 @@ fn rename_takes_a_saved_viewport_configuration() {
     }
     said(&mut s, "-RENAME VP CFG2 cfg2\n");
     assert_eq!(names(&s), [("*Active".to_string(), 2), ("cfg2".to_string(), 2), ("CFG3".to_string(), 2)]);
+    // The new name is compared with the stored one, not with the old name as typed (measured:
+    // CFG1 typed cfg1 to cfg1 gives cfg1; typed cfg1 to CFG1 changes nothing).
+    said(&mut s, "-RENAME VP CFG2 CFG2\n");
+    assert_eq!(names(&s)[1].0, "CFG2");
+    said(&mut s, "-RENAME VP cfg2 CFG2\n");
+    assert_eq!(names(&s)[1].0, "CFG2");
+    said(&mut s, "-RENAME VP CFG2 cfg2\n");
     // The JSON form too, which never takes the configuration shown.
     s.execute("rename", &json!({ "table": "vport", "from": "CFG3", "to": "Pair" })).unwrap();
     assert_eq!(names(&s)[2].0, "Pair");
