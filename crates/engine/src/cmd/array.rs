@@ -248,9 +248,16 @@ fn max_count(s: &Session, others: u64, objs: usize) -> u64 {
 }
 
 fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) -> Result<usize> {
+    // Every copy is checked before the first is made: a refusal part way would leave the copies
+    // already added in the drawing (a failed command is not rolled back).
+    let mats: Vec<Mat3> = mats.collect();
+    // A matrix every frame accepts needs no look at the objects; otherwise they are looked at once.
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && super::modify::holds_ole_frame(s, hs, true)? {
+        return Err(super::modify::ole_refusal());
+    }
     let mut n = 0;
-    for m in mats {
-        n += transform_entities(s, hs, &m, true)?.len();
+    for m in &mats {
+        n += transform_entities(s, hs, m, true)?.len();
     }
     Ok(n)
 }

@@ -80,9 +80,19 @@ pub struct Foreign {
     /// the file's own field objects back (they hold data CADCraft does not model, such as a
     /// date's time); once they differ, the field objects are written again from the contents.
     pub fields: BTreeMap<Handle, String>,
+    /// The `$ACADVER` of the file all this was read from: its groups are in that version's form.
+    /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
+    /// later save must not take it for this one (#2471).
+    pub version: Option<String>,
 }
 
 impl Foreign {
+    /// The class of the file's CLASSES a proxy's group 91 names (see [`class_number`]), if any.
+    /// Saving as DWG keeps a proxy with that class and leaves out one whose class it can't name.
+    pub fn proxy_class(&self, tags: &[RawTag]) -> Option<&str> {
+        class_index(class_number(tags.iter().map(|r| (r.code, r.value.as_str())))).and_then(|i| self.class_order.get(i)).map(String::as_str)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
             && self.dictionary.is_empty()
@@ -261,4 +271,30 @@ impl Foreign {
             }
         }
     }
+}
+
+/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
+/// (an application's can hold a 91 of its own) and before any xdata.
+pub fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
+    let mut in_group = false;
+    for (i, (code, value)) in groups.into_iter().enumerate() {
+        match code {
+            1000.. => return None,
+            102 => in_group = value.as_ref().trim().starts_with('{'),
+            91 if !in_group => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A proxy's class number (see [`class_group`]).
+pub fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
+    let i = class_group(groups.clone())?;
+    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
+}
+
+/// The place in CLASSES a class number names (500 is the first class).
+pub fn class_index(number: Option<i64>) -> Option<usize> {
+    usize::try_from(number?.checked_sub(500)?).ok()
 }
