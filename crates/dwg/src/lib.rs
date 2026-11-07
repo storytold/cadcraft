@@ -474,6 +474,45 @@ mod native {
         }
     }
 
+    /// Application name of the record version xdata on a pre-R2010 MLEADERSTYLE.
+    pub(super) const MLEADER_VERSION_APP: &str = "ACAD_MLEADERVER";
+
+    /// Every multileader style written before 2010 (AC1024) gets the `ACAD_MLEADERVER` xdata
+    /// (1070 = 2) that AutoCAD and ZWCAD write on it. A style read from DXF has none, and ZWCAD
+    /// 2025 AUDIT drops such a 2004 (AC1018) style as an invalid, doubly owned dictionary entry,
+    /// then clears `CMLEADERSTYLE` (#2875). acadrust adds it itself from hakanaktt/acadrust#351;
+    /// this fix-up can go when CADCraft moves to a release with it.
+    pub(super) fn mleader_style_versions(doc: &mut acadrust::CadDocument) {
+        use acadrust::objects::ObjectType;
+        use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+        if doc.version >= acadrust::DxfVersion::AC1024 {
+            return;
+        }
+        // The APPID goes in whenever there is a style: one read with the xdata but no APPID would
+        // otherwise lose the record in the DWG.
+        if !doc.objects.values().any(|o| matches!(o, ObjectType::MultiLeaderStyle(_))) {
+            return;
+        }
+        let styles: Vec<acadrust::Handle> = doc
+            .objects
+            .iter()
+            .filter(|(h, o)| {
+                matches!(o, ObjectType::MultiLeaderStyle(_)) && doc.object_xdata.get(h).and_then(|x| x.get_record(MLEADER_VERSION_APP)).is_none()
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        if !doc.app_ids.contains(MLEADER_VERSION_APP) {
+            let mut app = acadrust::tables::AppId::new(MLEADER_VERSION_APP);
+            app.handle = doc.allocate_handle();
+            let _ = doc.app_ids.add(app);
+        }
+        for h in styles {
+            let mut record = ExtendedDataRecord::new(MLEADER_VERSION_APP);
+            record.add_value(XDataValue::Integer16(2));
+            doc.object_xdata.entry(h).or_default().add_record(record);
+        }
+    }
+
     /// The DWG dimension flags byte. Its bit 1 is DXF group 70's bit 32 (ODA DWG specification,
     /// common dimension data), which acadrust keeps no copy of from DXF: it is set here as
     /// CADCraft's DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
@@ -989,6 +1028,7 @@ mod native {
             let proxies = proxy_classes(&mut doc, classes.as_deref());
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
+            mleader_style_versions(&mut doc);
             dimension_flags(&mut doc);
             let mut unwritten = drop_unwritable(&mut doc);
             for (kind, n) in proxies {
@@ -1306,6 +1346,36 @@ mod tests {
         let _panic = PanicIn::at("convert");
         let err = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap_err();
         assert!(err.contains("the DXF to DWG conversion failed on this file"), "{err}");
+    }
+
+    /// A multileader style written to a 2004 (AC1018) DWG carries the `ACAD_MLEADERVER` xdata
+    /// that AutoCAD and ZWCAD write before 2010; without it ZWCAD's AUDIT drops the style and
+    /// clears `CMLEADERSTYLE` (#2875). A DXF style has none.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn mleader_styles_carry_their_record_version() {
+        let dwg = dxf_to_dwg_as(MINIMAL_DXF.as_bytes(), "AC1018").unwrap();
+        let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
+        let mut styles = 0;
+        for (h, o) in &doc.objects {
+            let acadrust::objects::ObjectType::MultiLeaderStyle(s) = o else { continue };
+            let record = doc.object_xdata.get(h).and_then(|x| x.get_record("ACAD_MLEADERVER"));
+            assert_eq!(record.map(|r| r.values.clone()), Some(vec![acadrust::xdata::XDataValue::Integer16(2)]), "{}", s.name);
+            styles += 1;
+        }
+        assert!(styles > 0);
+    }
+
+    /// Styles that already carry the xdata still get its APPID when the document lacks it.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn mleader_version_app_registered_for_styles_with_the_xdata() {
+        let mut doc = acadrust::CadDocument::new();
+        doc.version = acadrust::DxfVersion::AC1018;
+        native::mleader_style_versions(&mut doc);
+        doc.app_ids.remove(native::MLEADER_VERSION_APP);
+        native::mleader_style_versions(&mut doc);
+        assert!(doc.app_ids.contains(native::MLEADER_VERSION_APP));
     }
 
     #[test]
