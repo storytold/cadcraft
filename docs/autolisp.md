@@ -69,7 +69,7 @@ reached", malformed source is a reader error, and every built-in checks its argu
   `vl-string-search vl-string-subst vl-string-trim vl-string-left-trim vl-string-right-trim
   vl-string-translate vl-string->list vl-list->string vl-prin1-to-string vl-princ-to-string
   vl-symbol-name vl-symbol-value vl-filename-base vl-filename-extension vl-filename-directory`
-- **Geometry:** `polar distance angle inters trans` (`trans` returns the point: no UCS yet)
+- **Geometry:** `polar distance angle inters trans` (`trans` between the WCS (0), the current UCS (1), display coordinates (2, 3: the WCS in a plan view) and an object's OCS (an entity name or an extrusion direction); `getpoint` and friends answer in the current UCS and `command` takes UCS points, while entity lists stay in world coordinates)
 - **Output and files:** `princ prin1 print prompt terpri alert open close read-line write-line
   findfile`
 - **Errors:** `*error*`, `vl-catch-all-apply vl-catch-all-error-p vl-catch-all-error-message`

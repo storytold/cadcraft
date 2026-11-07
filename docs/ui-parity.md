@@ -42,8 +42,8 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 
 | Input | AutoCAD | CADCraft | Evidence |
 |---|---|---|---|
-| `x,y[,z]`, `@dx,dy`, `@d<a`, `d<a`, `#x,y`, bare `@` | yes | yes; `#` equals absolute because there is no UCS; Z parsed then discarded | `prompt.rs:147-180` |
-| `*x,y` (WCS override) | yes | yes (`*x,y`, `*@dx,dy`, `@*dx,dy`); the same as the plain forms because there is no UCS | `prompt.rs` |
+| `x,y[,z]`, `@dx,dy`, `@d<a`, `d<a`, `#x,y`, bare `@` | yes | yes, in the current UCS (from its origin, along its axes, angles from its X axis); `#` is absolute in the UCS; Z parsed then discarded | `prompt.rs` (`parse_point_in`) |
+| `*x,y` (WCS override) | yes | yes (`*x,y`, `*@dx,dy`, `@*dx,dy`): world coordinates whatever the UCS | `prompt.rs` |
 | Direct distance entry | yes, honours ortho, polar and tracking paths | yes, ortho; polar only through the UI's snapped cursor | `lib.rs:782-793` |
 | Angle forms: `45d30'`, radians, grads, surveyor `N45dE` | yes | yes | `units.rs:141-197` |
 | Architectural/engineering distances `5'6-1/2"` | yes | yes | `units.rs:93-140` |
@@ -83,12 +83,12 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 
 | Feature | AutoCAD | CADCraft |
 |---|---|---|
-| Ortho (F8) | yes, Shift overrides it while held | yes; holding Shift turns it on or off while held (`Session::snap_cursor`, `snap/tracking.rs`) |
-| Polar tracking increment | yes | yes, measured from ANGBASE; dotted path and "Polar: d < a°" tooltip (`snap/tracking.rs`, `canvas.rs` `draw_tracking`) |
+| Ortho (F8) | yes, Shift overrides it while held | yes, along the current UCS's axes; holding Shift turns it on or off while held (`snap::ortho_at`, `Session::snap_cursor`) |
+| Polar tracking increment | yes | yes, measured from ANGBASE off the current UCS's X axis; dotted path and "Polar: d < a°" tooltip (`snap/tracking.rs`, `canvas.rs` `draw_tracking`) |
 | Additional polar angles, relative to last segment | yes | additional angles yes (POLARADDANG with POLARMODE 4); **relative to the last segment no** |
 | Polar distance snap (PolarSnap) | yes | **no** |
 | **Object snap tracking** (acquire points, alignment paths, intersections of paths) | yes, F11 | yes (#379): resting on a snap point acquires it (`+`), resting again releases it, seven at most; horizontal/vertical paths, or every polar angle with POLARMODE 2; Shift to acquire with POLARMODE 8; crossings of two paths, a path and an object, and a path and a polar path snap; tooltip names each path; a typed distance (direct distance entry) runs along the path the cursor is on, measured from the point the path comes from. Engine: `Session::snap_cursor`, `snap/tracking.rs`; AUTOSNAP bits 8 and 16 |
-| Grid (rectangular, major lines, adaptive, limits) | yes | rectangular and isometric (30°, 90° and 150° lines), major lines, adaptive display |
+| Grid (rectangular, major lines, adaptive, limits) | yes | rectangular and isometric (30°, 90° and 150° lines), major lines, adaptive display; grid and grid snap in the current UCS (SNAPBASE from its origin, SNAPANG from its X axis), the red and green axes along its X and Y |
 | Snap (rectangular, isometric, polar snap) | yes | rectangular and isometric (SNAPSTYL 1: the snap Y spacing along the isometric axes), from SNAPBASE turned by SNAPANG |
 | Isometric drafting (ISODRAFT, isoplanes F5) | yes | yes (#556): ISODRAFT and the status-bar toggle set SNAPSTYL and the plane; ISOPLANE / F5 / Ctrl+E cycle Left, Top, Right (SNAPISOPAIR); ortho, direct distance entry and the crosshair follow the plane's axes; ELLIPSE Isocircle (radius or Diameter, also for elliptical arcs); Drafting Settings snap style radio. Engine: `snap/iso.rs`, `cmd/settings/iso.rs` |
 | Drafting Settings dialog | yes | yes (`dialogs.rs:36-80`) |
