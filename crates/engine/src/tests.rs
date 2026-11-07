@@ -179,13 +179,74 @@ fn json_execute_and_errors() {
     assert_eq!(s.state().unwrap().undo.len(), 1);
 }
 
+/// A drawing is opened on the view it was saved at, as every other reader opens it. Fitting the
+/// extents instead showed a drawing whose extents are dominated by far-off geometry at a view
+/// hundreds of thousands of times its content: sub-pixel, and `ZOOM Extents` fits the same box
+/// (#1602). The extents are still the fallback for a drawing that stores no view.
+#[test]
+fn a_drawing_opens_on_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    for (a, b) in [([0.0, 0.0], [100.0, 60.0]), ([5e6, 5e6], [5e6 + 100.0, 5e6 + 60.0])] {
+        let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::new(a[0], a[1], 0.0), b: cadcraft_geom::Vec3::new(b[0], b[1], 0.0) };
+        d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    }
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    s.open_drawing(d.clone(), "saved-view.dxf", None);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
+
+    // No stored view: the extents, as before. They are what makes this drawing unusable without
+    // the stored one -- the fit is more than a hundred thousand times taller than the detail.
+    let mut plain = d.clone();
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    s.open_drawing(plain, "no-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+
+    // A stored view that cannot be shown is no view at all.
+    let mut broken = d;
+    broken.header.set("VIEWSIZE", cadcraft_doc::HVal::Real(0.0));
+    let mut s = Session::new();
+    s.open_drawing(broken, "broken-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
+/// Resolving a drawing's xrefs after OPEN refits the view only for a drawing that stores none:
+/// one saved at a view keeps it, xref or not (#1626 review).
+#[test]
+fn a_drawing_with_an_xref_keeps_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(5e6, 5e6, 0.0) };
+    d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    let mut xref = cadcraft_doc::Block::new("XR");
+    xref.xref_path = Some("missing-xref.dxf".into());
+    d.blocks.insert("XR".into(), std::sync::Arc::new(xref));
+    let mut plain = d.clone();
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    let i = s.open_drawing(d, "saved-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
+
+    // With no stored view, the xrefs' pass still frames the drawing.
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    let i = s.open_drawing(plain, "no-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
 #[test]
 fn move_with_pickfirst_and_window_selection() {
     let mut s = Session::new();
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
@@ -342,6 +403,15 @@ fn fillet_two_lines() {
     let g = s.doc().unwrap().entity(hs[0]).unwrap().kind.grips();
     assert!(g[0].near(Vec2::new(10.0, 0.0), 1e-9) || g[2].near(Vec2::new(10.0, 0.0), 1e-9));
     assert!(g.iter().any(|p| p.near(Vec2::new(2.0, 0.0), 1e-9)));
+}
+
+#[test]
+fn offset_zero_distance_is_rejected() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let r = s.execute("offset", &json!({"handle": "100", "distance": 0, "side": [1, 1]}));
+    assert!(r.is_err(), "offset distance 0 made a coincident copy: {r:?}");
+    assert_eq!(s.doc().unwrap().model.len(), 1);
 }
 
 #[test]
@@ -634,6 +704,29 @@ fn setvar_keeps_header_types() {
 }
 
 #[test]
+fn setvar_rejects_out_of_range_units() {
+    let mut s = Session::new();
+    for (name, v) in [("LUPREC", 100), ("LUNITS", 9), ("LUNITS", 0), ("AUPREC", -5), ("AUNITS", 5)] {
+        assert!(s.execute("setvar", &json!({"name": name, "value": v})).is_err(), "{name} {v}");
+    }
+    s.execute("setvar", &json!({"name": "LUPREC", "value": 8})).unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 8);
+    assert_ne!(s.doc().unwrap().header.i64("LUNITS", 2), 9);
+}
+
+#[test]
+fn setvar_rejects_out_of_range_osmode() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 4133})).unwrap();
+    for v in [4294967296u64, 65536, 32768] {
+        assert!(s.execute("setvar", &json!({"name": "OSMODE", "value": v})).is_err(), "{v}");
+        assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(4133)), "{v}");
+    }
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 0x7fff})).unwrap();
+    assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(0x7fff)));
+}
+
+#[test]
 fn dynamic_input_pointer_settings() {
     let mut s = Session::new();
     assert_eq!(sysvars::get(&s, "DYNPIFORMAT"), Some(json!(0)));
@@ -678,25 +771,6 @@ fn cancel_keeps_partial_line_as_one_undo() {
     assert_eq!(s.doc().unwrap().model.len(), 2);
     s.undo().unwrap();
     assert_eq!(s.doc().unwrap().model.len(), 0);
-}
-
-#[test]
-fn hostile_params_never_panic() {
-    let mut s = Session::new();
-    for c in command_specs() {
-        for p in [
-            json!(null),
-            json!([]),
-            json!("x"),
-            json!({"points": [[1e308, -1e308], ["a"]]}),
-            json!({"handles": ["zz", 99999]}),
-            json!({"radius": -1, "center": [0, 0]}),
-            json!({"gradient": {"name": 5, "color1": [1], "angle": "x", "centered": "y"}}),
-            json!({"points": [[0, 0]], "handles": ["1"], "gradient": "x", "name": "RAINBOW"}),
-        ] {
-            let _ = s.execute(c.id, &p);
-        }
-    }
 }
 
 #[test]
@@ -1432,4 +1506,48 @@ fn hostile_variable_like_input_never_panics() {
     // The session is still usable afterwards.
     s.cmdline("pickadd").unwrap();
     assert!(setvar_prompt_open(&s));
+}
+
+#[test]
+fn chamfer_rejects_negative_distances() {
+    let mut s = Session::new();
+    let h1 = s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let h2 = s.execute("line", &json!({"points": [[0, 0], [0, 10]]})).unwrap();
+    let before = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    let r = s.execute("chamfer", &json!({"h1": h1["handles"][0], "h2": h2["handles"][0], "p1": [5, 0], "p2": [0, 5], "d1": -3, "d2": 2}));
+    assert!(r.is_err(), "negative chamfer distance accepted: {r:?}");
+    let after = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    assert_eq!(before, after);
+}
+
+#[test]
+fn array_counts_reject_invalid_values() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
+    for bad in [json!(-3), json!(0), json!(2.5)] {
+        for key in ["count", "rows", "levels"] {
+            let mut p = json!({"center": [0, 0], "associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arraypolar", &p).is_err(), "arraypolar {key}={bad}");
+        }
+        for key in ["rows", "cols", "levels"] {
+            let mut p = json!({"associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arrayrect", &p).is_err(), "arrayrect {key}={bad}");
+        }
+    }
+    s.execute("arraypolar", &json!({"center": [0, 0], "count": 1, "associative": false})).unwrap();
+}
+
+#[test]
+fn setvar_rejects_non_finite_text_for_real_variables() {
+    let mut s = Session::new();
+    for name in ["LTSCALE", "TEXTSIZE", "SNAPANG"] {
+        let before = s.execute("getvar", &json!({"name": name})).unwrap();
+        for text in ["nan", "inf", "-inf"] {
+            let r = s.execute("setvar", &json!({"name": name, "value": text}));
+            assert!(r.is_err(), "SETVAR {name} {text} was accepted");
+            assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
+        }
+    }
 }

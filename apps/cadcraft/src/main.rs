@@ -86,7 +86,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
-        self.cad.logic(ctx);
+        self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -116,7 +116,7 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.cad.ui(ui);
+        self.cad.guarded_ui(ui);
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
@@ -127,7 +127,8 @@ impl eframe::App for App {
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
     }
-    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    /// Preferences (the interface theme) survive restarts; eframe saves the window state itself
+    /// (`persist_window`); egui state is not kept.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.cad.profile_json());
         storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.cad.prefs_json());
@@ -145,6 +146,7 @@ pub fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
@@ -179,6 +181,14 @@ fn services() -> Services {
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         no_file_system: false,
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);
+            let dialog = match dir {
+                Some(dir) => dialog.set_directory(dir),
+                None => dialog,
+            };
+            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 
@@ -194,7 +204,50 @@ fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
     filters
 }
 
+/// Whether eframe's storage file (`app.ron`, a map of keys to strings) holds a saved main window
+/// state. An unreadable or malformed file counts as none, as it does for eframe.
+fn saved_window(app_ron: &str) -> bool {
+    ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
+}
+
+/// The window state from the last session is saved and will be restored (#2595).
+fn restores_window() -> bool {
+    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+}
+
+/// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
+/// saved by the last session is restored instead of opening centred.
+fn window_options(restoring: bool) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("CADCraft")
+            .with_inner_size([1600.0, 1000.0])
+            .with_min_inner_size([900.0, 560.0])
+            .with_drag_and_drop(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+            .with_app_id(APP_ID),
+        // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
+        // restored window on the monitors that are connected now.
+        persist_window: true,
+        // The first launch opens centred on its screen, not cascaded from the top-left corner
+        // (#1129); later launches go back where the window was (eframe would centre over that).
+        // Wayland compositors place windows themselves.
+        centered: !restoring,
+        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
+        // system-font discovery as a hidden fallback.
+        system_font_fallback: false,
+        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
+        stencil_buffer: STENCIL_BITS,
+        ..Default::default()
+    }
+}
+
 const APP_ID: &str = "ai.storyteller.cadcraft";
+
+/// The key eframe saves the main window state under in its storage.
+const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
@@ -214,11 +267,16 @@ fn version_string() -> String {
 
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
+    // A copy of this program started to read or write a DWG file does only that.
+    if let Some(code) = cadcraft_io::dwg_worker::serve_if_asked() {
+        std::process::exit(code);
+    }
+    cadcraft_io::dwg_worker::use_own_worker();
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
     // The update helper relaunches this binary after a self-update; it runs and exits here.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(done) = craft_update::self_update::finish(&craft_update::suite::CADCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if let Some(done) = craft_update::self_update::finish(&cadcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
         if let Err(e) = done {
             eprintln!("CADCraft update helper failed: {e}");
             std::process::exit(1);
@@ -245,6 +303,9 @@ fn main() -> eframe::Result {
     }
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
+    if let Some(dir) = &vars.config_dir {
+        cadcraft_ui_egui::fault::install_report_hook(dir.join(cadcraft_ui_egui::fault::REPORT_DIR));
+    }
     if let Some(name) = &vars.font_alt {
         cadcraft_engine::fonts::ttf::set_font_alt(name);
     }
@@ -256,22 +317,7 @@ fn main() -> eframe::Result {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(APP_ID),
-        persist_window: false,
-        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
-        // system-font discovery as a hidden fallback.
-        system_font_fallback: false,
-        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
-        ..Default::default()
+        ..window_options(restores_window())
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -298,6 +344,16 @@ fn main() -> eframe::Result {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
+        }));
+    }
+    // macOS: Quit CADCraft (Cmd+Q), the Dock's Quit and logout end the app through AppKit's
+    // terminate, which would skip the unsaved-changes prompt (#2157). winit turns each into a
+    // close request for the window instead, so it asks first, as the close button does.
+    #[cfg(target_os = "macos")]
+    {
+        options.event_loop_builder = Some(Box::new(|b| {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            b.with_close_requested_on_terminate(true);
         }));
     }
     eframe::run_native(
@@ -383,7 +439,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop};
+    use super::{filters_for_save, follow_desktop, saved_window, window_options};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -399,6 +455,32 @@ mod tests {
             let exts: Vec<_> = filters_for_save(name).iter().map(|(_, e)| *e).collect();
             assert!(exts.contains(&"dwg") && exts.contains(&"dxf"), "{name}");
         }
+    }
+
+    /// #1129: the first launch opens centred, not cascaded from the top-left corner.
+    #[test]
+    fn the_first_launch_opens_centred() {
+        let o = window_options(false);
+        assert!(o.centered, "centred on launch");
+        assert!(o.persist_window, "the window state is saved for the next launch");
+    }
+
+    /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
+    #[test]
+    fn a_saved_window_reopens_where_it_was() {
+        let o = window_options(true);
+        assert!(!o.centered, "centring would move a restored window");
+        assert!(o.persist_window);
+    }
+
+    /// Only a readable `app.ron` with a window entry counts as a saved window state.
+    #[test]
+    fn a_saved_window_is_read_from_app_ron() {
+        assert!(saved_window(r#"{"cadcraft.prefs": "{}", "window": "(maximized: true)"}"#));
+        assert!(!saved_window(r#"{"cadcraft.prefs": "{\"window\":1}"}"#), "a value mentioning it is not the key");
+        assert!(!saved_window(""));
+        assert!(!saved_window("{\"window\": "), "truncated");
+        assert!(!saved_window("not ron at all"));
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;
