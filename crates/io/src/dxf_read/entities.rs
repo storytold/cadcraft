@@ -107,13 +107,14 @@ fn spline(t: &T) -> Spline {
     let weights = t.all_f(41);
     let fit = t.pts(11);
     let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
+    // AutoCAD takes a 12/13 tangent with its length, and writes it back as it read it.
     let fit_opts =
         cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
-            .sanitized();
+            .sanitized_keeping_length();
     let closed = t.i(70).unwrap_or(0) & 1 != 0;
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
-        sp = Spline::fit_with(&fit, sp.closed, fit_opts);
+        sp = Spline::fit_with_end_derivatives(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {
         sp = Spline::from_control(sp.control.clone(), degree);
     } else if fit.len() >= 3 {
