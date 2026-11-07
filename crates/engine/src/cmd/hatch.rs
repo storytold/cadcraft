@@ -10,6 +10,7 @@ use cadcraft_geom::{Bounds2, PolyVertex, Polyline, Vec2, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::helpers::lwpoly;
+use super::machines::SelectRun;
 use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_param, str_param, targets};
 
 use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
@@ -27,7 +28,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
         CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true)))),
         CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM { region: false }))),
-        CommandSpec::new("region", "Region", run_region).menu(&["Draw", "Region"]).alias(&["reg"]).params("{handles?}"),
+        CommandSpec::new("region", "Region", run_region)
+            .menu(&["Draw", "Region"])
+            .alias(&["reg"])
+            .params("{handles?}")
+            // Typed with nothing selected it asks for objects, as in AutoCAD, rather than converting none.
+            .interactive(|_| Ok(Box::new(SelectRun::new("region", "REGION")))),
         CommandSpec::new("hatchedit", "Hatch Edit", edit::run_hatchedit).menu(&["Modify", "Object", "Hatch..."]).alias(&["he", "-hatchedit"]).params("{handles?, pattern?, scale?, angle?, gradient?: {name?, color1?, color2?, angle? (degrees), centered?} (makes or changes a gradient fill; `pattern` turns it back), associative?: bool (false unlinks; true links each loop to a closed object of the same shape, or to `boundary` objects), boundary?: [hex], addPoints?: [[x,y]], addBoundary?: [hex], removeLoops?: [zero-based index] (geometry edits require one hatch), style?, origin? | originMode?, separate?: true, recreate?: \"polyline\"|\"region\", associate?: bool (link to the recreated boundary)}").interactive(|s| Ok(Box::new(edit::HatchEditM::new(s)))),
         CommandSpec::new("hatchpick", "Hatch Pick", pick::run_hatchpick)
             .params("{points?: [[x,y]] (internal points), handles?: [hex] (closed objects)} (typed: Points, Objects, oRigin or Hatch, then the picks): the Hatch and Gradient dialog's picks, kept in the session; changes nothing")
