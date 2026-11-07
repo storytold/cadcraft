@@ -818,6 +818,7 @@ impl Sink<'_> {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 };
                 block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| {
                     if snaps_to(d, k) {
