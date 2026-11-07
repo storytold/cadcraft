@@ -29,6 +29,7 @@ commands:
                   (default DIR/report); runs `cadcraft-cli roundtrip` in release mode
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the AutoCAD menu-breadth checklist in docs/parity-checklist.md
+  deploy          build release cadcraft and copy to cadcraftPrototyp
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
 ";
@@ -46,6 +47,7 @@ fn main() -> ExitCode {
         Some("corpus") => cmd_corpus(&rest),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
+        Some("deploy") => cmd_deploy(),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
@@ -271,4 +273,21 @@ fn cmd_corpus(args: &[&str]) -> Result<(), String> {
     let mut c = cargo();
     c.args(["run", "--release", "-q", "-p", "cadcraft-cli", "--", "roundtrip", &dir]).args(&pass);
     run(c, &format!("cadcraft-cli roundtrip {dir} {}", pass.join(" ")))
+}
+
+fn cmd_deploy() -> Result<(), String> {
+    let r = root();
+    let mut c = cargo();
+    c.args(["build", "--release", "-p", "cadcraft"]);
+    run(c, "cargo build --release -p cadcraft")?;
+    let exe_name = if cfg!(windows) { "cadcraft.exe" } else { "cadcraft" };
+    let src = r.join("target").join("release").join(exe_name);
+    let dest_dir = r.parent().map(|p| p.join("cadcraftPrototyp")).ok_or("cannot find parent directory")?;
+    let dest = dest_dir.join(exe_name);
+    if !dest_dir.is_dir() {
+        std::fs::create_dir_all(&dest_dir).map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
+    }
+    std::fs::copy(&src, &dest).map_err(|e| format!("cannot copy {} to {}: {e}", src.display(), dest.display()))?;
+    println!("Deployed {} -> {}", src.display(), dest.display());
+    Ok(())
 }
