@@ -51,3 +51,16 @@ fn esc_keeps_the_pickfirst_selection_a_command_started_with() {
     s.cancel();
     assert_eq!(s.selection(), vec![h]);
 }
+
+/// A program can switch to a layout while a command runs. The switch clears the selection, and
+/// Esc must not bring back model-space objects on the layout, where the next command would take
+/// them as its selection.
+#[test]
+fn esc_after_a_layout_switch_restores_nothing_from_model_space() {
+    let (mut s, h) = one_line();
+    s.set_selection(vec![h]);
+    s.start("move").unwrap();
+    s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    s.cancel();
+    assert!(s.selection().is_empty(), "a model-space line came back selected on the layout: {:?}", s.selection());
+}
