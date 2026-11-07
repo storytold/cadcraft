@@ -104,6 +104,10 @@ sync_github_name = true
 [people.GULERTOLGA]
 sync_github_name = true
 
+[people.Obtrusive8276]
+display_name = "Nicopicks"
+sync_github_name = false
+
 [people.Tyler-Chiriboga]
 real_name = "Tyler Chiriboga"
 sync_github_name = true

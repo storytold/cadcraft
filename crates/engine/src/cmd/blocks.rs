@@ -44,6 +44,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
+        CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
+            .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
+            .enabled(has_doc)
+            .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
             .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
@@ -92,6 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .into_iter()
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
+    .chain(library::specs())
     .chain(refedit::specs())
     .chain(xclip::specs())
     .chain(bedit::specs())
@@ -110,6 +115,15 @@ fn referenced_block(e: &Entity) -> Option<String> {
         EntityKind::Dimension(dm) => dm.block.clone(),
         EntityKind::MLeader(m) => m.block.as_ref().map(|b| b.block.clone()),
         _ => None,
+    }
+}
+
+/// The attributes an object carries: a block reference's, or those of a multileader's block content.
+pub(crate) fn object_attribs(e: &Entity) -> &[Attrib] {
+    match &e.kind {
+        EntityKind::Insert(i) => &i.attribs,
+        EntityKind::MLeader(m) => m.block.as_ref().map_or(&[][..], |b| b.attribs.as_slice()),
+        _ => &[],
     }
 }
 
@@ -344,6 +358,40 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     Ok(json!({ "block": name, "insert": r.map(|h| h.hex()) }))
+}
+
+/// BLOCKSPALETTE as a JSON call: the drawing's own blocks (no anonymous, layout or xref blocks)
+/// with their descriptions and how many objects draw each (block references, dimensions and
+/// multileader block content). The app opens the palette instead.
+fn run_blockspalette(s: &mut Session, p: &Value) -> Result<Value> {
+    let d = s.doc()?;
+    let counting = bool_or(p, "references", true);
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    if counting {
+        let mut count = |store: &cadcraft_doc::EntityStore| {
+            for e in store.iter() {
+                if let Some(block) = referenced_block(e) {
+                    let n = counts.entry(block.to_ascii_lowercase()).or_insert(0);
+                    *n = n.saturating_add(1);
+                }
+            }
+        };
+        count(&d.model);
+        d.layouts.iter().for_each(|l| count(&l.entities));
+        d.blocks.values().for_each(|b| count(&b.entities));
+    }
+    let (blocks, truncated) = library::library_blocks(d);
+    let list: Vec<Value> = blocks
+        .iter()
+        .map(|b| {
+            let mut block = json!({ "name": b.name, "description": b.description });
+            if counting {
+                block["references"] = json!(counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0));
+            }
+            block
+        })
+        .collect();
+    Ok(json!({ "blocks": list, "truncated": truncated }))
 }
 
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
@@ -601,6 +649,7 @@ impl BlockM {
 }
 
 mod insert_file;
+pub(crate) mod library;
 pub(crate) mod xref;
 
 /// Where the command-line INSERT is in its prompt sequence.
@@ -705,6 +754,9 @@ impl InsertM {
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
+            // Written here, not when the name is given: a cancelled INSERT leaves the drawing as
+            // it was, so it takes no undo step that would undo nothing visible.
+            s.doc_mut()?.header.set_str("INSNAME", &n);
             return Ok(Step::Done);
         }
         Ok(Step::Continue)
@@ -760,13 +812,14 @@ impl InsertM {
                 })
                 .collect()
         };
-        s.doc_mut()?.header.set_str("INSNAME", &b.name);
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
     }
 
-    /// Define the block from a file, then choose it; a file that can't be read is reported.
+    /// Define the block from a file, then choose it; a file that can't be read is reported. The
+    /// definition comes before the insertion point and stays when INSERT is then cancelled, as in
+    /// AutoCAD 2027.
     fn choose_file(&mut self, s: &mut Session, f: &insert_file::FileRef) -> Result<()> {
         match f.define(s) {
             Ok(name) => self.choose(s, &name),
