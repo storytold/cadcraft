@@ -803,15 +803,20 @@ mod native {
     /// Table style rows' text style handles from their names, else Standard. acadrust 0.6.6
     /// writes a pre-R2010 row without a handle as null, which ZWCAD's AUDIT reports (#2871).
     pub(super) fn table_style_text_styles(doc: &mut acadrust::CadDocument) {
-        let known: Vec<_> = doc.text_styles.iter().map(|ts| (ts.handle, ts.name.clone())).collect();
-        let standard = known.iter().find(|(_, n)| n.eq_ignore_ascii_case("Standard")).map(|(h, _)| *h);
+        // Names uppercased as acadrust's tables key them; the first style of a name wins.
+        let handles: std::collections::HashSet<_> = doc.text_styles.iter().map(|ts| ts.handle).collect();
+        let mut by_name = std::collections::HashMap::new();
+        for ts in doc.text_styles.iter() {
+            by_name.entry(ts.name.to_uppercase()).or_insert(ts.handle);
+        }
+        let standard = by_name.get("STANDARD").copied();
         for o in doc.objects.values_mut() {
             let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
             for row in [&mut s.data_row_style, &mut s.header_row_style, &mut s.title_row_style] {
-                if row.text_style_handle.is_some_and(|h| known.iter().any(|(k, _)| *k == h)) {
+                if row.text_style_handle.is_some_and(|h| handles.contains(&h)) {
                     continue;
                 }
-                row.text_style_handle = known.iter().find(|(_, n)| n.eq_ignore_ascii_case(&row.text_style_name)).map(|(h, _)| *h).or(standard);
+                row.text_style_handle = by_name.get(&row.text_style_name.to_uppercase()).copied().or(standard);
             }
         }
     }
@@ -1345,6 +1350,29 @@ mod tests {
             }
         }
         assert!(rows > 0);
+    }
+
+    /// A row's text style name matches a style's whatever its case, non-ASCII letters included.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn table_style_rows_match_text_style_names_in_any_case() {
+        let mut doc = acadrust::CadDocument::new();
+        let mut style = acadrust::tables::TextStyle::new(char::from(0xc4u8).to_string());
+        style.handle = doc.allocate_handle();
+        let wanted = style.handle;
+        doc.text_styles.add(style).unwrap();
+        for o in doc.objects.values_mut() {
+            let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+            s.data_row_style.text_style_name = char::from(0xe4u8).to_string();
+            s.data_row_style.text_style_handle = None;
+        }
+        native::table_style_text_styles(&mut doc);
+        let rows: Vec<_> = doc
+            .objects
+            .values()
+            .filter_map(|o| if let acadrust::objects::ObjectType::TableStyle(s) = o { Some(s.data_row_style.text_style_handle) } else { None })
+            .collect();
+        assert!(!rows.is_empty() && rows.iter().all(|h| *h == Some(wanted)), "{rows:?}");
     }
 
     #[test]
