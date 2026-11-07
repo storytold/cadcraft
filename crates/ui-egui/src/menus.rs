@@ -375,6 +375,24 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
+/// A user's WBLOCK: ask where to write the selection. With nothing selected it says so instead of
+/// writing an empty drawing.
+fn run_wblock_command(app: &mut CadApp) -> Option<Result<Value, String>> {
+    if app.session.selection().is_empty() {
+        app.session.echo("WBLOCK: select the objects to write first");
+        return Some(Ok(Value::Null));
+    }
+    let pick = app.services.pick_save.as_ref()?;
+    let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+    let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+    let Some(path) = pick(&format!("{}.dwg", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
+    let r = app.run("wblock", json!({ "path": path }));
+    if let Ok(v) = &r {
+        app.session.echo(format!("Wrote {} objects to {path}", v["entities"]));
+    }
+    Some(r)
+}
+
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = route_ui_subsystems(app, id, params) {
         return Some(result);
@@ -475,24 +493,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             });
             r
         }
-        // WBLOCK from the menu or typed: ask where to write the selection. With nothing selected it
-        // says so instead of writing an empty drawing. JSON calls carry `path` (and `name` or
-        // `handles`) and never open a dialog.
-        "wblock" | "w" if params.is_null() && app.session.state().is_ok() => {
-            if app.session.selection().is_empty() {
-                app.session.echo("WBLOCK: select the objects to write first");
-                return Some(Ok(Value::Null));
-            }
-            let pick = app.services.pick_save.as_ref()?;
-            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
-            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
-            let Some(path) = pick(&format!("{}.dwg", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
-            let r = app.run("wblock", json!({ "path": path }));
-            if let Ok(v) = &r {
-                app.session.echo(format!("Wrote {} objects to {path}", v["entities"]));
-            }
-            r
-        }
+        // WBLOCK from the menu or typed: see `run_wblock_command`. JSON calls carry `path` (and
+        // `name` or `handles`) and never open a dialog.
+        "wblock" | "w" if params.is_null() && app.session.state().is_ok() => return run_wblock_command(app),
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
             app.session.open_drawing(d, "Bracket", None);

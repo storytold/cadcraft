@@ -225,4 +225,20 @@ mod tests {
         assert!(e.contains("`path` is required"), "{e}");
         assert_eq!(asked.borrow().len(), 2, "JSON calls never open a file dialog");
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn typed_wblock_writes_the_selection_to_the_chosen_file() {
+        let path = std::env::temp_dir().join(format!("cadcraft-wblock-{}.dwg", std::process::id()));
+        let chosen = path.to_string_lossy().to_string();
+        let services = Services { pick_save: Some(Box::new(move |_: &str| Some(chosen.clone()))), ..Services::default() };
+        let mut app = CadApp::new(Session::new(), services);
+        let l = app.session.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone();
+        app.session.execute("select", &json!({ "handles": [l] })).unwrap();
+        app.start("wblock");
+        let written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+        assert!(written > 0, "the chosen file is written");
+        assert!(app.session.log.iter().any(|l| l.contains("Wrote 1 objects to")), "{:?}", app.session.log);
+    }
 }
