@@ -160,7 +160,7 @@ dimensions are edited).
 
 | Feature | AutoCAD for Mac | CADCraft |
 |---|---|---|
-| Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered (233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
+| Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered at the 2026-10-10 re-measure, not re-measured since (the generated checklist now reads 298/491, engine commands only; 233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
 | Tool Bar, File tabs, Start tab, layout tabs | yes | yes |
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
 | Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing; numeric fields take feet and inches and show lengths in the drawing's units (#870) |

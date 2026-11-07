@@ -11,7 +11,7 @@ scriptable CLI, a web build, Linux and FreeBSD builds, and a free licence.
 **Why pre-alpha:** four of AutoCAD's five core workflows fail the [alpha gate](docs/roadmap.md#alpha-gate).
 Precise drafting still has approximate ellipse and spline intersections and a few stubbed prompt options
 (object snap tracking, TRIM/EXTEND/OFFSET options and typed snap overrides have landed); dynamic blocks can't be
-authored and xrefs can't be edited in place or clipped (the Block Editor, REFEDIT and dynamic block editing have landed);
+authored and xrefs can't be edited in place (the Block Editor, REFEDIT, dynamic block editing and XCLIP have landed);
 plots go only to PDF, PNG and SVG files (plot styles and the Plot dialog have landed); and a DWG saved by
 CADCraft drops what acadrust doesn't model and has never been checked in
 AutoCAD. Dimensioning passes. Ready for real work (≈ 38%) is also under the ~40% alpha bar. Beta
@@ -82,8 +82,8 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 
 ## Languages
 
-AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus fifteen catalogs
-(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian and Turkish). Detail: [localization-parity.md](docs/localization-parity.md).
+AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus eighteen catalogs
+(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian, Turkish, Bosnian, Georgian and Vietnamese). Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Status | UI translated |
 |---|---|---:|
@@ -99,7 +99,7 @@ AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus fi
 | Greek | partial | 1,330 catalog rows; independent proofreading pending |
 | German | partial | 1,031 catalog rows |
 | Korean | partial | 1,235 catalog rows |
-| Vietnamese | none | 0% |
+| Vietnamese | partial | 1,460 catalog rows (2026-11-07); native review pending |
 
 Other languages shipped: Ukrainian (1,357 rows, the reference catalog, #36), Czech (1,215), Russian (1,005), Italian (1,352), Swedish (1,382), Hungarian (1,326) and Turkish (1,330), counted 2026-10-24; engine messages stay English. Every catalog but Ukrainian's has strings added since it landed that still fall back to English: 6 (Italian, Swedish) to 296 (French) per `cargo xtask i18n` ([localization-parity.md](docs/localization-parity.md)).
 
@@ -115,7 +115,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 5. ~~Unstub prompt options in TRIM/EXTEND, OFFSET, ROTATE, PLINE, SPLINE, MTEXT, MLEADER.~~ Done (#397, #408, #547); the stubs left are in gaps F1.
 6. ~~Autosave, recovery, AUDIT, RECOVER.~~ Done on the desktop (#406, #416); the web build has no autosave (gaps F4).
 7. Exact ellipse/spline geometry and correct polyline offsets (30–50 h).
-8. Xrefs, block editor, groups, then dynamic blocks (80–120 h): xrefs (#525), groups (#417), the Block Editor (#824, #833, #885), REFEDIT (#818) and dynamic block references (#838–#883) landed; left: dynamic-block authoring, XCLIP, editing an xref in place.
+8. Xrefs, block editor, groups, then dynamic blocks (80–120 h): xrefs (#525), groups (#417), the Block Editor (#824, #833, #885), REFEDIT (#818), XCLIP and XCLIPFRAME (#2354) and dynamic block references (#838–#883) landed; left: dynamic-block authoring, editing an xref in place.
 
 ## Progress log
 

@@ -23,8 +23,8 @@ shaping and right-to-left text through TrueType, vertical SHX text styles.
 - **A display-time string catalog** (`crates/ui-egui/src/i18n/`, landed with #36): a TSV per
   language (context, English source, translation, `@plural` rows), Edit → Interface Language with
   Auto (system language), live switching, a saved choice, and tests for coverage, placeholders
-  and plurals ([localization.md](localization.md)). The fifteen catalogs have between 1,004
-  (French) and 1,382 rows (Swedish; Ukrainian, the reference, has 1,357), counted 2026-10-24,
+  and plurals ([localization.md](localization.md)). The eighteen non-English catalogs have between 1,026
+  (Russian) and 1,471 rows (Swedish; Ukrainian, the reference, has 1,414), counted 2026-11-07 on main 486d558a7 (rows without comment lines, `@plural` rows included),
   covering menus, command labels, tool groups and tooltips, the Start page, tabs, status
   controls, object snaps, drafting prompts, property labels and dialogs. Engine diagnostics,
   CLI/MCP responses and command history stay English, and uncatalogued text falls back to
@@ -68,7 +68,8 @@ plus native review by a human; extending the catalog to the remaining English-on
 | German | de | 1,031 catalog rows; 284 strings fall back to English | dialogs and tooltips yes; command reference searchable in German | Latin: yes (bundled egui fonts cover ä ö ü Ä Ö Ü ß; long strings will need layout checks) | no native review | partial | 1–2 h |
 | Greek | el | 1,330 catalog rows; 34 strings fall back to English | Menus, dialogs, tooltips, drawing prompts, command labels and contextual headings; English fallback for uncatalogued UI | Greek script; bundled egui glyph check added | Original AI-assisted translation by @Camthalion77, independent native review pending | complete when it landed; 34 strings added since fall back to English | native proofreading and platform layout review |
 | Korean | ko | 1,235 catalog rows; 124 strings fall back to English | dialogs, tooltips, Options and translated command-reference labels | UI requires catalog-covering installed or optional craft-fonts Hang/Kore face; English fallback without one; IME fixes still pending | original AI-assisted translation; independent native proofreading pending | complete when it landed; 124 strings added since fall back to English | native review + platform layout/IME validation |
-| Vietnamese | vi | 0 (0%) | 0% | Latin with stacked diacritics: renders per code point, untested | no | none | 3–5 h |
+| Vietnamese | vi | 1,460 catalog rows (2026-11-07); English-fallback count not measured | catalog shipped; dialog and tooltip coverage not audited | Latin with stacked diacritics: renders per code point, untested | original translations by @2ez4gcx (AI-assisted); no native review recorded | partial | 1–2 h + native review |
+| Georgian | ka | 1,458 catalog rows (2026-11-07); written to cover the union of the existing catalogs | menus, dialogs and tooltips | Georgian script: drawn with the craft-fonts `Geor` face, none in a build without craft-fonts | original clean-room translation by the CADCraft contributors; no native review recorded | partial | native review |
 | Ukrainian | uk | 989 catalog rows (≈ 100% of the catalog; ≈ 80% of all UI strings, estimated: engine diagnostics and uncatalogued text stay English) | dialogs and tooltips yes; command reference searchable in Ukrainian | Cyrillic: yes (bundled egui fonts) | translated by a contributor; no second review | partial | 2–4 h |
 | Czech | cs | 1,202 catalog rows; reference catalog and marked UI literals covered | dialogs and tooltips yes; contextual menu headings; command reference searchable in Czech | Latin: yes (bundled egui proportional and monospace fonts; Czech letters and quotes tested) | AI-assisted by @Losminek; independent review pass; not yet proofread by a native speaker | complete current catalog; English-only interface gaps remain | native review + shared English-only UI work |
 | Swedish | sv | 1,330 catalog rows; reference catalog, marked UI literals and menu headings covered (no gaps reported) | dialogs and tooltips yes; contextual menu headings; command reference searchable in Swedish | Latin: yes (bundled egui proportional and monospace fonts; å ä ö é and Swedish quotes tested) | AI-assisted (Claude Code) by @holmbom; terminology and the running app reviewed by a native speaker | complete current catalog; English-only interface gaps remain | line-by-line proofreading + shared English-only UI work |
@@ -77,14 +78,14 @@ plus native review by a human; extending the catalog to the remaining English-on
 | Turkish | tr | 1,330 catalog rows; reference catalog, marked UI literals and menu headings covered (no gaps reported) | dialogs and tooltips yes; contextual menu headings (Ölçülendirme / Ölçü); command reference searchable in Turkish | Latin: yes (bundled egui proportional and monospace fonts; Ç Ğ İ Ö Ş Ü ç ğ ı ö ş ü tested) | AI-assisted by @ogzhnklvz, written from the English strings with Turkish desktop-CAD vocabulary; the running app reviewed by a native speaker | complete current catalog; English-only interface gaps remain | line-by-line proofreading + shared English-only UI work |
 | Bosnian | bs | 1,442 catalog rows; reference catalog and marked UI literals covered | dialogs and tooltips yes | Latin: yes (bundled egui fonts) | AI-assisted; independent native proofreading pending | complete current catalog; English-only interface gaps remain | native proofreading + shared English-only UI work |
 
-Other languages shipped: Ukrainian, Brazilian Portuguese, German, Czech, Russian, French, Italian, Korean, Swedish, Hungarian, Turkish and Bosnian.
+Other languages shipped: Ukrainian, Brazilian Portuguese, German, Czech, Russian, French, Italian, Korean, Swedish, Hungarian, Turkish, Bosnian, Georgian and Vietnamese. The per-language cells above keep the counts of the dated audit that wrote them (2026-10-24 or earlier, as stated); only the row totals in "What CADCraft has" and the Vietnamese and Georgian rows are from 2026-11-07, and the English-fallback counts have not been re-measured since 2026-10-24.
 Czech, Swedish, Hungarian, Brazilian Portuguese and Bosnian (1,442 rows, AI-assisted, not yet native-reviewed) cover the reference catalog and every marked UI literal; engine diagnostics and uncatalogued text
 remain English. AutoCAD for Mac ships 7
 non-English languages (zh-Hans, es, fr, ja, de, ko, it); of those, CADCraft now ships German and Korean,
 and additionally Ukrainian, which AutoCAD for Mac doesn't ship.
 
 **Total to put the languages at `full`:** about 62–102 Opus 5.5 hours, summed from the table's estimates (catalog extension 4–6 h,
-four languages not started 13–21 h, closing the gaps of the fourteen lagging catalogs 15–30 h,
+three languages not started (hi, id, ja) 10–16 h, closing the gaps of the lagging catalogs 15–30 h,
 complex-script shaping and RTL 30–45 h), plus native-speaker review for
 each language, which needs humans. Translations parallelise fully once the catalog exists.
 
@@ -92,6 +93,7 @@ each language, which needs humans. Translations parallelise fully once the catal
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Inventory reconciled with main 486d558a7: 18 non-English catalogs (Georgian and Vietnamese rows added; Vietnamese no longer listed as not started), row totals re-counted; per-language cells and fallback counts keep their earlier dates |
 | 2026-10-30 | minor | Bosnian (`bs`, Latin, Ijekavian) added: 1,442 rows, one/few/other plurals, `bs-*` locales; AI-assisted, native proofreading pending |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: catalog row counts and English-fallback counts re-measured for all fifteen catalogs (main 41d9b5e95) |
 | 2026-10-22 | minor | Command line IME: enabled while a prompt collects text, composition shown but not saved, commit inserted once; single-line TEXT edits accept CJK input (#1761) |
