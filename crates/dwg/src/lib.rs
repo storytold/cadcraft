@@ -1028,14 +1028,11 @@ mod native {
     /// dictionary, with the variables it keeps there, when the drawing has none (#1813).
     /// Vectric Aspire 10.5 reads a 2004 (AC1018) DWG without it as empty ("No data was imported
     /// from the DXF / DWG file"), though it reads the same drawing as DXF — which has no such
-    /// dictionary either, as CADCraft's and ezdxf's writers don't make one. AutoCAD's AC1032 DWGs
-    /// read there without it, so newer output is left as it was, and a dictionary the drawing
+    /// dictionary either, as CADCraft's and ezdxf's writers don't make one. ZWCAD 2025's AUDIT reports
+    /// an AC1032 DWG without it as an error, so every version gets it. A dictionary the drawing
     /// does have keeps its own entries and values.
     fn add_variable_dictionary(doc: &mut acadrust::CadDocument) {
         use acadrust::objects::{Dictionary, DictionaryVariable, ObjectType};
-        if doc.version >= acadrust::DxfVersion::AC1032 {
-            return;
-        }
         let root_handle = doc.header.named_objects_dict_handle;
         match doc.objects.get(&root_handle) {
             Some(ObjectType::Dictionary(root)) => {
