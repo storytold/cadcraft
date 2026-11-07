@@ -27,6 +27,10 @@ pub struct Settings {
     pub measureinit: bool,
     /// -VIEW sEttings > Layer snapshot: named views save the layer settings with them.
     pub view_layer_snapshot: bool,
+    /// -LAYER stAte Save: the properties a new layer state restores (its mask), as the last Save
+    /// left them. AutoCAD 2024 keeps these toggles in the registry from one Save to the next
+    /// (measured); Edit doesn't change them.
+    pub layer_state_mask: u32,
     pub dynmode: bool,
     /// DYNDIGRIP: which dimensions grip dimensional input shows while a grip is stretched (bits:
     /// 1 resulting length, 2 length change, 4 absolute angle, 8 angle change, 16 radius); read
@@ -148,6 +152,7 @@ impl Default for Settings {
             zoomfactor: 60,
             measureinit: false,
             view_layer_snapshot: true,
+            layer_state_mask: cadcraft_doc::LayerState::ALL,
             dynmode: true,
             dyndigrip: 31,
             dyndivis: 1,

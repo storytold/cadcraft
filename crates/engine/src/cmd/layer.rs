@@ -1,6 +1,7 @@
 //! Layers: LAYER (programmatic sub-ids, -LAYER prompts), layer tools (LAYMCUR, LAYISO, LAYOFF, LAYFRZ…).
 
 mod prompts;
+mod state_prompts;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Layer, Lineweight};
@@ -55,7 +56,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("layon", "Turn All Layers On", |s, _| all_layers(s, |l| l.on = true)),
         CommandSpec::new("laythw", "Thaw All Layers", |s, _| all_layers(s, |l| l.frozen = false)),
         CommandSpec::new("layerp", "Previous Layer", run_layerp).menu(&["Format", "Layer Tools", "Previous Layer"]),
-        CommandSpec::new("layerstate.save", "Save Layer State", run_state_save).menu(&["Format", "Layer States Manager..."]).params("{name}"),
+        CommandSpec::new("layerstate.save", "Save Layer State", run_state_save)
+            .menu(&["Format", "Layer States Manager..."])
+            .params("{name, mask? (properties restoring sets: 1 on, 2 frozen, 4 locked, 8 plot, 16 new viewport freeze, 32 color, 64 linetype, 128 lineweight, 256 plot style, 1024 transparency; default all)}"),
         CommandSpec::new("layerstate.restore", "Restore Layer State", run_state_restore).params("{name}"),
         CommandSpec::new("layerstate.list", "List Layer States", run_state_list).params("{} → states").noundo(),
         CommandSpec::new("layerstate.delete", "Delete Layer State", run_state_delete).params("{name}"),
@@ -396,19 +399,36 @@ fn all_layers(s: &mut Session, f: fn(&mut Layer)) -> Result<Value> {
 }
 
 fn run_state_save(s: &mut Session, p: &Value) -> Result<Value> {
+    use cadcraft_doc::LayerState as S;
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.save", "`name` is required"))?.to_string();
+    // The properties restoring sets; bit 512, which no property toggles, is always set, as AutoCAD
+    // 2024 saves it (measured: On alone is 513).
+    let mask = match p.get("mask") {
+        None | Some(Value::Null) => S::ALL,
+        Some(v) => {
+            let m = v.as_u64().filter(|m| m & !u64::from(S::ALL) == 0);
+            m.and_then(|m| u32::try_from(m).ok()).ok_or_else(|| bad("layerstate.save", "`mask` must be a sum of layer state bits (0 to 2047)"))? | 512
+        }
+    };
     let d = s.doc_mut()?;
     let layers = d.layers.clone();
     let current = d.header.str("CLAYER", "0");
     d.layer_states.retain(|st| st.name != name);
-    d.layer_states.push(cadcraft_doc::LayerState::new(name, layers, current));
+    d.layer_states.push(S { mask, ..S::new(name, layers, current) });
     ok()
+}
+
+/// The saved state called `name`: the one spelled so, else the first whose name differs only in
+/// case. AutoCAD 2024 finds layer states without regard to case (measured: Restore, Edit, Name
+/// and Delete of `s1` reach `S1`); case is compared as for layers and view snapshots.
+pub(super) fn state_index(d: &cadcraft_doc::Drawing, name: &str) -> Option<usize> {
+    d.layer_states.iter().position(|st| st.name == name).or_else(|| d.layer_states.iter().position(|st| st.name.eq_ignore_ascii_case(name)))
 }
 
 fn run_state_restore(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.restore", "`name` is required"))?;
     let d = s.doc_mut()?;
-    let st = d.layer_states.iter().find(|st| st.name == name).cloned().ok_or_else(|| bad("layerstate.restore", "no such layer state"))?;
+    let st = state_index(d, name).and_then(|i| d.layer_states.get(i)).cloned().ok_or_else(|| bad("layerstate.restore", "no such layer state"))?;
     restore_state(d, &st);
     ok()
 }
@@ -497,10 +517,8 @@ fn run_state_list(s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_state_delete(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.delete", "`name` is required"))?;
     let d = s.doc_mut()?;
-    if !d.layer_states.iter().any(|st| st.name == name) {
-        return Err(bad("layerstate.delete", "no such layer state"));
-    }
-    d.layer_states.retain(|st| st.name != name);
+    let i = state_index(d, name).ok_or_else(|| bad("layerstate.delete", "no such layer state"))?;
+    d.layer_states.remove(i);
     ok()
 }
 
@@ -511,10 +529,12 @@ fn run_state_rename(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("layerstate.rename", "invalid name"));
     }
     let d = s.doc_mut()?;
-    if d.layer_states.iter().any(|st| st.name == to) {
+    // A name in another case counts, the state's own too (AutoCAD 2024 refuses `S1` to `s1`,
+    // measured).
+    if d.layer_states.iter().any(|st| st.name.eq_ignore_ascii_case(&to)) {
         return Err(bad("layerstate.rename", format!("layer state `{to}` already exists")));
     }
-    let st = d.layer_states.iter_mut().find(|st| st.name == from).ok_or_else(|| bad("layerstate.rename", "no such layer state"))?;
+    let st = state_index(d, from).and_then(|i| d.layer_states.get_mut(i)).ok_or_else(|| bad("layerstate.rename", "no such layer state"))?;
     st.name = to;
     ok()
 }

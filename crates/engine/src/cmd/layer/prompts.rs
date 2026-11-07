@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::super::find_command;
 use super::super::qselect::wildcard;
+use super::state_prompts;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 const OPTIONS: &[&str] = &[
@@ -34,9 +35,9 @@ const OPTIONS: &[&str] = &[
 ];
 
 /// Keyword-only: spaces separate inputs.
-const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
+pub(super) const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 /// A name or value: Space ends the input, as it does in AutoCAD scripts.
-const NAME: Accept = Accept { number: true, ..Accept::TEXT };
+pub(super) const NAME: Accept = Accept { number: true, ..Accept::TEXT };
 
 /// A per-layer change applied to a list of layer names.
 #[derive(Clone, Debug)]
@@ -111,6 +112,8 @@ enum Stage {
     Layers(Change),
     /// Turning the current layer off asks first.
     ConfirmOff(Vec<String>),
+    /// stAte and its options.
+    State(state_prompts::Stage),
 }
 
 #[derive(Default)]
@@ -123,19 +126,19 @@ fn current_layer(s: &Session) -> String {
 }
 
 /// Run a layer command's body directly: the running command records the single undo step.
-fn call(s: &mut Session, id: &str, p: &Value) -> Result<Value> {
+pub(super) fn call(s: &mut Session, id: &str, p: &Value) -> Result<Value> {
     let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
     (spec.run)(s, p)
 }
 
-fn message(e: &EngineError) -> String {
+pub(super) fn message(e: &EngineError) -> String {
     match e {
         EngineError::BadParams { msg, .. } => msg.clone(),
         other => other.to_string(),
     }
 }
 
-fn retry(msg: impl Into<String>) -> EngineError {
+pub(super) fn retry(msg: impl Into<String>) -> EngineError {
     EngineError::Other(msg.into())
 }
 
@@ -188,8 +191,9 @@ impl LayerM {
             "LOck" => Stage::Layers(Change::Lock),
             "Unlock" => Stage::Layers(Change::Unlock),
             "Description" => Stage::Description,
+            "stAte" => Stage::State(state_prompts::Stage::Option),
             other => {
-                // MATerial, stAte, rEconcile: report and stay at the option prompt.
+                // MATerial, rEconcile: report and stay at the option prompt.
                 s.echo(format!("-LAYER {other} is not available yet."));
                 Stage::Option
             }
@@ -262,7 +266,7 @@ impl LayerM {
             Ok(Step::Continue)
         };
         match stage {
-            Stage::Option => Ok(Step::Continue),
+            Stage::Option | Stage::State(_) => Ok(Step::Continue),
             Stage::List => {
                 self.list(s, text.as_deref().unwrap_or("*"));
                 Ok(Step::Continue)
@@ -434,9 +438,18 @@ impl Interactive for LayerM {
                 if enter_is_current { p.default(cur) } else { p }
             }
             Stage::ConfirmOff(_) => Prompt::new(format!("Really want layer \"{cur}\" (the CURRENT layer) off?"), KW).kw(&["Yes", "No"]).default("N"),
+            Stage::State(st) => st.prompt(),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Stage::State(st) = &mut self.stage
+            && !matches!(i, Input::Cancel)
+        {
+            if !st.input(s, &i)? {
+                self.stage = Stage::Option;
+            }
+            return Ok(Step::Continue);
+        }
         match (&self.stage, &i) {
             (_, Input::Cancel) => Ok(Step::Cancel),
             (Stage::Option, Input::Enter) => Ok(Step::Done),
