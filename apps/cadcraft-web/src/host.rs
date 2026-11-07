@@ -67,8 +67,17 @@ impl Bridge {
     /// Hear drawings from the host; they arrive through the upload inbox.
     pub fn listen(&self, inbox: crate::upload::Inbox) {
         self.host.listen(move |message| {
-            if let Message::Open { name, data } = message {
-                receive_open(&name, &data, &inbox);
+            match message {
+                Message::Open { name, data } => receive_open(&name, &data, &inbox),
+                Message::AttachPdf { name, bytes, page, insertion, width, height } => {
+                    // Check the real typed-array length before copying untrusted host input.
+                    if u64::from(bytes.length()) > cadcraft_engine::cmd::MAX_PDF_BYTES as u64 {
+                        inbox.refuse(format!("{name}: PDF exceeds the 64 MiB input limit"));
+                    } else {
+                        inbox.attach_pdf(name, bytes.to_vec(), crate::upload::PdfPlacement { page, insertion, width, height });
+                    }
+                }
+                _ => {}
             }
         });
     }
@@ -103,7 +112,7 @@ fn receive_open(name: &str, data: &FileData, inbox: &crate::upload::Inbox) {
         return;
     };
     // Refuse an oversized drawing before copying it into the app's memory (the data's own length).
-    if let Some(e) = CadApp::open_size_error(&name, data.size() as u64) {
+    if let Some(e) = crate::upload::size_error(&name, data.size() as u64) {
         inbox.refuse(e);
         return;
     }

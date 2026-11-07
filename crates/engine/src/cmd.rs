@@ -19,6 +19,7 @@ mod griphot;
 pub(crate) mod groups;
 pub(crate) mod hatch;
 mod image;
+pub use image::MAX_PDF_BYTES;
 mod inquiry;
 mod layer;
 mod layout;

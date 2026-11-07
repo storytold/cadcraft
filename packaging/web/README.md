@@ -96,6 +96,7 @@ page over `postMessage`, with plain window messages that carry a `type`:
 |---|---|---|
 | `cadcraft:ready` | app → page | `version`, `appVersion`: the app is listening; send a drawing now |
 | `cadcraft:open` | page → app | `name`, `bytes` (an `ArrayBuffer` or `Uint8Array`): open like File › Open |
+| `cadcraft:attach-pdf` | page → app | `name`, `bytes` (an `ArrayBuffer` or `Uint8Array`), `page` (from 1), `insertion` ([x,y,z]), `width`, `height` (positive drawing units): attach one PDF page to the current drawing |
 | `cadcraft:save` | app → page | `name`, `bytes` (a transferred `ArrayBuffer`): every file the app would otherwise download (SAVE, SAVEAS, exports). The page stores it and reports failures itself. |
 | `cadcraft:dirty` | app → page | `dirty`: unsaved changes appeared or went away |
 | `cadcraft:failed` | app → page | `error`: the app couldn't start |
@@ -152,6 +153,19 @@ try {
 ```
 
 The messages and both transports are the shared contract of [`craft-web-host`](https://github.com/storytold/craft-libs/tree/main/crates/web-host) (storytold/craft-libs#420), the same for every Craft app: its README lists every message, including `saved`, with the compatibility notes. In `cadcraft:ready`, `version` is the contract's (`"1"`) and `appVersion` is this app's release. CADCraft reads bytes, so a host sends `bytes`, not a `File`.
+
+### PDF attachments
+
+The picker and drag-and-drop accept `.pdf`. They attach the first page at the origin,
+one drawing unit wide, with the page's aspect ratio. A host can send `cadcraft:attach-pdf`
+to choose the page and its rectangle. The page command API also accepts
+`pdfattach` with `{data: base64Pdf, name, page, insertion, width, height}`.
+
+Byte attachments use the same PDF reader and renderer as file underlays, but become
+raster IMAGE entities held in the current session. Their pixels are not embedded in
+saved drawings; reattach the PDF after reopening. `PDFADJUST` applies to file underlays,
+not these images. Rendering uses 144 dpi up to a 4096-pixel longest edge. PDFs over
+64 MiB are refused before the host bytes are copied or base64 data is decoded.
 
 ### Trust and limits
 

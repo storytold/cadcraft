@@ -76,7 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("pdfattach", "PDF Underlay...", run_pdfattach)
             .menu(&["Insert", "PDF Underlay..."])
-            .params("{path: PDF file, page?: number from 1 (default 1), at?: [x,y] lower-left corner (default 0,0), scale?: 1 = the page at its size on paper (default; 1/50 = a fiftieth of it), rotation? (degrees), fade?: 0..80 (default 0), contrast?: 0..100 (default 100), monochrome?: bool (default false), adjustColors?: bool (default true)} → {handle, page, pages, width, height} (typed: path, page, insertion point, scale, rotation)")
+            .params("{path: PDF file, page?: number from 1 (default 1), at?: [x,y] lower-left corner (default 0,0), scale?: 1 = the page at its size on paper (default; 1/50 = a fiftieth of it), rotation? (degrees), fade?: 0..80 (default 0), contrast?: 0..100 (default 100), monochrome?: bool (default false), adjustColors?: bool (default true)} → {handle, page, pages, width, height} (typed: path, page, insertion point, scale, rotation). Alternatively {data: base64 PDF (64 MiB maximum), name?: file name, page?: from 1, insertion?: [x,y,z] (default 0,0,0), width?: drawing units (default 1), height?: drawing units (default page aspect ratio)} attaches one raster IMAGE using the same PDF reader; returns {name, handle, path, pixels: [w,h], size: [w,h]}. Byte attachments are held in memory and must be reattached after reopening; PDFADJUST applies only to file underlays.")
             .interactive(|s| Ok(Box::new(AttachM::new(s)))),
         CommandSpec::new("pdfadjust", "Adjust PDF Underlay", run_pdfadjust)
             .menu(&["Modify", "Object", "PDF Underlay", "Adjust"])
@@ -90,6 +90,15 @@ const MAX_ATTACH_PAGES: usize = 100;
 
 fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
     const ID: &str = "pdfattach";
+    if p.get("data").is_some() {
+        if ["path", "pages", "at", "scale", "rotation", "fade", "contrast", "monochrome", "adjustColors", "pathType"]
+            .iter()
+            .any(|key| p.get(key).is_some())
+        {
+            return Err(bad(ID, "byte attachments use one `page`, `insertion`, `width` and `height`; file-underlay options do not apply"));
+        }
+        return super::image::attach_pdf_bytes(s, p);
+    }
     let hooks = pdf().ok_or_else(|| bad(ID, "PDF underlays are not available in this build"))?;
     let path = str_param(p, "path").filter(|s| !s.is_empty()).ok_or_else(|| bad(ID, "`path` (the PDF file) is required"))?;
     let page_no = |v: &Value| v.as_u64().filter(|n| *n >= 1).and_then(|n| u32::try_from(n).ok());
