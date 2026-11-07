@@ -160,7 +160,9 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                 w.f(43, p.const_width);
             }
             // The elevation runs along the polyline's normal, which isn't written: one facing down
-            // Z is at the elevation's negative.
+            // Z is at the elevation's negative. That is exact for a normal of 0,0,-1 only; a tilted
+            // one pointing partly down is flipped the same way (the reader brings tilted polylines
+            // into plan with normal Z, so only other sources make one).
             let elevation = if e.common.extrusion.z < 0.0 { -p.elevation } else { p.elevation };
             if elevation != 0.0 {
                 w.f(38, elevation);
@@ -614,6 +616,7 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         w.s(0, "HATCH");
         common(w, e, owner, paper, "AcDbHatch");
         // Its elevation runs along its normal, written as Z: one facing down is at the negative.
+        // Exact for a normal of 0,0,-1; the reader brings a tilted hatch into plan with normal Z.
         let elevation = if e.common.extrusion.z < 0.0 { -h.elevation } else { h.elevation };
         w.p(10, Vec3::new(0.0, 0.0, elevation));
         w.p(210, Vec3::Z);
@@ -836,7 +839,8 @@ fn gradient(w: &mut W, g: &Gradient) {
 
 /// Group 39 (thickness) of the entities whose DXF Reference record has one; only when set. They
 /// are written with no normal, so they extrude along Z: one whose normal points down Z extrudes
-/// the other way, and its thickness changes sign.
+/// the other way, and its thickness changes sign. That is exact for a normal of 0,0,-1; a tilted
+/// one pointing partly down only gets the closer of the two directions.
 fn thickness(w: &mut W, e: &Entity) {
     let t = if e.common.extrusion.z < 0.0 { -e.common.thickness } else { e.common.thickness };
     if t != 0.0 {
