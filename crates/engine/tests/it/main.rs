@@ -69,6 +69,7 @@ mod insert_attribute_prompts;
 mod insert_prompts;
 mod isometric;
 mod join_close;
+mod join_on_source;
 mod json_param_validation;
 mod layer_cmdline;
 mod layer_merge_delete;
