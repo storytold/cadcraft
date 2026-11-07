@@ -625,6 +625,21 @@ pub fn save_keeps_current(_path: &std::path::Path) -> bool {
     false
 }
 
+/// The mode of a new backup: no more open than the drawing (`src_mode`, group `src_gid`) nor than the
+/// `.bak` it replaces (`old`: mode and group). The backup keeps the old `.bak`'s group, so when that
+/// differs from the drawing's group the group bits are dropped: that group could not read the drawing.
+#[cfg(unix)]
+fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
+    let mut mode = src_mode & 0o777;
+    if let Some((old_mode, old_gid)) = old {
+        mode &= old_mode;
+        if old_gid != src_gid {
+            mode &= !0o070;
+        }
+    }
+    mode
+}
+
 /// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
@@ -649,14 +664,10 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     // written through.
     #[cfg(unix)]
     let permissions = {
-        use std::os::unix::fs::PermissionsExt;
-        let mut mode = src.metadata()?.permissions().mode() & 0o777;
-        if let Ok(m) = std::fs::symlink_metadata(&bak)
-            && m.is_file()
-        {
-            mode &= m.permissions().mode();
-        }
-        Some(std::fs::Permissions::from_mode(mode))
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let sm = src.metadata()?;
+        let old = std::fs::symlink_metadata(&bak).ok().filter(|m| m.is_file());
+        Some(std::fs::Permissions::from_mode(backup_mode(sm.mode(), sm.gid(), old.map(|m| (m.mode(), m.gid())))))
     };
     #[cfg(not(unix))]
     let permissions = None;
@@ -1030,6 +1041,19 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// A backup is never more open than the drawing or the old `.bak`, and loses the group bits when
+    /// it would keep the old `.bak`'s group while the drawing is in another.
+    #[cfg(unix)]
+    #[test]
+    fn backup_mode_drops_group_bits_for_a_different_group() {
+        use super::backup_mode;
+        assert_eq!(backup_mode(0o640, 10, None), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 10))), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 20))), 0o600);
+        assert_eq!(backup_mode(0o644, 10, Some((0o644, 20))), 0o604);
+        assert_eq!(backup_mode(0o600, 10, Some((0o664, 10))), 0o600);
+    }
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()
