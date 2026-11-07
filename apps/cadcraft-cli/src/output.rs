@@ -163,10 +163,19 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 /// frame is drawn), or `None` when there are none.
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut ole = 0usize;
     for e in d.model.iter() {
-        // An underlay whose PDF wasn't found on opening has no page size, and no page to draw.
+        // An OLE2FRAME's frame outline is drawn, so it isn't an undrawn entity; its content is
+        // not, which gets a note of its own. An underlay whose PDF wasn't found on opening has
+        // no page size, and no page to draw.
         let undrawn = match &e.kind {
-            cadcraft_engine::doc::EntityKind::Unknown(u) => Some(u.dxf_type.as_str()),
+            cadcraft_engine::doc::EntityKind::Unknown(u) => {
+                if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
+                    ole = ole.saturating_add(1);
+                    continue;
+                }
+                Some(u.dxf_type.as_str())
+            }
             cadcraft_engine::doc::EntityKind::PdfUnderlay(u) if u.size.x <= 0.0 => Some("PDFUNDERLAY"),
             _ => None,
         };
@@ -176,12 +185,17 @@ pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> 
         }
     }
     let n = types.values().fold(0usize, |a, n| a.saturating_add(*n));
-    if n == 0 {
-        return None;
+    let mut lines = Vec::new();
+    if n > 0 {
+        let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
+        let entities = if n == 1 { "entity" } else { "entities" };
+        lines.push(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")));
     }
-    let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
-    let entities = if n == 1 { "entity" } else { "entities" };
-    Some(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")))
+    if ole > 0 {
+        let objects = if ole == 1 { "object" } else { "objects" };
+        lines.push(format!("{path}: {ole} OLE {objects} shown as the frame only (the OLE content is not drawn)"));
+    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
 /// The reader's notes on what it left out of `path` (a damaged DWG's unreadable object records,

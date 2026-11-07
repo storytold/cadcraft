@@ -40,8 +40,12 @@ fn arc_geom(a: &cadcraft_doc::Arc) -> cadcraft_geom::Arc {
 
 /// Where a snap sits on an object now.
 pub fn snap_point(d: &Drawing, a: &DimAssoc) -> Option<Vec2> {
-    let e = d.entity(a.handle)?;
-    match (&e.kind, &a.snap) {
+    snap_on(d, &d.entity(a.handle)?.kind, &a.snap)
+}
+
+/// Where `snap` sits on an object of kind `kind` (an intersection finds its other line in `d`).
+fn snap_on(d: &Drawing, kind: &EntityKind, snap: &AssocSnap) -> Option<Vec2> {
+    match (kind, snap) {
         (EntityKind::Line(l), AssocSnap::Start) => Some(l.a.xy()),
         (EntityKind::Line(l), AssocSnap::End) => Some(l.b.xy()),
         (EntityKind::Line(l), AssocSnap::Mid) => Some(l.a.xy().mid(l.b.xy())),
@@ -86,6 +90,61 @@ fn candidates(kind: &EntityKind) -> Vec<(AssocSnap, Vec2)> {
         EntityKind::Point(p) => vec![(AssocSnap::Start, p.p.xy())],
         _ => Vec::new(),
     }
+}
+
+/// Whether two snaps are the same kind of object point: an endpoint or vertex, a centre, or a
+/// midpoint.
+fn same_kind(a: &AssocSnap, b: &AssocSnap) -> bool {
+    matches!(
+        (a, b),
+        (AssocSnap::Start | AssocSnap::End | AssocSnap::Vertex { .. }, AssocSnap::Start | AssocSnap::End | AssocSnap::Vertex { .. })
+            | (AssocSnap::Center, AssocSnap::Center)
+            | (AssocSnap::Mid, AssocSnap::Mid)
+    )
+}
+
+/// BREAK or TRIM reshaped the object `pieces[0]` (which was `old`) and added the other pieces:
+/// move the dimension attachments on it as AutoCAD 2024 does. An attachment whose point is still
+/// a point of the same kind on the object stays there (a closed polyline opened by BREAK numbers
+/// its vertices from the break); one whose point is on a new piece moves to that piece, so a
+/// dimension across a line broken in its middle stays where it was; any other is left as it was,
+/// so the dimension follows the object's new end when that end was cut off. Attachments at an
+/// angle on a circle or arc and at an intersection stay on the object. [`update`] moves the
+/// definition points after the command.
+pub fn follow_pieces(d: &mut Drawing, old: &EntityKind, pieces: &[Handle]) {
+    let Some(&h) = pieces.first() else { return };
+    let mut changes: Vec<(Handle, Vec<DimAssoc>)> = Vec::new();
+    for store in std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)) {
+        for e in store.iter() {
+            let EntityKind::Dimension(dm) = &e.kind else { continue };
+            if !dm.assoc.iter().any(|a| a.handle == h) {
+                continue;
+            }
+            let assoc: Vec<DimAssoc> = dm.assoc.iter().map(|a| on_piece(d, old, pieces, a).unwrap_or_else(|| a.clone())).collect();
+            if assoc != dm.assoc {
+                changes.push((e.handle, assoc));
+            }
+        }
+    }
+    for (dh, assoc) in changes {
+        let _ = d.modify_entity(dh, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.assoc = assoc;
+            }
+        });
+    }
+}
+
+/// The piece attachment `a` moves to when its object became `pieces` (see [`follow_pieces`]).
+fn on_piece(d: &Drawing, old: &EntityKind, pieces: &[Handle], a: &DimAssoc) -> Option<DimAssoc> {
+    if pieces.first() != Some(&a.handle) || matches!(a.snap, AssocSnap::OnCircle { .. } | AssocSnap::Intersection { .. }) {
+        return None;
+    }
+    let p = snap_on(d, old, &a.snap)?;
+    pieces.iter().find_map(|&ph| {
+        let (snap, _) = candidates(&d.entity(ph)?.kind).into_iter().find(|(s, q)| same_kind(&a.snap, s) && close(p, *q))?;
+        Some(DimAssoc { point: a.point.clone(), handle: ph, snap })
+    })
 }
 
 /// An object point exactly at `p` (an endpoint, vertex, centre or midpoint) to attach to.
@@ -244,8 +303,10 @@ pub fn recompute(dm: &Dimension, prev: Option<&Dimension>, before: &Drawing, aft
     let was = prev.unwrap_or(dm);
     nd.assoc.retain(|a| {
         let Some(old) = def_point(was, &a.point) else { return false };
-        // Only follow if the point sat on the object before the change.
-        if let Some(prev) = snap_point(before, a)
+        // Only follow if the point sat on the object before the change, as attached then (BREAK
+        // and TRIM may have moved the attachment to a piece of the object since).
+        let held = was.assoc.iter().find(|o| o.point == a.point).unwrap_or(a);
+        if let Some(prev) = snap_point(before, held)
             && !close(prev, old.xy())
         {
             return false;
@@ -304,16 +365,20 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
                 if dm.assoc.is_empty() {
                     continue;
                 }
-                let touched = dm.assoc.iter().any(|a| {
-                    src_changed(before, d, a.handle) || matches!(a.snap, AssocSnap::Intersection { other } if src_changed(before, d, other))
-                });
-                if !touched {
-                    continue;
-                }
                 let prev = match before.entity(e.handle).map(|x| &x.kind) {
                     Some(EntityKind::Dimension(p)) => Some(p),
                     _ => None,
                 };
+                // Its objects changed, or the command moved an attachment (BREAK and TRIM move them
+                // to new pieces, which a later pick of the same TRIM may reshape again).
+                let touched = dm.assoc.iter().any(|a| {
+                    src_changed(before, d, a.handle)
+                        || matches!(a.snap, AssocSnap::Intersection { other } if src_changed(before, d, other))
+                        || prev.is_some_and(|p| !p.assoc.contains(a))
+                });
+                if !touched {
+                    continue;
+                }
                 let nd = recompute(dm, prev, before, d);
                 if nd != *dm {
                     changes.push((e.handle, nd));

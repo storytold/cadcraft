@@ -60,6 +60,13 @@ pub struct Unknown {
     pub tags: Vec<RawTag>,
 }
 
+impl Unknown {
+    /// Whether this is an OLE2FRAME (the type name is matched without regard to case).
+    pub fn is_ole_frame(&self) -> bool {
+        self.dxf_type.eq_ignore_ascii_case("OLE2FRAME")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EntityKind {
@@ -516,6 +523,7 @@ impl EntityKind {
                 let a = if mirror { t.rotation() } else { t.rotation() + rot };
                 t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
             }
+            EntityKind::Unknown(u) if u.is_ole_frame() => crate::ole_frame_transform(&mut u.tags, m),
             EntityKind::Unknown(_) => {}
         }
     }

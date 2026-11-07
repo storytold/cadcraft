@@ -776,7 +776,7 @@ mod tests {
         let old = Detail { region: [0.0, 0.0, 1.0, 1.0], density: 1.0, shown: Some(tex), pending: None, used: -DETAIL_KEEP_S - 1.0, failed: None };
         app.canvas.underlays.details.insert((Handle(1), Scope::Main, 0, String::new(), 1, (false, 0, false)), old);
         let painter = egui::Painter::new(ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING);
-        let xf = Xf { rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)), center: Vec2::ZERO, scale: 1.0 };
+        let xf = Xf { rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)), center: Vec2::ZERO, scale: 1.0, twist: 0.0 };
         assert!(shapes(&mut app, &painter, &xf, Scope::Main, &[], None, Rgb(0, 0, 0)).is_empty());
         assert!(app.canvas.underlays.details.is_empty(), "the sharper part is dropped");
     }
