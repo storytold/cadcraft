@@ -192,7 +192,7 @@ pub(super) fn draw_highlight_gpu(
         crate::gpu::CanvasCallback {
             key,
             slot: hl_slot.clone(),
-            offset: [(hl_origin.x - xf.center.x) as f32, (hl_origin.y - xf.center.y) as f32],
+            offset: xf.gpu_offset(*hl_origin),
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_HIGHLIGHT,
@@ -256,7 +256,7 @@ pub(super) fn draw_drag_gpu(
         crate::gpu::CanvasCallback {
             key,
             slot: c.drag_slot.clone(),
-            offset: [(o.x - xf.center.x) as f32, (o.y - xf.center.y) as f32],
+            offset: xf.gpu_offset(o),
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
@@ -299,7 +299,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         crate::gpu::CanvasCallback {
             key,
             slot: c.mesh_slot.clone(),
-            offset: [(c.mesh_origin.x - xf.center.x) as f32, (c.mesh_origin.y - xf.center.y) as f32],
+            offset: xf.gpu_offset(c.mesh_origin),
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAWING,
@@ -415,7 +415,7 @@ mod highlight_stability_tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
         let input = egui::RawInput { screen_rect: Some(rect), events: vec![egui::Event::PointerMoved(pointer)], ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
-            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, twist: 0.0 }, list, &[0], Color32::LIGHT_BLUE, look);
+            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP }, list, &[0], Color32::LIGHT_BLUE, look);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.textures_delta.clear();
@@ -472,7 +472,7 @@ mod highlight_stability_tests {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
-                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0 };
+                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
                 draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
             });
             h.run_steps(3);
@@ -542,7 +542,7 @@ mod zoomed_highlight_tests {
         let list = line(Vec2::new(-1000.0, 0.0), Vec2::new(1000.0, 0.0));
         // The smaller zoom first, so a regression fails here instead of filling memory at 1e9.
         for scale in [1e3, 1e9] {
-            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, twist: 0.0 }).len();
+            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP }).len();
             assert!((50..=70).contains(&n), "scale {scale}: {n} dashes for 600 points of line");
         }
     }
@@ -553,7 +553,7 @@ mod zoomed_highlight_tests {
     fn clipped_dashes_stay_where_the_whole_line_puts_them() {
         let list = line(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 0.0));
         for x in [500.3, 512.9, 731.0] {
-            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, twist: 0.0 };
+            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
             let whole = Shape::dashed_line(
                 &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(1000.0, 0.0))],
                 Stroke::new(1.0, Color32::LIGHT_BLUE),

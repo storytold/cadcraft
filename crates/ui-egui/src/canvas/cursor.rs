@@ -223,7 +223,21 @@ pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Po
     let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
     let gap = pb.unwrap_or(0.0);
     // Along the isometric plane's axes in isometric drafting.
-    if app.session.settings.isodraft {
+    let cam = app.session.state().map(|st| st.camera).unwrap_or_default();
+    if !cam.is_top_plan() {
+        for axis in [
+            cadcraft_geom::Vec3::new(1.0, 0.0, 0.0),
+            cadcraft_geom::Vec3::new(0.0, 1.0, 0.0),
+            cadcraft_geom::Vec3::new(0.0, 0.0, 1.0),
+        ] {
+            let uv = cam.project_point(axis, Vec2::ZERO);
+            let dir = vec2(uv.x as f32, -(uv.y as f32)).normalized();
+            if dir.length_sq() > 0.01 {
+                p.line_segment([at - dir * len, at - dir * gap], st);
+                p.line_segment([at + dir * gap, at + dir * len], st);
+            }
+        }
+    } else if app.session.settings.isodraft {
         for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
             let dir = vec2(a.cos() as f32, -(a.sin() as f32));
             p.line_segment([at - dir * len, at - dir * gap], st);

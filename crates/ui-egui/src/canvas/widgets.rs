@@ -1,3 +1,5 @@
+use cadcraft_geom::{Camera3D, Vec2, Vec3};
+
 use super::draw::draw_list;
 use super::grid::draw_grid;
 use super::{CadApp, Color32, Pos2, Rect, Rgb, Shape, Stroke, Tokens, Xf, pos2, vec2};
@@ -14,7 +16,7 @@ pub(super) fn tile_rects(app: &CadApp, full: Rect) -> Vec<(Rect, cadcraft_engine
 
 /// The world ↔ screen transform of a model tile drawn in `r`.
 pub(super) fn tile_xf(r: Rect, tile: &cadcraft_engine::ModelTile) -> Xf {
-    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12), twist: tile.view.twist }
+    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12), twist: tile.view.twist, cam: Camera3D::TOP }
 }
 
 /// The tiles other than the current one (each with its own view, clipped to it), then the
@@ -30,7 +32,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }
-        viewport_label(&p, *r);
+        viewport_label(&p, *r, &Camera3D::TOP);
     }
     let p = ui.painter();
     for (r, tile) in tiles {
@@ -48,22 +50,48 @@ pub(super) fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
     ));
 }
 
-pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
+/// Draw the 3-axis X/Y/Z CADCross / UCS icon, rotating with `cam` (ported from MATCAD `synchronize_cadcross.m`).
+pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     let t = Tokens::get();
     let o = pos2(rect.left() + 36.0, rect.bottom() - 34.0);
-    let st = Stroke::new(1.0, t.canvas_ink);
-    p.line_segment([o, o + vec2(60.0, 0.0)], st);
-    p.line_segment([o, o + vec2(0.0, -60.0)], st);
-    p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
     let f = egui::FontId::proportional(13.0);
-    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
-    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+    if cam.is_top_plan() {
+        let st = Stroke::new(1.0, t.canvas_ink);
+        p.line_segment([o, o + vec2(60.0, 0.0)], st);
+        p.line_segment([o, o + vec2(0.0, -60.0)], st);
+        p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
+        p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
+        p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+        return;
+    }
+    // 3D CADCross: X (red), Y (green), Z (blue) projected by the 3D camera.
+    let axes = [
+        ("X", Vec3::new(1.0, 0.0, 0.0), Color32::from_rgb(0xe0, 0x45, 0x45)),
+        ("Y", Vec3::new(0.0, 1.0, 0.0), Color32::from_rgb(0x3b, 0xb5, 0x4a)),
+        ("Z", Vec3::new(0.0, 0.0, 1.0), Color32::from_rgb(0x3a, 0x82, 0xf6)),
+    ];
+    for (label, axis, col) in axes {
+        let uv = cam.project_point(axis, Vec2::ZERO);
+        let dir = vec2(uv.x as f32, -(uv.y as f32));
+        if dir.length() < 0.08 {
+            continue;
+        }
+        let end = o + dir * 56.0;
+        p.line_segment([o, end], Stroke::new(1.8, col));
+        p.text(o + dir * 68.0, egui::Align2::CENTER_CENTER, label, f.clone(), col);
+    }
+    p.rect_stroke(Rect::from_center_size(o, vec2(8.0, 8.0)), 0.0, Stroke::new(1.0, t.canvas_ink), egui::StrokeKind::Middle);
 }
 
-pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
+pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
+    let label = if cam.is_top_plan() {
+        crate::tl!("+  |  Top  |  2D Wireframe").to_string()
+    } else {
+        format!("+  |  {}  |  2D Wireframe", cam.view_name())
+    };
+    p.text(at, egui::Align2::LEFT_TOP, label, crate::theme::small(), t.canvas_ink);
 }
 
 pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {

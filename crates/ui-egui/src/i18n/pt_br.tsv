@@ -1465,3 +1465,8 @@ menu	View	Exibir
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	O desenho mudou. Feche a janela e abra-a novamente.
+	BOTTOM	INFERIOR
+	FRONT	FRONTAL
+	BACK	POSTERIOR
+	LEFT	ESQUERDA
+	RIGHT	DIREITA

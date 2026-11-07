@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod bounds;
+pub mod camera;
 mod curve;
 mod fillet;
 mod intersect;
@@ -19,6 +20,7 @@ mod spline_fit;
 mod vec;
 
 pub use bounds::Bounds2;
+pub use camera::{Camera3D, CubeQuad, build_beveled_cube, face_text_axes, intersect_ray_plane, rotate_vec_around_axis};
 pub use curve::{
     Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, polygon_centroid, shoelace,
 };

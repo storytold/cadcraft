@@ -322,7 +322,7 @@ mod tests {
     fn painted(list: &DisplayList) -> (egui::Context, Vec<ClippedShape>) {
         let ctx = egui::Context::default();
         let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(100.0, 100.0));
-        let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0 };
+        let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
         let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
             draw(&painter, &xf, list);
@@ -401,7 +401,7 @@ mod tests {
         let l = build(&d, &Space::Model, &Options::default());
         let ctx = egui::Context::default();
         let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(8192.0, 100.0));
-        let xf = Xf { rect, center: v(side as f64 / 2.0, 0.5), scale: 2.0, twist: 0.0 };
+        let xf = Xf { rect, center: v(side as f64 / 2.0, 0.5), scale: 2.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
         let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), max_texture_side: Some(1 << 14), ..Default::default() }, |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
             draw(&painter, &xf, &l);
@@ -480,7 +480,7 @@ mod tests {
         l.images[0].raster = r.clone();
         let ctx = egui::Context::default();
         let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(100.0, 100.0));
-        let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0 };
+        let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
         let frame = |list: &DisplayList| {
             let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
                 let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
@@ -530,7 +530,7 @@ mod tests {
             let l = build(&d, &Space::Model, &Options::default());
             let ctx = egui::Context::default();
             let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(100.0, 100.0));
-            let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0 };
+            let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
             let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
                 let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
                 crate::canvas::draw_list(&painter, &xf, &l, cadcraft_color::Rgb(0, 0, 0), false);

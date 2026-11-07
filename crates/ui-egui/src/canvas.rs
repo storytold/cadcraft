@@ -50,6 +50,8 @@ pub struct Xf {
     /// The view twist (radians counterclockwise, `cadcraft_engine::View::twist`): the drawing
     /// appears turned by it about `center`. 0 for paper space.
     pub twist: f64,
+    /// Active 3D camera orientation for model space (ViewCube, 3D Orbit, CADCross).
+    pub cam: cadcraft_geom::Camera3D,
 }
 
 impl Xf {
@@ -59,11 +61,19 @@ impl Xf {
     }
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
+        if !self.cam.is_top_plan() {
+            let uv = self.cam.project_xy(p, self.center);
+            return pos2(c.x + (uv.x * self.scale) as f32, c.y - (uv.y * self.scale) as f32);
+        }
         let q = self.turn(p - self.center);
         pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
     pub fn to_world(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
+        if !self.cam.is_top_plan() {
+            let uv = Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale);
+            return self.cam.unproject_to_xy(uv, self.center);
+        }
         self.center + self.screen_delta_to_world(p - c)
     }
     /// The world offset a screen offset `d` (points, y down) covers: a pan moves the view by it.
@@ -74,6 +84,17 @@ impl Xf {
     /// The world box holding everything on screen (in a twisted view, the box of the rect's
     /// four corners).
     pub fn world_bounds(&self) -> Bounds2 {
+        if !self.cam.is_top_plan() {
+            let mut b = Bounds2::from_points([
+                self.to_world(self.rect.left_bottom()),
+                self.to_world(self.rect.right_bottom()),
+                self.to_world(self.rect.right_top()),
+                self.to_world(self.rect.left_top()),
+            ]);
+            let half = f64::from(self.rect.width().hypot(self.rect.height())) / self.scale.max(1e-12);
+            b = b.union(&Bounds2::new(self.center - Vec2::new(half, half), self.center + Vec2::new(half, half)));
+            return b;
+        }
         let r = self.rect;
         Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|p| self.to_world(p)))
     }
@@ -83,9 +104,23 @@ impl Xf {
     /// `R(m(origin + p) − center)` with `R` the twist, so `L = R·m` and
     /// `e = R(m(origin) − center) − (origin − center)`.
     pub(crate) fn gpu_xform(&self, origin: Vec2, m: Mat3) -> [f32; 6] {
+        if !self.cam.is_top_plan() {
+            return [
+                self.cam.x.x as f32, self.cam.y.x as f32,
+                self.cam.x.y as f32, self.cam.y.y as f32,
+                0.0, 0.0,
+            ];
+        }
         let (a, b) = (self.turn(Vec2::new(m.a, m.b)), self.turn(Vec2::new(m.c, m.d)));
         let e = self.turn(m.apply(origin) - self.center) - (origin - self.center);
         [a.x as f32, a.y as f32, b.x as f32, b.y as f32, e.x as f32, e.y as f32]
+    }
+    pub(crate) fn gpu_offset(&self, origin: Vec2) -> [f32; 2] {
+        if !self.cam.is_top_plan() {
+            let uv = self.cam.project_xy(origin, self.center);
+            return [uv.x as f32, uv.y as f32];
+        }
+        [(origin.x - self.center.x) as f32, (origin.y - self.center.y) as f32]
     }
 }
 
@@ -153,6 +188,10 @@ pub struct CanvasState {
     /// The polar or object snap tracking path(s) the cursor is on.
     pub track: Option<snap::tracking::Track>,
     pan_last: Option<Pos2>,
+    /// Start position and initial camera for Shift+MMB 3D orbit (MATCAD `camera.data.startPt` / `cam0`).
+    orbit_start: Option<(Pos2, cadcraft_geom::Camera3D)>,
+    /// Start position, initial camera and ring flag for ViewCube drag (`move_viewcube.m`).
+    pub(crate) viewcube_drag: Option<(Pos2, cadcraft_geom::Camera3D, bool)>,
     /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
     /// scrolling then pans and pinch zooms. A notched mouse wheel clears it so the wheel zooms.
     scroll_pans: bool,
@@ -342,12 +381,33 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
         && (app.canvas.pan_last.is_some() || (middle_pressed && inside))
         && let Some(at) = p.hover_pos
     {
-        if let Some(last) = app.canvas.pan_last {
-            let delta = at - last;
+        if p.mods.shift {
             if let Ok(st) = app.session.state_mut() {
+                let (start_pos, cam0) = *app.canvas.orbit_start.get_or_insert((at, st.camera));
+                let total = at - start_pos;
+                // In egui screen coordinates, Y increases downwards; in MATCAD figure pixels, Y increases upwards.
+                let daz = f64::from(total.x) * 0.45;
+                let del = f64::from(-total.y) * 0.45;
+                st.camera = cam0.orbit(daz, del, true);
+            }
+        } else {
+            app.canvas.orbit_start = None;
+            if let Some(last) = app.canvas.pan_last
+                && let Ok(st) = app.session.state_mut()
+            {
                 let view = st.view();
+                let world_delta = if nav.xf.cam.is_top_plan() {
+                    nav.xf.screen_delta_to_world(at - last)
+                } else if nav.xf.cam.z.z.abs() > 0.15 {
+                    nav.xf.to_world(at) - nav.xf.to_world(last)
+                } else {
+                    let delta = at - last;
+                    let du = f64::from(delta.x) / nav.xf.scale;
+                    let dv = -f64::from(delta.y) / nav.xf.scale;
+                    (nav.xf.cam.x * du + nav.xf.cam.y * dv).xy()
+                };
                 st.set_view_quiet(cadcraft_engine::View {
-                    center: view.center - nav.xf.screen_delta_to_world(delta),
+                    center: view.center - world_delta,
                     height: view.height,
                     twist: view.twist,
                 });
@@ -356,6 +416,7 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
         app.canvas.pan_last = Some(at);
     } else {
         app.canvas.pan_last = None;
+        app.canvas.orbit_start = None;
     }
     if p.dbl_middle && inside {
         let _ = app.session.zoom_extents();
@@ -535,13 +596,13 @@ fn paint_pointer_overlay(
     draw_tiles(app, ui, tiles);
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
-        draw_ucs_icon(painter, rect);
+        draw_ucs_icon(painter, rect, &xf.cam);
         crate::viewcube::ucs_icon(app, ui, rect);
     }
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    viewport_label(painter, rect, &xf.cam);
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
@@ -796,7 +857,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let Ok(st) = app.session.state() else { return };
     let view = st.view();
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale, twist: view.twist };
+    let cam = app.session.state().map(|s| s.camera).unwrap_or_default();
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
     app.canvas.xf = Some(xf);
 
     // ---------- input ----------
@@ -816,14 +878,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Re-read the view after navigation.
     let view = app.session.state().map(|s| s.view()).unwrap_or(view);
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale, twist: view.twist };
+    let cam = app.session.state().map(|s| s.camera).unwrap_or_default();
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
     app.canvas.xf = Some(xf);
     // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
     let (xf_paper, active_vp) = match app.session.state() {
         Ok(st) => {
             let pv = st.paper_view();
             // Paper space is never twisted.
-            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12), twist: 0.0 };
+            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12), twist: 0.0, cam: st.camera };
             (if st.mspace.is_some() { xp } else { xf }, st.active_viewport().map(|(_, v)| v))
         }
         Err(_) => (xf, None),

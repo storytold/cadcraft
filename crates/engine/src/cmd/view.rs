@@ -98,11 +98,38 @@ pub fn specs() -> Vec<CommandSpec> {
         .transparent(),
         dview::spec(),
         CommandSpec::new("view.set", "Set View", run_view_set)
-            .params("{center: [x,y], height, twist?: degrees (default: keep the current twist; in a layout viewport it is the viewport's twist, an undoable edit; not in Paper space)}")
+            .params("{center?: [x,y], height?: f64, twist?: degrees, preset?: string (top|bottom|front|back|left|right|iso_se|...), dir?: [x,y,z], up?: [x,y,z]}")
             .noundo(),
+        CommandSpec::new("3dorbit", "3D Orbit", run_3dorbit)
+            .menu(&["View", "3D Orbit"])
+            .alias(&["orbit", "3do"])
+            .params("{daz?: f64 (deg), del?: f64 (deg), clamp?: bool, preset?: string}")
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.roll", "Roll View", run_view_roll)
+            .params("{angle?: f64 (deg, default 90), inPlane?: bool}")
+            .noundo()
+            .transparent(),
+        CommandSpec::new("plan", "Plan View", |s, _| {
+            s.state_mut()?.camera = cadcraft_geom::Camera3D::TOP;
+            ok()
+        })
+        .menu(&["View", "3D Views", "Plan View"])
+        .noundo()
+        .transparent(),
         CommandSpec::new("view.get", "Get View", |s, _| {
-            let v = s.state()?.view();
-            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "twist": v.twist.to_degrees(), "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
+            let st = s.state()?;
+            let v = st.view();
+            let cam = st.camera;
+            Ok(json!({
+                "center": [v.center.x, v.center.y],
+                "height": v.height,
+                "twist": v.twist.to_degrees(),
+                "viewportPx": [s.viewport_px.0, s.viewport_px.1],
+                "viewName": cam.view_name(),
+                "dir": [cam.z.x, cam.z.y, cam.z.z],
+                "up": [cam.y.x, cam.y.y, cam.y.z],
+            }))
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
@@ -270,7 +297,67 @@ fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+fn vec3_param(p: &Value, key: &str) -> Option<cadcraft_geom::Vec3> {
+    let a = p.get(key)?.as_array()?;
+    let x = a.first()?.as_f64()?;
+    let y = a.get(1)?.as_f64()?;
+    let z = a.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+    (x.is_finite() && y.is_finite() && z.is_finite()).then_some(cadcraft_geom::Vec3::new(x, y, z))
+}
+
+fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.state_mut()?;
+    if let Some(preset) = str_param(p, "preset") {
+        let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
+        st.camera = cam;
+        return ok();
+    }
+    let daz = f64_or(p, "daz", 0.0);
+    let del = f64_or(p, "del", 0.0);
+    let clamp = bool_or(p, "clamp", true);
+    st.camera = st.camera.orbit(daz, del, clamp);
+    ok()
+}
+
+fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
+    let angle = f64_or(p, "angle", 90.0);
+    let in_plane = bool_or(p, "inPlane", false);
+    let st = s.state_mut()?;
+    st.camera = if in_plane {
+        st.camera.roll_in_plane(angle)
+    } else {
+        st.camera.roll_world_z(angle)
+    };
+    ok()
+}
+
 fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(neighbor) = str_param(p, "neighbor") {
+        let dir = match neighbor.trim().to_ascii_lowercase().as_str() {
+            "top" | "up" | "n" => "top",
+            "bottom" | "down" | "s" => "bottom",
+            "left" | "w" => "left",
+            "right" | "e" => "right",
+            _ => return Err(bad("view.set", "unknown neighbor direction")),
+        };
+        let st = s.state_mut()?;
+        st.camera = st.camera.orthogonal_neighbor(dir);
+        return ok();
+    }
+    if let Some(preset) = str_param(p, "preset") {
+        let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?;
+        s.state_mut()?.camera = cam;
+        if p.get("center").is_none() && p.get("height").is_none() {
+            return ok();
+        }
+    }
+    if let Some(dir) = vec3_param(p, "dir") {
+        let up = vec3_param(p, "up").unwrap_or(cadcraft_geom::Vec3::Z);
+        s.state_mut()?.camera = cadcraft_geom::Camera3D::from_dir_up(dir, up);
+        if p.get("center").is_none() && p.get("height").is_none() {
+            return ok();
+        }
+    }
     let c = point_req("view.set", p, "center")?;
     let h = f64_req("view.set", p, "height")?;
     if h <= 0.0 {
