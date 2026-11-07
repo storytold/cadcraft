@@ -36,10 +36,11 @@ const MODELLED_KEYS: &[&str] = &[
     "ACAD_IMAGE_VARS",
 ];
 
-/// Extension dictionary entries not kept raw: dimension associativity (CADCraft reads and
-/// rewrites it), draw order and annotation scale contexts (written from their own models by the
-/// changes that model them; stale copies would contradict the drawing).
-const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
+/// Extension dictionary entries not kept raw: dimension associativity and the LAYER table's layer
+/// states (CADCraft reads and rewrites them), draw order and annotation scale contexts (written
+/// from their own models by the changes that model them; stale copies would contradict the
+/// drawing).
+const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_LAYERSTATES", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
 /// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
@@ -879,20 +880,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, s, _)| *s);
     let root_keys: HashSet<String> =
         objects.iter().find(|(_, s, _)| Some(*s) == root).map(|(_, _, t)| entries(t).into_iter().map(|(k, _)| up(&k)).collect()).unwrap_or_default();
-    // Extension dictionaries that go on a written record (one without its own).
-    let mut block = String::new();
-    let mut attached: HashSet<String> = HashSet::new();
-    for r in &recs {
-        if r.kind == "BLOCK" {
-            block = up(&val(body(r), 2).unwrap_or_default());
-        }
-        if let Some(x) = extra_for(f, &xd, r, body(r), &block)
-            && let Some(xd) = x.xdict
-            && head(body(r)).xdict.is_none()
-        {
-            attached.insert(xd.hex());
-        }
-    }
+    let (mut attached, merged) = kept_dictionaries(f, &xd, &recs, tags);
     for (_, t) in planned.values().flatten() {
         let x = head(t.get(1..).unwrap_or(&[])).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
         attached.extend(x.and_then(|x| x.xdict).map(Handle::hex));
@@ -929,7 +917,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             if nod.contains(&owner) {
                 break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
             }
-            if attached.contains(&cur) {
+            if attached.contains(&cur) || merged.contains_key(&cur) {
                 break true;
             }
             break unknown.contains(&owner) && written.contains(&owner);
@@ -945,6 +933,13 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         alive.insert(o.handle.hex(), format!("{next:X}"));
         next = next.saturating_add(1);
     }
+    // A merged dictionary is not written: what pointed at it points at the written one.
+    for (kept, own) in &merged {
+        if let Some(h) = alive.get_mut(kept) {
+            h.clone_from(own);
+        }
+    }
+    let merged_into: HashMap<String, &ForeignObject> = merged.iter().filter_map(|(kept, own)| Some((own.clone(), *objs.get(kept)?))).collect();
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
@@ -961,7 +956,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             }
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
-            for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
+            for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex()) && !merged.contains_key(&o.handle.hex())) {
                 let number = is_proxy(&o.kind).then(|| renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str()))))).flatten();
                 match number {
                     Some(n) => {
@@ -985,11 +980,15 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
-        if x.is_none() && Some(r.start) != root {
+        let joined = joined_into(&merged_into, b);
+        if x.is_none() && Some(r.start) != root && joined.is_none() {
             out.extend(b.iter().cloned());
             continue;
         }
         record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
+        if let Some(kept) = joined {
+            join_entries(&map, b, kept, &mut out);
+        }
     }
     add_appids(&mut out);
     let top = max_handle(&out).saturating_add(1);
@@ -999,6 +998,32 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+}
+
+/// Kept extension dictionaries of written records: those that go on a record without its own,
+/// and those whose entries join the one the writer gave a table (the LAYER table's, holding the
+/// layer states) as kept dictionary → the written one.
+fn kept_dictionaries(f: &Foreign, xd: &XdataOf, recs: &[Rec], tags: &[Tag]) -> (HashSet<String>, HashMap<String, String>) {
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let mut block = String::new();
+    let mut attached: HashSet<String> = HashSet::new();
+    let mut merged: HashMap<String, String> = HashMap::new();
+    for r in recs {
+        if r.kind == "BLOCK" {
+            block = up(&val(body(r), 2).unwrap_or_default());
+        }
+        let Some(kept) = extra_for(f, xd, r, body(r), &block).and_then(|x| x.xdict) else { continue };
+        match head(body(r)).xdict {
+            None => {
+                attached.insert(kept.hex());
+            }
+            Some(own) if r.sec == "TABLES" => {
+                merged.insert(kept.hex(), own);
+            }
+            Some(_) => {}
+        }
+    }
+    (attached, merged)
 }
 
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of
@@ -1184,6 +1209,37 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Opti
                 out.push(Tag::s(3, key.clone()));
                 out.push(Tag::s(350, nh.clone()));
             }
+        }
+    }
+}
+
+/// The kept dictionary whose entries join written dictionary `b`, if any.
+fn joined_into<'a>(merged_into: &HashMap<String, &'a ForeignObject>, b: &[Tag]) -> Option<&'a ForeignObject> {
+    if merged_into.is_empty() {
+        return None;
+    }
+    head(b).handle.and_then(|h| merged_into.get(&h).copied())
+}
+
+/// The entries of kept dictionary `kept` that written dictionary `b` doesn't have (by key, without
+/// regard to case), appended to it with their handles remapped; entries whose object is gone are
+/// left out.
+fn join_entries(map: &Map, b: &[Tag], kept: &ForeignObject, out: &mut Vec<Tag>) {
+    let has = |key: &str| b.iter().any(|t| t.code == 3 && up(&t.str()) == up(key));
+    let mut key: Option<&str> = None;
+    for t in kept.tags.iter().take_while(|t| t.code < 1000) {
+        match t.code {
+            3 => key = Some(t.value.as_str()),
+            350 | 360 => {
+                if let Some(k) = key.take()
+                    && !has(k)
+                    && let Some(h) = map.get(&t.value).filter(|h| h != "0")
+                {
+                    out.push(Tag::s(3, k));
+                    out.push(Tag::s(t.code, h));
+                }
+            }
+            _ => {}
         }
     }
 }
