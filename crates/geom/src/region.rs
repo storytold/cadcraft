@@ -110,6 +110,10 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
     };
     let mut grid: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let mut long: Vec<usize> = Vec::new();
+    // Every cell a segment is registered in is an index kept: past this many in all (each segment
+    // may take up to 4096 cells), the input is refused as it is for too much pair work.
+    const MAX_REGISTRATIONS: usize = 20_000_000;
+    let mut registered = 0usize;
     for (i, (a, b)) in segs.iter().enumerate() {
         let (x0, y0) = cell(a.min(*b));
         let (x1, y1) = cell(a.max(*b));
@@ -117,6 +121,10 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
             // Very long segment: too many cells to register in; it is tested against every segment below.
             long.push(i);
             continue;
+        }
+        registered = registered.saturating_add((x1 - x0 + 1) * (y1 - y0 + 1));
+        if registered > MAX_REGISTRATIONS {
+            return None;
         }
         for gx in x0..=x1 {
             for gy in y0..=y1 {
@@ -424,19 +432,32 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
     let mut starts: Vec<(usize, usize)> = start.into_iter().collect();
     starts.sort_unstable();
     let mut out = Vec::new();
+    // Each containment test scans a whole polygon, accepted or not: they share one allowance of
+    // polygon edges, and the search ends when it is spent.
+    let mut edges_left: usize = 100_000_000;
     for (c, u) in starts {
         if out.len() >= MAX_ISLANDS {
             break;
         }
         let Some(&pu) = core.pts.get(u) else { continue };
-        if !ob.contains(pu) || !point_in_polygon(&outer_pts, pu) {
+        if !ob.contains(pu) {
+            continue;
+        }
+        let Some(left) = edges_left.checked_sub(outer_pts.len()) else { break };
+        edges_left = left;
+        if !point_in_polygon(&outer_pts, pu) {
             continue;
         }
         let steps = edges.get(&c).copied().unwrap_or(0).saturating_add(4);
         let Some(lp) = outside(&core, u, steps) else { continue };
         let area = shoelace(&lp);
         let ib = Bounds2::from_points(lp.iter().copied());
-        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) || point_in_polygon(&lp, p) {
+        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) {
+            continue;
+        }
+        let Some(left) = edges_left.checked_sub(lp.len()) else { break };
+        edges_left = left;
+        if point_in_polygon(&lp, p) {
             continue;
         }
         let mut src = sources.remove(&c).unwrap_or_default();
@@ -456,6 +477,10 @@ fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, bu
     for (j, other) in polys.iter().enumerate() {
         if j == i {
             continue;
+        }
+        // A curve with no segment costs a visit too, so many of them can't multiply the searches.
+        if other.len() < 2 {
+            *budget = budget.checked_sub(1).ok_or(())?;
         }
         for (k, w) in other.windows(2).enumerate() {
             if *budget == 0 {
