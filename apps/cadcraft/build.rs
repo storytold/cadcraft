@@ -6,7 +6,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CADCRAFT_REQUIRE_WINRES");
     println!("cargo:rerun-if-env-changed=CADCRAFT_BUILD_SHA");
     // The target triple, for `tests/winit_startup_token.rs`'s `cargo metadata --filter-platform`.
-    println!("cargo:rustc-env=CADCRAFT_TARGET={}", std::env::var("TARGET").unwrap());
+    println!("cargo:rustc-env=CADCRAFT_TARGET={}", std::env::var("TARGET").unwrap_or_default());
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

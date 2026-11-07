@@ -32,6 +32,11 @@ fn winit_hands_the_launchers_activation_token_back() {
     // environment's token. The policy is tested beside it (`startup_token::tests`, run them in the
     // winit fork); this guards the pin: moving winit to a revision without W30 would silently
     // bring the bug back. Drop it once winit or eframe hands the token back.
+    //
+    // It checks winit's source text, so it can also trip when the fork is only reformatted or
+    // refactored. If it does: look in the pinned revision's `PATCHES.md` and
+    // `src/platform_impl/linux/`. If W30 is still there, update the strings below to match the
+    // new source. If it's gone, re-apply W30 in storytold/winit before moving the pin.
     let linux = winit_source().join("src/platform_impl/linux");
     let module = read_source(&linux.join("mod.rs"));
     assert!(module.contains("mod startup_token;"), "the pinned winit lacks W30");
