@@ -753,8 +753,8 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
-    } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
-        report_sat_text_dropped(s, &mut r);
+    } else if is_dxf_file(format!("drawing.{fmt}")) {
+        report_sat_text_dropped(s, &mut r, version);
     }
     Ok(r)
 }
@@ -789,10 +789,12 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
-            // A DWG before 2013 writes a solid's SAT text as it is; from 2013 the geometry has to be
-            // in the data store, and SAT text alone is lost (#2334).
+            // A DWG before 2013 keeps a solid's SAT text of ACIS 7.0 and later; from 2013 the geometry
+            // has to be in the data store, and SAT text alone is lost. Older SAT (ACIS 4.0, as ZWCAD
+            // writes to DXF 2000) reaches the DWG without usable geometry: ZWCAD 2025 opens such a
+            // solid as a proxy or an empty body (#2334).
             if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t))
-                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::has_sat_text(&u.tags)))
+                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::sat_version(&u.tags).is_some_and(|v| v >= 700)))
             {
                 continue;
             }
@@ -834,9 +836,9 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
     let version = drawing_version(s, path);
-    if is_dxf_file(path) && version >= Version::R2013 {
+    if is_dxf_file(path) {
         // The drawing a file holds: the host while the Block Editor is open.
-        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+        return s.state().map(|st| cadcraft_doc::foreign::acis_dropped(st.drawing(), version >= Version::R2013)).unwrap_or_default();
     }
     if !drops_unknown(path) {
         return Default::default();
@@ -847,9 +849,8 @@ pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<Strin
 /// Report what the file `path`, just written at the drawing's own version, left out.
 pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
     if is_dxf_file(path) {
-        if drawing_version(s, path) >= Version::R2013 {
-            report_sat_text_dropped(s, r);
-        }
+        let version = drawing_version(s, path);
+        report_sat_text_dropped(s, r, version);
     } else {
         let lost = loss_on_save(s, path);
         report_not_saved(s, r, &lost);
@@ -872,19 +873,23 @@ fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path) == Some(Format::Dxf)
 }
 
-/// Say on the command line which solid modeler entities a DXF of 2013 or later left out because
-/// they hold SAT-text ACIS data, which such files keep in a data store instead (#2334).
-fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
+/// Say on the command line which solid modeler entities a DXF of `version` left out: from 2013
+/// those with SAT-text ACIS data, which such files keep in a data store instead; before 2013 those
+/// whose geometry is only in the data store, which such files don't have (#2334).
+fn report_sat_text_dropped(s: &mut Session, r: &mut Value, version: Version) {
+    let modern = version >= Version::R2013;
     // The drawing a file holds: the host while the Block Editor is open.
-    let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    let lost = s.state().map(|st| cadcraft_doc::foreign::acis_dropped(st.drawing(), modern)).unwrap_or_default();
     if lost.is_empty() {
         return;
     }
     let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    s.echo(format!(
-        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
-        list.join(", ")
-    ));
+    let why = if modern {
+        "2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them"
+    } else {
+        "2010 and earlier have no data store, where these entities keep their ACIS geometry; save as 2013 or later to keep them"
+    };
+    s.echo(format!("Not saved in the DXF file ({why}): {}", list.join(", ")));
     if let Some(o) = r.as_object_mut() {
         o.insert("notSaved".into(), json!(lost));
     }
@@ -933,8 +938,8 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
-    } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
-        report_sat_text_dropped(s, &mut r);
+    } else if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        report_sat_text_dropped(s, &mut r, version);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);

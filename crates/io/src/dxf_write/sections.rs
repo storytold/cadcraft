@@ -1143,8 +1143,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         *t = Tag::s(5, seed);
     }
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
-    // DWG writer, which keeps SAT-text solids (#2334).
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
+    // DWG writer, which keeps SAT-text solids (#2334). A file of 2010 or earlier, DXF or DWG, has
+    // no data store, so a solid whose geometry is only there is left out of it.
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, target >= Version::R2013);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
