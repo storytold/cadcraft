@@ -553,6 +553,25 @@ fn space_width_in(f: &Fmt) -> f64 {
     crate::space_width(&f.font, f.height, f.wf) * f.tracking
 }
 
+/// What tracking adds after the last character of `seg` when something follows it on the line (a
+/// space, a tab or the next segment of the word): the step from that character to the next one is
+/// its advance times the factor, as it is inside the text. [`seg_width`] ends at the character's
+/// own width, so a line still ends where its last character does.
+fn seg_trail(seg: &Seg, f: &Fmt) -> f64 {
+    match seg {
+        Seg::Text(t) if tracked(f, t) => track_clusters(t).last().map_or(0.0, |c| text_width(&f.font, c, f.height, f.wf) * (f.tracking - 1.0)),
+        _ => 0.0,
+    }
+}
+
+/// The width of a word's segments set one after the other, each in its format: the tracking after
+/// every segment but the last counts.
+fn run_width<'f>(segments: &[(Seg, usize)], fmt: impl Fn(usize) -> &'f Fmt) -> f64 {
+    let widths: f64 = segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum();
+    let trails: f64 = segments.iter().rev().skip(1).map(|(segment, format)| seg_trail(segment, fmt(*format))).sum();
+    widths + trails
+}
+
 fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     match seg {
         Seg::Text(t) => text_width_in(f, t),
@@ -654,6 +673,8 @@ struct Item {
 struct Line {
     items: Vec<Item>,
     width: f64,
+    /// Tracking owed after the last segment ([`seg_trail`]), added once something follows it.
+    trail: f64,
     max_h: f64,
     text: String,
     /// Running character count of `text`, kept incrementally so appending a segment need not
@@ -708,6 +729,14 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
         line.para = paragraph;
         lines.push(std::mem::take(line));
     };
+    // Something follows the last segment on the line: its tracking now counts.
+    let settle = |line: &mut Line| {
+        if let Some(last) = line.items.last_mut() {
+            last.w += line.trail;
+            line.width += line.trail;
+        }
+        line.trail = 0.0;
+    };
 
     for atom in atoms {
         match atom {
@@ -724,8 +753,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 last_fmt = *format;
             }
             Atom::Word(word) => {
-                let word_width =
-                    |segments: &[(Seg, usize)]| -> f64 { segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum() };
+                let word_width = |segments: &[(Seg, usize)]| -> f64 { run_width(segments, fmt) };
                 // Wider than the column: Thai breaks between its words (see `split_thai`).
                 let split;
                 let pieces = if width > 0.0 && word_width(word) > width + 1e-9 {
@@ -737,9 +765,10 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 for segments in pieces {
                     let word_width = word_width(segments);
                     let space_width = pending_space.map(|format| space_width_in(fmt(format))).unwrap_or(0.0);
-                    if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                    if width > 0.0 && !line.items.is_empty() && line.width + line.trail + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                     } else if !line.items.is_empty() || pending_space.is_some() {
+                        settle(&mut line);
                         if let Some(format) = pending_space {
                             let at = line.chars;
                             line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
@@ -750,7 +779,9 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                     }
                     pending_space = None;
                     for (segment, format) in segments {
+                        settle(&mut line);
                         let segment_width = seg_width(segment, fmt(*format));
+                        line.trail = seg_trail(segment, fmt(*format));
                         line.max_h = line.max_h.max(fmt(*format).height);
                         let at = line.chars;
                         let plain = seg_plain(segment);
@@ -900,6 +931,29 @@ mod tests {
         let column = (one_line.max.x - one_line.min.x) * 1.1;
         assert_eq!(lay("HHH HHH HHH", column).lines.len(), 1);
         assert!(lay("\\T2;HHH HHH HHH", column).lines.len() > 1, "twice as wide, it no longer fits");
+    }
+
+    /// Tracking spreads every step from one character to the next, also the steps out of a text
+    /// segment: from the last letter of a word to the space after it, and across a format change
+    /// inside a word. Only the line's last character keeps its own width, so a line is
+    /// `(factor − 1) · (width − last character's width)` wider. In both layouts (the paragraph
+    /// one runs for `\p` codes).
+    #[test]
+    fn tracking_spreads_the_steps_between_words_and_across_format_changes() {
+        let h = crate::text_width(&TextFont::Stroke, "H", 1.0, 1.0);
+        let width = |s: &str| {
+            let b = lay(s, 0.0).bounds;
+            b.max.x - b.min.x
+        };
+        for para in ["", "\\pxi0;"] {
+            for text in ["HHH HHH", "HH{\\C1;H}H", "H{\\C1;H} H"] {
+                for t in [2.0, 0.8] {
+                    let normal = width(&format!("{para}{text}"));
+                    let tracked = width(&format!("{para}\\T{t};{text}"));
+                    assert!((tracked - normal - (t - 1.0) * (normal - h)).abs() < 1e-6, "{para}{text} \\T{t}: {tracked} vs {normal}");
+                }
+            }
+        }
     }
 
     /// The format allows tracking from 0.75 to 4 times: a value outside is held to the nearest end, and
