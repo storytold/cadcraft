@@ -67,10 +67,23 @@ fn append_word(path: &str, word: &str) -> Result<()> {
         if let Some(dir) = std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
             let _ = std::fs::create_dir_all(dir);
         }
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| other(format!("{path}: {e}")))?;
+        use std::io::{Read, Seek, SeekFrom};
+        let io = |e: std::io::Error| other(format!("{path}: {e}"));
         // A word is one line: never let one carry a line break.
         let word: String = word.chars().filter(|c| !c.is_control()).collect();
-        writeln!(f, "{word}").map_err(|e| other(format!("{path}: {e}")))
+        // A hand-edited file may lack its last newline: start the word on its own line. A file
+        // that can't be read for this check is appended to as before.
+        let lead = match std::fs::File::open(path) {
+            Ok(mut r) => {
+                let len = r.metadata().map(|m| m.len()).unwrap_or(0);
+                let mut last = [0u8];
+                let ok = len > 0 && r.seek(SeekFrom::Start(len - 1)).is_ok() && r.read_exact(&mut last).is_ok();
+                if ok && last[0] != b'\n' { "\n" } else { "" }
+            }
+            Err(_) => "",
+        };
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(io)?;
+        writeln!(f, "{lead}{word}").map_err(io)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -128,39 +141,70 @@ fn shown_texts(k: &EntityKind) -> Vec<String> {
     }
 }
 
-/// Replace a whole word in an object's texts (field codes untouched); returns the count.
+/// Byte ranges of the MTEXT formatting commands whose payload is not shown text: the codes with
+/// an argument ended by `;` (`\f`, `\H`, `\C`, ...) and `\U+XXXX`. The one-letter codes carry no
+/// payload and `\S` stacks hold shown text, so those stay open to replacement.
+fn mtext_payloads(t: &str) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut it = t.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if c != '\\' {
+            continue;
+        }
+        let Some((_, code)) = it.next() else { break };
+        let rest = t.get(i + 2..).unwrap_or("");
+        let end = match code {
+            'f' | 'F' | 'H' | 'W' | 'Q' | 'T' | 'A' | 'C' | 'c' | 'p' => rest.find(';').map(|e| i + 2 + e + 1),
+            'U' if rest.starts_with('+') => Some((i + 2 + rest.char_indices().nth(5).map_or(rest.len(), |(k, _)| k)).min(t.len())),
+            _ => None,
+        };
+        if let Some(end) = end {
+            out.push(i..end);
+            while it.peek().is_some_and(|(k, _)| *k < end) {
+                it.next();
+            }
+        }
+    }
+    out
+}
+
+/// Replace a whole word in an object's texts; returns the count. Field codes and (for MTEXT)
+/// formatting payloads such as a `\f` font name stay untouched.
 fn replace_word(k: &mut EntityKind, word: &str, rep: &str) -> usize {
     let mut n = 0;
-    let mut apply = |t: &mut String| {
-        let (nt, c) = super::replace_in(t, word, rep, true, true);
-        if c > 0 && !fields::has_fields(t) {
-            *t = nt;
-            n += c;
-        } else if c > 0 {
-            // Only outside fields.
-            let spans = fields::find(t);
-            let mut out = String::new();
-            let mut last = 0;
-            for sp in &spans {
-                let (seg, c) = super::replace_in(t.get(last..sp.range.start).unwrap_or(""), word, rep, true, true);
-                n += c;
-                out.push_str(&seg);
-                out.push_str(t.get(sp.range.clone()).unwrap_or(""));
-                last = sp.range.end;
+    let mut apply = |t: &mut String, mtext: bool| {
+        let before = n;
+        let mut skip = fields::find(t).into_iter().map(|sp| sp.range).collect::<Vec<_>>();
+        if mtext {
+            skip.extend(mtext_payloads(t));
+        }
+        skip.sort_by_key(|r| r.start);
+        let mut out = String::new();
+        let mut last = 0;
+        for r in &skip {
+            if r.start < last {
+                continue;
             }
-            let (seg, c) = super::replace_in(t.get(last..).unwrap_or(""), word, rep, true, true);
+            let (seg, c) = super::replace_in(t.get(last..r.start).unwrap_or(""), word, rep, true, true);
             n += c;
             out.push_str(&seg);
+            out.push_str(t.get(r.clone()).unwrap_or(""));
+            last = r.end;
+        }
+        let (seg, c) = super::replace_in(t.get(last..).unwrap_or(""), word, rep, true, true);
+        n += c;
+        out.push_str(&seg);
+        if n > before {
             *t = out;
         }
     };
     match k {
-        EntityKind::Text(t) => apply(&mut t.value),
-        EntityKind::MText(t) => apply(&mut t.contents),
-        EntityKind::Insert(i) => i.attribs.iter_mut().for_each(|a| apply(&mut a.text.value)),
+        EntityKind::Text(t) => apply(&mut t.value, false),
+        EntityKind::MText(t) => apply(&mut t.contents, true),
+        EntityKind::Insert(i) => i.attribs.iter_mut().for_each(|a| apply(&mut a.text.value, false)),
         EntityKind::MLeader(m) => {
             if let Some(t) = &mut m.text {
-                apply(&mut t.contents)
+                apply(&mut t.contents, true)
             }
         }
         _ => {}
@@ -302,9 +346,12 @@ fn run_spell(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let d = s.doc_mut()?;
-    for (h, k) in edits {
-        d.modify_entity(h, |e| e.kind = k)?;
+    // A check without edits must leave the drawing alone: `doc_mut` would copy it and count as a change.
+    if !edits.is_empty() {
+        let d = s.doc_mut()?;
+        for (h, k) in edits {
+            d.modify_entity(h, |e| e.kind = k)?;
+        }
     }
     let message = if unknown.is_empty() { "Spelling check complete.".to_string() } else { format!("{} unknown word(s).", unknown.len()) };
     Ok(json!({ "checked": checked, "unknown": unknown, "replaced": replaced, "message": message }))
@@ -429,6 +476,20 @@ impl Interactive for SpellM {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn append_word_starts_on_a_new_line() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-spell-nonl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dic = dir.join("user.dic");
+        let path = dic.to_str().unwrap();
+        std::fs::write(&dic, "foo").unwrap();
+        append_word(path, "bar").unwrap();
+        append_word(path, "baz").unwrap();
+        assert_eq!(std::fs::read_to_string(&dic).unwrap(), "foo\nbar\nbaz\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn words_and_suggestions() {

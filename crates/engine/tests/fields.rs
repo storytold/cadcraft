@@ -117,6 +117,24 @@ fn spell_reports_and_replaces_unknown_words() {
 }
 
 #[test]
+fn spell_replaces_shown_text_only_not_formatting_payloads() {
+    let mut s = Session::new();
+    let t = s.execute("mtext", &json!({"at": [0, 0], "text": "\\fArial|b0;Arial teh"})).unwrap();
+    let h = t["handle"].as_str().unwrap().to_string();
+    s.execute("spell", &json!({"words": ["teh"], "replace": {"Arial": "Font", "teh": "the"}})).unwrap();
+    assert_eq!(contents(&s, &h), "\\fArial|b0;Font the");
+}
+
+#[test]
+fn spell_check_without_replace_does_not_dirty_the_drawing() {
+    let mut s = Session::new();
+    s.execute("mtext", &json!({"at": [0, 0], "text": "teh"})).unwrap();
+    let before = s.state().unwrap().revision;
+    s.execute("spell", &json!({"words": ["the"]})).unwrap();
+    assert_eq!(s.state().unwrap().revision, before);
+}
+
+#[test]
 fn spell_at_the_command_line_with_a_user_dictionary() {
     let dir = std::env::temp_dir().join(format!("cadcraft-spell-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

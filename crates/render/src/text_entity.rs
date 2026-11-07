@@ -126,7 +126,13 @@ pub(crate) fn field_text_background(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc
     // Shaped unturned, then turned about the justification point with the text.
     let flat = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
     let (sh, _) = place_text_entity(ctx.d, &flat, shown);
-    field_background(b, ctx, &sh.outlines(), t.justify_point(), t.rotation, t.height);
+    // Aligned and fit text run from the insertion point to the second point: their angle comes
+    // from the two points, not from `rotation`.
+    let rot = match (t.halign, t.align_pt) {
+        (cadcraft_doc::HAlign::Aligned | cadcraft_doc::HAlign::Fit, Some(p2)) => t.insert.xy().angle_to(p2.xy()),
+        _ => t.rotation,
+    };
+    field_background(b, ctx, &sh.outlines(), t.justify_point(), rot, t.height);
 }
 
 /// A TEXT's justification as the fonts' alignment (used where text is placed outside a build).
