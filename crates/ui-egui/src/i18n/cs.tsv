@@ -140,6 +140,8 @@
 	Clip Viewport	Oříznout výřez
 	Clip Xref	Oříznout externí referenci
 	Xref Clip Frame	Rámeček oříznutí externí reference
+	Xref	Externí reference
+	Multiple Insert	Vícenásobné vložení
 	Clipboard	Schránka
 	Close	Zavřít
 	Close All	Zavřít vše
@@ -1292,6 +1294,7 @@
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Výkresy, které ještě nemají soubor, se ukládají ve výchozí verzi formátu. Hodnota 0 minut vypíná automatické ukládání.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Rozlišovat délku stisku pravého tlačítka: krátké kliknutí odpovídá klávese Enter, podržení otevře místní nabídku
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Při vypnuté volbě kliknutí pravým tlačítkem během příkazu vždy otevře místní nabídku.
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Při vypnuté volbě se kliknutí pravým tlačítkem během příkazu řídí nastavením Režim příkazu v Přizpůsobení pravého tlačítka.
 menu	View	Zobrazení
 menu	Draw	Kreslení
 menu	Dimension	Kótování
@@ -1340,6 +1343,10 @@ menu	Modify	Modifikace
 	Edit…	Upravit…
 	Import…	Importovat…
 	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Import: dialog pro výběr souboru tu není k dispozici; spusťte ALIASEDIT s obsahem souboru v parametru text.
+	Run ALIASEDIT with the file's contents using its text parameter.	Spusťte ALIASEDIT s obsahem souboru v parametru text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Import souboru nahradí vaše aliasy (počet: {n}) i všechny dosud nepoužité změny.
+	Import and replace	Importovat a nahradit
+	Keep my aliases	Ponechat moje aliasy
 	{n} more warnings; see the command line.	Další varování: {n}; podrobnosti najdete na příkazovém řádku.
 	Alias files (PGP)	Soubory aliasů (PGP)
 	Save alias	Uložit alias
