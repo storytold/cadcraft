@@ -59,6 +59,7 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// Compute the ViewCube layout and pre-built roll arrow geometry for `canvas`.
     pub fn new(canvas: Rect) -> Self {
         let center = pos2(canvas.right() - 116.0, canvas.top() + 106.0);
         let ring = RING_RADIUS;
@@ -144,6 +145,7 @@ impl Layout {
     }
 }
 
+/// Interactive part of the ViewCube widget under the cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Face,
@@ -159,6 +161,7 @@ pub enum Part {
 }
 
 impl Part {
+    /// Hover tooltip text for this ViewCube part.
     fn tip(self) -> &'static str {
         match self {
             Part::Face => "Top: plan view of the drawing (zoom extents)",
@@ -175,6 +178,7 @@ impl Part {
     }
 }
 
+/// A projected 3D beveled-cube quad sorted back-to-front for painting and hit-testing.
 struct ProjectedQuad {
     pts: [Pos2; 4],
     poly_world: [Vec2; 4],
@@ -186,6 +190,8 @@ struct ProjectedQuad {
     shade: f32,
 }
 
+/// Project visible beveled-cube quads onto screen coordinates around `center` for `cam`,
+/// culling backfaces and shallow edge-on slivers (`facing <= 0.075`) and sorting back-to-front.
 fn project_cube_quads(center: Pos2, cam: &Camera3D) -> Vec<ProjectedQuad> {
     let quads = build_beveled_cube(CUBE_HALF, CUBE_BEVEL);
     let mut out = Vec::with_capacity(quads.len());
@@ -219,6 +225,7 @@ fn project_cube_quads(center: Pos2, cam: &Camera3D) -> Vec<ProjectedQuad> {
     out
 }
 
+/// Return the topmost visible beveled-cube zone (`"top"`, `"front_right"`, `"top_front_right"`, etc.) containing `p`.
 fn hit_beveled_cube(center: Pos2, cam: &Camera3D, p: Pos2) -> Option<&'static str> {
     let local = Vec2::new(f64::from(p.x - center.x), f64::from(p.y - center.y));
     let quads = project_cube_quads(center, cam);
@@ -636,6 +643,7 @@ fn build_curved_arrow_data(
     (poly, outer_arc, inner_arc, [base_outer, tip, base_inner])
 }
 
+/// Mirror a curved roll arrow horizontally across `center.x` (CW -> CCW).
 fn mirror_arrow_data(
     center: Pos2,
     poly: &[Pos2],
@@ -651,6 +659,7 @@ fn mirror_arrow_data(
     (m_poly, m_outer, m_inner, m_head)
 }
 
+/// Build a non-convex triangle strip mesh for a curved roll arrow shaft and head.
 fn curved_arrow_mesh(outer: &[Pos2], inner: &[Pos2], head: &[Pos2; 3], color: Color32) -> egui::Mesh {
     let mut mesh = egui::Mesh::default();
     let n = outer.len().min(inner.len());
@@ -675,6 +684,7 @@ fn curved_arrow_mesh(outer: &[Pos2], inner: &[Pos2], head: &[Pos2; 3], color: Co
     mesh
 }
 
+/// Paint a curved 90° roll arrow fill and outline.
 fn paint_curved_arrow(
     p: &egui::Painter,
     poly: &[Pos2],
@@ -688,6 +698,7 @@ fn paint_curved_arrow(
     p.add(Shape::closed_line(poly.to_vec(), stroke));
 }
 
+/// Tight bounding rectangle enclosing `pts`.
 fn poly_bounding_rect(pts: &[Pos2]) -> Rect {
     let mut r = Rect::NOTHING;
     for pt in pts {
@@ -696,6 +707,7 @@ fn poly_bounding_rect(pts: &[Pos2]) -> Rect {
     r
 }
 
+/// Ray-casting point-in-polygon test in screen coordinates.
 fn point_in_poly(pts: &[Pos2], p: Pos2) -> bool {
     let mut inside = false;
     let mut j = pts.len().saturating_sub(1);
@@ -711,6 +723,7 @@ fn point_in_poly(pts: &[Pos2], p: Pos2) -> bool {
     inside
 }
 
+/// Point-in-triangle test in screen coordinates.
 fn point_in_tri(p: Pos2, t: &[Pos2; 3]) -> bool {
     let (p1, p2, p3) = (t[0], t[1], t[2]);
     let sign = |a: Pos2, b: Pos2, c: Pos2| (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);

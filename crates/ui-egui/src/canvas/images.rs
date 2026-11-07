@@ -261,11 +261,13 @@ struct Cut<'a> {
     outline: Option<&'a [Vec2]>,
 }
 
+/// Clip `img`'s outlines against `canvas`, using a fast screen-rectangle intersection in
+/// unrotated Top plan view and falling back to polygon triangulation in twisted or 3D views.
 fn cut<'a>(img: &'a DImage, xf: &Xf, canvas: Rect) -> Cut<'a> {
     let mut cut = Cut { rect: canvas, outline: None };
     for outline in &img.clips {
-        // In a twisted view a rectangle along the drawing's axes is turned on screen.
-        match axis_rect(outline).filter(|_| xf.twist == 0.0) {
+        // In a twisted or 3D view a rectangle along the drawing's axes is turned on screen.
+        match axis_rect(outline).filter(|_| xf.twist == 0.0 && xf.cam.is_top_plan()) {
             Some(b) => cut.rect = cut.rect.intersect(Rect::from_two_pos(xf.to_screen(b.min), xf.to_screen(b.max))),
             None if cut.outline.is_none() => cut.outline = Some(outline),
             None => {}

@@ -62,11 +62,13 @@ impl Xf {
         }
         if self.twist == 0.0 { v } else { v.rotate(self.twist) }
     }
+    /// Map a 2D world point `p` (on `Z = 0`) to screen coordinates.
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
         let q = self.turn(p - self.center);
         pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
+    /// Map a screen position `p` back to the world XY plane (`Z = 0`).
     pub fn to_world(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
         if !self.cam.is_top_plan() {
@@ -89,14 +91,24 @@ impl Xf {
         let q = Vec2::new(f64::from(d.x) / self.scale, -f64::from(d.y) / self.scale);
         if self.twist == 0.0 { q } else { q.rotate(-self.twist) }
     }
-    /// The world box holding everything on screen (in a twisted view, the box of the rect's
-    /// four corners; in a 3D view, the rotation-invariant camera volume box around `center`).
+    /// The world box holding everything on screen (in a twisted or 3D view, the box of the
+    /// rect's four unprojected corners, capped around `center` for near-edge-on 3D views).
     pub fn world_bounds(&self) -> Bounds2 {
-        if !self.cam.is_top_plan() {
-            let half = f64::from(self.rect.width().hypot(self.rect.height())) * 0.75 / self.scale.max(1e-12);
-            return Bounds2::new(self.center - Vec2::new(half, half), self.center + Vec2::new(half, half));
-        }
         let r = self.rect;
+        if !self.cam.is_top_plan() {
+            let diag = f64::from(r.width().hypot(r.height())) / self.scale.max(1e-12);
+            // Cap for near-edge-on views, where the visible ground strip is unbounded, kept tight
+            // enough that `grid_index_ranges` stays under its 2000-line limit.
+            let cap = diag * 3.0;
+            let capped = Bounds2::new(self.center - Vec2::new(cap, cap), self.center + Vec2::new(cap, cap));
+            if self.cam.z.z.abs() <= 0.15 {
+                return capped;
+            }
+            let b = Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|p| self.to_world(p)));
+            let lo = Vec2::new(b.min.x.clamp(capped.min.x, capped.max.x), b.min.y.clamp(capped.min.y, capped.max.y));
+            let hi = Vec2::new(b.max.x.clamp(capped.min.x, capped.max.x), b.max.y.clamp(capped.min.y, capped.max.y));
+            return Bounds2::new(lo.min(self.center), hi.max(self.center));
+        }
         Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|p| self.to_world(p)))
     }
     /// The GPU transform ([`crate::gpu::CanvasCallback::xform`]) that draws vertex data built at

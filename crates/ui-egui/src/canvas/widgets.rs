@@ -83,6 +83,7 @@ pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     p.rect_stroke(Rect::from_center_size(o, vec2(8.0, 8.0)), 0.0, Stroke::new(1.0, t.canvas_ink), egui::StrokeKind::Middle);
 }
 
+/// Paint the top-left viewport label showing the active 3D view name (`Top`, `SW Isometric`, `3D`, etc.).
 pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
@@ -94,6 +95,7 @@ pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     p.text(at, egui::Align2::LEFT_TOP, label, crate::theme::small(), t.canvas_ink);
 }
 
+/// Paint the interactive 3D ViewCube widget and the WCS coordinate-system pill beneath it.
 pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     let l = crate::viewcube::Layout::new(rect);
     let (c, ring) = (l.center, l.ring);

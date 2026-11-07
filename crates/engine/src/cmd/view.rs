@@ -297,6 +297,7 @@ fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Parse an optional 2D/3D vector `[x, y, z?]` from JSON parameter `key`.
 fn vec3_param(p: &Value, key: &str) -> Option<cadcraft_geom::Vec3> {
     let a = p.get(key)?.as_array()?;
     let x = a.first()?.as_f64()?;
@@ -305,6 +306,7 @@ fn vec3_param(p: &Value, key: &str) -> Option<cadcraft_geom::Vec3> {
     (x.is_finite() && y.is_finite() && z.is_finite()).then_some(cadcraft_geom::Vec3::new(x, y, z))
 }
 
+/// Execute `3dorbit` (`{daz?, del?, clamp?, preset?}`): orbit the 3D camera or jump to a preset.
 fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.state_mut()?;
     if let Some(preset) = str_param(p, "preset") {
@@ -319,6 +321,7 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Execute `view.roll` (`{angle?, inPlane?}`): roll the 3D camera around world Z or in-plane.
 fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
     let angle = f64_or(p, "angle", 90.0);
     let in_plane = bool_or(p, "inPlane", false);
@@ -331,6 +334,7 @@ fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Execute `view.set`: set a 3D camera preset, orthogonal neighbor, custom direction/up, or 2D center/height/twist.
 fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(neighbor) = str_param(p, "neighbor") {
         let dir = match neighbor.trim().to_ascii_lowercase().as_str() {
