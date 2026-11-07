@@ -986,6 +986,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids = &*memo.ids();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut attrib_set: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1255,9 +1256,11 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                attrib_set = attributes_group(ui, e.handle, &i.attribs);
             }
             _ => {}
         }
+        extended_data_groups(ui, &e.common.xdata);
     } else if let Some(dims) = sel
         .iter()
         .map(|h| match d.entity(*h).map(|e| &e.kind) {
@@ -1497,6 +1500,81 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
     }
+    if let Some(p) = attrib_set {
+        let _ = app.run("attedit", p);
+    }
+}
+
+/// A Properties group title (the same band as General, Geometry, Custom).
+fn group_header(ui: &mut egui::Ui, title: &str) {
+    let t = Tokens::get();
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
+    ui.painter().text(pos2(r.left() + 12.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(title), crate::theme::small(), t.text_dim);
+}
+
+/// A block reference's attributes, invisible ones too, as AutoCAD's Properties palette lists
+/// them. A value typed here comes back as ATTEDIT parameters (one undo step); constant
+/// attributes are read-only.
+fn attributes_group(ui: &mut egui::Ui, h: cadcraft_engine::doc::Handle, attribs: &[cadcraft_engine::doc::Attrib]) -> Option<Value> {
+    if attribs.is_empty() {
+        return None;
+    }
+    group_header(ui, "Attributes");
+    let mut out = None;
+    for a in attribs {
+        prop_row(ui, &a.tag, |ui| {
+            if a.constant {
+                value_box(ui, &a.text.value, false, false).on_hover_text(crate::tl!("Read-only"));
+                return;
+            }
+            let id = ui.scope_id().with(("attrib", h, &a.tag));
+            if let Some(v) = edit_field(ui, id, a.text.value.clone()).filter(|v| *v != a.text.value) {
+                out = Some(json!({ "handle": h.hex(), "values": { a.tag.clone(): v } }));
+            }
+        });
+    }
+    out
+}
+
+/// Other applications' extended data (xdata), read-only: a group per application, each
+/// `NAME=value` string as a row of its own.
+fn extended_data_groups(ui: &mut egui::Ui, xdata: &[cadcraft_engine::doc::RawTag]) {
+    for (app_name, rows) in xdata_rows(xdata) {
+        group_header(ui, "Extended data");
+        prop_row(ui, "Application", |ui| {
+            value_box(ui, &app_name, false, false).on_hover_text(crate::tl!("Read-only"));
+        });
+        for (k, v) in &rows {
+            prop_row(ui, k, |ui| {
+                value_box(ui, v, false, false).on_hover_text(crate::tl!("Read-only"));
+            });
+        }
+    }
+}
+
+/// An entity's xdata as `(application, [(label, value)])`: a string `NAME=value` (group 1000)
+/// is labelled by its name; other groups by their DXF group code. Control strings (`{`, `}`) are
+/// left out.
+fn xdata_rows(xdata: &[cadcraft_engine::doc::RawTag]) -> Vec<(String, Vec<(String, String)>)> {
+    let mut out: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for t in xdata {
+        if t.code == 1001 {
+            out.push((t.value.trim().to_string(), Vec::new()));
+            continue;
+        }
+        let Some((_, rows)) = out.last_mut() else { continue };
+        if t.code == 1002 {
+            continue;
+        }
+        let row = match t.value.split_once('=') {
+            Some((k, v)) if t.code == 1000 && !k.trim().is_empty() => (k.trim().to_string(), v.trim().to_string()),
+            _ => (t.code.to_string(), t.value.clone()),
+        };
+        rows.push(row);
+    }
+    out.retain(|(_, rows)| !rows.is_empty());
+    out
 }
 
 #[cfg(test)]
@@ -1521,6 +1599,106 @@ mod tests {
             Shape::Vec(shapes) => shapes.iter().any(|shape| contains_swatch(shape, color)),
             _ => false,
         }
+    }
+
+    fn texts(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+
+    /// The Properties texts for the selection, after two frames.
+    fn properties_texts(app: &mut CadApp) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 2400.0))), ..Default::default() };
+        let mut out = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| properties_section(app, ui));
+            out.clear();
+            output.shapes.iter().for_each(|s| texts(&s.shape, &mut out));
+            output.textures_delta.clear();
+        }
+        out
+    }
+
+    #[test]
+    fn block_reference_lists_its_attributes_and_line_its_extended_data() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({"tag": "TAG", "default": "P-101", "at": [0, 1]})).unwrap();
+        app.run("attdef", json!({"tag": "SERVICE", "default": "crude", "at": [0, 2], "invisible": true})).unwrap();
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let _ = l;
+        let hs: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        app.run("block", json!({"name": "B", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+        let r = app.run("insert", json!({"name": "B", "at": [0, 0], "attribs": {"TAG": "P-101A"}})).unwrap();
+        app.run("select", json!({ "handles": [r["handle"].clone()] })).unwrap();
+        let shown = properties_texts(&mut app);
+        for want in ["Attributes", "TAG", "P-101A", "SERVICE", "crude"] {
+            assert!(shown.iter().any(|t| t == want), "{want} not in {shown:?}");
+        }
+        // A line with another application's xdata: NAME=value strings as rows of their own.
+        let pipe = app.run("line", json!({ "points": [[0, 5], [10, 5]] })).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(pipe["handles"][0].as_str().unwrap()).unwrap();
+        let tag = |code: i32, value: &str| cadcraft_engine::doc::RawTag { code, value: value.into() };
+        app.session
+            .doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                e.common.xdata = vec![tag(1001, "SMARTPID"), tag(1000, "Line number=6\"-P-1001"), tag(1000, "From=T-101"), tag(1070, "3")]
+            })
+            .unwrap();
+        app.run("select", json!({ "handles": [pipe["handles"][0].clone()] })).unwrap();
+        let shown = properties_texts(&mut app);
+        for want in ["Extended data", "SMARTPID", "Line number", "6\"-P-1001", "From", "T-101", "1070", "3"] {
+            assert!(shown.iter().any(|t| t == want), "{want} not in {shown:?}");
+        }
+        assert!(!shown.iter().any(|t| t == "Attributes"));
+    }
+
+    #[test]
+    fn xdata_rows_split_name_value_strings_by_application() {
+        let tag = |code: i32, value: &str| cadcraft_engine::doc::RawTag { code, value: value.into() };
+        let rows = xdata_rows(&[
+            tag(1001, "A"),
+            tag(1002, "{"),
+            tag(1000, "K=v=w"),
+            tag(1000, "plain"),
+            tag(1002, "}"),
+            tag(1001, "EMPTY"),
+            tag(1001, "B"),
+            tag(1040, "2.5"),
+        ]);
+        assert_eq!(
+            rows,
+            vec![
+                ("A".to_string(), vec![("K".to_string(), "v=w".to_string()), ("1000".to_string(), "plain".to_string())]),
+                ("B".to_string(), vec![("1040".to_string(), "2.5".to_string())]),
+            ]
+        );
+    }
+
+    /// Editing an attribute in Properties runs ATTEDIT, so it is one undo step.
+    #[test]
+    fn attribute_typed_in_properties_is_set_and_undone_as_one_step() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({"tag": "TAG", "default": "x", "at": [0, 1]})).unwrap();
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let _ = l;
+        let hs: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        app.run("block", json!({"name": "B", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+        let r = app.run("insert", json!({"name": "B", "at": [0, 0], "attribs": {"TAG": "V-1"}})).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let value = |app: &CadApp| match &app.session.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::Insert(i) => i.attribs[0].text.value.clone(),
+            _ => String::new(),
+        };
+        app.run("attedit", json!({ "handle": r["handle"].clone(), "values": { "TAG": "V-2" } })).unwrap();
+        assert_eq!(value(&app), "V-2");
+        app.run("undo", json!({})).unwrap();
+        assert_eq!(value(&app), "V-1");
     }
 
     #[test]
