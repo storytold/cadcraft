@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject};
+use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
 use cadcraft_dxf::{Section, Tag};
 
@@ -452,8 +452,19 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         f.data_store = ds.tags.iter().take(MAX_DATA_STORE_GROUPS).map(raw).collect();
     }
     if !f.is_empty() {
+        f.version = file_version(secs);
         d.foreign = Arc::new(f);
     }
+}
+
+/// The `$ACADVER` the file's own HEADER section declares, if it does. Not the drawing's: a new
+/// drawing starts as AC1032, and a file without the variable would leave that default there.
+fn file_version(secs: &[Section]) -> Option<String> {
+    let header = secs.iter().find(|s| s.name.eq_ignore_ascii_case("HEADER"))?;
+    let at = header.tags.iter().position(|t| t.code == 9 && t.str().trim().eq_ignore_ascii_case("$ACADVER"))?;
+    let value = header.tags.get(at + 1).filter(|t| t.code != 9)?.str();
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn entity_types(drawing: &Drawing) -> HashMap<String, bool> {
@@ -550,32 +561,6 @@ fn retained_objects(
 /// objects and entities, whose class is named by number in group 91.
 fn is_proxy(kind: &str) -> bool {
     matches!(up(kind).as_str(), "ACAD_PROXY_OBJECT" | "ACAD_PROXY_ENTITY")
-}
-
-/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
-/// (an application's can hold a 91 of its own) and before any xdata.
-fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
-    let mut in_group = false;
-    for (i, (code, value)) in groups.into_iter().enumerate() {
-        match code {
-            1000.. => return None,
-            102 => in_group = value.as_ref().trim().starts_with('{'),
-            91 if !in_group => return Some(i),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A proxy's class number (see [`class_group`]).
-fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
-    let i = class_group(groups.clone())?;
-    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
-}
-
-/// The place in CLASSES a class number names (500 is the first class).
-fn class_index(number: Option<i64>) -> Option<usize> {
-    usize::try_from(number?.checked_sub(500)?).ok()
 }
 
 /// Set a proxy's class number (see [`class_group`]).
