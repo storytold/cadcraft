@@ -341,6 +341,17 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     if has_center != has_height {
         return Err(bad("view.set", "center and height must be given together"));
     }
+    let center_height = if has_center {
+        let c = point_req("view.set", p, "center")?;
+        let h = f64_req("view.set", p, "height")?;
+        if h <= 0.0 {
+            return Err(bad("view.set", "height must be positive"));
+        }
+        Some((c, h))
+    } else {
+        None
+    };
+    let mut new_cam = None;
     if let Some(neighbor) = str_param(p, "neighbor") {
         let dir = match neighbor.trim().to_ascii_lowercase().as_str() {
             "top" | "up" | "n" => "top",
@@ -349,29 +360,23 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             "right" | "e" => "right",
             _ => return Err(bad("view.set", "unknown neighbor direction")),
         };
-        let st = s.state_mut()?;
-        st.camera = st.camera.orthogonal_neighbor(dir);
-        return ok();
+        new_cam = Some(s.state()?.camera.orthogonal_neighbor(dir));
     }
     if let Some(preset) = str_param(p, "preset") {
-        let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?;
-        s.state_mut()?.camera = cam;
-        if p.get("center").is_none() && p.get("height").is_none() {
-            return ok();
-        }
+        new_cam = Some(cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?);
     }
     if let Some(dir) = vec3_param(p, "dir") {
         let up = vec3_param(p, "up").unwrap_or(cadcraft_geom::Vec3::Z);
-        s.state_mut()?.camera = cadcraft_geom::Camera3D::from_dir_up(dir, up);
-        if p.get("center").is_none() && p.get("height").is_none() {
+        new_cam = Some(cadcraft_geom::Camera3D::from_dir_up(dir, up));
+    }
+    let Some((c, h)) = center_height else {
+        if let Some(cam) = new_cam {
+            s.state_mut()?.camera = cam;
             return ok();
         }
-    }
-    let c = point_req("view.set", p, "center")?;
-    let h = f64_req("view.set", p, "height")?;
-    if h <= 0.0 {
-        return Err(bad("view.set", "height must be positive"));
-    }
+        let _ = point_req("view.set", p, "center")?;
+        return Err(bad("view.set", "height is required"));
+    };
     let twist = match p.get("twist") {
         Some(t) => t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad("view.set", "twist must be a number of degrees"))?.to_radians(),
         None => s.state()?.view().twist,
@@ -398,6 +403,9 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(dview::Target::Viewport(h)) = target {
         dview::record_viewport_edit(s, before, h)?;
+    }
+    if let Some(cam) = new_cam {
+        s.state_mut()?.camera = cam;
     }
     ok()
 }
