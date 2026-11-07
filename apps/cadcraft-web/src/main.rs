@@ -128,6 +128,8 @@ mod web {
             groups: cadcraft_io::entity_groups,
             entity: cadcraft_io::entity_from_groups,
         });
+        // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+        cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
         let Some(canvas) = app_canvas() else {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;

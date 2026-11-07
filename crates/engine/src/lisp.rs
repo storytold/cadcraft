@@ -9,6 +9,7 @@ pub mod builtins;
 mod drawing;
 pub mod eval;
 pub mod input;
+mod objects;
 pub mod read;
 mod startup;
 pub mod value;
@@ -61,6 +62,8 @@ pub struct Env {
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
     /// entities made meanwhile go into it, numbered when it ends.
     pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
+    /// Entity names of non-graphic objects (dictionaries, table records, layouts).
+    pub(crate) objects: objects::Names,
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
@@ -79,6 +82,7 @@ impl Default for Env {
             order: None,
             tblnext: HashMap::new(),
             pending_block: None,
+            objects: objects::Names::default(),
             printed_at: None,
         };
         builtins::install(&mut e);
