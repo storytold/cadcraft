@@ -2,7 +2,7 @@
 //! loading with `xref|name` symbols, saving only the reference, reopening, Reload/Unload/Detach/
 //! Path, Bind and XBIND, overlays, missing files, circular and deeply nested references.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use cadcraft_engine::Session;
@@ -12,6 +12,11 @@ use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Block, Circle, Drawing, Entity, EntityKind, Handle, Insert, Layer, Line, Linetype, MAX_BLOCK_DEPTH, XrefStatus};
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 fn hooks() {
     set_io(IoHooks {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
@@ -20,12 +25,9 @@ fn hooks() {
     });
 }
 
-/// A fresh folder for one test.
-fn folder(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("cadcraft-xref-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A fresh folder for one test, removed when the test ends.
+fn folder(tag: &str) -> TempDir {
+    TempDir::new(&format!("xref-{tag}"))
 }
 
 fn save(d: &Drawing, path: &Path) {
@@ -50,6 +52,7 @@ fn insert(block: &str, x: f64) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -503,4 +506,21 @@ fn saved_xref_paths_are_followed_beside_the_host_or_on_this_computer_only() {
     let far = elsewhere.join("far.dxf");
     s.execute("-xref", &json!({ "option": "path", "names": "unc", "path": far.to_str().unwrap() })).unwrap();
     assert_eq!(status(&s, "unc"), Some(XrefStatus::Loaded));
+}
+
+/// A reference saved on Windows with different letter case (`..\XR\PLAN.DWG` for
+/// `../xr/plan.dxf`) is still found on case-sensitive file systems.
+#[test]
+fn saved_xref_paths_ignore_letter_case() {
+    hooks();
+    let base = folder("case");
+    std::fs::create_dir_all(base.join("host")).unwrap();
+    std::fs::create_dir_all(base.join("Xr")).unwrap();
+    save(&site(), &base.join("Xr").join("Plan.dxf"));
+    let host = base.join("host").join("host.dxf");
+    save(&host_with_paths(&[("plan", r"..\XR\PLAN.DXF")]), &host);
+    let mut s = Session::new();
+    open(&mut s, &host);
+    assert_eq!(status(&s, "plan"), Some(XrefStatus::Loaded), "{:?}", s.log);
+    assert!(objects(&s, "plan") > 0);
 }
