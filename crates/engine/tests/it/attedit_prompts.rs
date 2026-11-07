@@ -109,3 +109,77 @@ fn attribute_tags_match_in_any_case_and_unknown_tags_are_reported() {
     let r = s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "four"}})).unwrap();
     assert_eq!(r, json!({"changed": 1}));
 }
+
+#[test]
+fn attedit_takes_a_selected_block_reference_at_once() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    s.set_selection(vec![h]);
+    s.cmdline("attedit").unwrap();
+    assert!(s.prompt_text().contains("Enter value for T <one>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["picked", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!((value(&s, h, "T"), value(&s, h, "U")), ("picked".into(), "u".into()));
+}
+
+#[test]
+fn attedit_leaves_constant_attributes_and_locked_references_alone() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs[1].constant = true;
+            }
+        })
+        .unwrap();
+    let rows = cadcraft_engine::attributes(s.doc().unwrap(), h);
+    assert_eq!(rows.iter().map(|r| (r.tag.as_str(), r.editable)).collect::<Vec<_>>(), [("T", true), ("U", false)]);
+
+    let r = s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "t2", "U": "u2"}})).unwrap();
+    assert_eq!((r["changed"].clone(), r["constantTags"].clone()), (json!(1), json!(["U"])));
+    assert_eq!((value(&s, h, "T"), value(&s, h, "U")), ("t2".into(), "u".into()));
+    // One undo step.
+    s.undo().unwrap();
+    assert_eq!(value(&s, h, "T"), "one");
+
+    // Not a block reference, a value too long, a locked layer.
+    let line = s.execute("line", &json!({"points": [[0, 50], [10, 50]]})).unwrap()["handles"][0].clone();
+    assert!(s.execute("attedit", &json!({"handle": line, "values": {"T": "x"}})).is_err());
+    assert!(s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "x".repeat(70_000)}})).is_err());
+    s.execute("layer.set", &json!({"name": "0", "locked": true})).unwrap();
+    let e = s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "x"}})).unwrap_err().to_string();
+    assert!(e.contains("locked"), "{e}");
+    assert_eq!(value(&s, h, "T"), "one");
+}
+
+#[test]
+fn attedit_at_changes_one_of_two_attributes_sharing_a_tag() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    // As a DXF reference may carry them: the second attribute's tag is T too.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs[1].tag = "T".into();
+            }
+        })
+        .unwrap();
+    let values = |s: &Session| -> Vec<String> {
+        let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+        i.attribs.iter().map(|a| a.text.value.clone()).collect()
+    };
+    let r = s.execute("attedit", &json!({"handle": h.hex(), "at": {"1": "second"}})).unwrap();
+    assert_eq!(r, json!({"changed": 1}));
+    assert_eq!(values(&s), ["one", "second"]);
+    // By tag, every attribute with it, as before.
+    s.execute("attedit", &json!({"handle": h.hex(), "values": {"t": "both"}})).unwrap();
+    assert_eq!(values(&s), ["both", "both"]);
+    // Hostile places are refused and change nothing.
+    for at in [json!({"2": "x"}), json!({"-1": "x"}), json!({"one": "x"}), json!({"0": [1]}), json!([1]), json!({"18446744073709551616": "x"})] {
+        assert!(s.execute("attedit", &json!({"handle": h.hex(), "at": at})).is_err(), "{at}");
+    }
+    assert_eq!(values(&s), ["both", "both"]);
+}
