@@ -40,7 +40,6 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
-
 /// A prompt with options is translated without its own "or": the command line adds the
 /// translated " or [" before the options ("Select polyline or [Multiple]").
 #[test]
@@ -670,10 +669,8 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
 
 #[test]
 fn polish_plural_forms() {
-    for (n, expected) in [
-        (0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2),
-        (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2),
-    ] {
+    for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
+    {
         assert_eq!(plural_pl(n), expected, "n={n}");
     }
 }

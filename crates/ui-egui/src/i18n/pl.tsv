@@ -81,7 +81,7 @@
 	CADCraft Help	Pomoc CADCraft
 	Cancel	Anuluj
 	Cartesian (x, y)	Kartezjańskie (x, y)
-	Center	Osiowa
+	Center	Środek
 	Center Line	Linia środkowa
 	Center Mark	Znacznik środka
 	Center X	Środek X
@@ -160,7 +160,7 @@
 	Description	Opis
 	Diameter	Średnica
 	Dim style	Styl wymiaru
-	Dimension	Wymiarowanie
+	Dimension	Wymiar
 	Dimension Space	Odstępy między wymiarami
 	Dimension Style Override	Nadpisz ustawienia stylu wymiarowania
 	Dimension Style...	Styl wymiarowania...
@@ -357,8 +357,8 @@
 	Layer is empty (double-click to make current)	Warstwa jest pusta (kliknij dwukrotnie, aby ustawić jako bieżącą)
 	Layers	Warstwy
 	Layers displayed: {shown} of {total}.   Current layer: {layer}	Wyświetlane warstwy: {shown} z {total}.   Bieżąca warstwa: {layer}
-	Layout	Układ
-	Layout list	Lista układów
+	Layout	Arkusz
+	Layout list	Lista arkuszy
 	Leader	Linia odniesienia
 	Left	Lewo
 	Length	Długość
@@ -434,7 +434,7 @@
 	New Drawing (⌘N)	Nowy rysunek (⌘N)
 	New Drawing...	Nowy rysunek...
 	New Layer	Nowa warstwa
-	New Layout	Nowy układ
+	New Layout	Nowy arkusz
 	New VP Freeze	Zamroź w nowej rzutni
 	New Viewports...	Nowe rzutnie...
 	New state name	Nazwa nowego stanu
@@ -453,8 +453,8 @@
 	Object Snap	Przyciąganie do obiektów
 	Object Snap (F3)	Przyciąganie do obiektów (F3)
 	Object Snap On (F3)	Włącz przyciąganie do obiektów (F3)
-	Object Snap Tracking	Śledzenie punktów charakterystycznych
-	Object Snap Tracking (F11)	Śledzenie punktów charakterystycznych (F11)
+	Object Snap Tracking	Śledzenie przyciągania do obiektów
+	Object Snap Tracking (F11)	Śledzenie przyciągania do obiektów (F11)
 	Object type:	Typ obiektu:
 	Off	Wyłącz
 	Offset	Odsuń
@@ -898,7 +898,7 @@
 	Viewport Properties	Właściwości rzutni
 	Viewport {id}	Rzutnia {id}
 	Viewports	Rzutnie
-	W	W
+	W	Z
 	WCS	GUW
 	White	Biały
 	Width factor	Współczynnik szerokości
@@ -1009,7 +1009,7 @@
 	Import...	Importuj...
 	Attach...	Dołącz...
 	Export...	Eksportuj...
-	Export Layout to Model...	Eksportuj układ do modelu...
+	Export Layout to Model...	Eksportuj arkusz do modelu...
 	Package Drawing...	Spakuj rysunek...
 	DWG Compare...	Porównaj pliki DWG...
 	Markup Import...	Importuj oznaczenia...
@@ -1069,7 +1069,7 @@
 	Raster Image Reference...	Odnośnik do obrazu rastrowego...
 	Field...	Pole...
 	Data Link...	Łącze danych...
-	Layout from Template...	Układ z szablonu...
+	Layout from Template...	Arkusz z szablonu...
 	ACIS File...	Plik ACIS...
 	Drawing Exchange Binary...	Binarny plik wymiany rysunków...
 	Reference Manager	Menedżer odnośników
@@ -1113,9 +1113,9 @@
 	Specify opposite corner point	Wskaż przeciwległy narożnik
 	Pick internal point	Wskaż punkt wewnętrzny
 	{n} commit	{n} zatwierdzenie
-	{n} contributor	{n} współautor
+	{n} contributor	{n} współtwórca
 @plural	{n} commit	{n} zatwierdzenie|{n} zatwierdzenia|{n} zatwierdzeń
-@plural	{n} contributor	{n} współautor|{n} współautorów|{n} współautorów
+@plural	{n} contributor	{n} współtwórca|{n} współtwórcy|{n} współtwórców
 	Attach DWG...	Dołącz plik DWG...
 	Bind	Powiąż
 	Detach	Odłącz
@@ -1220,14 +1220,14 @@
 	New layout	Nowy arkusz
 	Next Change	Następna różnica
 	Numbered list	Lista numerowana
-	Object Snap Tracking Settings	Ustawienia śledzenia lokalizacji względem obiektów
+	Object Snap Tracking Settings	Ustawienia śledzenia przyciągania do obiektów
 	Oblique	Ukośny
 	Only in this drawing: {n}	Tylko w tym rysunku: {n}
 	Only in {name}: {n}	Tylko w {name}: {n}
 	Open sample drawing	Otwórz przykładowy rysunek
 	Clear Recent Files	Wyczyść ostatnie pliki
-	Osnap Settings...	Ustawienia lokalizacji względem obiektów...
-	Over-constrained	Nadmiernie związany więzami
+	Osnap Settings...	Ustawienia przyciągania do obiektów...
+	Over-constrained	Nadmiar więzów
 	Paste to Command Line	Wklej do wiersza poleceń
 	Plot Window	Okno wydruku
 	Plot Style Manager	Menedżer stylów wydruku
@@ -1245,9 +1245,9 @@
 	Keep an editable copy of this table in the drawing	Zachowaj edytowalną kopię tej tabeli w rysunku
 	Layout {name}: {table}	Arkusz {name}: {table}
 	Grayscale	Skala szarości
-	Screening	Rasteryzacja tonalna
+	Screening	Intensywność wydruku
 	Use object linetype	Użyj rodzaju linii obiektu
-	Use object lineweight	Użyj szerokości linii obiektu
+	Use object lineweight	Użyj grubości linii obiektu
 	Remove	Usuń
 	Add	Dodaj
 	Open a drawing first.	Najpierw otwórz rysunek.
@@ -1280,11 +1280,11 @@
 	Show and hide the tools of this category	Pokaż lub ukryj narzędzia tej kategorii
 	Show in Tool Sets	Pokaż w zestawach narzędzi
 	Show command prompting near the crosshairs	Wyświetlaj monity poleceń przy celowniku
-	Snap Overrides	Nadpisania trybów lokalizacji
+	Snap Overrides	Tymczasowe tryby przyciągania do obiektów
 	Snap type	Typ skoku
 	A drawing opened from a file keeps that file's format.	Rysunek otwarty z pliku zachowuje format tego pliku.
-	An array that would create more objects than this is refused.	Tablica tworząca więcej obiektów niż dopuszczalna liczba zostanie odrzucona.
-	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft zapisuje te preferencje, tryby lokalizacji względem obiektów i przełączniki rysunkowe na Twoim koncie użytkownika oraz przywraca je przy uruchomieniu.
+	An array that would create more objects than this is refused.	Szyk tworzący więcej obiektów niż dopuszczalna liczba zostanie odrzucony.
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft zapisuje te preferencje, tryby przyciągania do obiektów i przełączniki rysunkowe na Twoim koncie użytkownika oraz przywraca je przy uruchomieniu.
 	Changes apply at once and are kept for next time.	Zmiany są stosowane natychmiast i zachowywane na przyszłość.
 	Command line history	Historia wiersza poleceń
 	Copy as JSON	Kopiuj jako JSON
@@ -1300,14 +1300,14 @@
 	Interface language	Język interfejsu
 	Interface theme	Motyw interfejsu
 	Keep the system cursor visible over the drawing area	Pozostaw kursor systemowy widoczny nad obszarem rysunku
-	Largest array	Maksymalna wielkość tablicy
+	Largest array	Maksymalna wielkość szyku
 	Layout paper	Papier arkusza
 	Model background	Tło modelu
 	Multiline text	Tekst wielowierszowy
 	Object grouping	Grupowanie obiektów
 	Object selection limit for display of grips	Limit liczby obiektów do wyświetlania uchwytów
-	Object snap aperture	Obszar wykrywania lokalizacji względem obiektów
-	Object snap marker size	Rozmiar znacznika lokalizacji względem obiektów
+	Object snap aperture	Obszar wykrywania przyciągania do obiektów
+	Object snap marker size	Rozmiar znacznika przyciągania do obiektów
 	Objects on locked layers	Obiekty na zablokowanych warstwach
 	Open and Save	Otwieranie i zapisywanie
 	Options	Opcje
@@ -1330,7 +1330,7 @@
 	Show grips	Pokaż uchwyty
 	Snap, grid, polar tracking and Dynamic Input:	Skok, siatka, śledzenie biegunowe i wprowadzanie dynamiczne:
 	Tables	Tabele
-	The aperture is how near the cursor must come to a point for an object snap to find it.	Obszar wykrywania określa, jak blisko punktu musi znajdować się kursor, aby lokalizacja względem obiektów mogła go znaleźć.
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Obszar wykrywania określa, jak blisko punktu musi znajdować się kursor, aby działało przyciąganie do obiektów.
 	User Preferences	Preferencje użytkownika
 	Visual Effect Settings	Ustawienia efektów wizualnych
 	Visual Effect Settings...	Ustawienia efektów wizualnych...
@@ -1381,8 +1381,8 @@
 	Convert to Arc	Zamień na łuk
 	Convert to Line	Zamień na linię
 	Stretch Vertex	Rozciągnij wierzchołek
-	Edit Array	Edytuj tablicę
-	Close Array Editing	Zakończ edycję tablicy
+	Edit Array	Edytuj szyk
+	Close Array Editing	Zakończ edycję szyku
 	Multiline...	Multilinia...
 	Multiline Style...	Styl multilinii...
 	Solid Editing	Edycja brył
@@ -1468,3 +1468,522 @@
 	Justify	Wyrównanie
 	Text color	Kolor tekstu
 	Click the ruler to add a tab stop, right-click to remove one	Kliknij linijkę, aby dodać tabulator; kliknij prawym przyciskiem, aby go usunąć
+
+# Menu headings use their own context; object labels keep the ordinary entry.
+menu	Dimension	Wymiarowanie
+
+# Additional interface labels and command prompts.
+	(1, 2, 4, 8, 16, 32, 64, 128, or 256)	(1, 2, 4, 8, 16, 32, 64, 128 lub 256)
+	<Offset>	<Offset>
+	>> Expression	>> Wyrażenie
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Przypisany skrót zastępuje domyślny skrót CADCraft. Zmiany są stosowane od razu i zapamiętywane.
+	Add…	Dodaj…
+	Alias	Alias
+	Alias file: {file}	Plik aliasów: {file}
+	Aliases are saved in your CADCraft profile and survive restarts.	Aliasy są zapisywane w profilu CADCraft i zachowywane po ponownym uruchomieniu.
+	Analyze Shapes	Analizuj kształty
+	Analyze Usage	Analizuj użycie
+	Associate the hatch with the new boundary?	Powiązać kreskowanie z nową obwiednią?
+	Associative dimension priority	Priorytet wymiarowania skojarzonego
+	Back to CADCraft's shortcut	Przywróć domyślny skrót CADCraft
+	Backup copies are off, so the current file will be replaced.	Kopie zapasowe są wyłączone, więc bieżący plik zostanie zastąpiony.
+	Backup copy	Kopia zapasowa
+	Block Description...	Opis bloku...
+	Break-line Symbol	Symbol linii przerwania
+	Breakline extension distance	Długość przedłużenia linii przerwania
+	Breakline symbol size	Rozmiar symbolu linii przerwania
+	Bring to front	Przenieś na wierzch
+	CADCraft is up to date.	CADCraft jest aktualny.
+	Change	Zmień
+	Change Properties	Zmień właściwości
+	Check for Updates…	Sprawdź aktualizacje…
+	Choose mode for selected object conversion	Wybierz tryb przekształcania zaznaczonych obiektów
+	Choose the command the alias starts.	Wybierz polecenie uruchamiane przez alias.
+	Clip Xref	Przytnij odnośnik zewnętrzny
+	Combine collinear objects that meet end to end	Połącz współliniowe obiekty stykające się końcami
+	Combine collinear objects that partially overlap	Połącz częściowo nakładające się obiekty współliniowe
+	Combine identical rows?	Połączyć identyczne wiersze?
+	Combine layer property changes into one undo step?	Połączyć zmiany właściwości warstw w jeden krok cofania?
+	Combine text into a single MTEXT?	Połączyć teksty w jeden obiekt MTEXT?
+	Combine zooms and pans into one undo step?	Połączyć zmiany powiększenia i przesunięcia widoku w jeden krok cofania?
+	Command	Polecenie
+	Command Mode	Tryb polecenia
+	Constant?	Stały?
+	Convert Lines and Arcs to polylines	Przekształć linie i łuki w polilinie
+	Convert Text to Mtext	Przekształć TEXT w MTEXT
+	Could not check for updates.	Nie udało się sprawdzić aktualizacji.
+	Create associative array	Utwórz szyk skojarzony
+	Create backup copy with each save	Twórz kopię zapasową przy każdym zapisie
+	Ctrl+Enter to apply	Ctrl+Enter, aby zastosować
+	Customize	Dostosuj
+	DView	DView
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 i starsze je zachowują. Użyj opcji Zapisz jako, aby zachować je w rysunku.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF je zachowuje. Użyj opcji Zapisz jako, aby zachować je w rysunku.
+	Default Mode	Tryb domyślny
+	Define each corner of the selection window with a separate click.	Wskaż każdy narożnik okna zaznaczenia osobnym kliknięciem.
+	Delete old boundary(s)?	Usunąć stare obwiednie?
+	Discard	Odrzuć
+	Don't Save	Nie zapisuj
+	Drafting mode?	Tryb rysowania?
+	ENTER	ENTER
+	Edit Command Aliases (PGP)...	Edytuj aliasy poleceń (PGP)...
+	Edit Mode	Tryb edycji
+	Edit Text	Edytuj tekst
+	Edit attributes one at a time?	Edytować atrybuty pojedynczo?
+	Edit only attributes visible on screen?	Edytować tylko atrybuty widoczne na ekranie?
+	Edit path for which xref(s)	Dla których odnośników zewnętrznych zmienić ścieżkę
+	Edit…	Edytuj…
+	Enter Trim mode option	Wybierz opcję trybu przycinania
+	Enter UNDO Auto mode	Wybierz tryb Auto polecenia UNDO
+	Enter X scale factor, specify opposite corner	Podaj współczynnik skali X lub wskaż przeciwległy narożnik
+	Enter Y scale factor	Podaj współczynnik skali Y
+	Enter a boundary loop number to remove (starting at 1)	Podaj numer pętli obwiedni do usunięcia (od 1)
+	Enter a configuration option	Wybierz opcję konfiguracji
+	Enter a default viewport visibility option	Wybierz opcję domyślnej widoczności w rzutniach
+	Enter a group description	Podaj opis grupy
+	Enter a group name	Podaj nazwę grupy
+	Enter a group option	Wybierz opcję grupy
+	Enter a hatch option	Wybierz opcję kreskowania
+	Enter a loaded linetype name	Podaj nazwę wczytanego rodzaju linii
+	Enter a name for the new plotter	Podaj nazwę nowego plotera
+	Enter a new name for the group	Podaj nową nazwę grupy
+	Enter a plotter option	Wybierz opcję plotera
+	Enter a plotting preference	Wybierz ustawienie wydruku
+	Enter a projection option	Wybierz opcję rzutowania
+	Enter a property to turn on or off	Wybierz właściwość do włączenia lub wyłączenia
+	Enter a scale factor (nX or nXP)	Podaj współczynnik skali (nX lub nXP)
+	Enter a text edit mode option	Wybierz opcję trybu edycji tekstu
+	Enter an UNDO control option	Wybierz opcję sterowania poleceniem UNDO
+	Enter an annotation option	Wybierz opcję opisu
+	Enter an implied edge extension mode	Wybierz tryb przedłużania domniemanych krawędzi
+	Enter an option [Add/Remove] <Add>	Wybierz opcję [Add/Remove] <Add>
+	Enter an option to change	Wybierz opcję do zmiany
+	Enter angle of xline (0)	Podaj kąt prostej konstrukcyjnej (0)
+	Enter array type	Wybierz typ szyku
+	Enter attribute tag	Podaj etykietę atrybutu
+	Enter attribute tag specification	Podaj wzorzec etykiety atrybutu
+	Enter attribute value specification	Podaj wzorzec wartości atrybutu
+	Enter attribute visibility setting	Wybierz ustawienie widoczności atrybutów
+	Enter block name or select a block reference	Podaj nazwę bloku lub wybierz odnośnik bloku
+	Enter block name or select a block reference [?]	Podaj nazwę bloku lub wybierz odnośnik bloku [?]
+	Enter block name specification	Podaj wzorzec nazwy bloku
+	Enter block names to extract	Podaj nazwy bloków do wyodrębnienia
+	Enter block(s) to list	Podaj bloki do wyświetlenia na liście
+	Enter choice, 1 to 5	Wybierz wartość od 1 do 5
+	Enter clipping option	Wybierz opcję przycinania
+	Enter color name or number (1-255)	Podaj nazwę lub numer koloru (1-255)
+	Enter column type	Wybierz typ kolumn
+	Enter decimal places of accuracy (0 to 16)	Podaj liczbę miejsc dziesiętnych (od 0 do 16)
+	Enter delta length	Podaj przyrost długości
+	Enter distance between rows or specify unit cell (---)	Podaj odległość między wierszami lub wskaż komórkę jednostkową (---)
+	Enter file name	Podaj nazwę pliku
+	Enter first angle constraint	Podaj pierwszy więz kątowy
+	Enter first line of annotation text or	Wpisz pierwszy wiersz tekstu opisu lub
+	Enter first tolerance value	Podaj pierwszą wartość tolerancji
+	Enter fit tolerance	Podaj tolerancję dopasowania
+	Enter fuzz distance	Podaj tolerancję odległości przy łączeniu
+	Enter geometric characteristic	Podaj cechę geometryczną
+	Enter group description	Podaj opis grupy
+	Enter group name	Podaj nazwę grupy
+	Enter group name(s) to list	Podaj nazwy grup do wyświetlenia na liście
+	Enter inspection rate	Podaj częstotliwość kontroli
+	Enter inspection shape	Wybierz kształt ramki kontrolnej
+	Enter justification	Wybierz wyrównanie
+	Enter knot parameterization	Wybierz parametryzację węzłów
+	Enter label (press ENTER for none)	Podaj etykietę (ENTER — bez etykiety)
+	Enter layer description	Podaj opis warstwy
+	Enter layer name	Podaj nazwę warstwy
+	Enter layer name to make current	Podaj nazwę warstwy do ustawienia jako bieżąca
+	Enter layer name(s) to change default viewport visibility	Podaj nazwy warstw, aby zmienić domyślną widoczność w rzutniach
+	Enter layer name(s) to list	Podaj nazwy warstw do wyświetlenia na liście
+	Enter layer option for offset objects	Wybierz opcję warstwy dla odsuniętych obiektów
+	Enter layout name for copy	Podaj nazwę kopii arkusza
+	Enter layout name(s) to list	Podaj nazwy arkuszy do wyświetlenia na liście
+	Enter layout option	Wybierz opcję arkusza
+	Enter layout to make current	Podaj arkusz do ustawienia jako bieżący
+	Enter layout to rename	Podaj arkusz, którego nazwę chcesz zmienić
+	Enter layout to save to template	Podaj arkusz do zapisania jako szablon
+	Enter leader format option	Wybierz opcję formatu odnośnika
+	Enter line spacing factor or distance	Podaj współczynnik odstępu między wierszami lub odległość
+	Enter line spacing type	Wybierz typ odstępu między wierszami
+	Enter linetype(s) to load	Podaj rodzaje linii do wczytania
+	Enter lineweight (0.0mm - 2.11mm)	Podaj grubość linii (0.0mm - 2.11mm)
+	Enter magnification or height	Podaj powiększenie lub wysokość
+	Enter maximum part height	Podaj maksymalną wysokość części
+	Enter mline editing option	Wybierz opcję edycji multilinii
+	Enter mline style name or [?]	Podaj nazwę stylu multilinii lub [?]
+	Enter name for new layer (becomes the current layer)	Podaj nazwę nowej warstwy (stanie się bieżącą)
+	Enter name for new scale	Podaj nazwę nowej skali
+	Enter name for new viewport configuration	Podaj nazwę nowej konfiguracji rzutni
+	Enter name list for new layer(s)	Podaj listę nazw nowych warstw
+	Enter name of LISP file to load	Podaj nazwę pliku LISP do wczytania
+	Enter name of block to manage	Podaj nazwę bloku do zarządzania
+	Enter name of block to sync	Podaj nazwę bloku do synchronizacji
+	Enter name of breakline symbol block (. for the built-in symbol)	Podaj nazwę bloku symbolu linii przerwania (. — symbol wbudowany)
+	Enter name of drawing file to recover	Podaj nazwę pliku rysunku do odzyskania
+	Enter name of existing block	Podaj nazwę istniejącego bloku
+	Enter name of layout to copy	Podaj nazwę arkusza do skopiowania
+	Enter name of layout to delete	Podaj nazwę arkusza do usunięcia
+	Enter name of linetype file	Podaj nazwę pliku rodzajów linii
+	Enter name of new layout	Podaj nazwę nowego arkusza
+	Enter name of output file	Podaj nazwę pliku wyjściowego
+	Enter name of scale to delete	Podaj nazwę skali do usunięcia
+	Enter name of script file	Podaj nazwę pliku skryptu
+	Enter name of viewport configuration to restore	Podaj nazwę konfiguracji rzutni do przywrócenia
+	Enter name(s) of new layers frozen in all viewports	Podaj nazwy nowych warstw zamrożonych we wszystkich rzutniach
+	Enter name(s) of viewport configurations to delete	Podaj nazwy konfiguracji rzutni do usunięcia
+	Enter name(s) of viewport configurations to list	Podaj nazwy konfiguracji rzutni do wyświetlenia na liście
+	Enter name(s) to purge	Podaj nazwy elementów do usunięcia z rysunku
+	Enter named scale to add	Podaj nazwę skali do dodania
+	Enter named scale to delete	Podaj nazwę skali do usunięcia
+	Enter new attribute value	Podaj nową wartość atrybutu
+	Enter new color	Podaj nowy kolor
+	Enter new default value	Podaj nową wartość domyślną
+	Enter new dimension text	Podaj nowy tekst wymiaru
+	Enter new group name	Podaj nową nazwę grupy
+	Enter new layer name	Podaj nową nazwę warstwy
+	Enter new layout name	Podaj nową nazwę arkusza
+	Enter new linetype name	Podaj nową nazwę rodzaju linii
+	Enter new linetype scale factor	Podaj nowy współczynnik skali rodzaju linii
+	Enter new lineweight	Podaj nową grubość linii
+	Enter new order	Podaj nowy rząd splajnu
+	Enter new prompt	Podaj nowy monit
+	Enter new string	Podaj nowy ciąg znaków
+	Enter new tag	Podaj nową etykietę
+	Enter new text style	Podaj nowy styl tekstu
+	Enter new value for CONSTRAINTINFER	Podaj nową wartość CONSTRAINTINFER
+	Enter new value for PICKSTYLE	Podaj nową wartość PICKSTYLE
+	Enter new value for THICKNESS	Podaj nową wartość THICKNESS
+	Enter new value for XCLIPFRAME	Podaj nową wartość XCLIPFRAME
+	Enter next line of annotation text	Wpisz następny wiersz tekstu opisu
+	Enter next line of text (empty line to finish)	Wpisz następny wiersz tekstu (pusty wiersz kończy wprowadzanie)
+	Enter number of actions	Podaj liczbę działań
+	Enter number of columns (|||)	Podaj liczbę kolumn (|||)
+	Enter number of digits to right of decimal point (0 to 8)	Podaj liczbę cyfr po separatorze dziesiętnym (od 0 do 8)
+	Enter number of fractional places for display of angles (0 to 8)	Podaj liczbę miejsc dziesiętnych wyświetlanych kątów (od 0 do 8)
+	Enter number of items in array	Podaj liczbę elementów szyku
+	Enter number of rows (---)	Podaj liczbę wierszy (---)
+	Enter object ordering option	Wybierz opcję kolejności obiektów
+	Enter object type to rename	Podaj typ obiektu, którego nazwę chcesz zmienić
+	Enter obliquing angle (press ENTER for none)	Podaj kąt pochylenia (ENTER — bez pochylenia)
+	Enter old group name	Podaj starą nazwę grupy
+	Enter old layer name	Podaj starą nazwę warstwy
+	Enter option	Wybierz opcję
+	Enter option [Save/Discard reference changes] <Save>	Wybierz opcję [Save/Discard reference changes] <Save>
+	Enter properties to match (SELECTSIMILARMODE bit code)	Podaj właściwości do dopasowania (kod bitowy SELECTSIMILARMODE)
+	Enter property to change	Wybierz właściwość do zmiany
+	Enter scale ratio (paper units:drawing units)	Podaj stosunek skali (jednostki papieru:jednostki rysunku)
+	Enter second angle constraint	Podaj drugi więz kątowy
+	Enter second tolerance value	Podaj drugą wartość tolerancji
+	Enter spline creation method	Wybierz metodę tworzenia splajnu
+	Enter string to change	Podaj ciąg znaków do zmiany
+	Enter style name	Podaj nazwę stylu
+	Enter symbol type to bind	Podaj typ symbolu do powiązania
+	Enter target layer name	Podaj nazwę warstwy docelowej
+	Enter template file name	Podaj nazwę pliku szablonu
+	Enter the distance between rows or specify unit cell (---)	Podaj odległość między wierszami lub wskaż komórkę jednostkową (---)
+	Enter the drawing to compare with (an open drawing's name or a file path)	Podaj rysunek do porównania (nazwę otwartego rysunku lub ścieżkę pliku)
+	Enter the maximum points for leader line	Podaj maksymalną liczbę punktów linii odnośnika
+	Enter the name of the block to replace	Podaj nazwę bloku do zastąpienia
+	Enter the number of columns	Podaj liczbę kolumn
+	Enter the number of columns (|||)	Podaj liczbę kolumn (|||)
+	Enter the number of items in the array	Podaj liczbę elementów szyku
+	Enter the number of levels	Podaj liczbę poziomów
+	Enter the number of operations to undo	Podaj liczbę operacji do cofnięcia
+	Enter the number of rows	Podaj liczbę wierszy
+	Enter the number of rows (---)	Podaj liczbę wierszy (---)
+	Enter the output	Wybierz format wyjściowy
+	Enter the paper name	Podaj nazwę papieru
+	Enter the paper width,height in mm	Podaj szerokość,wysokość papieru w mm
+	Enter the plotter to add a paper size to	Podaj ploter, do którego chcesz dodać rozmiar papieru
+	Enter the plotter to delete	Podaj ploter do usunięcia
+	Enter the type of array	Wybierz typ szyku
+	Enter tolerance location	Podaj położenie tolerancji
+	Enter transparency value	Podaj wartość przezroczystości
+	Enter transparency value (0-90)	Podaj wartość przezroczystości (0-90)
+	Enter trim method	Wybierz metodę przycinania
+	Enter type of dimension editing	Wybierz typ edycji wymiaru
+	Enter type of unused objects to purge	Podaj typ nieużywanych elementów do usunięcia z rysunku
+	Enter type of value modification	Wybierz typ zmiany wartości
+	Enter value	Podaj wartość
+	Enter variable name	Podaj nazwę zmiennej
+	Enter view name to restore	Podaj nazwę widoku do przywrócenia
+	Enter view name to save	Podaj nazwę widoku do zapisania
+	Enter view name(s) to delete	Podaj nazwy widoków do usunięcia
+	Enter view name(s) to list	Podaj nazwy widoków do wyświetlenia na liście
+	Enter viewport arrangement	Wybierz układ rzutni
+	Enter viewport configuration name	Podaj nazwę konfiguracji rzutni
+	Enter what to pick	Wybierz, co wskazać
+	Enter xref(s) to list	Podaj odnośniki zewnętrzne do wyświetlenia na liście
+	Erase source object after offsetting?	Usunąć obiekt źródłowy po odsunięciu?
+	Explode Attributes to Text	Rozbij atrybuty na tekst
+	Export Comparison	Eksportuj porównanie
+	Express Tools	Narzędzia Express
+	Find All	Znajdź wszystkie
+	Find what:	Znajdź:
+	First point of mid	Pierwszy punkt do wyznaczenia środka
+	First tracking point	Pierwszy punkt śledzenia
+	Fix any errors detected?	Naprawić wykryte błędy?
+	Font	Czcionka
+	Get from the drawing or [Point/Distance/Angle/Intersection]	Pobierz z rysunku lub [Point/Distance/Angle/Intersection]
+	Imperial (inches)	Imperialne (cale)
+	Implied Loops	Kontury z linii i łuków
+	Import and replace	Importuj i zastąp
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Import: okno wyboru pliku jest niedostępne; uruchom ALIASEDIT z zawartością pliku w parametrze text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Import pliku zastąpi Twoje aliasy ({n}) oraz niezastosowane zmiany.
+	Import…	Importuj…
+	Indicate dimension point to add	Wskaż punkt wymiarowy do dodania
+	Indicate dimension point to remove	Wskaż punkt wymiarowy do usunięcia
+	Interface scale	Skala interfejsu
+	Internal error; press Enter to end the command	Błąd wewnętrzny; naciśnij Enter, aby zakończyć polecenie
+	Invisible?	Niewidoczny?
+	Island	Wyspa
+	Island detection style	Styl wykrywania wysp
+	Isometric plane?	Płaszczyzna izometryczna?
+	Keep associative objects	Zachowaj obiekty skojarzone
+	Keep my aliases	Zachowaj moje aliasy
+	Keyboard Shortcuts	Skróty klawiaturowe
+	Keyboard Shortcuts...	Skróty klawiaturowe...
+	Lock the view of viewports?	Zablokować widok rzutni?
+	Longer click duration:	Próg czasu przytrzymania:
+	Match case	Uwzględniaj wielkość liter
+	Measure angles clockwise?	Mierzyć kąty zgodnie z ruchem wskazówek zegara?
+	Metric (millimetres)	Metryczne (milimetry)
+	More than {n} aliases.	Liczba aliasów przekracza {n}.
+	Move/Copy/Rotate	Przesuń/Kopiuj/Obróć
+	Multiple Insert	Wstaw wielokrotnie
+	Needs Ctrl, Alt or a function key	Wymaga Ctrl, Alt lub klawisza funkcyjnego
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nowe rysunki i pierwszy rysunek po uruchomieniu używają tych jednostek, jeśli nie ustawiono domyślnego szablonu (QNEWTEMPLATE).
+	New color	Nowy kolor
+	Next point (Press ENTER to end tracking)	Następny punkt (ENTER — zakończ śledzenie)
+	No alias file loaded. REINIT replaces these aliases with a file's.	Nie wczytano pliku aliasów. REINIT zastępuje te aliasy aliasami z pliku.
+	No mark: undo everything?	Brak znacznika: cofnąć wszystko?
+	No objects selected and no command running:	Brak zaznaczonych obiektów i aktywnego polecenia:
+	Nothing found	Nic nie znaleziono
+	Number of objects to move	Liczba obiektów do przesunięcia
+	Objects selected and no command running:	Obiekty zaznaczone, brak aktywnego polecenia:
+	Oops	Przywróć usunięte obiekty
+	Optimize segments within polylines	Optymalizuj segmenty polilinii
+	Pick a table cell	Wskaż komórkę tabeli
+	Pick an internal point for the new boundary	Wskaż punkt wewnętrzny nowej obwiedni
+	Press the keys	Naciśnij klawisze
+	Raster Images	Obrazy rastrowe
+	Red, Green, Blue	Red, Green, Blue
+	Red,Green,Blue	Red,Green,Blue
+	Repeat last command	Powtórz ostatnie polecenie
+	Replace	Zamień
+	Replace All	Zamień wszystkie
+	Replace Block...	Zastąp blok...
+	Replace with:	Zamień na:
+	Replacement text	Tekst zastępujący
+	Replaces the shortcut of {commands}	Zastępuje skrót poleceń: {commands}
+	Reset the scale list to the defaults?	Przywrócić domyślną listę skal?
+	Results	Wyniki
+	Right-Click Customization	Dostosowanie prawego przycisku myszy
+	Right-Click Customization...	Dostosowanie prawego przycisku myszy...
+	Rotate arrayed items?	Obracać elementy szyku?
+	Rotate arrayed objects?	Obracać obiekty szyku?
+	Run ALIASEDIT with the file's contents using its text parameter.	Uruchom ALIASEDIT z zawartością pliku w parametrze text.
+	Save Anyway	Zapisz mimo to
+	Save Layout as Template	Zapisz arkusz jako szablon
+	Save alias	Zapisz alias
+	Save cancelled: {path} was not changed.	Anulowano zapis: plik {path} nie został zmieniony.
+	Save changes to array?	Zapisać zmiany szyku?
+	Save changes to block "{name}"?	Zapisać zmiany w bloku „{name}”?
+	Save changes to {name}?	Zapisać zmiany w {name}?
+	Save layer settings with views?	Zapisywać ustawienia warstw wraz z widokami?
+	Saving {name} will remove content	Zapis {name} spowoduje usunięcie zawartości
+	Searches the current space.	Przeszukuje bieżącą przestrzeń.
+	Second point of mid	Drugi punkt do wyznaczenia środka
+	Select a block	Wybierz blok
+	Select a block reference	Wybierz odnośnik bloku
+	Select a content type	Wybierz typ zawartości
+	Select a leader type	Wybierz typ odnośnika
+	Select a multileader	Wybierz odnośnik wielokrotny
+	Select a table	Wybierz tabelę
+	Select a viewport	Wybierz rzutnię
+	Select an item in array to replace	Wybierz element szyku do zastąpienia
+	Select an object to change	Wybierz obiekt do zmiany
+	Select an object to copy	Wybierz obiekt do skopiowania
+	Select an object to measure	Wybierz obiekt do pomiaru
+	Select array	Wybierz szyk
+	Select attributes	Wybierz atrybuty
+	Select base dimension	Wybierz wymiar bazowy
+	Select base point of replacement objects	Wskaż punkt bazowy obiektów zastępujących
+	Select block reference	Wybierz odnośnik bloku
+	Select boundaries to remove	Wybierz obwiednie do usunięcia
+	Select boundary objects (Enter finds them)	Wybierz obiekty obwiedni (Enter — wyszukaj je)
+	Select clipping object	Wybierz obiekt przycinający
+	Select closed boundary objects to add	Wybierz zamknięte obiekty obwiedni do dodania
+	Select destination object(s)	Wybierz obiekty docelowe
+	Select dimension	Wybierz wymiar
+	Select dimension to add jog	Wybierz wymiar, aby dodać załamanie
+	Select dimension to add/remove break	Wybierz wymiar, aby dodać lub usunąć przerwę
+	Select dimensions to space	Wybierz wymiary, których odstępy chcesz ustawić
+	Select first mline	Wybierz pierwszą multilinię
+	Select grip to edit array	Wybierz uchwyt do edycji szyku
+	Select group	Wybierz grupę
+	Select hatch object	Wybierz obiekt kreskowania
+	Select item in array	Wybierz element szyku
+	Select jog to remove	Wybierz załamanie do usunięcia
+	Select mline	Wybierz multilinię
+	Select multileader to align to or [Options]	Wybierz odnośnik wielokrotny do wyrównania lub [Options]
+	Select nested objects to copy	Wybierz obiekty zagnieżdżone do skopiowania
+	Select new datum point	Wskaż nowy punkt odniesienia
+	Select object on target layer	Wybierz obiekt na warstwie docelowej
+	Select object to break dimension	Wybierz obiekt do przerwania wymiaru
+	Select object to clip viewport	Wybierz obiekt do przycięcia rzutni
+	Select object to count or [List/Spaces]	Wybierz obiekt do zliczenia lub [List/Spaces]
+	Select objects or	Wybierz obiekty lub
+	Select objects to add to the group	Wybierz obiekty do dodania do grupy
+	Select objects to erase or	Wybierz obiekty do usunięcia lub
+	Select objects to remove from the group	Wybierz obiekty do usunięcia z grupy
+	Select polyline	Wybierz polilinię
+	Select reference objects	Wybierz obiekty odniesienia
+	Select replacement objects	Wybierz obiekty zastępujące
+	Select second mline	Wybierz drugą multilinię
+	Select source object	Wybierz obiekt źródłowy
+	Select using two clicks only	Zaznaczanie tylko dwoma kliknięciami
+	Select viewport to clip	Wybierz rzutnię do przycięcia
+	Select viewports	Wybierz rzutnie
+	Shortcut Menu	Menu kontekstowe
+	Shortcut Menu: always enabled	Menu kontekstowe: zawsze włączone
+	Shortcut Menu: enabled when command options are present	Menu kontekstowe: włączone, gdy polecenie ma opcje
+	Sort text top-down?	Posortować teksty od góry do dołu?
+	Specify X scale factor	Podaj współczynnik skali X
+	Specify Z scale factor or	Podaj współczynnik skali Z lub
+	Specify a fit tolerance	Podaj tolerancję dopasowania
+	Specify a point on the spline <exit>	Wskaż punkt na splajnie <exit>
+	Specify a precision	Podaj dokładność
+	Specify angle for dimension text	Podaj kąt tekstu wymiaru
+	Specify base point of objects	Wskaż punkt bazowy obiektów
+	Specify block attachment	Wskaż punkt dołączenia bloku
+	Specify center location override	Wskaż nowe położenie środka
+	Specify center of isocircle	Wskaż środek izookręgu
+	Specify center of view box	Wskaż środek ramki widoku
+	Specify chamfer angle from the first line	Podaj kąt fazowania względem pierwszej linii
+	Specify chamfer length on the first line	Podaj długość fazowania na pierwszej linii
+	Specify change point	Wskaż punkt zmiany
+	Specify clipping boundary or select invert option	Wskaż obwiednię przycinania lub wybierz opcję odwrócenia
+	Specify collected multileader location or [Vertical/Horizontal/Wrap]	Wskaż położenie zebranych odnośników wielokrotnych lub [Vertical/Horizontal/Wrap]
+	Specify column height	Podaj wysokość kolumny
+	Specify control point <exit>	Wskaż punkt sterujący <exit>
+	Specify diameter of isocircle	Podaj średnicę izookręgu
+	Specify dimension line position	Wskaż położenie linii wymiarowej
+	Specify direction	Wskaż kierunek
+	Specify direction (first point)	Wskaż kierunek (pierwszy punkt)
+	Specify direction (second point)	Wskaż kierunek (drugi punkt)
+	Specify direction of chord for arc	Wskaż kierunek cięciwy łuku
+	Specify direction of vertex tangent	Wskaż kierunek stycznej w wierzchołku
+	Specify displacement	Wskaż przemieszczenie
+	Specify displacement base point	Wskaż punkt bazowy przemieszczenia
+	Specify distance between columns (|||)	Podaj odległość między kolumnami (|||)
+	Specify end tangent	Wskaż styczną końcową
+	Specify endpoint of the arc	Wskaż punkt końcowy łuku
+	Specify existing fit point <exit>	Wskaż istniejący punkt dopasowania <exit>
+	Specify first break point	Wskaż pierwszy punkt przerwania
+	Specify first corner of the unit cell	Wskaż pierwszy narożnik komórki jednostkowej
+	Specify first fence point	Wskaż pierwszy punkt linii wyboru
+	Specify first point for arc length dimension	Wskaż pierwszy punkt wymiaru długości łuku
+	Specify first point for breakline	Wskaż pierwszy punkt linii przerwania
+	Specify first point or [Options]	Wskaż pierwszy punkt lub [Options]
+	Specify fourth point or	Wskaż czwarty punkt lub
+	Specify gutter width	Podaj szerokość odstępu między kolumnami
+	Specify helix height	Podaj wysokość helisy
+	Specify included angle for arc	Podaj kąt rozwarcia łuku
+	Specify insertion point of the table	Wskaż punkt wstawienia tabeli
+	Specify jog location	Wskaż położenie załamania
+	Specify jog location (or press ENTER)	Wskaż położenie załamania (lub naciśnij ENTER)
+	Specify leader arrowhead location or [Remove leaders]	Wskaż położenie grotu odnośnika lub [Remove leaders]
+	Specify leader start point	Wskaż punkt początkowy odnośnika
+	Specify leaders to remove	Wybierz odnośniki do usunięcia
+	Specify leaders to remove or [Add leaders]	Wybierz odnośniki do usunięcia lub [Add leaders]
+	Specify length of line	Podaj długość linii
+	Specify linetype name	Podaj nazwę rodzaju linii
+	Specify location for break symbol	Wskaż położenie symbolu przerwania
+	Specify location of the text	Wskaż położenie tekstu
+	Specify new angle	Podaj nowy kąt
+	Specify new block insertion point	Wskaż nowy punkt wstawienia bloku
+	Specify new block rotation angle	Podaj nowy kąt obrotu bloku
+	Specify new circle radius	Podaj nowy promień okręgu
+	Specify new elevation	Podaj nową rzędną
+	Specify new fit point <exit>	Wskaż nowy punkt dopasowania <exit>
+	Specify new height	Podaj nową wysokość
+	Specify new length	Podaj nową długość
+	Specify new linetype scale	Podaj nową skalę rodzaju linii
+	Specify new location	Wskaż nowe położenie
+	Specify new location for dimension text	Wskaż nowe położenie tekstu wymiaru
+	Specify new point on spline <exit>	Wskaż nowy punkt na splajnie <exit>
+	Specify new rotation angle	Podaj nowy kąt obrotu
+	Specify new text insertion point	Wskaż nowy punkt wstawienia tekstu
+	Specify new thickness	Podaj nową grubość obiektu
+	Specify next fence point	Wskaż następny punkt linii wyboru
+	Specify number of columns	Podaj liczbę kolumn
+	Specify other corner	Wskaż przeciwległy narożnik
+	Specify quadrant	Wskaż ćwiartkę
+	Specify radius of isocircle	Podaj promień izookręgu
+	Specify reference angle	Podaj kąt odniesienia
+	Specify reference length	Podaj długość odniesienia
+	Specify rotation around major axis	Podaj obrót wokół osi głównej
+	Specify scale factor for XYZ axes	Podaj współczynnik skali dla osi XYZ
+	Specify second point for arc length dimension	Wskaż drugi punkt wymiaru długości łuku
+	Specify second point for breakline	Wskaż drugi punkt linii przerwania
+	Specify second point on arc	Wskaż drugi punkt na łuku
+	Specify size of view box	Podaj rozmiar ramki widoku
+	Specify spacing	Podaj odstęp
+	Specify start tangent	Wskaż styczną początkową
+	Specify temporary OTRACK point	Wskaż tymczasowy punkt OTRACK
+	Specify text height	Podaj wysokość tekstu
+	Specify the angle between items	Podaj kąt między elementami
+	Specify the angle to fill (+=ccw, -=cw)	Podaj kąt wypełnienia (+=ccw, -=cw)
+	Specify the distance between columns (|||)	Podaj odległość między kolumnami (|||)
+	Specify the incrementing elevation between rows	Podaj przyrost rzędnej między wierszami
+	Specify the new angle	Podaj nowy kąt
+	Specify the pattern origin	Wskaż punkt początkowy wzoru
+	Specify the reference angle	Podaj kąt odniesienia
+	Specify the tangent direction for the start point of arc	Wskaż kierunek stycznej w punkcie początkowym łuku
+	Specify third point	Wskaż trzeci punkt
+	Specify tolerance	Podaj tolerancję
+	Specify total length	Podaj długość całkowitą
+	Specify view twist angle	Podaj kąt skręcenia widoku
+	Specify width	Podaj szerokość
+	Specify zoom scale factor	Podaj współczynnik powiększenia widoku
+	Text to find	Tekst do znalezienia
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Bieżący plik wygląda na niekompletny, więc {name} pozostanie bez zmian, a bieżący plik zostanie zastąpiony.
+	The current file is kept as {name} until the next save.	Bieżący plik zostanie zachowany jako {name} do następnego zapisu.
+	The drawing changed. Close the window and open it again.	Rysunek został zmieniony. Zamknij okno i otwórz je ponownie.
+	This format can't keep these objects yet: {objects}.	Ten format nie potrafi jeszcze zachować tych obiektów: {objects}.
+	Turn on time-sensitive right-click	Włącz obsługę prawego przycisku zależną od czasu
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Po wyłączeniu tej opcji prawy przycisk podczas polecenia działa zgodnie z ustawieniami trybu polecenia w oknie Dostosowanie prawego przycisku myszy.
+	Type an alias name.	Wpisz nazwę aliasu.
+	Type of boundary object	Typ obiektu obwiedni
+	Type something to find	Wpisz tekst do znalezienia
+	Units of new drawings	Jednostki nowych rysunków
+	Use landing	Użyj odcinka poziomego odnośnika
+	Verify each name to be purged?	Potwierdzać każdą nazwę usuwanego elementu?
+	Where should the data go?	Gdzie zapisać dane?
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Podczas polecenia szybkie kliknięcie działa jak Enter, a przytrzymanie otwiera menu kontekstowe.
+	While a command runs:	Podczas działania polecenia:
+	Whole words	Całe wyrazy
+	Word-wrap text?	Zawijać tekst?
+	Xref	Odnośnik zewnętrzny
+	Xref Clip Frame	Ramka przycinania odnośnika zewnętrznego
+	Your changes will be lost if you don't save them.	Niezapisane zmiany zostaną utracone.
+	built-in	wbudowany
+	milliseconds	milisekundy
+	overrides built-in	zastępuje wbudowany
+	{alias} is already defined; select it and use Edit.	Alias {alias} już istnieje; zaznacz go i wybierz Edytuj.
+	{command} is an unknown command.	Nieznane polecenie: {command}.
+	{count} more types	Liczba pozostałych typów: {count}
+	{n} more warnings; see the command line.	Pozostałe ostrzeżenia: {n}; sprawdź wiersz poleceń.
+	Remove objects	Usuń obiekty z zaznaczenia
+	Select geometry to dimension	Wybierz geometrię do zwymiarowania
+	Select annotative objects	Wybierz obiekty opisowe
+	Specify total width	Podaj szerokość całkowitą
+	Specify column width	Podaj szerokość kolumny
+	Specify base radius	Podaj promień podstawy
+	Specify top radius	Podaj promień górnej podstawy
+	Specify fit point	Wskaż punkt dopasowania
+	Specify control point	Wskaż punkt sterujący
+	Arrow size	Rozmiar grotu
+	Dim scale overall	Ogólna skala wymiarowania
