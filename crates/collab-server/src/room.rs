@@ -19,14 +19,25 @@ const IDEMPOTENCY_WINDOW: usize = 1_000;
 /// How many operations the journal keeps (compaction and snapshots come later).
 const JOURNAL_LIMIT: usize = 10_000;
 
-/// One undoable step: the operation's id, the version it produced, and the drawing before it.
+/// One undoable step: the drawing before and after the operation, and its renames.
 ///
-/// The drawing is an `Arc` clone (copy-on-write chunks), so a step pins only what it changed.
+/// The drawings are `Arc` clones (copy-on-write chunks), so a step pins only what it changed.
 #[derive(Clone, Debug)]
 struct UndoStep {
-    op_id: String,
-    version_after: u64,
     before: Arc<Drawing>,
+    after: Arc<Drawing>,
+    renames: TableRenames,
+}
+
+/// One redoable step: the drawing the undo left, the drawing to bring back, and the forward
+/// renames of the operation the redo restores.
+///
+/// A redo is exact only while the drawing is what the undo left: any other state, from this
+/// participant or another, makes it a conflict (the same rule as undo, ADR 0010).
+#[derive(Clone, Debug)]
+struct RedoStep {
+    undo_left: Arc<Drawing>,
+    restore: Arc<Drawing>,
     renames: TableRenames,
 }
 
@@ -93,6 +104,7 @@ pub struct Room {
     journal: VecDeque<Applied>,
     journal_path: Option<PathBuf>,
     undo: BTreeMap<String, Vec<UndoStep>>,
+    redo: BTreeMap<String, Vec<RedoStep>>,
 }
 
 impl Room {
@@ -105,7 +117,16 @@ impl Room {
         session.set_record_undo(false);
         let mut registry = TableRegistry::new();
         registry.reconcile(session.doc().map_err(|_| RoomError::NoDrawing)?);
-        Ok(Room { session, registry, version: 0, applied: VecDeque::new(), journal: VecDeque::new(), journal_path: None, undo: BTreeMap::new() })
+        Ok(Room {
+            session,
+            registry,
+            version: 0,
+            applied: VecDeque::new(),
+            journal: VecDeque::new(),
+            journal_path: None,
+            undo: BTreeMap::new(),
+            redo: BTreeMap::new(),
+        })
     }
 
     /// The authoritative drawing, for a snapshot or a test replica.
@@ -190,7 +211,9 @@ impl Room {
         self.version = self.version.saturating_add(1);
         let applied = Applied { op_id: op.op_id.clone(), version: self.version, actor: op.actor.clone(), changes };
         self.remember(applied.clone());
-        self.remember_undo(op, applied.version, before, renames);
+        self.remember_undo(op, before, after, renames);
+        // A new operation is a new branch: what this participant undid can no longer be redone.
+        self.redo.remove(&op.actor);
         Ok(Outcome::Applied(applied))
     }
 
@@ -199,31 +222,32 @@ impl Room {
     /// The inverse is the change set from the current drawing back to the drawing before the step,
     /// which is exact while the step is the latest: a remote change after it makes the step
     /// conflicted instead of silently reverting someone else's edit (ADR 0010). The undo is a new
-    /// operation with its own version and journal entry; it is not itself undoable yet.
+    /// operation with its own version and journal entry; [`Room::redo`] can bring the step back
+    /// while nothing else changed.
     pub fn undo(&mut self, actor: &str, op_id: &str) -> Result<Outcome, RoomError> {
         let Some(step) = self.undo.get(actor).and_then(|steps| steps.last()).cloned() else {
             return Ok(Outcome::Rejected(Reject {
-                op_id: String::new(),
+                op_id: op_id.to_string(),
                 code: "nothing-to-undo".into(),
                 message: "this participant has no operation to undo".into(),
                 retryable: false,
             }));
         };
-        if step.version_after != self.version {
+        let current = self.drawing()?.clone();
+        if !self.same_content(&current, &step.after) {
             return Ok(Outcome::Rejected(Reject {
-                op_id: step.op_id.clone(),
+                op_id: op_id.to_string(),
                 code: "undo-conflict".into(),
                 message: "the drawing changed after this operation; it cannot be undone alone".into(),
                 retryable: false,
             }));
         }
-        let current = self.drawing()?.clone();
         let renames = reverse_renames(&step.renames);
         let changes = match diff_all(&current, step.before.as_ref(), &mut self.registry, &renames) {
             Ok(changes) => changes,
             Err(error) => {
                 return Ok(Outcome::Rejected(Reject {
-                    op_id: step.op_id.clone(),
+                    op_id: op_id.to_string(),
                     code: "invalid".into(),
                     message: error.to_string(),
                     retryable: false,
@@ -234,7 +258,7 @@ impl Room {
             if let Ok(doc) = self.session.doc_mut() {
                 *doc = current;
             }
-            return Ok(Outcome::Rejected(Reject { op_id: step.op_id.clone(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+            return Ok(Outcome::Rejected(Reject { op_id: op_id.to_string(), code: "invalid".into(), message: error.to_string(), retryable: false }));
         }
         self.version = self.version.saturating_add(1);
         let applied = Applied { op_id: op_id.to_string(), version: self.version, actor: actor.into(), changes };
@@ -242,6 +266,59 @@ impl Room {
         if let Some(steps) = self.undo.get_mut(actor) {
             steps.pop();
         }
+        // The step goes back on the redo stack: undoing again keeps the older entries, because
+        // each one is exact for the state the previous undo returns to.
+        self.redo.entry(actor.into()).or_default().push(RedoStep { undo_left: step.before, restore: step.after, renames: step.renames });
+        Ok(Outcome::Applied(applied))
+    }
+
+    /// Redo `actor`'s last undo, if nothing has happened since.
+    ///
+    /// The redo is a new operation with its own version and journal entry, and it puts the step
+    /// back on the participant's undo stack. A change after the undo — from anyone, including the
+    /// same participant — makes it `redo-conflict` instead of bringing back a stale drawing.
+    pub fn redo(&mut self, actor: &str, op_id: &str) -> Result<Outcome, RoomError> {
+        let Some(step) = self.redo.get(actor).and_then(|steps| steps.last()).cloned() else {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "nothing-to-redo".into(),
+                message: "this participant has no undone operation to redo".into(),
+                retryable: false,
+            }));
+        };
+        let current = self.drawing()?.clone();
+        if !self.same_content(&current, &step.undo_left) {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "redo-conflict".into(),
+                message: "the drawing changed after the undo; it cannot be redone alone".into(),
+                retryable: false,
+            }));
+        }
+        let changes = match diff_all(&current, step.restore.as_ref(), &mut self.registry, &step.renames) {
+            Ok(changes) => changes,
+            Err(error) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op_id.to_string(),
+                    code: "invalid".into(),
+                    message: error.to_string(),
+                    retryable: false,
+                }));
+            }
+        };
+        if let Err(error) = cadcraft_collab::apply(self.session.doc_mut().map_err(|_| RoomError::NoDrawing)?, &changes) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = current;
+            }
+            return Ok(Outcome::Rejected(Reject { op_id: op_id.to_string(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+        }
+        self.version = self.version.saturating_add(1);
+        let applied = Applied { op_id: op_id.to_string(), version: self.version, actor: actor.into(), changes };
+        self.remember(applied.clone());
+        if let Some(steps) = self.redo.get_mut(actor) {
+            steps.pop();
+        }
+        self.undo.entry(actor.into()).or_default().push(UndoStep { before: step.undo_left, after: step.restore, renames: step.renames });
         Ok(Outcome::Applied(applied))
     }
 
@@ -346,10 +423,21 @@ impl Room {
         self.journal.iter()
     }
 
-    /// Keep the step that undoes `op`: bounded per participant, with the drawing before it.
-    fn remember_undo(&mut self, op: &Op, version_after: u64, before: Drawing, renames: TableRenames) {
+    /// Whether two drawings have the same modelled content: no change set between them.
+    ///
+    /// A drawing also carries counters and file metadata (the handle seed, timestamps) that an
+    /// operation does not restore; comparing them would make every undo a conflict. The probe
+    /// registry keeps the room's identifiers untouched.
+    fn same_content(&self, a: &Drawing, b: &Drawing) -> bool {
+        let mut probe = self.registry.clone();
+        diff_all(a, b, &mut probe, &TableRenames::default()).is_ok_and(|changes| changes.is_empty())
+    }
+
+    /// Keep the step that undoes `op`: bounded per participant, with the drawing before it and
+    /// the drawing it produced (the state an undo must still find).
+    fn remember_undo(&mut self, op: &Op, before: Drawing, after: Drawing, renames: TableRenames) {
         let steps = self.undo.entry(op.actor.clone()).or_default();
-        steps.push(UndoStep { op_id: op.op_id.clone(), version_after, before: Arc::new(before), renames });
+        steps.push(UndoStep { before: Arc::new(before), after: Arc::new(after), renames });
         while steps.len() > 200 {
             steps.remove(0);
         }
@@ -806,6 +894,94 @@ mod undo_tests {
             Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-undo"),
             Outcome::Applied(_) => panic!("nothing to undo"),
         }
+    }
+
+    #[test]
+    fn redo_restores_the_undone_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let start = room.drawing().unwrap().clone();
+        let forward = applied(room.apply(&line_op("a", 0.0)).unwrap());
+        let undo = applied(room.undo("u1", "undo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+
+        let redo = applied(room.redo("u1", "redo-a").unwrap());
+
+        assert_eq!(room.version(), 3);
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+        let mut replica = start;
+        for change in [&forward, &undo, &redo] {
+            cadcraft_collab::apply(&mut replica, &change.changes).unwrap();
+        }
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
+    fn redo_after_another_operation_is_a_conflict() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        let mut other = line_op("b", 5.0);
+        other.actor = "u2".into();
+        applied(room.apply(&other).unwrap());
+
+        match room.redo("u1", "redo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "redo-conflict"),
+            Outcome::Applied(_) => panic!("redone a step with a later operation"),
+        }
+        assert_eq!(room.version(), 3);
+    }
+
+    #[test]
+    fn redo_without_an_undo_is_refused() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        match room.redo("u1", "redo-none").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-redo"),
+            Outcome::Applied(_) => panic!("nothing to redo"),
+        }
+    }
+
+    #[test]
+    fn a_new_operation_after_undo_drops_the_redo() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        applied(room.apply(&line_op("b", 5.0)).unwrap());
+
+        match room.redo("u1", "redo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-redo"),
+            Outcome::Applied(_) => panic!("a new operation must drop the redo branch"),
+        }
+    }
+
+    #[test]
+    fn undo_after_redo_works() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        applied(room.redo("u1", "redo-a").unwrap());
+
+        applied(room.undo("u1", "undo-redo").unwrap());
+
+        assert_eq!(room.version(), 4);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn consecutive_undos_are_redone_in_order() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.apply(&line_op("b", 5.0)).unwrap());
+        applied(room.undo("u1", "undo-b").unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+
+        applied(room.redo("u1", "redo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+        applied(room.redo("u1", "redo-b").unwrap());
+
+        assert_eq!(room.version(), 6);
+        assert_eq!(room.drawing().unwrap().entity_count(), 2);
     }
 }
 

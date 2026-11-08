@@ -101,6 +101,16 @@ fn two_editors_and_a_viewer_over_websocket() {
     assert_eq!(replica_a.drawing().entity_count(), 1);
     assert_eq!(replica_a.drawing().space(&Space::Model), replica_b.drawing().space(&Space::Model));
 
+    // b redoes the step its undo removed; the redo is a journal entry of its own.
+    b.send(&ClientMessage::Redo { op_id: "redo-b1".into() }).unwrap();
+    let redo_b = next_applied(&mut b, 4);
+    let redo_a = next_applied(&mut a, 4);
+    replica_a.applied(&redo_a).unwrap();
+    replica_b.applied(&redo_b).unwrap();
+    assert_eq!(replica_a.version(), 4);
+    assert_eq!(replica_a.drawing().entity_count(), 2);
+    assert_eq!(replica_a.drawing().space(&Space::Model), replica_b.drawing().space(&Space::Model));
+
     // a's own step is now older than the drawing: the server refuses it.
     a.send(&ClientMessage::Undo { op_id: "undo-a1".into() }).unwrap();
     match a.receive().unwrap() {

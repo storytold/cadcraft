@@ -248,6 +248,34 @@ impl Server {
                     }
                 }
             }
+            ClientMessage::Redo { op_id } => {
+                if !claims.role.may_write() {
+                    let _ = tx.send(ServerMessage::Rejected {
+                        rejected: Reject { op_id, code: "forbidden".into(), message: "a viewer cannot redo".into(), retryable: false },
+                    });
+                    return true;
+                }
+                let already = lock(&self.room).applied(&op_id).cloned();
+                let outcome = match already {
+                    Some(applied) => Ok(Outcome::Applied(applied)),
+                    None => lock(&self.room).redo(&claims.sub, &op_id),
+                };
+                match outcome {
+                    Ok(Outcome::Applied(applied)) => {
+                        self.metrics.applied.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
+                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                    }
+                    Ok(Outcome::Rejected(rejected)) => {
+                        self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Rejected { rejected });
+                    }
+                    Err(error) => {
+                        self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
+                    }
+                }
+            }
             ClientMessage::Presence { presence } => {
                 // The token says who this is; a client cannot label its cursor as someone else.
                 let mut presence = presence;
