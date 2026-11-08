@@ -800,6 +800,99 @@ mod native {
         }
     }
 
+    /// Table styles' R2010+ row cell styles (`_TITLE`, `_HEADER`, `_DATA`) with the style's cell
+    /// margins (#2920). Without row cell styles of its own (as after reading a DXF), acadrust
+    /// 0.6.6's DWG writer builds them with no margin override, and AutoCAD then reads the style's
+    /// margins as 0.06 where the drawing has another value. They are built here the way that
+    /// writer builds them, with the margins the writer gives the base `Table` cell style.
+    /// Styles that carry row cell styles already, and versions before 2010, are left alone.
+    pub(super) fn table_style_row_margins(doc: &mut acadrust::CadDocument) {
+        use acadrust::objects::{
+            NamedTableCellStyle, ObjectType, RowCellStyle, TableCellBorder, TableCellStyleData, TableContentFormat, TableGridFormat,
+        };
+        use acadrust::types::{Color, Handle};
+        if doc.version < acadrust::DxfVersion::AC1024 {
+            return;
+        }
+        // A row's text style: its handle when it is a text style's, else its name's; a null handle
+        // is left for the writer, which gives such a row Standard.
+        let handles: std::collections::HashSet<Handle> = doc.text_styles.iter().map(|ts| ts.handle).collect();
+        let by_name = |name: &str| doc.text_styles.iter().find(|ts| ts.name.eq_ignore_ascii_case(name)).map(|ts| ts.handle);
+        let text_style = |row: &RowCellStyle| {
+            row.text_style_handle.filter(|h| handles.contains(h)).or_else(|| by_name(&row.text_style_name)).unwrap_or(Handle::NULL)
+        };
+        let mut rows_of = Vec::new();
+        for (h, o) in doc.objects.iter() {
+            let ObjectType::TableStyle(s) = o else { continue };
+            if !s.modern_overrides.is_empty() {
+                continue;
+            }
+            let (v, hz) = (s.vertical_margin, s.horizontal_margin);
+            let row_style = |row: &RowCellStyle, id: i32, style_type: i32, name: &str, merge_flags: i32| {
+                // R2010+ edge order; the grid flag is set for a hidden edge, the reverse of the
+                // row border's `is_invisible`.
+                let borders = [
+                    (1, &row.top_border),
+                    (2, &row.horizontal_inside_border),
+                    (4, &row.bottom_border),
+                    (8, &row.left_border),
+                    (16, &row.vertical_inside_border),
+                    (32, &row.right_border),
+                ]
+                .into_iter()
+                .map(|(index_mask, border)| TableGridFormat {
+                    index_mask,
+                    border: TableCellBorder { is_invisible: !border.is_invisible, ..border.clone() },
+                    line_type: Handle::NULL,
+                })
+                .collect();
+                NamedTableCellStyle {
+                    cell_style: TableCellStyleData {
+                        style_type: 5,
+                        data_flags: 1,
+                        merge_flags,
+                        background_color: if row.fill_enabled { row.fill_color } else { Color::None },
+                        content_layout: 1,
+                        content_format: TableContentFormat {
+                            value_data_type: row.data_type,
+                            value_unit_type: row.unit_type,
+                            value_format_string: row.format_string.clone(),
+                            block_scale: 1.0,
+                            cell_alignment: row.alignment as i32,
+                            content_color: row.text_color,
+                            text_style: text_style(row),
+                            text_height: row.text_height,
+                            ..TableContentFormat::default()
+                        },
+                        margin_override_flags: 1,
+                        vertical_margin: v,
+                        horizontal_margin: hz,
+                        bottom_margin: v,
+                        right_margin: hz,
+                        horizontal_spacing: 0.18,
+                        vertical_spacing: 0.18,
+                        borders,
+                        ..TableCellStyleData::default()
+                    },
+                    id,
+                    style_type,
+                    name: name.to_string(),
+                }
+            };
+            let rows = vec![
+                (1, row_style(&s.title_row_style, 1, 1, "_TITLE", 0x8000)),
+                (2, row_style(&s.header_row_style, 2, 1, "_HEADER", 0)),
+                (3, row_style(&s.data_row_style, 3, 2, "_DATA", 0)),
+            ];
+            rows_of.push((*h, rows));
+        }
+        for (h, rows) in rows_of {
+            if let Some(ObjectType::TableStyle(s)) = doc.objects.get_mut(&h) {
+                s.modern_overrides = rows;
+            }
+        }
+    }
+
     /// The DXF names of an ASCII DXF's CLASS records, in CLASSES order: a proxy's class number
     /// (group 91) is 500 plus its class's place here (DXF Reference, ACAD_PROXY_OBJECT). Empty for
     /// one without a CLASSES section. `None` for a binary DXF, whose classes this doesn't read:
@@ -989,6 +1082,7 @@ mod native {
             let proxies = proxy_classes(&mut doc, classes.as_deref());
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
+            table_style_row_margins(&mut doc);
             dimension_flags(&mut doc);
             let mut unwritten = drop_unwritable(&mut doc);
             for (kind, n) in proxies {
@@ -1329,6 +1423,40 @@ mod tests {
         let romans = doc.text_styles.iter().find(|ts| ts.name == "ROMANS").map(|ts| ts.handle);
         assert!(romans.is_some(), "ROMANS is missing from the DWG");
         assert_eq!(Some(doc.header.current_text_style_handle), romans);
+    }
+
+    /// A 2010+ DWG's table style row cell styles carry the style's margins, as AutoCAD writes
+    /// them: without them AutoCAD reads the margins as 0.06 where the drawing has 1.0 (#2920).
+    /// DWG 2004 has no row cell styles and keeps the margins in the style itself.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn table_style_row_cell_styles_keep_the_margins() {
+        let read = |dxf: Vec<u8>| acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf)).unwrap().read().unwrap();
+        let mut doc = read(MINIMAL_DXF.into());
+        let mut styles = 0;
+        for o in doc.objects.values_mut() {
+            let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+            s.set_margins(1.0);
+            styles += 1;
+        }
+        assert!(styles > 0, "the drawing has no table style");
+        let dxf = acadrust::DxfWriter::new(&doc).write_to_vec().unwrap();
+        for version in ["AC1024", "AC1027", "AC1032"] {
+            let dwg = dxf_to_dwg_as(&dxf, version).unwrap();
+            let back = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
+            let mut rows = Vec::new();
+            for o in back.objects.values() {
+                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+                assert_eq!((s.horizontal_margin, s.vertical_margin), (1.0, 1.0), "{version} {}", s.name);
+                for (_, row) in &s.modern_overrides {
+                    let c = &row.cell_style;
+                    rows.push((row.name.clone(), c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin));
+                }
+            }
+            let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
+            assert!(["_TITLE", "_HEADER", "_DATA"].iter().all(|n| names.contains(n)), "{version}: {names:?}");
+            assert!(rows.iter().all(|r| (r.1, r.2, r.3, r.4, r.5) == (1, 1.0, 1.0, 1.0, 1.0)), "{version}: {rows:?}");
+        }
     }
 
     #[test]
