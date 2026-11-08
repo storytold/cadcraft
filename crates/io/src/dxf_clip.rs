@@ -548,4 +548,62 @@ mod tests {
             assert!(parse_filter(&filter, None).is_none(), "{count}");
         }
     }
+
+    fn make_test_filter(inverse: &Mat3, own: &Mat3) -> ForeignObject {
+        let mut tags = vec![
+            raw(100, "AcDbFilter"),
+            raw(100, "AcDbSpatialFilter"),
+            raw(70, 4),
+            raw(10, 0.0),
+            raw(20, 0.0),
+            raw(10, 10.0),
+            raw(20, 0.0),
+            raw(10, 10.0),
+            raw(20, 10.0),
+            raw(10, 0.0),
+            raw(20, 10.0),
+            raw(210, 0.0),
+            raw(220, 0.0),
+            raw(230, 1.0),
+            raw(71, 1),
+            raw(72, 0),
+            raw(73, 0),
+        ];
+        for v in matrix_values(inverse).into_iter().chain(matrix_values(own)) {
+            tags.push(raw(40, v));
+        }
+        ForeignObject { handle: Handle(0x100), kind: "SPATIAL_FILTER".into(), tags }
+    }
+
+    #[test]
+    fn parse_filter_accepts_identity_boundary_transform() {
+        // Baseline: parse_filter accepts filters where the second matrix is Identity.
+        let filter = make_test_filter(&Mat3::IDENTITY, &Mat3::IDENTITY);
+        let parsed = parse_filter(&filter, None);
+        assert!(parsed.is_some(), "Baseline filter with identity own matrix must be accepted");
+    }
+
+    #[test]
+    fn parse_filter_preserves_non_identity_boundary_transform() {
+        // WHY:
+        // SPATIAL_FILTER can contain two transformation matrices.
+        // parse_filter currently rejects every non-identity `own` matrix,
+        // causing an otherwise valid clipping definition to be discarded.
+        //
+        // This test captures the parser limitation. The expected coordinate
+        // mapping must be established from the DXF matrix semantics and
+        // Mat3::then() before changing the parser implementation.
+        //
+        // This is a synthetic regression test, not yet a reproduction of
+        // GitHub issue #2845. A real AutoCAD DWG fixture is still required.
+
+        let inverse = Mat3::IDENTITY;
+        let own = Mat3::translate(Vec2::new(100.0, 50.0));
+
+        let filter = make_test_filter(&inverse, &own);
+        let parsed = parse_filter(&filter, None);
+
+        // This test INTENTIONALLY FAILS on the current baseline:
+        assert!(parsed.is_some(), "A valid non-identity boundary transform must not cause the filter to be discarded");
+    }
 }
