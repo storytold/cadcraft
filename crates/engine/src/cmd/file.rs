@@ -603,7 +603,8 @@ pub fn save_keeps_current(_path: &std::path::Path) -> bool {
 
 /// The mode of a new backup: no more open than the drawing (`src_mode`, group `src_gid`) nor than the
 /// `.bak` it replaces (`old`: mode and group). The backup keeps the old `.bak`'s group, so when that
-/// differs from the drawing's group the group bits are dropped: that group could not read the drawing.
+/// differs from the drawing's group, its group bits are dropped and its other bits are capped by
+/// the drawing's group bits: a member of the drawing's group must not gain access through `other`.
 #[cfg(unix)]
 fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
     let mut mode = src_mode & 0o777;
@@ -611,6 +612,8 @@ fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
         mode &= old_mode;
         if old_gid != src_gid {
             mode &= !0o070;
+            let source_group_as_other = (src_mode & 0o070) >> 3;
+            mode &= !0o007 | source_group_as_other;
         }
     }
     mode
@@ -639,15 +642,16 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     // failed write leaves the old .bak as it was; a symlink at the .bak is replaced, never
     // written through.
     #[cfg(unix)]
-    let permissions = {
+    let source_metadata = src.metadata()?;
+    #[cfg(unix)]
+    let permissions = || {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let sm = src.metadata()?;
         let old = std::fs::symlink_metadata(&bak).ok().filter(|m| m.is_file());
-        Some(std::fs::Permissions::from_mode(backup_mode(sm.mode(), sm.gid(), old.map(|m| (m.mode(), m.gid())))))
+        Ok(Some(std::fs::Permissions::from_mode(backup_mode(source_metadata.mode(), source_metadata.gid(), old.map(|m| (m.mode(), m.gid()))))))
     };
     #[cfg(not(unix))]
-    let permissions = None;
-    crate::atomic_write::write_atomic_with(&bak, permissions, |out| {
+    let permissions = || Ok(None);
+    crate::atomic_write::write_atomic_with_permissions(&bak, permissions, |out| {
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
     })

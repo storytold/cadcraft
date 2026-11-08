@@ -16,9 +16,30 @@ use std::fs::{File, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// Monotonic counter making temporary names unique within this process without a RNG dependency.
 static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Locks held from destination metadata inspection through rename, so concurrent writes cannot
+/// combine permissions from one version of a path with the group of another.
+fn path_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let key = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()).join(name),
+        _ => absolute,
+    };
+    let mut locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        lock
+    } else {
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+}
 
 /// How many fresh temporary names to try before giving up (each collision is another local race).
 const MAX_TRIES: u32 = 32;
@@ -33,13 +54,15 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     // A symlinked destination is resolved so the link stays a link and its target is replaced.
     let resolved = resolve_symlink(path)?;
     let path = resolved.as_deref().unwrap_or(path);
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let permissions = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(meta.permissions()),
         Ok(_) => None,
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
-    write_atomic_with(path, permissions, |file| file.write_all(bytes))
+    write_atomic_with_locked(path, permissions, |file| file.write_all(bytes))
 }
 
 /// The topmost folder missing above `path`: what [`write_atomic_making_folders`] will create.
@@ -67,6 +90,24 @@ pub fn write_atomic_making_folders(path: &Path, bytes: &[u8]) -> io::Result<()> 
 /// with `permissions` given to it from its creation (`None`: the usual creation mode). A symlink
 /// at `path` is replaced by the new file, never written through.
 pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+/// [`write_atomic_with`] with permissions derived under the same destination lock as the write.
+pub fn write_atomic_with_permissions(
+    path: &Path,
+    permissions: impl FnOnce() -> io::Result<Option<Permissions>>,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let permissions = permissions()?;
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+fn write_atomic_with_locked(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let (mut file, tmp) = create_temp(&dir, permissions.as_ref())?;
     let write = (|| {
