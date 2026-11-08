@@ -535,6 +535,7 @@
 	Multiline Text	Chữ nhiều dòng
 	Multiline Text...	Chữ nhiều dòng...
 	Multiple	Nhiều
+	Multiple Insert	Chèn nhiều
 	Multiple Point	Nhiều điểm
 	My	Của tôi
 	My properties: not available yet	Thuộc tính của tôi: chưa khả dụng
@@ -1462,3 +1463,6 @@ menu	Modify	Hiệu chỉnh
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.

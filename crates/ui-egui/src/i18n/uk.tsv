@@ -141,6 +141,8 @@
 	Clear	Очистити
 	Clip	Обрізати
 	Clip Viewport	Обрізати видовий екран
+	Clip Xref	Обрізати зовнішнє посилання
+	Xref Clip Frame	Рамка обрізки зовнішнього посилання
 	Clipboard	Буфер обміну
 	Close	Закрити
 	Close All	Закрити всі
@@ -200,7 +202,10 @@
 	Cylinder	Циліндр
 	DWG	DWG
 	DWG Reference...	Посилання на DWG...
+	Raster Image Reference...	Посилання на растрове зображення...
+	Raster Images	Растрові зображення
 	DXF	DXF
+	DView	Динамічний вид
 	Dark	Темна
 	Data Extraction...	Вилучення даних...
 	Default	Типово
@@ -1361,12 +1366,17 @@
 	More than {n} aliases.	Понад {n} псевдонімів.
 	Alias file: {file}	Файл псевдонімів: {file}
 	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонімів не завантажено. REINIT замінює ці псевдоніми псевдонімами з файлу.
+	Aliases are saved in your CADCraft profile and survive restarts.	Псевдоніми зберігаються в профілі CADCraft і не зникають після перезапуску.
 	Alias	Псевдонім
 	Command	Команда
 	overrides built-in	замінює вбудований
 	built-in	вбудований
 	Add…	Додати…
 	Edit…	Змінити…
+	Import…	Імпортувати…
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Імпорт: тут немає діалогу вибору файлів; запустіть ALIASEDIT із вмістом файлу в параметрі text.
+	{n} more warnings; see the command line.	Ще {n} попереджень; див. командний рядок.
+	Alias files (PGP)	Файли псевдонімів (PGP)
 	Save alias	Зберегти псевдонім
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
@@ -1387,3 +1397,30 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Креслення змінилося. Закрийте вікно та відкрийте його знову.
+	Keyboard Shortcuts...	Комбінації клавіш...
+	Keyboard Shortcuts	Комбінації клавіш
+	Replaces the shortcut of {commands}	Замінює комбінацію клавіш команди: {commands}
+	Needs Ctrl, Alt or a function key	Потрібна клавіша Ctrl, Alt або функціональна клавіша
+	Press the keys	Натисніть клавіші
+	Back to CADCraft's shortcut	Повернути комбінацію CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Ваша комбінація клавіш має перевагу над комбінацією CADCraft. Зміни застосовуються одразу й зберігаються.
+	Right-Click Customization...	Налаштування правої кнопки...
+	Right-Click Customization	Налаштування правої кнопки
+	Turn on time-sensitive right-click	Увімкнути залежне від часу клацання правою кнопкою
+	Longer click duration:	Тривалість довгого клацання:
+	milliseconds	мілісекунд
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Під час команди коротке клацання — Enter, довше відкриває контекстне меню.
+	Default Mode	Режим за замовчуванням
+	No objects selected and no command running:	Нічого не вибрано й команда не виконується:
+	Edit Mode	Режим редагування
+	Objects selected and no command running:	Об'єкти вибрано, команда не виконується:
+	Repeat last command	Повторити останню команду
+	Shortcut Menu	Контекстне меню
+	Command Mode	Режим команди
+	While a command runs:	Під час виконання команди:
+	ENTER	Клавіша Enter
+	Shortcut Menu: always enabled	Контекстне меню: завжди
+	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри

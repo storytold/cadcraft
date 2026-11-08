@@ -1462,3 +1462,26 @@ menu	Modify	Ändra
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Layouts	Layouter
+	Associate	Associera
+	Change	Ändra
+	Change Properties	Ändra egenskaper
+	Save Layout as Template	Spara layout som mall
+	Units	Enheter
+	Backup copy	Säkerhetskopia
+	Create backup copy with each save	Skapa en säkerhetskopia vid varje sparande
+	Font	Typsnitt
+	Save changes to block "{name}"?	Spara ändringar i blocket "{name}"?
+	Backup copies are off, so the current file will be replaced.	Säkerhetskopior är avstängda, så den aktuella filen kommer att ersättas.
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 och tidigare behåller dem. Använd Spara som för att behålla dem i ritningen.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF behåller dem. Använd Spara som för att behålla dem i ritningen.
+	Save Anyway	Spara ändå
+	Save cancelled: {path} was not changed.	Sparandet avbröts: {path} ändrades inte.
+	Saving {name} will remove content	Om du sparar {name} tas innehåll bort
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Den aktuella filen verkar inte vara hel, så {name} lämnas som den är och den aktuella filen kommer att ersättas.
+	The current file is kept as {name} until the next save.	Den aktuella filen sparas som {name} till nästa sparande.
+	This format can't keep these objects yet: {objects}.	Det här formatet kan ännu inte behålla följande objekt: {objects}.
+	{count} more types	{count} typer till
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
