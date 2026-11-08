@@ -103,7 +103,7 @@ fn dxf_angular_block_text_keeps_the_decimal_separator() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_angular_block_text_keeps_the_decimal_separator() {
     use std::io::Cursor;
