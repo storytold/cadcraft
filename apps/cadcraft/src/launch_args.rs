@@ -24,6 +24,16 @@ pub(crate) struct LaunchArgs {
     /// Open with the sample drawing
     #[arg(long)]
     pub(crate) sample: bool,
+    /// Join a shared session at this WebSocket URL
+    #[arg(long, value_name = "URL", env = "CADCRAFT_COLLAB_URL")]
+    pub(crate) collab_url: Option<String>,
+    /// The session token (a JWT) for the shared session; prefer the environment, which is not
+    /// visible in the process list
+    #[arg(long, value_name = "TOKEN", env = "CADCRAFT_COLLAB_TOKEN", hide = true)]
+    pub(crate) collab_token: Option<String>,
+    /// The drawing id the shared session is about
+    #[arg(long, value_name = "DOC", env = "CADCRAFT_COLLAB_DOC")]
+    pub(crate) collab_doc: Option<String>,
 }
 
 /// The command line. An empty or blank variable counts as unset.

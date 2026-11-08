@@ -201,7 +201,10 @@ impl Server {
     /// Answer one message; `false` closes the connection.
     fn handle(&self, message: ClientMessage, claims: &Claims, tx: &Sender<ServerMessage>) -> bool {
         match message {
-            ClientMessage::Op { op } => match lock(&self.room).apply_as(claims.role, &op) {
+            ClientMessage::Op { mut op } => {
+                // The token says who sent it; a client cannot file an edit under another name.
+                op.actor = claims.sub.clone();
+                match lock(&self.room).apply_as(claims.role, &op) {
                 Ok(Outcome::Applied(applied)) => {
                     self.metrics.applied.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
@@ -215,7 +218,8 @@ impl Server {
                     self.metrics.errors.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
                 }
-            },
+                }
+            }
             ClientMessage::Undo { op_id } => {
                 if !claims.role.may_write() {
                     let _ = tx.send(ServerMessage::Rejected {
@@ -245,6 +249,9 @@ impl Server {
                 }
             }
             ClientMessage::Presence { presence } => {
+                // The token says who this is; a client cannot label its cursor as someone else.
+                let mut presence = presence;
+                presence.actor = claims.sub.clone();
                 lock(&self.presence).update(presence.clone(), Instant::now());
                 self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });
             }

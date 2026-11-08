@@ -808,3 +808,59 @@ mod undo_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod large_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::geom::Vec3;
+    use cadcraft_doc::{Common, EntityKind, Line, Space};
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn applied(outcome: Outcome) -> Applied {
+        match outcome {
+            Outcome::Applied(applied) => applied,
+            Outcome::Rejected(reject) => panic!("expected an applied operation, got {reject:?}"),
+        }
+    }
+
+    #[test]
+    fn a_ten_thousand_entity_drawing_round_trips() {
+        let mut drawing = Drawing::new_metric();
+        for i in 0..10_000 {
+            let x = f64::from(i);
+            drawing
+                .add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 1.0, 0.0) }))
+                .unwrap();
+        }
+        let mut room = Room::new(drawing).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+
+        let start = Instant::now();
+        let change = applied(room.apply(&line_op("big", 0.0)).unwrap());
+        let applied_in = start.elapsed();
+        cadcraft_collab::apply(&mut replica, &change.changes).unwrap();
+
+        assert!(applied_in < Duration::from_secs(5), "an operation on 10k entities took {applied_in:?}");
+        assert_eq!(replica.entity_count(), 10_001);
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+
+        let snapshot = room.snapshot().unwrap();
+        let restored = Room::restore(&snapshot).unwrap();
+        assert_eq!(restored.drawing().unwrap().entity_count(), 10_001);
+        assert_eq!(restored.version(), room.version());
+    }
+}

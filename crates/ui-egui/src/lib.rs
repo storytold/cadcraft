@@ -22,6 +22,7 @@ pub mod animation;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
+pub mod collab;
 pub mod capture;
 pub mod chrome;
 pub mod clipboard;
@@ -261,6 +262,14 @@ pub struct CadApp {
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
+    /// A shared session's connection, when this drawing is being edited together.
+    pub collab: Option<collab::Collab>,
+    /// What the other participants are looking at, by actor.
+    pub remote_presence: std::collections::BTreeMap<String, cadcraft_collab::Presence>,
+    /// The version of the shared drawing this app shows.
+    pub collab_version: u64,
+    collab_seq: u64,
+    last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
     /// Monotonic surface epoch, bumped whenever the window/viewport geometry changes.
@@ -353,6 +362,11 @@ impl CadApp {
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             control_rx: None,
+            collab: None,
+            remote_presence: std::collections::BTreeMap::new(),
+            collab_version: 0,
+            collab_seq: 0,
+            last_presence: None,
             capture_geometry: None,
             capture_epoch: 0,
             capture_identity_epoch: 0,
@@ -418,6 +432,9 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        if let Some(r) = self.collab_command(id, &params) {
+            return r;
+        }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
@@ -437,6 +454,10 @@ impl CadApp {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        if self.is_shared() {
+            self.session.echo("a shared session takes commands with explicit parameters; the interactive command line is not available yet");
+            return;
+        }
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -452,6 +473,11 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        if self.is_shared() {
+            let message = "a shared session takes commands with explicit parameters; the interactive command line is not available yet".to_string();
+            self.session.echo(message.clone());
+            return Some(message);
+        }
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -702,6 +728,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        self.collab_tick(ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
         capture::note_identity(self, ctx);

@@ -860,6 +860,8 @@ dependencies = [
 name = "cadcraft-ui-egui"
 version = "0.17.0"
 dependencies = [
+ "cadcraft-collab",
+ "cadcraft-collab-client",
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-engine",
