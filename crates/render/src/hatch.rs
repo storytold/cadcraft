@@ -512,10 +512,11 @@ impl Family<'_> {
     fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         // Transforming the boundary is charged before it is done, at the scanline rate (one unit per 8 vertices).
         let verts: u64 = loops.iter().map(|l| l.len() as u64).sum();
-        if *work == 0 {
+        let transform_charge = verts / 8 + 1;
+        if transform_charge > *work {
             return;
         }
-        *work = work.saturating_sub(verts / 8 + 1);
+        *work -= transform_charge;
         let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
         let bb = Bounds2::from_points(local.iter().flatten().copied());
         if bb.is_empty() {
@@ -534,15 +535,17 @@ impl Family<'_> {
         // family draws anything at all).
         let draws = self.dashes.iter().any(|d| *d >= 0.0);
         let solid_line = self.dashes.is_empty() || pat_len < 1e-12 || (px > 0.0 && pat_len < 2.0 * px && draws);
-        // Each scanline visits every boundary edge and sorts the crossings: that costs the shared
-        // allowance one unit per 8 edges (a 5,000-edge boundary swept by 10,000 lines uses about
-        // 6 million of its 50 million), whether or not any dash is made.
+        // Each scanline visits every boundary edge and sorts the intersections. Charge both the
+        // traversal and an n*ceil(log2(n)) upper bound for sorting, scaled to one unit per eight
+        // operations, whether or not any dash is made.
         let edges: u64 = local.iter().map(|l| l.len() as u64).sum();
+        let sort_levels = if edges > 1 { (u64::BITS - (edges - 1).leading_zeros()) as u64 } else { 0 };
+        let crossings_charge = edges.saturating_add(edges.saturating_mul(sort_levels)) / 8 + 1;
         for k in k0..=k1 {
-            if out.len() >= self.max_runs || *work == 0 || is_set(cancel) {
+            if out.len() >= self.max_runs || crossings_charge > *work || is_set(cancel) {
                 return;
             }
-            *work = work.saturating_sub(edges / 8 + 1);
+            *work -= crossings_charge;
             let y = k as f64 * self.spacing;
             let xs = crossings(&local, y);
             let offset = shift_per_line * k as f64;
@@ -572,10 +575,10 @@ impl Family<'_> {
         'outer: while x < x1 {
             for d in self.dashes {
                 guard += 1;
-                *work = work.saturating_sub(1);
                 if guard > 100_000 || out.len() >= self.max_runs || *work == 0 {
                     break 'outer;
                 }
+                *work -= 1;
                 let len = d.abs();
                 if *d > 0.0 {
                     let a = x.max(x0);
