@@ -16,7 +16,7 @@
 //! written. The record goes through DWG as it is.
 //!
 //! Reading takes the planar filters the model can hold out of the kept foreign data and puts them
-//! on the references ([`read`]); others (front/back clipping, non-planar extrusion) stay
+//! on the references ([`read`]); others (front/back clipping, non-planar extrusion, sheared boundary transform) stay
 //! foreign and are written back untouched. Writing adds the dictionaries and the filter of every
 //! clipped reference to a copy of the drawing's foreign data ([`prepare`]), which the raw-data
 //! writer (#528) then places on the reference.
@@ -200,6 +200,10 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         0 => (Mat3::IDENTITY, Mat3::IDENTITY),
         _ => return None,
     };
+    // Reject sheared/skewed boundary transforms that cannot be losslessly represented.
+    if (boundary_xf.a * boundary_xf.c + boundary_xf.b * boundary_xf.d).abs() > 1e-6 {
+        return None;
+    }
     let verts = vertices(&o.tags, count)?;
     let outline = boundary.unwrap_or(&verts);
     if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
@@ -634,5 +638,33 @@ mod tests {
         assert!(clip.points[1].near(Vec2::new(-20.0, 15.0), 1e-9));
         assert!(clip.points[2].near(Vec2::new(-15.0, 15.0), 1e-9));
         assert!(clip.points[3].near(Vec2::new(-15.0, 20.0), 1e-9));
+    }
+    /// Verifies `parse_filter` rejects sheared boundary matrices to preserve foreign data.
+    #[test]
+    fn parse_filter_rejects_sheared_boundary_transform() {
+        let inverse = Mat3::IDENTITY;
+        // Non-orthogonal shear matrix: (x' = x + 0.5y, y' = y)
+        let shear = Mat3 { a: 1.0, b: 0.0, c: 0.5, d: 1.0, e: 0.0, f: 0.0 };
+        let filter = make_test_filter(&inverse, &shear);
+        assert!(parse_filter(&filter, None).is_none(), "Sheared transforms must be rejected to stay foreign");
+    }
+
+    /// Verifies that an explicit boundary slice (e.g. inverted clip) is transformed correctly.
+    #[test]
+    fn parse_filter_applies_transform_to_inverted_boundary() {
+        let inverse = Mat3::translate(Vec2::new(-10.0, 0.0));
+        let boundary_xf = Mat3::translate(Vec2::new(50.0, 0.0));
+        let filter = make_test_filter(&inverse, &boundary_xf);
+
+        let explicit_boundary = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+        let parsed = parse_filter(&filter, Some(&explicit_boundary));
+        assert!(parsed.is_some());
+        let clip = parsed.unwrap();
+        assert!(clip.inverted);
+        // Explicit boundary points transformed by net: (x - 50 - 10) = x - 60
+        assert_eq!(clip.points.len(), 3);
+        assert!(clip.points[0].near(Vec2::new(-60.0, 0.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-50.0, 0.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-50.0, 10.0), 1e-9));
     }
 }
