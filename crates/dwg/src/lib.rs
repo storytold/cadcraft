@@ -66,6 +66,8 @@ fn mb(n: u64) -> String {
 pub mod worker;
 #[cfg(not(no_dwg_bridge))]
 pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_kept_noted, encode_noted, serve_if_asked, use_own_worker, use_worker};
+#[cfg(not(no_dwg_bridge))]
+mod proxy_transport;
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -109,6 +111,10 @@ mod native {
         let mut doc = outcome.document;
         notes.extend(
             guarded(AssertUnwindSafe(|| application_objects(&mut doc))).map_err(|_| "the DWG application object conversion failed".to_string())?,
+        );
+        // After application_objects, so the proxy objects it makes are numbered as the DXF's.
+        notes.extend(
+            guarded(AssertUnwindSafe(|| super::proxy_transport::prepare(&mut doc))).map_err(|_| "the DWG proxy conversion failed".to_string())?,
         );
         let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
@@ -396,7 +402,7 @@ mod native {
     /// The version a proxy record of a DWG of `version` names its format by (Open Design
     /// Specification for .dwg, proxy objects): 19 for R13, 21 for R14, 23 for 2000, 25 for 2004,
     /// 27 for 2007, 29 for 2010, 31 for 2013 and 33 for 2018; `None` for any other version.
-    fn proxy_dwg_version(version: acadrust::DxfVersion) -> Option<i32> {
+    pub(super) fn proxy_dwg_version(version: acadrust::DxfVersion) -> Option<i32> {
         Some(match version.version_code() {
             1012 => 19,
             1014 => 21,
@@ -957,7 +963,7 @@ mod native {
     /// value) line pairs, in one pass with no buffering, up to the first `0`/`ENDSEC`, the end
     /// of the HEADER section: a large input without one costs time, not memory (a line index of
     /// a 32 MiB file used 0.8 GB). Lines may end in `\r\n`.
-    fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
+    pub(super) fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
         let mut offset = 0usize;
         let mut lines = dxf.split(|b| *b == b'\n').map(|line| {
             let at = offset.saturating_add(line.len() - line.trim_ascii_start().len());
@@ -1017,32 +1023,32 @@ mod native {
     /// CADCraft's own bridge DXF is always ASCII, and only a binary DXF given to the public
     /// conversion functions comes here.
     pub(super) fn dxf_class_names(dxf: &[u8]) -> Option<Vec<String>> {
+        let pairs = super::proxy_transport::text_pairs(dxf)?;
         let mut names = Vec::new();
-        if dxf.starts_with(b"AutoCAD Binary DXF") {
-            return None;
-        }
-        let mut lines = dxf.split(|b| *b == b'\n').map(|l| l.trim_ascii());
-        let (mut in_classes, mut in_class) = (false, false);
-        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-            match (code, value) {
-                (b"0", b"ENDSEC") if in_classes => break,
-                (b"2", b"CLASSES") => in_classes = true,
-                (b"0", v) if in_classes => {
-                    in_class = v == b"CLASS";
-                    // Every record keeps its place, named or not: a proxy numbers its class by
-                    // place, so a record without a name must not move the ones after it. An empty
-                    // name matches no class, and such a proxy is left out.
+        let (mut section, mut in_classes, mut in_class) = (false, false, false);
+        for pair in pairs {
+            let (code, value) = pair?;
+            match (code, value.as_str()) {
+                (0, "ENDSEC") if in_classes => break,
+                (0, "SECTION") => section = true,
+                (2, name) if section => {
+                    in_classes = name == "CLASSES";
+                    section = false;
+                }
+                (0, kind) if in_classes => {
+                    in_class = kind == "CLASS";
+                    // Even an unnamed record keeps its place in the source class table.
                     if in_class {
                         names.push(String::new());
                     }
                 }
-                (b"1", v) if in_class => {
+                (1, value) if in_class => {
                     if let Some(last) = names.last_mut() {
-                        *last = String::from_utf8_lossy(v).into_owned();
+                        *last = value.to_string();
                     }
                     in_class = false;
                 }
-                _ => {}
+                _ => section = false,
             }
         }
         Some(names)
@@ -1088,8 +1094,17 @@ mod native {
                 return left_out(objects.len(), entities.len());
             }
         };
+        // Name matching cannot choose between different source classes with the same name.
+        // Count those proxies as unwritten rather than silently changing their class identity.
+        let mut unique = std::collections::HashMap::new();
+        for name in classes {
+            unique.entry(name.to_uppercase()).and_modify(|value| *value = false).or_insert(true);
+        }
         let number = |id: i32| -> Option<i32> {
             let name = classes.get(usize::try_from(id.checked_sub(500)?).ok()?)?;
+            if unique.get(&name.to_uppercase()) != Some(&true) {
+                return None;
+            }
             doc.classes.get_by_name(name).map(|c| i32::from(c.class_number))
         };
         let objects: Vec<(acadrust::Handle, Option<i32>)> = doc
@@ -1182,7 +1197,8 @@ mod native {
             Some(d) => d,
             None => dxf.to_vec(),
         };
-        let classes = dxf_class_names(&data);
+        let (classes, source) = guarded(AssertUnwindSafe(|| (dxf_class_names(&data), super::proxy_transport::source_classes(&data))))
+            .map_err(|_| "the DXF proxy class conversion failed".to_string())?;
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
@@ -1197,7 +1213,17 @@ mod native {
         // The fix-ups run on the third-party reader's document, so a panic in one is an error, not a crash.
         let unwritten = guarded(AssertUnwindSafe(|| {
             super::fail_in_test("convert");
-            let proxies = proxy_classes(&mut doc, classes.as_deref());
+            // From 2013 the DWG takes the source classes as they are, duplicates and metadata
+            // included; otherwise (before 2013, a binary DXF, classes that can't be written back)
+            // proxies are matched to classes by name or left out.
+            let restored = match source {
+                Some(source) if doc.version >= acadrust::DxfVersion::AC1027 => super::proxy_transport::restore_classes(&mut doc, source),
+                _ => None,
+            };
+            let proxies = match restored {
+                Some((objects, entities)) => left_out(objects, entities),
+                None => proxy_classes(&mut doc, classes.as_deref()),
+            };
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
             dimension_flags(&mut doc);
@@ -1977,7 +2003,7 @@ mod tests {
     /// ("Error Decrypting Data"); 0.6.5 added it and 0.6.6, which this uses, still keeps it (0.6.6 also
     /// fixes multi-layout DWGs, #1463). The byte reaches the DWG, and a scale action
     /// from DXF is written whole, with the byte AutoCAD writes (0).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn scale_actions_keep_the_byte_autocad_reads_after_their_connections() {
         use acadrust::objects::*;
