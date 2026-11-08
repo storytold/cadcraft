@@ -6,6 +6,8 @@ use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, TableRegistry, Table
 use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
+
+use crate::policy::{Role, changes_too_many, deny_reason, size_reason};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -106,6 +108,25 @@ impl Room {
     /// applied twice (ADR 0003). A structural operation with a stale `base_version` is rejected and
     /// the client waits for the room's order instead of retrying (ADR 0004).
     pub fn apply(&mut self, op: &Op) -> Result<Outcome, RoomError> {
+        self.apply_as(Role::Editor, op)
+    }
+
+    /// Apply one operation for a participant with `role`; a viewer is refused before anything runs.
+    pub fn apply_as(&mut self, role: Role, op: &Op) -> Result<Outcome, RoomError> {
+        if !role.may_write() {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op.op_id.clone(),
+                code: "forbidden".into(),
+                message: "this participant may view the drawing, not change it".into(),
+                retryable: false,
+            }));
+        }
+        if let Some(reason) = deny_reason(&op.command) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "forbidden".into(), message: reason.into(), retryable: false }));
+        }
+        if let Some(reason) = size_reason(op) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "too-large".into(), message: reason.into(), retryable: false }));
+        }
         if let Some(applied) = self.applied.iter().find(|a| a.op_id == op.op_id) {
             return Ok(Outcome::Applied(applied.clone()));
         }
@@ -139,6 +160,17 @@ impl Room {
                 }));
             }
         };
+        if changes_too_many(changes.len()) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = before;
+            }
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op.op_id.clone(),
+                code: "too-large".into(),
+                message: format!("the operation changes {} objects; the limit is {}", changes.len(), crate::policy::MAX_CHANGES),
+                retryable: false,
+            }));
+        }
         self.version = self.version.saturating_add(1);
         let applied = Applied { op_id: op.op_id.clone(), version: self.version, actor: op.actor.clone(), changes };
         self.remember(applied.clone());
@@ -402,5 +434,47 @@ mod commit_tests {
 
         let reopened = cadcraft_io::read(&committed.bytes, "commit.dxf").unwrap();
         assert_eq!(reopened.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use cadcraft_collab::{OpContext, OpKind};
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    fn an_op(command: &str) -> Op {
+        Op {
+            op_id: "op".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: command.into(),
+            params: json!({ "points": [[0.0, 0.0], [1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    #[test]
+    fn a_viewer_cannot_change_the_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.apply_as(Role::Viewer, &an_op("line")).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("a viewer must not write"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn a_denied_command_changes_nothing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.apply(&an_op("open")).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("`open` must not run in a room"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
     }
 }

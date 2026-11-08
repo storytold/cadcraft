@@ -12,7 +12,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod policy;
+mod presence;
 mod room;
 
 pub use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject};
+pub use policy::{MAX_CHANGES, MAX_OP_BYTES, MAX_PARTICIPANTS, Role, changes_too_many, deny_reason, size_reason};
+pub use presence::{PRESENCE_TTL, PresenceBoard};
 pub use room::{CommitFormat, Committed, Room, RoomError, Snapshot};

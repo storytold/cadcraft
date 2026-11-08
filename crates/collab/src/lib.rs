@@ -38,6 +38,7 @@ mod change;
 mod context;
 mod diff;
 mod error;
+mod presence;
 mod table;
 mod wire;
 
@@ -49,5 +50,6 @@ pub use change::{Anchor, Change};
 pub use context::OpContext;
 pub use diff::{diff, diff_all, diff_tables};
 pub use error::CollabError;
+pub use presence::{Presence, View};
 pub use table::{RecordId, RecordKind, TableRegistry, TableRenames};
 pub use wire::{Applied, Op, OpKind, Outcome, Reject};
