@@ -448,6 +448,17 @@ impl Session {
         st.doc.vports.iter().filter(|c| !c.is_active()).find(|c| same_places(&c.tiles, &tiles)).map(|c| c.name.clone())
     }
 
+    /// The Model tab's view a drawing file opens on, as it is now: the first tile's (the first
+    /// `*Active` record, which a reader takes the view from and opens current), the model view
+    /// itself when there is no tiling. `None` when the Model tab has no view yet.
+    pub(crate) fn opening_view(&self) -> Option<View> {
+        let st = self.state().ok()?;
+        if !st.views.iter().any(|(sp, _)| *sp == Space::Model) {
+            return None;
+        }
+        live(st, self.viewport_px).0.first().map(view_of)
+    }
+
     /// The model space tiles to draw (empty: one view, or not in the Model tab).
     pub fn model_tiles(&self) -> Vec<ModelTile> {
         let Ok(st) = self.state() else { return Vec::new() };
