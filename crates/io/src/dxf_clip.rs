@@ -355,10 +355,12 @@ fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3
     }
     tags.extend([raw(330, owner.hex()), raw(100, "AcDbFilter"), raw(100, "AcDbSpatialFilter"), raw(70, clip.points.len())]);
     // A 2-vertex SPATIAL_FILTER defines an axis-aligned rectangle in `boundary_xf` space.
-    // When the reference is rotated, a 2-point block-space rectangle is axis-aligned in block
-    // space (`boundary_xf = inverse`), not in WCS (`Mat3::IDENTITY`).
+    // When the reference is rotated, a 2-point block-space rectangle is axis-aligned in a frame
+    // rotated by the reference's angle (`Mat3::rotate(-to_world.rotation())`), which remains
+    // strictly orthogonal even when the reference has non-uniform X/Y scale.
     let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
-    let (pts_xf, boundary_xf) = if block_space_rect { (Mat3::IDENTITY, *inverse) } else { (*to_world, Mat3::IDENTITY) };
+    let boundary_xf = if block_space_rect { Mat3::rotate(-to_world.rotation()) } else { Mat3::IDENTITY };
+    let pts_xf = to_world.then(boundary_xf);
     for p in &clip.points {
         let q = pts_xf.apply(*p);
         tags.push(raw(10, q.x));
@@ -451,7 +453,9 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             own.tags.extend([raw(3, ROUNDTRIP_KEY), raw(360, r.hex())]);
             add(own);
             let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
-            let world: Vec<Vec2> = clip.points.iter().map(|p| if block_space_rect { *p } else { to_world.apply(*p) }).collect();
+            let boundary_xf = if block_space_rect { Mat3::rotate(-to_world.rotation()) } else { Mat3::IDENTITY };
+            let pts_xf = to_world.then(boundary_xf);
+            let world: Vec<Vec2> = clip.points.iter().map(|p| pts_xf.apply(*p)).collect();
             add(roundtrip_record(r, x, &world));
         }
     }

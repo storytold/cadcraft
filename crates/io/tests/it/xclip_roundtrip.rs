@@ -235,9 +235,9 @@ fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
     );
 }
 
-/// Verifies that a rotated `INSERT` with an inverted 2-point block-space `ClipBoundary`
-/// round-trips losslessly across DXF and DWG (`R2004`, `R2010`, `R2018`), exercising both
-/// the `block_space_rect` writer branch (`boundary_xf = *inverse`) and the `ROUNDTRIP` record.
+/// Verifies that rotated `INSERT` references with uniform, non-uniform, and mirrored scales
+/// and normal or inverted 2-point block-space `ClipBoundary` rectangles round-trip losslessly
+/// across DXF and DWG (`R2004`, `R2010`, `R2018`) without producing sheared `boundary_xf` matrices.
 #[test]
 fn inverted_rotated_2point_clip_round_trips() {
     let mut d = Drawing::new_metric();
@@ -245,16 +245,14 @@ fn inverted_rotated_2point_clip_round_trips() {
     block.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::new(-10.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) })));
     d.blocks.insert(block.name.clone(), Arc::new(block));
 
-    let clip = ClipBoundary { inverted: true, ..ClipBoundary::new(vec![Vec2::new(-2.0, -1.0), Vec2::new(2.0, 1.0)]) };
-    let ins = Insert {
-        block: "Plan".into(),
-        insert: Vec3::new(10.0, 20.0, 0.0),
-        scale: Vec3::new(2.0, 2.0, 1.0),
-        rotation: 0.3,
-        clip: Some(clip),
-        ..Insert::default()
-    };
-    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    for scale in [Vec3::new(2.0, 2.0, 1.0), Vec3::new(2.0, 3.0, 1.0), Vec3::new(-2.0, 3.0, 1.0)] {
+        for inverted in [false, true] {
+            let clip = ClipBoundary { inverted, ..ClipBoundary::new(vec![Vec2::new(-2.0, -1.0), Vec2::new(2.0, 1.0)]) };
+            let ins =
+                Insert { block: "Plan".into(), insert: Vec3::new(10.0, 20.0, 0.0), scale, rotation: 0.3, clip: Some(clip), ..Insert::default() };
+            d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        }
+    }
 
     for v in [Version::R2004, Version::R2010, Version::R2018] {
         let dxf_back = read(&save(&d, "inv_rot.dxf", v), "inv_rot.dxf").unwrap();
