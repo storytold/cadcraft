@@ -806,7 +806,7 @@ mod native {
     /// margins as 0.06 where the drawing has another value. They are built here the way that
     /// writer builds them, with the margins the writer gives the base `Table` cell style.
     /// Styles that carry row cell styles already, and versions before 2010, are left alone.
-    pub(super) fn table_style_row_margins(doc: &mut acadrust::CadDocument) {
+    fn table_style_row_margins(doc: &mut acadrust::CadDocument) {
         use acadrust::objects::{
             NamedTableCellStyle, ObjectType, RowCellStyle, TableCellBorder, TableCellStyleData, TableContentFormat, TableGridFormat,
         };
@@ -814,15 +814,17 @@ mod native {
         if doc.version < acadrust::DxfVersion::AC1024 {
             return;
         }
-        // A row's text style: its handle when it is a text style's, else its name's; a null handle
-        // is left for the writer, which gives such a row Standard.
-        let handles: std::collections::HashSet<Handle> = doc.text_styles.iter().map(|ts| ts.handle).collect();
-        let by_name = |name: &str| doc.text_styles.iter().find(|ts| ts.name.eq_ignore_ascii_case(name)).map(|ts| ts.handle);
+        // A row's text style as the writer finds it: its handle when it is a text style's, else
+        // its name's; a null handle is left for the writer, which gives such a row Standard.
+        let text_styles = &doc.text_styles;
+        let handles: std::collections::HashSet<Handle> = text_styles.iter().map(|ts| ts.handle).collect();
         let text_style = |row: &RowCellStyle| {
-            row.text_style_handle.filter(|h| handles.contains(h)).or_else(|| by_name(&row.text_style_name)).unwrap_or(Handle::NULL)
+            row.text_style_handle
+                .filter(|h| handles.contains(h))
+                .or_else(|| text_styles.get(&row.text_style_name).map(|ts| ts.handle))
+                .unwrap_or(Handle::NULL)
         };
-        let mut rows_of = Vec::new();
-        for (h, o) in doc.objects.iter() {
+        for o in doc.objects.values_mut() {
             let ObjectType::TableStyle(s) = o else { continue };
             if !s.modern_overrides.is_empty() {
                 continue;
@@ -879,17 +881,11 @@ mod native {
                     name: name.to_string(),
                 }
             };
-            let rows = vec![
+            s.modern_overrides = vec![
                 (1, row_style(&s.title_row_style, 1, 1, "_TITLE", 0x8000)),
                 (2, row_style(&s.header_row_style, 2, 1, "_HEADER", 0)),
                 (3, row_style(&s.data_row_style, 3, 2, "_DATA", 0)),
             ];
-            rows_of.push((*h, rows));
-        }
-        for (h, rows) in rows_of {
-            if let Some(ObjectType::TableStyle(s)) = doc.objects.get_mut(&h) {
-                s.modern_overrides = rows;
-            }
         }
     }
 
@@ -1436,7 +1432,9 @@ mod tests {
         let mut styles = 0;
         for o in doc.objects.values_mut() {
             let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
-            s.set_margins(1.0);
+            // Different margins each way, so a swapped pair shows.
+            s.horizontal_margin = 1.0;
+            s.vertical_margin = 0.25;
             styles += 1;
         }
         assert!(styles > 0, "the drawing has no table style");
@@ -1447,7 +1445,7 @@ mod tests {
             let mut rows = Vec::new();
             for o in back.objects.values() {
                 let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
-                assert_eq!((s.horizontal_margin, s.vertical_margin), (1.0, 1.0), "{version} {}", s.name);
+                assert_eq!((s.horizontal_margin, s.vertical_margin), (1.0, 0.25), "{version} {}", s.name);
                 for (_, row) in &s.modern_overrides {
                     let c = &row.cell_style;
                     rows.push((row.name.clone(), c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin));
@@ -1455,7 +1453,7 @@ mod tests {
             }
             let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
             assert!(["_TITLE", "_HEADER", "_DATA"].iter().all(|n| names.contains(n)), "{version}: {names:?}");
-            assert!(rows.iter().all(|r| (r.1, r.2, r.3, r.4, r.5) == (1, 1.0, 1.0, 1.0, 1.0)), "{version}: {rows:?}");
+            assert!(rows.iter().all(|r| (r.1, r.2, r.3, r.4, r.5) == (1, 1.0, 0.25, 1.0, 0.25)), "{version}: {rows:?}");
         }
     }
 
