@@ -156,6 +156,12 @@ pub(super) struct MocoroM {
 
 impl MocoroM {
     fn run(&mut self, s: &mut Session, op: Op) -> Result<Step> {
+        if matches!(op, Op::Copy(_)) {
+            let live = counts(s, &self.objs)?.0;
+            if live > 0 {
+                crate::cmd::array::check_size(s, 1, live)?;
+            }
+        }
         let before = s.state()?.doc.clone();
         let base = self.base;
         apply(s, &self.objs, &mut self.base, op)?;

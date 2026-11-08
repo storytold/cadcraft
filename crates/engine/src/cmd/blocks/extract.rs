@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use cadcraft_doc::{EntityKind, Insert};
+use cadcraft_doc::{Drawing, EntityKind, Insert};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -88,13 +88,13 @@ fn matches(spec: &str, text: &str) -> bool {
     spec.split(',').any(|p| wildcard(p.trim(), text))
 }
 
-/// The constant attribute values of a block definition whose tags `tags` selects.
-fn constants(b: &cadcraft_doc::Block, tags: &str) -> Vec<(String, String)> {
+/// The constant attribute values of a block definition whose tags are selected for output.
+fn constants(b: &cadcraft_doc::Block, selected: &[String]) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> = Vec::new();
     for e in b.entities.iter() {
         if let EntityKind::AttDef(a) = &e.kind
             && a.constant
-            && matches(tags, &a.tag.to_ascii_uppercase())
+            && selected.iter().any(|tag| tag == &a.tag.to_ascii_uppercase())
             && !v.iter().any(|(t, _)| t.eq_ignore_ascii_case(&a.tag))
         {
             v.push((a.tag.to_ascii_uppercase(), a.text.value.clone()));
@@ -105,12 +105,12 @@ fn constants(b: &cadcraft_doc::Block, tags: &str) -> Vec<(String, String)> {
 
 /// The attribute values of `ins` that `o.tags` selects: its own, then the constant ones of its
 /// block (`consts`, read once per block). Values no column shows are not copied.
-fn values(ins: &Insert, consts: &[(String, String)], tags: &str) -> Vec<(String, String)> {
+fn values(ins: &Insert, consts: &[(String, String)], selected: &[String]) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> = ins
         .attribs
         .iter()
         .map(|a| (a.tag.to_ascii_uppercase(), a))
-        .filter(|(t, _)| matches(tags, t))
+        .filter(|(t, _)| selected.contains(t))
         .map(|(t, a)| (t, a.text.value.clone()))
         .collect();
     for (t, val) in consts {
@@ -121,6 +121,36 @@ fn values(ins: &Insert, consts: &[(String, String)], tags: &str) -> Vec<(String,
     v
 }
 
+/// Select the output columns before copying any attribute text. A block definition can contain
+/// many large constants that do not survive the table's 190-column limit.
+fn selected_tags(ents: &[std::sync::Arc<cadcraft_doc::Entity>], d: &Drawing, o: &Options) -> Vec<String> {
+    let mut selected = Vec::new();
+    let mut add = |tag: &str| {
+        let tag = tag.to_ascii_uppercase();
+        if selected.len() < MAX_TAGS && matches(&o.tags, &tag) && !selected.contains(&tag) {
+            selected.push(tag);
+        }
+    };
+    for entity in ents {
+        let EntityKind::Insert(ins) = &entity.kind else { continue };
+        let anonymous = ins.block.starts_with('*') || d.block(&ins.block).is_some_and(|b| b.anonymous);
+        if anonymous || !matches(&o.blocks, &ins.block) {
+            continue;
+        }
+        for attribute in &ins.attribs {
+            add(&attribute.tag);
+        }
+        if let Some(block) = d.block(&ins.block) {
+            for entity in block.entities.iter() {
+                if let EntityKind::AttDef(attribute) = &entity.kind && attribute.constant {
+                    add(&attribute.tag);
+                }
+            }
+        }
+    }
+    selected
+}
+
 /// The block references to extract from: `handles` when given, else model space and the layouts.
 fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     let d = s.doc()?;
@@ -129,6 +159,7 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     } else {
         d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).cloned().collect()
     };
+    let selected = selected_tags(&ents, d, o);
     let mut out = Vec::new();
     let mut consts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for e in &ents {
@@ -147,8 +178,8 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
             values: values(
                 ins,
                 // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
-                consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &o.tags)).unwrap_or_default()),
-                &o.tags,
+                consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &selected)).unwrap_or_default()),
+                &selected,
             ),
         });
     }
