@@ -54,8 +54,8 @@ pub(crate) fn switcher(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let Ok(st) = app.session.state() else { return };
     let d = &*st.doc;
-    let last_id = ui.id().with("layerset_last");
-    let edit_id = ui.id().with("layerset_name");
+    let last_id = ui.scope_id().with("layerset_last");
+    let edit_id = ui.scope_id().with("layerset_name");
     let last: Option<String> = ui.data(|m| m.get_temp(last_id));
     let mut editing: Option<Naming> = ui.data(|m| m.get_temp(edit_id));
     let names: Vec<String> = d.layer_states.iter().map(|st| st.name.clone()).collect();
@@ -72,7 +72,7 @@ pub(crate) fn switcher(app: &mut CadApp, ui: &mut egui::Ui) {
         if let Some((renaming, text, ready)) = editing.as_mut() {
             let resp = ui.add_sized(
                 vec2(w, 24.0),
-                egui::TextEdit::singleline(text).id(egui::Id::new("layerset_name_field")).hint_text(crate::tl!("Layer state name")),
+                egui::TextEdit::singleline(text).id(egui::Id::unique("layerset_name_field")).hint_text(crate::tl!("Layer state name")),
             );
             if !*ready {
                 // Focus until the field has it (the command line takes typing from a field without focus),
@@ -111,7 +111,7 @@ pub(crate) fn switcher(app: &mut CadApp, ui: &mut egui::Ui) {
         p.text(pos2(rect.left() + 8.0, rect.center().y), egui::Align2::LEFT_CENTER, &label, crate::theme::body(), t.text);
         icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
         egui::Popup::from_toggle_button_response(&combo)
-            .id(ui.id().with("layerset_list"))
+            .id(ui.scope_id().with("layerset_list"))
             .width(w)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
