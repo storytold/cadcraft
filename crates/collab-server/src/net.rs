@@ -9,6 +9,7 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -28,6 +29,41 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Peers = Arc<Mutex<Vec<(String, Sender<ServerMessage>)>>>;
 
+/// What a room has done, for a health check and a metrics scrape.
+#[derive(Debug, Default)]
+pub struct Metrics {
+    /// Connections accepted.
+    pub connections: AtomicU64,
+    /// Operations applied.
+    pub applied: AtomicU64,
+    /// Operations rejected.
+    pub rejected: AtomicU64,
+    /// Messages that could not be handled.
+    pub errors: AtomicU64,
+}
+
+impl Metrics {
+    /// The counters and the room's state, as Prometheus text.
+    pub fn render(&self, version: u64, journal: usize, participants: usize) -> String {
+        format!(
+            "# TYPE cadcraft_collab_connections_total counter\ncadcraft_collab_connections_total {}\n\
+             # TYPE cadcraft_collab_operations_total counter\ncadcraft_collab_operations_total{{result=\"applied\"}} {}\n\
+             cadcraft_collab_operations_total{{result=\"rejected\"}} {}\n\
+             # TYPE cadcraft_collab_errors_total counter\ncadcraft_collab_errors_total {}\n\
+             # TYPE cadcraft_collab_version gauge\ncadcraft_collab_version {}\n\
+             # TYPE cadcraft_collab_journal_length gauge\ncadcraft_collab_journal_length {}\n\
+             # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n",
+            self.connections.load(Ordering::Relaxed),
+            self.applied.load(Ordering::Relaxed),
+            self.rejected.load(Ordering::Relaxed),
+            self.errors.load(Ordering::Relaxed),
+            version,
+            journal,
+            participants,
+        )
+    }
+}
+
 /// A room served over WebSocket.
 pub struct Server {
     room: Arc<Mutex<Room>>,
@@ -36,6 +72,7 @@ pub struct Server {
     auth: Arc<dyn Authenticator>,
     app: String,
     session: String,
+    metrics: Arc<Metrics>,
 }
 
 impl Server {
@@ -48,18 +85,25 @@ impl Server {
             auth,
             app: app.into(),
             session: session_id.into(),
+            metrics: Arc::new(Metrics::default()),
         }
     }
 
+    /// The counters of this room.
+    pub fn metrics(&self) -> Arc<Metrics> {
+        Arc::clone(&self.metrics)
+    }
+
     /// Bind `addr` and serve in background threads; returns the bound address.
-    pub fn bind(self, addr: impl ToSocketAddrs) -> io::Result<(SocketAddr, thread::JoinHandle<()>)> {
+    pub fn bind(self: &Arc<Self>, addr: impl ToSocketAddrs) -> io::Result<(SocketAddr, thread::JoinHandle<()>)> {
         let listener = TcpListener::bind(addr)?;
         let local = listener.local_addr()?;
-        let server = Arc::new(self);
+        let server = Arc::clone(self);
         let handle = thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let server = Arc::clone(&server);
                 thread::spawn(move || {
+                    server.metrics.connections.fetch_add(1, Ordering::Relaxed);
                     let _ = server.connection(stream);
                 });
             }
@@ -70,6 +114,21 @@ impl Server {
     /// The authoritative room, for a test or a snapshot job.
     pub fn room(&self) -> MutexGuard<'_, Room> {
         lock(&self.room)
+    }
+
+    /// The drawing's version.
+    pub fn version(&self) -> u64 {
+        lock(&self.room).version()
+    }
+
+    /// How many operations the journal keeps.
+    pub fn journal_len(&self) -> usize {
+        lock(&self.room).journal().count()
+    }
+
+    /// How many participants are present.
+    pub fn participants(&self) -> usize {
+        lock(&self.presence).len()
     }
 
     fn connection(&self, stream: TcpStream) -> io::Result<()> {
@@ -144,13 +203,16 @@ impl Server {
         match message {
             ClientMessage::Op { op } => match lock(&self.room).apply_as(claims.role, &op) {
                 Ok(Outcome::Applied(applied)) => {
+                    self.metrics.applied.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
                     self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
                 }
                 Ok(Outcome::Rejected(rejected)) => {
+                    self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(ServerMessage::Rejected { rejected });
                 }
                 Err(error) => {
+                    self.metrics.errors.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
                 }
             },

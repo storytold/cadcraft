@@ -62,7 +62,8 @@ fn two_editors_and_a_viewer_over_websocket() {
         ("token-b".to_string(), Claims { sub: "b".into(), doc: "d1".into(), role: Role::Editor }),
         ("token-v".to_string(), Claims { sub: "v".into(), doc: "d1".into(), role: Role::Viewer }),
     ]));
-    let (addr, _accept_loop) = Server::new(room, auth, "s1", "cadcraft").bind("127.0.0.1:0").unwrap();
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
     let url = format!("ws://{addr}");
     let timeout = Duration::from_secs(3);
 
@@ -102,7 +103,8 @@ fn two_editors_and_a_viewer_over_websocket() {
 fn a_connection_with_an_unknown_token_is_refused() {
     let room = Room::new(Drawing::new_metric()).unwrap();
     let auth = Arc::new(StaticAuthenticator::default());
-    let (addr, _accept_loop) = Server::new(room, auth, "s1", "cadcraft").bind("127.0.0.1:0").unwrap();
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
     let url = format!("ws://{addr}");
 
     let (_connection, message) = Connection::connect(&url, &hello("nobody"), Duration::from_secs(3)).unwrap();

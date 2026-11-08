@@ -19,7 +19,7 @@ mod presence;
 mod room;
 
 pub use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role};
-pub use net::Server;
+pub use net::{Metrics, Server};
 pub use policy::{MAX_CHANGES, MAX_OP_BYTES, MAX_PARTICIPANTS, changes_too_many, deny_reason, size_reason};
 pub use presence::{PRESENCE_TTL, PresenceBoard};
 pub use room::{CommitFormat, Committed, Room, RoomError, Snapshot};

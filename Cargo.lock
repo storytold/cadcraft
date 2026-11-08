@@ -711,6 +711,7 @@ dependencies = [
  "cadcraft-doc",
  "cadcraft-engine",
  "cadcraft-io",
+ "clap",
  "jsonwebtoken",
  "serde",
  "serde_json",
