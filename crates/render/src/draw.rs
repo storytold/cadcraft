@@ -1,18 +1,34 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
-use super::props::{resolve, transparency};
+use super::props::{contents_outlive_layer, resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
     Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
     mline, point, table, tolerance, wide,
 };
 
-/// The layer `e` is drawn on, as an index in the layer table: layer 0 inside a block is the
-/// block reference's layer.
-fn entity_layer(ctx: &Ctx, e: &Entity) -> u32 {
-    let name = if e.common.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { e.common.layer.as_str() };
+/// The layer an object with properties `c` is drawn on, as an index in the layer table: layer 0
+/// inside a block is the block reference's layer.
+pub(crate) fn common_layer(ctx: &Ctx, c: &cadcraft_doc::Common) -> u32 {
+    let name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
     ctx.d.layers.iter().position(|l| l.name.eq_ignore_ascii_case(name)).and_then(|i| u32::try_from(i).ok()).unwrap_or(NO_LAYER)
+}
+
+/// When plotting: put what has been drawn and not yet claimed by a layer on `layer` (an index in
+/// the layer table), for the PDF layers.
+pub(crate) fn claim_layer(b: &mut Builder, ctx: &Ctx, layer: u32) {
+    if b.plotting && b.list.prim_layers.len() < b.list.prims.len() {
+        let from = b.list.prim_layers.len();
+        b.list.prim_layers.resize(b.list.prims.len(), layer);
+        if ctx.top == VIEWPORT_CONTENT {
+            // Model space seen through a viewport is clipped into the layout's list; the layer
+            // travels in the handle until then (see [`take_viewport_layers`]).
+            for p in b.list.prims.iter_mut().skip(from) {
+                p.handle = Handle(u64::from(layer));
+            }
+        }
+    }
 }
 
 pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
@@ -28,18 +44,20 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     entity_parts(b, ctx, e);
     b.named = saved;
     b.transparency = saved_transparency;
-    if b.plotting && b.list.prim_layers.len() < b.list.prims.len() {
-        // What it drew that its block contents didn't claim is on its own layer.
-        let layer = entity_layer(ctx, e);
-        let from = b.list.prim_layers.len();
-        b.list.prim_layers.resize(b.list.prims.len(), layer);
-        if ctx.top == VIEWPORT_CONTENT {
-            // Model space seen through a viewport is clipped into the layout's list; the layer
-            // travels in the handle until then (see [`take_viewport_layers`]).
-            for p in b.list.prims.iter_mut().skip(from) {
-                p.handle = Handle(u64::from(layer));
-            }
-        }
+    // What it drew that its block contents (and attributes) didn't claim is on its own layer.
+    claim_layer(b, ctx, common_layer(ctx, &e.common));
+}
+
+/// Whether `e`, `visible` as resolved, is drawn: `None` not at all, `Some(true)` in full,
+/// `Some(false)` only for a block reference on a layer that is off, which still shows what its
+/// block has on other layers.
+fn drawn(ctx: &Ctx, e: &Entity, visible: bool) -> Option<bool> {
+    if visible {
+        Some(true)
+    } else if matches!(e.kind, EntityKind::Insert(_)) && contents_outlive_layer(ctx, e) {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -63,9 +81,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         }
     }
     let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
-    if !visible {
-        return;
-    }
+    let Some(shown) = drawn(ctx, e, visible) else { return };
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
     }
@@ -127,7 +143,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 mtext(b, ctx, t, rgb, lw);
             }
         }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb, shown),
         EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),
         EntityKind::Hatch(h) => hatch::draw(b, ctx, e, h, rgb, lw, tol),
         EntityKind::MLine(m) => mline::draw(b, ctx, e, m, rgb, lw, tol),
@@ -284,7 +300,7 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
-        insert(b, ctx, e, ins, rgb);
+        insert(b, ctx, e, ins, rgb, true);
     }
 }
 

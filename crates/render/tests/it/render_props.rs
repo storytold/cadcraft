@@ -187,3 +187,80 @@ fn attributes_draw_with_their_own_properties() {
     assert_eq!(attrib_at(&d, 0.0), None);
     assert_eq!(attrib_at(&d, 10.0), Some((rgb(1), 0.35)));
 }
+
+/// Whether anything is drawn between x0 and x0 + 5.
+fn drawn_at(d: &Drawing, x0: f64) -> bool {
+    let l = build(d, &Space::Model, &Options::default());
+    l.prims.iter().any(|p| l.points(p).iter().all(|q| q.x >= x0 - 0.5 && q.x < x0 + 5.0))
+}
+
+/// A block reference on a layer that is off hides what its block has on layer 0 (and its
+/// attributes without properties of their own), as AutoCAD does, but still shows the objects and
+/// attributes on layers of their own that are on. A frozen layer hides all of it.
+#[test]
+fn a_block_reference_on_a_layer_that_is_off_still_shows_its_own_layers() {
+    let mut d = Drawing::new_imperial();
+    layer(&mut d, "TXT", 2, Lineweight::ByLayer);
+    layer(&mut d, "OWN", 3, Lineweight::ByLayer);
+    layer(&mut d, "INS", 5, Lineweight::ByLayer);
+    let line = |x: f64, layer: &str| Entity {
+        common: on(layer),
+        ..Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 4.0, 0.0, 0.0) }))
+    };
+    let mut blk = Block::new("KKS");
+    blk.entities.push(Entity { handle: Handle(0x20), ..line(0.0, "0") });
+    blk.entities.push(Entity { handle: Handle(0x21), ..line(10.0, "OWN") });
+    blk.entities.push(attdef(0x22, "TAG", 20.0, on("TXT")));
+    d.blocks.insert(blk.name.clone(), Arc::new(blk));
+    let attribs = [("TAG", 20.0), ("NODEF", 30.0)]
+        .map(|(tag, x)| Attrib {
+            tag: tag.into(),
+            text: text(x, "X"),
+            invisible: false,
+            constant: false,
+            prompt: String::new(),
+            props: Default::default(),
+            multiline: None,
+            modes: Default::default(),
+        })
+        .to_vec();
+    let ins = Insert {
+        block: "KKS".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs,
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    d.add(&Space::Model, on("INS"), EntityKind::Insert(ins)).unwrap();
+    assert_eq!([0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)), [true; 4], "layer on: all of it");
+
+    d.layer_mut("INS").unwrap().on = false;
+    assert_eq!(
+        [0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)),
+        [false, true, true, false],
+        "layer off: layer 0 and the attribute that follows the reference go, the own layers stay"
+    );
+
+    // In a plot each part is on its own PDF layer: the attribute on TXT, not on the reference's
+    // layer that is off (whose PDF layer starts hidden).
+    let l = cadcraft_render::build_plot(&d, &Space::Model, &Options::default());
+    let index = |name: &str| d.layers.iter().position(|l| l.name == name).map(|i| i as u32);
+    let layers_at = |x0: f64| -> Vec<u32> {
+        let mut v: Vec<u32> = (0..l.prims.len())
+            .filter(|&i| l.points(&l.prims[i]).iter().all(|q| q.x >= x0 - 0.5 && q.x < x0 + 5.0))
+            .map(|i| l.prim_layers[i])
+            .collect();
+        v.dedup();
+        v
+    };
+    assert_eq!(layers_at(10.0), vec![index("OWN").unwrap()]);
+    assert_eq!(layers_at(20.0), vec![index("TXT").unwrap()]);
+
+    d.layer_mut("INS").unwrap().frozen = true;
+    assert_eq!([0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)), [false; 4], "frozen: none of it");
+}
