@@ -217,13 +217,12 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         return None;
     }
     let net = boundary_xf.inverse()?.then(inverse);
-    // Expand a 2-corner rectangle to 4 corners when boundary_xf introduces rotation relative
-    // to the block, preserving its rotated orientation (e.g. at 45° where 2 corners would collapse).
+    // Expand a 2-corner rectangle to 4 corners whenever the net transform from boundary space
+    // to block space introduces rotation, preserving its rotated orientation in block space.
     let rotated_rect;
-    let boundary_rotated = boundary_xf.b.abs() > 1e-9 || boundary_xf.c.abs() > 1e-9;
     let net_rotated = net.b.abs() > 1e-9 || net.c.abs() > 1e-9;
     let outline = match raw_outline {
-        [a, b] if boundary_rotated && net_rotated => {
+        [a, b] if net_rotated => {
             rotated_rect = vec![*a, Vec2::new(b.x, a.y), *b, Vec2::new(a.x, b.y)];
             &rotated_rect[..]
         }
@@ -355,14 +354,19 @@ fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3
         tags.extend([raw(102, "{ACAD_XDICTIONARY"), raw(360, x.hex()), raw(102, "}")]);
     }
     tags.extend([raw(330, owner.hex()), raw(100, "AcDbFilter"), raw(100, "AcDbSpatialFilter"), raw(70, clip.points.len())]);
+    // A 2-vertex SPATIAL_FILTER defines an axis-aligned rectangle in `boundary_xf` space.
+    // When the reference is rotated, a 2-point block-space rectangle is axis-aligned in block
+    // space (`boundary_xf = inverse`), not in WCS (`Mat3::IDENTITY`).
+    let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
+    let (pts_xf, boundary_xf) = if block_space_rect { (Mat3::IDENTITY, *inverse) } else { (*to_world, Mat3::IDENTITY) };
     for p in &clip.points {
-        let q = to_world.apply(*p);
+        let q = pts_xf.apply(*p);
         tags.push(raw(10, q.x));
         tags.push(raw(20, q.y));
     }
     tags.extend([raw(210, 0.0), raw(220, 0.0), raw(230, 1.0), raw(11, 0.0), raw(21, 0.0), raw(31, 0.0)]);
     tags.extend([raw(71, i32::from(clip.enabled)), raw(72, 0), raw(73, 0)]);
-    for v in matrix_values(inverse).into_iter().chain(matrix_values(&Mat3::IDENTITY)) {
+    for v in matrix_values(inverse).into_iter().chain(matrix_values(&boundary_xf)) {
         tags.push(raw(40, v));
     }
     ForeignObject { handle: h, kind: "SPATIAL_FILTER".into(), tags }
@@ -446,7 +450,8 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             let mut own = dictionary(x, sf);
             own.tags.extend([raw(3, ROUNDTRIP_KEY), raw(360, r.hex())]);
             add(own);
-            let world: Vec<Vec2> = clip.points.iter().map(|p| to_world.apply(*p)).collect();
+            let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
+            let world: Vec<Vec2> = clip.points.iter().map(|p| if block_space_rect { *p } else { to_world.apply(*p) }).collect();
             add(roundtrip_record(r, x, &world));
         }
     }
@@ -700,38 +705,42 @@ mod tests {
         assert!(parse_filter(&filter, None).is_none(), "Small-scale sheared transform must be rejected");
     }
 
-    /// Verifies that a 2-corner rectangle rotated by 30°, 45°, 60°, or 90° expands to an exact
-    /// 4-corner orthogonal rectangle in block coordinates without collapsing or skewing.
+    /// Verifies that a 2-corner rectangle rotated by 30°, 45°, 60°, or 90° (whether via
+    /// `boundary_xf` or via `inverse` with an unrotated/translated `boundary_xf`) expands
+    /// to an exact 4-corner orthogonal rectangle in block coordinates without collapsing or skewing.
     #[test]
     fn parse_filter_expands_rotated_two_corner_boundary() {
         for deg in [30.0_f64, 45.0, 60.0, 90.0] {
-            let mut tags = vec![
-                raw(100, "AcDbFilter"),
-                raw(100, "AcDbSpatialFilter"),
-                raw(70, 2),
-                raw(10, 0.0),
-                raw(20, 0.0),
-                raw(10, 10.0),
-                raw(20, 20.0),
-                raw(210, 0.0),
-                raw(220, 0.0),
-                raw(230, 1.0),
-                raw(71, 1),
-                raw(72, 0),
-                raw(73, 0),
-            ];
-            let boundary_xf = Mat3::rotate(deg.to_radians());
-            for v in matrix_values(&Mat3::IDENTITY).into_iter().chain(matrix_values(&boundary_xf)) {
-                tags.push(raw(40, v));
+            let rot = Mat3::rotate(deg.to_radians());
+            let trans = Mat3::translate(Vec2::new(15.0, -10.0));
+            for (inverse, boundary_xf) in [(Mat3::IDENTITY, rot), (rot, Mat3::IDENTITY), (rot, trans)] {
+                let mut tags = vec![
+                    raw(100, "AcDbFilter"),
+                    raw(100, "AcDbSpatialFilter"),
+                    raw(70, 2),
+                    raw(10, 0.0),
+                    raw(20, 0.0),
+                    raw(10, 10.0),
+                    raw(20, 20.0),
+                    raw(210, 0.0),
+                    raw(220, 0.0),
+                    raw(230, 1.0),
+                    raw(71, 1),
+                    raw(72, 0),
+                    raw(73, 0),
+                ];
+                for v in matrix_values(&inverse).into_iter().chain(matrix_values(&boundary_xf)) {
+                    tags.push(raw(40, v));
+                }
+                let filter = ForeignObject { handle: Handle(0x102), kind: "SPATIAL_FILTER".into(), tags };
+                let clip = parse_filter(&filter, None).expect("rotated 2-corner clip must not collapse");
+                assert_eq!(clip.points.len(), 4, "angle {deg}°");
+                let e01 = clip.points[1] - clip.points[0];
+                let e12 = clip.points[2] - clip.points[1];
+                assert!((e01.len() - 10.0).abs() < 1e-9, "width preserved at {deg}°");
+                assert!((e12.len() - 20.0).abs() < 1e-9, "height preserved at {deg}°");
+                assert!(e01.dot(e12).abs() < 1e-9, "right angle preserved at {deg}°");
             }
-            let filter = ForeignObject { handle: Handle(0x102), kind: "SPATIAL_FILTER".into(), tags };
-            let clip = parse_filter(&filter, None).expect("rotated 2-corner clip must not collapse");
-            assert_eq!(clip.points.len(), 4, "angle {deg}°");
-            let e01 = clip.points[1] - clip.points[0];
-            let e12 = clip.points[2] - clip.points[1];
-            assert!((e01.len() - 10.0).abs() < 1e-9, "width preserved at {deg}°");
-            assert!((e12.len() - 20.0).abs() < 1e-9, "height preserved at {deg}°");
-            assert!(e01.dot(e12).abs() < 1e-9, "right angle preserved at {deg}°");
         }
     }
 }
