@@ -805,8 +805,9 @@ mod native {
     /// 0.6.6's DWG writer builds them with no margin override, and the reference app then reads
     /// the style's margins as 0.06 where the drawing has another value. They are built here the
     /// way that writer builds them, with the margins the writer gives the base `Table` cell
-    /// style. Only missing rows are added: a row a style carries already keeps its values.
-    /// Versions before 2010 are left alone.
+    /// style. Only missing rows are added, so every style ends with all three: a row a style
+    /// carries already keeps its values, and a row whose id another cell style holds gets a free
+    /// one. Versions before 2010 are left alone.
     fn table_style_row_margins(doc: &mut acadrust::CadDocument) {
         use acadrust::objects::{
             NamedTableCellStyle, ObjectType, RowCellStyle, TableCellBorder, TableCellStyleData, TableContentFormat, TableGridFormat,
@@ -824,7 +825,7 @@ mod native {
         let handles: std::collections::HashSet<Handle> = text_styles.iter().map(|ts| ts.handle).filter(|h| !h.is_null()).collect();
         let text_style = |row: &RowCellStyle| {
             row.text_style_handle
-                .filter(|h| !h.is_null() && handles.contains(h))
+                .filter(|h| handles.contains(h))
                 .or_else(|| text_styles.get(&row.text_style_name).map(|ts| ts.handle))
                 .unwrap_or(Handle::NULL)
         };
@@ -883,20 +884,28 @@ mod native {
                 }
             };
             // Only the rows the style doesn't already carry (a DXF's CELLSTYLEMAP may hold some of
-            // them), found by name: a custom cell style may use any key. The ones it has keep their
-            // values, and an added row goes before the first entry with a higher key, so a partial
-            // map still lists _TITLE, _HEADER, _DATA in that order.
-            for (id, style_type, name, merge_flags) in [(1, 1, "_TITLE", 0x8000), (2, 1, "_HEADER", 0), (3, 2, "_DATA", 0)] {
-                if s.modern_overrides.iter().any(|(_, o)| o.name.eq_ignore_ascii_case(name)) {
+            // them), found by name in any case as cell style names are; the ones it has keep their
+            // values. A row's id held already by another cell style (as key or id) gives the row a
+            // free id instead, so no two styles share one. An added row goes right after the last
+            // row that comes before it (or first), so the rows keep _TITLE, _HEADER, _DATA order.
+            let rank = |name: &str| ["_TITLE", "_HEADER", "_DATA"].iter().position(|r| r.eq_ignore_ascii_case(name)).unwrap_or(3);
+            let rows =
+                [(1, 1, "_TITLE", 0x8000, &s.title_row_style), (2, 1, "_HEADER", 0, &s.header_row_style), (3, 2, "_DATA", 0, &s.data_row_style)];
+            for (i, &(id, style_type, name, merge_flags, row)) in rows.iter().enumerate() {
+                let styles = &s.modern_overrides;
+                if styles.iter().any(|(_, o)| o.name.eq_ignore_ascii_case(name)) {
                     continue;
                 }
-                let row = match id {
-                    1 => &s.title_row_style,
-                    2 => &s.header_row_style,
-                    _ => &s.data_row_style,
+                let held = |n: i32| styles.iter().any(|(k, o)| *k == n || o.id == n);
+                let id = if held(id) {
+                    // The lowest id above 100 nothing holds: one of these len + 1 is always free.
+                    let Some(free) = (101..).take(styles.len() + 1).find(|&n| !held(n)) else { continue };
+                    free
+                } else {
+                    id
                 };
+                let at = styles.iter().rposition(|(_, o)| rank(&o.name) < i).map_or(0, |j| j + 1);
                 let row = row_style(row, id, style_type, name, merge_flags);
-                let at = s.modern_overrides.iter().position(|(k, _)| *k > id).unwrap_or(s.modern_overrides.len());
                 s.modern_overrides.insert(at, (id, row));
             }
         }
@@ -1239,12 +1248,13 @@ mod native {
                 s.horizontal_margin = 1.0;
                 s.vertical_margin = 0.25;
                 s.modern_overrides.retain(|(_, row)| row.name == "_DATA");
-                for (_, row) in &mut s.modern_overrides {
+                // Under a key lower than the rows that go before it.
+                for (k, row) in &mut s.modern_overrides {
+                    *k = 0;
                     row.cell_style.horizontal_margin = 9.0;
                 }
-                // A custom cell style on key and id 1 doesn't stand for _TITLE.
-                let custom = NamedTableCellStyle { id: 1, name: "Highlight".into(), ..NamedTableCellStyle::default() };
-                s.modern_overrides.push((1, custom));
+                let custom = NamedTableCellStyle { id: 101, name: "Highlight".into(), ..NamedTableCellStyle::default() };
+                s.modern_overrides.push((101, custom));
                 styles += 1;
             }
             assert!(styles > 0, "the drawing has no table style");
@@ -1252,7 +1262,7 @@ mod native {
             for o in doc.objects.values() {
                 let ObjectType::TableStyle(s) = o else { continue };
                 let rows: Vec<_> = s.modern_overrides.iter().map(|(k, row)| (*k, row.name.as_str())).collect();
-                assert_eq!(rows, [(1, "_TITLE"), (2, "_HEADER"), (3, "_DATA"), (1, "Highlight")], "rows in order, custom one kept");
+                assert_eq!(rows, [(1, "_TITLE"), (2, "_HEADER"), (0, "_DATA"), (101, "Highlight")], "rows in order, custom one kept");
                 for (_, row) in &s.modern_overrides {
                     let c = &row.cell_style;
                     let margins = (c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin);
@@ -1262,6 +1272,60 @@ mod native {
                         _ => {}
                     }
                 }
+            }
+        }
+
+        /// `(key, id, name)` of each cell style a table style ends with when it starts with `start`.
+        fn rows_after(start: &[(i32, i32, &str)]) -> Vec<Vec<(i32, i32, String)>> {
+            use acadrust::objects::{NamedTableCellStyle, ObjectType};
+            let mut doc = acadrust::CadDocument::new();
+            doc.version = acadrust::DxfVersion::AC1032;
+            for o in doc.objects.values_mut() {
+                let ObjectType::TableStyle(s) = o else { continue };
+                s.horizontal_margin = 1.0;
+                s.modern_overrides =
+                    start.iter().map(|&(k, id, name)| (k, NamedTableCellStyle { id, name: name.into(), ..NamedTableCellStyle::default() })).collect();
+            }
+            table_style_row_margins(&mut doc);
+            let mut out = Vec::new();
+            for o in doc.objects.values() {
+                let ObjectType::TableStyle(s) = o else { continue };
+                for (_, row) in s.modern_overrides.iter().filter(|(_, r)| !start.iter().any(|&(_, _, n)| n == r.name)) {
+                    assert_eq!((row.cell_style.margin_override_flags, row.cell_style.horizontal_margin), (1, 1.0), "{} has the margins", row.name);
+                }
+                out.push(s.modern_overrides.iter().map(|(k, row)| (*k, row.id, row.name.clone())).collect());
+            }
+            assert!(!out.is_empty(), "the drawing has no table style");
+            out
+        }
+
+        fn owned(rows: &[(i32, i32, &str)]) -> Vec<(i32, i32, String)> {
+            rows.iter().map(|&(k, id, n)| (k, id, n.to_string())).collect()
+        }
+
+        /// A row whose id another cell style holds already (as key or as id) is still added, with
+        /// its margins, under a free id: no two styles share one, and no row goes without.
+        #[test]
+        fn a_row_takes_a_free_id_when_another_cell_style_holds_its_own() {
+            for rows in rows_after(&[(101, 1, "Highlight"), (2, 102, "Note")]) {
+                let want = [(103, 103, "_TITLE"), (104, 104, "_HEADER"), (3, 3, "_DATA"), (101, 1, "Highlight"), (2, 102, "Note")];
+                assert_eq!(rows, owned(&want));
+            }
+            // An id at the top of the range leaves a free one all the same.
+            for rows in rows_after(&[(1, i32::MAX, "Huge")]) {
+                assert_eq!(rows, owned(&[(101, 101, "_TITLE"), (2, 2, "_HEADER"), (3, 3, "_DATA"), (1, i32::MAX, "Huge")]));
+            }
+        }
+
+        /// A row present under another case is the row (cell style names ignore case), and added
+        /// rows go after the rows before them, whatever the keys: _TITLE, _HEADER, _DATA stay in order.
+        #[test]
+        fn rows_are_found_in_any_case_and_added_in_row_order() {
+            for rows in rows_after(&[(5, 5, "_title")]) {
+                assert_eq!(rows, owned(&[(5, 5, "_title"), (2, 2, "_HEADER"), (3, 3, "_DATA")]));
+            }
+            for rows in rows_after(&[(101, 101, "Custom"), (2, 2, "_HEADER")]) {
+                assert_eq!(rows, owned(&[(1, 1, "_TITLE"), (101, 101, "Custom"), (2, 2, "_HEADER"), (3, 3, "_DATA")]));
             }
         }
 
