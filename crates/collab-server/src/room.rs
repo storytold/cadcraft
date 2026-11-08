@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role, TableRegistry, TableRenames, diff_all};
 use cadcraft_doc::Drawing;
@@ -17,6 +18,17 @@ use serde_json::Value;
 const IDEMPOTENCY_WINDOW: usize = 1_000;
 /// How many operations the journal keeps (compaction and snapshots come later).
 const JOURNAL_LIMIT: usize = 10_000;
+
+/// One undoable step: the operation's id, the version it produced, and the drawing before it.
+///
+/// The drawing is an `Arc` clone (copy-on-write chunks), so a step pins only what it changed.
+#[derive(Clone, Debug)]
+struct UndoStep {
+    op_id: String,
+    version_after: u64,
+    before: Arc<Drawing>,
+    renames: TableRenames,
+}
 
 /// A room's state at one version, as a drawing file.
 ///
@@ -80,6 +92,7 @@ pub struct Room {
     applied: VecDeque<Applied>,
     journal: VecDeque<Applied>,
     journal_path: Option<PathBuf>,
+    undo: BTreeMap<String, Vec<UndoStep>>,
 }
 
 impl Room {
@@ -92,7 +105,7 @@ impl Room {
         session.set_record_undo(false);
         let mut registry = TableRegistry::new();
         registry.reconcile(session.doc().map_err(|_| RoomError::NoDrawing)?);
-        Ok(Room { session, registry, version: 0, applied: VecDeque::new(), journal: VecDeque::new(), journal_path: None })
+        Ok(Room { session, registry, version: 0, applied: VecDeque::new(), journal: VecDeque::new(), journal_path: None, undo: BTreeMap::new() })
     }
 
     /// The authoritative drawing, for a snapshot or a test replica.
@@ -177,7 +190,64 @@ impl Room {
         self.version = self.version.saturating_add(1);
         let applied = Applied { op_id: op.op_id.clone(), version: self.version, actor: op.actor.clone(), changes };
         self.remember(applied.clone());
+        self.remember_undo(op, applied.version, before, renames);
         Ok(Outcome::Applied(applied))
+    }
+
+    /// Undo `actor`'s last operation, if nothing has happened since.
+    ///
+    /// The inverse is the change set from the current drawing back to the drawing before the step,
+    /// which is exact while the step is the latest: a remote change after it makes the step
+    /// conflicted instead of silently reverting someone else's edit (ADR 0010). The undo is a new
+    /// operation with its own version and journal entry; it is not itself undoable yet.
+    pub fn undo(&mut self, actor: &str, op_id: &str) -> Result<Outcome, RoomError> {
+        let Some(step) = self.undo.get(actor).and_then(|steps| steps.last()).cloned() else {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: String::new(),
+                code: "nothing-to-undo".into(),
+                message: "this participant has no operation to undo".into(),
+                retryable: false,
+            }));
+        };
+        if step.version_after != self.version {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: step.op_id.clone(),
+                code: "undo-conflict".into(),
+                message: "the drawing changed after this operation; it cannot be undone alone".into(),
+                retryable: false,
+            }));
+        }
+        let current = self.drawing()?.clone();
+        let renames = reverse_renames(&step.renames);
+        let changes = match diff_all(&current, step.before.as_ref(), &mut self.registry, &renames) {
+            Ok(changes) => changes,
+            Err(error) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: step.op_id.clone(),
+                    code: "invalid".into(),
+                    message: error.to_string(),
+                    retryable: false,
+                }));
+            }
+        };
+        if let Err(error) = cadcraft_collab::apply(self.session.doc_mut().map_err(|_| RoomError::NoDrawing)?, &changes) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = current;
+            }
+            return Ok(Outcome::Rejected(Reject { op_id: step.op_id.clone(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+        }
+        self.version = self.version.saturating_add(1);
+        let applied = Applied { op_id: op_id.to_string(), version: self.version, actor: actor.into(), changes };
+        self.remember(applied.clone());
+        if let Some(steps) = self.undo.get_mut(actor) {
+            steps.pop();
+        }
+        Ok(Outcome::Applied(applied))
+    }
+
+    /// The answer stored for `op_id`, when the window still holds it.
+    pub fn applied(&self, op_id: &str) -> Option<&Applied> {
+        self.applied.iter().find(|a| a.op_id == op_id)
     }
 
     /// Write the authoritative drawing as a DXF snapshot at the current version.
@@ -276,6 +346,15 @@ impl Room {
         self.journal.iter()
     }
 
+    /// Keep the step that undoes `op`: bounded per participant, with the drawing before it.
+    fn remember_undo(&mut self, op: &Op, version_after: u64, before: Drawing, renames: TableRenames) {
+        let steps = self.undo.entry(op.actor.clone()).or_default();
+        steps.push(UndoStep { op_id: op.op_id.clone(), version_after, before: Arc::new(before), renames });
+        while steps.len() > 200 {
+            steps.remove(0);
+        }
+    }
+
     fn remember(&mut self, applied: Applied) {
         if let Some(path) = &self.journal_path
             && let Ok(line) = serde_json::to_string(&applied)
@@ -298,6 +377,14 @@ impl Room {
         while self.journal.len() > JOURNAL_LIMIT {
             self.journal.pop_front();
         }
+    }
+}
+
+/// The rename pairs swapped, for the inverse change set.
+fn reverse_renames(renames: &TableRenames) -> TableRenames {
+    TableRenames {
+        layers: renames.layers.iter().map(|(from, to)| (to.clone(), from.clone())).collect(),
+        layouts: renames.layouts.iter().map(|(from, to)| (to.clone(), from.clone())).collect(),
     }
 }
 
@@ -615,5 +702,109 @@ mod journal_tests {
         let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
         assert!(Room::restore_with_journal(&snapshot, &tail).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::color::Color;
+    use cadcraft_doc::geom::Vec3;
+    use cadcraft_doc::{Common, EntityKind, Layer, Line, Space};
+    use serde_json::json;
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn applied(outcome: Outcome) -> Applied {
+        match outcome {
+            Outcome::Applied(applied) => applied,
+            Outcome::Rejected(reject) => panic!("expected an applied operation, got {reject:?}"),
+        }
+    }
+
+    #[test]
+    fn undo_restores_the_previous_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let start = room.drawing().unwrap().clone();
+        let forward = applied(room.apply(&line_op("a", 0.0)).unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+
+        let undo = applied(room.undo("u1", "undo-a").unwrap());
+
+        assert_eq!(room.version(), 2);
+        assert_eq!(room.drawing().unwrap().space(&Space::Model), start.space(&Space::Model));
+        let mut replica = start.clone();
+        cadcraft_collab::apply(&mut replica, &forward.changes).unwrap();
+        cadcraft_collab::apply(&mut replica, &undo.changes).unwrap();
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
+    fn undo_after_another_operation_is_a_conflict() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        let mut other = line_op("b", 5.0);
+        other.actor = "u2".into();
+        applied(room.apply(&other).unwrap());
+
+        match room.undo("u1", "undo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "undo-conflict"),
+            Outcome::Applied(_) => panic!("undone a step with a later operation"),
+        }
+        assert_eq!(room.version(), 2);
+    }
+
+    #[test]
+    fn undo_of_a_layer_deletion_restores_its_properties_and_objects() {
+        let mut drawing = Drawing::new_metric();
+        let mut layer = Layer::new("WALLS");
+        layer.color = Color::Index(5);
+        drawing.layers.push(layer);
+        drawing
+            .add(
+                &Space::Model,
+                Common { layer: "WALLS".into(), ..Default::default() },
+                EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }),
+            )
+            .unwrap();
+        let mut room = Room::new(drawing).unwrap();
+        let op = Op {
+            op_id: "delete-layer".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            command: "laydel".into(),
+            params: json!({ "names": ["WALLS"] }),
+            context: OpContext::in_space(Space::Model),
+        };
+        applied(room.apply(&op).unwrap());
+        assert!(room.drawing().unwrap().layers.iter().all(|l| l.name != "WALLS"));
+
+        applied(room.undo("u1", "undo-a").unwrap());
+
+        let drawing = room.drawing().unwrap();
+        let layer = drawing.layers.iter().find(|l| l.name == "WALLS").expect("the layer is back");
+        assert_eq!(layer.color, Color::Index(5));
+        assert_eq!(drawing.entity_count(), 1);
+    }
+
+    #[test]
+    fn undo_without_a_step_is_refused() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.undo("nobody", "undo-none").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-undo"),
+            Outcome::Applied(_) => panic!("nothing to undo"),
+        }
     }
 }

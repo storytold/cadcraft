@@ -51,7 +51,8 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
     for (key, layer) in &new_layers {
         if !old_layers.contains_key(key) && !renamed_to.contains(key) {
             let id = registry.id(RecordKind::Layer, &layer.name);
-            changes.push(Change::TableCreate { kind: RecordKind::Layer, id, name: layer.name.clone() });
+            let properties = serde_json::to_value(layer).ok();
+            changes.push(Change::TableCreate { kind: RecordKind::Layer, id, name: layer.name.clone(), properties });
         }
     }
     for (from, to) in &renames.layers {
@@ -72,7 +73,8 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
     for (key, layout) in &new_layouts {
         if !old_layouts.contains_key(key) && !renamed_to.contains(key) {
             let id = registry.id(RecordKind::Layout, &layout.name);
-            changes.push(Change::LayoutCreate { id, name: layout.name.clone(), tab_order: layout.tab_order });
+            let properties = serde_json::to_value(layout).ok();
+            changes.push(Change::LayoutCreate { id, name: layout.name.clone(), tab_order: layout.tab_order, properties });
         }
     }
     for (from, to) in &renames.layouts {

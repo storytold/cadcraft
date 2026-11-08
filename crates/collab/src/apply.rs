@@ -1,6 +1,6 @@
 //! Applying a change set to a drawing.
 
-use cadcraft_doc::{Drawing, EntityStore, Handle, Layout};
+use cadcraft_doc::{Drawing, EntityStore, Handle, Layer, Layout};
 
 use crate::CollabError;
 use crate::change::{Anchor, Change};
@@ -48,7 +48,16 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
                 let store = drawing.space_mut(&space).ok_or(CollabError::NoEntity(*handle))?;
                 place(store, *handle, order)?;
             }
-            Change::TableCreate { kind: RecordKind::Layer, name, .. } => create_layer(drawing, name)?,
+            Change::TableCreate { kind: RecordKind::Layer, name, properties, .. } => {
+                create_layer(drawing, name)?;
+                if let Some(properties) = properties
+                    && let Ok(layer) = serde_json::from_value::<Layer>(properties.clone())
+                    && let Some(slot) = drawing.layers.iter_mut().find(|l| l.name.eq_ignore_ascii_case(name))
+                {
+                    *slot = layer;
+                    slot.name = name.clone();
+                }
+            }
             Change::TableCreate { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is created with `layout.create`".into()));
             }
@@ -60,11 +69,19 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
             Change::TableDelete { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is deleted with `layout.delete`".into()));
             }
-            Change::LayoutCreate { name, tab_order, .. } => {
+            Change::LayoutCreate { name, tab_order, properties, .. } => {
                 if drawing.layouts.iter().any(|l| l.name.eq_ignore_ascii_case(name)) {
                     return Err(CollabError::DuplicateName(RecordKind::Layout, name.clone()));
                 }
-                drawing.layouts.push(Layout::new(name, *tab_order));
+                let mut layout = Layout::new(name, *tab_order);
+                if let Some(properties) = properties
+                    && let Ok(saved) = serde_json::from_value::<Layout>(properties.clone())
+                {
+                    layout.page = saved.page;
+                    layout.view = saved.view;
+                    layout.limits = saved.limits;
+                }
+                drawing.layouts.push(layout);
             }
             Change::LayoutRename { from, to, .. } => {
                 if drawing.layouts.iter().all(|l| !l.name.eq_ignore_ascii_case(from)) {

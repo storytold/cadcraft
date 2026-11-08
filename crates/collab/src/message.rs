@@ -63,6 +63,8 @@ pub enum ClientMessage {
     },
     /// An operation.
     Op { op: Op },
+    /// Undo this participant's last operation, if nothing changed since.
+    Undo { op_id: String },
     /// Where the participant is looking; never journaled.
     Presence { presence: Presence },
     /// Ask for the journal tail after `last_version`, or a snapshot when it is gone.

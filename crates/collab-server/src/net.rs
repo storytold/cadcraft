@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cadcraft_collab::message::{Snapshot, encode_bytes};
-use cadcraft_collab::{ClientMessage, Outcome, ServerMessage};
+use cadcraft_collab::{ClientMessage, Outcome, Reject, ServerMessage};
 use tungstenite::{Message, WebSocket, accept};
 
 use crate::auth::{Authenticator, Claims};
@@ -216,6 +216,34 @@ impl Server {
                     let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
                 }
             },
+            ClientMessage::Undo { op_id } => {
+                if !claims.role.may_write() {
+                    let _ = tx.send(ServerMessage::Rejected {
+                        rejected: Reject { op_id, code: "forbidden".into(), message: "a viewer cannot undo".into(), retryable: false },
+                    });
+                    return true;
+                }
+                let already = lock(&self.room).applied(&op_id).cloned();
+                let outcome = match already {
+                    Some(applied) => Ok(Outcome::Applied(applied)),
+                    None => lock(&self.room).undo(&claims.sub, &op_id),
+                };
+                match outcome {
+                    Ok(Outcome::Applied(applied)) => {
+                        self.metrics.applied.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
+                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                    }
+                    Ok(Outcome::Rejected(rejected)) => {
+                        self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Rejected { rejected });
+                    }
+                    Err(error) => {
+                        self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
+                    }
+                }
+            }
             ClientMessage::Presence { presence } => {
                 lock(&self.presence).update(presence.clone(), Instant::now());
                 self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });

@@ -91,6 +91,23 @@ fn two_editors_and_a_viewer_over_websocket() {
     assert_eq!(replica_a.drawing().space(&Space::Model), replica_b.drawing().space(&Space::Model));
     assert_eq!(replica_a.drawing().entity_count(), 2);
 
+    // b undoes its own last operation; both replicas follow the authoritative change set.
+    b.send(&ClientMessage::Undo { op_id: "undo-b1".into() }).unwrap();
+    let undo_b = next_applied(&mut b, 3);
+    let undo_a = next_applied(&mut a, 3);
+    replica_a.applied(&undo_a).unwrap();
+    replica_b.applied(&undo_b).unwrap();
+    assert_eq!(replica_a.version(), 3);
+    assert_eq!(replica_a.drawing().entity_count(), 1);
+    assert_eq!(replica_a.drawing().space(&Space::Model), replica_b.drawing().space(&Space::Model));
+
+    // a's own step is now older than the drawing: the server refuses it.
+    a.send(&ClientMessage::Undo { op_id: "undo-a1".into() }).unwrap();
+    match a.receive().unwrap() {
+        ServerMessage::Rejected { rejected } => assert_eq!(rejected.code, "undo-conflict"),
+        other => panic!("expected an undo conflict, got {other:?}"),
+    }
+
     let (mut viewer, _welcome_v) = Connection::connect(&url, &hello("token-v"), timeout).unwrap();
     viewer.send(&ClientMessage::Op { op: line_op("v", "v1", 9.0) }).unwrap();
     match viewer.receive().unwrap() {
