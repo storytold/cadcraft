@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(UcsM::starting(Stage::ThreePoint)))),
         CommandSpec::new("ucs.view", "View", |s, p| run_ucs(s, &with_option(p, "view")))
             .menu(&["Tools", "New UCS", "View"])
-            .params("{} (XY plane square to the view, origin kept)"),
+            .params("{} (XY plane square to the view, X along the screen's horizontal so it follows the view twist, origin kept)"),
         CommandSpec::new("ucs.z", "Z", |s, p| run_ucs(s, &with_option(p, "z")))
             .menu(&["Tools", "New UCS", "Z"])
             .params("{angle?} (degrees counterclockwise about Z, default UCSAXISANG)")
@@ -182,7 +182,7 @@ fn set_by_points(s: &mut Session, origin: Vec3, x: Option<Vec3>, xy: Option<Vec3
 /// along the screen's horizontal. The drawing appears turned by the view twist (the Model tab's,
 /// or the active layout viewport's), so the screen's X is the world direction at -twist.
 fn view_ucs(s: &Session) -> UcsFrame {
-    let twist = s.state().map(|st| st.view().twist).ok().filter(|t| t.is_finite()).unwrap_or(0.0);
+    let twist = cadcraft_geom::norm_angle(s.state().map_or(0.0, |st| st.view().twist));
     UcsFrame::WORLD.rotated_z(-twist).with_origin(s.ucs().origin)
 }
 
