@@ -89,9 +89,10 @@ pub enum ServerMessage {
         version: u64,
         /// The other participants' latest presence.
         participants: Vec<Presence>,
-        /// A snapshot, when the client's version is too old for the journal.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        snapshot: Option<Snapshot>,
+        /// The drawing in parts, when the client's version is too old for the journal; empty when
+        /// the client is in step.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        snapshot: Vec<Snapshot>,
     },
     /// An operation was applied.
     Applied { applied: Applied },
@@ -166,6 +167,18 @@ impl Snapshot {
         }
         Ok(bytes)
     }
+}
+
+/// The base64 of `bytes`, as `snapshot.bytesBase64` and `commitResult.bytesBase64` carry it.
+pub fn encode_bytes(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The bytes of a base64 field.
+pub fn decode_bytes(text: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(text).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

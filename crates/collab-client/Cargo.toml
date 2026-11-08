@@ -11,7 +11,11 @@ workspace = true
 [dependencies]
 cadcraft-doc = { workspace = true }
 cadcraft-collab = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = "0.30"
 
 [dev-dependencies]
 serde_json = { workspace = true }
