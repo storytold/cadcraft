@@ -896,10 +896,13 @@ mod native {
                 if styles.iter().any(|(_, o)| o.name.eq_ignore_ascii_case(name)) {
                     continue;
                 }
-                let held = |n: i32| styles.iter().any(|(k, o)| *k == n || o.id == n);
-                let id = if held(id) {
-                    // The lowest id above 100 nothing holds: one of these len + 1 is always free.
-                    let Some(free) = (101..).take(styles.len() + 1).find(|&n| !held(n)) else { continue };
+                // Each style holds at most two numbers (its key and its id), so one of the 2 * len + 1
+                // numbers from 101 is always free; a set keeps the search linear in the styles.
+                let held: std::collections::HashSet<i32> = styles.iter().flat_map(|(k, o)| [*k, o.id]).collect();
+                let id = if held.contains(&id) {
+                    // The lowest id above 100 nothing holds.
+                    let span = held.len().saturating_add(1);
+                    let Some(free) = (101..).take(span).find(|n| !held.contains(n)) else { continue };
                     free
                 } else {
                     id
@@ -1314,6 +1317,17 @@ mod native {
             // An id at the top of the range leaves a free one all the same.
             for rows in rows_after(&[(1, i32::MAX, "Huge")]) {
                 assert_eq!(rows, owned(&[(101, 101, "_TITLE"), (2, 2, "_HEADER"), (3, 3, "_DATA"), (1, i32::MAX, "Huge")]));
+            }
+            // Keys and ids together can fill more than len + 1 numbers above 100.
+            for rows in rows_after(&[(1, 101, "A"), (102, 103, "B")]) {
+                let want = [(104, 104, "_TITLE"), (2, 2, "_HEADER"), (3, 3, "_DATA"), (1, 101, "A"), (102, 103, "B")];
+                assert_eq!(rows, owned(&want));
+            }
+            // Every row needs a free id, and each one added takes a number from the next search.
+            for rows in rows_after(&[(1, 101, "A"), (2, 102, "B"), (3, 103, "C"), (104, 105, "D")]) {
+                let want =
+                    [(106, 106, "_TITLE"), (107, 107, "_HEADER"), (108, 108, "_DATA"), (1, 101, "A"), (2, 102, "B"), (3, 103, "C"), (104, 105, "D")];
+                assert_eq!(rows, owned(&want));
             }
         }
 
