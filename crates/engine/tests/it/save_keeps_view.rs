@@ -7,18 +7,17 @@ use cadcraft_engine::{Session, View};
 use cadcraft_geom::Vec2;
 use serde_json::json;
 
+#[path = "../support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 fn hooks() {
     set_io(IoHooks {
         read: |bytes, name| cadcraft_io::read(bytes, name).map_err(|e| e.to_string()),
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: None,
     });
-}
-
-fn dir(test: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("cadcraft-save-view-{test}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
 }
 
 /// Two lines far apart, so the extents are nowhere near a zoomed-in view.
@@ -45,9 +44,9 @@ fn same(a: View, b: View) -> bool {
 #[test]
 fn the_view_on_screen_is_where_the_drawing_opens_again() {
     hooks();
-    let dir = dir("roundtrip");
+    let dir = TempDir::new("save-view-roundtrip");
     for name in ["plan.dxf", "plan.dwg"] {
-        let path = dir.join(name).to_string_lossy().into_owned();
+        let path = dir.path_str(name);
         let mut s = plan();
         let undo = s.state().unwrap().undo.len();
         assert!(s.state_mut().unwrap().set_view(ZOOMED));
@@ -61,7 +60,6 @@ fn the_view_on_screen_is_where_the_drawing_opens_again() {
             assert_eq!(d.header.saved_view(), Some((ZOOMED.center, ZOOMED.height)), "{name}: $VIEWCTR/$VIEWSIZE");
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A drawing without unsaved changes, zoomed and saved again, stays without them: the view isn't
@@ -69,8 +67,8 @@ fn the_view_on_screen_is_where_the_drawing_opens_again() {
 #[test]
 fn saving_a_clean_drawing_at_a_new_view_leaves_it_clean() {
     hooks();
-    let dir = dir("clean");
-    let path = dir.join("plan.dxf").to_string_lossy().into_owned();
+    let dir = TempDir::new("save-view-clean");
+    let path = dir.path_str("plan.dxf");
     let mut s = plan();
     s.execute("saveas", &json!({ "path": path })).unwrap();
     let mut t = Session::empty();
@@ -82,15 +80,14 @@ fn saving_a_clean_drawing_at_a_new_view_leaves_it_clean() {
     assert!(t.state().unwrap().undo.is_empty(), "saving made no undo step");
     let v = opened_at(&path);
     assert!(same(v, ZOOMED), "opened at {v:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Saved from a layout, the drawing keeps the Model tab's view as it was left, not the sheet's.
 #[test]
 fn saving_from_a_layout_keeps_the_model_view() {
     hooks();
-    let dir = dir("layout");
-    let path = dir.join("plan.dxf").to_string_lossy().into_owned();
+    let dir = TempDir::new("save-view-layout");
+    let path = dir.path_str("plan.dxf");
     let mut s = plan();
     assert!(s.state_mut().unwrap().set_view(ZOOMED));
     s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
@@ -98,15 +95,14 @@ fn saving_from_a_layout_keeps_the_model_view() {
     s.execute("saveas", &json!({ "path": path })).unwrap();
     let v = opened_at(&path);
     assert!(same(v, ZOOMED), "opened at {v:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// In the Block Editor the view on screen is the block's: saving keeps the drawing's own view.
 #[test]
 fn saving_in_the_block_editor_keeps_the_drawings_view() {
     hooks();
-    let dir = dir("bedit");
-    let path = dir.join("plan.dxf").to_string_lossy().into_owned();
+    let dir = TempDir::new("save-view-bedit");
+    let path = dir.path_str("plan.dxf");
     let mut s = plan();
     let l = s.execute("line", &json!({ "points": [[10, 10], [12, 10]] })).unwrap()["handles"][0].clone();
     s.execute("block", &json!({ "name": "Door", "base": [10, 10], "handles": [l] })).unwrap();
@@ -117,7 +113,6 @@ fn saving_in_the_block_editor_keeps_the_drawings_view() {
     s.execute("qsave", &json!({})).unwrap();
     let v = opened_at(&path);
     assert!(same(v, ZOOMED), "the drawing's view, not the block's: {v:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// With tiled viewports the saved view is the first tile's, as it is now: the first `*Active`
@@ -125,8 +120,8 @@ fn saving_in_the_block_editor_keeps_the_drawings_view() {
 #[test]
 fn tiled_viewports_save_the_first_tiles_view() {
     hooks();
-    let dir = dir("tiles");
-    let path = dir.join("plan.dxf").to_string_lossy().into_owned();
+    let dir = TempDir::new("save-view-tiles");
+    let path = dir.path_str("plan.dxf");
     let mut s = plan();
     s.execute("-vports", &json!({ "option": "2", "arrangement": "vertical" })).unwrap();
     // The first tile zoomed in, then the second one current and zoomed elsewhere.
@@ -137,5 +132,4 @@ fn tiled_viewports_save_the_first_tiles_view() {
     s.execute("saveas", &json!({ "path": path })).unwrap();
     let v = opened_at(&path);
     assert!(same(v, ZOOMED), "opened at the first tile's view, not the current one's: {v:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
