@@ -3665,3 +3665,47 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// A loop flagged as not closed may come first and carry source objects: skipping it consumes
+/// its edges and its 97/330 groups, so the closed loop after it is read whole, with its own
+/// source. Only bit 32 drops a loop: 32 alone too; other flags (outermost 16, none) keep it.
+#[test]
+fn hatch_loop_not_closed_is_skipped_whole_wherever_it_is() {
+    let line = |x0: f64, y0: f64, x1: f64, y1: f64| format!("72\n1\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n");
+    let square = |lo: f64, hi: f64| [line(lo, lo, hi, lo), line(hi, lo, hi, hi), line(hi, hi, lo, hi), line(lo, hi, lo, lo)].concat();
+    let open = [line(10.0, 0.0, 10.0, 50.0), line(40.0, 30.0, 40.0, 20.0), line(30.0, 40.0, 30.0, 10.0)].concat();
+    let hatch = |loops: &[(i32, String, &str)]| {
+        let body: String =
+            loops.iter().map(|(flags, edges, sources)| format!("92\n{flags}\n93\n{}\n{edges}{sources}", edges.matches("72\n").count())).collect();
+        format!(
+            "0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n1\n2\nSOLID\n70\n1\n71\n1\n91\n{}\n{body}75\n0\n76\n1\n98\n0\n",
+            loops.len()
+        )
+    };
+    let read_hatches = |records: &[String]| {
+        let text = format!("0\nSECTION\n2\nENTITIES\n{}0\nENDSEC\n0\nEOF\n", records.concat());
+        let d = read(text.as_bytes(), "h.dxf").unwrap();
+        // Extents and a display list of whatever was read never panic.
+        let _ = d.extents(&Space::Model);
+        let _ = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+        hatches(&d)
+    };
+
+    // The open loop first, with two source objects; then the closed one with its own.
+    let h = read_hatches(&[hatch(&[(33, open.clone(), "97\n2\n330\n1A\n330\n1B\n"), (1, square(0.0, 1.0), "97\n1\n330\n2C\n")])]);
+    assert_eq!(h[0].loops.len(), 1);
+    let kept = &h[0].loops[0];
+    let xy: Vec<(f64, f64)> = kept.vertices.iter().map(|v| (v.p.x, v.p.y)).collect();
+    assert_eq!(xy, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], "the closed loop, read whole");
+    assert!(kept.outer);
+    assert_eq!(kept.sources, [Handle(0x2C)], "its own source, none of the skipped loop's");
+
+    // Nothing but open loops: no loops, and nothing panics.
+    let h = read_hatches(&[hatch(&[(33, open.clone(), "97\n0\n")]), hatch(&[(32, open.clone(), "97\n0\n"), (32, open.clone(), "97\n0\n")])]);
+    assert!(h.iter().all(|h| h.loops.is_empty()), "{h:?}");
+
+    // Bit 32 alone drops a loop; 16 (outermost) and 0 keep theirs.
+    let h = read_hatches(&[hatch(&[(32, square(0.0, 1.0), "97\n0\n"), (16, square(2.0, 3.0), "97\n0\n"), (0, square(4.0, 5.0), "97\n0\n")])]);
+    let firsts: Vec<f64> = h[0].loops.iter().map(|l| l.vertices[0].p.x).collect();
+    assert_eq!(firsts, [2.0, 4.0]);
+}
