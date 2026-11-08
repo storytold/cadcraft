@@ -201,7 +201,14 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         _ => return None,
     };
     // Reject sheared/skewed boundary transforms that cannot be losslessly represented.
-    if (boundary_xf.a * boundary_xf.c + boundary_xf.b * boundary_xf.d).abs() > 1e-6 {
+    // Scale-independent orthogonality check: |u . v| > 1e-4 * |u| * |v|
+    let u_len = (boundary_xf.a * boundary_xf.a + boundary_xf.b * boundary_xf.b).sqrt();
+    let v_len = (boundary_xf.c * boundary_xf.c + boundary_xf.d * boundary_xf.d).sqrt();
+    if u_len <= 1e-9 || v_len <= 1e-9 {
+        return None;
+    }
+    let dot = boundary_xf.a * boundary_xf.c + boundary_xf.b * boundary_xf.d;
+    if dot.abs() > 1e-4 * u_len * v_len {
         return None;
     }
     let verts = vertices(&o.tags, count)?;
@@ -666,5 +673,18 @@ mod tests {
         assert!(clip.points[0].near(Vec2::new(-60.0, 0.0), 1e-9));
         assert!(clip.points[1].near(Vec2::new(-50.0, 0.0), 1e-9));
         assert!(clip.points[2].near(Vec2::new(-50.0, 10.0), 1e-9));
+    }
+    /// Verifies that small-scale sheared transforms are rejected by the scale-independent guard.
+    #[test]
+    fn parse_filter_rejects_small_scale_sheared_boundary_transform() {
+        // WHY:
+        // A sheared transform with tiny scale factors (e.g. u = (0.001, 0), v = (0.0005, 0.001))
+        // yields a small absolute dot product (5e-7), which would bypass a naive absolute tolerance.
+        // The orthogonality guard is scale-independent (|u . v| > 1e-4 * |u| * |v|) so that
+        // non-orthogonal shears are consistently rejected across all coordinate scales.
+        let inverse = Mat3::IDENTITY;
+        let small_shear = Mat3 { a: 0.001, b: 0.0, c: 0.0005, d: 0.001, e: 0.0, f: 0.0 };
+        let filter = make_test_filter(&inverse, &small_shear);
+        assert!(parse_filter(&filter, None).is_none(), "Small-scale sheared transform must be rejected");
     }
 }
