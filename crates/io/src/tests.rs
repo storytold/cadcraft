@@ -3647,3 +3647,30 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// An attribute's own visibility is kept only where it differs from its definition's, looked up
+/// as drawing finds it: the block by name in any case, the first ATTDEF of the tag. (Built once
+/// per block, not searched per attribute.)
+#[test]
+fn attribute_visibility_follows_the_first_definition_of_a_block_named_in_another_case() {
+    let attdef = |hidden: bool| format!("0\nATTDEF\n8\n0\n60\n{}\n10\n0\n20\n0\n30\n0\n40\n1\n1\nX\n2\nT\n70\n0\n", i32::from(hidden));
+    let reference = |hidden: bool| {
+        format!(
+            "0\nINSERT\n8\n0\n66\n1\n2\nKOPF\n10\n0\n20\n0\n30\n0\n0\nATTRIB\n8\n0\n60\n{}\n10\n0\n20\n0\n30\n0\n40\n1\n1\nX\n2\nt\n70\n0\n0\nSEQEND\n8\n0\n",
+            i32::from(hidden)
+        )
+    };
+    let text = format!(
+        "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nKopf\n70\n2\n10\n0\n20\n0\n30\n0\n{}{}0\nENDBLK\n8\n0\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n{}{}0\nENDSEC\n0\nEOF\n",
+        attdef(true),
+        attdef(false),
+        reference(true),
+        reference(false)
+    );
+    let d = read(text.as_bytes(), "v.dxf").unwrap();
+    let own: Vec<Option<bool>> =
+        d.model.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.attribs[0].props.visible) } else { None }).collect();
+    // Hidden like the first definition: follows it. Shown: its own.
+    assert_eq!(own, [None, Some(true)]);
+}

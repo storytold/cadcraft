@@ -185,21 +185,49 @@ fn number_unknown_viewport_ids(d: &mut Drawing, sheet_dropped: &std::collections
 /// definition's (the block's first ATTDEF with its tag, as drawing finds it): the others follow
 /// their definitions, so a dynamic block's visibility state still shows and hides them.
 fn attribs_follow_definitions(d: &mut Drawing) {
-    /// The attributes of `e` whose visibility follows the definition, by index.
-    fn redundant(d: &Drawing, e: &Entity) -> Vec<usize> {
-        let EntityKind::Insert(ins) = &e.kind else { return Vec::new() };
-        let block = d.block(&ins.block);
-        let def_visible = |tag: &str| {
-            block
-                .and_then(|b| {
-                    b.entities.iter().find_map(|be| match &be.kind {
-                        EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(tag) => Some(be.common.visible),
-                        _ => None,
-                    })
-                })
+    use std::collections::HashMap;
+    /// Each block's attribute definitions: the visibility of the first one per tag (in lower
+    /// case), by block name, built once rather than looked up per attribute of every reference.
+    struct Defs {
+        exact: HashMap<String, HashMap<String, bool>>,
+        /// The same by lower-case name, for a reference whose block name differs in case (as
+        /// `Drawing::block` finds it).
+        folded: HashMap<String, HashMap<String, bool>>,
+    }
+    impl Defs {
+        fn new(d: &Drawing) -> Defs {
+            let mut exact = HashMap::new();
+            let mut folded = HashMap::new();
+            for (name, b) in &d.blocks {
+                let mut tags: HashMap<String, bool> = HashMap::new();
+                for be in b.entities.iter() {
+                    if let EntityKind::AttDef(ad) = &be.kind {
+                        tags.entry(ad.tag.to_ascii_lowercase()).or_insert(be.common.visible);
+                    }
+                }
+                folded.entry(name.to_ascii_lowercase()).or_insert_with(|| tags.clone());
+                exact.insert(name.clone(), tags);
+            }
+            Defs { exact, folded }
+        }
+        /// Whether the definition of `tag` in `block` is visible (no definition: visible).
+        fn visible(&self, block: &str, tag: &str) -> bool {
+            self.exact
+                .get(block)
+                .or_else(|| self.folded.get(&block.to_ascii_lowercase()))
+                .and_then(|tags| tags.get(&tag.to_ascii_lowercase()).copied())
                 .unwrap_or(true)
-        };
-        ins.attribs.iter().enumerate().filter(|(_, a)| a.props.visible.is_some_and(|v| v == def_visible(&a.tag))).map(|(k, _)| k).collect()
+        }
+    }
+    /// The attributes of `e` whose visibility follows the definition, by index.
+    fn redundant(defs: &Defs, e: &Entity) -> Vec<usize> {
+        let EntityKind::Insert(ins) = &e.kind else { return Vec::new() };
+        ins.attribs
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.props.visible.is_some_and(|v| v == defs.visible(&ins.block, &a.tag)))
+            .map(|(k, _)| k)
+            .collect()
     }
     fn clear(e: &mut Entity, ks: &[usize]) {
         if let EntityKind::Insert(ins) = &mut e.kind {
@@ -210,11 +238,13 @@ fn attribs_follow_definitions(d: &mut Drawing) {
             }
         }
     }
+    // Clearing an attribute's own visibility doesn't change any definition: built once.
+    let defs = Defs::new(d);
     let spaces: Vec<cadcraft_doc::Space> =
         std::iter::once(cadcraft_doc::Space::Model).chain(d.layouts.iter().map(|l| cadcraft_doc::Space::Paper(l.name.clone()))).collect();
     for space in spaces {
         let changes: Vec<(Handle, Vec<usize>)> =
-            d.space(&space).into_iter().flat_map(|s| s.iter()).map(|e| (e.handle, redundant(d, e))).filter(|(_, ks)| !ks.is_empty()).collect();
+            d.space(&space).into_iter().flat_map(|s| s.iter()).map(|e| (e.handle, redundant(&defs, e))).filter(|(_, ks)| !ks.is_empty()).collect();
         if let Some(store) = d.space_mut(&space) {
             for (h, ks) in changes {
                 store.modify(h, |e| clear(e, &ks));
@@ -228,7 +258,7 @@ fn attribs_follow_definitions(d: &mut Drawing) {
             .get(&name)
             .into_iter()
             .flat_map(|b| b.entities.iter())
-            .map(|e| (e.handle, redundant(d, e)))
+            .map(|e| (e.handle, redundant(&defs, e)))
             .filter(|(_, ks)| !ks.is_empty())
             .collect();
         if let Some(b) = d.blocks.get_mut(&name).filter(|_| !changes.is_empty()) {
