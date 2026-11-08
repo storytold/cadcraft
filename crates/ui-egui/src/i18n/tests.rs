@@ -656,3 +656,19 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
         assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
     }
 }
+
+/// Arabic gives Stretch, Trim and Point words of their own: Stretch read «تمديد» like Extend,
+/// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
+#[test]
+fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
+        assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
+    }
+    for (prompt, verb) in [
+        ("Select object to trim or shift-select to extend", "تشذيب"),
+        ("Select object to extend or shift-select to trim", "تشذيب"),
+        ("Select objects to stretch by crossing-window or crossing-polygon...", "تمطيط"),
+    ] {
+        assert!(tr("ar", prompt).contains(verb), "{prompt}");
+    }
+}
