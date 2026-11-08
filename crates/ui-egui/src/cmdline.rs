@@ -127,11 +127,12 @@ fn suggest(app: &CadApp, prefix: &str) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    suggestions(prefix, &app.session.lisp_commands())
+    suggestions(prefix, &crate::context_menu::lisp_commands(app))
 }
 
 /// Matching command names/aliases for AutoComplete; `lisp` are the names of the commands LISP
-/// routines define (`c:` functions), listed after the registered commands whose name matches.
+/// routines define (`c:` functions), listed after the registered commands whose name matches, or
+/// first when the whole name is typed: that is what Enter runs.
 fn suggestions(prefix: &str, lisp: &[String]) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
@@ -168,7 +169,8 @@ fn suggestions(prefix: &str, lisp: &[String]) -> Vec<Suggestion> {
     lisp_matches.dedup();
     for n in lisp_matches {
         let id = n.to_ascii_uppercase();
-        out.push(Suggestion { display: id.clone(), id, label: LISP_LABEL });
+        let at = if n == p { 0 } else { out.len() };
+        out.insert(at, Suggestion { display: id.clone(), id, label: LISP_LABEL });
     }
 
     // 4. Command alias prefix matches (for commands not yet added).
@@ -960,6 +962,10 @@ mod autocomplete_tests {
         // Typed in any case; nothing without a prefix.
         assert_eq!(suggestions("PidI", &lisp).first().map(|s| s.id.as_str()), Some("PIDINST"));
         assert!(suggestions("", &lisp).is_empty());
+        // The whole name goes first, ahead of the registered commands it is a prefix of.
+        let lin = suggestions("lin", &["LIN".to_string()]);
+        assert_eq!((lin[0].id.as_str(), lin[0].label), ("LIN", LISP_LABEL));
+        assert_eq!(lin[1].id, "LINE");
     }
 
     #[test]

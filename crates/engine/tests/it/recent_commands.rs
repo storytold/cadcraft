@@ -32,3 +32,16 @@ fn recent_commands_include_the_drawings_lisp_commands() {
     s.cmdline("(setq c:pidhola nil)").unwrap();
     assert_eq!(s.recent_commands(5), ["line"]);
 }
+
+/// START gives a registered alias precedence, so a `c:` function named like one is not a command
+/// it can run; nor is one whose name starts with a prefix START takes off.
+#[test]
+fn a_function_start_would_not_run_is_not_a_lisp_command() {
+    let mut s = Session::new();
+    s.cmdline("(defun c:c () (princ))").unwrap();
+    s.cmdline("(defun c:-pid () (princ))").unwrap();
+    s.cmdline("(defun c:pid () (princ))").unwrap();
+    assert!(!s.is_lisp_command("c"), "C is CIRCLE's alias");
+    assert!(!s.is_lisp_command("-pid"));
+    assert!(s.is_lisp_command("pid"));
+}

@@ -262,3 +262,27 @@ fn idle_menu_lists_and_repeats_lisp_commands() {
     assert_eq!(app.cmdline("(princ *ran*)"), None);
     assert!(app.session.log.iter().any(|x| x.trim() == "2"), "{:?}", app.session.log.iter().rev().take(4).collect::<Vec<_>>());
 }
+
+/// Choosing `C` starts CIRCLE, and a UI command's name opens that, so a `c:` function with such a
+/// name is not offered: the menu would run something else.
+#[test]
+fn a_lisp_command_another_command_takes_over_is_not_listed() {
+    let mut app = app();
+    app.cmdline("(defun c:c () (princ))");
+    app.cmdline(&format!("(defun c:{} () (princ))", cadcraft_ui_egui::menus::UI_COMMANDS[0].0));
+    app.cmdline("(defun c:pidinst () (princ))");
+    let lisp: Vec<_> = labels(&context_menu::entries(&app)).into_iter().filter(|x| x.starts_with("LISP Commands/")).collect();
+    assert_eq!(lisp, ["LISP Commands/PIDINST"]);
+    assert_eq!(context_menu::lisp_commands(&app), ["PIDINST"]);
+}
+
+/// More commands than the old limit of 40 are all listed.
+#[test]
+fn every_lisp_command_of_a_large_library_is_listed() {
+    let mut app = app();
+    for k in 0..60 {
+        app.cmdline(&format!("(defun c:pidz{k:02} () (princ))"));
+    }
+    let n = labels(&context_menu::entries(&app)).iter().filter(|x| x.starts_with("LISP Commands/")).count();
+    assert_eq!(n, 60);
+}

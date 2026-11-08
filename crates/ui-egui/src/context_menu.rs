@@ -74,8 +74,19 @@ fn items(app: &CadApp, ids: &[&str]) -> Vec<Entry> {
     ids.iter().filter_map(|id| item(app, id, None)).collect()
 }
 
-/// Most LISP commands the LISP Commands submenu lists.
-pub const LISP_MAX: usize = 40;
+/// Most LISP commands the LISP Commands submenu lists (it scrolls).
+pub const LISP_MAX: usize = 200;
+
+/// Whether starting `id` runs a command the drawing's LISP defines: not one that a registered or
+/// UI command of that name takes over.
+fn runs_lisp(app: &CadApp, id: &str) -> bool {
+    app.session.is_lisp_command(id) && !crate::menus::is_ui_command(&id.to_ascii_lowercase())
+}
+
+/// The commands the drawing's LISP defines that their names start, uppercase and sorted.
+pub fn lisp_commands(app: &CadApp) -> Vec<String> {
+    app.session.lisp_commands().into_iter().filter(|n| runs_lisp(app, n)).collect()
+}
 
 /// Command `id` as a menu shows it: its upper-case name, the id that starts it and whether it is
 /// enabled. A registered command, or a command the drawing's LISP defines (`c:` function), which
@@ -84,7 +95,7 @@ fn command_target(app: &CadApp, id: &str) -> Option<(String, String, bool)> {
     if let Some(c) = find_command(id) {
         return Some((c.id.to_ascii_uppercase(), c.id.to_string(), (c.enabled)(&app.session).is_ok()));
     }
-    app.session.is_lisp_command(id).then(|| (id.to_ascii_uppercase(), id.to_ascii_lowercase(), true))
+    runs_lisp(app, id).then(|| (id.to_ascii_uppercase(), id.to_ascii_lowercase(), true))
 }
 
 /// A menu item that starts command `id` ([`command_target`]).
@@ -99,13 +110,7 @@ pub fn recent_entries(app: &CadApp) -> Vec<Entry> {
 
 /// LISP Commands ▸: the commands the drawing's LISP defines, in alphabetical order.
 fn lisp_entries(app: &CadApp) -> Vec<Entry> {
-    app.session
-        .lisp_commands()
-        .iter()
-        .filter(|n| find_command(&n.to_ascii_lowercase()).is_none())
-        .take(LISP_MAX)
-        .filter_map(|n| command_entry(app, n))
-        .collect()
+    lisp_commands(app).iter().take(LISP_MAX).filter_map(|n| command_entry(app, n)).collect()
 }
 
 /// A submenu, left out when none of its commands exist.

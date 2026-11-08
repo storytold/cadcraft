@@ -670,8 +670,13 @@ impl Session {
         names
     }
 
-    /// Whether the active drawing's LISP defines command `name` (a `c:` function), in any case.
+    /// Whether starting command `name`, in any case, runs a `c:` function of the active drawing.
+    /// A function named like a registered command or alias, or with a prefix [`Session::start`]
+    /// takes off, is defined but never run by that name.
     pub fn is_lisp_command(&self, name: &str) -> bool {
+        if name.starts_with(['_', '.', '-', '\'']) || crate::cmd::find_command(&crate::cmd::resolve_alias(&name.to_ascii_lowercase())).is_some() {
+            return false;
+        }
         let Ok(uid) = self.state().map(|s| s.uid) else { return false };
         let Some(env) = self.lisp.envs.get(&uid) else { return false };
         !name.is_empty() && matches!(env.get(&format!("C:{}", name.to_ascii_uppercase())), Value::Func(_) | Value::Subr(_))
