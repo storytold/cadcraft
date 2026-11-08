@@ -1485,30 +1485,20 @@ menu	View	视图
 	Go to Storey	转到楼层
 	Storey Above	上一层
 	Storey Below	下一层
-	Ghost Storey	虚影楼层
 	Copy to Storey	复制到楼层
 	Move to Storey	移动到楼层
 	No storeys yet: the first one takes everything drawn so far.	尚无楼层：第一个楼层将包含目前已绘制的全部内容。
-	Show beneath the current storey as a ghost	作为虚影显示在当前楼层下方
 	Storey name	楼层名称
 	Above the current storey	在当前楼层之上
 	Only an empty storey can be deleted	只能删除空楼层
-	Move the current storey up	上移当前楼层
-	Move the current storey down	下移当前楼层
-	Ghost color	虚影颜色
 	Import Plan as Storey	将图纸导入为楼层
 	current	当前
-	Ghost On/Off	虚影开/关
-	Ghost Storey Above	上一层虚影
-	Ghost Storey Below	下一层虚影
-	Choose Ghost Storey...	选择虚影楼层...
 	The storey shown beneath the current one	显示在当前楼层下方的楼层
 	Arrow keys choose, Enter applies, Esc closes	方向键选择，Enter 应用，Esc 关闭
 	Blueprint	底图
 	Blueprint On/Off	底图开/关
 	Blueprint Storey Above	上一层底图
 	Blueprint Storey Below	下一层底图
-	Blueprint color	底图颜色
 	Choose Blueprint...	选择底图...
 	Go to Storey...	转到楼层...
 	Hide Blueprint	隐藏底图
@@ -1517,13 +1507,9 @@ menu	View	视图
 	New Storey Above	在上方新建楼层
 	New Storey Below	在下方新建楼层
 	Press the keys	请按下按键
-	Rename to {name}	重命名为 {name}
-	Shortcuts...	快捷键...
 	Show as Blueprint	显示为底图
 	Shown as blueprint (click to hide)	显示为底图（单击隐藏）
 	Storey	楼层
-	Storey Shortcuts	楼层快捷键
-	Storey Shortcuts...	楼层快捷键...
 	The storey to work on	正在编辑的楼层
 	Apply to This Drawing	应用到此图纸
 	Building	建筑

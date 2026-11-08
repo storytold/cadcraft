@@ -1039,30 +1039,20 @@
 	Go to Storey	Перейти на этаж
 	Storey Above	Этаж выше
 	Storey Below	Этаж ниже
-	Ghost Storey	Этаж-призрак
 	Copy to Storey	Копировать на этаж
 	Move to Storey	Переместить на этаж
 	No storeys yet: the first one takes everything drawn so far.	Этажей пока нет: первый получит всё уже начерченное.
-	Show beneath the current storey as a ghost	Показать под текущим этажом как призрак
 	Storey name	Имя этажа
 	Above the current storey	Над текущим этажом
 	Only an empty storey can be deleted	Удалить можно только пустой этаж
-	Move the current storey up	Переместить текущий этаж выше
-	Move the current storey down	Переместить текущий этаж ниже
-	Ghost color	Цвет призрака
 	Import Plan as Storey	Импортировать план как этаж
 	current	текущий
-	Ghost On/Off	Призрак вкл./выкл.
-	Ghost Storey Above	Этаж-призрак выше
-	Ghost Storey Below	Этаж-призрак ниже
-	Choose Ghost Storey...	Выбрать этаж-призрак...
 	The storey shown beneath the current one	Этаж, показанный под текущим
 	Arrow keys choose, Enter applies, Esc closes	Стрелки выбирают, Enter применяет, Esc закрывает
 	Blueprint	Подложка
 	Blueprint On/Off	Подложка вкл./выкл.
 	Blueprint Storey Above	Этаж-подложка выше
 	Blueprint Storey Below	Этаж-подложка ниже
-	Blueprint color	Цвет подложки
 	Choose Blueprint...	Выбрать подложку...
 	Go to Storey...	Перейти на этаж...
 	Hide Blueprint	Скрыть подложку
@@ -1071,13 +1061,9 @@
 	New Storey Above	Новый этаж выше
 	New Storey Below	Новый этаж ниже
 	Press the keys	Нажмите клавиши
-	Rename to {name}	Переименовать в {name}
-	Shortcuts...	Клавиши...
 	Show as Blueprint	Показать как подложку
 	Shown as blueprint (click to hide)	Показан как подложка (щёлкните, чтобы скрыть)
 	Storey	Этаж
-	Storey Shortcuts	Клавиши этажей
-	Storey Shortcuts...	Клавиши этажей...
 	The storey to work on	Этаж, на котором вы работаете
 	Apply to This Drawing	Применить к этому чертежу
 	Building	Строительство

@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn both_namings_are_translated_in_every_catalog() {
-        for code in ["de", "uk", "es", "fr", "it", "pt-BR", "cs", "ru", "sv", "hu", "tr", "el", "ar", "ko", "zh"] {
+        for code in ["de", "uk", "es", "fr", "it", "pt-BR", "cs", "ru", "sv", "hu", "tr", "el", "ar", "ko", "zh", "bs", "ka", "vi"] {
             let catalog = crate::i18n::catalog(code).unwrap_or_else(|| panic!("{code}"));
             for (a, b) in TERMS {
                 for s in [a, b] {

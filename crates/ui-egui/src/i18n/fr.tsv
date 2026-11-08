@@ -1045,30 +1045,20 @@
 	Go to Storey	Aller au niveau
 	Storey Above	Niveau supérieur
 	Storey Below	Niveau inférieur
-	Ghost Storey	Niveau fantôme
 	Copy to Storey	Copier vers un niveau
 	Move to Storey	Déplacer vers un niveau
 	No storeys yet: the first one takes everything drawn so far.	Aucun niveau pour l’instant : le premier reçoit tout ce qui est déjà dessiné.
-	Show beneath the current storey as a ghost	Afficher sous le niveau courant comme fantôme
 	Storey name	Nom du niveau
 	Above the current storey	Au-dessus du niveau courant
 	Only an empty storey can be deleted	Seul un niveau vide peut être supprimé
-	Move the current storey up	Monter le niveau courant
-	Move the current storey down	Descendre le niveau courant
-	Ghost color	Couleur du fantôme
 	Import Plan as Storey	Importer un plan comme niveau
 	current	courant
-	Ghost On/Off	Fantôme oui/non
-	Ghost Storey Above	Niveau fantôme au-dessus
-	Ghost Storey Below	Niveau fantôme en dessous
-	Choose Ghost Storey...	Choisir le niveau fantôme...
 	The storey shown beneath the current one	Le niveau affiché sous le niveau courant
 	Arrow keys choose, Enter applies, Esc closes	Flèches pour choisir, Entrée applique, Échap ferme
 	Blueprint	Plan de fond
 	Blueprint On/Off	Plan de fond oui/non
 	Blueprint Storey Above	Plan de fond au-dessus
 	Blueprint Storey Below	Plan de fond en dessous
-	Blueprint color	Couleur du plan de fond
 	Choose Blueprint...	Choisir le plan de fond...
 	Go to Storey...	Aller au niveau...
 	Hide Blueprint	Masquer le plan de fond
@@ -1076,13 +1066,9 @@
 	Move Up	Monter
 	New Storey Above	Nouveau niveau au-dessus
 	New Storey Below	Nouveau niveau en dessous
-	Rename to {name}	Renommer en {name}
-	Shortcuts...	Raccourcis...
 	Show as Blueprint	Afficher comme plan de fond
 	Shown as blueprint (click to hide)	Affiché comme plan de fond (clic pour masquer)
 	Storey	Niveau
-	Storey Shortcuts	Raccourcis des niveaux
-	Storey Shortcuts...	Raccourcis des niveaux...
 	The storey to work on	Le niveau sur lequel on travaille
 	Apply to This Drawing	Appliquer à ce dessin
 	Building	Bâtiment

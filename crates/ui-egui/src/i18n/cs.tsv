@@ -1248,30 +1248,20 @@ menu	Modify	Modifikace
 	Go to Storey	Přejít na podlaží
 	Storey Above	Podlaží výše
 	Storey Below	Podlaží níže
-	Ghost Storey	Duch podlaží
 	Copy to Storey	Kopírovat do podlaží
 	Move to Storey	Přesunout do podlaží
 	No storeys yet: the first one takes everything drawn so far.	Zatím žádná podlaží: první převezme vše dosud nakreslené.
-	Show beneath the current storey as a ghost	Zobrazit jako ducha pod aktuálním podlažím
 	Storey name	Název podlaží
 	Above the current storey	Nad aktuálním podlažím
 	Only an empty storey can be deleted	Odstranit lze jen prázdné podlaží
-	Move the current storey up	Posunout aktuální podlaží nahoru
-	Move the current storey down	Posunout aktuální podlaží dolů
-	Ghost color	Barva ducha
 	Import Plan as Storey	Importovat výkres jako podlaží
 	current	aktuální
-	Ghost On/Off	Duch zap./vyp.
-	Ghost Storey Above	Duch podlaží výše
-	Ghost Storey Below	Duch podlaží níže
-	Choose Ghost Storey...	Vybrat ducha podlaží...
 	The storey shown beneath the current one	Podlaží zobrazené pod aktuálním
 	Arrow keys choose, Enter applies, Esc closes	Šipky vybírají, Enter použije, Esc zavře
 	Blueprint	Podklad
 	Blueprint On/Off	Podklad zap./vyp.
 	Blueprint Storey Above	Podkladové podlaží výše
 	Blueprint Storey Below	Podkladové podlaží níže
-	Blueprint color	Barva podkladu
 	Choose Blueprint...	Vybrat podklad...
 	Go to Storey...	Přejít na podlaží...
 	Hide Blueprint	Skrýt podklad
@@ -1280,13 +1270,9 @@ menu	Modify	Modifikace
 	New Storey Above	Nové podlaží nad
 	New Storey Below	Nové podlaží pod
 	Press the keys	Stiskněte klávesy
-	Rename to {name}	Přejmenovat na {name}
-	Shortcuts...	Zkratky...
 	Show as Blueprint	Zobrazit jako podklad
 	Shown as blueprint (click to hide)	Zobrazeno jako podklad (kliknutím skrýt)
 	Storey	Podlaží
-	Storey Shortcuts	Zkratky podlaží
-	Storey Shortcuts...	Zkratky podlaží...
 	The storey to work on	Podlaží, na kterém se pracuje
 	Apply to This Drawing	Použít na tento výkres
 	Building	Stavebnictví

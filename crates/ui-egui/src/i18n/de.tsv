@@ -1065,30 +1065,20 @@
 	Go to Storey	Zu Geschoss wechseln
 	Storey Above	Geschoss darüber
 	Storey Below	Geschoss darunter
-	Ghost Storey	Ghost-Geschoss
 	Copy to Storey	In Geschoss kopieren
 	Move to Storey	In Geschoss verschieben
 	No storeys yet: the first one takes everything drawn so far.	Noch keine Geschosse: das erste übernimmt alles bisher Gezeichnete.
-	Show beneath the current storey as a ghost	Als Ghost unter dem aktuellen Geschoss zeigen
 	Storey name	Geschossname
 	Above the current storey	Über dem aktuellen Geschoss
 	Only an empty storey can be deleted	Nur ein leeres Geschoss kann gelöscht werden
-	Move the current storey up	Aktuelles Geschoss nach oben verschieben
-	Move the current storey down	Aktuelles Geschoss nach unten verschieben
-	Ghost color	Ghost-Farbe
 	Import Plan as Storey	Plan als Geschoss importieren
 	current	aktuell
-	Ghost On/Off	Ghost ein/aus
-	Ghost Storey Above	Ghost-Geschoss darüber
-	Ghost Storey Below	Ghost-Geschoss darunter
-	Choose Ghost Storey...	Ghost-Geschoss wählen...
 	The storey shown beneath the current one	Das Geschoss, das unter dem aktuellen liegt
 	Arrow keys choose, Enter applies, Esc closes	Pfeiltasten wählen, Enter übernimmt, Esc schließt
 	Blueprint	Blueprint
 	Blueprint On/Off	Blueprint ein/aus
 	Blueprint Storey Above	Blueprint-Geschoss darüber
 	Blueprint Storey Below	Blueprint-Geschoss darunter
-	Blueprint color	Blueprint-Farbe
 	Choose Blueprint...	Blueprint wählen...
 	Go to Storey...	Zu Geschoss wechseln...
 	Hide Blueprint	Blueprint ausblenden
@@ -1097,13 +1087,9 @@
 	New Storey Above	Neues Geschoss darüber
 	New Storey Below	Neues Geschoss darunter
 	Press the keys	Tasten drücken
-	Rename to {name}	Umbenennen in {name}
-	Shortcuts...	Tastenkürzel...
 	Show as Blueprint	Als Blueprint darstellen
 	Shown as blueprint (click to hide)	Als Blueprint dargestellt (Klick blendet aus)
 	Storey	Geschoss
-	Storey Shortcuts	Geschoss-Tastenkürzel
-	Storey Shortcuts...	Geschoss-Tastenkürzel...
 	The storey to work on	Das Geschoss, auf dem gearbeitet wird
 	Apply to This Drawing	Auf diese Zeichnung anwenden
 	Building	Bauwesen

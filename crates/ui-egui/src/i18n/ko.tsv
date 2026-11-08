@@ -1268,30 +1268,20 @@ menu	Modify	수정
 	Go to Storey	층 전환
 	Storey Above	위층
 	Storey Below	아래층
-	Ghost Storey	고스트 층
 	Copy to Storey	다른 층으로 복사
 	Move to Storey	다른 층으로 옮기기
 	No storeys yet: the first one takes everything drawn so far.	아직 층이 없습니다: 첫 번째 층이 지금까지 그린 모든 것을 가져옵니다.
-	Show beneath the current storey as a ghost	현재 층 아래에 고스트로 표시
 	Storey name	층 이름
 	Above the current storey	현재 층 위에
 	Only an empty storey can be deleted	빈 층만 삭제할 수 있습니다
-	Move the current storey up	현재 층을 위로 이동
-	Move the current storey down	현재 층을 아래로 이동
-	Ghost color	고스트 색상
 	Import Plan as Storey	도면을 층으로 가져오기
 	current	현재
-	Ghost On/Off	고스트 켜기/끄기
-	Ghost Storey Above	위층 고스트
-	Ghost Storey Below	아래층 고스트
-	Choose Ghost Storey...	고스트 층 선택...
 	The storey shown beneath the current one	현재 층 아래에 표시되는 층
 	Arrow keys choose, Enter applies, Esc closes	화살표로 선택, Enter 적용, Esc 닫기
 	Blueprint	밑그림
 	Blueprint On/Off	밑그림 켜기/끄기
 	Blueprint Storey Above	위층 밑그림
 	Blueprint Storey Below	아래층 밑그림
-	Blueprint color	밑그림 색상
 	Choose Blueprint...	밑그림 선택...
 	Go to Storey...	층으로 이동...
 	Hide Blueprint	밑그림 숨기기
@@ -1300,13 +1290,9 @@ menu	Modify	수정
 	New Storey Above	위에 새 층
 	New Storey Below	아래에 새 층
 	Press the keys	키를 누르세요
-	Rename to {name}	{name}(으)로 이름 바꾸기
-	Shortcuts...	단축키...
 	Show as Blueprint	밑그림으로 표시
 	Shown as blueprint (click to hide)	밑그림으로 표시됨 (클릭하면 숨김)
 	Storey	층
-	Storey Shortcuts	층 단축키
-	Storey Shortcuts...	층 단축키...
 	The storey to work on	작업 중인 층
 	Apply to This Drawing	이 도면에 적용
 	Building	건축

@@ -1359,30 +1359,20 @@ menu	View	Προβολή
 	Go to Storey	Μετάβαση σε όροφο
 	Storey Above	Όροφος πάνω
 	Storey Below	Όροφος κάτω
-	Ghost Storey	Όροφος-φάντασμα
 	Copy to Storey	Αντιγραφή σε όροφο
 	Move to Storey	Μετακίνηση σε όροφο
 	No storeys yet: the first one takes everything drawn so far.	Δεν υπάρχουν ακόμη όροφοι: ο πρώτος παίρνει ό,τι έχει ήδη σχεδιαστεί.
-	Show beneath the current storey as a ghost	Εμφάνιση ως φάντασμα κάτω από τον τρέχοντα όροφο
 	Storey name	Όνομα ορόφου
 	Above the current storey	Πάνω από τον τρέχοντα όροφο
 	Only an empty storey can be deleted	Μόνο κενός όροφος μπορεί να διαγραφεί
-	Move the current storey up	Μετακίνηση τρέχοντος ορόφου πάνω
-	Move the current storey down	Μετακίνηση τρέχοντος ορόφου κάτω
-	Ghost color	Χρώμα φαντάσματος
 	Import Plan as Storey	Εισαγωγή σχεδίου ως ορόφου
 	current	τρέχων
-	Ghost On/Off	Φάντασμα ναι/όχι
-	Ghost Storey Above	Όροφος-φάντασμα πάνω
-	Ghost Storey Below	Όροφος-φάντασμα κάτω
-	Choose Ghost Storey...	Επιλογή ορόφου-φαντάσματος...
 	The storey shown beneath the current one	Ο όροφος που εμφανίζεται κάτω από τον τρέχοντα
 	Arrow keys choose, Enter applies, Esc closes	Βέλη για επιλογή, Enter εφαρμογή, Esc κλείσιμο
 	Blueprint	Υπόβαθρο
 	Blueprint On/Off	Υπόβαθρο ναι/όχι
 	Blueprint Storey Above	Όροφος-υπόβαθρο πάνω
 	Blueprint Storey Below	Όροφος-υπόβαθρο κάτω
-	Blueprint color	Χρώμα υποβάθρου
 	Choose Blueprint...	Επιλογή υποβάθρου...
 	Go to Storey...	Μετάβαση σε όροφο...
 	Hide Blueprint	Απόκρυψη υποβάθρου
@@ -1391,13 +1381,9 @@ menu	View	Προβολή
 	New Storey Above	Νέος όροφος από πάνω
 	New Storey Below	Νέος όροφος από κάτω
 	Press the keys	Πατήστε τα πλήκτρα
-	Rename to {name}	Μετονομασία σε {name}
-	Shortcuts...	Συντομεύσεις...
 	Show as Blueprint	Εμφάνιση ως υπόβαθρο
 	Shown as blueprint (click to hide)	Εμφανίζεται ως υπόβαθρο (κλικ για απόκρυψη)
 	Storey	Όροφος
-	Storey Shortcuts	Συντομεύσεις ορόφων
-	Storey Shortcuts...	Συντομεύσεις ορόφων...
 	The storey to work on	Ο όροφος στον οποίο εργάζεστε
 	Apply to This Drawing	Εφαρμογή σε αυτό το σχέδιο
 	Building	Κτίριο

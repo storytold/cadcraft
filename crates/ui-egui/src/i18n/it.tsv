@@ -1407,30 +1407,20 @@ menu	Modify	Edita
 	Go to Storey	Vai al piano
 	Storey Above	Piano superiore
 	Storey Below	Piano inferiore
-	Ghost Storey	Piano fantasma
 	Copy to Storey	Copia nel piano
 	Move to Storey	Sposta nel piano
 	No storeys yet: the first one takes everything drawn so far.	Ancora nessun piano: il primo riceve tutto ciò che è già disegnato.
-	Show beneath the current storey as a ghost	Mostra come fantasma sotto il piano corrente
 	Storey name	Nome del piano
 	Above the current storey	Sopra il piano corrente
 	Only an empty storey can be deleted	Si può eliminare solo un piano vuoto
-	Move the current storey up	Sposta su il piano corrente
-	Move the current storey down	Sposta giù il piano corrente
-	Ghost color	Colore del fantasma
 	Import Plan as Storey	Importa pianta come piano
 	current	corrente
-	Ghost On/Off	Fantasma sì/no
-	Ghost Storey Above	Piano fantasma superiore
-	Ghost Storey Below	Piano fantasma inferiore
-	Choose Ghost Storey...	Scegli piano fantasma...
 	The storey shown beneath the current one	Il piano mostrato sotto quello corrente
 	Arrow keys choose, Enter applies, Esc closes	Frecce per scegliere, Invio applica, Esc chiude
 	Blueprint	Base di riferimento
 	Blueprint On/Off	Base di riferimento sì/no
 	Blueprint Storey Above	Piano di riferimento sopra
 	Blueprint Storey Below	Piano di riferimento sotto
-	Blueprint color	Colore della base
 	Choose Blueprint...	Scegli base di riferimento...
 	Go to Storey...	Vai al piano...
 	Hide Blueprint	Nascondi base di riferimento
@@ -1439,13 +1429,9 @@ menu	Modify	Edita
 	New Storey Above	Nuovo piano sopra
 	New Storey Below	Nuovo piano sotto
 	Press the keys	Premi i tasti
-	Rename to {name}	Rinomina in {name}
-	Shortcuts...	Scorciatoie...
 	Show as Blueprint	Mostra come base di riferimento
 	Shown as blueprint (click to hide)	Mostrato come base (clic per nascondere)
 	Storey	Piano
-	Storey Shortcuts	Scorciatoie dei piani
-	Storey Shortcuts...	Scorciatoie dei piani...
 	The storey to work on	Il piano su cui si lavora
 	Apply to This Drawing	Applica a questo disegno
 	Building	Edilizia

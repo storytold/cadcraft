@@ -1392,30 +1392,20 @@ menu	View	عرض
 	Go to Storey	الانتقال إلى طابق
 	Storey Above	الطابق الأعلى
 	Storey Below	الطابق الأسفل
-	Ghost Storey	طابق شبح
 	Copy to Storey	نسخ إلى طابق
 	Move to Storey	نقل إلى طابق
 	No storeys yet: the first one takes everything drawn so far.	لا توجد طوابق بعد: يأخذ الأول كل ما رُسم حتى الآن.
-	Show beneath the current storey as a ghost	إظهار كشبح أسفل الطابق الحالي
 	Storey name	اسم الطابق
 	Above the current storey	فوق الطابق الحالي
 	Only an empty storey can be deleted	لا يمكن حذف إلا طابق فارغ
-	Move the current storey up	نقل الطابق الحالي إلى الأعلى
-	Move the current storey down	نقل الطابق الحالي إلى الأسفل
-	Ghost color	لون الشبح
 	Import Plan as Storey	استيراد مخطط كطابق
 	current	الحالي
-	Ghost On/Off	تشغيل/إيقاف الشبح
-	Ghost Storey Above	الطابق الشبح الأعلى
-	Ghost Storey Below	الطابق الشبح الأسفل
-	Choose Ghost Storey...	اختيار الطابق الشبح...
 	The storey shown beneath the current one	الطابق المعروض أسفل الطابق الحالي
 	Arrow keys choose, Enter applies, Esc closes	الأسهم للاختيار، Enter للتطبيق، Esc للإغلاق
 	Blueprint	مخطط خلفي
 	Blueprint On/Off	تشغيل/إيقاف المخطط الخلفي
 	Blueprint Storey Above	الطابق الخلفي الأعلى
 	Blueprint Storey Below	الطابق الخلفي الأسفل
-	Blueprint color	لون المخطط الخلفي
 	Choose Blueprint...	اختيار المخطط الخلفي...
 	Go to Storey...	الانتقال إلى طابق...
 	Hide Blueprint	إخفاء المخطط الخلفي
@@ -1424,13 +1414,9 @@ menu	View	عرض
 	New Storey Above	طابق جديد أعلاه
 	New Storey Below	طابق جديد أسفله
 	Press the keys	اضغط المفاتيح
-	Rename to {name}	إعادة التسمية إلى {name}
-	Shortcuts...	الاختصارات...
 	Show as Blueprint	إظهار كمخطط خلفي
 	Shown as blueprint (click to hide)	معروض كمخطط خلفي (انقر للإخفاء)
 	Storey	طابق
-	Storey Shortcuts	اختصارات الطوابق
-	Storey Shortcuts...	اختصارات الطوابق...
 	The storey to work on	الطابق الذي يُعمل عليه
 	Apply to This Drawing	تطبيق على هذا الرسم
 	Building	البناء

@@ -1492,30 +1492,20 @@ menu	Modify	Ändra
 	Go to Storey	Gå till våning
 	Storey Above	Våningen ovanför
 	Storey Below	Våningen nedanför
-	Ghost Storey	Spökvåning
 	Copy to Storey	Kopiera till våning
 	Move to Storey	Flytta till våning
 	No storeys yet: the first one takes everything drawn so far.	Inga våningar än: den första får allt som redan ritats.
-	Show beneath the current storey as a ghost	Visa som spöke under aktuell våning
 	Storey name	Våningens namn
 	Above the current storey	Ovanför aktuell våning
 	Only an empty storey can be deleted	Bara en tom våning kan tas bort
-	Move the current storey up	Flytta aktuell våning uppåt
-	Move the current storey down	Flytta aktuell våning nedåt
-	Ghost color	Spökfärg
 	Import Plan as Storey	Importera ritning som våning
 	current	aktuell
-	Ghost On/Off	Spöke på/av
-	Ghost Storey Above	Spökvåning ovanför
-	Ghost Storey Below	Spökvåning nedanför
-	Choose Ghost Storey...	Välj spökvåning...
 	The storey shown beneath the current one	Våningen som visas under den aktuella
 	Arrow keys choose, Enter applies, Esc closes	Piltangenter väljer, Enter verkställer, Esc stänger
 	Blueprint	Underlägg
 	Blueprint On/Off	Underlägg på/av
 	Blueprint Storey Above	Underläggsvåning ovanför
 	Blueprint Storey Below	Underläggsvåning nedanför
-	Blueprint color	Underläggets färg
 	Choose Blueprint...	Välj underlägg...
 	Go to Storey...	Gå till våning...
 	Hide Blueprint	Dölj underlägg
@@ -1524,13 +1514,9 @@ menu	Modify	Ändra
 	New Storey Above	Ny våning ovanför
 	New Storey Below	Ny våning nedanför
 	Press the keys	Tryck på tangenterna
-	Rename to {name}	Byt namn till {name}
-	Shortcuts...	Kortkommandon...
 	Show as Blueprint	Visa som underlägg
 	Shown as blueprint (click to hide)	Visas som underlägg (klicka för att dölja)
 	Storey	Våning
-	Storey Shortcuts	Kortkommandon för våningar
-	Storey Shortcuts...	Kortkommandon för våningar...
 	The storey to work on	Våningen som du arbetar på
 	Apply to This Drawing	Använd på den här ritningen
 	Building	Byggnad

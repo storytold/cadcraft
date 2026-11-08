@@ -1279,30 +1279,20 @@
 	Go to Storey	Ir a planta
 	Storey Above	Planta superior
 	Storey Below	Planta inferior
-	Ghost Storey	Planta fantasma
 	Copy to Storey	Copiar a planta
 	Move to Storey	Mover a planta
 	No storeys yet: the first one takes everything drawn so far.	Aún no hay plantas: la primera recibe todo lo dibujado hasta ahora.
-	Show beneath the current storey as a ghost	Mostrar como fantasma bajo la planta actual
 	Storey name	Nombre de la planta
 	Above the current storey	Encima de la planta actual
 	Only an empty storey can be deleted	Solo se puede eliminar una planta vacía
-	Move the current storey up	Subir la planta actual
-	Move the current storey down	Bajar la planta actual
-	Ghost color	Color del fantasma
 	Import Plan as Storey	Importar plano como planta
 	current	actual
-	Ghost On/Off	Fantasma sí/no
-	Ghost Storey Above	Planta fantasma superior
-	Ghost Storey Below	Planta fantasma inferior
-	Choose Ghost Storey...	Elegir planta fantasma...
 	The storey shown beneath the current one	La planta que se muestra bajo la actual
 	Arrow keys choose, Enter applies, Esc closes	Flechas para elegir, Intro aplica, Esc cierra
 	Blueprint	Plano base
 	Blueprint On/Off	Plano base sí/no
 	Blueprint Storey Above	Plano base superior
 	Blueprint Storey Below	Plano base inferior
-	Blueprint color	Color del plano base
 	Choose Blueprint...	Elegir plano base...
 	Go to Storey...	Ir a planta...
 	Hide Blueprint	Ocultar plano base
@@ -1311,13 +1301,9 @@
 	New Storey Above	Nueva planta encima
 	New Storey Below	Nueva planta debajo
 	Press the keys	Pulse las teclas
-	Rename to {name}	Renombrar a {name}
-	Shortcuts...	Atajos...
 	Show as Blueprint	Mostrar como plano base
 	Shown as blueprint (click to hide)	Mostrada como plano base (clic para ocultar)
 	Storey	Planta
-	Storey Shortcuts	Atajos de plantas
-	Storey Shortcuts...	Atajos de plantas...
 	The storey to work on	La planta en la que se trabaja
 	Apply to This Drawing	Aplicar a este dibujo
 	Building	Edificación

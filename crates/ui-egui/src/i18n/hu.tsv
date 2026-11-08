@@ -1370,30 +1370,20 @@ menu	View	Nézet
 	Go to Storey	Ugrás szintre
 	Storey Above	Felső szint
 	Storey Below	Alsó szint
-	Ghost Storey	Szellemszint
 	Copy to Storey	Másolás szintre
 	Move to Storey	Áthelyezés szintre
 	No storeys yet: the first one takes everything drawn so far.	Még nincs szint: az első megkap mindent, ami eddig elkészült.
-	Show beneath the current storey as a ghost	Megjelenítés szellemként az aktuális szint alatt
 	Storey name	Szint neve
 	Above the current storey	Az aktuális szint fölé
 	Only an empty storey can be deleted	Csak üres szint törölhető
-	Move the current storey up	Aktuális szint feljebb
-	Move the current storey down	Aktuális szint lejjebb
-	Ghost color	Szellem színe
 	Import Plan as Storey	Terv importálása szintként
 	current	aktuális
-	Ghost On/Off	Szellem be/ki
-	Ghost Storey Above	Szellemszint feljebb
-	Ghost Storey Below	Szellemszint lejjebb
-	Choose Ghost Storey...	Szellemszint kiválasztása...
 	The storey shown beneath the current one	Az aktuális alatt megjelenített szint
 	Arrow keys choose, Enter applies, Esc closes	Nyilak: választás, Enter: alkalmaz, Esc: bezár
 	Blueprint	Háttérrajz
 	Blueprint On/Off	Háttérrajz be/ki
 	Blueprint Storey Above	Háttérrajz-szint feljebb
 	Blueprint Storey Below	Háttérrajz-szint lejjebb
-	Blueprint color	Háttérrajz színe
 	Choose Blueprint...	Háttérrajz kiválasztása...
 	Go to Storey...	Ugrás szintre...
 	Hide Blueprint	Háttérrajz elrejtése
@@ -1402,13 +1392,9 @@ menu	View	Nézet
 	New Storey Above	Új szint fölötte
 	New Storey Below	Új szint alatta
 	Press the keys	Nyomja le a billentyűket
-	Rename to {name}	Átnevezés erre: {name}
-	Shortcuts...	Billentyűparancsok...
 	Show as Blueprint	Megjelenítés háttérrajzként
 	Shown as blueprint (click to hide)	Háttérrajzként látható (kattintással elrejthető)
 	Storey	Szint
-	Storey Shortcuts	Szint-billentyűparancsok
-	Storey Shortcuts...	Szint-billentyűparancsok...
 	The storey to work on	A szint, amelyen dolgozik
 	Apply to This Drawing	Alkalmazás erre a rajzra
 	Building	Építészet

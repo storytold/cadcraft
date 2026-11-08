@@ -1472,3 +1472,109 @@ menu	View	ხედი
 	Text to find	მოსაძებნი ტექსტი
 	Whole words	მთლიანი სიტყვები
 	Nothing found	ვერაფერი მოიძებნა
+# Storeys (storey management and the blueprint).
+	Storeys	სართულები
+	New Storey	ახალი სართული
+	Rename Storey	სართულის გადარქმევა
+	Delete Storey	სართულის წაშლა
+	Reorder Storey	სართულის რიგის შეცვლა
+	Go to Storey	სართულზე გადასვლა
+	Storey Above	ზედა სართული
+	Storey Below	ქვედა სართული
+	Copy to Storey	სართულზე კოპირება
+	Move to Storey	სართულზე გადატანა
+	No storeys yet: the first one takes everything drawn so far.	სართულები ჯერ არ არის: პირველი მიიღებს ყველაფერს, რაც აქამდე დაიხაზა.
+	Storey name	სართულის სახელი
+	Above the current storey	მიმდინარე სართულის ზემოთ
+	Only an empty storey can be deleted	წაშლა შეიძლება მხოლოდ ცარიელი სართულის
+	Import Plan as Storey	გეგმის იმპორტი სართულად
+	current	მიმდინარე
+	The storey shown beneath the current one	სართული, რომელიც მიმდინარის ქვეშ ჩანს
+	Arrow keys choose, Enter applies, Esc closes	ისრები ირჩევს, Enter ასრულებს, Esc ხურავს
+	Blueprint	ქვესაფენი
+	Blueprint On/Off	ქვესაფენი ჩართ./გამორთ.
+	Blueprint Storey Above	ქვესაფენი: ზედა სართული
+	Blueprint Storey Below	ქვესაფენი: ქვედა სართული
+	Choose Blueprint...	ქვესაფენის არჩევა...
+	Go to Storey...	სართულზე გადასვლა...
+	Hide Blueprint	ქვესაფენის დამალვა
+	Move Down	ქვემოთ გადატანა
+	Move Up	ზემოთ გადატანა
+	New Storey Above	ახალი სართული ზემოთ
+	New Storey Below	ახალი სართული ქვემოთ
+	Show as Blueprint	ქვესაფენად ჩვენება
+	Shown as blueprint (click to hide)	ჩანს ქვესაფენად (დააწკაპეთ დასამალად)
+	Storey	სართული
+	The storey to work on	სართული, რომელზეც მუშაობთ
+	Apply to This Drawing	ამ ნახაზზე გამოყენება
+	Building	შენობა
+	Double-click to rename	ორჯერ დააწკაპეთ გადასარქმევად
+	Drawing 0, drawings above, blueprints below	ნახაზი 0, ნახაზები ზემოთ, ქვესაფენები ქვემოთ
+	Everything drawn so far goes on the start storey	ყველაფერი, რაც აქამდე დაიხაზა, საწყის სართულზე გადადის
+	Neutral	ნეიტრალური
+	New drawings, and opened drawings without storeys, get these storeys	ახალი ნახაზები და გახსნილი ნახაზები სართულების გარეშე ამ სართულებს მიიღებენ
+	Rename	გადარქმევა
+	Set as Start Storey	საწყის სართულად დაყენება
+	Shortcuts	მალსახმობები
+	Start Setup	საწყისი პარამეტრები
+	Start Storey	საწყისი სართული
+	Start storey	საწყისი სართული
+	Start storey (number 0)	საწყისი სართული (ნომერი 0)
+	Storey Settings...	სართულების პარამეტრები...
+	Storey number	სართულის ნომერი
+	Storeys Palette	სართულების პალიტრა
+	Storeys from Setup	სართულები პარამეტრებიდან
+	Storeys, top first, one per line	სართულები, ზემოდან, თითო ხაზზე
+	The drawing has storeys already	ნახაზს უკვე აქვს სართულები
+	Above the current level	მიმდინარე დონის ზემოთ
+	Blueprint Level Above	ქვესაფენი: ზედა დონე
+	Blueprint Level Below	ქვესაფენი: ქვედა დონე
+	Blueprint Settings...	ქვესაფენის პარამეტრები...
+	Blueprints	ქვესაფენები
+	Blueprints Palette	ქვესაფენების პალიტრა
+	Blueprints and levels (any other stack)	ქვესაფენები და დონეები (ნებისმიერი სხვა წყობა)
+	Copy Selection Here	მონიშნულის აქ კოპირება
+	Copy to Level	დონეზე კოპირება
+	Copy to Level...	დონეზე კოპირება...
+	Copy to Storey...	სართულზე კოპირება...
+	Delete Level	დონის წაშლა
+	Each level remembers its blueprint	ყოველი დონე იმახსოვრებს თავის ქვესაფენს
+	Each storey remembers its blueprint	ყოველი სართული იმახსოვრებს თავის ქვესაფენს
+	Everything drawn so far goes on the start level	ყველაფერი, რაც აქამდე დაიხაზა, საწყის დონეზე გადადის
+	Go to Level	დონეზე გადასვლა
+	Go to Level...	დონეზე გადასვლა...
+	Import Plan as Level	გეგმის იმპორტი დონედ
+	Level	დონე
+	Level Above	ზედა დონე
+	Level Below	ქვედა დონე
+	Level name	დონის სახელი
+	Level number	დონის ნომერი
+	Levels from Setup	დონეები პარამეტრებიდან
+	Levels, top first, one per line	დონეები, ზემოდან, თითო ხაზზე
+	Move Selection Here	მონიშნულის აქ გადატანა
+	Move to Level	დონეზე გადატანა
+	Move to Level...	დონეზე გადატანა...
+	Move to Storey...	სართულზე გადატანა...
+	Names	სახელები
+	New Level	ახალი დონე
+	New Level Above	ახალი დონე ზემოთ
+	New Level Below	ახალი დონე ქვემოთ
+	New drawings, and opened drawings without levels, get these levels	ახალი ნახაზები და გახსნილი ნახაზები დონეების გარეშე ამ დონეებს მიიღებენ
+	No levels yet: the first one takes everything drawn so far.	დონეები ჯერ არ არის: პირველი მიიღებს ყველაფერს, რაც აქამდე დაიხაზა.
+	On a dark drawing area	მუქ სახაზავ არეზე
+	On a light drawing area	ღია სახაზავ არეზე
+	Only an empty level can be deleted	წაშლა შეიძლება მხოლოდ ცარიელი დონის
+	Select the objects first, then choose the level.	ჯერ მონიშნეთ ობიექტები, შემდეგ აირჩიეთ დონე.
+	Select the objects first, then choose the storey.	ჯერ მონიშნეთ ობიექტები, შემდეგ აირჩიეთ სართული.
+	Set as Start Level	საწყის დონედ დაყენება
+	Show hatches in the blueprint (off: hatches on the current level only)	დაშტრიხვების ჩვენება ქვესაფენში (გამორთული: დაშტრიხვები მხოლოდ მიმდინარე დონეზე)
+	Show hatches in the blueprint (off: hatches on the current storey only)	დაშტრიხვების ჩვენება ქვესაფენში (გამორთული: დაშტრიხვები მხოლოდ მიმდინარე სართულზე)
+	Start level	საწყისი დონე
+	Start level (number 0)	საწყისი დონე (ნომერი 0)
+	Storeys (buildings)	სართულები (შენობები)
+	The drawing has levels already	ნახაზს უკვე აქვს დონეები
+	The level shown beneath the current one	დონე, რომელიც მიმდინარის ქვეშ ჩანს
+	The level to work on	დონე, რომელზეც მუშაობთ
+	selected	მონიშნული
+	selected objects, copied in place to	მონიშნული ობიექტი, ადგილზე დაკოპირდა:
+	selected objects, moved in place to	მონიშნული ობიექტი, ადგილზე გადავიდა:

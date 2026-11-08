@@ -1431,30 +1431,20 @@
 	Go to Storey	Перейти на поверх
 	Storey Above	Поверх вище
 	Storey Below	Поверх нижче
-	Ghost Storey	Поверх-привид
 	Copy to Storey	Копіювати на поверх
 	Move to Storey	Перемістити на поверх
 	No storeys yet: the first one takes everything drawn so far.	Поверхів ще немає: перший отримає все, що вже накреслено.
-	Show beneath the current storey as a ghost	Показати під поточним поверхом як привид
 	Storey name	Назва поверху
 	Above the current storey	Над поточним поверхом
 	Only an empty storey can be deleted	Видалити можна лише порожній поверх
-	Move the current storey up	Перемістити поточний поверх вище
-	Move the current storey down	Перемістити поточний поверх нижче
-	Ghost color	Колір привида
 	Import Plan as Storey	Імпортувати план як поверх
 	current	поточний
-	Ghost On/Off	Привид увімк./вимк.
-	Ghost Storey Above	Поверх-привид вище
-	Ghost Storey Below	Поверх-привид нижче
-	Choose Ghost Storey...	Вибрати поверх-привид...
 	The storey shown beneath the current one	Поверх, показаний під поточним
 	Arrow keys choose, Enter applies, Esc closes	Стрілки вибирають, Enter застосовує, Esc закриває
 	Blueprint	Підкладка
 	Blueprint On/Off	Підкладка увімк./вимк.
 	Blueprint Storey Above	Поверх-підкладка вище
 	Blueprint Storey Below	Поверх-підкладка нижче
-	Blueprint color	Колір підкладки
 	Choose Blueprint...	Вибрати підкладку...
 	Go to Storey...	Перейти на поверх...
 	Hide Blueprint	Сховати підкладку
@@ -1462,13 +1452,9 @@
 	Move Up	Вище
 	New Storey Above	Новий поверх вище
 	New Storey Below	Новий поверх нижче
-	Rename to {name}	Перейменувати на {name}
-	Shortcuts...	Клавіші...
 	Show as Blueprint	Показати як підкладку
 	Shown as blueprint (click to hide)	Показано як підкладку (клацніть, щоб сховати)
 	Storey	Поверх
-	Storey Shortcuts	Клавіші поверхів
-	Storey Shortcuts...	Клавіші поверхів...
 	The storey to work on	Поверх, на якому ви працюєте
 	Apply to This Drawing	Застосувати до цього креслення
 	Building	Будівництво

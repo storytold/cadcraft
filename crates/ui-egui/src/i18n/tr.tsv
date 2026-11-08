@@ -1373,30 +1373,20 @@ menu	View	Görünüm
 	Go to Storey	Kata git
 	Storey Above	Üst kat
 	Storey Below	Alt kat
-	Ghost Storey	Hayalet kat
 	Copy to Storey	Kata kopyala
 	Move to Storey	Kata taşı
 	No storeys yet: the first one takes everything drawn so far.	Henüz kat yok: ilki şimdiye kadar çizilen her şeyi alır.
-	Show beneath the current storey as a ghost	Geçerli katın altında hayalet olarak göster
 	Storey name	Kat adı
 	Above the current storey	Geçerli katın üstüne
 	Only an empty storey can be deleted	Yalnızca boş bir kat silinebilir
-	Move the current storey up	Geçerli katı yukarı taşı
-	Move the current storey down	Geçerli katı aşağı taşı
-	Ghost color	Hayalet rengi
 	Import Plan as Storey	Planı kat olarak içe aktar
 	current	geçerli
-	Ghost On/Off	Hayalet aç/kapat
-	Ghost Storey Above	Üstteki hayalet kat
-	Ghost Storey Below	Alttaki hayalet kat
-	Choose Ghost Storey...	Hayalet katı seç...
 	The storey shown beneath the current one	Geçerli katın altında gösterilen kat
 	Arrow keys choose, Enter applies, Esc closes	Ok tuşları seçer, Enter uygular, Esc kapatır
 	Blueprint	Altlık
 	Blueprint On/Off	Altlık aç/kapat
 	Blueprint Storey Above	Üstteki altlık kat
 	Blueprint Storey Below	Alttaki altlık kat
-	Blueprint color	Altlık rengi
 	Choose Blueprint...	Altlık seç...
 	Go to Storey...	Kata git...
 	Hide Blueprint	Altlığı gizle
@@ -1405,13 +1395,9 @@ menu	View	Görünüm
 	New Storey Above	Üste yeni kat
 	New Storey Below	Alta yeni kat
 	Press the keys	Tuşlara basın
-	Rename to {name}	{name} olarak yeniden adlandır
-	Shortcuts...	Kısayollar...
 	Show as Blueprint	Altlık olarak göster
 	Shown as blueprint (click to hide)	Altlık olarak gösteriliyor (gizlemek için tıklayın)
 	Storey	Kat
-	Storey Shortcuts	Kat kısayolları
-	Storey Shortcuts...	Kat kısayolları...
 	The storey to work on	Üzerinde çalışılan kat
 	Apply to This Drawing	Bu çizime uygula
 	Building	Yapı
