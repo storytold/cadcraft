@@ -431,10 +431,10 @@ fn outside(core: &Graph, u: usize, steps: usize) -> Option<Vec<Vec2>> {
 }
 
 /// Outlines of the groups of curves inside the face `outer` (vertex indices into `g`).
-fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
+fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Option<Vec<Island>> {
     let comp = components(g);
     let outer_comp: std::collections::HashSet<usize> = outer.iter().filter_map(|&i| comp.get(i).copied()).collect();
-    let Some(outer_pts) = points(g, outer) else { return Vec::new() };
+    let outer_pts = points(g, outer)?;
     let ob = Bounds2::from_points(outer_pts.iter().copied());
     let core = prune(g);
     // Leftmost (then lowest) vertex still on a cycle, per component.
@@ -475,7 +475,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
         if !ob.contains(pu) {
             continue;
         }
-        let Some(left) = edges_left.checked_sub(outer_pts.len()) else { break };
+        let left = edges_left.checked_sub(outer_pts.len())?;
         edges_left = left;
         if !point_in_polygon(&outer_pts, pu) {
             continue;
@@ -487,7 +487,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
         if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) {
             continue;
         }
-        let Some(left) = edges_left.checked_sub(lp.len()) else { break };
+        let left = edges_left.checked_sub(lp.len())?;
         edges_left = left;
         if point_in_polygon(&lp, p) {
             continue;
@@ -497,7 +497,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
         src.dedup();
         out.push(Island { outline: lp, sources: src });
     }
-    out
+    Some(out)
 }
 
 /// The point of the nearest other curve within `snap` of the end `e` of curve `i`, as (curve,
@@ -615,7 +615,7 @@ pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Opti
     let g = build_gap(polys, tol, gap)?;
     let ids = outer_face(&g, p)?;
     let outer = points(&g, &ids)?;
-    let islands = islands(&g, &ids, p);
+    let islands = islands(&g, &ids, p)?;
     let mut outer_sources: Vec<usize> =
         ids.iter().zip(ids.iter().cycle().skip(1)).filter_map(|(&u, &v)| g.edge_src.get(&(u.min(v), u.max(v))).copied()).collect();
     outer_sources.sort_unstable();
