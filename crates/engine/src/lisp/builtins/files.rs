@@ -17,29 +17,25 @@ pub struct LispFile {
     pub text: String,
 }
 
-/// The lines of a file's text, ended by LF, CRLF or a lone CR (an old Mac file), and whether
-/// the last of them had a terminator.
+/// The lines of a file's text, ended by LF or CRLF (a lone CR is data), and whether the last of
+/// them had a terminator.
 fn split_lines(t: &str) -> (std::collections::VecDeque<String>, bool) {
-    let mut lines = std::collections::VecDeque::new();
-    let mut cur = String::new();
-    let mut chars = t.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\n' => lines.push_back(std::mem::take(&mut cur)),
-            '\r' => {
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-                lines.push_back(std::mem::take(&mut cur));
-            }
-            c => cur.push(c),
-        }
+    let lines = t
+        .split_inclusive('\n')
+        .map(|l| match l.strip_suffix('\n') {
+            Some(l) => l.strip_suffix('\r').unwrap_or(l).to_string(),
+            None => l.to_string(),
+        })
+        .collect();
+    (lines, !t.is_empty() && !t.ends_with('\n'))
+}
+
+impl LispFile {
+    /// Whether the line at the front is the last and has no terminator in the file, so it is
+    /// followed by the end of the file rather than by a line end.
+    pub fn at_unterminated_last(&self) -> bool {
+        self.unterminated && self.lines.len() == 1
     }
-    let unterminated = !cur.is_empty();
-    if unterminated {
-        lines.push_back(cur);
-    }
-    (lines, unterminated)
 }
 
 pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -86,9 +82,10 @@ pub(super) fn read_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispEr
     // The rest of the line: what `read-char` hasn't read of it yet. Nothing left of an
     // unterminated last line is the end of the file.
     let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| {
+        let last_unterminated = f.at_unterminated_last();
         let l = f.lines.pop_front()?;
         let rest = l.get(std::mem::take(&mut f.pos)..).unwrap_or("").to_string();
-        if f.unterminated && f.lines.is_empty() && rest.is_empty() {
+        if last_unterminated && rest.is_empty() {
             return None;
         }
         Some(rest)

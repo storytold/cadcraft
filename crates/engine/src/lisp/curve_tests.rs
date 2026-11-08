@@ -266,7 +266,7 @@ fn read_char_and_read_line_share_their_place_in_the_file() {
 
 /// The end of a file as `read-char` and `read-line` see it: a last line with no terminator
 /// reads back without an invented 10 and ends the file once its characters are used up (also
-/// for `read-line` after a `read-char`); CRLF and a lone CR end a line like LF.
+/// for `read-line` after a `read-char`); only LF and CRLF end a line (a lone CR is data).
 #[test]
 fn read_char_reproduces_the_final_terminator_state() {
     let mut s = session();
@@ -284,14 +284,19 @@ fn read_char_reproduces_the_final_terminator_state() {
     assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
     std::fs::write(&path, "a\nb").unwrap();
     assert_eq!(ok(&mut s, &code), "(97 10 98 1)");
-    // A lone CR (an old Mac file) ends a line, at the end of the file and between lines.
+    // A lone CR is data (only LF and CRLF end a line), also at the end of the file: "a\r" is an
+    // unterminated line of two characters.
     std::fs::write(&path, "a\r").unwrap();
-    assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
+    assert_eq!(ok(&mut s, &code), "(97 13 nil 1)");
+    let lens = format!("(setq f (open \"{p}\" \"r\")) (list (strlen (read-line f)) (read-line f) (progn (close f) 1))");
+    assert_eq!(ok(&mut s, &lens), "(2 nil 1)");
     std::fs::write(&path, "a\rb\r\nc").unwrap();
-    let all = format!("(setq f (open \"{p}\" \"r\")) (list (read-line f) (read-line f) (read-line f) (read-line f) (progn (close f) 1))");
-    assert_eq!(ok(&mut s, &all), "(\"a\" \"b\" \"c\" nil 1)");
-    std::fs::write(&path, "a\r").unwrap();
-    assert_eq!(ok(&mut s, &all), "(\"a\" nil nil nil 1)");
+    let all = format!("(setq f (open \"{p}\" \"r\")) (list (strlen (read-line f)) (read-line f) (read-line f) (progn (close f) 1))");
+    assert_eq!(ok(&mut s, &all), "(3 \"c\" nil 1)");
+    let chars = format!(
+        "(setq f (open \"{p}\" \"r\")) (list (read-char f) (read-char f) (read-char f) (read-char f) (read-char f) (read-char f) (progn (close f) 1))"
+    );
+    assert_eq!(ok(&mut s, &chars), "(97 13 98 10 99 nil 1)");
     // read-line after read-char: the rest of the line, and nothing once an unterminated last line is used up.
     let mixed = format!("(setq f (open \"{p}\" \"r\")) (list (read-char f) (read-line f) (read-line f) (progn (close f) 1))");
     std::fs::write(&path, "a").unwrap();

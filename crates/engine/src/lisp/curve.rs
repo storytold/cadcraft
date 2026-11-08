@@ -551,10 +551,10 @@ fn flattened(pts: &[(f64, P3)]) -> Vec<(f64, f64, Seg)> {
 
 /// A few Newton steps on (C(t) − q)·C'(t) = 0, kept within the curve's parameters.
 fn newton(c: &Curve, q: &P3, mut t: f64) -> f64 {
-    // A closed ellipse or a periodic spline goes on round past its ends, so a step wraps over
-    // the seam; any other curve stops at its ends.
-    let wraps = c.closed && (matches!(c.exact, Exact::Ellipse(..)) || c.periodic);
+    // A periodic curve (a full ellipse, a periodic spline) goes on round past its ends, so a step
+    // wraps over the seam; any other curve stops at its ends.
     let period = c.end - c.start;
+    let wraps = c.periodic && period > 0.0 && period.is_finite();
     for _ in 0..8 {
         let (Some(p), Some((d1, d2))) = (c.point_at_param(t), c.derivs(t)) else { break };
         let r = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
@@ -564,8 +564,8 @@ fn newton(c: &Curve, q: &P3, mut t: f64) -> f64 {
             break;
         }
         let raw = t - f / df;
-        let next = if wraps && period > 0.0 && period.is_finite() { c.start + (raw - c.start).rem_euclid(period) } else { raw.clamp(c.start, c.end) };
-        if (raw - t).abs() <= 1e-14 * (1.0 + t.abs()) {
+        let next = if wraps { c.start + (raw - c.start).rem_euclid(period) } else { raw.clamp(c.start, c.end) };
+        if (raw - t).abs() <= 1e-14 * (1.0 + t.abs()) || next == t {
             t = next;
             break;
         }
