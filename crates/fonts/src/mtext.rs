@@ -621,6 +621,10 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
     let mut pending_space = None;
     let mut last_fmt = 0usize;
     let mut paragraph = 0usize;
+    // Width of the spaces beyond the first of a run, and of those that start a paragraph's first
+    // line (a soft-wrapped line drops them).
+    let mut extra = 0.0f64;
+    let mut soft_wrapped = false;
     let finish = |lines: &mut Vec<Line>, line: &mut Line, format: &Fmt, paragraph: usize| {
         if line.items.is_empty() {
             line.max_h = format.height;
@@ -632,13 +636,21 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
     for atom in atoms {
         match atom {
             Atom::Space(format) => {
+                let w = crate::space_width(&fmt(*format).font, fmt(*format).height, fmt(*format).wf);
                 if !line.items.is_empty() || pending_space.is_some() {
+                    if pending_space.is_some() {
+                        extra += w;
+                    }
                     pending_space = Some(*format);
+                } else if !soft_wrapped {
+                    extra += w;
                 }
                 last_fmt = *format;
             }
             Atom::Para(format) => {
                 pending_space = None;
+                extra = 0.0;
+                soft_wrapped = false;
                 finish(&mut lines, &mut line, fmt(*format), paragraph);
                 paragraph += 1;
                 last_fmt = *format;
@@ -657,10 +669,11 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 for segments in pieces {
                     let word_width = word_width(segments);
                     let space_width =
-                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0) + extra;
                     if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
-                    } else if !line.items.is_empty() || pending_space.is_some() {
+                        soft_wrapped = true;
+                    } else if !line.items.is_empty() || pending_space.is_some() || extra > 0.0 {
                         if let Some(format) = pending_space {
                             let at = line.chars;
                             line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
@@ -670,6 +683,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                         line.width += space_width;
                     }
                     pending_space = None;
+                    extra = 0.0;
                     for (segment, format) in segments {
                         let segment_width = seg_width(segment, fmt(*format));
                         line.max_h = line.max_h.max(fmt(*format).height);
@@ -692,6 +706,14 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
 /// Lay out MTEXT: inline formatting runs, stacked fractions, paragraphs, word wrap to the
 /// column width and the attachment point.
 pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
+    // AutoCAD reads a caret-I in the contents as a tab (DWG files can hold the two characters).
+    let normalised;
+    let contents = if contents.contains("^I") {
+        normalised = contents.replace("^I", "\t");
+        normalised.as_str()
+    } else {
+        contents
+    };
     let h = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
     let wf = if p.width_factor.is_finite() && p.width_factor > 0.0 { p.width_factor } else { 1.0 };
     let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
@@ -826,6 +848,23 @@ mod tests {
 
     fn lay(s: &str, width: f64) -> MTextLayout {
         layout_mtext(s, Vec2::ZERO, 1.0, width, 1, 0.0, 1.0)
+    }
+
+    #[test]
+    fn spaces_keep_their_width_and_a_caret_i_is_a_tab() {
+        let w = |s: &str| lay(s, 0.0).bounds.width();
+        // Leading spaces of a paragraph's first line take room (AutoCAD keeps them).
+        assert!(w("   A") > w("A") + 0.5);
+        // A run of spaces is wider than one space.
+        assert!(w("A    B") > w("A B") + 0.5);
+        // A wrapped line drops its leading spaces.
+        let wrapped = lay("AAAA     BBBB", 5.0);
+        assert_eq!(wrapped.lines, vec!["AAAA", "BBBB"]);
+        // `^I` is a tab, the same as a tab character, and it takes room.
+        assert!(w("^IA") > w("A") + 0.5);
+        assert!((w("^IA") - w("\tA")).abs() < 1e-9);
+        // Paragraph layout (a `\p` code) behaves the same way.
+        assert!(w("\\pxql;   A") > w("\\pxql;A") + 0.5);
     }
 
     #[test]
