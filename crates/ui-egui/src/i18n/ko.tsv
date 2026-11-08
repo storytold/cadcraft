@@ -1287,23 +1287,18 @@ menu	Modify	수정
 	Choose Ghost Storey...	고스트 층 선택...
 	The storey shown beneath the current one	현재 층 아래에 표시되는 층
 	Arrow keys choose, Enter applies, Esc closes	화살표로 선택, Enter 적용, Esc 닫기
-	A shortcut CADCraft uses is never taken over.	CADCraft가 사용하는 단축키는 절대 덮어쓰지 않습니다.
-	Number Keys Layout	숫자 키 배치
 	Blueprint	밑그림
 	Blueprint On/Off	밑그림 켜기/끄기
 	Blueprint Storey Above	위층 밑그림
 	Blueprint Storey Below	아래층 밑그림
 	Blueprint color	밑그림 색상
 	Choose Blueprint...	밑그림 선택...
-	Defaults	기본값
 	Go to Storey...	층으로 이동...
 	Hide Blueprint	밑그림 숨기기
 	Move Down	아래로
 	Move Up	위로
 	New Storey Above	위에 새 층
 	New Storey Below	아래에 새 층
-	Not set	설정 안 됨
-	Not understood	인식할 수 없음
 	Press the keys	키를 누르세요
 	Rename to {name}	{name}(으)로 이름 바꾸기
 	Shortcuts...	단축키...
@@ -1312,10 +1307,7 @@ menu	Modify	수정
 	Storey	층
 	Storey Shortcuts	층 단축키
 	Storey Shortcuts...	층 단축키...
-	Taken by {command}: not active	{command}에서 사용 중: 비활성
 	The storey to work on	작업 중인 층
-	Used twice: not active	두 번 사용됨: 비활성
-	Needs Ctrl or Alt: not active	Ctrl 또는 Alt 필요: 비활성
 	Apply to This Drawing	이 도면에 적용
 	Building	건축
 	Double-click to rename	두 번 클릭하여 이름 바꾸기

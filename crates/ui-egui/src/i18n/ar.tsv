@@ -1411,23 +1411,18 @@ menu	View	عرض
 	Choose Ghost Storey...	اختيار الطابق الشبح...
 	The storey shown beneath the current one	الطابق المعروض أسفل الطابق الحالي
 	Arrow keys choose, Enter applies, Esc closes	الأسهم للاختيار، Enter للتطبيق، Esc للإغلاق
-	A shortcut CADCraft uses is never taken over.	لا يُستبدل أبدًا اختصار يستخدمه CADCraft.
-	Number Keys Layout	تخطيط مفاتيح الأرقام
 	Blueprint	مخطط خلفي
 	Blueprint On/Off	تشغيل/إيقاف المخطط الخلفي
 	Blueprint Storey Above	الطابق الخلفي الأعلى
 	Blueprint Storey Below	الطابق الخلفي الأسفل
 	Blueprint color	لون المخطط الخلفي
 	Choose Blueprint...	اختيار المخطط الخلفي...
-	Defaults	الافتراضيات
 	Go to Storey...	الانتقال إلى طابق...
 	Hide Blueprint	إخفاء المخطط الخلفي
 	Move Down	نقل للأسفل
 	Move Up	نقل للأعلى
 	New Storey Above	طابق جديد أعلاه
 	New Storey Below	طابق جديد أسفله
-	Not set	غير معيّن
-	Not understood	غير مفهوم
 	Press the keys	اضغط المفاتيح
 	Rename to {name}	إعادة التسمية إلى {name}
 	Shortcuts...	الاختصارات...
@@ -1436,10 +1431,7 @@ menu	View	عرض
 	Storey	طابق
 	Storey Shortcuts	اختصارات الطوابق
 	Storey Shortcuts...	اختصارات الطوابق...
-	Taken by {command}: not active	مستخدم من {command}: غير نشط
 	The storey to work on	الطابق الذي يُعمل عليه
-	Used twice: not active	مستخدم مرتين: غير نشط
-	Needs Ctrl or Alt: not active	يتطلب Ctrl أو Alt: غير نشط
 	Apply to This Drawing	تطبيق على هذا الرسم
 	Building	البناء
 	Double-click to rename	انقر نقرًا مزدوجًا لإعادة التسمية

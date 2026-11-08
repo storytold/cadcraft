@@ -1084,23 +1084,18 @@
 	Choose Ghost Storey...	Ghost-Geschoss wählen...
 	The storey shown beneath the current one	Das Geschoss, das unter dem aktuellen liegt
 	Arrow keys choose, Enter applies, Esc closes	Pfeiltasten wählen, Enter übernimmt, Esc schließt
-	A shortcut CADCraft uses is never taken over.	Ein Tastenkürzel, das CADCraft verwendet, wird nie übernommen.
-	Number Keys Layout	Zifferntasten-Belegung
 	Blueprint	Blueprint
 	Blueprint On/Off	Blueprint ein/aus
 	Blueprint Storey Above	Blueprint-Geschoss darüber
 	Blueprint Storey Below	Blueprint-Geschoss darunter
 	Blueprint color	Blueprint-Farbe
 	Choose Blueprint...	Blueprint wählen...
-	Defaults	Standard
 	Go to Storey...	Zu Geschoss wechseln...
 	Hide Blueprint	Blueprint ausblenden
 	Move Down	Nach unten
 	Move Up	Nach oben
 	New Storey Above	Neues Geschoss darüber
 	New Storey Below	Neues Geschoss darunter
-	Not set	Nicht belegt
-	Not understood	Nicht verstanden
 	Press the keys	Tasten drücken
 	Rename to {name}	Umbenennen in {name}
 	Shortcuts...	Tastenkürzel...
@@ -1109,10 +1104,7 @@
 	Storey	Geschoss
 	Storey Shortcuts	Geschoss-Tastenkürzel
 	Storey Shortcuts...	Geschoss-Tastenkürzel...
-	Taken by {command}: not active	Belegt durch {command}: nicht aktiv
 	The storey to work on	Das Geschoss, auf dem gearbeitet wird
-	Used twice: not active	Doppelt belegt: nicht aktiv
-	Needs Ctrl or Alt: not active	Braucht Strg oder Alt: nicht aktiv
 	Apply to This Drawing	Auf diese Zeichnung anwenden
 	Building	Bauwesen
 	Double-click to rename	Doppelklick zum Umbenennen

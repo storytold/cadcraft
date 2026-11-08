@@ -60,12 +60,12 @@ start storey; a drawing with storeys opens on its own start storey. Two setups a
 Clear "New drawings, and opened drawings without storeys, get these storeys" to work without storeys unless you make them. "Apply to
 This Drawing" gives the open drawing the setup when it has no storeys yet.
 
-**Shortcuts are yours** (Options ▸ Storeys, below the setup): storey above, storey below, go to
-storey…, blueprint on/off, choose blueprint…. Press the keys to set one. A shortcut CADCraft
-already uses is never taken over: it is shown as taken and stays inactive. Two layouts are
-ready: the defaults (Ctrl+PageUp / Ctrl+PageDown, Ctrl+G to choose the blueprint, Ctrl+Shift+G
-on/off) and one on the number keys (Ctrl+4 go to storey, Ctrl+5 down, Ctrl+6 up, Ctrl+7 choose
-blueprint, Ctrl+0 blueprint on/off).
+**Shortcuts are yours**, like every command's: Storey Above (Ctrl+PageUp), Storey Below
+(Ctrl+PageDown), Blueprint On/Off (Ctrl+Shift+G) and Choose Blueprint… (Ctrl+G) come with one, Go
+to Storey… has none. Change them in Tools ▸ Customize ▸ Keyboard Shortcuts… (Options ▸ Storeys
+has a button for it); a key you give a storey command wins over another command's, and the
+dialog says which command lost it. On the number keys, for instance: Ctrl+4 go to storey, Ctrl+5
+down, Ctrl+6 up, Ctrl+7 choose blueprint, Ctrl+0 blueprint on/off.
 Blueprint on/off works while a command runs.
 
 | Command | What it does |

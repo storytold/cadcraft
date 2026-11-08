@@ -130,8 +130,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.updates.check", "Check for Updates…", &["Help", "Check for Updates…"], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
-    // Storeys: the choosers and the user's storey shortcuts (no fixed keys: see `storeys`).
-    ("ui.dialog.storeyghost", "Choose Blueprint...", &["Format", "Storeys", "Choose Blueprint..."], None),
+    // Storeys: the choosers and the storey settings.
+    ("ui.dialog.storeyghost", "Choose Blueprint...", &["Format", "Storeys", "Choose Blueprint..."], Some("Cmd+G")),
     ("ui.dialog.storeygoto", "Go to Storey...", &["Format", "Storeys", "Go to Storey..."], None),
     ("ui.dialog.storeycopy", "Copy to Storey...", &["Format", "Storeys", "Copy to Storey..."], None),
     ("ui.dialog.storeymove", "Move to Storey...", &["Format", "Storeys", "Move to Storey..."], None),
@@ -548,7 +548,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
             Ok(Value::Null)
         }
-        // Options, opened on its Storeys tab (start setup and storey shortcuts).
+        // Options, opened on its Storeys tab (start setup and blueprint).
         "ui.storeysettings" => {
             app.ui.dialog = Some("options:storeys".into());
             Ok(Value::Null)
@@ -924,6 +924,10 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
         (sc(cmd, Key::Num1), "ui.panel.properties"),
         (sc(cmd, Key::Num3), "ui.toggle.toolsets"),
         (sc(cmd, Key::Num9), "ui.toggle.cmdline"),
+        (sc(cmd, Key::PageUp), "storey.up"),
+        (sc(cmd, Key::PageDown), "storey.down"),
+        (sc(cmd_shift, Key::G), "storey.ghost.toggle"),
+        (sc(cmd, Key::G), "ui.dialog.storeyghost"),
         (sc(Modifiers::NONE, Key::F1), "ui.dialog.commands"),
         (sc(Modifiers::NONE, Key::F2), "ui.toggle.history"),
         (sc(Modifiers::NONE, Key::F3), "osnap"),
@@ -941,6 +945,7 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
 /// Keyboard shortcuts and function keys: the user's ([`crate::keys`]) and CADCraft's own.
 pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     use egui::{Key, KeyboardShortcut, Modifiers};
+    crate::storeys::sync(app);
     // A recording ends with the dialog it was started in; while it lasts the keys are its own.
     if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
         crate::keys::stop_recording(ctx);
@@ -948,22 +953,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if crate::keys::recording(ctx) {
         return;
     }
-    let mut pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
-    crate::storeys::sync(app);
-    // A storey shortcut recording ends with the tab it was started on (left, or Options closed): it
-    // never keeps the shortcuts off.
-    if app.ui.dialog.as_deref() != Some("options:storeys") {
-        crate::storeys::stop_recording(ctx);
-    }
-    // The user's storey shortcuts; none at all while one is being recorded (the keys are the
-    // recording's then).
-    if crate::storeys::recording(ctx) {
-        return;
-    }
-    if app.ui.dialog.as_deref() != Some("options:storeys") {
-        pairs.extend(crate::storeys::active_cached(ctx, &app.ui.storey_keys).into_iter().map(|(s, id)| (s, id.to_string())));
-    }
-    crate::keys::by_specificity(&mut pairs);
+    let pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
     crate::clipboard::mirror(app, ctx);
     if app.closing.is_some() {
         return;

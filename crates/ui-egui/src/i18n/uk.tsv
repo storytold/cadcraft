@@ -1450,23 +1450,18 @@
 	Choose Ghost Storey...	Вибрати поверх-привид...
 	The storey shown beneath the current one	Поверх, показаний під поточним
 	Arrow keys choose, Enter applies, Esc closes	Стрілки вибирають, Enter застосовує, Esc закриває
-	A shortcut CADCraft uses is never taken over.	Комбінацію, яку використовує CADCraft, ніколи не буде перехоплено.
-	Number Keys Layout	Розкладка на цифрових клавішах
 	Blueprint	Підкладка
 	Blueprint On/Off	Підкладка увімк./вимк.
 	Blueprint Storey Above	Поверх-підкладка вище
 	Blueprint Storey Below	Поверх-підкладка нижче
 	Blueprint color	Колір підкладки
 	Choose Blueprint...	Вибрати підкладку...
-	Defaults	Типові
 	Go to Storey...	Перейти на поверх...
 	Hide Blueprint	Сховати підкладку
 	Move Down	Нижче
 	Move Up	Вище
 	New Storey Above	Новий поверх вище
 	New Storey Below	Новий поверх нижче
-	Not set	Не задано
-	Not understood	Не розпізнано
 	Rename to {name}	Перейменувати на {name}
 	Shortcuts...	Клавіші...
 	Show as Blueprint	Показати як підкладку
@@ -1474,10 +1469,7 @@
 	Storey	Поверх
 	Storey Shortcuts	Клавіші поверхів
 	Storey Shortcuts...	Клавіші поверхів...
-	Taken by {command}: not active	Зайнято командою {command}: неактивно
 	The storey to work on	Поверх, на якому ви працюєте
-	Used twice: not active	Задано двічі: неактивно
-	Needs Ctrl or Alt: not active	Потрібні Ctrl або Alt: неактивно
 	Apply to This Drawing	Застосувати до цього креслення
 	Building	Будівництво
 	Double-click to rename	Двічі клацніть, щоб перейменувати

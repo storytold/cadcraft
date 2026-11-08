@@ -1267,23 +1267,18 @@ menu	Modify	Modifikace
 	Choose Ghost Storey...	Vybrat ducha podlaží...
 	The storey shown beneath the current one	Podlaží zobrazené pod aktuálním
 	Arrow keys choose, Enter applies, Esc closes	Šipky vybírají, Enter použije, Esc zavře
-	A shortcut CADCraft uses is never taken over.	Klávesovou zkratku, kterou používá CADCraft, nikdy nepřevezmeme.
-	Number Keys Layout	Rozložení na číselných klávesách
 	Blueprint	Podklad
 	Blueprint On/Off	Podklad zap./vyp.
 	Blueprint Storey Above	Podkladové podlaží výše
 	Blueprint Storey Below	Podkladové podlaží níže
 	Blueprint color	Barva podkladu
 	Choose Blueprint...	Vybrat podklad...
-	Defaults	Výchozí
 	Go to Storey...	Přejít na podlaží...
 	Hide Blueprint	Skrýt podklad
 	Move Down	Posunout dolů
 	Move Up	Posunout nahoru
 	New Storey Above	Nové podlaží nad
 	New Storey Below	Nové podlaží pod
-	Not set	Nenastaveno
-	Not understood	Nerozpoznáno
 	Press the keys	Stiskněte klávesy
 	Rename to {name}	Přejmenovat na {name}
 	Shortcuts...	Zkratky...
@@ -1292,10 +1287,7 @@ menu	Modify	Modifikace
 	Storey	Podlaží
 	Storey Shortcuts	Zkratky podlaží
 	Storey Shortcuts...	Zkratky podlaží...
-	Taken by {command}: not active	Obsazeno příkazem {command}: neaktivní
 	The storey to work on	Podlaží, na kterém se pracuje
-	Used twice: not active	Použito dvakrát: neaktivní
-	Needs Ctrl or Alt: not active	Vyžaduje Ctrl nebo Alt: neaktivní
 	Apply to This Drawing	Použít na tento výkres
 	Building	Stavebnictví
 	Double-click to rename	Dvojklikem přejmenujete

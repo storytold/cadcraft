@@ -1298,23 +1298,18 @@
 	Choose Ghost Storey...	Elegir planta fantasma...
 	The storey shown beneath the current one	La planta que se muestra bajo la actual
 	Arrow keys choose, Enter applies, Esc closes	Flechas para elegir, Intro aplica, Esc cierra
-	A shortcut CADCraft uses is never taken over.	Nunca se reemplaza un atajo que usa CADCraft.
-	Number Keys Layout	Distribución en las teclas numéricas
 	Blueprint	Plano base
 	Blueprint On/Off	Plano base sí/no
 	Blueprint Storey Above	Plano base superior
 	Blueprint Storey Below	Plano base inferior
 	Blueprint color	Color del plano base
 	Choose Blueprint...	Elegir plano base...
-	Defaults	Predeterminados
 	Go to Storey...	Ir a planta...
 	Hide Blueprint	Ocultar plano base
 	Move Down	Bajar
 	Move Up	Subir
 	New Storey Above	Nueva planta encima
 	New Storey Below	Nueva planta debajo
-	Not set	Sin asignar
-	Not understood	No reconocido
 	Press the keys	Pulse las teclas
 	Rename to {name}	Renombrar a {name}
 	Shortcuts...	Atajos...
@@ -1323,10 +1318,7 @@
 	Storey	Planta
 	Storey Shortcuts	Atajos de plantas
 	Storey Shortcuts...	Atajos de plantas...
-	Taken by {command}: not active	Ocupado por {command}: inactivo
 	The storey to work on	La planta en la que se trabaja
-	Used twice: not active	Repetido: inactivo
-	Needs Ctrl or Alt: not active	Requiere Ctrl o Alt: inactivo
 	Apply to This Drawing	Aplicar a este dibujo
 	Building	Edificación
 	Double-click to rename	Doble clic para cambiar el nombre

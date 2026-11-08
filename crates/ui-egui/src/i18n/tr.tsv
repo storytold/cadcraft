@@ -1392,23 +1392,18 @@ menu	View	Görünüm
 	Choose Ghost Storey...	Hayalet katı seç...
 	The storey shown beneath the current one	Geçerli katın altında gösterilen kat
 	Arrow keys choose, Enter applies, Esc closes	Ok tuşları seçer, Enter uygular, Esc kapatır
-	A shortcut CADCraft uses is never taken over.	CADCraft'ın kullandığı bir kısayol asla devralınmaz.
-	Number Keys Layout	Rakam tuşu düzeni
 	Blueprint	Altlık
 	Blueprint On/Off	Altlık aç/kapat
 	Blueprint Storey Above	Üstteki altlık kat
 	Blueprint Storey Below	Alttaki altlık kat
 	Blueprint color	Altlık rengi
 	Choose Blueprint...	Altlık seç...
-	Defaults	Varsayılanlar
 	Go to Storey...	Kata git...
 	Hide Blueprint	Altlığı gizle
 	Move Down	Aşağı taşı
 	Move Up	Yukarı taşı
 	New Storey Above	Üste yeni kat
 	New Storey Below	Alta yeni kat
-	Not set	Atanmamış
-	Not understood	Anlaşılmadı
 	Press the keys	Tuşlara basın
 	Rename to {name}	{name} olarak yeniden adlandır
 	Shortcuts...	Kısayollar...
@@ -1417,10 +1412,7 @@ menu	View	Görünüm
 	Storey	Kat
 	Storey Shortcuts	Kat kısayolları
 	Storey Shortcuts...	Kat kısayolları...
-	Taken by {command}: not active	{command} tarafından kullanılıyor: etkin değil
 	The storey to work on	Üzerinde çalışılan kat
-	Used twice: not active	İki kez kullanılmış: etkin değil
-	Needs Ctrl or Alt: not active	Ctrl veya Alt gerekir: etkin değil
 	Apply to This Drawing	Bu çizime uygula
 	Building	Yapı
 	Double-click to rename	Yeniden adlandırmak için çift tıklayın

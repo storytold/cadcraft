@@ -1,15 +1,15 @@
 //! Storeys in the interface: the storey navigator in the Layers palette, the storey and blueprint
-//! choosers, and the storey shortcuts the user sets.
+//! choosers, and the storey setup in Options.
 //!
 //! The navigator lists the storeys top to bottom. A click goes to a storey; the blueprint mark in
 //! front of a storey shows (and switches) the one drawn beneath the current storey; a right-click
 //! offers the rest (blueprint, new storey above or below, move, delete). Everything runs the
 //! engine's `storey.*` commands, like the Layers section runs `layer.*`.
 //!
-//! Shortcuts are the user's: [`StoreyKeys`] is kept with the interface preferences. A shortcut
-//! CADCraft already uses is never taken over: it is shown as taken and stays inactive.
+//! The storey commands' shortcuts are ordinary command shortcuts: built in
+//! (`menus::builtin_shortcuts`) and changed in the Keyboard Shortcuts dialog like any other.
 
-use egui::{Key, KeyboardShortcut, Modifiers, RichText, vec2};
+use egui::{Key, Modifiers, RichText, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -91,194 +91,6 @@ pub fn term(source: &str) -> &str {
 /// `source` in the user's words and language.
 fn w(source: &'static str) -> &'static str {
     crate::i18n::t(term(source))
-}
-
-// ---------------- shortcuts ----------------
-
-/// The storey shortcuts, as registry strings ("Cmd+PageUp"; empty: none).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct StoreyKeys {
-    pub up: String,
-    pub down: String,
-    pub go_to: String,
-    pub blueprint: String,
-    pub choose_blueprint: String,
-}
-
-impl Default for StoreyKeys {
-    fn default() -> Self {
-        StoreyKeys {
-            up: "Cmd+PageUp".into(),
-            down: "Cmd+PageDown".into(),
-            go_to: String::new(),
-            blueprint: "Cmd+Shift+G".into(),
-            choose_blueprint: "Cmd+G".into(),
-        }
-    }
-}
-
-impl StoreyKeys {
-    /// Storey keys on the number keys: Ctrl+4 go to storey, Ctrl+5 down, Ctrl+6 up, Ctrl+7 choose
-    /// the blueprint, Ctrl+0 blueprint on/off (Ctrl+8 is QuickCalc's).
-    pub fn number_keys() -> Self {
-        StoreyKeys { up: "Cmd+6".into(), down: "Cmd+5".into(), go_to: "Cmd+4".into(), blueprint: "Cmd+0".into(), choose_blueprint: "Cmd+7".into() }
-    }
-
-    /// (action label, command, the key) in the order the dialog shows them.
-    fn actions(&self) -> [(&'static str, &'static str, &String); 5] {
-        [
-            ("Storey Above", "storey.up", &self.up),
-            ("Storey Below", "storey.down", &self.down),
-            ("Go to Storey...", "ui.dialog.storeygoto", &self.go_to),
-            ("Blueprint On/Off", "storey.ghost.toggle", &self.blueprint),
-            ("Choose Blueprint...", "ui.dialog.storeyghost", &self.choose_blueprint),
-        ]
-    }
-
-    fn slot(&mut self, i: usize) -> Option<&mut String> {
-        match i {
-            0 => Some(&mut self.up),
-            1 => Some(&mut self.down),
-            2 => Some(&mut self.go_to),
-            3 => Some(&mut self.blueprint),
-            4 => Some(&mut self.choose_blueprint),
-            _ => None,
-        }
-    }
-}
-
-/// A registry shortcut string ("Cmd+Shift+G", "Cmd+4", "F3") as a shortcut; `None` when empty or
-/// not understood.
-pub fn parse(s: &str) -> Option<KeyboardShortcut> {
-    let mut m = Modifiers::NONE;
-    let mut key = None;
-    for part in s.split('+').map(str::trim).filter(|p| !p.is_empty()) {
-        match part.to_ascii_lowercase().as_str() {
-            "cmd" | "command" => m |= Modifiers::COMMAND,
-            // Control on macOS (on Windows and Linux, Ctrl is written Cmd: it is the command key).
-            "ctrl" => m |= Modifiers::CTRL,
-            "shift" => m |= Modifiers::SHIFT,
-            "alt" | "option" => m |= Modifiers::ALT,
-            _ if key.is_none() => key = Key::from_name(part),
-            _ => return None,
-        }
-    }
-    key.map(|k| KeyboardShortcut::new(m, k))
-}
-
-/// A shortcut as a registry string: "Cmd+Shift+G". `mac`: Command is Cmd and Control is Ctrl;
-/// elsewhere Control is the command key, Cmd.
-fn format(m: Modifiers, k: Key, mac: bool) -> String {
-    let mut s = String::new();
-    if (mac && m.mac_cmd) || (!mac && (m.command || m.ctrl)) {
-        s.push_str("Cmd+");
-    }
-    if mac && m.ctrl {
-        s.push_str("Ctrl+");
-    }
-    if m.shift {
-        s.push_str("Shift+");
-    }
-    if m.alt {
-        s.push_str("Alt+");
-    }
-    // "+" and "-" would read as separators.
-    s.push_str(match k {
-        Key::Plus => "Plus",
-        Key::Minus => "Minus",
-        k => k.name(),
-    });
-    s
-}
-
-/// Whether `s` can be a storey shortcut at all: with Cmd, Ctrl or Alt, or a function or paging
-/// key alone. Keys the drawing area and the command line live on (Space, Enter, Tab, Esc, Delete,
-/// Backspace, the arrows, letters as typing) and the clipboard keys (they arrive as clipboard
-/// events, not key presses) are never storey keys.
-pub fn allowed(s: &KeyboardShortcut) -> bool {
-    let k = s.logical_key;
-    let never =
-        [Key::Space, Key::Enter, Key::Tab, Key::Escape, Key::Delete, Key::Backspace, Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft, Key::ArrowRight];
-    if never.contains(&k) {
-        return false;
-    }
-    let m = s.modifiers;
-    let clipboard = (m.command || m.ctrl || m.mac_cmd) && !m.shift && !m.alt && [Key::C, Key::X, Key::V].contains(&k);
-    let alone_ok = matches!(k, Key::PageUp | Key::PageDown | Key::Home | Key::End) || k.name().starts_with('F') && k.name().len() > 1;
-    !clipboard && (m.command || m.ctrl || m.mac_cmd || m.alt || alone_ok)
-}
-
-/// Shortcuts are tried most specific first (egui lets a shortcut match with Shift or Alt held on
-/// top), so Cmd+Shift+G reaches its own action before Cmd+G does.
-pub fn by_specificity(pairs: &mut [(KeyboardShortcut, &'static str)]) {
-    let weight = |s: &KeyboardShortcut| {
-        let m = s.modifiers;
-        u8::from(m.shift) + u8::from(m.alt) + u8::from(m.ctrl && !m.command) + u8::from(m.command || m.mac_cmd)
-    };
-    pairs.sort_by_key(|(s, _)| std::cmp::Reverse(weight(s)));
-}
-
-/// The command CADCraft itself has on `s`, if any (built-in shortcuts, menu shortcuts, command
-/// shortcuts).
-pub fn taken_by(s: &KeyboardShortcut) -> Option<String> {
-    let same = |o: &KeyboardShortcut| o.logical_key == s.logical_key && o.modifiers == s.modifiers;
-    if let Some((_, id)) = crate::menus::builtin_shortcuts().into_iter().find(|(o, _)| same(o)) {
-        return Some(label_of(id));
-    }
-    for (id, label, _, key) in crate::menus::UI_COMMANDS {
-        if key.and_then(parse).is_some_and(|o| same(&o)) {
-            return Some(crate::i18n::t(label).to_string());
-        }
-        let _ = id;
-    }
-    cadcraft_engine::command_specs()
-        .iter()
-        .filter(|c| !matches!(c.id, "storey.up" | "storey.down" | "storey.ghost.toggle"))
-        .find(|c| c.shortcut.and_then(parse).is_some_and(|o| same(&o)))
-        .map(|c| crate::i18n::t(c.label).to_string())
-}
-
-fn label_of(id: &str) -> String {
-    cadcraft_engine::cmd::find_command(id)
-        .map(|c| crate::i18n::t(c.label).to_string())
-        .or_else(|| crate::menus::UI_COMMANDS.iter().find(|c| c.0 == id).map(|c| crate::i18n::t(c.1).to_string()))
-        .unwrap_or_else(|| id.to_string())
-}
-
-/// The storey shortcuts that are in force: set, understood, not one CADCraft uses, and not one an
-/// earlier storey action already has.
-pub fn active(keys: &StoreyKeys) -> Vec<(KeyboardShortcut, &'static str)> {
-    let mut out: Vec<(KeyboardShortcut, &'static str)> = Vec::new();
-    for (_, cmd, key) in keys.actions() {
-        let Some(s) = parse(key) else { continue };
-        if allowed(&s) && taken_by(&s).is_none() && !out.iter().any(|(o, _)| o.logical_key == s.logical_key && o.modifiers == s.modifiers) {
-            out.push((s, cmd));
-        }
-    }
-    out
-}
-
-/// [`active`], worked out again only when the keys change (the shortcut handler asks every frame).
-pub fn active_cached(ctx: &egui::Context, keys: &StoreyKeys) -> Vec<(KeyboardShortcut, &'static str)> {
-    let id = egui::Id::unique("storey_keys_active");
-    if let Some((k, v)) = ctx.data(|m| m.get_temp::<(StoreyKeys, Vec<(KeyboardShortcut, &'static str)>)>(id))
-        && k == *keys
-    {
-        return v;
-    }
-    let v = active(keys);
-    ctx.data_mut(|m| m.insert_temp(id, (keys.clone(), v.clone())));
-    v
-}
-
-/// Whether a storey shortcut is being recorded (every shortcut stays quiet meanwhile).
-pub fn stop_recording(ctx: &egui::Context) {
-    ctx.data_mut(|m| m.remove::<usize>(egui::Id::unique("storey_keys_recording")));
-}
-
-pub fn recording(ctx: &egui::Context) -> bool {
-    ctx.data(|m| m.get_temp::<usize>(egui::Id::unique("storey_keys_recording"))).is_some()
 }
 
 // ---------------- settings ----------------
@@ -374,7 +186,8 @@ pub fn sync(app: &mut CadApp) {
     }
 }
 
-/// The Storeys tab of Options: the start setup, then the storey shortcuts.
+/// The Storeys tab of Options: the start setup and the blueprint; the storey shortcuts are in the
+/// Keyboard Shortcuts dialog, a click away.
 pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.heading(crate::tl!("Start Setup"));
@@ -453,101 +266,9 @@ pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
     ui.heading(crate::tl!("Shortcuts"));
-    shortcuts_ui(app, ui);
-}
-
-/// The storey shortcuts: each action's keys, set by pressing them; taken ones are marked.
-fn shortcuts_ui(app: &mut CadApp, ui: &mut egui::Ui) {
-    let t = Tokens::get();
-    let ctx = ui.ctx().clone();
-    let rec_id = egui::Id::unique("storey_keys_recording");
-    let mut recording: Option<usize> = ctx.data(|m| m.get_temp(rec_id));
-    // A key pressed while recording becomes that action's shortcut (Esc stops recording).
-    if let Some(i) = recording {
-        let pressed = ctx.input(|inp| {
-            inp.events.iter().find_map(|e| match e {
-                egui::Event::Key { key, pressed: true, modifiers, .. } => Some((*key, *modifiers)),
-                _ => None,
-            })
-        });
-        if let Some((k, m)) = pressed {
-            if k != Key::Escape
-                && let Some(slot) = app.ui.storey_keys.slot(i)
-            {
-                *slot = format(m, k, ctx.os().is_mac());
-            }
-            recording = None;
-            ctx.input_mut(|inp| inp.events.clear());
-        }
+    if ui.button(crate::tl!("Keyboard Shortcuts...")).clicked() {
+        app.ui.dialog = Some(crate::keys::DIALOG.into());
     }
-    let keys = app.ui.storey_keys.clone();
-    let mut set: Option<StoreyKeys> = None;
-    let mac = ctx.os().is_mac();
-    egui::Grid::new("storey_keys_grid").num_columns(4).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-        let mut seen: Vec<KeyboardShortcut> = Vec::new();
-        for (i, (label, _, key)) in keys.actions().into_iter().enumerate() {
-            ui.label(w(label));
-            let shown = if recording == Some(i) {
-                crate::tl!("Press the keys").to_string()
-            } else if key.is_empty() {
-                crate::tl!("Not set").to_string()
-            } else {
-                crate::menus::shortcut_label(key, mac)
-            };
-            if ui.add(egui::Button::selectable(recording == Some(i), shown).min_size(vec2(140.0, 20.0))).clicked() {
-                recording = Some(i);
-            }
-            if ui.small_button(crate::tl!("Clear")).clicked() {
-                let mut k = keys.clone();
-                if let Some(slot) = k.slot(i) {
-                    slot.clear();
-                }
-                set = Some(k);
-            }
-            let note = match parse(key) {
-                None if !key.is_empty() => Some(crate::tl!("Not understood").to_string()),
-                None => None,
-                Some(s) if !allowed(&s) => Some(crate::tl!("Needs Ctrl or Alt: not active").to_string()),
-                Some(s) => match taken_by(&s) {
-                    Some(cmd) => Some(crate::tf!("Taken by {command}: not active", command = cmd)),
-                    None if seen.iter().any(|o| o.logical_key == s.logical_key && o.modifiers == s.modifiers) => {
-                        Some(crate::tl!("Used twice: not active").to_string())
-                    }
-                    None => {
-                        seen.push(s);
-                        None
-                    }
-                },
-            };
-            match note {
-                Some(n) => ui.label(RichText::new(n).color(egui::Color32::from_rgb(0xe0, 0x6c, 0x5a)).small()),
-                None => ui.label(""),
-            };
-            ui.end_row();
-        }
-    });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        if ui.button(crate::tl!("Defaults")).clicked() {
-            set = Some(StoreyKeys::default());
-        }
-        if ui.button(crate::tl!("Number Keys Layout")).clicked() {
-            set = Some(StoreyKeys::number_keys());
-        }
-    });
-    ui.label(RichText::new(crate::tl!("A shortcut CADCraft uses is never taken over.")).color(t.text_dim).small());
-    if let Some(k) = set {
-        app.ui.storey_keys = k;
-        recording = None;
-    }
-    ctx.data_mut(|m| match recording {
-        Some(r) => {
-            m.insert_temp(rec_id, r);
-        }
-        None => {
-            m.remove::<usize>(rec_id);
-        }
-    });
 }
 
 // ---------------- the navigator ----------------
@@ -961,63 +682,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn shortcut_strings_round_trip() {
-        for s in ["Cmd+PageUp", "Cmd+Shift+G", "Cmd+4", "F3", "Cmd+Alt+Delete", "Cmd+Plus", "Cmd+Minus"] {
-            let k = parse(s).unwrap_or_else(|| panic!("{s}"));
-            assert_eq!(parse(&format(k.modifiers, k.logical_key, false)), Some(k), "{s}");
-        }
-        // macOS: Control stays Control, Command stays Command.
-        let ctrl = Modifiers { ctrl: true, ..Modifiers::NONE };
-        assert_eq!(format(ctrl, Key::Num5, true), "Ctrl+5");
-        assert_eq!(format(Modifiers::MAC_CMD, Key::Num5, true), "Cmd+5");
-        assert_eq!(format(Modifiers::CTRL, Key::Num5, false), "Cmd+5");
-        assert_eq!(parse(""), None);
-        assert_eq!(parse("Cmd+Nonsense"), None);
-        assert_eq!(parse("Cmd+G+H"), None);
+    fn key(s: &str) -> egui::KeyboardShortcut {
+        crate::keys::parse(s).unwrap_or_else(|| panic!("{s}"))
+    }
+
+    /// The command a key press runs with these user shortcuts.
+    fn runs(user: &crate::keys::UserKeys, s: &str) -> Option<String> {
+        let k = key(s);
+        crate::keys::effective(user).into_iter().find(|(o, _)| o.logical_key == k.logical_key && o.modifiers == k.modifiers).map(|(_, id)| id)
     }
 
     #[test]
-    fn cadcraft_shortcuts_are_never_taken_over() {
-        // Ctrl+8 is QuickCalc's, Ctrl+Z undo's: a storey key set to one of them stays inactive.
-        assert!(taken_by(&parse("Cmd+Z").unwrap_or_else(|| panic!())).is_some());
-        let taken = StoreyKeys { blueprint: "Cmd+8".into(), ..StoreyKeys::number_keys() };
-        assert!(active(&taken).iter().all(|(s, c)| taken_by(s).is_none() && *c != "storey.ghost.toggle"));
-        // The number keys layout: all five work.
-        assert_eq!(active_count(&StoreyKeys::number_keys()), 5);
-        // The defaults are all free.
-        assert_eq!(active_count(&StoreyKeys::default()), 4);
-    }
-
-    fn active_count(k: &StoreyKeys) -> usize {
-        active(k).len()
-    }
-
-    #[test]
-    fn keys_of_the_drawing_area_are_never_storey_keys() {
-        for s in ["Space", "Enter", "Tab", "Escape", "Delete", "Up", "G", "Shift+G", "Cmd+C", "Cmd+V"] {
-            assert!(!parse(s).is_some_and(|k| allowed(&k)), "{s}");
-        }
-        for s in ["Cmd+G", "Alt+5", "F6", "PageUp", "Cmd+Shift+V"] {
-            assert!(parse(s).is_some_and(|k| allowed(&k)), "{s}");
-        }
+    fn the_storey_commands_have_their_shortcuts_and_the_more_specific_one_comes_first() {
+        let none = crate::keys::UserKeys::new();
+        assert_eq!(runs(&none, "Cmd+PageUp").as_deref(), Some("storey.up"));
+        assert_eq!(runs(&none, "Cmd+PageDown").as_deref(), Some("storey.down"));
+        assert_eq!(runs(&none, "Cmd+Shift+G").as_deref(), Some("storey.ghost.toggle"));
+        assert_eq!(runs(&none, "Cmd+G").as_deref(), Some("ui.dialog.storeyghost"));
+        // egui lets Cmd+G match with Shift held: Cmd+Shift+G must be tried first.
+        let pairs = crate::keys::effective(&none);
+        let pos = |id: &str| pairs.iter().position(|(_, i)| i == id);
+        assert!(pos("storey.ghost.toggle") < pos("ui.dialog.storeyghost"));
+        // The menus show them.
+        assert_eq!(crate::keys::default_key("storey.up"), Some("Cmd+PageUp"));
+        assert_eq!(crate::keys::default_key("ui.dialog.storeyghost"), Some("Cmd+G"));
     }
 
     #[test]
-    fn the_more_specific_shortcut_is_tried_first() {
-        let mut v = vec![(parse("Cmd+G").unwrap_or_else(|| panic!()), "a"), (parse("Cmd+Shift+G").unwrap_or_else(|| panic!()), "b")];
-        by_specificity(&mut v);
-        assert_eq!(v.first().map(|p| p.1), Some("b"));
-        // Cmd+Shift+Z (redo) still comes before Cmd+Z (undo) among the built-in ones.
-        let mut b = crate::menus::builtin_shortcuts();
-        by_specificity(&mut b);
-        let pos = |id: &str| b.iter().position(|p| p.1 == id);
-        assert!(pos("redo") < pos("u"));
+    fn storey_shortcuts_are_set_like_any_other() {
+        let mut user = crate::keys::UserKeys::new();
+        let _ = crate::keys::assign(&mut user, "storey.up", "Cmd+6");
+        let _ = crate::keys::assign(&mut user, "ui.dialog.storeygoto", "Cmd+4");
+        assert_eq!(runs(&user, "Cmd+6").as_deref(), Some("storey.up"));
+        assert_eq!(runs(&user, "Cmd+4").as_deref(), Some("ui.dialog.storeygoto"));
+        assert_eq!(runs(&user, "Cmd+PageUp"), None, "its built-in key is given up");
+        // Another command can take a storey key; storey.down loses it, with the dialog saying so.
+        let replaced = crate::keys::assign(&mut user, "line", "Cmd+PageDown").unwrap_or_default();
+        assert_eq!(replaced, vec!["storey.down".to_string()]);
+        assert_eq!(runs(&user, "Cmd+PageDown").as_deref(), Some("line"));
     }
 
     #[test]
-    fn one_key_for_two_actions_is_active_once() {
-        let k = StoreyKeys { up: "Cmd+PageUp".into(), down: "Cmd+PageUp".into(), ..StoreyKeys::default() };
-        assert_eq!(active(&k).iter().filter(|(_, c)| *c == "storey.down").count(), 0);
+    fn storey_keys_saved_by_an_earlier_version_are_ignored() {
+        let old = json!({ "storeyKeys": { "up": "Cmd+6", "down": "Cmd+5", "goTo": "Cmd+4", "blueprint": "Cmd+0", "chooseBlueprint": "Cmd+7" } });
+        let ui = serde_json::from_value::<crate::UiState>(old.clone());
+        assert!(ui.is_ok(), "{ui:?}");
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.load_prefs(&old.to_string());
+        assert!(app.ui.shortcuts.is_empty());
     }
 }

@@ -1378,23 +1378,18 @@ menu	View	Προβολή
 	Choose Ghost Storey...	Επιλογή ορόφου-φαντάσματος...
 	The storey shown beneath the current one	Ο όροφος που εμφανίζεται κάτω από τον τρέχοντα
 	Arrow keys choose, Enter applies, Esc closes	Βέλη για επιλογή, Enter εφαρμογή, Esc κλείσιμο
-	A shortcut CADCraft uses is never taken over.	Μια συντόμευση που χρησιμοποιεί το CADCraft δεν αντικαθίσταται ποτέ.
-	Number Keys Layout	Διάταξη στα αριθμητικά πλήκτρα
 	Blueprint	Υπόβαθρο
 	Blueprint On/Off	Υπόβαθρο ναι/όχι
 	Blueprint Storey Above	Όροφος-υπόβαθρο πάνω
 	Blueprint Storey Below	Όροφος-υπόβαθρο κάτω
 	Blueprint color	Χρώμα υποβάθρου
 	Choose Blueprint...	Επιλογή υποβάθρου...
-	Defaults	Προεπιλογές
 	Go to Storey...	Μετάβαση σε όροφο...
 	Hide Blueprint	Απόκρυψη υποβάθρου
 	Move Down	Μετακίνηση κάτω
 	Move Up	Μετακίνηση πάνω
 	New Storey Above	Νέος όροφος από πάνω
 	New Storey Below	Νέος όροφος από κάτω
-	Not set	Δεν έχει οριστεί
-	Not understood	Δεν αναγνωρίστηκε
 	Press the keys	Πατήστε τα πλήκτρα
 	Rename to {name}	Μετονομασία σε {name}
 	Shortcuts...	Συντομεύσεις...
@@ -1403,10 +1398,7 @@ menu	View	Προβολή
 	Storey	Όροφος
 	Storey Shortcuts	Συντομεύσεις ορόφων
 	Storey Shortcuts...	Συντομεύσεις ορόφων...
-	Taken by {command}: not active	Χρησιμοποιείται από {command}: ανενεργό
 	The storey to work on	Ο όροφος στον οποίο εργάζεστε
-	Used twice: not active	Χρησιμοποιείται δύο φορές: ανενεργό
-	Needs Ctrl or Alt: not active	Απαιτείται Ctrl ή Alt: ανενεργό
 	Apply to This Drawing	Εφαρμογή σε αυτό το σχέδιο
 	Building	Κτίριο
 	Double-click to rename	Διπλό κλικ για μετονομασία

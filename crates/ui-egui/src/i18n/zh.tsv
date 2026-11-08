@@ -1504,23 +1504,18 @@ menu	View	视图
 	Choose Ghost Storey...	选择虚影楼层...
 	The storey shown beneath the current one	显示在当前楼层下方的楼层
 	Arrow keys choose, Enter applies, Esc closes	方向键选择，Enter 应用，Esc 关闭
-	A shortcut CADCraft uses is never taken over.	绝不会占用 CADCraft 已使用的快捷键。
-	Number Keys Layout	数字键布局
 	Blueprint	底图
 	Blueprint On/Off	底图开/关
 	Blueprint Storey Above	上一层底图
 	Blueprint Storey Below	下一层底图
 	Blueprint color	底图颜色
 	Choose Blueprint...	选择底图...
-	Defaults	默认值
 	Go to Storey...	转到楼层...
 	Hide Blueprint	隐藏底图
 	Move Down	下移
 	Move Up	上移
 	New Storey Above	在上方新建楼层
 	New Storey Below	在下方新建楼层
-	Not set	未设置
-	Not understood	无法识别
 	Press the keys	请按下按键
 	Rename to {name}	重命名为 {name}
 	Shortcuts...	快捷键...
@@ -1529,10 +1524,7 @@ menu	View	视图
 	Storey	楼层
 	Storey Shortcuts	楼层快捷键
 	Storey Shortcuts...	楼层快捷键...
-	Taken by {command}: not active	已被 {command} 使用：未生效
 	The storey to work on	正在编辑的楼层
-	Used twice: not active	重复使用：未生效
-	Needs Ctrl or Alt: not active	需要 Ctrl 或 Alt：未生效
 	Apply to This Drawing	应用到此图纸
 	Building	建筑
 	Double-click to rename	双击重命名

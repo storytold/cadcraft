@@ -1058,23 +1058,18 @@
 	Choose Ghost Storey...	Выбрать этаж-призрак...
 	The storey shown beneath the current one	Этаж, показанный под текущим
 	Arrow keys choose, Enter applies, Esc closes	Стрелки выбирают, Enter применяет, Esc закрывает
-	A shortcut CADCraft uses is never taken over.	Сочетание клавиш, которое использует CADCraft, никогда не перехватывается.
-	Number Keys Layout	Раскладка на цифровых клавишах
 	Blueprint	Подложка
 	Blueprint On/Off	Подложка вкл./выкл.
 	Blueprint Storey Above	Этаж-подложка выше
 	Blueprint Storey Below	Этаж-подложка ниже
 	Blueprint color	Цвет подложки
 	Choose Blueprint...	Выбрать подложку...
-	Defaults	По умолчанию
 	Go to Storey...	Перейти на этаж...
 	Hide Blueprint	Скрыть подложку
 	Move Down	Ниже
 	Move Up	Выше
 	New Storey Above	Новый этаж выше
 	New Storey Below	Новый этаж ниже
-	Not set	Не задано
-	Not understood	Не распознано
 	Press the keys	Нажмите клавиши
 	Rename to {name}	Переименовать в {name}
 	Shortcuts...	Клавиши...
@@ -1083,10 +1078,7 @@
 	Storey	Этаж
 	Storey Shortcuts	Клавиши этажей
 	Storey Shortcuts...	Клавиши этажей...
-	Taken by {command}: not active	Занято командой {command}: неактивно
 	The storey to work on	Этаж, на котором вы работаете
-	Used twice: not active	Задано дважды: неактивно
-	Needs Ctrl or Alt: not active	Нужен Ctrl или Alt: неактивно
 	Apply to This Drawing	Применить к этому чертежу
 	Building	Строительство
 	Double-click to rename	Двойной щелчок — переименовать

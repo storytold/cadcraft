@@ -1389,23 +1389,18 @@ menu	View	Nézet
 	Choose Ghost Storey...	Szellemszint kiválasztása...
 	The storey shown beneath the current one	Az aktuális alatt megjelenített szint
 	Arrow keys choose, Enter applies, Esc closes	Nyilak: választás, Enter: alkalmaz, Esc: bezár
-	A shortcut CADCraft uses is never taken over.	A CADCraft által használt billentyűparancsot sosem vesszük át.
-	Number Keys Layout	Számbillentyű-kiosztás
 	Blueprint	Háttérrajz
 	Blueprint On/Off	Háttérrajz be/ki
 	Blueprint Storey Above	Háttérrajz-szint feljebb
 	Blueprint Storey Below	Háttérrajz-szint lejjebb
 	Blueprint color	Háttérrajz színe
 	Choose Blueprint...	Háttérrajz kiválasztása...
-	Defaults	Alapértelmezett
 	Go to Storey...	Ugrás szintre...
 	Hide Blueprint	Háttérrajz elrejtése
 	Move Down	Lejjebb
 	Move Up	Feljebb
 	New Storey Above	Új szint fölötte
 	New Storey Below	Új szint alatta
-	Not set	Nincs beállítva
-	Not understood	Nem értelmezhető
 	Press the keys	Nyomja le a billentyűket
 	Rename to {name}	Átnevezés erre: {name}
 	Shortcuts...	Billentyűparancsok...
@@ -1414,10 +1409,7 @@ menu	View	Nézet
 	Storey	Szint
 	Storey Shortcuts	Szint-billentyűparancsok
 	Storey Shortcuts...	Szint-billentyűparancsok...
-	Taken by {command}: not active	Foglalja: {command}, nem aktív
 	The storey to work on	A szint, amelyen dolgozik
-	Used twice: not active	Kétszer használva: nem aktív
-	Needs Ctrl or Alt: not active	Ctrl vagy Alt szükséges: nem aktív
 	Apply to This Drawing	Alkalmazás erre a rajzra
 	Building	Építészet
 	Double-click to rename	Dupla kattintás az átnevezéshez

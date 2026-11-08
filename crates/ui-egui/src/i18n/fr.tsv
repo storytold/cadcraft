@@ -1064,23 +1064,18 @@
 	Choose Ghost Storey...	Choisir le niveau fantôme...
 	The storey shown beneath the current one	Le niveau affiché sous le niveau courant
 	Arrow keys choose, Enter applies, Esc closes	Flèches pour choisir, Entrée applique, Échap ferme
-	A shortcut CADCraft uses is never taken over.	Un raccourci utilisé par CADCraft n’est jamais remplacé.
-	Number Keys Layout	Disposition sur les touches numériques
 	Blueprint	Plan de fond
 	Blueprint On/Off	Plan de fond oui/non
 	Blueprint Storey Above	Plan de fond au-dessus
 	Blueprint Storey Below	Plan de fond en dessous
 	Blueprint color	Couleur du plan de fond
 	Choose Blueprint...	Choisir le plan de fond...
-	Defaults	Par défaut
 	Go to Storey...	Aller au niveau...
 	Hide Blueprint	Masquer le plan de fond
 	Move Down	Descendre
 	Move Up	Monter
 	New Storey Above	Nouveau niveau au-dessus
 	New Storey Below	Nouveau niveau en dessous
-	Not set	Non défini
-	Not understood	Non reconnu
 	Rename to {name}	Renommer en {name}
 	Shortcuts...	Raccourcis...
 	Show as Blueprint	Afficher comme plan de fond
@@ -1088,10 +1083,7 @@
 	Storey	Niveau
 	Storey Shortcuts	Raccourcis des niveaux
 	Storey Shortcuts...	Raccourcis des niveaux...
-	Taken by {command}: not active	Pris par {command} : inactif
 	The storey to work on	Le niveau sur lequel on travaille
-	Used twice: not active	Utilisé deux fois : inactif
-	Needs Ctrl or Alt: not active	Ctrl ou Alt requis : inactif
 	Apply to This Drawing	Appliquer à ce dessin
 	Building	Bâtiment
 	Double-click to rename	Double-clic pour renommer

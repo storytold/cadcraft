@@ -70,8 +70,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{name} (only an empty storey; deleting the last one turns storeys off)"),
         CommandSpec::new("storey.order", "Reorder Storey", run_order).params("{name, index} (0 = bottom)"),
         CommandSpec::new("storey.current", "Go to Storey", run_current).params("{name}").noundo(),
-        CommandSpec::new("storey.up", "Storey Above", |s, _| step(s, 1)).menu(&["Format", "Storeys", "Storey Above"]).noundo(),
-        CommandSpec::new("storey.down", "Storey Below", |s, _| step(s, -1)).menu(&["Format", "Storeys", "Storey Below"]).noundo(),
+        CommandSpec::new("storey.up", "Storey Above", |s, _| step(s, 1)).menu(&["Format", "Storeys", "Storey Above"]).key("Cmd+PageUp").noundo(),
+        CommandSpec::new("storey.down", "Storey Below", |s, _| step(s, -1)).menu(&["Format", "Storeys", "Storey Below"]).key("Cmd+PageDown").noundo(),
         CommandSpec::new("storey.ghost", "Blueprint", run_ghost)
             .menu(&["Format", "Storeys", "Blueprint"])
             .params("{name|null (off), color?: \"#rrggbb\"} — shown beneath the current storey, snappable only")
@@ -81,6 +81,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{file: DXF/DWG path, name? (default: the file name), ghost?: bool (default true)} — a new storey (above the current one) holding the file's model space at its own coordinates, its layers as they are; shown as the ghost"),
         CommandSpec::new("storey.ghost.toggle", "Blueprint On/Off", run_ghost_toggle)
             .menu(&["Format", "Storeys", "Blueprint On/Off"])
+            .key("Cmd+Shift+G")
             .params("{} — off, or on again: the last ghost storey, else the one below the current storey")
             .noundo(),
         CommandSpec::new("storey.ghost.up", "Blueprint Storey Above", |s, _| ghost_step(s, 1)).params("{} — the ghost moves one storey up (past the current one)").noundo(),

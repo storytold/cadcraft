@@ -1493,23 +1493,18 @@ menu	View	Exibir
 	Choose Ghost Storey...	Escolher pavimento fantasma...
 	The storey shown beneath the current one	O pavimento mostrado sob o atual
 	Arrow keys choose, Enter applies, Esc closes	Setas escolhem, Enter aplica, Esc fecha
-	A shortcut CADCraft uses is never taken over.	Um atalho usado pelo CADCraft nunca é substituído.
-	Number Keys Layout	Layout nas teclas numéricas
 	Blueprint	Planta de fundo
 	Blueprint On/Off	Planta de fundo liga/desliga
 	Blueprint Storey Above	Planta de fundo acima
 	Blueprint Storey Below	Planta de fundo abaixo
 	Blueprint color	Cor da planta de fundo
 	Choose Blueprint...	Escolher planta de fundo...
-	Defaults	Padrões
 	Go to Storey...	Ir para o pavimento...
 	Hide Blueprint	Ocultar planta de fundo
 	Move Down	Descer
 	Move Up	Subir
 	New Storey Above	Novo pavimento acima
 	New Storey Below	Novo pavimento abaixo
-	Not set	Não definido
-	Not understood	Não reconhecido
 	Press the keys	Pressione as teclas
 	Rename to {name}	Renomear para {name}
 	Shortcuts...	Atalhos...
@@ -1518,10 +1513,7 @@ menu	View	Exibir
 	Storey	Pavimento
 	Storey Shortcuts	Atalhos de pavimentos
 	Storey Shortcuts...	Atalhos de pavimentos...
-	Taken by {command}: not active	Usado por {command}: inativo
 	The storey to work on	O pavimento em que se trabalha
-	Used twice: not active	Usado duas vezes: inativo
-	Needs Ctrl or Alt: not active	Requer Ctrl ou Alt: inativo
 	Apply to This Drawing	Aplicar a este desenho
 	Building	Construção
 	Double-click to rename	Clique duas vezes para renomear

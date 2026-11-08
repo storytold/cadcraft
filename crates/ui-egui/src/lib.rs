@@ -121,8 +121,6 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
-    /// The user's storey shortcuts (see [`storeys::StoreyKeys`]).
-    pub storey_keys: storeys::StoreyKeys,
     /// The storeys new drawings, and opened drawings without storeys, get.
     pub storey_setup: storeys::StoreySetup,
     /// The user's keyboard shortcuts ([`keys`]).
@@ -215,7 +213,6 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
-            storey_keys: storeys::StoreyKeys::default(),
             storey_setup: storeys::StoreySetup::default(),
             shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),

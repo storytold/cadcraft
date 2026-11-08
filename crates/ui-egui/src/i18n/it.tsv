@@ -1426,23 +1426,18 @@ menu	Modify	Edita
 	Choose Ghost Storey...	Scegli piano fantasma...
 	The storey shown beneath the current one	Il piano mostrato sotto quello corrente
 	Arrow keys choose, Enter applies, Esc closes	Frecce per scegliere, Invio applica, Esc chiude
-	A shortcut CADCraft uses is never taken over.	Una scorciatoia usata da CADCraft non viene mai sostituita.
-	Number Keys Layout	Schema sui tasti numerici
 	Blueprint	Base di riferimento
 	Blueprint On/Off	Base di riferimento sì/no
 	Blueprint Storey Above	Piano di riferimento sopra
 	Blueprint Storey Below	Piano di riferimento sotto
 	Blueprint color	Colore della base
 	Choose Blueprint...	Scegli base di riferimento...
-	Defaults	Predefiniti
 	Go to Storey...	Vai al piano...
 	Hide Blueprint	Nascondi base di riferimento
 	Move Down	Sposta giù
 	Move Up	Sposta su
 	New Storey Above	Nuovo piano sopra
 	New Storey Below	Nuovo piano sotto
-	Not set	Non impostata
-	Not understood	Non riconosciuta
 	Press the keys	Premi i tasti
 	Rename to {name}	Rinomina in {name}
 	Shortcuts...	Scorciatoie...
@@ -1451,10 +1446,7 @@ menu	Modify	Edita
 	Storey	Piano
 	Storey Shortcuts	Scorciatoie dei piani
 	Storey Shortcuts...	Scorciatoie dei piani...
-	Taken by {command}: not active	Usata da {command}: non attiva
 	The storey to work on	Il piano su cui si lavora
-	Used twice: not active	Usata due volte: non attiva
-	Needs Ctrl or Alt: not active	Serve Ctrl o Alt: non attiva
 	Apply to This Drawing	Applica a questo disegno
 	Building	Edilizia
 	Double-click to rename	Doppio clic per rinominare

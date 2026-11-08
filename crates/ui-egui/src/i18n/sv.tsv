@@ -1511,23 +1511,18 @@ menu	Modify	Ändra
 	Choose Ghost Storey...	Välj spökvåning...
 	The storey shown beneath the current one	Våningen som visas under den aktuella
 	Arrow keys choose, Enter applies, Esc closes	Piltangenter väljer, Enter verkställer, Esc stänger
-	A shortcut CADCraft uses is never taken over.	Ett kortkommando som CADCraft använder tas aldrig över.
-	Number Keys Layout	Siffertangentlayout
 	Blueprint	Underlägg
 	Blueprint On/Off	Underlägg på/av
 	Blueprint Storey Above	Underläggsvåning ovanför
 	Blueprint Storey Below	Underläggsvåning nedanför
 	Blueprint color	Underläggets färg
 	Choose Blueprint...	Välj underlägg...
-	Defaults	Standard
 	Go to Storey...	Gå till våning...
 	Hide Blueprint	Dölj underlägg
 	Move Down	Flytta ned
 	Move Up	Flytta upp
 	New Storey Above	Ny våning ovanför
 	New Storey Below	Ny våning nedanför
-	Not set	Inte angivet
-	Not understood	Inte förstått
 	Press the keys	Tryck på tangenterna
 	Rename to {name}	Byt namn till {name}
 	Shortcuts...	Kortkommandon...
@@ -1536,10 +1531,7 @@ menu	Modify	Ändra
 	Storey	Våning
 	Storey Shortcuts	Kortkommandon för våningar
 	Storey Shortcuts...	Kortkommandon för våningar...
-	Taken by {command}: not active	Upptaget av {command}: inte aktivt
 	The storey to work on	Våningen som du arbetar på
-	Used twice: not active	Används två gånger: inte aktivt
-	Needs Ctrl or Alt: not active	Kräver Ctrl eller Alt: inte aktivt
 	Apply to This Drawing	Använd på den här ritningen
 	Building	Byggnad
 	Double-click to rename	Dubbelklicka för att byta namn
