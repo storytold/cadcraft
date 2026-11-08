@@ -265,6 +265,17 @@ mod tests {
     }
 
     #[test]
+    fn an_oversized_ribbon_tab_is_not_saved() {
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        let (mut store, _, _) = Workspace::at(Some(path.clone()));
+        let ui = UiState { ribbon_tab: "x".repeat(65), ..Default::default() };
+        assert!(store.save_if_changed(&ui, Instant::now()).is_err());
+        assert!(!path.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn dock_columns_floating_and_hidden_panels_survive_native_workspace_file_reload() {
         use cadcraft_ui_egui::docking::{LAYOUT_VERSION, Panel, permissions, reveal_panel};
         let directory = temp_dir();

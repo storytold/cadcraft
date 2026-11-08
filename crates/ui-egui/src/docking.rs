@@ -111,7 +111,8 @@ pub fn default_workspace() -> Workspace {
 
 /// The Windows layout: the Properties palette docked on the left of the drawing, no Tool Sets
 /// (the Ribbon holds the tools) and no Layers palette (the Ribbon's Layers panel holds the layer
-/// list).
+/// list). `apply_pc_layout` applies it and so replaces the user's current docking;
+/// `default_workspace` is the Mac layout `apply_mac_layout` switches back to.
 pub fn pc_workspace() -> Workspace {
     Workspace::new(Layout {
         root: Some(split(

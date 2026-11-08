@@ -17,6 +17,7 @@ use crate::theme::Tokens;
 /// interface catalog) and icon.
 #[derive(Clone, Copy)]
 pub struct Cmd {
+    /// A button is greyed out (with a "not available yet" tooltip) when `known(id)` is false.
     pub id: &'static str,
     pub label: &'static str,
     pub icon: Option<Icon>,
@@ -57,6 +58,8 @@ pub enum Cell {
     ListIcons(Widget, f32, &'static [Cmd]),
 }
 
+/// A titled group of buttons on a tab. The Ribbon collapses panels from the right when the window
+/// is too narrow (see `fit`); a collapsed panel shows its commands in a menu.
 pub struct PanelDef {
     pub title: &'static str,
     pub cells: &'static [Cell],
@@ -64,6 +67,8 @@ pub struct PanelDef {
     pub more: &'static [Cmd],
 }
 
+/// A Ribbon tab. `id` is what the workspace file stores as `ribbonTab` (at most 64 bytes); an
+/// unknown stored id falls back to the first tab.
 pub struct TabDef {
     pub id: &'static str,
     pub title: &'static str,
@@ -1257,5 +1262,54 @@ mod tests {
         assert_eq!(lineweight_name(-1), "ByLayer");
         assert_eq!(color_name(4), "Cyan");
         assert_eq!(color_name(42), "Color 42");
+    }
+
+    #[test]
+    fn tab_ids_and_panel_titles_are_unique_and_every_command_has_an_id_and_label() {
+        let mut ids = std::collections::BTreeSet::new();
+        for tab in TABS {
+            assert!(ids.insert(tab.id), "duplicate tab id {}", tab.id);
+            let mut titles = std::collections::BTreeSet::new();
+            for panel in tab.panels {
+                assert!(titles.insert(panel.title), "duplicate panel {} on {}", panel.title, tab.id);
+                let cells = panel.cells.iter().flat_map(|cell| match cell {
+                    Cell::Big(cmd, variants) => std::iter::once(cmd).chain(variants.iter()).collect::<Vec<_>>(),
+                    Cell::Small(rows) => rows.iter().flat_map(|(cmd, variants)| std::iter::once(cmd).chain(variants.iter())).collect(),
+                    Cell::Icons(cmds) | Cell::ListIcons(_, _, cmds) => cmds.iter().collect(),
+                    Cell::Lists(..) => Vec::new(),
+                });
+                for cmd in cells.chain(panel.more.iter()) {
+                    assert!(!cmd.id.is_empty() && !cmd.label.is_empty(), "empty command on {}/{}", tab.id, panel.title);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_command_with_no_engine_or_ui_command_is_greyed_out() {
+        assert!(!known("no.such.command"));
+        assert!(known("line") && known("ui.layout.pc"));
+    }
+
+    #[test]
+    fn layouts_switch_between_windows_and_mac_and_the_ribbon_toggle_leaves_the_workspace_alone() {
+        use crate::Services;
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), Services::default());
+        assert!(!app.ui.show_ribbon && !app.ui.pc_layout_applied);
+        app.run("ui.layout.pc", json!({})).unwrap();
+        assert!(app.ui.show_ribbon && !app.ui.show_toolbar && app.ui.pc_layout_applied);
+        assert!(!app.ui.docking.layout.contains(&crate::docking::Panel::ToolSets));
+        app.run("ui.layout.mac", json!({})).unwrap();
+        assert!(!app.ui.show_ribbon && app.ui.show_toolbar);
+        assert!(app.ui.docking.layout.contains(&crate::docking::Panel::ToolSets));
+        app.run("ui.layout.pc", json!({})).unwrap();
+        assert!(app.ui.show_ribbon && !app.ui.show_toolbar);
+        // Hiding and showing the Ribbon only flips the flag; it does not re-apply the layout.
+        let docking = app.ui.docking.clone();
+        app.run("ui.toggle.ribbon", json!({})).unwrap();
+        assert!(!app.ui.show_ribbon);
+        app.run("ui.toggle.ribbon", json!({})).unwrap();
+        assert!(app.ui.show_ribbon);
+        assert_eq!(app.ui.docking, docking);
     }
 }
