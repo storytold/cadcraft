@@ -6,7 +6,7 @@
 //! named object dictionary, a table record, a block, an entity); references to objects that are
 //! gone are dropped. Commands don't edit it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Handle, RawTag};
 
@@ -55,6 +55,8 @@ impl ForeignExtra {
 pub struct Foreign {
     /// CLASS records (groups after `0 CLASS`) of the kept objects' and entities' types.
     pub classes: Vec<Vec<RawTag>>,
+    /// Classes retain every source position, including duplicate names.
+    pub complete_class_table: bool,
     /// Kept objects, in file order.
     pub objects: Vec<ForeignObject>,
     /// Entries of the named object dictionary that CADCraft doesn't write itself: (key, object).
@@ -75,9 +77,19 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// The `$ACADVER` of the file all this was read from: its groups are in that version's form.
+    /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
+    /// later save must not take it for this one (#2471).
+    pub version: Option<String>,
 }
 
 impl Foreign {
+    /// The class of the file's CLASSES a proxy's group 91 names (see [`class_number`]), if any.
+    /// Saving as DWG keeps a proxy with that class and leaves out one whose class it can't name.
+    pub fn proxy_class(&self, tags: &[RawTag]) -> Option<&str> {
+        class_index(class_number(tags.iter().map(|r| (r.code, r.value.as_str())))).and_then(|i| self.class_order.get(i)).map(String::as_str)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
             && self.dictionary.is_empty()
@@ -89,8 +101,196 @@ impl Foreign {
             && self.data_store.is_empty()
     }
 
-    /// The entities the data store has records for (their 320 handles).
+    /// The entities with a geometry record in the data store: an `ACDSRECORD` naming the entity
+    /// (320) that holds its `ASM_Data`. A 320 without one doesn't keep an entity's geometry.
     pub fn data_store_entities(&self) -> std::collections::BTreeSet<Handle> {
-        self.data_store.iter().filter(|t| t.code == 320).filter_map(|t| Handle::parse_hex(t.value.trim())).collect()
+        let mut out = std::collections::BTreeSet::new();
+        for rec in data_store_records(&self.data_store) {
+            let is_record = rec.first().is_some_and(|t| t.value.trim().eq_ignore_ascii_case("ACDSRECORD"));
+            if is_record && rec.iter().any(|t| t.code == 2 && t.value.trim().eq_ignore_ascii_case("ASM_Data")) {
+                out.extend(data_store_owner(rec).and_then(|t| Handle::parse_hex(t.value.trim())));
+            }
+        }
+        out
     }
+}
+
+/// Whether a solid modeler entity (3DSOLID, REGION, BODY) holds its ACIS geometry as SAT text
+/// (groups 1 and 3), which DXF 2013 and later no longer has: those files keep it in the data
+/// store section, so an entity with SAT text and no record there can't be written to one (#2334).
+pub fn sat_text_acis(u: &crate::Unknown, handle: Handle, stored: &std::collections::BTreeSet<Handle>) -> bool {
+    ["3DSOLID", "REGION", "BODY"].iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && !stored.contains(&handle) && has_sat_text(&u.tags)
+}
+
+/// The entities a DXF of 2013 or later leaves out because they hold SAT-text ACIS data
+/// ([`sat_text_acis`]), counted by DXF type, across model space, layouts and block definitions.
+pub fn sat_text_dropped(d: &crate::Drawing) -> BTreeMap<String, usize> {
+    let stored = d.foreign.data_store_entities();
+    let mut out = BTreeMap::new();
+    // The writer saves xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
+    let own_blocks = d.blocks.values().filter(|b| b.xref_path.is_none() && !xref_dependent(&b.name));
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(own_blocks.map(|b| &b.entities));
+    for e in stores.flat_map(|s| s.iter()) {
+        if let crate::EntityKind::Unknown(u) = &e.kind
+            && sat_text_acis(u, e.handle, &stored)
+        {
+            let n: &mut usize = out.entry(u.dxf_type.to_ascii_uppercase()).or_default();
+            *n = n.saturating_add(1);
+        }
+    }
+    out
+}
+
+/// Whether a symbol name belongs to an attached xref (`xref|name`): the DXF writer leaves such
+/// symbols out, and the contents of xref blocks too ([`Block::xref_path`](crate::Block::xref_path)).
+pub fn xref_dependent(name: &str) -> bool {
+    name.contains('|')
+}
+
+/// The records of a data store section's groups: each starts at a `0` group and runs to the next
+/// (the section's own groups before the first record are not part of one).
+pub fn data_store_records(tags: &[RawTag]) -> Vec<&[RawTag]> {
+    let mut out = Vec::new();
+    let mut start = tags.iter().position(|t| t.code == 0).unwrap_or(tags.len());
+    while start < tags.len() {
+        let end = tags.iter().skip(start + 1).position(|t| t.code == 0).map_or(tags.len(), |k| start + 1 + k);
+        out.push(tags.get(start..end).unwrap_or(&[]));
+        start = end;
+    }
+    out
+}
+
+/// Whether an entity's groups hold SAT text: groups 1 and 3 inside its `AcDbModelerGeometry`
+/// subclass. A file of a version before the subclass markers has no `100` groups: all of its
+/// groups (before the extended data) are the entity's.
+pub fn has_sat_text(tags: &[RawTag]) -> bool {
+    let own = tags.iter().take_while(|r| r.code < 1000);
+    let marked = tags.iter().take_while(|r| r.code < 1000).any(|r| r.code == 100);
+    let mut in_modeler = !marked;
+    for r in own {
+        if r.code == 100 {
+            in_modeler = r.value.trim().eq_ignore_ascii_case("AcDbModelerGeometry");
+        } else if in_modeler && (r.code == 1 || r.code == 3) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The group naming the entity a data store record belongs to: its first `320`. A record is kept
+/// or dropped by this handle alone, in the writer and wherever the store is read.
+pub fn data_store_owner(record: &[RawTag]) -> Option<&RawTag> {
+    record.iter().find(|t| t.code == 320)
+}
+
+impl Foreign {
+    /// The kept objects by handle (the first of any that share one).
+    fn object_index(&self) -> BTreeMap<Handle, &ForeignObject> {
+        let mut m = BTreeMap::new();
+        for o in &self.objects {
+            m.entry(o.handle).or_insert(o);
+        }
+        m
+    }
+
+    /// The kept object `root` and the kept objects it owns, directly or not (dictionary entries
+    /// and child pointers, groups 350 and 360), `root` first.
+    pub fn tree(&self, root: Handle) -> Vec<Handle> {
+        // Indexed once: a file can keep many objects, and a lookup per pointer would grow with
+        // their product.
+        let by_handle = self.object_index();
+        let mut out = vec![root];
+        let mut seen = BTreeSet::from([root]);
+        let mut i = 0;
+        while let Some(&h) = out.get(i) {
+            i += 1;
+            let Some(o) = by_handle.get(&h) else { continue };
+            for c in o.tags.iter().filter(|t| matches!(t.code, 350 | 360)).filter_map(|t| Handle::parse_hex(t.value.trim())) {
+                if out.len() < 4096 && by_handle.contains_key(&c) && seen.insert(c) {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
+
+    /// Copy the objects of `tree` (see [`Foreign::tree`]) of `src` into this one under the handles
+    /// `fresh` (the same order; two more follow for a field list), `owner` taking the place of the
+    /// root's owner. References to objects outside the tree become null. Fields keep a field
+    /// list: this one gets a copy of the source's if it has none.
+    pub fn adopt_tree(&mut self, src: &Foreign, tree: &[Handle], fresh: &[Handle], owner: Handle) {
+        if fresh.len() < tree.len() + 2 {
+            return;
+        }
+        let map: BTreeMap<Handle, Handle> = tree.iter().copied().zip(fresh.iter().copied()).collect();
+        let by_handle = src.object_index();
+        let mut kinds = Vec::new();
+        for (n, h) in tree.iter().enumerate() {
+            let Some(o) = by_handle.get(h) else { continue };
+            let mut c = (*o).clone();
+            let Some(&new) = fresh.get(n) else { continue };
+            c.handle = new;
+            for t in &mut c.tags {
+                if t.code == 5 {
+                    t.value = new.hex();
+                } else if matches!(t.code, 320..=369 | 390..=399) {
+                    let to = Handle::parse_hex(t.value.trim()).and_then(|h| map.get(&h).copied()).or((n == 0 && t.code == 330).then_some(owner));
+                    t.value = to.map_or_else(|| "0".to_string(), Handle::hex);
+                }
+            }
+            kinds.push(c.kind.clone());
+            self.objects.push(c);
+        }
+        if let Some(list) = src.objects.iter().find(|o| o.kind == "FIELDLIST").filter(|_| !self.objects.iter().any(|o| o.kind == "FIELDLIST")) {
+            let (Some(&h), Some(&nod)) = (fresh.get(tree.len()), fresh.get(tree.len() + 1)) else { return };
+            let mut c = list.clone();
+            c.handle = h;
+            for t in &mut c.tags {
+                match t.code {
+                    5 => t.value = h.hex(),
+                    330 => t.value = "0".to_string(),
+                    _ => {}
+                }
+            }
+            if let Some(t) = c.tags.iter_mut().find(|t| t.code == 330) {
+                t.value = nod.hex();
+            }
+            self.targets.insert(nod, ("NOD".to_string(), String::new()));
+            self.dictionary.push(("ACAD_FIELDLIST".to_string(), h));
+            kinds.push(c.kind.clone());
+            self.objects.push(c);
+        }
+        for k in kinds {
+            let named = |c: &Vec<RawTag>| c.iter().any(|t| t.code == 1 && t.value.eq_ignore_ascii_case(&k));
+            if !self.classes.iter().any(named) {
+                self.classes.extend(src.classes.iter().filter(|c| named(c)).cloned());
+            }
+        }
+    }
+}
+
+/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
+/// (an application's can hold a 91 of its own) and before any xdata.
+pub fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
+    let mut in_group = false;
+    for (i, (code, value)) in groups.into_iter().enumerate() {
+        match code {
+            1000.. => return None,
+            102 => in_group = value.as_ref().trim().starts_with('{'),
+            91 if !in_group => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A proxy's class number (see [`class_group`]).
+pub fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
+    let i = class_group(groups.clone())?;
+    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
+}
+
+/// The place in CLASSES a class number names (500 is the first class).
+pub fn class_index(number: Option<i64>) -> Option<usize> {
+    usize::try_from(number?.checked_sub(500)?).ok()
 }

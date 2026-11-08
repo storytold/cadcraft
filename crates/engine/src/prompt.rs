@@ -26,6 +26,42 @@ impl Accept {
     pub const SELECT: Accept = Accept { point: true, number: false, text: false, select: true, enter: true };
 }
 
+/// Prompts that ask for one of their keywords, which AutoCAD 2024 writes without "or" before them:
+/// "Enter an option [?/Make/Set/…]:", "Enter layout option [Copy/Delete/…/?] <set>:", "New color
+/// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
+/// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
+/// AutoCAD's command line over measured runs, where no prompt was written both ways.
+const NO_OR: [&str; 28] = [
+    "Bring to front",
+    "Calculate rectangle dimensions based on",
+    "Choose mode for selected object conversion",
+    "Create annotative block",
+    "Enter a configuration option",
+    "Enter a plotting preference",
+    "Enter an annotation option",
+    "Enter an option",
+    "Enter an option to change",
+    "Enter attribute visibility setting",
+    "Enter justification",
+    "Enter layout option",
+    "Enter leader format option",
+    "Enter line spacing type",
+    "Enter object ordering option",
+    "Enter option",
+    "Enter polyline linetype generation option",
+    "Enter property to change",
+    "Enter the type of array",
+    "Enter type of unused objects to purge",
+    "Enter viewport arrangement",
+    "Explode block",
+    "New color",
+    "Orient relative to sheet in paper space viewports",
+    "Select a content type",
+    "Select a leader type",
+    "Use landing",
+    "Viewport View Locking",
+];
+
 /// A prompt shown on the command line.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,15 +114,9 @@ pub struct Prompt {
 pub struct SelectWindow {
     pub corner: Vec2,
     /// `Some(true)`: always a crossing (TRIM's Crossing, a typed `C`), `Some(false)`: always a
-    /// window (a typed `W`), `None`: a window to the right of the corner, a crossing to its left.
+    /// window (a typed `W`), `None`: as it is dragged on screen, a window to the right and a
+    /// crossing to the left ([`crate::Session::selection_window_crossing`]).
     pub crossing: Option<bool>,
-}
-
-impl SelectWindow {
-    /// Whether the window from the corner to `p` selects as a crossing.
-    pub fn crossing_to(&self, p: Vec2) -> bool {
-        self.crossing.unwrap_or(p.x < self.corner.x)
-    }
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -178,15 +208,7 @@ impl Prompt {
         }
         let mut s = self.message.clone();
         if !self.keywords.is_empty() {
-            // A question offers its answers ("Fix any errors detected? [Yes/No]"); anything else
-            // offers options besides what it asks for ("Specify next point or [Undo]").
-            s.push_str(if self.message.is_empty() {
-                "["
-            } else if self.message.ends_with('?') {
-                " ["
-            } else {
-                " or ["
-            });
+            s.push_str(self.keyword_lead());
             s.push_str(&self.keywords.join("/"));
             s.push(']');
         }
@@ -195,6 +217,20 @@ impl Prompt {
         }
         s.push(':');
         s
+    }
+    /// What goes between the message and its keywords. A question offers its answers ("Fix any
+    /// errors detected? [Yes/No]"), and so does a prompt for an option ([`NO_OR`]): " [". Anything
+    /// else offers options besides what it asks for ("Specify next point or [Undo]"): " or [". With
+    /// no message, "[". The command line in the window draws the keywords itself and takes this
+    /// too.
+    pub fn keyword_lead(&self) -> &'static str {
+        if self.message.is_empty() {
+            "["
+        } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
+            " ["
+        } else {
+            " or ["
+        }
     }
     /// Match typed text against keywords: full word or the capitalised shortcut, case-insensitive.
     pub fn match_keyword(&self, text: &str) -> Option<String> {
@@ -255,6 +291,9 @@ pub trait Interactive: Send {
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
+    /// Called when the command is cancelled from outside (Esc, or another command starting),
+    /// before it finishes: what it records on every exit path.
+    fn cancelled(&mut self, _s: &mut Session) {}
     /// Rubber-band geometry for the cursor position.
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
@@ -271,11 +310,28 @@ pub trait Interactive: Send {
     fn drag(&self, _s: &Session, _cursor: Vec2) -> Option<Drag> {
         None
     }
-    /// The multiline text being typed (MTEXT, once its box is known) with empty contents: where
-    /// the UI places its in-place editor and with which height, width and justification.
+    /// The multiline text being typed (MTEXT, once its box is known, with empty contents) or edited
+    /// (TEXTEDIT on an MTEXT or a multileader's text, with its contents): where the UI places its
+    /// in-place editor and with which height, width, justification and starting text.
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
+    /// only its preview set); `None` shows the drawing.
+    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
+        None
+    }
+}
+
+/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
+/// runs. The whole drawing is drawn again when it ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DisplayOnly {
+    /// Objects of the drawing, drawn as they are.
+    pub handles: Vec<Handle>,
+    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
+    /// DVIEWBLOCK block), with its own properties.
+    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// See [`Interactive::drag`].
@@ -368,6 +424,13 @@ mod tests {
         assert_eq!(p.display(), "Specify next point or [Undo/Close]:");
         let q = Prompt::new("Erase polyline?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         assert_eq!(q.display(), "Erase polyline? [Yes/No] <No>:");
+        // A prompt for an option has no "or", as AutoCAD writes it.
+        let o = Prompt::new("Enter an option", Accept::TEXT).kw(&["Close", "Join"]);
+        assert_eq!(o.display(), "Enter an option [Close/Join]:");
+        let c = Prompt::new("New color", Accept::TEXT).kw(&["Truecolor", "COlorbook"]).default("BYLAYER");
+        assert_eq!(c.display(), "New color [Truecolor/COlorbook] <BYLAYER>:");
+        let b = Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]);
+        assert_eq!(b.display(), "Enter block name or [?]:");
         assert_eq!(p.match_keyword("u").as_deref(), Some("Undo"));
         assert_eq!(p.match_keyword("CL").as_deref(), Some("Close"));
         assert_eq!(p.match_keyword("x"), None);

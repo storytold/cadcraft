@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIASES, alias_name, command_id};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -70,6 +70,19 @@ pub fn entity_codec() -> Option<&'static EntityCodec> {
 /// COMPARE (drawing comparison).
 pub mod compare;
 
+/// Decode a raster image file (PNG, JPEG, BMP, TIFF) to pixels: installed by the app with the
+/// image reader, a lower layer.
+pub type ImageHook = fn(&[u8]) -> std::result::Result<cadcraft_doc::Raster, String>;
+
+static IMAGE: OnceLock<ImageHook> = OnceLock::new();
+
+pub fn set_image_decoder(h: ImageHook) {
+    let _ = IMAGE.set(h);
+}
+pub fn image_decoder() -> Option<ImageHook> {
+    IMAGE.get().copied()
+}
+
 /// Hand finished file bytes to the user where there is no file system (the browser: a download).
 /// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
 pub type DeliverHook = fn(&str, &str, &[u8]) -> std::result::Result<(), String>;
@@ -85,12 +98,13 @@ pub fn deliver() -> Option<DeliverHook> {
     DELIVER.get().copied()
 }
 
-/// How a drawing file is written: its version (`None`: the drawing's own, `$ACADVER`) and
-/// binary instead of ASCII DXF.
+/// How a drawing file is written: its version (`None`: the drawing's own, `$ACADVER`), binary
+/// instead of ASCII DXF, and Windows fonts for Linux ones ([`cadcraft_doc::Drawing::portable_fonts`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SaveAs {
     pub version: Option<Version>,
     pub binary: bool,
+    pub portable_fonts: bool,
 }
 
 /// Write a drawing with [`SaveAs`] options (installed by hosts whose writer supports them).
@@ -131,7 +145,12 @@ fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err(bad(cmd, "`binary` must be true or false")),
     };
-    Ok(SaveAs { version, binary })
+    let portable_fonts = match p.get("portableFonts") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad(cmd, "`portableFonts` must be true or false")),
+    };
+    Ok(SaveAs { version, binary, portable_fonts })
 }
 
 /// Whether `path` names a DXF file (or has no extension, which saves as DXF).
@@ -148,7 +167,9 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     }
     // A drawing file is the drawing outside the Block Editor; an image is what is shown.
     let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
-    let r = if *opts == SaveAs::default() {
+    let copy = (opts.portable_fonts && is_drawing_file(path)).then(|| Drawing { portable_fonts: true, ..d.clone() });
+    let d = copy.as_ref().unwrap_or(d);
+    let r = if opts.version.is_none() && !opts.binary {
         (hooks.write)(d, path)
     } else {
         let w = write_as().ok_or_else(|| bad(cmd, "saving at a chosen version or as binary DXF is not available in this build"))?;
@@ -178,11 +199,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("saveas", "Save As...", run_saveas_reporting)
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
-            .params("{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool}")
+            .params(
+                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file)}",
+            )
             .noundo(),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
         CommandSpec::new("document.bytes", "Drawing as bytes", run_bytes)
-            .params("{format?: dxf, version?: 2000…2018, binary?: bool} → {data: base64}")
+            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool} → {data: base64}")
             .noundo(),
         CommandSpec::new("script", "Run Script...", run_script)
             .menu(&["Tools", "Run Script..."])
@@ -301,6 +324,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -310,6 +334,12 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
+    // The SHX fonts its text styles name are looked for beside the drawing too.
+    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+        // A bare file name is in the current folder.
+        let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
+        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+    }
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
@@ -335,10 +365,12 @@ pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option
 fn opened(s: &Session, i: usize, entities: bool) -> Value {
     let d = s.docs.get(i).map(|st| &st.doc);
     let warnings = d.map(|d| d.read_notes.clone()).unwrap_or_default();
+    // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
+    let saved_view = d.is_some_and(|d| crate::view::saved_view(d).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings })
+        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings, "saved_view": saved_view })
     } else {
-        json!({ "index": i, "warnings": warnings })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view })
     }
 }
 
@@ -353,6 +385,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            super::image::after_open(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -363,6 +396,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Drawing.dxf");
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, false))
 }
 
@@ -395,7 +429,7 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
-    let opts = SaveAs { version: None, binary: s.state()?.binary_dxf && is_dxf(path) };
+    let opts = SaveAs { binary: s.state()?.binary_dxf && is_dxf(path), ..SaveAs::default() };
     save_as(s, "save", path, &opts)
 }
 
@@ -430,13 +464,14 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if is_drawing_file(path) && crate::autosave::isavebak() {
+        // A file in a folder still to be made has nothing to back up.
+        if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
                 .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
         }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -677,6 +712,7 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     if is_drawing_file(&path) {
         r["version"] = json!(opts.version.unwrap_or_else(|| drawing_version(s, &path)).year());
         r["binary"] = json!(opts.binary);
+        r["portableFonts"] = json!(opts.portable_fonts);
     }
     Ok(r)
 }
@@ -684,8 +720,11 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
 fn drawing_version(s: &Session, path: &str) -> Version {
-    let v =
-        s.doc().ok().and_then(|d| d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver)).unwrap_or_default();
+    let v = s
+        .state()
+        .ok()
+        .and_then(|st| st.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
+        .unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
 }
 
@@ -714,6 +753,8 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
+    } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
+        report_sat_text_dropped(s, &mut r);
     }
     Ok(r)
 }
@@ -731,18 +772,45 @@ pub fn not_saved(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
 /// store section, which is written back with the drawing (`Foreign::data_store`).
 const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 
+/// Entity types CADCraft doesn't model that the DWG bridge writes all the same: acadrust reads
+/// them from our DXF into entities of its own and writes them to DWG of every version we save,
+/// an OLE object with its frame and its embedded object's bytes unchanged. Matched exactly: the
+/// bridge gets the type as stored, and acadrust knows only this spelling of it.
+const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
+
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted.
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`], nor
+/// another program's proxy entity whose class the file names: the DWG writes it with that class.
+/// Before 2013, or when its group 91 names no class of the file, the DWG leaves the proxy out and
+/// it is counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
-            if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&e.handle) {
+            // A DWG before 2013 writes a solid's SAT text as it is; from 2013 the geometry has to be
+            // in the data store, and SAT text alone is lost (#2334).
+            if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t))
+                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::has_sat_text(&u.tags)))
+            {
+                continue;
+            }
+            if DWG_WRITES.contains(&u.dxf_type.as_str()) {
+                continue;
+            }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.proxy_class(&u.tags).is_some() {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    // Another program's proxy objects (in the OBJECTS section) follow the same rule as its proxy
+    // entities: the DWG writer leaves them out before 2013, or when their class can't be named.
+    for o in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_PROXY_OBJECT")) {
+        if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
+            let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }
@@ -755,18 +823,37 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
         return None;
     }
     let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    Some(format!("Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): {}", list.join(", ")))
+    Some(format!(
+        "Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them, solids only when saved as 2010 or earlier): {}",
+        list.join(", ")
+    ))
 }
 
 /// What saving the active drawing to `path` would leave out, before anything is written: empty
 /// when the format keeps everything. The interactive save asks with this; [`save_reporting`]
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
+    let version = drawing_version(s, path);
+    if is_dxf_file(path) && version >= Version::R2013 {
+        // The drawing a file holds: the host while the Block Editor is open.
+        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    }
     if !drops_unknown(path) {
         return Default::default();
     }
-    let version = drawing_version(s, path);
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
+}
+
+/// Report what the file `path`, just written at the drawing's own version, left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+    if is_dxf_file(path) {
+        if drawing_version(s, path) >= Version::R2013 {
+            report_sat_text_dropped(s, r);
+        }
+    } else {
+        let lost = loss_on_save(s, path);
+        report_not_saved(s, r, &lost);
+    }
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
@@ -780,8 +867,53 @@ fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path).is_some_and(Format::is_drawing)
 }
 
+/// Whether `path` is a DXF file.
+fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path) == Some(Format::Dxf)
+}
+
+/// Say on the command line which solid modeler entities a DXF of 2013 or later left out because
+/// they hold SAT-text ACIS data, which such files keep in a data store instead (#2334).
+fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
+    // The drawing a file holds: the host while the Block Editor is open.
+    let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    if lost.is_empty() {
+        return;
+    }
+    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
+    s.echo(format!(
+        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
+        list.join(", ")
+    ));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("notSaved".into(), json!(lost));
+    }
+}
+
+/// The folder a write to `path` has to create, asked before writing so it can be reported after.
+/// The web has no folders.
+pub(super) fn new_folder(path: &str) -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return crate::atomic_write::missing_folder(std::path::Path::new(path)).map(|f| f.display().to_string());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Say on the command line that the file went into a folder that didn't exist, so a mistyped path
+/// is noticed, and name the folder in the result's `createdFolder`.
+pub(super) fn report_new_folder(s: &mut Session, r: &mut Value, folder: Option<String>) {
+    let Some(folder) = folder else { return };
+    s.echo(format!("Created the folder {folder}, which did not exist. Check the path if you did not mean to."));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("createdFolder".into(), json!(folder));
+    }
+}
+
 /// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
-fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
+pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
     let Some(msg) = not_saved_message(lost) else { return };
     s.echo(msg);
     if let Some(o) = r.as_object_mut() {
@@ -790,24 +922,64 @@ fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTr
 }
 
 /// Save, then report the entities the file couldn't keep (nothing is dropped silently).
-fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>) -> Result<Value> {
+fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
     // What the file will hold depends on the version it is saved as (the data store from 2013).
+    // QSAVE takes no `version` and keeps the drawing's own; SAVEAS writes the one asked for.
     let path = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone())).unwrap_or_default();
-    let version = save_options("save", p).ok().and_then(|o| o.version).unwrap_or_else(|| drawing_version(s, &path));
+    let version = asked.unwrap_or_else(|| drawing_version(s, &path));
     let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
+    let folder = new_folder(&path);
     let mut r = run(s, p)?;
+    report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
+    } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        report_sat_text_dropped(s, &mut r);
+    }
+    if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
+        report_fonts(s, &mut r);
     }
     Ok(r)
 }
 
+/// Name the text styles whose font in the saved file AutoCAD on Windows doesn't have: in the
+/// result, and at the command line when the list changed since the last save. Styles from an xref
+/// (`XREF|name`) aren't saved: AutoCAD takes them from the xref.
+fn report_fonts(s: &mut Session, r: &mut Value) {
+    use cadcraft_fonts::windows::{missing_on_windows, windows_font, written_font};
+    let portable = r.get("portableFonts").and_then(Value::as_bool).unwrap_or(false);
+    let Ok(d) = s.state().map(|st| st.drawing()) else { return };
+    let fonts: Vec<(String, String)> = d
+        .text_styles
+        .iter()
+        .filter(|t| !t.name.contains('|') && missing_on_windows(written_font(&t.font, portable)))
+        .map(|t| (t.name.clone(), t.font.clone()))
+        .collect();
+    let list = fonts.iter().map(|(style, font)| format!("{style} ({font})")).collect::<Vec<_>>().join(", ");
+    let changed = s.state_mut().map(|st| std::mem::replace(&mut st.fonts_noted, list.clone()) != list).unwrap_or(true);
+    if fonts.is_empty() {
+        return;
+    }
+    if changed {
+        let hint = if fonts.iter().any(|(_, font)| windows_font(font).is_some()) {
+            " SAVEAS with portableFonts writes Windows fonts for those that have one."
+        } else {
+            ""
+        };
+        s.echo(format!("Fonts AutoCAD on Windows doesn't have: {list}.{hint}"));
+    }
+    if let Some(o) = r.as_object_mut() {
+        o.insert("nonPortableFonts".into(), json!(fonts.iter().map(|(style, font)| json!({ "style": style, "font": font })).collect::<Vec<_>>()));
+    }
+}
+
 fn run_qsave_reporting(s: &mut Session, p: &Value) -> Result<Value> {
-    save_reporting(s, p, run_save)
+    save_reporting(s, p, run_save, None)
 }
 
 fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
-    save_reporting(s, p, run_saveas)
+    let asked = save_options("saveas", p)?.version;
+    save_reporting(s, p, run_saveas, asked)
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

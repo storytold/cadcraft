@@ -45,7 +45,7 @@ fn stretch_selects_at_the_sessions_select_objects_prompt() {
     point(&mut s, 12.0, 2.0);
     let w = s.selection_window().expect("a window waits for its opposite corner");
     assert_eq!(w.corner, Vec2::new(12.0, 2.0));
-    assert!(w.crossing_to(Vec2::new(8.0, -2.0)));
+    assert!(s.selection_window_crossing(&w, Vec2::new(8.0, -2.0)));
     point(&mut s, 8.0, -2.0);
     assert!(s.selection_window().is_none());
     assert_eq!(s.selection(), vec![a]);
@@ -184,4 +184,26 @@ fn a_stretch_crossing_takes_a_multiline_by_its_vertex() {
     point(&mut s, 0.0, 0.0);
     point(&mut s, 0.0, -610.0);
     assert_eq!(vertices(&s), vec![(0.0, 0.0), (3000.0, 0.0), (3000.0, 2000.0)]);
+}
+
+/// In a twisted view the session's window is a crossing when dragged leftwards on screen, at a
+/// command's "Select objects" as with no command running; a window fixed as a crossing stays one.
+#[test]
+fn the_selection_windows_crossing_follows_the_screen_in_a_twisted_view() {
+    let mut s = session();
+    let a = line(&mut s, [200.0, 0.0], [260.0, 0.0]);
+    s.execute("dview", &json!({ "twist": 180 })).unwrap();
+    s.start("stretch").unwrap();
+    // Towards +X in the drawing, which runs leftwards on the turned screen.
+    point(&mut s, 210.0, -5.0);
+    let w = s.selection_window().expect("a window waits for its corner");
+    assert!(s.selection_window_crossing(&w, Vec2::new(230.0, 5.0)));
+    point(&mut s, 230.0, 5.0);
+    assert_eq!(s.selection(), vec![a], "the crossing takes the line it only partly covers");
+    assert!(s.take_pick_area().is_none(), "the stretch took the area");
+    s.cancel();
+    s.start("trim").unwrap();
+    point(&mut s, 300.0, 50.0);
+    let w = s.selection_window().expect("TRIM's crossing waits for its corner");
+    assert!(s.selection_window_crossing(&w, Vec2::new(250.0, 40.0)), "TRIM's crossing is one whichever way it goes");
 }

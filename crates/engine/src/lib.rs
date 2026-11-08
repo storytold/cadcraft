@@ -27,6 +27,7 @@ pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
 mod recent;
+pub mod render_look;
 pub mod sample;
 pub mod select;
 pub mod settings_dir;
@@ -49,7 +50,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, SelectWindow, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, SelectWindow, Step};
 
 mod doc_state;
 mod error;
@@ -92,6 +93,12 @@ pub struct Session {
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
+    /// AREA and PERIMETER: the last area AREA or MEASUREGEOM measured (in their Add and Subtract
+    /// modes the running total) and that area's perimeter. Not saved, as in AutoCAD.
+    pub area: f64,
+    pub perimeter: f64,
+    /// DISTANCE: the last distance DIST or MEASUREGEOM measured (with Multiple points, the total).
+    pub distance: f64,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -176,6 +183,9 @@ impl Session {
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
+            area: 0.0,
+            perimeter: 0.0,
+            distance: 0.0,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),

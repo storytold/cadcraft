@@ -16,6 +16,20 @@ impl Session {
         true
     }
 
+    /// Whether a selection window from `corner` to `p` is a crossing window: it was dragged
+    /// leftwards on screen (in a twisted view, not along the drawing's X axis).
+    pub fn window_is_crossing(&self, corner: Vec2, p: Vec2) -> bool {
+        let twist = self.state().map_or(0.0, |st| st.view().twist);
+        (p - corner).rotate(twist).x < 0.0
+    }
+
+    /// Whether the selection window `w` dragged to `p` is a crossing: as its command fixed it
+    /// (TRIM's Crossing, a typed `W` or `C`), else as it was dragged on screen
+    /// ([`Self::window_is_crossing`]).
+    pub fn selection_window_crossing(&self, w: &crate::SelectWindow, p: Vec2) -> bool {
+        w.crossing.unwrap_or_else(|| self.window_is_crossing(w.corner, p))
+    }
+
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///
     /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
@@ -24,7 +38,7 @@ impl Session {
         let space = self.space();
         let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
-            let crossing = p.x < pw.corner.x;
+            let crossing = self.window_is_crossing(pw.corner, p);
             let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
@@ -180,7 +194,7 @@ impl Session {
 
 /// An object's DXF group 10 point: the first point of its entity list, or its first grip where
 /// entity lists are not built in.
-fn group_10(d: &Drawing, e: &Entity) -> Option<Vec2> {
+pub(crate) fn group_10(d: &Drawing, e: &Entity) -> Option<Vec2> {
     let Some(codec) = cmd::file::entity_codec() else { return e.kind.grips().first().copied() };
     let (_, tags) = (codec.groups)(d, e);
     let i = tags.iter().position(|t| t.code == 10)?;

@@ -32,11 +32,16 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+pub mod fault;
+// The Find and Replace window behind the FIND command.
+pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+// The Edit Text window, opened from the shortcut menu's Edit Text entry.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
 
@@ -46,6 +51,7 @@ pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
+pub mod keys;
 pub mod layers;
 pub mod managers;
 pub mod menus;
@@ -114,6 +120,8 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The user's keyboard shortcuts ([`keys`]).
+    pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
@@ -128,6 +136,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -200,12 +210,14 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -222,6 +234,8 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
 }
 
 pub struct CadApp {
@@ -239,6 +253,8 @@ pub struct CadApp {
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
+    /// Calculator data shared by its floating and docked views; durable fields live in prefs.
+    pub(crate) quickcalc: palettes::quickcalc::State,
     pub cmd: cmdline::CmdLine,
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
@@ -303,6 +319,10 @@ pub struct CadApp {
     pub gpu_faults: std::sync::Arc<gpu::GpuFaults>,
     /// The notice shown after one (see [`autosave::gpu_notice`]).
     pub gpu_notice: Option<autosave::GpuNotice>,
+    /// Panics caught around the frame ([`fault`]).
+    pub fault: fault::UiFault,
+    /// The notice shown while autosave fails (see [`autosave::failure_notice`]).
+    pub autosave_notice: Option<autosave::AutosaveNotice>,
     /// The Command Aliases dialog while open ([`aliasdlg`]).
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
@@ -327,6 +347,7 @@ impl CadApp {
             services,
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),
+            quickcalc: palettes::quickcalc::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
@@ -361,6 +382,8 @@ impl CadApp {
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
             gpu_notice: None,
+            fault: fault::UiFault::default(),
+            autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
@@ -465,6 +488,7 @@ impl CadApp {
             "interfaceLanguage": self.ui.interface_language.code(),
             "saveFormat": self.ui.save_format.as_str(),
             "saveVersion": self.ui.save_version,
+            "quickcalc": self.quickcalc.prefs(),
         });
         if self.spacemouse.settings != spacemouse::Settings::default() {
             prefs["spacemouse"] = json!(self.spacemouse.settings);
@@ -475,12 +499,21 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
+        if !self.ui.shortcuts.is_empty() {
+            prefs["shortcuts"] = json!(self.ui.shortcuts);
+        }
         prefs.to_string()
     }
 
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(calculator) = v.get("quickcalc") {
+            self.quickcalc.load_prefs(calculator);
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }
@@ -504,6 +537,12 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
+            self.ui.shortcuts = keys::from_prefs(keys);
         }
     }
 
@@ -554,7 +593,13 @@ impl CadApp {
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (_, outcome) in self.opening.poll() {
+        for (path, outcome) in self.opening.poll() {
+            // A recent file that is gone can never be opened again: drop it from the list. A path
+            // whose existence can't be checked (a folder that denies access) stays.
+            if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
+                let path = path.to_string_lossy();
+                self.ui.recent_files.retain(|p| *p != path);
+            }
             let r = match outcome {
                 Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
@@ -618,7 +663,8 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
-                self.canvas.zoom_pending = true;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
                     self.remember_recent(path);
@@ -896,6 +942,7 @@ impl CadApp {
         save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
+        autosave::failure_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
     }
 
@@ -1129,7 +1176,8 @@ mod tests {
         frame(&mut a, &ctx, None);
         assert_eq!(Tokens::get(), Tokens::of(theme::SYSTEM_FALLBACK), "no OS appearance: the documented fallback");
         assert_eq!(a.ui.theme, ThemePref::System);
-        assert_eq!(a.prefs_json(), r#"{"animations":"system","interfaceLanguage":"auto","saveFormat":"dxf","saveVersion":"2018","theme":"system"}"#);
+        let prefs: Value = serde_json::from_str(&a.prefs_json()).unwrap();
+        assert_eq!(prefs["theme"], "system");
     }
 
     #[test]

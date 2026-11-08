@@ -88,6 +88,10 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+[people.assamaral]
+real_name = "assamaral"
+sync_github_name = false
+
 [people.2ez4gcx]
 real_name = "Doan Huynh Huu Khuong"
 display_name = "Doan Huynh Huu Khuong"
@@ -96,3 +100,19 @@ sync_github_name = false
 
 [people.dylanmtaylor]
 sync_github_name = true
+
+[people.GULERTOLGA]
+sync_github_name = true
+
+[people.Tyler-Chiriboga]
+real_name = "Tyler Chiriboga"
+sync_github_name = true
+
+[people.starise]
+real_name = "Andrea Brandi"
+
+[people.qinshah]
+sync_github_name = true
+
+[people.helenkwok]
+real_name = "Helen Kwok"
