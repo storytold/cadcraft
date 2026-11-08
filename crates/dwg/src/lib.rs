@@ -2003,7 +2003,7 @@ mod tests {
     /// ("Error Decrypting Data"); 0.6.5 added it and 0.6.6, which this uses, still keeps it (0.6.6 also
     /// fixes multi-layout DWGs, #1463). The byte reaches the DWG, and a scale action
     /// from DXF is written whole, with the byte AutoCAD writes (0).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn scale_actions_keep_the_byte_autocad_reads_after_their_connections() {
         use acadrust::objects::*;
