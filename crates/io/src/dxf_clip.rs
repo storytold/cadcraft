@@ -180,27 +180,19 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         return None;
     }
     let m: Vec<f64> = o.tags.iter().filter(|t| t.code == 40).map(|t| t.value.trim().parse::<f64>().unwrap_or(f64::NAN)).collect();
-    let (inverse, own) = match m.len() {
+    let (inverse, boundary_xf) = match m.len() {
         24 => (matrix_2d(m.get(..12)?)?, matrix_2d(m.get(12..)?)?),
         // Without matrices the vertices are taken as the block's own.
         0 => (Mat3::IDENTITY, Mat3::IDENTITY),
         _ => return None,
     };
-    if (own.a - 1.0).abs() > 1e-9
-        || own.b.abs() > 1e-9
-        || own.c.abs() > 1e-9
-        || (own.d - 1.0).abs() > 1e-9
-        || own.e.abs() > 1e-9
-        || own.f.abs() > 1e-9
-    {
-        return None;
-    }
-    let own = vertices(&o.tags, count)?;
-    let outline = boundary.unwrap_or(&own);
+    let verts = vertices(&o.tags, count)?;
+    let outline = boundary.unwrap_or(&verts);
     if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
         return None;
     }
-    let points: Vec<Vec2> = outline.iter().map(|p| inverse.apply(*p)).collect();
+    let net = boundary_xf.then(inverse);
+    let points: Vec<Vec2> = outline.iter().map(|p| net.apply(*p)).collect();
     if !points.iter().all(|p| p.is_finite()) {
         return None;
     }
@@ -603,7 +595,12 @@ mod tests {
         let filter = make_test_filter(&inverse, &own);
         let parsed = parse_filter(&filter, None);
 
-        // This test INTENTIONALLY FAILS on the current baseline:
         assert!(parsed.is_some(), "A valid non-identity boundary transform must not cause the filter to be discarded");
+        let clip = parsed.unwrap();
+        assert_eq!(clip.points.len(), 4);
+        assert!(clip.points[0].near(Vec2::new(100.0, 50.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(110.0, 50.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(110.0, 60.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(100.0, 60.0), 1e-9));
     }
 }
