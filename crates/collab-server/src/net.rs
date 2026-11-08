@@ -205,19 +205,19 @@ impl Server {
                 // The token says who sent it; a client cannot file an edit under another name.
                 op.actor = claims.sub.clone();
                 match lock(&self.room).apply_as(claims.role, &op) {
-                Ok(Outcome::Applied(applied)) => {
-                    self.metrics.applied.fetch_add(1, Ordering::Relaxed);
-                    let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
-                    self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
-                }
-                Ok(Outcome::Rejected(rejected)) => {
-                    self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
-                    let _ = tx.send(ServerMessage::Rejected { rejected });
-                }
-                Err(error) => {
-                    self.metrics.errors.fetch_add(1, Ordering::Relaxed);
-                    let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
-                }
+                    Ok(Outcome::Applied(applied)) => {
+                        self.metrics.applied.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
+                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                    }
+                    Ok(Outcome::Rejected(rejected)) => {
+                        self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Rejected { rejected });
+                    }
+                    Err(error) => {
+                        self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(ServerMessage::Error { code: "internal".into(), message: error.to_string(), retryable: true });
+                    }
                 }
             }
             ClientMessage::Undo { op_id } => {

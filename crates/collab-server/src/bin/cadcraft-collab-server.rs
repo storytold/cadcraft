@@ -49,6 +49,9 @@ struct Args {
     /// HTTP health and metrics address.
     #[arg(long)]
     http: Option<SocketAddr>,
+    /// Close the room after this many seconds with no participants; 0 keeps it open.
+    #[arg(long, default_value_t = 600)]
+    idle_secs: u64,
 }
 
 fn main() -> Result<(), String> {
@@ -78,6 +81,31 @@ fn main() -> Result<(), String> {
     if let Some(http) = args.http {
         let server = Arc::clone(&server);
         thread::spawn(move || serve_http(http, server));
+    }
+
+    if args.idle_secs > 0 {
+        let server = Arc::clone(&server);
+        let state = args.state.clone();
+        let idle_secs = args.idle_secs;
+        thread::spawn(move || {
+            let mut idle_since = Some(std::time::Instant::now());
+            loop {
+                thread::sleep(Duration::from_secs(30));
+                if server.participants() > 0 {
+                    idle_since = None;
+                    continue;
+                }
+                let since = idle_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed().as_secs() < idle_secs {
+                    continue;
+                }
+                if let Some(path) = &state {
+                    let _ = server.room().compact(path);
+                }
+                println!("cadcraft-collab-server: no participants for {idle_secs} s; the room is closed");
+                std::process::exit(0);
+            }
+        });
     }
 
     loop {

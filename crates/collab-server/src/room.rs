@@ -842,9 +842,7 @@ mod large_tests {
         let mut drawing = Drawing::new_metric();
         for i in 0..10_000 {
             let x = f64::from(i);
-            drawing
-                .add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 1.0, 0.0) }))
-                .unwrap();
+            drawing.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 1.0, 0.0) })).unwrap();
         }
         let mut room = Room::new(drawing).unwrap();
         let mut replica = room.drawing().unwrap().clone();
