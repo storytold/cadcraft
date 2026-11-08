@@ -486,20 +486,7 @@ impl Curve {
         // Refine on the exact curve (the pieces are a flattening there).
         match &self.exact {
             Exact::None => {}
-            Exact::Ellipse(e, _) => {
-                let sampled = newton(self, q, t);
-                t = sampled;
-                if self.closed {
-                    // The radial parameter can sit on a stationary point that is not the nearest
-                    // (a query at the centre), so it only wins when it is genuinely nearer.
-                    let radial = newton(self, q, e.param_of(Vec2::new(q[0], q[1])).rem_euclid(std::f64::consts::TAU));
-                    let dist = |u: f64| self.point_at_param(u).map_or(f64::INFINITY, |p| dist3(&p, q));
-                    if dist(radial) < dist(sampled) {
-                        t = radial;
-                    }
-                }
-            }
-            Exact::Spline(_) => t = newton(self, q, t),
+            Exact::Ellipse(..) | Exact::Spline(_) => t = newton(self, q, t),
         }
         Some((t, self.point_at_param(t)?))
     }
@@ -564,6 +551,10 @@ fn flattened(pts: &[(f64, P3)]) -> Vec<(f64, f64, Seg)> {
 
 /// A few Newton steps on (C(t) − q)·C'(t) = 0, kept within the curve's parameters.
 fn newton(c: &Curve, q: &P3, mut t: f64) -> f64 {
+    // A closed ellipse or a periodic spline goes on round past its ends, so a step wraps over
+    // the seam; any other curve stops at its ends.
+    let wraps = c.closed && (matches!(c.exact, Exact::Ellipse(..)) || c.periodic);
+    let period = c.end - c.start;
     for _ in 0..8 {
         let (Some(p), Some((d1, d2))) = (c.point_at_param(t), c.derivs(t)) else { break };
         let r = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
@@ -572,8 +563,9 @@ fn newton(c: &Curve, q: &P3, mut t: f64) -> f64 {
         if df.abs() <= 1e-30 || !f.is_finite() || !df.is_finite() {
             break;
         }
-        let next = (t - f / df).clamp(c.start, c.end);
-        if (next - t).abs() <= 1e-14 * (1.0 + t.abs()) {
+        let raw = t - f / df;
+        let next = if wraps && period > 0.0 && period.is_finite() { c.start + (raw - c.start).rem_euclid(period) } else { raw.clamp(c.start, c.end) };
+        if (raw - t).abs() <= 1e-14 * (1.0 + t.abs()) {
             t = next;
             break;
         }

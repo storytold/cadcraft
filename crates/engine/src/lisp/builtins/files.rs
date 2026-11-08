@@ -17,6 +17,31 @@ pub struct LispFile {
     pub text: String,
 }
 
+/// The lines of a file's text, ended by LF, CRLF or a lone CR (an old Mac file), and whether
+/// the last of them had a terminator.
+fn split_lines(t: &str) -> (std::collections::VecDeque<String>, bool) {
+    let mut lines = std::collections::VecDeque::new();
+    let mut cur = String::new();
+    let mut chars = t.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => lines.push_back(std::mem::take(&mut cur)),
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                lines.push_back(std::mem::take(&mut cur));
+            }
+            c => cur.push(c),
+        }
+    }
+    let unterminated = !cur.is_empty();
+    if unterminated {
+        lines.push_back(cur);
+    }
+    (lines, unterminated)
+}
+
 pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 3)?;
     let path = string(&a[0])?.to_string();
@@ -32,8 +57,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
         match read_text_file(&path) {
             Some(t) => {
                 charge_bytes(t.len())?;
-                f.lines = t.lines().map(str::to_string).collect();
-                f.unterminated = !t.is_empty() && !t.ends_with('\n');
+                (f.lines, f.unterminated) = split_lines(&t);
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
@@ -59,10 +83,14 @@ pub(super) fn close(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
 pub(super) fn read_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(Value::File(id)) = a.first() else { return Ok(Flow::Value(Value::Nil)) };
-    // The rest of the line: what `read-char` hasn't read of it yet.
+    // The rest of the line: what `read-char` hasn't read of it yet. Nothing left of an
+    // unterminated last line is the end of the file.
     let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| {
         let l = f.lines.pop_front()?;
         let rest = l.get(std::mem::take(&mut f.pos)..).unwrap_or("").to_string();
+        if f.unterminated && f.lines.is_empty() && rest.is_empty() {
+            return None;
+        }
         Some(rest)
     });
     Ok(Flow::Value(line.map(|l| Value::str(&l)).unwrap_or_default()))

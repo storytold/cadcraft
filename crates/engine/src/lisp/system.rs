@@ -464,7 +464,8 @@ pub(super) fn vl_string_mismatch(a: &[Value]) -> R {
 }
 
 /// `(read-char [file])`: the next character's code from a file opened for reading (10 at each
-/// line end), nil at its end or without a file.
+/// line end, but none after a last line the file leaves unterminated), nil at its end or
+/// without a file.
 pub(super) fn read_char(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(Value::File(id)) = a.first() else { return Ok(Flow::Value(Value::Nil)) };

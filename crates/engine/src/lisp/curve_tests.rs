@@ -153,7 +153,26 @@ fn a_full_ellipse_queried_near_its_centre_finds_the_minor_end() {
     add(&mut s, "e", EntityKind::Ellipse(Ellipse { center: v3(0.0, 0.0, 0.0), major: v3(10.0, 0.0, 0.0), ratio: 0.1, start: 0.0, end: tau }));
     // The centre and a point just off it: the nearest point is a minor-axis end (1 away), not a major-axis end (10 away).
     is_t(&mut s, "(< (distance (vlax-curve-getClosestPointTo e '(0 0)) '(0 0)) 1.0001)");
-    is_t(&mut s, "(< (distance (vlax-curve-getClosestPointTo e '(0.001 0.2)) '(0.001 0.2)) 0.8001)");
+    is_t(&mut s, "(< (distance (vlax-curve-getClosestPointTo e '(0.001 0.2)) '(0.001 0.2)) (+ 0.8 1e-3))");
+}
+
+/// Near the +major end of a full ellipse the nearest point can lie across the 0/TAU seam from
+/// where the search starts, so the refinement wraps rather than stopping at a parameter end.
+#[test]
+fn a_full_ellipse_is_searched_across_its_seam() {
+    let mut s = session();
+    let tau = std::f64::consts::TAU;
+    add(&mut s, "e", EntityKind::Ellipse(Ellipse { center: v3(0.0, 0.0, 0.0), major: v3(10.0, 0.0, 0.0), ratio: 0.1, start: 0.0, end: tau }));
+    // Just inside the +major end and a little below the axis: the nearest t is about TAU - 0.00056.
+    is_t(
+        &mut s,
+        "(setq q '(9.99 -0.0005) p (vlax-curve-getClosestPointTo e q) u (vlax-curve-getParamAtPoint e p)) (and (> u (- (* 2 pi) 0.001)) (< u (* 2 pi)))",
+    );
+    is_t(
+        &mut s,
+        "(and (< (cadr p) 0.0) (< (distance p q) (distance '(10.0 0.0) q)) (equal (vlax-curve-getParamAtPoint e (vlax-curve-getClosestPointTo e q)) u 1e-9))",
+    );
+    is_t(&mut s, "(equal (vlax-curve-getParamAtPoint e (vlax-curve-getClosestPointTo e '(9.99 0.0005))) 0.000556 1e-4)");
 }
 
 #[test]
@@ -245,7 +264,9 @@ fn read_char_and_read_line_share_their_place_in_the_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A last line with no terminator reads back without an invented 10; CRLF line ends read as 10.
+/// The end of a file as `read-char` and `read-line` see it: a last line with no terminator
+/// reads back without an invented 10 and ends the file once its characters are used up (also
+/// for `read-line` after a `read-char`); CRLF and a lone CR end a line like LF.
 #[test]
 fn read_char_reproduces_the_final_terminator_state() {
     let mut s = session();
@@ -263,6 +284,22 @@ fn read_char_reproduces_the_final_terminator_state() {
     assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
     std::fs::write(&path, "a\nb").unwrap();
     assert_eq!(ok(&mut s, &code), "(97 10 98 1)");
+    // A lone CR (an old Mac file) ends a line, at the end of the file and between lines.
+    std::fs::write(&path, "a\r").unwrap();
+    assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
+    std::fs::write(&path, "a\rb\r\nc").unwrap();
+    let all = format!("(setq f (open \"{p}\" \"r\")) (list (read-line f) (read-line f) (read-line f) (read-line f) (progn (close f) 1))");
+    assert_eq!(ok(&mut s, &all), "(\"a\" \"b\" \"c\" nil 1)");
+    std::fs::write(&path, "a\r").unwrap();
+    assert_eq!(ok(&mut s, &all), "(\"a\" nil nil nil 1)");
+    // read-line after read-char: the rest of the line, and nothing once an unterminated last line is used up.
+    let mixed = format!("(setq f (open \"{p}\" \"r\")) (list (read-char f) (read-line f) (read-line f) (progn (close f) 1))");
+    std::fs::write(&path, "a").unwrap();
+    assert_eq!(ok(&mut s, &mixed), "(97 nil nil 1)");
+    std::fs::write(&path, "a\n").unwrap();
+    assert_eq!(ok(&mut s, &mixed), "(97 \"\" nil 1)");
+    std::fs::write(&path, "ab").unwrap();
+    assert_eq!(ok(&mut s, &mixed), "(97 \"b\" nil 1)");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
