@@ -173,9 +173,6 @@ pub fn data_store_records(tags: &[RawTag]) -> Vec<&[RawTag]> {
     out
 }
 
-/// Whether an entity's groups hold SAT text: groups 1 and 3 inside its `AcDbModelerGeometry`
-/// subclass. A file of a version before the subclass markers has no `100` groups: all of its
-/// groups (before the extended data) are the entity's.
 /// The ACIS version a modeler entity's SAT text declares (the first number of its first line:
 /// 400, 700, 21800…), if it has SAT text.
 pub fn sat_version(tags: &[RawTag]) -> Option<u32> {
@@ -186,13 +183,16 @@ pub fn sat_version(tags: &[RawTag]) -> Option<u32> {
             in_modeler = r.value.trim().eq_ignore_ascii_case("AcDbModelerGeometry");
         } else if in_modeler && r.code == 1 {
             let first = r.value.split_whitespace().next()?;
-            // DXF before 2007 encodes SAT text: each character but a space is 159 minus it ("hoo" is 700).
+            // DXF before 2013 encodes SAT text: each character but a space is 159 minus it ("hoo" is 700).
             return first.parse().ok().or_else(|| first.bytes().map(|b| char::from(159u8.wrapping_sub(b))).collect::<String>().parse().ok());
         }
     }
     None
 }
 
+/// Whether an entity's groups hold SAT text: groups 1 and 3 inside its `AcDbModelerGeometry`
+/// subclass. A file of a version before the subclass markers has no `100` groups: all of its
+/// groups (before the extended data) are the entity's.
 pub fn has_sat_text(tags: &[RawTag]) -> bool {
     let own = tags.iter().take_while(|r| r.code < 1000);
     let marked = tags.iter().take_while(|r| r.code < 1000).any(|r| r.code == 100);

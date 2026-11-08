@@ -284,7 +284,7 @@ fn a_dwg_keeps_sat_text_solids_only_before_2013() {
     assert_eq!(not_saved_as(&d, Version::R2018), [("3DSOLID".to_string(), 2)].into_iter().collect(), "2018 loses it");
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "400 85 1 0")])).unwrap();
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2)].into_iter().collect(), "ACIS 4.0 SAT is listed");
-    // The same versions encoded, as a DXF before 2007 holds them: 700 is kept, 400 is listed.
+    // The same versions encoded, as a DXF before 2013 holds them: 700 is kept, 400 is listed.
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "hoo o n o")])).unwrap();
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2)].into_iter().collect(), "encoded ACIS 7.0 SAT is kept");
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "koo gj n o")])).unwrap();

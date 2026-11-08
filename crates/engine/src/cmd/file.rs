@@ -754,7 +754,7 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
     } else if is_dxf_file(format!("drawing.{fmt}")) {
-        report_sat_text_dropped(s, &mut r, version);
+        report_acis_dropped(s, &mut r, version);
     }
     Ok(r)
 }
@@ -850,7 +850,7 @@ pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<Strin
 pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
     if is_dxf_file(path) {
         let version = drawing_version(s, path);
-        report_sat_text_dropped(s, r, version);
+        report_acis_dropped(s, r, version);
     } else {
         let lost = loss_on_save(s, path);
         report_not_saved(s, r, &lost);
@@ -876,7 +876,7 @@ fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
 /// Say on the command line which solid modeler entities a DXF of `version` left out: from 2013
 /// those with SAT-text ACIS data, which such files keep in a data store instead; before 2013 those
 /// whose geometry is only in the data store, which such files don't have (#2334).
-fn report_sat_text_dropped(s: &mut Session, r: &mut Value, version: Version) {
+fn report_acis_dropped(s: &mut Session, r: &mut Value, version: Version) {
     let modern = version >= Version::R2013;
     // The drawing a file holds: the host while the Block Editor is open.
     let lost = s.state().map(|st| cadcraft_doc::foreign::acis_dropped(st.drawing(), modern)).unwrap_or_default();
@@ -939,7 +939,7 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
     } else if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
-        report_sat_text_dropped(s, &mut r, version);
+        report_acis_dropped(s, &mut r, version);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);
