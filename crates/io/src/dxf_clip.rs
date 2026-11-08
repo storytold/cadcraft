@@ -3,7 +3,8 @@
 //! The filter holds the boundary vertices in the reference's coordinates (group 70 the count,
 //! 10/20 the vertices), whether clipping is on (71), the front and back clip (72/73, 40/41) and
 //! two 3×4 matrices (group 40, row by row): the inverse of the reference's transform, which takes
-//! the boundary into the block's coordinates, and the boundary's own transform (identity here).
+//! the boundary into the block's coordinates, and the boundary's own transform (composed with
+//! the inverse transform when non-identity, e.g. on clipboard-pasted block references).
 //!
 //! An inverted clip ("Invert clip") is marked as the reference app writes it in a file: the
 //! filter has an extension dictionary whose `ACAD_XREC_ROUNDTRIP` entry is an XRECORD holding
@@ -15,7 +16,7 @@
 //! written. The record goes through DWG as it is.
 //!
 //! Reading takes the planar filters the model can hold out of the kept foreign data and puts them
-//! on the references ([`read`]); others (front/back clipping, a skewed boundary transform) stay
+//! on the references ([`read`]); others (front/back clipping, non-planar extrusion) stay
 //! foreign and are written back untouched. Writing adds the dictionaries and the filter of every
 //! clipped reference to a copy of the drawing's foreign data ([`prepare`]), which the raw-data
 //! writer (#528) then places on the reference.
@@ -164,9 +165,19 @@ fn roundtrip(f: &Foreign, idx: &Index, filter: &ForeignObject) -> Option<Vec<Vec
     (same && boundary.len() >= 2).then_some(boundary)
 }
 
-/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates; with `boundary`, the
-/// clip is inverted and that is its outline (in the filter's coordinates). `None` for anything
-/// the model can't hold as it is (it then stays foreign).
+/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates.
+///
+/// Per the Autodesk DXF Reference for `SPATIAL_FILTER`:
+/// - Group 40 (first 12 values): 3×4 matrix representing the inverse of the block reference
+///   transformation (maps coordinates from WCS to block local space).
+/// - Group 40 (second 12 values): 3×4 matrix representing the transformation of the clipping
+///   boundary itself (maps boundary coordinate space to WCS, e.g. on clipboard-pasted references).
+///
+/// The net point transformation `boundary_xf.then(inverse)` transforms vertices from boundary
+/// coordinates to block coordinates: $P_{\text{block}} = M_{\text{inverse}} \times M_{\text{boundary}} \times P_{\text{boundary}}$.
+///
+/// With `boundary`, the clip is inverted and that is its outline (in the filter's coordinates).
+/// Returns `None` for unsupported configurations (e.g. non-planar extrusion, front/back clipping depth).
 fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoundary> {
     let count = usize::try_from(number(&o.tags, 70)? as i64).ok()?;
     if !(2..=MAX_CLIP_VERTICES).contains(&count) {
@@ -541,6 +552,8 @@ mod tests {
         }
     }
 
+    /// Builds a mock SPATIAL_FILTER [`ForeignObject`] with a 10×10 rectangle boundary:
+    /// (0,0), (10,0), (10,10), (0,10).
     fn make_test_filter(inverse: &Mat3, own: &Mat3) -> ForeignObject {
         let mut tags = vec![
             raw(100, "AcDbFilter"),
@@ -567,6 +580,7 @@ mod tests {
         ForeignObject { handle: Handle(0x100), kind: "SPATIAL_FILTER".into(), tags }
     }
 
+    /// Baseline check: verifies `parse_filter` accepts filters where the boundary matrix is identity.
     #[test]
     fn parse_filter_accepts_identity_boundary_transform() {
         // Baseline: parse_filter accepts filters where the second matrix is Identity.
@@ -575,19 +589,16 @@ mod tests {
         assert!(parsed.is_some(), "Baseline filter with identity own matrix must be accepted");
     }
 
+    /// Regression test: verifies `parse_filter` preserves filters with a non-identity translation matrix.
     #[test]
     fn parse_filter_preserves_non_identity_boundary_transform() {
         // WHY:
         // SPATIAL_FILTER can contain two transformation matrices.
-        // parse_filter currently rejects every non-identity `own` matrix,
+        // parse_filter previously rejected every non-identity `own` matrix,
         // causing an otherwise valid clipping definition to be discarded.
         //
         // This test captures the parser limitation. The expected coordinate
-        // mapping must be established from the DXF matrix semantics and
-        // Mat3::then() before changing the parser implementation.
-        //
-        // This is a synthetic regression test, not yet a reproduction of
-        // GitHub issue #2845. A real AutoCAD DWG fixture is still required.
+        // mapping is established from the DXF matrix semantics and Mat3::then().
 
         let inverse = Mat3::IDENTITY;
         let own = Mat3::translate(Vec2::new(100.0, 50.0));
@@ -602,5 +613,23 @@ mod tests {
         assert!(clip.points[1].near(Vec2::new(110.0, 50.0), 1e-9));
         assert!(clip.points[2].near(Vec2::new(110.0, 60.0), 1e-9));
         assert!(clip.points[3].near(Vec2::new(100.0, 60.0), 1e-9));
+    }
+
+    /// Verifies `boundary_xf.then(inverse)` correctly composes rotation, scaling, and translation.
+    #[test]
+    fn parse_filter_applies_rotation_and_scale_boundary_transform() {
+        let boundary_xf = Mat3::scale(2.0, 2.0).then(Mat3::rotate(std::f64::consts::FRAC_PI_2)).then(Mat3::translate(Vec2::new(50.0, 20.0)));
+        let inverse = Mat3::translate(Vec2::new(-10.0, -5.0));
+
+        let filter = make_test_filter(&inverse, &boundary_xf);
+        let parsed = parse_filter(&filter, None);
+
+        assert!(parsed.is_some(), "Combined scale, rotation, and translation boundary transform must be parsed");
+        let clip = parsed.unwrap();
+        assert_eq!(clip.points.len(), 4);
+        assert!(clip.points[0].near(Vec2::new(40.0, 15.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(40.0, 35.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(20.0, 35.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(20.0, 15.0), 1e-9));
     }
 }
