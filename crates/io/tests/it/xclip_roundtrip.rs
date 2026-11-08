@@ -205,8 +205,8 @@ fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
     let loaded = read(mutated.as_bytes(), "a.dxf").unwrap();
     let loaded_clips = clips(&loaded);
     let ins_clip = loaded_clips[0].as_ref().expect("clip must be preserved");
-    assert!(ins_clip.points[0].near(Vec2::new(30.0, 25.0), 1e-9));
-    assert!(ins_clip.points[1].near(Vec2::new(90.0, 85.0), 1e-9));
+    assert!(ins_clip.points[0].near(Vec2::new(10.0, 15.0), 1e-9));
+    assert!(ins_clip.points[1].near(Vec2::new(70.0, 75.0), 1e-9));
 
     for v in [Version::R2004, Version::R2010, Version::R2018] {
         let dxf_back = read(&save(&loaded, "resaved.dxf", v), "resaved.dxf").unwrap();

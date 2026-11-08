@@ -170,11 +170,14 @@ fn roundtrip(f: &Foreign, idx: &Index, filter: &ForeignObject) -> Option<Vec<Vec
 /// Per the Autodesk DXF Reference for `SPATIAL_FILTER`:
 /// - Group 40 (first 12 values): 3×4 matrix representing the inverse of the block reference
 ///   transformation (maps coordinates from WCS to block local space).
-/// - Group 40 (second 12 values): 3×4 matrix representing the transformation of the clipping
-///   boundary itself (maps boundary coordinate space to WCS, e.g. on clipboard-pasted references).
+/// - Group 40 (second 12 values): 3×4 matrix representing the transformation into the coordinate
+///   system of the clip boundary ($WCS \to \text{Boundary}$).
 ///
-/// The net point transformation `boundary_xf.then(inverse)` transforms vertices from boundary
-/// coordinates to block coordinates: $P_{\text{block}} = M_{\text{inverse}} \times M_{\text{boundary}} \times P_{\text{boundary}}$.
+/// Since boundary vertices (group 10/20) are stored in the clip boundary's coordinate system,
+/// transforming them into the block's local coordinates requires inverting the boundary transform
+/// ($\text{Boundary} \to WCS$) and then applying the inverse block transform ($WCS \to \text{Block}$):
+/// $P_{\text{block}} = M_{\text{inverse}} \times (M_{\text{boundary\_xf}})^{-1} \times P_{\text{boundary}}$.
+/// In code: `boundary_xf.inverse()?.then(inverse)`.
 ///
 /// With `boundary`, the clip is inverted and that is its outline (in the filter's coordinates).
 /// Returns `None` for unsupported configurations (e.g. non-planar extrusion, front/back clipping depth).
@@ -202,7 +205,7 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
     if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
         return None;
     }
-    let net = boundary_xf.then(inverse);
+    let net = boundary_xf.inverse()?.then(inverse);
     let points: Vec<Vec2> = outline.iter().map(|p| net.apply(*p)).collect();
     if !points.iter().all(|p| p.is_finite()) {
         return None;
@@ -597,8 +600,8 @@ mod tests {
         // parse_filter previously rejected every non-identity `own` matrix,
         // causing an otherwise valid clipping definition to be discarded.
         //
-        // This test captures the parser limitation. The expected coordinate
-        // mapping is established from the DXF matrix semantics and Mat3::then().
+        // Matrix 2 transforms WCS into boundary coordinates; its inverse transforms
+        // boundary coordinates into WCS, mapping (0..10, 0..10) shifted by (-100, -50).
 
         let inverse = Mat3::IDENTITY;
         let own = Mat3::translate(Vec2::new(100.0, 50.0));
@@ -609,13 +612,13 @@ mod tests {
         assert!(parsed.is_some(), "A valid non-identity boundary transform must not cause the filter to be discarded");
         let clip = parsed.unwrap();
         assert_eq!(clip.points.len(), 4);
-        assert!(clip.points[0].near(Vec2::new(100.0, 50.0), 1e-9));
-        assert!(clip.points[1].near(Vec2::new(110.0, 50.0), 1e-9));
-        assert!(clip.points[2].near(Vec2::new(110.0, 60.0), 1e-9));
-        assert!(clip.points[3].near(Vec2::new(100.0, 60.0), 1e-9));
+        assert!(clip.points[0].near(Vec2::new(-100.0, -50.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-90.0, -50.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-90.0, -40.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(-100.0, -40.0), 1e-9));
     }
 
-    /// Verifies `boundary_xf.then(inverse)` correctly composes rotation, scaling, and translation.
+    /// Verifies `boundary_xf.inverse()?.then(inverse)` correctly composes rotation, scaling, and translation.
     #[test]
     fn parse_filter_applies_rotation_and_scale_boundary_transform() {
         let boundary_xf = Mat3::scale(2.0, 2.0).then(Mat3::rotate(std::f64::consts::FRAC_PI_2)).then(Mat3::translate(Vec2::new(50.0, 20.0)));
@@ -627,9 +630,9 @@ mod tests {
         assert!(parsed.is_some(), "Combined scale, rotation, and translation boundary transform must be parsed");
         let clip = parsed.unwrap();
         assert_eq!(clip.points.len(), 4);
-        assert!(clip.points[0].near(Vec2::new(40.0, 15.0), 1e-9));
-        assert!(clip.points[1].near(Vec2::new(40.0, 35.0), 1e-9));
-        assert!(clip.points[2].near(Vec2::new(20.0, 35.0), 1e-9));
-        assert!(clip.points[3].near(Vec2::new(20.0, 15.0), 1e-9));
+        assert!(clip.points[0].near(Vec2::new(-20.0, 20.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-20.0, 15.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-15.0, 15.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(-15.0, 20.0), 1e-9));
     }
 }
