@@ -3668,3 +3668,97 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// A SOLID hatch record with `loops` (flags, edges, sources) and nothing else.
+fn solid_hatch(loops: &[(i32, String)]) -> String {
+    // Edges counted by their group codes (every other line), not by text that a coordinate
+    // ending in 72 would match too.
+    let edge_count = |edges: &str| edges.split('\n').step_by(2).filter(|code| *code == "72").count();
+    let body: String = loops.iter().map(|(flags, edges)| format!("92\n{flags}\n93\n{}\n{edges}97\n0\n", edge_count(edges))).collect();
+    format!("0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n1\n2\nSOLID\n70\n1\n71\n0\n91\n{}\n{body}75\n0\n76\n1\n98\n0\n", loops.len())
+}
+
+fn hatch_line(x0: f64, y0: f64, x1: f64, y1: f64) -> String {
+    format!("72\n1\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n")
+}
+
+fn hatch_square(lo: f64, hi: f64) -> String {
+    [hatch_line(lo, lo, hi, lo), hatch_line(hi, lo, hi, hi), hatch_line(hi, hi, lo, hi), hatch_line(lo, hi, lo, lo)].concat()
+}
+
+fn read_hatch_records(records: &[String]) -> (Drawing, Vec<Hatch>) {
+    let text = format!("0\nSECTION\n2\nENTITIES\n{}0\nENDSEC\n0\nEOF\n", records.concat());
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = hatches(&d);
+    (d, h)
+}
+
+fn loop_box(l: &HatchLoop) -> [f64; 4] {
+    let b = cadcraft_geom::Polyline { vertices: l.vertices.clone(), closed: true }.bounds();
+    [b.min.x, b.min.y, b.max.x, b.max.y]
+}
+
+/// The text box kept is the one inside the fill, and it is a hole there: the fill's display
+/// list covers the fill but not the box.
+#[test]
+fn hatch_text_box_inside_the_fill_stays_as_its_hole() {
+    let (d, h) = read_hatch_records(&[solid_hatch(&[(1, hatch_square(0.0, 10.0)), (137, hatch_square(2.0, 4.0)), (153, hatch_square(20.0, 22.0))])]);
+    assert_eq!(h[0].loops.iter().map(loop_box).collect::<Vec<_>>(), [[0.0, 0.0, 10.0, 10.0], [2.0, 2.0, 4.0, 4.0]]);
+    let l = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+    let tris: Vec<Vec2> = l.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Tris).flat_map(|p| l.points(p).to_vec()).collect();
+    let covered = |q: Vec2| {
+        tris.as_chunks::<3>().0.iter().any(|t| {
+            let side = |a: Vec2, b: Vec2| (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+            let (s0, s1, s2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
+            (s0 >= 0.0 && s1 >= 0.0 && s2 >= 0.0) || (s0 <= 0.0 && s1 <= 0.0 && s2 <= 0.0)
+        })
+    };
+    assert!(covered(Vec2::new(1.0, 1.0)) && covered(Vec2::new(7.0, 7.0)), "the fill");
+    assert!(!covered(Vec2::new(3.0, 3.0)), "the hole of the text box");
+    assert!(!covered(Vec2::new(21.0, 21.0)), "nothing beside it");
+}
+
+/// A fill with curved edges (a full circle of two arcs) holds the text box at its middle; the
+/// one beside it, inside the circle's bounds but not the circle, goes.
+#[test]
+fn hatch_text_box_in_a_curved_fill_stays_and_one_outside_it_goes() {
+    // Edge type 2: an arc (centre, radius, start and end angle, counter-clockwise).
+    let arc = |a0: f64, a1: f64| format!("72\n2\n10\n0\n20\n0\n40\n10\n50\n{a0}\n51\n{a1}\n73\n1\n");
+    let circle = [arc(0.0, 180.0), arc(180.0, 360.0)].concat();
+    let corner =
+        [hatch_line(8.5, 8.5, 9.5, 8.5), hatch_line(9.5, 8.5, 9.5, 9.5), hatch_line(9.5, 9.5, 8.5, 9.5), hatch_line(8.5, 9.5, 8.5, 8.5)].concat();
+    let (_, h) = read_hatch_records(&[solid_hatch(&[(1, circle), (137, hatch_square(-1.0, 1.0)), (153, corner)])]);
+    let boxes: Vec<[f64; 4]> = h[0].loops.iter().skip(1).map(loop_box).collect();
+    assert_eq!(boxes, [[-1.0, -1.0, 1.0, 1.0]]);
+}
+
+/// A text box without edges has no centre and is left out, without a panic, even where an empty
+/// outline's inverted bounds would put its centre at the origin, on the fill. (Coordinates that
+/// aren't numbers don't reach it: the reader takes them as 0.)
+#[test]
+fn hatch_text_box_without_edges_is_left_out() {
+    let (_, h) = read_hatch_records(&[solid_hatch(&[(1, hatch_square(0.0, 10.0)), (137, String::new()), (137, String::new())])]);
+    assert_eq!(h[0].loops.iter().map(loop_box).collect::<Vec<_>>(), [[0.0, 0.0, 10.0, 10.0]]);
+}
+
+/// Past the work bound (text boxes times outline points) the text boxes are kept, inside and
+/// beside the fill alike, as before the check: a hole too many rather than a covered label.
+#[test]
+fn hatch_text_boxes_past_the_work_bound_are_all_kept() {
+    // A fill of 1000 edges and 4001 text boxes beside it: 4 001 000, past the bound.
+    let n = 1000;
+    let fill: String = (0..n)
+        .map(|k| {
+            let a0 = std::f64::consts::TAU * f64::from(k) / f64::from(n);
+            let a1 = std::f64::consts::TAU * f64::from(k + 1) / f64::from(n);
+            hatch_line(10.0 * a0.cos(), 10.0 * a0.sin(), 10.0 * a1.cos(), 10.0 * a1.sin())
+        })
+        .collect();
+    let mut loops = vec![(1, fill)];
+    loops.extend((0..4001).map(|k| (153, hatch_square(20.0 + 3.0 * f64::from(k), 21.0 + 3.0 * f64::from(k)))));
+    let (_, h) = read_hatch_records(&[solid_hatch(&loops)]);
+    assert_eq!(h[0].loops.len(), 4002, "all text boxes kept");
+    // Within the bound the same boxes beside the fill go.
+    let (_, h) = read_hatch_records(&[solid_hatch(&[(1, hatch_square(0.0, 10.0)), (153, hatch_square(20.0, 21.0))])]);
+    assert_eq!(h[0].loops.len(), 1);
+}
