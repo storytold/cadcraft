@@ -802,10 +802,11 @@ mod native {
 
     /// Table styles' R2010+ row cell styles (`_TITLE`, `_HEADER`, `_DATA`) with the style's cell
     /// margins (#2920). Without row cell styles of its own (as after reading a DXF), acadrust
-    /// 0.6.6's DWG writer builds them with no margin override, and AutoCAD then reads the style's
-    /// margins as 0.06 where the drawing has another value. They are built here the way that
-    /// writer builds them, with the margins the writer gives the base `Table` cell style.
-    /// Styles that carry row cell styles already, and versions before 2010, are left alone.
+    /// 0.6.6's DWG writer builds them with no margin override, and the reference app then reads
+    /// the style's margins as 0.06 where the drawing has another value. They are built here the
+    /// way that writer builds them, with the margins the writer gives the base `Table` cell
+    /// style. Only missing rows are added: a row a style carries already keeps its values.
+    /// Versions before 2010 are left alone.
     fn table_style_row_margins(doc: &mut acadrust::CadDocument) {
         use acadrust::objects::{
             NamedTableCellStyle, ObjectType, RowCellStyle, TableCellBorder, TableCellStyleData, TableContentFormat, TableGridFormat,
@@ -814,21 +815,21 @@ mod native {
         if doc.version < acadrust::DxfVersion::AC1024 {
             return;
         }
+        // The writer gives text styles read without a handle (R12, HANDLING 0) one before it looks
+        // rows up; do it first so a row finds its style by name here as it would there.
+        doc.assign_table_entry_handles();
         // A row's text style as the writer finds it: its handle when it is a text style's, else
         // its name's; a null handle is left for the writer, which gives such a row Standard.
         let text_styles = &doc.text_styles;
-        let handles: std::collections::HashSet<Handle> = text_styles.iter().map(|ts| ts.handle).collect();
+        let handles: std::collections::HashSet<Handle> = text_styles.iter().map(|ts| ts.handle).filter(|h| !h.is_null()).collect();
         let text_style = |row: &RowCellStyle| {
             row.text_style_handle
-                .filter(|h| handles.contains(h))
+                .filter(|h| !h.is_null() && handles.contains(h))
                 .or_else(|| text_styles.get(&row.text_style_name).map(|ts| ts.handle))
                 .unwrap_or(Handle::NULL)
         };
         for o in doc.objects.values_mut() {
             let ObjectType::TableStyle(s) = o else { continue };
-            if !s.modern_overrides.is_empty() {
-                continue;
-            }
             let (v, hz) = (s.vertical_margin, s.horizontal_margin);
             let row_style = |row: &RowCellStyle, id: i32, style_type: i32, name: &str, merge_flags: i32| {
                 // R2010+ edge order; the grid flag is set for a hidden edge, the reverse of the
@@ -881,11 +882,23 @@ mod native {
                     name: name.to_string(),
                 }
             };
-            s.modern_overrides = vec![
-                (1, row_style(&s.title_row_style, 1, 1, "_TITLE", 0x8000)),
-                (2, row_style(&s.header_row_style, 2, 1, "_HEADER", 0)),
-                (3, row_style(&s.data_row_style, 3, 2, "_DATA", 0)),
-            ];
+            // Only the rows the style doesn't already carry (a DXF's CELLSTYLEMAP may hold some of
+            // them), found by name: a custom cell style may use any key. The ones it has keep their
+            // values, and an added row goes before the first entry with a higher key, so a partial
+            // map still lists _TITLE, _HEADER, _DATA in that order.
+            for (id, style_type, name, merge_flags) in [(1, 1, "_TITLE", 0x8000), (2, 1, "_HEADER", 0), (3, 2, "_DATA", 0)] {
+                if s.modern_overrides.iter().any(|(_, o)| o.name.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+                let row = match id {
+                    1 => &s.title_row_style,
+                    2 => &s.header_row_style,
+                    _ => &s.data_row_style,
+                };
+                let row = row_style(row, id, style_type, name, merge_flags);
+                let at = s.modern_overrides.iter().position(|(k, _)| *k > id).unwrap_or(s.modern_overrides.len());
+                s.modern_overrides.insert(at, (id, row));
+            }
         }
     }
 
@@ -1212,6 +1225,88 @@ mod native {
             assert_eq!(table_merges_within(&mut doc, usize::MAX), 100);
         }
 
+        /// A style that carries some row cell styles already (a DXF's partial CELLSTYLEMAP) gets
+        /// the missing rows, and the ones it has keep their values (review on #2921).
+        #[test]
+        fn partial_row_cell_styles_get_the_missing_rows() {
+            use acadrust::objects::{NamedTableCellStyle, ObjectType};
+            let mut doc = acadrust::CadDocument::new();
+            doc.version = acadrust::DxfVersion::AC1032;
+            table_style_row_margins(&mut doc);
+            let mut styles = 0;
+            for o in doc.objects.values_mut() {
+                let ObjectType::TableStyle(s) = o else { continue };
+                s.horizontal_margin = 1.0;
+                s.vertical_margin = 0.25;
+                s.modern_overrides.retain(|(_, row)| row.name == "_DATA");
+                for (_, row) in &mut s.modern_overrides {
+                    row.cell_style.horizontal_margin = 9.0;
+                }
+                // A custom cell style on key and id 1 doesn't stand for _TITLE.
+                let custom = NamedTableCellStyle { id: 1, name: "Highlight".into(), ..NamedTableCellStyle::default() };
+                s.modern_overrides.push((1, custom));
+                styles += 1;
+            }
+            assert!(styles > 0, "the drawing has no table style");
+            table_style_row_margins(&mut doc);
+            for o in doc.objects.values() {
+                let ObjectType::TableStyle(s) = o else { continue };
+                let rows: Vec<_> = s.modern_overrides.iter().map(|(k, row)| (*k, row.name.as_str())).collect();
+                assert_eq!(rows, [(1, "_TITLE"), (2, "_HEADER"), (3, "_DATA"), (1, "Highlight")], "rows in order, custom one kept");
+                for (_, row) in &s.modern_overrides {
+                    let c = &row.cell_style;
+                    let margins = (c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin);
+                    match row.name.as_str() {
+                        "_TITLE" | "_HEADER" => assert_eq!(margins, (1, 1.0, 0.25, 1.0, 0.25), "{} gets the style's margins", row.name),
+                        "_DATA" => assert_eq!(c.horizontal_margin, 9.0, "the _DATA row keeps its value"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        /// Before 2010 a DWG has no row cell styles: the style is left as it is.
+        #[test]
+        fn pre_2010_table_styles_get_no_row_cell_styles() {
+            for version in [acadrust::DxfVersion::AC1018, acadrust::DxfVersion::AC1021] {
+                let mut doc = acadrust::CadDocument::new();
+                doc.version = version;
+                table_style_row_margins(&mut doc);
+                for o in doc.objects.values() {
+                    let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+                    assert!(s.modern_overrides.is_empty(), "{version:?}");
+                }
+            }
+        }
+
+        /// A row whose text style was read without a handle (R12, HANDLING 0) still finds it by
+        /// name, as the writer would after giving it a handle, rather than falling to Standard.
+        #[test]
+        fn a_row_finds_a_text_style_read_without_a_handle() {
+            let mut doc = acadrust::CadDocument::new();
+            doc.version = acadrust::DxfVersion::AC1032;
+            let romans = acadrust::tables::TextStyle::new("ROMANS");
+            assert!(romans.handle.is_null());
+            assert!(doc.text_styles.add(romans).is_ok());
+            for o in doc.objects.values_mut() {
+                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+                s.data_row_style.text_style_name = "ROMANS".into();
+                s.data_row_style.text_style_handle = None;
+            }
+            table_style_row_margins(&mut doc);
+            let romans = doc.text_styles.get("ROMANS").map(|ts| ts.handle);
+            assert!(romans.is_some_and(|h| !h.is_null()), "ROMANS has a handle now");
+            let mut rows = 0;
+            for o in doc.objects.values() {
+                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+                for (_, row) in s.modern_overrides.iter().filter(|(_, r)| r.name == "_DATA") {
+                    assert_eq!(Some(row.cell_style.content_format.text_style), romans);
+                    rows += 1;
+                }
+            }
+            assert!(rows > 0);
+        }
+
         /// A height marked only in the style's override flags (as newer files store it) is kept,
         /// and the same height with no flag at all is cleared (review on #2588). Tested on the
         /// read document because acadrust's DWG writer doesn't write the override flags.
@@ -1421,8 +1516,8 @@ mod tests {
         assert_eq!(Some(doc.header.current_text_style_handle), romans);
     }
 
-    /// A 2010+ DWG's table style row cell styles carry the style's margins, as AutoCAD writes
-    /// them: without them AutoCAD reads the margins as 0.06 where the drawing has 1.0 (#2920).
+    /// A 2010+ DWG's table style row cell styles carry the style's margins, as the reference app
+    /// writes them: without them it reads the margins as 0.06 where the drawing has 1.0 (#2920).
     /// DWG 2004 has no row cell styles and keeps the margins in the style itself.
     #[cfg(not(no_dwg_bridge))]
     #[test]
