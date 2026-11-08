@@ -21,17 +21,38 @@ fn records(text: &str) -> Vec<Vec<(i32, String)>> {
     out
 }
 
+/// The value of the record's first group `code`.
 fn value(r: &[(i32, String)], code: i32) -> Option<&str> {
     r.iter().find(|(c, _)| *c == code).map(|(_, v)| v.as_str())
 }
 
-/// A file whose APPID table has `Other_App` (handle 7A00), which no xdata names.
-fn source() -> String {
+/// A file whose APPID table has `Other_App` (handle 7A00), which no xdata names; with `xdata`,
+/// a line's xdata names it as `OTHER_APP`.
+fn source(xdata: bool) -> String {
     let mut out = String::new();
     let mut put = |c: i32, v: &str| out.push_str(&format!("{c:>3}\n{v}\n"));
     for r in records(&write_dxf(&Drawing::new_metric())) {
         for (c, v) in &r {
             put(*c, v);
+        }
+        if xdata && r[0].1 == "SECTION" && value(&r, 2) == Some("ENTITIES") {
+            for (c, v) in [
+                (0, "LINE"),
+                (5, "7A01"),
+                (100, "AcDbEntity"),
+                (8, "0"),
+                (100, "AcDbLine"),
+                (10, "0"),
+                (20, "0"),
+                (30, "0"),
+                (11, "10"),
+                (21, "0"),
+                (31, "0"),
+                (1001, "OTHER_APP"),
+                (1000, "x"),
+            ] {
+                put(c, v);
+            }
         }
         if r[0].1 == "TABLE" && value(&r, 2) == Some("APPID") {
             let table = value(&r, 5).unwrap_or("0").to_string();
@@ -51,22 +72,39 @@ fn source() -> String {
     out
 }
 
-/// Whether the DXF has an APPID record named `Other_App`.
-fn appid(text: &str) -> bool {
-    records(text).into_iter().any(|r| r[0].1 == "APPID" && value(&r, 2) == Some("Other_App"))
+/// How many APPID records of the DXF are named `Other_App`, in any case.
+fn appids(text: &str) -> usize {
+    records(text).into_iter().filter(|r| r[0].1 == "APPID" && value(r, 2).is_some_and(|n| n.eq_ignore_ascii_case("Other_App"))).count()
 }
 
 #[test]
 fn registered_applications_no_xdata_names_are_kept() {
-    let mut d = read_dxf(source().as_bytes()).expect("read");
+    let mut d = read_dxf(source(false).as_bytes()).expect("read");
     for generation in 1..=2 {
         let text = write_dxf(&d);
-        assert!(appid(&text), "DXF {generation}");
+        assert_eq!(appids(&text), 1, "DXF {generation}");
         d = read_dxf(text.as_bytes()).expect("reread");
     }
     for generation in 1..=2 {
         let dwg = write(&d, "kept.dwg").expect("DWG");
         d = read(&dwg, "kept.dwg").expect("DWG read");
-        assert!(appid(&write_dxf(&d)), "DWG {generation}");
+        assert_eq!(appids(&write_dxf(&d)), 1, "DWG {generation}");
+    }
+}
+
+/// An application both registered and named by xdata, in another case, gets one record.
+#[test]
+fn a_registered_application_xdata_names_gets_one_record() {
+    let mut d = read_dxf(source(true).as_bytes()).expect("read");
+    for generation in 1..=2 {
+        let text = write_dxf(&d);
+        assert!(text.contains("OTHER_APP"), "DXF {generation}: the line's xdata is kept");
+        assert_eq!(appids(&text), 1, "DXF {generation}");
+        d = read_dxf(text.as_bytes()).expect("reread");
+    }
+    for generation in 1..=2 {
+        let dwg = write(&d, "kept.dwg").expect("DWG");
+        d = read(&dwg, "kept.dwg").expect("DWG read");
+        assert_eq!(appids(&write_dxf(&d)), 1, "DWG {generation}");
     }
 }
