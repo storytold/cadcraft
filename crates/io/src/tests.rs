@@ -2787,6 +2787,27 @@ fn hatch_edges_keep_full_circles_splines_and_clockwise_ellipses() {
     near(hatch_edge_extents(&ellipse(1)), [-5.0, 0.0, 5.0, 2.5]);
 }
 
+/// A text box loop (92 bit 8) only cuts a text out of the fill around it. One beside the fill
+/// (a label next to a solid-filled dot) isn't filled itself: odd parity alone filled it as a
+/// black box over the text. One inside the fill stays as its hole.
+#[test]
+fn hatch_text_box_beside_the_fill_is_not_filled() {
+    let line = |x0: f64, y0: f64, x1: f64, y1: f64| format!("72\n1\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n");
+    let square = |lo: f64, hi: f64| [line(lo, lo, hi, lo), line(hi, lo, hi, hi), line(hi, hi, lo, hi), line(lo, hi, lo, lo)].concat();
+    let text = format!(
+        "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n1\n2\nSOLID\n70\n1\n71\n0\n\
+         91\n3\n92\n1\n93\n4\n{}97\n0\n92\n137\n93\n4\n{}97\n0\n92\n153\n93\n4\n{}97\n0\n75\n0\n76\n1\n98\n0\n0\nENDSEC\n0\nEOF\n",
+        square(0.0, 10.0),
+        square(2.0, 4.0),
+        square(20.0, 22.0)
+    );
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = hatches(&d);
+    assert_eq!(h[0].loops.len(), 2, "the fill and the text box inside it");
+    let b = d.extents(&Space::Model);
+    assert!(b.max.x <= 10.0 + 1e-9 && b.max.y <= 10.0 + 1e-9, "extents {b:?}");
+}
+
 /// Issue #923: a HATCH spline edge caps its degree at 10 like the SPLINE reader does, both when the
 /// knots are valid for the stated degree and when the reader falls back to the control polygon.
 #[test]

@@ -1,3 +1,5 @@
+use cadcraft_geom::{Polyline, point_in_polygon};
+
 use super::common::T;
 use super::{Color, EntityKind, Gradient, Handle, Hatch, HatchLoop, PolyVertex, Rgb, Spline, Tag, Vec2};
 
@@ -24,8 +26,10 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        // Bit 8: the box around a text the hatch leaves out (a text island).
+        loops.push((HatchLoop { vertices: verts, outer, sources }, flags & 8 != 0));
     }
+    let loops = without_free_text_boxes(loops);
     let solid = solid || pattern.eq_ignore_ascii_case("SOLID");
     let (scale, angle) = (t.fd(41, 1.0), t.fd(52, 0.0).to_radians());
     // Keep the file's definition lines even for a name the library knows: the library's versions
@@ -47,6 +51,43 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         background,
         pattern_lines,
     }))
+}
+
+/// Most comparisons of text boxes with loop vertices; past it the text boxes are left out.
+const MAX_TEXT_BOX_WORK: usize = 4_000_000;
+
+/// The loops without the text boxes that lie in no other loop. A text box only cuts the text
+/// out of the fill around it; one with no fill around it is never filled itself (a box around
+/// a label beside a solid-filled dot), while odd parity alone would fill it. A text box inside
+/// another loop stays and is a hole there.
+fn without_free_text_boxes(loops: Vec<(HatchLoop, bool)>) -> Vec<HatchLoop> {
+    if loops.iter().all(|(_, text_box)| !text_box) {
+        return loops.into_iter().map(|(l, _)| l).collect();
+    }
+    let areas: Vec<Vec<Vec2>> = loops
+        .iter()
+        .filter(|(_, text_box)| !text_box)
+        .map(|(l, _)| {
+            let outline = Polyline { vertices: l.vertices.clone(), closed: true };
+            let b = outline.bounds();
+            let tol = ((b.width() + b.height()) * 1e-3).max(1e-9);
+            outline.tessellate(if tol.is_finite() { tol } else { 1e-3 })
+        })
+        .collect();
+    let boxes = loops.iter().filter(|(_, text_box)| *text_box).count();
+    let vertices: usize = areas.iter().map(Vec::len).sum();
+    let within_budget = boxes.saturating_mul(vertices) <= MAX_TEXT_BOX_WORK;
+    loops
+        .into_iter()
+        .filter(|(l, text_box)| {
+            if !text_box {
+                return true;
+            }
+            let centre = Polyline { vertices: l.vertices.clone(), closed: true }.bounds().center();
+            within_budget && centre.x.is_finite() && centre.y.is_finite() && areas.iter().any(|a| point_in_polygon(a, centre))
+        })
+        .map(|(l, _)| l)
+        .collect()
 }
 
 fn seek_code(tags: &[Tag], index: &mut usize, code: i32) {
