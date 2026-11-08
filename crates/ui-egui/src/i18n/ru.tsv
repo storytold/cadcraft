@@ -193,6 +193,7 @@
 	Command History	Журнал команд
 	Command Line	Командная строка
 	Command Line History Lines	Строки журнала командной строки
+	Command Mode	Режим команды
 	Command Reference	Справочник команд
 	Command line history	История командной строки
 	Commits	Коммиты
@@ -240,6 +241,7 @@
 	Cut with Base Point	Вырезать с базовой точкой
 	Cyan	Голубой
 	Cylinder	Цилиндр
+	Default Mode	Режим по умолчанию
 	DWG	DWG
 	DWG Reference...	Ссылка на DWG...
 	DXF	DXF
@@ -333,6 +335,7 @@
 	Edit Attributes...	Редактировать атрибуты...
 	Edit Block Definition	Редактировать описание блока
 	Edit Command Aliases (PGP)...	Редактировать псевдонимы команд (PGP)...
+	Edit Mode	Режим редактирования
 	Edit Multileader	Редактировать мультивыноску
 	Edit Table Cell	Редактировать ячейку таблицы
 	Edit Text...	Редактировать текст...
@@ -605,6 +608,7 @@
 	Load Application...	Загрузить приложение...
 	Loaded	Загружено
 	Lock viewport	Заблокировать видовой экран
+	Longer click duration:	Длительность долгого щелчка:
 	Ltscale	Масштаб типа линии
 	Linetype...	Тип линии...
 	Lineweight	Вес линии
@@ -624,6 +628,7 @@
 	Lock Layer	Заблокировать слой
 	Lock/Unlock	Заблокировать/разблокировать
 	Loft	Тело по сечениям
+	milliseconds	мс
 	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Не аффилировано с Autodesk, Inc.
 	MODEL	МОДЕЛЬ
 	MText	Многострочный текст
@@ -703,6 +708,7 @@
 	No contributor data was built into this copy.	В эту сборку не включены данные об участниках.
 	No external references are attached.	Внешние ссылки не присоединены.
 	No model credits were built into this copy.	В эту сборку не включены данные о моделях.
+	No objects selected and no command running:	Ничего не выбрано и команда не выполняется:
 	No saved layer states	Нет сохраненных состояний слоев
 	No selection	Ничего не выделено
 	No supported 3D mouse found	Поддерживаемая 3D-мышь не найдена
@@ -714,6 +720,7 @@
 	Not available yet	Пока недоступно
 	Not loaded	Не загружено
 	Numbered list	Нумерованный список
+	Objects selected and no command running:	Объекты выбраны, команда не выполняется:
 	OK	ОК
 	Object	Объект
 	Object Snap	Объектная привязка
@@ -836,11 +843,17 @@
 	Reload	Обновить
 	Reload All	Обновить все
 	Remove Vertex	Удалить вершину
+	Repeat last command	Повторить последнюю команду
 	Reset Panel Layout	Сбросить расположение панелей
 	Reset keeps the interface language.	Сброс сохраняет язык интерфейса.
 	Reset to Defaults	Восстановить значения по умолчанию
 	Reverse zoom direction	Обратное направление масштабирования
+	Right-Click Customization	Настройка правой кнопки мыши
+	Right-Click Customization...	Настройка правой кнопки мыши...
 	Run Script...	Выполнить сценарий...
+	Shortcut Menu	Контекстное меню
+	Shortcut Menu: always enabled	Контекстное меню: всегда включено
+	Shortcut Menu: enabled when command options are present	Контекстное меню: включено, когда у команды есть параметры
 	SVG drawings (SVG, SVGZ)	Чертежи SVG (SVG, SVGZ)
 	Sample output	Пример вывода
 	Save Block	Сохранить блок
@@ -903,7 +916,8 @@
 	Track orthogonally only	Отслеживать только ортогонально
 	Track using all polar angle settings	Отслеживать по всем полярным углам
 	Turn On Layer	Включить слой
-	Turned off, a right-click while a command runs always opens the shortcut menu.	Если выключено, правый щелчок во время команды всегда открывает контекстное меню.
+	Turn on time-sensitive right-click	Включить правый щелчок с учетом времени
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Если выключено, правый щелчок во время команды делает то, что задано для режима команды в настройке правой кнопки мыши.
 	Type an alias name.	Введите имя псевдонима.
 	US Survey Feet	Геодезические футы США
 	US Survey Inch	Геодезический дюйм США
@@ -1064,6 +1078,8 @@
 	Visual Effect Settings...	Параметры визуальных эффектов...
 	When a command is active	Когда команда активна
 	When no command is active	Когда нет активной команды
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Во время команды быстрый щелчок работает как Enter, а долгий открывает контекстное меню.
+	While a command runs:	Во время выполнения команды:
 	Window <	Рамка <
 	Window selection color:	Цвет рамки выбора:
 	Working Set	Рабочий набор
