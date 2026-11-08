@@ -377,7 +377,7 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
 /// `LayerN` offered and selected, so typing replaces it. Enter moves the selection, Escape or a
 /// click elsewhere drops it; a taken or bad name keeps the field (the reason is on the command line).
 fn new_layer_field(app: &mut CadApp, ui: &mut egui::Ui, clicked: bool) {
-    let id = ui.id().with("laynewsel_name");
+    let id = ui.scope_id().with("laynewsel_name");
     // (the text, focus given)
     let mut editing: Option<(String, bool)> = ui.data(|m| m.get_temp(id));
     if clicked {
@@ -401,7 +401,7 @@ fn new_layer_field(app: &mut CadApp, ui: &mut egui::Ui, clicked: bool) {
             let w = ui.available_width() - 10.0;
             let resp = ui.add_sized(
                 vec2(w, 24.0),
-                egui::TextEdit::singleline(text).id(egui::Id::new("laynewsel_field")).hint_text(crate::tl!("New layer name")),
+                egui::TextEdit::singleline(text).id(egui::Id::unique("laynewsel_field")).hint_text(crate::tl!("New layer name")),
             );
             if !*ready {
                 // Focus until the field has it (the command line takes typing from a field without
