@@ -97,7 +97,7 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && pick_bounds(d, e).contains(p)) || in_text(d, e, p) {
+    if (filled && entity_bounds(d, e, 0).contains(p)) || in_blank_mtext(e, p) || in_text(d, e, p) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
@@ -165,10 +165,11 @@ fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
     t.contents.replace(r"\~", " ").chars().all(char::is_whitespace)
 }
 
-/// The box a blank MTEXT is picked in (#2810): its width (the text height when it has none) by its
-/// text height, placed by its attachment point and turned by its rotation about the insertion
-/// point. `None` for any other entity, or a blank MTEXT without a usable size or position.
-pub(crate) fn blank_mtext_box(e: &Entity) -> Option<Bounds2> {
+/// The frame a blank MTEXT is picked in (#2810): its insertion point, rotation and the box before
+/// turning (`x0, x1, y0, y1` about the insertion point): its width (the text height when it has
+/// none) by its text height, placed by its attachment point. `None` for any other entity, or a
+/// blank MTEXT without a usable size or position.
+fn blank_mtext_frame(e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
     let EntityKind::MText(t) = &e.kind else { return None };
     if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
         return None;
@@ -185,8 +186,22 @@ pub(crate) fn blank_mtext_box(e: &Entity) -> Option<Bounds2> {
         7..=9 => h,
         _ => 0.0,
     };
-    let corners = [Vec2::new(dx, top), Vec2::new(dx + w, top), Vec2::new(dx + w, top - h), Vec2::new(dx, top - h)];
-    Some(Bounds2::from_points(corners.map(|c| t.insert.xy() + c.rotate(t.rotation))))
+    Some((t.insert.xy(), t.rotation, [dx, dx + w, top - h, top]))
+}
+
+/// The box around a blank MTEXT's turned frame, for the spatial index and windows (a crossing
+/// window may catch a little extra near a corner, as it does for other text).
+pub(crate) fn blank_mtext_box(e: &Entity) -> Option<Bounds2> {
+    let (o, rot, [x0, x1, y0, y1]) = blank_mtext_frame(e)?;
+    let corners = [Vec2::new(x0, y1), Vec2::new(x1, y1), Vec2::new(x1, y0), Vec2::new(x0, y0)];
+    Some(Bounds2::from_points(corners.map(|c| o + c.rotate(rot))))
+}
+
+/// Whether `p` is on a blank MTEXT: inside its box turned with the text, not the larger box around it.
+fn in_blank_mtext(e: &Entity, p: Vec2) -> bool {
+    let Some((o, rot, [x0, x1, y0, y1])) = blank_mtext_frame(e) else { return false };
+    let q = (p - o).rotate(-rot);
+    q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1
 }
 
 /// The box `e` is selected by: its drawn bounds, or for a blank MTEXT (whose drawn bounds are
@@ -607,6 +622,19 @@ mod tests {
         let h = d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
         assert_eq!(at(&d, 2.0, -1.0), Some(h));
         assert_eq!(at(&d, 5.0, -1.0), None);
+    }
+
+    /// A turned blank MTEXT is hit in its turned box, not in the axis-aligned box around it (whose
+    /// empty corners lie off the text).
+    #[test]
+    fn a_turned_blank_mtext_is_picked_in_its_turned_box() {
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 1, 30f64.to_radians())).unwrap();
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.05);
+        // Local (5, -1.25), the centre of the box.
+        assert_eq!(at(4.955, 1.418), Some(h));
+        // Inside the box around the turned one, but local (2.87, 2.96) is above the text.
+        assert_eq!(at(1.0, 4.0), None);
     }
 
     /// A drawing large enough for the spatial index must still offer a blank MTEXT as a candidate.
