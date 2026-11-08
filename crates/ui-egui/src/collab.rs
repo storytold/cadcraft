@@ -16,6 +16,10 @@ pub enum Request {
     Op(Op),
     /// Where the participant is looking.
     Presence(Presence),
+    /// Undo this participant's last operation.
+    Undo(String),
+    /// Write the file the cabinet stores, at this version.
+    Commit(u64),
 }
 
 /// What the worker reports to the UI.
@@ -26,6 +30,8 @@ pub enum Update {
     Rejected(Reject),
     /// Another participant's view.
     Presence(Presence),
+    /// The file a commit produced.
+    Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
     /// The connection ended; the message says why.
     Lost(String),
 }
@@ -97,6 +103,18 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
                         return;
                     }
                 }
+                Ok(Request::Undo(op_id)) => {
+                    if session.undo(&op_id).is_err() {
+                        let _ = updates.send(Update::Lost("the connection closed".into()));
+                        return;
+                    }
+                }
+                Ok(Request::Commit(version)) => {
+                    if session.commit(version).is_err() {
+                        let _ = updates.send(Update::Lost("the connection closed".into()));
+                        return;
+                    }
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
@@ -110,6 +128,9 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
             }
             Ok(Event::Presence(presence)) => {
                 let _ = updates.send(Update::Presence(presence));
+            }
+            Ok(Event::Committed { version, not_saved, bytes }) => {
+                let _ = updates.send(Update::Committed { version, not_saved, bytes });
             }
             Ok(Event::Error { message, .. }) => {
                 let _ = updates.send(Update::Lost(message));
@@ -127,7 +148,6 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
         }
     }
 }
-
 
 impl crate::CadApp {
     /// Attach a shared session; commands then go to the server instead of the local drawing.
@@ -161,6 +181,20 @@ impl crate::CadApp {
                 Update::Rejected(rejected) => self.session.echo(format!("shared session: {}", rejected.message)),
                 Update::Presence(presence) => {
                     self.remote_presence.insert(presence.actor.clone(), presence);
+                }
+                Update::Committed { version, not_saved, bytes } => {
+                    let path = self.session.state().ok().and_then(|state| state.path.clone());
+                    let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
+                    let temporary = format!("{path}.tmp");
+                    match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
+                        Ok(()) => {
+                            self.session.echo(format!("shared session: wrote {path} (version {version})"));
+                            if !not_saved.is_empty() {
+                                self.session.echo(format!("the format did not keep: {not_saved:?}"));
+                            }
+                        }
+                        Err(error) => self.session.echo(format!("shared session: could not write {path}: {error}")),
+                    }
                 }
                 Update::Lost(reason) => {
                     self.session.echo(format!("shared session ended: {reason}"));
@@ -197,6 +231,20 @@ impl crate::CadApp {
         if !collab.role().may_write() {
             return Some(Err("this shared session is read-only".into()));
         }
+        if matches!(id, "u" | "undo") {
+            let op_id = format!("local-undo-{}", self.collab_seq);
+            self.collab_seq = self.collab_seq.saturating_add(1);
+            collab.send(Request::Undo(op_id));
+            return Some(Ok(serde_json::json!({ "queued": true })));
+        }
+        if id == "redo" || id == "mr" {
+            return Some(Err("redo is not available in a shared session yet".into()));
+        }
+        if matches!(id, "save" | "qsave" | "saveas") {
+            let version = self.collab_version;
+            collab.send(Request::Commit(version));
+            return Some(Ok(serde_json::json!({ "queued": true })));
+        }
         let (space, selection) = match self.session.state() {
             Ok(state) => (state.space.clone(), state.selection.clone()),
             Err(error) => return Some(Err(error.to_string())),
@@ -219,10 +267,7 @@ impl crate::CadApp {
 
 /// Commands whose result depends on other objects: the server runs them in its order (ADR-0004).
 pub fn is_structural(command: &str) -> bool {
-    matches!(
-        command,
-        "laydel" | "laymrg" | "rename" | "layout.delete" | "layout.rename" | "layout.copy" | "block.delete" | "group.delete"
-    )
+    matches!(command, "laydel" | "laymrg" | "rename" | "layout.delete" | "layout.rename" | "layout.copy" | "block.delete" | "group.delete")
 }
 
 #[cfg(test)]
