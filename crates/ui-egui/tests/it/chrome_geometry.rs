@@ -200,3 +200,16 @@ fn the_windows_layout_has_no_collapsed_tool_sets_strip() {
     h.run_steps(3);
     assert!(h.query_by_label("Expand Tool Sets").is_some());
 }
+
+#[test]
+fn only_the_ribbon_hides_the_collapsed_tool_sets_strip() {
+    // Tool Sets hidden in both cases; the Ribbon is the one thing that changes.
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    h.state_mut().ui.show_toolsets = false;
+    h.state_mut().ui.show_ribbon = true;
+    h.run_steps(3);
+    assert!(h.query_by_label("Expand Tool Sets").is_none(), "the Ribbon is shown");
+    h.state_mut().ui.show_ribbon = false;
+    h.run_steps(3);
+    assert!(h.query_by_label("Expand Tool Sets").is_some(), "the Ribbon is hidden");
+}
