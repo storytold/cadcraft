@@ -205,10 +205,29 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
         let lits: Vec<&str> = match p.get("names") {
             Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
             Some(Value::String(t)) => vec![t.as_str()],
-            _ => Vec::new(),
+            _ => str_param(p, "name").into_iter().collect(),
         };
         let d = s.doc()?;
-        let names: Vec<String> = xrefs(d).filter(|b| lits.iter().any(|l| l.eq_ignore_ascii_case(&b.name))).map(|b| b.name.clone()).collect();
+        let mut names = Vec::new();
+        let mut selected = std::collections::HashSet::new();
+        for literal in &lits {
+            if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
+                if selected.insert(block.name.to_lowercase()) {
+                    names.push(block.name.clone());
+                }
+                continue;
+            }
+            let normalized = literal.to_lowercase();
+            let mut matches = xrefs(d).filter(|block| block.name.to_lowercase() == normalized);
+            if let Some(block) = matches.next() {
+                if matches.next().is_some() {
+                    return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
+                }
+                if selected.insert(block.name.to_lowercase()) {
+                    names.push(block.name.clone());
+                }
+            }
+        }
         if names.is_empty() {
             return Err(bad(cmd, format!("no xref named \"{}\"", lits.join(","))));
         }

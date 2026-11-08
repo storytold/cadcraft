@@ -34,10 +34,23 @@ pub(super) fn default_path(s: &Session, layout: &str) -> String {
     let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (base.len() == 4 && (base.starts_with("COM") || base.starts_with("LPT")) && base.ends_with(|c: char| ('1'..='9').contains(&c)));
     let file = if reserved { format!("_{name}.dwt") } else { format!("{name}.dwt") };
-    match s.state().ok().and_then(|st| st.path.clone()) {
-        Some(p) => std::path::Path::new(&p).with_file_name(&file).to_string_lossy().into_owned(),
-        None => file,
+    let candidate = match s.state().ok().and_then(|st| st.path.clone()) {
+        Some(p) => std::path::Path::new(&p).with_file_name(&file),
+        None => std::path::PathBuf::from(file),
+    };
+    if !candidate.exists() {
+        return candidate.to_string_lossy().into_owned();
     }
+    let stem = candidate.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
+    let extension = candidate.extension().and_then(|e| e.to_str()).unwrap_or("dwt");
+    let parent = candidate.parent().unwrap_or_else(|| std::path::Path::new(""));
+    for suffix in 2u64.. {
+        let alternative = parent.join(format!("{stem}-{suffix}.{extension}"));
+        if !alternative.exists() {
+            return alternative.to_string_lossy().into_owned();
+        }
+    }
+    unreachable!("the default layout template filename suffix space is exhausted")
 }
 
 /// `path` with `.dwt` added when it has no extension; an error for any other file type.

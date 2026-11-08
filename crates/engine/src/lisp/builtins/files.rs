@@ -27,8 +27,10 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
     if !writing {
         match read_text_file(&path) {
             Some(t) => {
-                // The lines are separate Strings: their headers cost memory the text length hides.
-                charge_bytes(t.len().saturating_add(t.lines().count().saturating_mul(std::mem::size_of::<String>())))?;
+                // Each line has a String header and a separately allocated buffer. Charge a
+                // conservative 64 bytes per line for both, including the allocator's minimum
+                // allocation size, before collecting so many short lines cannot evade the budget.
+                charge_bytes(t.len().saturating_add(t.lines().count().saturating_mul(64)))?;
                 f.lines = t.lines().map(str::to_string).collect();
             }
             None => return Ok(Flow::Value(Value::Nil)),
