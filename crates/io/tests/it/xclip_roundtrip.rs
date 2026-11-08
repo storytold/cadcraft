@@ -172,6 +172,8 @@ fn hostile_spatial_filters_do_not_panic() {
     }
 }
 
+/// Verifies that a `SPATIAL_FILTER` with a non-identity boundary transform matrix is preserved
+/// across DXF and DWG round-trips (R2004, R2010, R2018), while a sheared filter stays foreign.
 #[test]
 fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
     let mut d = Drawing::new_metric();
@@ -220,4 +222,15 @@ fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
         let dwg_back = read(&save(&loaded, "resaved.dwg", v), "resaved.dwg").unwrap();
         same(&clips(&dwg_back), &clips(&loaded));
     }
+
+    // Index 13 = Matrix 2 row 0, col 1 (shear term c). A sheared filter cannot be represented
+    // losslessly as a planar 2D clip and must remain in `foreign.objects` untouched.
+    lines[g40_indices[13]] = "0.5".to_string();
+    let sheared_dxf = lines.join("\r\n") + "\r\n";
+    let sheared_loaded = read(sheared_dxf.as_bytes(), "a.dxf").unwrap();
+    assert!(clips(&sheared_loaded)[0].is_none(), "sheared filter must not be converted into a lossy clip");
+    assert!(
+        sheared_loaded.foreign.objects.iter().any(|o| o.kind.eq_ignore_ascii_case("SPATIAL_FILTER")),
+        "sheared SPATIAL_FILTER must be preserved in foreign objects"
+    );
 }

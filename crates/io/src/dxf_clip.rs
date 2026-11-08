@@ -212,11 +212,23 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         return None;
     }
     let verts = vertices(&o.tags, count)?;
-    let outline = boundary.unwrap_or(&verts);
-    if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
+    let raw_outline = boundary.unwrap_or(&verts);
+    if !(2..=MAX_CLIP_VERTICES).contains(&raw_outline.len()) {
         return None;
     }
     let net = boundary_xf.inverse()?.then(inverse);
+    // Expand a 2-corner rectangle to 4 corners when boundary_xf introduces rotation relative
+    // to the block, preserving its rotated orientation (e.g. at 45° where 2 corners would collapse).
+    let rotated_rect;
+    let boundary_rotated = boundary_xf.b.abs() > 1e-9 || boundary_xf.c.abs() > 1e-9;
+    let net_rotated = net.b.abs() > 1e-9 || net.c.abs() > 1e-9;
+    let outline = match raw_outline {
+        [a, b] if boundary_rotated && net_rotated => {
+            rotated_rect = vec![*a, Vec2::new(b.x, a.y), *b, Vec2::new(a.x, b.y)];
+            &rotated_rect[..]
+        }
+        other => other,
+    };
     let points: Vec<Vec2> = outline.iter().map(|p| net.apply(*p)).collect();
     if !points.iter().all(|p| p.is_finite()) {
         return None;
@@ -686,5 +698,34 @@ mod tests {
         let small_shear = Mat3 { a: 0.001, b: 0.0, c: 0.0005, d: 0.001, e: 0.0, f: 0.0 };
         let filter = make_test_filter(&inverse, &small_shear);
         assert!(parse_filter(&filter, None).is_none(), "Small-scale sheared transform must be rejected");
+    }
+
+    /// Verifies that a 2-corner rectangle rotated by 45° expands to 4 corners instead of collapsing.
+    #[test]
+    fn parse_filter_expands_rotated_two_corner_boundary() {
+        let mut tags = vec![
+            raw(100, "AcDbFilter"),
+            raw(100, "AcDbSpatialFilter"),
+            raw(70, 2),
+            raw(10, 0.0),
+            raw(20, 0.0),
+            raw(10, 10.0),
+            raw(20, 10.0),
+            raw(210, 0.0),
+            raw(220, 0.0),
+            raw(230, 1.0),
+            raw(71, 1),
+            raw(72, 0),
+            raw(73, 0),
+        ];
+        // A 45° rotation maps (0,0) and (10,10) to points sharing Y = 0; without 4-corner expansion
+        // the resulting 2-point bounding box would have zero height and be discarded.
+        let boundary_xf = Mat3::rotate(std::f64::consts::FRAC_PI_4);
+        for v in matrix_values(&Mat3::IDENTITY).into_iter().chain(matrix_values(&boundary_xf)) {
+            tags.push(raw(40, v));
+        }
+        let filter = ForeignObject { handle: Handle(0x102), kind: "SPATIAL_FILTER".into(), tags };
+        let clip = parse_filter(&filter, None).expect("45° rotated 2-corner clip must not collapse");
+        assert_eq!(clip.points.len(), 4);
     }
 }
