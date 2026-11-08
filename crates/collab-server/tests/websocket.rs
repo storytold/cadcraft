@@ -130,3 +130,56 @@ fn a_connection_with_an_unknown_token_is_refused() {
         other => panic!("expected an auth error, got {other:?}"),
     }
 }
+
+fn next_session_applied(session: &mut cadcraft_collab_client::Session, version: u64) -> Applied {
+    use cadcraft_collab_client::Event;
+    for _ in 0..16 {
+        if let Event::Applied(applied) = session.next_event().expect("an event")
+            && applied.version == version
+        {
+            return applied;
+        }
+    }
+    panic!("no applied answer for version {version}");
+}
+
+#[test]
+fn a_reconnecting_client_catches_up() {
+    use cadcraft_collab_client::Session;
+
+    let room = Room::new(Drawing::new_metric()).unwrap();
+    let auth = Arc::new(StaticAuthenticator::new([
+        ("token-a".to_string(), Claims { sub: "a".into(), doc: "d1".into(), role: Role::Editor }),
+        ("token-b".to_string(), Claims { sub: "b".into(), doc: "d1".into(), role: Role::Editor }),
+    ]));
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{addr}");
+    let timeout = Duration::from_secs(3);
+
+    let mut a = Session::connect(&url, "token-a", "d1", None, timeout).unwrap();
+    let mut b = Session::connect(&url, "token-b", "d1", None, timeout).unwrap();
+
+    a.submit(line_op("a", "a1", 0.0)).unwrap();
+    let _ = next_session_applied(&mut a, 1);
+    let _ = next_session_applied(&mut b, 1);
+
+    // b leaves and misses one operation.
+    let replica = b.drawing().clone();
+    drop(b);
+    a.submit(line_op("a", "a2", 5.0)).unwrap();
+    let _ = next_session_applied(&mut a, 2);
+
+    // it comes back with its replica and catches up from the journal.
+    let mut b = Session::connect_from(&url, "token-b", "d1", replica, 1, timeout).unwrap();
+    assert_eq!(b.version(), 1);
+    b.resync(b.version()).unwrap();
+    for _ in 0..8 {
+        let _ = b.next_event().unwrap();
+        if b.version() == 2 {
+            break;
+        }
+    }
+    assert_eq!(b.version(), 2);
+    assert_eq!(b.drawing().space(&Space::Model), a.drawing().space(&Space::Model));
+}

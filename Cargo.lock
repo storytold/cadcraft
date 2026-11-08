@@ -697,6 +697,7 @@ version = "0.17.0"
 dependencies = [
  "cadcraft-collab",
  "cadcraft-doc",
+ "cadcraft-io",
  "serde_json",
  "thiserror 2.0.21",
  "tungstenite",
