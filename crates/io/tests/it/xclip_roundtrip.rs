@@ -234,3 +234,33 @@ fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
         "sheared SPATIAL_FILTER must be preserved in foreign objects"
     );
 }
+
+/// Verifies that a rotated `INSERT` with an inverted 2-point block-space `ClipBoundary`
+/// round-trips losslessly across DXF and DWG (`R2004`, `R2010`, `R2018`), exercising both
+/// the `block_space_rect` writer branch (`boundary_xf = *inverse`) and the `ROUNDTRIP` record.
+#[test]
+fn inverted_rotated_2point_clip_round_trips() {
+    let mut d = Drawing::new_metric();
+    let mut block = Block::new("Plan");
+    block.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::new(-10.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) })));
+    d.blocks.insert(block.name.clone(), Arc::new(block));
+
+    let clip = ClipBoundary { inverted: true, ..ClipBoundary::new(vec![Vec2::new(-2.0, -1.0), Vec2::new(2.0, 1.0)]) };
+    let ins = Insert {
+        block: "Plan".into(),
+        insert: Vec3::new(10.0, 20.0, 0.0),
+        scale: Vec3::new(2.0, 2.0, 1.0),
+        rotation: 0.3,
+        clip: Some(clip),
+        ..Insert::default()
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+
+    for v in [Version::R2004, Version::R2010, Version::R2018] {
+        let dxf_back = read(&save(&d, "inv_rot.dxf", v), "inv_rot.dxf").unwrap();
+        same(&clips(&dxf_back), &clips(&d));
+
+        let dwg_back = read(&save(&d, "inv_rot.dwg", v), "inv_rot.dwg").unwrap();
+        same(&clips(&dwg_back), &clips(&d));
+    }
+}
