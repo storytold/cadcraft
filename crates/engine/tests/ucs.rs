@@ -266,6 +266,27 @@ fn ucs_view_and_the_tilted_options() {
     }
 }
 
+/// UCS View on a twisted view: X runs along the screen's horizontal, not the world's.
+#[test]
+fn ucs_view_follows_the_view_twist() {
+    let mut s = session();
+    typed(&mut s, &["ucs 100,50 "]);
+    // The drawing appears turned 90° counterclockwise, so the screen's X is the world's -Y.
+    s.execute("dview", &json!({"twist": 90.0})).unwrap();
+    typed(&mut s, &["ucs v"]);
+    let u = s.ucs();
+    assert!(near3(u.origin, Vec3::new(100.0, 50.0, 0.0)), "origin kept: {u:?}");
+    assert!(near3(u.x, Vec3::new(0.0, -1.0, 0.0)) && near3(u.y, Vec3::new(1.0, 0.0, 0.0)), "{u:?}");
+    // The JSON form gives the same frame; with no twist, the World axes.
+    s.execute("dview", &json!({"twist": 30.0})).unwrap();
+    s.execute("ucs", &json!({"option": "view"})).unwrap();
+    let a = -30f64.to_radians();
+    assert!(near3(s.ucs().x, Vec3::new(a.cos(), a.sin(), 0.0)), "{:?}", s.ucs());
+    s.execute("dview", &json!({"twist": 0.0})).unwrap();
+    s.execute("ucs", &json!({"option": "view"})).unwrap();
+    assert!(near3(s.ucs().x, Vec3::new(1.0, 0.0, 0.0)) && near3(s.ucs().origin, Vec3::new(100.0, 50.0, 0.0)));
+}
+
 #[test]
 fn a_ucs_change_is_undone_like_an_edit() {
     let mut s = session();
