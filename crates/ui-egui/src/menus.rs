@@ -501,8 +501,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
             let system_cursor = app.system_cursor_default;
-            // The user's shortcuts and import folder are preferences, not palette layout.
+            // The user's shortcuts, import folder and storey setup are preferences, not palette layout.
             let (shortcuts, last_pgp_dir) = (std::mem::take(&mut app.ui.shortcuts), app.ui.last_pgp_dir.take());
+            let storey_setup = std::mem::take(&mut app.ui.storey_setup);
             app.ui = crate::UiState {
                 in_window_menu: menu,
                 theme,
@@ -513,6 +514,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 system_cursor,
                 shortcuts,
                 last_pgp_dir,
+                storey_setup,
                 ..Default::default()
             };
             Ok(Value::Null)

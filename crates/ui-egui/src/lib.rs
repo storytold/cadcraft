@@ -509,6 +509,9 @@ impl CadApp {
         if !self.ui.shortcuts.is_empty() {
             prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
+        if self.ui.storey_setup != storeys::StoreySetup::default() {
+            prefs["storeySetup"] = json!(self.ui.storey_setup);
+        }
         prefs.to_string()
     }
 
@@ -547,6 +550,9 @@ impl CadApp {
         }
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
+        }
+        if let Some(setup) = v.get("storeySetup").and_then(|s| storeys::StoreySetup::deserialize(s).ok()) {
+            self.ui.storey_setup = setup;
         }
     }
 

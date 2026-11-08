@@ -41,6 +41,9 @@ pub struct DImage {
     pub clips: Vec<Vec<Vec2>>,
     /// Fade towards the background, percent (0..=100).
     pub fade: u8,
+    /// A colour multiplied into every pixel (the ghost storey's colour, so a scanned blueprint
+    /// shows in it like the lines do); `None`: the pixels as they are.
+    pub tint: Option<Rgb>,
 }
 
 impl DImage {

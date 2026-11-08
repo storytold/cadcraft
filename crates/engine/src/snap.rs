@@ -448,10 +448,10 @@ fn gather_in(
         }
         let mut sink = Sink { osmode, aperture, probe, cands: &mut cands, near: &mut near_prims };
         sink.object(&e.kind, None);
+        // A blueprint without hatches: not the hatches inside its blocks (or its dimensions' blocks) either.
+        let no_hatches = !d.ghost_hatches && d.is_ghost(e);
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
-            // A blueprint without hatches: not the hatches inside its blocks either.
-            let no_hatches = !d.ghost_hatches && d.is_ghost(e);
             block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| {
                 if !(no_hatches && matches!(k, EntityKind::Hatch(_))) {
                     sink.object(k, Some(m));
@@ -459,7 +459,7 @@ fn gather_in(
             });
         }
         if let EntityKind::Dimension(dm) = &e.kind {
-            sink.dimension(d, dm, &mut budget, frozen);
+            sink.dimension(d, dm, &mut budget, frozen, no_hatches);
         }
     }
     Some((cands, near_prims))
@@ -707,7 +707,7 @@ impl Sink<'_> {
     /// A dimension snaps to what it draws, as in AutoCAD (into its block): the objects of its
     /// block when the drawing has one (read from a file), else the lines generated from it
     /// (Endpoint on their ends); Node on its definition points.
-    fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
+    fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String], no_hatches: bool) {
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
                 // The block holds world geometry: a reference at its own base point places it as is.
@@ -723,7 +723,11 @@ impl Sink<'_> {
                     row_spacing: 0.0,
                     clip: None,
                 };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| {
+                    if !(no_hatches && matches!(k, EntityKind::Hatch(_))) {
+                        self.object(k, Some(m));
+                    }
+                });
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);

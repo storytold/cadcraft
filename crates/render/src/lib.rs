@@ -210,6 +210,7 @@ impl<'a> Builder<'a> {
             down: down * (i.size.y / f64::from(raster.height())),
             clips: clip.into_iter().collect(),
             fade: i.fade.min(100),
+            tint: self.ghost,
         };
         let corners = img.corners();
         if !corners.iter().all(|q| q.x.is_finite() && q.y.is_finite()) {

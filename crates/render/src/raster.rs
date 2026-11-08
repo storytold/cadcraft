@@ -272,10 +272,10 @@ fn image(pm: &mut Pixmap, img: &DImage, view: &View, alpha: u8, antialias: bool)
     let Ok(mask) = clip_mask(pm, img, view, antialias) else { return };
     // tiny-skia wants premultiplied pixels; opaque ones already are.
     let owned;
-    let pixels = if r.opaque() {
+    let pixels = if r.opaque() && img.tint.is_none() {
         tiny_skia::PixmapRef::from_bytes(r.rgba(), r.width(), r.height())
     } else {
-        owned = premultiplied(r);
+        owned = premultiplied(r, img.tint);
         owned.as_ref().map(Pixmap::as_ref)
     };
     let Some(pixels) = pixels else { return };
@@ -345,11 +345,13 @@ fn outline_path(outline: &[Vec2], view: &View) -> Option<tiny_skia::Path> {
 }
 
 /// The pixels of `r` with each colour multiplied by its alpha.
-fn premultiplied(r: &cadcraft_doc::Raster) -> Option<Pixmap> {
+/// The pixels premultiplied by their alpha, and by `tint` (see [`DImage::tint`]) when given.
+fn premultiplied(r: &cadcraft_doc::Raster, tint: Option<Rgb>) -> Option<Pixmap> {
+    let Rgb(tr, tg, tb) = tint.unwrap_or(Rgb(255, 255, 255));
     let mut data = Vec::with_capacity(r.rgba().len());
     for [red, green, blue, a] in r.rgba().as_chunks::<4>().0 {
-        let m = |c: &u8| ((u16::from(*c) * u16::from(*a) + 127) / 255) as u8;
-        data.extend_from_slice(&[m(red), m(green), m(blue), *a]);
+        let m = |c: &u8, t: u8| ((u32::from(*c) * u32::from(t) * u32::from(*a) + 255 * 127) / (255 * 255)) as u8;
+        data.extend_from_slice(&[m(red, tr), m(green, tg), m(blue, tb), *a]);
     }
     Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(r.width(), r.height())?)
 }

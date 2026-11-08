@@ -131,6 +131,28 @@ fn drawing_wide_layer_commands_reach_every_storey() {
 }
 
 #[test]
+fn style_renames_reach_every_storey() {
+    let (mut s, _, _) = building();
+    s.execute("style", &json!({ "name": "Notes", "current": false })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "DS", "current": false })).unwrap();
+    // Text and dimension on EG, renamed from OG1.
+    s.execute("storey.down", &json!({})).unwrap();
+    s.execute("style.current", &json!({ "name": "Notes" })).unwrap();
+    s.execute("dimstyle.current", &json!({ "name": "DS" })).unwrap();
+    let t = h(&s.execute("text", &json!({ "at": [0, 2], "height": 0.25, "text": "X" })).unwrap());
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap());
+    s.execute("style.current", &json!({ "name": "Standard" })).unwrap();
+    s.execute("dimstyle.current", &json!({ "name": "Standard" })).unwrap();
+    s.execute("storey.up", &json!({})).unwrap();
+    s.execute("style.rename", &json!({ "from": "Notes", "to": "Labels" })).unwrap();
+    s.execute("dimstyle.rename", &json!({ "from": "DS", "to": "DS2" })).unwrap();
+    let doc = s.doc().unwrap();
+    assert!(doc.text_style("Labels").is_some() && doc.dim_style("DS2").is_some(), "the renames stand");
+    assert!(matches!(dim(&s, t), EntityKind::Text(x) if x.style == "Labels"), "the text on EG follows");
+    assert!(matches!(dim(&s, d), EntityKind::Dimension(x) if x.style == "DS2"), "the dimension on EG follows");
+}
+
+#[test]
 fn the_guard_takes_back_a_command_that_reaches_another_storey() {
     let (mut s, eg, _) = building();
     let before = dump(&s);
@@ -703,6 +725,68 @@ fn blueprint_without_hatches_shows_and_snaps_hatches_of_the_current_storey_only(
     assert!(!snaps(&s), "a hatch not shown is not snapped to");
     let list = cadcraft_render::build(s.doc().unwrap(), &Space::Model, &cadcraft_render::Options::default());
     assert!(list.prims.iter().all(|p| p.handle != hatch));
+}
+
+#[test]
+fn blueprint_without_hatches_does_not_snap_hatches_inside_blocks_or_dimensions() {
+    let (mut s, _, _) = building();
+    // On EG: a hatch kept only in a block definition, shown through a dimension whose block is
+    // that definition.
+    s.execute("storey.current", &json!({ "name": "EG" })).unwrap();
+    let r = h(&s.execute("rectang", &json!({ "p1": [20, 0], "p2": [30, 5] })).unwrap());
+    s.execute("hatch", &json!({ "handles": [r.hex()] })).unwrap();
+    s.execute("erase", &json!({ "handles": [r.hex()] })).unwrap();
+    let hatch = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).map(|e| e.handle).expect("a hatch");
+    s.execute("block", &json!({ "name": "HB", "base": [0, 0], "handles": [hatch.hex()], "keep": "delete" })).unwrap();
+    let dm = h(&s.execute("dimlinear", &json!({ "p1": [20, 0], "p2": [30, 0], "at": [25, 6] })).unwrap());
+    let d = std::sync::Arc::make_mut(&mut s.state_mut().unwrap().doc);
+    d.model.modify(dm, |e| {
+        if let EntityKind::Dimension(x) = &mut e.kind {
+            x.block = Some("HB".into());
+            x.insertion_point = cadcraft_geom::Vec3::default();
+        }
+    });
+    s.execute("storey.current", &json!({ "name": "OG1" })).unwrap();
+    s.execute("storey.ghost", &json!({ "name": "EG" })).unwrap();
+    let modes = mode::END | mode::HATCH;
+    let snaps = |s: &Session| snap::osnap(s.doc().unwrap(), &Space::Model, Vec2::new(30.05, 5.0), 0.5, modes, None, false).is_some();
+    assert!(snaps(&s), "with hatches, the hatch in the dimension's block snaps");
+    std::sync::Arc::make_mut(&mut s.state_mut().unwrap().doc).ghost_hatches = false;
+    assert!(!snaps(&s), "a blueprint without hatches: not the hatch in a dimension's block");
+}
+
+#[test]
+fn a_raster_image_on_the_blueprint_shows_in_the_ghost_colour() {
+    use cadcraft_render::raster::{RasterOptions, View, render};
+    let (mut s, _, _) = building();
+    let eg = id_of(&s, "EG");
+    // A white scan on EG, 10 x 10 units right of the lines.
+    let d = std::sync::Arc::make_mut(&mut s.state_mut().unwrap().doc);
+    let mut c = cadcraft_doc::Common::default();
+    c.set_storey(Some(eg));
+    let img = cadcraft_doc::Image {
+        insert: cadcraft_geom::Vec3::new(20.0, 0.0, 0.0),
+        u: cadcraft_geom::Vec3::new(10.0, 0.0, 0.0),
+        v: cadcraft_geom::Vec3::new(0.0, 10.0, 0.0),
+        size: Vec2::new(1.0, 1.0),
+        path: "scan.png".into(),
+        ..cadcraft_doc::Image::default()
+    };
+    d.add(&Space::Model, c, EntityKind::Image(img)).unwrap();
+    d.rasters.insert("scan.png", std::sync::Arc::new(cadcraft_doc::Raster::new(1, 1, vec![255, 255, 255, 255]).unwrap()));
+    s.execute("storey.ghost", &json!({ "name": "EG" })).unwrap();
+    let d = s.doc().unwrap();
+    let list = cadcraft_render::build(d, &Space::Model, &cadcraft_render::Options::default());
+    assert_eq!(list.images.len(), 1, "the blueprint's image is drawn");
+    assert_eq!(list.images[0].tint, Some(d.ghost_color), "on screen too (the canvas tints by it)");
+    let view = View { center: Vec2::new(25.0, 5.0), scale: 10.0, width: 100, height: 100 };
+    let pm = render(&list, &view, &RasterOptions { antialias: false, ..Default::default() }).unwrap();
+    let p = pm.pixel(50, 50).unwrap();
+    let g = d.ghost_color;
+    assert!(
+        [p.red(), p.green(), p.blue()].iter().zip([g.0, g.1, g.2]).all(|(a, b)| a.abs_diff(b) <= 2),
+        "the white scan shows in the ghost colour, not white: {p:?}"
+    );
 }
 
 #[test]
