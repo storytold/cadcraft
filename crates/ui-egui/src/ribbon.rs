@@ -773,6 +773,12 @@ fn tooltip(cmd: &Cmd, enabled: bool) -> String {
     if enabled { format!("{label} ({})", cmd.id.to_uppercase()) } else { format!("{label} — {}", crate::tl!("not available yet")) }
 }
 
+/// egui hides `on_hover_text` on a disabled widget, so a greyed-out command needs `on_disabled_hover_text`.
+fn hover(resp: egui::Response, cmd: &Cmd, enabled: bool) -> egui::Response {
+    let text = tooltip(cmd, enabled);
+    if enabled { resp.on_hover_text(text) } else { resp.on_disabled_hover_text(text) }
+}
+
 /// A menu of command variants (or a collapsed panel's commands).
 fn variant_menu(ui: &mut egui::Ui, items: &[Cmd], out: &mut Option<Action>) {
     for v in items {
@@ -802,7 +808,7 @@ fn big(ui: &mut egui::Ui, r: Rect, cmd: &Cmd, variants: &'static [Cmd], out: &mu
         ui.painter().text(pos2(r.center().x, y + 13.0), Align2::CENTER_TOP, b, font(), col);
     }
     icons::describe_control(ui, &resp, cmd.label, None, false);
-    if resp.on_hover_text(tooltip(cmd, enabled)).clicked() && enabled {
+    if hover(resp, cmd, enabled).clicked() && enabled {
         *out = Some(Action::Start(cmd.id));
     }
     if !variants.is_empty() {
@@ -836,7 +842,7 @@ fn small(ui: &mut egui::Ui, r: Rect, cmd: &Cmd, variants: &'static [Cmd], out: &
         if enabled { t.text } else { t.text_faint },
     );
     icons::describe_control(ui, &resp, cmd.label, None, false);
-    if resp.on_hover_text(tooltip(cmd, enabled)).clicked() && enabled {
+    if hover(resp, cmd, enabled).clicked() && enabled {
         *out = Some(Action::Start(cmd.id));
     }
     if !variants.is_empty() {
@@ -854,7 +860,7 @@ fn icon_button(ui: &mut egui::Ui, r: Rect, cmd: &Cmd, out: &mut Option<Action>) 
     hover_fill(ui, r, &resp);
     paint_icon(ui.painter(), Rect::from_center_size(r.center(), vec2(SMALL_ICON, SMALL_ICON)), cmd, !enabled);
     icons::describe_control(ui, &resp, cmd.label, None, false);
-    if resp.on_hover_text(tooltip(cmd, enabled)).clicked() && enabled {
+    if hover(resp, cmd, enabled).clicked() && enabled {
         *out = Some(Action::Start(cmd.id));
     }
 }
