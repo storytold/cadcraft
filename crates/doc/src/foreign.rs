@@ -77,29 +77,17 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// The `$ACADVER` of the file all this was read from: its groups are in that version's form.
+    /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
+    /// later save must not take it for this one (#2471).
+    pub version: Option<String>,
 }
 
 impl Foreign {
-    /// a standard proxy entity whose exact source CLASS can be written back.
-    pub fn preserves_proxy_entity(&self, tags: &[RawTag]) -> bool {
-        if !self.complete_class_table {
-            return false;
-        }
-        let mut depth = 0usize;
-        for tag in tags.iter().take_while(|t| t.code < 1000) {
-            if tag.code == 102 {
-                let value = tag.value.trim();
-                if value.starts_with('{') {
-                    depth = depth.saturating_add(1);
-                } else if value == "}" {
-                    depth = depth.saturating_sub(1);
-                }
-            } else if tag.code == 91 && depth == 0 {
-                let class = tag.value.trim().parse::<usize>().ok().and_then(|n| n.checked_sub(500)).and_then(|i| self.classes.get(i));
-                return class.is_some_and(|c| c.iter().any(|t| t.code == 281 && t.value.trim() == "1"));
-            }
-        }
-        false
+    /// The class of the file's CLASSES a proxy's group 91 names (see [`class_number`]), if any.
+    /// Saving as DWG keeps a proxy with that class and leaves out one whose class it can't name.
+    pub fn proxy_class(&self, tags: &[RawTag]) -> Option<&str> {
+        class_index(class_number(tags.iter().map(|r| (r.code, r.value.as_str())))).and_then(|i| self.class_order.get(i)).map(String::as_str)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -279,4 +267,30 @@ impl Foreign {
             }
         }
     }
+}
+
+/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
+/// (an application's can hold a 91 of its own) and before any xdata.
+pub fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
+    let mut in_group = false;
+    for (i, (code, value)) in groups.into_iter().enumerate() {
+        match code {
+            1000.. => return None,
+            102 => in_group = value.as_ref().trim().starts_with('{'),
+            91 if !in_group => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A proxy's class number (see [`class_group`]).
+pub fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
+    let i = class_group(groups.clone())?;
+    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
+}
+
+/// The place in CLASSES a class number names (500 is the first class).
+pub fn class_index(number: Option<i64>) -> Option<usize> {
+    usize::try_from(number?.checked_sub(500)?).ok()
 }

@@ -88,12 +88,15 @@ fn opaque_registered_entities_survive_repeated_saves_with_their_original_class()
 }
 
 #[test]
-fn legacy_dwg_rejects_proxy_loss_while_legacy_dxf_retains_the_data() {
+fn legacy_dwg_leaves_proxies_out_while_legacy_dxf_retains_the_data() {
     let drawing = check(&source(DxfVersion::AC1032), "source.dwg");
     for target in [Version::R2000, Version::R2004, Version::R2007, Version::R2010] {
         let options = SaveOptions { version: Some(target), ..Default::default() };
-        let error = cadcraft_io::write_with(&drawing, "old.dwg", &options).unwrap_err().to_string();
-        assert!(error.contains("2013"), "{error}");
+        // A DWG before 2013 can't name the proxy's class: it is left out, and the rest is saved.
+        let bytes = cadcraft_io::write_with(&drawing, "old.dwg", &options).unwrap();
+        let reread = cadcraft_io::read(&bytes, "old.dwg").unwrap();
+        assert_eq!(reread.entity_count(), 1, "{target:?}");
+        assert!(reread.model.iter().all(|e| matches!(e.kind, EntityKind::Line(_))), "{target:?}");
         let bytes = cadcraft_io::write_with(&drawing, "old.dxf", &options).unwrap();
         check(&bytes, "old.dxf");
     }

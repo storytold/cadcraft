@@ -35,7 +35,7 @@ impl Class {
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
     ("dxf", Class::Standalone),
-    ("dwg", Class::Layer(0)),
+    ("dwg", Class::Standalone),
     ("color", Class::Layer(0)),
     ("doc", Class::Layer(1)),
     ("constraints", Class::Layer(2)),
@@ -57,7 +57,7 @@ pub const TABLE: &[(&str, Class)] = &[
 /// The L0 foundation is a small chain: `raster` builds on `color` and
 /// `geom`, which the §3 diagram draws on one line. The GPU backend (`gpu`)
 /// reuses the CPU reference (`compose`) for LUTs and parity tests.
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["dxf", "dwg"], &["geom", "color"], &["fonts", "render"]];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["geom", "color"], &["fonts", "render"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));

@@ -115,6 +115,67 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
 }
 
+/// Another program's proxy entity reaches a 2013 or later DWG with the class its group 91 names;
+/// before 2013, or when the file has no such class, the DWG leaves it out and says so.
+#[test]
+fn proxy_entities_are_reported_only_before_2013() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    use cadcraft_engine::doc::foreign::Foreign;
+    let proxy = |class: i64| {
+        EntityKind::Unknown(Unknown {
+            dxf_type: "ACAD_PROXY_ENTITY".into(),
+            tags: vec![
+                RawTag { code: 8, value: "0".into() },
+                RawTag { code: 90, value: "498".into() },
+                RawTag { code: 91, value: class.to_string() },
+            ],
+        })
+    };
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), proxy(500)).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    d.foreign = std::sync::Arc::new(Foreign { class_order: vec!["MYAPP_THING".into()], ..Foreign::default() });
+    for v in [Version::R2013, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+    for v in [Version::R2004, Version::R2010] {
+        assert_eq!(not_saved_as(&d, v), [("ACAD_PROXY_ENTITY".to_string(), 1), ("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+    // A class number the file's CLASSES don't have, or none at all: the DWG can't name the class,
+    // leaves the proxy out, and says so from 2013 on too.
+    d.add(&Space::Model, Common::default(), proxy(501)).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("ACAD_PROXY_ENTITY")).unwrap();
+    assert_eq!(not_saved_as(&d, Version::R2018), [("ACAD_PROXY_ENTITY".to_string(), 2), ("MLINE".to_string(), 1)].into_iter().collect());
+}
+
+/// Another program's proxy objects are left out of a DWG the same way as its proxy entities, and
+/// said so: before 2013 always, from 2013 when the file names no class for them (#2471 review).
+#[test]
+fn proxy_objects_are_reported_like_proxy_entities() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    use cadcraft_engine::doc::Handle;
+    use cadcraft_engine::doc::foreign::{Foreign, ForeignObject};
+    let object = |h: u64, class: i64| ForeignObject {
+        handle: Handle(h),
+        kind: "ACAD_PROXY_OBJECT".into(),
+        tags: vec![
+            RawTag { code: 5, value: format!("{h:X}") },
+            RawTag { code: 90, value: "499".into() },
+            RawTag { code: 91, value: class.to_string() },
+        ],
+    };
+    let mut d = Drawing::new_imperial();
+    d.foreign = std::sync::Arc::new(Foreign {
+        class_order: vec!["MYAPP_DATA".into()],
+        objects: vec![object(0x500, 500), object(0x501, 501)],
+        ..Foreign::default()
+    });
+    let lost = |v| not_saved_as(&d, v).get("ACAD_PROXY_OBJECT").copied().unwrap_or(0);
+    assert_eq!(lost(Version::R2004), 2, "before 2013 every proxy object is left out");
+    assert_eq!(lost(Version::R2010), 2);
+    assert_eq!(lost(Version::R2018), 1, "from 2013 only the one whose class the file doesn't name");
+}
+
 /// A DXF of 2013 or later can't hold a solid's SAT-text geometry (it lives in the data store
 /// there), so the save leaves it out and says so; 2010 and earlier keep it (#2334).
 #[test]
@@ -240,20 +301,4 @@ fn ole_objects_are_not_reported() {
     for v in [Version::R2000, Version::R2010, Version::R2018] {
         assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
     }
-}
-
-#[test]
-fn retained_proxy_is_not_reported_as_lost_in_modern_dwg() {
-    use cadcraft_engine::cmd::file::{Version, not_saved_as};
-    let mut drawing = Drawing::new_metric();
-    let tags = vec![RawTag { code: 91, value: "500".into() }];
-    drawing.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags })).unwrap();
-    let foreign = std::sync::Arc::make_mut(&mut drawing.foreign);
-    foreign.complete_class_table = true;
-    foreign.classes = vec![vec![RawTag { code: 1, value: "CUSTOM".into() }, RawTag { code: 281, value: "1".into() }]];
-    assert!(not_saved_as(&drawing, Version::R2013).is_empty());
-    assert!(not_saved_as(&drawing, Version::R2018).is_empty());
-    assert_eq!(not_saved_as(&drawing, Version::R2010).get("ACAD_PROXY_ENTITY"), Some(&1));
-    std::sync::Arc::make_mut(&mut drawing.foreign).classes.clear();
-    assert_eq!(not_saved_as(&drawing, Version::R2018).get("ACAD_PROXY_ENTITY"), Some(&1));
 }

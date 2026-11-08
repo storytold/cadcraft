@@ -1,4 +1,6 @@
-//! Opaque application records use the source file's class table, never decoder defaults.
+//! Another application's entities and their classes through the DWG bridge: on reading a DWG,
+//! registered entities acadrust has no model for become proxy entities of their class; on writing
+//! one, the DWG gets the source DXF's classes in their places, so every proxy names its own class.
 
 use std::collections::{HashMap, HashSet};
 
@@ -6,13 +8,18 @@ use acadrust::CadDocument;
 use acadrust::classes::{DxfClass, ProxyFlags};
 use acadrust::entities::{EntityType, ExtendedEntityData, ProxyEntityData};
 use acadrust::objects::{ObjectType, ProxyPayload};
-use cadcraft_dxf::Tag;
 
 fn class_number(index: usize) -> Result<i16, String> {
     index.checked_add(500).and_then(|n| i16::try_from(n).ok()).ok_or_else(|| "DXF: too many application classes".into())
 }
 
-/// Convert representable application records and report only the records left out.
+/// After a DWG read: each registered entity of another application's class that acadrust keeps
+/// only as its record and opaque data (no decoded properties) becomes a proxy entity of that class
+/// (DXF Reference, ACAD_PROXY_ENTITY), with its graphics, data bits, R2007+ strings and object
+/// references, so the DXF keeps it; and every proxy's class number becomes 500 plus its class's
+/// place in the classes, as a DXF numbers it. A record that can't be converted (its class is
+/// missing or not unique) is left out and named in the notes; one with decoded properties stays as
+/// read, also named, as its opaque data has no DXF form beside them.
 pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
     let classes: Vec<_> = doc.classes.iter().cloned().collect();
     let mut numbers = HashMap::new();
@@ -31,18 +38,7 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
             .map(i32::from)
             .ok_or_else(|| format!("missing or ambiguous application CLASS for {dxf:.80} ({cpp:.80})"))
     };
-    let source = doc.dwg_source_version.unwrap_or(doc.version).version_code();
-    let dwg_version = match source {
-        1012 => 19,
-        1014 => 21,
-        1015 => 23,
-        1018 => 25,
-        1021 => 27,
-        1024 => 29,
-        1027 => 31,
-        1032 => 33,
-        _ => return Vec::new(),
-    };
+    let Some(dwg_version) = super::native::proxy_dwg_version(doc.dwg_source_version.unwrap_or(doc.version)) else { return Vec::new() };
     let maintenance = i32::from(doc.maintenance_version);
     let remap = |id: i32| numbers.get(&id).copied().flatten().ok_or_else(|| format!("proxy names missing or ambiguous application class {id}"));
     // Only mutate proxies: entities_mut invalidates the decoder's verbatim records for every entity.
@@ -60,8 +56,10 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
     let mut notes = Vec::new();
     let mut entity_count = 0usize;
     let mut object_count = 0usize;
+    let mut semantic = 0usize;
     for handle in handles {
-        let converted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Ok(None): not an application record; Ok(Some(None)): kept as read, with its properties.
+        let converted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Option<Option<ExtendedEntityData>>, String> {
             let Some(EntityType::Extended(entity)) = doc.get_entity(handle) else { return Ok(None) };
             let data = match &entity.data {
                 ExtendedEntityData::Proxy(data) => {
@@ -71,7 +69,7 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
                 }
                 ExtendedEntityData::RegisteredClass(data) => {
                     if !data.properties.is_empty() {
-                        return Err(format!("cannot transport semantic properties of {:.80} as an opaque proxy", data.dxf_name));
+                        return Ok(Some(None));
                     }
                     let class_id = identity(&data.dxf_name, &data.cpp_class_name, true)?;
                     let text_payload = entity.common.raw_record.as_deref().map(registered_text).transpose()?.unwrap_or_default();
@@ -91,15 +89,16 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
                 }
                 _ => return Ok(None),
             };
-            Ok(Some(data))
+            Ok(Some(Some(data)))
         }))
         .unwrap_or_else(|_| Err("application record conversion failed".into()));
         match converted {
-            Ok(Some(data)) => {
+            Ok(Some(Some(data))) => {
                 if let Some(EntityType::Extended(entity)) = doc.get_entity_mut(handle) {
                     entity.data = data;
                 }
             }
+            Ok(Some(None)) => semantic = semantic.saturating_add(1),
             Ok(None) => {}
             Err(why) => {
                 doc.remove_entity(handle);
@@ -123,6 +122,11 @@ pub(super) fn prepare(doc: &mut CadDocument) -> Vec<String> {
     });
     if entity_count > 0 || object_count > 0 {
         notes.insert(0, format!("DWG: partial read; application proxy records left out (entities: {entity_count}, objects: {object_count})"));
+    }
+    if semantic > 0 {
+        notes.push(format!(
+            "DWG: {semantic} registered entities with decoded properties keep them, without their other data; saving over the original file would lose it"
+        ));
     }
     notes
 }
@@ -184,83 +188,108 @@ fn registered_text(raw: &acadrust::entities::RawRecord) -> Result<ProxyPayload, 
     Ok(ProxyPayload::from_bits(&bytes, count))
 }
 
-/// Parse ASCII or binary DXF with the bounded, code-page-aware DXF parser.
-pub(super) fn read_classes(dxf: &[u8]) -> Result<Vec<DxfClass>, String> {
-    let tags = cadcraft_dxf::parse(dxf).map_err(|e| format!("DXF classes: {e}"))?;
-    let mut classes = Vec::new();
-    let mut in_classes = false;
-    let mut at = 0;
-    while let Some(tag) = tags.get(at) {
-        if tag.code != 0 {
-            at += 1;
-            continue;
-        }
-        let end = tags.get(at + 1..).unwrap_or_default().iter().position(|t| t.code == 0).map_or(tags.len(), |n| at + 1 + n);
-        let body = tags.get(at + 1..end).unwrap_or_default();
-        match tag.str().as_str() {
-            "SECTION" => in_classes = body.first().is_some_and(|t| t.code == 2 && t.str() == "CLASSES"),
-            "ENDSEC" => in_classes = false,
-            "CLASS" if in_classes => classes.push(read_class(body, class_number(classes.len())?)?),
-            _ => {}
-        }
-        at = end;
+/// The CLASS records of an ASCII DXF, in CLASSES order and numbered by place from 500 (DXF
+/// Reference, CLASSES; a proxy's group 91 is that number). `None` for a binary DXF (CADCraft's own
+/// bridge DXF is ASCII), and for one with a record that can't be written back as it is: no names,
+/// flags or instance count out of range, more classes than the numbers allow. Then
+/// `proxy_classes` matches the classes by name instead.
+pub(super) fn source_classes(dxf: &[u8]) -> Option<Vec<DxfClass>> {
+    if dxf.starts_with(b"AutoCAD Binary DXF") {
+        return None;
     }
-    Ok(classes)
+    let mut lines = dxf.split(|b| *b == b'\n').map(<[u8]>::trim_ascii);
+    let mut records: Vec<Vec<(i32, String)>> = Vec::new();
+    let (mut section, mut in_classes) = (false, false);
+    while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
+        let code: i32 = std::str::from_utf8(code).ok()?.parse().ok()?;
+        let value = String::from_utf8_lossy(value);
+        match (code, value.as_ref()) {
+            (0, "ENDSEC") if in_classes => break,
+            (0, "SECTION") => section = true,
+            (2, name) if section => {
+                in_classes = name == "CLASSES";
+                section = false;
+            }
+            (0, kind) if in_classes => {
+                if kind != "CLASS" {
+                    return None;
+                }
+                records.push(Vec::new());
+            }
+            (code, value) if in_classes => records.last_mut()?.push((code, value.to_string())),
+            _ => section = false,
+        }
+    }
+    records.iter().enumerate().map(|(index, groups)| source_class(groups, class_number(index).ok()?)).collect()
 }
 
-fn read_class(tags: &[Tag], number: i16) -> Result<DxfClass, String> {
-    let text = |code| tags.iter().find(|t| t.code == code).map(Tag::str).unwrap_or_default();
-    let integer = |code| tags.iter().find(|t| t.code == code).map_or(0, Tag::i64);
+/// One CLASS record's groups as the class `number`, or `None` when it can't be written back.
+fn source_class(groups: &[(i32, String)], number: i16) -> Option<DxfClass> {
+    let text = |code| groups.iter().find(|(c, _)| *c == code).map(|(_, v)| v.clone()).unwrap_or_default();
+    let integer = |code| groups.iter().find(|(c, _)| *c == code).map_or(Some(0), |(_, v)| v.trim().parse::<i64>().ok());
     let mut class = DxfClass::new(text(1), text(2));
     if class.dxf_name.is_empty() || class.cpp_class_name.is_empty() {
-        return Err("DXF: application CLASS has no name".into());
+        return None;
     }
     class.application_name = text(3);
-    class.proxy_flags = ProxyFlags(u16::try_from(integer(90)).map_err(|_| "DXF: invalid class proxy flags")?);
-    class.instance_count = i32::try_from(integer(91)).map_err(|_| "DXF: invalid class instance count")?;
-    class.was_zombie = integer(280) != 0;
-    class.is_an_entity = integer(281) != 0;
+    class.proxy_flags = ProxyFlags(u16::try_from(integer(90)?).ok()?);
+    class.instance_count = i32::try_from(integer(91)?).ok()?;
+    class.was_zombie = integer(280)? != 0;
+    class.is_an_entity = integer(281)? != 0;
     class.item_class_id = if class.is_an_entity { 498 } else { 499 };
     class.class_number = number;
-    Ok(class)
+    Some(class)
 }
 
-/// Keep source class positions and metadata, adding missing decoder defaults only afterwards.
-pub(super) fn restore_classes(doc: &mut CadDocument, source: impl FnOnce() -> Result<Vec<DxfClass>, String>) -> Result<(), String> {
-    let mut proxies = Vec::new();
+/// Give a DWG of 2013 or later the source DXF's classes (`classes`, from [`source_classes`]) in
+/// their places, with their metadata and duplicate names, so each proxy's DXF class number names
+/// its own class; the decoder's default classes the source lacks follow them. A proxy whose number
+/// names no source class is left out, as `proxy_classes` leaves it out. Returns how many proxy objects and
+/// entities were left out; nothing changes when the drawing has no proxies. `None`, with nothing
+/// changed, when the classes would be more than the class numbers allow.
+pub(super) fn restore_classes(doc: &mut CadDocument, classes: Vec<DxfClass>) -> Option<(usize, usize)> {
+    let fits = |number: i32| number.checked_sub(500).and_then(|n| usize::try_from(n).ok()).is_some_and(|i| i < classes.len());
+    let mut any = false;
+    let mut entities = Vec::new();
     for entity in doc.entities() {
         if let EntityType::Extended(e) = entity
             && let ExtendedEntityData::Proxy(p) = &e.data
         {
-            proxies.push((p.class_id, true));
+            any = true;
+            if !fits(p.class_id) {
+                entities.push(e.common.handle);
+            }
         }
     }
-    for object in doc.objects.values() {
+    let mut objects = Vec::new();
+    for (handle, object) in &doc.objects {
         if let ObjectType::ProxyObject(p) = object {
-            proxies.push((p.class_id, false));
+            any = true;
+            if !fits(p.class_id) {
+                objects.push(*handle);
+            }
         }
     }
-    if proxies.is_empty() {
-        return Ok(());
-    }
-    let classes = source()?;
-    for (number, entity) in proxies {
-        let index = number.checked_sub(500).and_then(|n| usize::try_from(n).ok());
-        if !index.and_then(|i| classes.get(i)).is_some_and(|c| c.is_an_entity == entity) {
-            return Err(format!("DXF: proxy names missing or incompatible application class {number}"));
-        }
-    }
-    if doc.version < acadrust::types::DxfVersion::AC1027 {
-        return Err("DWG: preserving application proxies requires AutoCAD 2013 or later; choose 2013/2018 DWG or DXF".into());
+    if !any {
+        return Some((0, 0));
     }
     let mut names: HashSet<_> = classes.iter().map(|c| c.dxf_name.to_uppercase()).collect();
     let defaults: Vec<_> = doc.classes.iter().filter(|c| names.insert(c.dxf_name.to_uppercase())).cloned().collect();
+    if let Some(last) = classes.len().checked_add(defaults.len())?.checked_sub(1) {
+        class_number(last).ok()?;
+    }
+    for handle in &entities {
+        doc.remove_entity(*handle);
+    }
+    for handle in &objects {
+        doc.objects.remove(handle);
+    }
     doc.classes.clear();
-    for mut class in classes.into_iter().chain(defaults) {
-        class.class_number = class_number(doc.classes.len())?;
+    for (index, mut class) in classes.into_iter().chain(defaults).enumerate() {
+        class.class_number = class_number(index).ok()?;
         doc.classes.push_preserving(class);
     }
-    Ok(())
+    Some((objects.len(), entities.len()))
 }
 
 #[cfg(test)]
@@ -292,43 +321,64 @@ mod tests {
         doc
     }
 
+    /// An ASCII DXF of `groups`, `(code, value)` per pair of lines.
+    fn dxf(groups: &[(i32, &str)]) -> Vec<u8> {
+        groups.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+    }
+
     #[test]
     fn source_classes_keep_duplicates_and_metadata_before_defaults() {
-        let tags = vec![
-            Tag::s(0, "SECTION"),
-            Tag::s(2, "CLASSES"),
-            Tag::s(0, "CLASS"),
-            Tag::s(1, "Объект"),
-            Tag::s(2, "First"),
-            Tag::s(3, "Первый"),
-            Tag::i(90, 1025),
-            Tag::i(91, 7),
-            Tag::i(280, 1),
-            Tag::i(281, 1),
-            Tag::s(0, "CLASS"),
-            Tag::s(1, "Объект"),
-            Tag::s(2, "Second"),
-            Tag::s(3, "Второй"),
-            Tag::i(90, 128),
-            Tag::i(281, 1),
-            Tag::s(0, "ENDSEC"),
-            Tag::s(0, "EOF"),
-        ];
-        for bytes in [cadcraft_dxf::write_ascii(&tags).into_bytes(), cadcraft_dxf::write_binary(&tags, true)] {
-            let classes = read_classes(&bytes).unwrap();
-            assert_eq!(classes.len(), 2);
-            assert_eq!(classes[0].application_name, "Первый");
-            assert_eq!(classes[0].proxy_flags.0, 1025);
-            assert_eq!(classes[0].instance_count, 7);
-            assert!(classes[0].was_zombie);
-            let mut doc = proxy_doc();
-            restore_classes(&mut doc, || Ok(classes.clone())).unwrap();
-            assert_eq!(doc.classes.iter().take(2).cloned().collect::<Vec<_>>(), classes);
+        let bytes = dxf(&[
+            (0, "SECTION"),
+            (2, "HEADER"),
+            (9, "$DIMSTYLE"),
+            (2, "CLASSES"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "CLASSES"),
+            (0, "CLASS"),
+            (1, "Объект"),
+            (2, "First"),
+            (3, "Первый"),
+            (90, "1025"),
+            (91, "7"),
+            (280, "1"),
+            (281, "1"),
+            (0, "CLASS"),
+            (1, "Объект"),
+            (2, "Second"),
+            (3, "Второй"),
+            (90, "128"),
+            (281, "1"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let classes = source_classes(&bytes).unwrap();
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0].application_name, "Первый");
+        assert_eq!(classes[0].proxy_flags.0, 1025);
+        assert_eq!(classes[0].instance_count, 7);
+        assert!(classes[0].was_zombie);
+        assert_eq!((classes[0].class_number, classes[1].class_number), (500, 501));
+        assert_eq!(classes[1].cpp_class_name, "Second");
+        let mut doc = proxy_doc();
+        assert_eq!(restore_classes(&mut doc, classes.clone()), Some((0, 0)));
+        assert_eq!(doc.classes.iter().take(2).cloned().collect::<Vec<_>>(), classes);
+        // A binary DXF, and a CLASS record that can't be written back as it is, give no classes.
+        assert!(source_classes(b"AutoCAD Binary DXF\r\n\x1a\0").is_none());
+        for (code, value) in [(1, ""), (2, ""), (90, "65536"), (91, "9223372036854775807"), (281, "x")] {
+            let mut class = vec![(1, "A"), (2, "A")];
+            class.retain(|(c, _)| *c != code);
+            class.push((code, value));
+            let mut groups = vec![(0, "SECTION"), (2, "CLASSES"), (0, "CLASS")];
+            groups.extend(class);
+            groups.extend([(0, "ENDSEC"), (0, "EOF")]);
+            assert!(source_classes(&dxf(&groups)).is_none(), "{code} {value}");
         }
     }
 
     #[test]
-    fn missing_negative_and_object_class_ids_are_rejected() {
+    fn proxies_of_missing_classes_are_left_out() {
         for id in [-1, 499, 501, i32::MAX] {
             let mut doc = proxy_doc();
             if let Some(EntityType::Extended(e)) = doc.entities_mut().next()
@@ -338,9 +388,19 @@ mod tests {
             }
             let mut class = DxfClass::new_entity("ENTITY", "Entity");
             class.class_number = 500;
-            assert!(restore_classes(&mut doc, || Ok(vec![class])).is_err());
+            assert_eq!(restore_classes(&mut doc, vec![class]), Some((0, 1)), "{id}");
+            assert_eq!(doc.entities().count(), 0);
         }
-        assert!(restore_classes(&mut proxy_doc(), || Ok(vec![DxfClass::new("A", "A"), DxfClass::new("B", "B")])).is_err());
+        // Class 501 is there: the proxy keeps it, in its place.
+        let mut doc = proxy_doc();
+        assert_eq!(restore_classes(&mut doc, vec![DxfClass::new("A", "A"), DxfClass::new_entity("B", "B")]), Some((0, 0)));
+        assert_eq!(doc.entities().count(), 1);
+        assert_eq!(doc.classes.iter().nth(1).map(|c| (c.dxf_name.clone(), c.class_number)), Some(("B".to_string(), 501)));
+        // Without proxies the classes stay the decoder's.
+        let mut doc = CadDocument::new();
+        let before: Vec<_> = doc.classes.iter().cloned().collect();
+        assert_eq!(restore_classes(&mut doc, vec![DxfClass::new("A", "A")]), Some((0, 0)));
+        assert_eq!(doc.classes.iter().cloned().collect::<Vec<_>>(), before);
     }
 
     #[test]
@@ -428,8 +488,9 @@ mod tests {
                 assert!(prepare(&mut doc).is_empty());
                 assert_eq!(doc.get_entity(handle).unwrap().common().raw_record.as_deref(), Some(&raw));
             } else {
-                assert!(prepare(&mut doc).iter().any(|n| n.contains("semantic properties")));
-                assert!(doc.get_entity(handle).is_none());
+                // Kept as read, and named: its opaque data has no DXF form beside the properties.
+                assert!(prepare(&mut doc).iter().any(|n| n.contains("decoded properties")));
+                assert_eq!(doc.get_entity(handle).unwrap().common().raw_record.as_deref(), Some(&raw));
             }
         }
     }

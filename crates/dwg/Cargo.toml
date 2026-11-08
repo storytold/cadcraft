@@ -17,4 +17,3 @@ log = { workspace = true }
 [target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dependencies]
 # MPL-2.0: used as an unmodified dependency only (see plan/adr/0001 and NOTICE).
 acadrust = "0.6.6"
-cadcraft-dxf = { workspace = true }
