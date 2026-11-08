@@ -83,8 +83,9 @@ read right as menu headings. The interface addresses the user informally (*tú*:
 *pinzamientos*, *presentación*, *ventana gráfica*, *trazar*, *contorno*, *delimitar*, *desfase*,
 *empalme*, *chaflán*, *texto multilínea*, *directriz múltiple*, *menú contextual*, *Intro*.
 The catalog was contributed by @PedroGuille and extended in #680; the rows added or changed in
-November 2026 were reviewed by a native Spanish speaker. The older rows have not yet been
-proofread line by line. The bundled egui fonts cover `Á É Í Ó Ú Ü Ñ á é í ó ú ü ñ ¿ ¡`.
+November 2026 were reviewed by a native Spanish speaker. The older rows were proofread line by
+line in November 2026, and their corrections were reviewed by a native speaker. The bundled
+egui fonts cover `Á É Í Ó Ú Ü Ñ á é í ó ú ü ñ ¿ ¡`.
 
 Drawing titles, layer/layout/block/style names, parameter names and expressions, text in a
 drawing, and command-line input are user data and retain their original spelling. Clickable

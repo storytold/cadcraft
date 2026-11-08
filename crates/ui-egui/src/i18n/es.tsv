@@ -124,8 +124,8 @@
 	Batch Publish...	Publicar en lote...
 	Binary assets added	Recursos binarios añadidos
 	Binary assets removed	Recursos binarios eliminados
-	Bind	Unir
-	Bind...	Unir...
+	Bind	Integrar
+	Bind...	Integrar...
 	Blend	Fusión de curvas
 	Block	Bloque
 	Block Attribute Manager...	Administrador de atributos de bloque...
@@ -239,7 +239,7 @@
 	Commits	Commits
 	Company	Empresa
 	Compare Drawings...	Comparar dibujos...
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Diseño y dibujo asistidos por computadora: una aplicación CAD de código abierto, desarrollada de forma independiente y escrita íntegramente en Rust.
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Diseño y dibujo asistidos por ordenador: una aplicación CAD de código abierto, desarrollada de forma independiente y escrita íntegramente en Rust.
 	Concentric	Concéntrica
 	Cone	Cono
 	Constraint Bars	Barras de restricciones
@@ -397,7 +397,7 @@
 	Enter number of columns	Introduce el número de columnas
 	Enter number of data rows	Introduce el número de filas de datos
 	Enter number of items	Introduce el número de elementos
-	Enter number of items along path	Introduce el número de elementos a lo largo del camino
+	Enter number of items along path	Introduce el número de elementos a lo largo de la trayectoria
 	Enter number of sides	Introduce el número de lados
 	Enter number of turns	Introduce el número de vueltas
 	Enter percentage length	Introduce el porcentaje de longitud
@@ -608,7 +608,7 @@
 	Length	Longitud
 	Length X	Longitud X
 	Length Y	Longitud Y
-	Lengthen	Longitud
+	Lengthen	Modificar longitud
 	Light	Claro
 	Light Years	Años luz
 	Limits	Límites
@@ -815,7 +815,7 @@
 	Paste	Pegar
 	Paste as Block	Pegar como bloque
 	Paste to Original Coordinates	Pegar en coordenadas originales
-	Path Array	Matriz de camino
+	Path Array	Matriz de trayectoria
 	Pattern	Patrón
 	Perpendicular	Perpendicular
 	Plot	Trazar
@@ -1056,7 +1056,7 @@
 	X offset (mm)	Desfase X (mm)
 	Xref	Referencia externa
 	Xref Clip Frame	Marco de delimitación de referencias externas
-	Xref and Block In-place Editing	Edición in situ de xrefs y bloques
+	Xref and Block In-place Editing	Edición in situ de referencias externas y bloques
 	Rename Dimension Style	Renombrar estilo de cota
 	Rename Layer	Renombrar capa
 	Rename Layer State	Renombrar estado de capas
@@ -1097,14 +1097,14 @@
 	Select a closed polyline	Selecciona una polilínea cerrada
 	Select a closed polyline, circle, ellipse or closed spline.	Selecciona una polilínea cerrada, círculo, elipse o spline cerrada.
 	Select a closed polyline.	Selecciona una polilínea cerrada.
-	Select a curve as the path.	Selecciona una curva como camino.
+	Select a curve as the path.	Selecciona una curva como trayectoria.
 	Select a dimension constraint type	Selecciona un tipo de restricción dimensional
 	Select a line object	Selecciona una línea
 	Select a line object.	Selecciona una línea.
 	Select a line or an arc.	Selecciona una línea o un arco.
 	Select a line or polyline segment	Selecciona una línea o segmento de polilínea
 	Select a line, arc or open polyline.	Selecciona una línea, arco o polilínea abierta.
-	Select a line, arc, circle, polyline, ellipse or spline as the path.	Selecciona una línea, arco, círculo, polilínea, elipse o spline como camino.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Selecciona una línea, arco, círculo, polilínea, elipse o spline como trayectoria.
 	Select a line, circle, arc or polyline segment.	Selecciona una línea, círculo, arco o segmento de polilínea.
 	Select a line.	Selecciona una línea.
 	Select a polyline.	Selecciona una polilínea.
@@ -1143,7 +1143,7 @@
 	Select objects to stretch by crossing-window or crossing-polygon...	Selecciona objetos para estirar mediante ventana o polígono de captura...
 	Select objects:	Selecciona objetos:
 	Select one polyline (Multiple is available through the JSON form).	Selecciona una polilínea (la opción Multiple está disponible en la forma JSON).
-	Select path curve	Selecciona la curva del camino
+	Select path curve	Selecciona la curva de trayectoria
 	Select point or object	Selecciona un punto u objeto
 	Select polyline	Selecciona una polilínea
 	Select second line	Selecciona la segunda línea
@@ -1174,7 +1174,7 @@
 	Show/Hide Transparency	Mostrar/ocultar transparencia
 	Single Line Text	Texto de una línea
 	Single Point	Punto único
-	Single...	Única...
+	Single...	Individual...
 	Smooth	Suave
 	Snap	Referencia
 	Snap Mode	Forzar cursor
@@ -1248,7 +1248,7 @@
 	Specify inside diameter of donut	Indica el diámetro interior de la arandela
 	Specify leader arrowhead location	Indica la posición de la punta de flecha de la directriz
 	Specify leader endpoint	Indica el extremo de la directriz
-	Specify leader landing location	Indica la posición del rellano de la directriz
+	Specify leader landing location	Indica la posición del tramo horizontal de la directriz
 	Specify length for rectangles	Indica la longitud de los rectángulos
 	Specify length of chord	Indica la longitud de la cuerda
 	Specify length of segment	Indica la longitud del segmento
@@ -1302,7 +1302,7 @@
 	Specify third point on circle	Indica el tercer punto del círculo
 	Specify third point on circle: _tan to	Indica el tercer punto del círculo: _tan a
 	Specify third source point or <continue>	Indica el tercer punto de origen o <continuar>
-	Specify through point	Indica el punto a atravesar
+	Specify through point	Indica el punto de paso
 	Specify top diameter	Indica el diámetro superior
 	Specify top radius	Indica el radio superior
 	Specify total angle	Indica el ángulo total
@@ -1486,7 +1486,7 @@
 	Reverse zoom direction	Invertir dirección del zoom
 	Calibrate	Calibrar
 	Move sideways to pan; push/pull or twist to zoom.	Mueve el mando lateralmente para encuadrar; empuja, tira o gira para hacer zoom.
-	Left device button: zoom extents. Right device button: calibrate.	Botón izquierdo del dispositivo: zoom a la extensión. Botón derecho: calibrar.
+	Left device button: zoom extents. Right device button: calibrate.	Botón izquierdo del dispositivo: zoom a extensión. Botón derecho: calibrar.
 	Hatch Pattern	Patrón de sombreado
 	Search for pattern	Buscar patrón
 	Not a number or distance: {text}	No es un número ni una distancia: {text}
@@ -1494,7 +1494,7 @@
 	Analyze Shapes	Analizar formas
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
-	Could not check for updates.	No se pudo buscar actualizaciones.
+	Could not check for updates.	No se pudo comprobar si hay actualizaciones.
 	Find All	Buscar todo
 	Find what:	Buscar:
 	Match case	Coincidir mayúsculas y minúsculas
