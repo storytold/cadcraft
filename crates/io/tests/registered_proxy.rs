@@ -1,5 +1,5 @@
 //! Synthetic application data must keep its identity as well as its bytes.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 use acadrust::classes::DxfClass;
 use acadrust::entities::{EntityCommon, EntityType, ExtendedEntity, ExtendedEntityData, Line, RegisteredClassEntityData};
 use acadrust::objects::{ProxyObjectReference, ProxyPayload, ProxyReferenceKind};
@@ -233,5 +233,64 @@ fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
         }
         let recovered = cadcraft_io::read(&bytes, "copy.dwg").unwrap();
         assert_eq!(recovered.entity_count(), 3);
+    }
+}
+
+/// Exercise the actual ASCII bridge, which writes Unicode as CIF escapes.
+#[test]
+fn unicode_class_identity_survives_the_ascii_bridge() {
+    let mut tags = cadcraft_dxf::parse(&duplicate_class_dxf()).unwrap();
+    for tag in &mut tags {
+        let text = tag.str();
+        let replacement = match (tag.code, text.as_str()) {
+            (1, "CUSTOM") => Some("Объект"),
+            (2, "First") => Some("Первый"),
+            (2, "Second") => Some("Второй"),
+            (2, "Object") => Some("ОбъектКласс"),
+            (3, "Synthetic") => Some("Café🙂"),
+            _ => None,
+        };
+        if let Some(text) = replacement {
+            *tag = cadcraft_dxf::Tag::s(tag.code, text);
+        }
+    }
+    let text = cadcraft_dxf::write_ascii(&tags);
+    assert!(text.contains("\\U+"));
+    let mut drawing = cadcraft_io::read(text.as_bytes(), "unicode.dxf").unwrap();
+    for _ in 0..2 {
+        let bytes = cadcraft_io::write_with(&drawing, "copy.dwg", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
+        let decoded = acadrust::DwgReader::from_stream(std::io::Cursor::new(&bytes)).read().unwrap();
+        let classes: Vec<_> = decoded.classes.iter().filter(|c| c.dxf_name == "Объект").collect();
+        assert_eq!(classes.len(), 3);
+        for (class, cpp) in classes.iter().zip(["Первый", "Второй", "ОбъектКласс"]) {
+            assert_eq!(class.cpp_class_name, cpp);
+            assert_eq!(class.application_name, "Café🙂");
+        }
+        drawing = cadcraft_io::read(&bytes, "copy.dwg").unwrap();
+        assert_eq!(drawing.entity_count(), 3);
+    }
+}
+
+/// A malformed unused class must not silently collapse two otherwise valid class identities.
+#[test]
+fn ambiguous_fallback_classes_are_reported_without_losing_plain_geometry() {
+    for escaped in [false, true] {
+        let mut source = String::from_utf8(duplicate_class_dxf()).unwrap().replacen(
+            "0\nENDSEC\n0\nSECTION\n2\nENTITIES",
+            "0\nCLASS\n1\nUNUSED\n2\nUnused\n90\n65536\n0\nENDSEC\n0\nSECTION\n2\nENTITIES",
+            1,
+        );
+        if escaped {
+            // Different DXF spellings decode to the same name. The unrelated object class
+            // remains unambiguous and must still be written.
+            source = source.replace("1\nCUSTOM\n2\nSecond", "1\n\\U+0043USTOM\n2\nSecond");
+            source = source.replace("1\nCUSTOM\n2\nObject", "1\nOTHER\n2\nObject");
+        }
+        let (bytes, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(source.as_bytes(), "AC1032").unwrap();
+        assert_eq!(unwritten.get("ACAD_PROXY_ENTITY"), Some(&2));
+        assert_eq!(unwritten.get("ACAD_PROXY_OBJECT"), if escaped { None } else { Some(&1) });
+        let drawing = cadcraft_io::read(&bytes, "copy.dwg").unwrap();
+        assert_eq!(drawing.entity_count(), 1);
+        assert!(drawing.model.iter().all(|e| matches!(e.kind, EntityKind::Line(_))));
     }
 }

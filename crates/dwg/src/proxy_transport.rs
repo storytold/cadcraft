@@ -3,10 +3,12 @@
 //! one, the DWG gets the source DXF's classes in their places, so every proxy names its own class.
 
 use std::collections::{HashMap, HashSet};
+use std::io::{BufReader, Cursor};
 
 use acadrust::CadDocument;
 use acadrust::classes::{DxfClass, ProxyFlags};
 use acadrust::entities::{EntityType, ExtendedEntityData, ProxyEntityData};
+use acadrust::io::dxf::reader::{DxfStreamReader, DxfTextReader};
 use acadrust::objects::{ObjectType, ProxyPayload};
 
 fn class_number(index: usize) -> Result<i16, String> {
@@ -188,22 +190,36 @@ fn registered_text(raw: &acadrust::entities::RawRecord) -> Result<ProxyPayload, 
     Ok(ProxyPayload::from_bits(&bytes, count))
 }
 
+/// The bridge decoder's ASCII text stream, with the source's declared legacy encoding.
+pub(super) fn text_reader(dxf: &[u8]) -> Option<DxfTextReader<Cursor<&[u8]>>> {
+    if dxf.starts_with(b"AutoCAD Binary DXF") {
+        return None;
+    }
+    // Use the same text decoder as the bridge reader. Raw DXF strings may contain CIF/MIF
+    // escapes, including an escaped literal backslash, or bytes in a declared legacy code page.
+    let mut reader = DxfTextReader::new(BufReader::new(Cursor::new(dxf))).ok()?;
+    let version =
+        super::native::header_value(dxf, b"$ACADVER").and_then(|(_, v)| std::str::from_utf8(v).ok()).map(acadrust::DxfVersion::from_version_string);
+    if version.is_some_and(|v| v < acadrust::DxfVersion::AC1021)
+        && let Some((_, page)) = super::native::header_value(dxf, b"$DWGCODEPAGE")
+        && let Some(encoding) = std::str::from_utf8(page).ok().and_then(acadrust::io::dxf::code_page::encoding_from_code_page)
+    {
+        reader.set_encoding(encoding);
+    }
+    Some(reader)
+}
+
 /// The CLASS records of an ASCII DXF, in CLASSES order and numbered by place from 500 (DXF
 /// Reference, CLASSES; a proxy's group 91 is that number). `None` for a binary DXF (CADCraft's own
 /// bridge DXF is ASCII), and for one with a record that can't be written back as it is: no names,
 /// flags or instance count out of range, more classes than the numbers allow. Then
 /// `proxy_classes` matches the classes by name instead.
 pub(super) fn source_classes(dxf: &[u8]) -> Option<Vec<DxfClass>> {
-    if dxf.starts_with(b"AutoCAD Binary DXF") {
-        return None;
-    }
-    let mut lines = dxf.split(|b| *b == b'\n').map(<[u8]>::trim_ascii);
+    let mut reader = text_reader(dxf)?;
     let mut records: Vec<Vec<(i32, String)>> = Vec::new();
     let (mut section, mut in_classes) = (false, false);
-    while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-        let code: i32 = std::str::from_utf8(code).ok()?.parse().ok()?;
-        let value = String::from_utf8_lossy(value);
-        match (code, value.as_ref()) {
+    while let Some(pair) = reader.read_pair().ok()? {
+        match (pair.code, pair.value_string.as_str()) {
             (0, "ENDSEC") if in_classes => break,
             (0, "SECTION") => section = true,
             (2, name) if section => {
@@ -375,6 +391,23 @@ mod tests {
             groups.extend([(0, "ENDSEC"), (0, "EOF")]);
             assert!(source_classes(&dxf(&groups)).is_none(), "{code} {value}");
         }
+    }
+
+    #[test]
+    fn source_classes_decode_escapes_once_and_respect_legacy_code_pages() {
+        let body = "0\nCLASS\n1\n\\U+041E\\U+0431\\U+044A\\U+0435\\U+043A\\U+0442\n2\nClass\n3\nCaf\\U+00E9\\U+D83D\\U+DE42\\U+005CU+0041\n281\n1\n0\nENDSEC\n0\nEOF\n";
+        let text = format!("0\nSECTION\n2\nCLASSES\n{body}");
+        let classes = source_classes(text.as_bytes()).unwrap();
+        assert_eq!(classes[0].dxf_name, "Объект");
+        assert_eq!(classes[0].application_name, "Café🙂\\U+0041");
+
+        let prefix =
+            b"0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DWGCODEPAGE\n3\nANSI_1251\n0\nENDSEC\n0\nSECTION\n2\nCLASSES\n0\nCLASS\n1\n";
+        let encoded = [prefix.as_slice(), b"\xCF\xF0\xE8\xEC\xE5\xF0", b"\n2\nClass\n3\nApp\n281\n1\n0\nENDSEC\n0\nEOF\n"].concat();
+        assert_eq!(source_classes(&encoded).unwrap()[0].dxf_name, "Пример");
+        // R2007+ text is UTF-8 even with a legacy code-page declaration.
+        let modern = String::from_utf8_lossy(prefix).replace("AC1015", "AC1032") + "Пример\n2\nClass\n3\nApp\n281\n1\n0\nENDSEC\n0\nEOF\n";
+        assert_eq!(source_classes(modern.as_bytes()).unwrap()[0].dxf_name, "Пример");
     }
 
     #[test]

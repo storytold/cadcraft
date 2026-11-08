@@ -963,7 +963,7 @@ mod native {
     /// value) line pairs, in one pass with no buffering, up to the first `0`/`ENDSEC`, the end
     /// of the HEADER section: a large input without one costs time, not memory (a line index of
     /// a 32 MiB file used 0.8 GB). Lines may end in `\r\n`.
-    fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
+    pub(super) fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
         let mut offset = 0usize;
         let mut lines = dxf.split(|b| *b == b'\n').map(|line| {
             let at = offset.saturating_add(line.len() - line.trim_ascii_start().len());
@@ -1023,32 +1023,32 @@ mod native {
     /// CADCraft's own bridge DXF is always ASCII, and only a binary DXF given to the public
     /// conversion functions comes here.
     pub(super) fn dxf_class_names(dxf: &[u8]) -> Option<Vec<String>> {
+        use acadrust::io::dxf::reader::DxfStreamReader;
+        let mut reader = super::proxy_transport::text_reader(dxf)?;
         let mut names = Vec::new();
-        if dxf.starts_with(b"AutoCAD Binary DXF") {
-            return None;
-        }
-        let mut lines = dxf.split(|b| *b == b'\n').map(|l| l.trim_ascii());
-        let (mut in_classes, mut in_class) = (false, false);
-        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-            match (code, value) {
-                (b"0", b"ENDSEC") if in_classes => break,
-                (b"2", b"CLASSES") => in_classes = true,
-                (b"0", v) if in_classes => {
-                    in_class = v == b"CLASS";
-                    // Every record keeps its place, named or not: a proxy numbers its class by
-                    // place, so a record without a name must not move the ones after it. An empty
-                    // name matches no class, and such a proxy is left out.
+        let (mut section, mut in_classes, mut in_class) = (false, false, false);
+        while let Some(pair) = reader.read_pair().ok()? {
+            match (pair.code, pair.value_string.as_str()) {
+                (0, "ENDSEC") if in_classes => break,
+                (0, "SECTION") => section = true,
+                (2, name) if section => {
+                    in_classes = name == "CLASSES";
+                    section = false;
+                }
+                (0, kind) if in_classes => {
+                    in_class = kind == "CLASS";
+                    // Even an unnamed record keeps its place in the source class table.
                     if in_class {
                         names.push(String::new());
                     }
                 }
-                (b"1", v) if in_class => {
+                (1, value) if in_class => {
                     if let Some(last) = names.last_mut() {
-                        *last = String::from_utf8_lossy(v).into_owned();
+                        *last = value.to_string();
                     }
                     in_class = false;
                 }
-                _ => {}
+                _ => section = false,
             }
         }
         Some(names)
@@ -1094,8 +1094,17 @@ mod native {
                 return left_out(objects.len(), entities.len());
             }
         };
+        // Name matching cannot choose between different source classes with the same name.
+        // Count those proxies as unwritten rather than silently changing their class identity.
+        let mut unique = std::collections::HashMap::new();
+        for name in classes {
+            unique.entry(name.to_uppercase()).and_modify(|value| *value = false).or_insert(true);
+        }
         let number = |id: i32| -> Option<i32> {
             let name = classes.get(usize::try_from(id.checked_sub(500)?).ok()?)?;
+            if unique.get(&name.to_uppercase()) != Some(&true) {
+                return None;
+            }
             doc.classes.get_by_name(name).map(|c| i32::from(c.class_number))
         };
         let objects: Vec<(acadrust::Handle, Option<i32>)> = doc
@@ -1188,8 +1197,8 @@ mod native {
             Some(d) => d,
             None => dxf.to_vec(),
         };
-        let classes = dxf_class_names(&data);
-        let source = super::proxy_transport::source_classes(&data);
+        let (classes, source) = guarded(AssertUnwindSafe(|| (dxf_class_names(&data), super::proxy_transport::source_classes(&data))))
+            .map_err(|_| "the DXF proxy class conversion failed".to_string())?;
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
