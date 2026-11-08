@@ -19,6 +19,10 @@ cadcraft-engine = { workspace = true }
 cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
 cadcraft-fonts = { workspace = true }
+# The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
+# The page command API (storytold/craft-libs#413): window.cadcraft over the control channel.
+craft-web-api = { git = "https://github.com/storytold/craft-libs", rev = "fd5e2feff6ea25bed371a99cc732b3968d621505", version = "0.1.0" }
+craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "fd5e2feff6ea25bed371a99cc732b3968d621505", version = "0.1.0" }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
@@ -31,4 +35,5 @@ web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"]
 eframe = { workspace = true, features = ["persistence", "wgpu", "accesskit"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag", "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList", "PointerEvent", "FocusOptions", "TouchEvent", "TouchList", "Touch"] }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag", "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList", "Event", "EventTarget", "CustomEvent", "CustomEventInit", "PointerEvent", "FocusOptions", "TouchEvent", "TouchList", "Touch"] }
