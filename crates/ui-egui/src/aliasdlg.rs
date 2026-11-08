@@ -33,8 +33,18 @@ pub struct AliasDlgState {
     pub filter: String,
     pub form: Option<Form>,
     pub error: Option<String>,
+    /// The warnings the last imported file reported (skipped lines, external commands, unknown
+    /// commands); the first few are shown in the dialog and all of them on the command line.
+    pub warnings: Vec<String>,
     /// ALIASEDIT typed again while open: bring the window to the front on the next frame.
     pub raise: bool,
+    /// Import… was clicked over aliases of the user's own: the dialog asks before a file replaces them.
+    pub confirm_import: bool,
+}
+
+/// Whether Import… asks first: the file would replace the user's aliases or the edits not applied yet.
+pub fn import_replaces_something(st: &AliasDlgState) -> bool {
+    !st.user.is_empty() || !st.applied.is_empty()
 }
 
 /// The user aliases and alias file ALIASEDIT holds now.
@@ -143,15 +153,94 @@ pub fn apply(app: &mut CadApp) -> bool {
     }
 }
 
+/// Whether `path` names a `.pgp` file, whatever its case.
+fn is_pgp(path: &str) -> bool {
+    std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("pgp"))
+}
+
+/// Report a failed import in the dialog (when it is open) and on the command line; returns it so
+/// the caller can too.
+fn refused(app: &mut CadApp, msg: String) -> String {
+    app.session.echo(msg.clone());
+    if let Some(st) = app.alias_dlg.as_mut() {
+        st.error = Some(msg.clone());
+        st.warnings.clear();
+    }
+    msg
+}
+
+/// Load the `.pgp` alias file at `path` through ALIASEDIT, replacing the user aliases as typing
+/// `ALIASEDIT {file}` does. The dialog refreshes to what ALIASEDIT holds now, so OK and Apply see
+/// no pending difference; the file's warnings are kept for display. Non-`.pgp` and unreadable
+/// files are ordinary errors, never a panic.
+pub fn import(app: &mut CadApp, path: &str) -> Result<(), String> {
+    if !is_pgp(path) {
+        return Err(refused(app, format!("Import: {path} is not a .pgp alias file")));
+    }
+    match app.run("aliasedit", json!({ "file": path })) {
+        Ok(v) => {
+            let aliases: BTreeMap<String, String> = v
+                .get("aliases")
+                .and_then(Value::as_object)
+                .map(|m| m.iter().filter_map(|(a, c)| Some((a.clone(), c.as_str()?.to_string()))).collect())
+                .unwrap_or_default();
+            let file = v.get("file").and_then(Value::as_str).unwrap_or(path).to_string();
+            let loaded = v.get("loaded").and_then(Value::as_u64).unwrap_or(0);
+            let warnings: Vec<String> = v
+                .get("warnings")
+                .and_then(Value::as_array)
+                .map(|w| w.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            if let Some(dir) = std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
+                app.ui.last_pgp_dir = Some(dir.to_string_lossy().to_string());
+            }
+            app.session.echo(format!("{loaded} command alias(es) imported from {path}."));
+            for w in &warnings {
+                app.session.echo(format!("Import {path}: {w}"));
+            }
+            if let Some(st) = app.alias_dlg.as_mut() {
+                st.user = aliases.clone();
+                st.applied = aliases;
+                st.file = Some(file);
+                st.form = None;
+                st.selected = None;
+                st.error = None;
+                st.warnings = warnings;
+            }
+            Ok(())
+        }
+        Err(e) => Err(refused(app, e)),
+    }
+}
+
+/// Import…: ask the host for a `.pgp` file (starting in the folder the last import came from),
+/// then load it. A cancelled picker is a no-op; without a native picker (the web) the error names
+/// the ALIASEDIT `text` form, since the web has no file system to read a path from.
+pub fn pick_and_import(app: &mut CadApp) -> Result<(), String> {
+    let dir = app.ui.last_pgp_dir.clone();
+    let picked = app.services.pick_pgp.as_ref().map(|pick| pick(dir.as_deref()));
+    match picked {
+        None => Err(refused(
+            app,
+            crate::tl!("Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.").to_string(),
+        )),
+        Some(None) => Ok(()),
+        Some(Some(path)) => import(app, &path),
+    }
+}
+
+/// Command Aliases window that edits the in-memory alias set in `app.alias_dlg`; OK/Apply send the differences to ALIASEDIT, read the resulting aliases and source file back, and show any error.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if app.alias_dlg.is_none() {
         crate::aliasdlg::open(app);
     }
     let built = built_in();
     let warn = Tokens::get().warn;
-    let (mut ok, mut cancel, mut apply_clicked) = (false, false, false);
+    let (mut ok, mut cancel, mut apply_clicked, mut import_clicked) = (false, false, false, false);
+    // Without a native file picker (the web) Import… can't open one; ALIASEDIT's `text` form loads a file there.
+    let can_pick = app.services.pick_pgp.is_some();
     let Some(st) = app.alias_dlg.as_mut() else { return };
-    let id = egui::Id::new("aliasedit_dialog");
+    let id = egui::Id::unique("aliasedit_dialog");
     if std::mem::take(&mut st.raise) {
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
     }
@@ -160,9 +249,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             Some(f) => ui.label(crate::tf!("Alias file: {file}", file = f)),
             None => ui.label(crate::tl!("No alias file loaded. REINIT replaces these aliases with a file's.")),
         };
+        ui.label(RichText::new(crate::tl!("Aliases are saved in your CADCraft profile and survive restarts.")).small());
         ui.horizontal(|ui| {
-            ui.label(crate::tl!("Filter"));
-            ui.text_edit_singleline(&mut st.filter);
+            let label = ui.label(crate::tl!("Filter"));
+            ui.text_edit_singleline(&mut st.filter).labelled_by(label.id);
         });
         let f = st.filter.trim().to_ascii_lowercase();
         let mut names: Vec<&String> = st.user.keys().chain(built.keys().filter(|a| !st.user.contains_key(*a))).collect();
@@ -220,17 +310,41 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             {
                 st.user.remove(s);
             }
+            let import = ui
+                .add_enabled(can_pick, egui::Button::new(crate::tl!("Import…")))
+                .on_disabled_hover_text(crate::tl!("Run ALIASEDIT with the file's contents using its text parameter."));
+            if import.clicked() {
+                if import_replaces_something(st) {
+                    st.confirm_import = true;
+                } else {
+                    import_clicked = true;
+                }
+            }
         });
+        if st.confirm_import {
+            ui.group(|ui| {
+                ui.label(crate::tf!("Importing a file replaces your {n} aliases, and any changes not applied yet.", n = st.user.len()));
+                ui.horizontal(|ui| {
+                    if ui.button(crate::tl!("Import and replace")).clicked() {
+                        st.confirm_import = false;
+                        import_clicked = true;
+                    }
+                    if ui.button(crate::tl!("Keep my aliases")).clicked() {
+                        st.confirm_import = false;
+                    }
+                });
+            });
+        }
         let mut save = false;
         let mut discard = false;
         if let Some(form) = st.form.as_mut() {
             ui.group(|ui| {
                 egui::Grid::new("alias_form").num_columns(2).show(ui, |ui| {
-                    ui.label(crate::tl!("Alias"));
-                    ui.text_edit_singleline(&mut form.alias);
+                    let alias_label = ui.label(crate::tl!("Alias"));
+                    ui.text_edit_singleline(&mut form.alias).labelled_by(alias_label.id);
                     ui.end_row();
-                    ui.label(crate::tl!("Command"));
-                    ui.text_edit_singleline(&mut form.command);
+                    let command_label = ui.label(crate::tl!("Command"));
+                    ui.text_edit_singleline(&mut form.command).labelled_by(command_label.id);
                     ui.end_row();
                 });
                 // A few commands starting with what was typed, to pick from.
@@ -260,6 +374,15 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         if let Some(e) = &st.error {
             ui.colored_label(warn, e.as_str());
         }
+        if !st.warnings.is_empty() {
+            for w in st.warnings.iter().take(3) {
+                ui.colored_label(warn, w.as_str());
+            }
+            let more = st.warnings.len().saturating_sub(3);
+            if more > 0 {
+                ui.label(crate::tf!("{n} more warnings; see the command line.", n = more));
+            }
+        }
         ui.separator();
         ui.horizontal(|ui| {
             ok = ui.button(crate::tl!("OK")).clicked();
@@ -267,6 +390,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             apply_clicked = ui.button(crate::tl!("Apply")).clicked();
         });
     });
+    if import_clicked {
+        let _ = pick_and_import(app);
+    }
     if (ok && apply(app)) || cancel {
         *open = false;
     } else if apply_clicked {
@@ -274,5 +400,187 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     if !*open {
         app.alias_dlg = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    use cadcraft_engine::Session;
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    use super::{open, pick_and_import};
+
+    /// The alias store is process-wide, so the tests that load files take turns and clear it.
+    fn alone() -> MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!("cadcraft-alias-{}-{}-{name}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// An app whose Import picker answers `answer` and records the folder it was asked to start in.
+    fn app_with_pick(answer: Option<String>) -> (CadApp, Rc<RefCell<Vec<Option<String>>>>) {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let log = Rc::clone(&asked);
+        let answer = Rc::new(RefCell::new(answer));
+        let services = Services {
+            pick_pgp: Some(Box::new(move |dir: Option<&str>| {
+                log.borrow_mut().push(dir.map(str::to_string));
+                answer.borrow().clone()
+            })),
+            ..Services::default()
+        };
+        (CadApp::new(Session::new(), services), asked)
+    }
+
+    fn clear(app: &mut CadApp) {
+        let _ = app.run("aliasedit", json!({ "clear": true }));
+    }
+
+    #[test]
+    fn import_loads_the_aliases_shows_the_path_and_warnings() {
+        let _guard = alone();
+        let dir = temp_dir("good");
+        let path = dir.join("aliases.pgp");
+        std::fs::write(&path, "; our own aliases\nXXL, *LINE\nXXC, *CIRCLE\nNOPE, *NOTACOMMAND\nEXT, notepad.exe\n").unwrap_or_default();
+        let picked = path.to_string_lossy().to_string();
+        let (mut app, asked) = app_with_pick(Some(picked.clone()));
+        open(&mut app);
+
+        pick_and_import(&mut app).expect("the file loads");
+
+        let st = app.alias_dlg.as_ref().expect("the dialog stays open");
+        assert_eq!(st.user.get("xxl").map(String::as_str), Some("line"));
+        assert_eq!(st.user.get("xxc").map(String::as_str), Some("circle"));
+        assert_eq!(st.file.as_deref(), Some(picked.as_str()), "the imported path is shown");
+        assert_eq!(st.applied, st.user, "an import leaves nothing for Apply to resend");
+        assert!(st.error.is_none());
+        assert!(st.warnings.iter().any(|w| w.contains("unknown command")), "unknown commands are reported: {:?}", st.warnings);
+        assert!(st.warnings.iter().any(|w| w.contains("external command")), "external commands are reported: {:?}", st.warnings);
+        assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "the command line shows the full warnings");
+        assert_eq!(app.ui.last_pgp_dir.as_deref(), Some(dir.to_string_lossy().as_ref()), "the import folder is remembered");
+        assert_eq!(asked.borrow().as_slice(), [None], "the first import has no folder yet");
+
+        // The next import starts where the last file was.
+        open(&mut app);
+        let _ = pick_and_import(&mut app);
+        assert_eq!(asked.borrow().as_slice(), [None, Some(dir.to_string_lossy().to_string())]);
+
+        clear(&mut app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Import… asks first when a file would replace aliases of the user's own or unapplied edits;
+    /// with neither it opens the picker at once.
+    #[test]
+    fn import_asks_before_replacing_the_users_aliases() {
+        let mut st = super::AliasDlgState::default();
+        assert!(!super::import_replaces_something(&st));
+        st.user.insert("xxl".into(), "line".into());
+        assert!(super::import_replaces_something(&st), "an edit not applied yet");
+        st.applied = st.user.clone();
+        assert!(super::import_replaces_something(&st), "an applied user alias");
+        st.user.clear();
+        assert!(super::import_replaces_something(&st), "a removal not applied yet");
+    }
+
+    #[test]
+    fn a_cancelled_picker_changes_nothing() {
+        let _guard = alone();
+        let (mut app, asked) = app_with_pick(None);
+        open(&mut app);
+        let before = app.alias_dlg.clone();
+
+        pick_and_import(&mut app).expect("cancelling is not an error");
+
+        assert_eq!(asked.borrow().len(), 1, "the picker was offered");
+        assert_eq!(app.alias_dlg, before, "a cancelled picker leaves the aliases, file and errors alone");
+        clear(&mut app);
+    }
+
+    #[test]
+    fn non_pgp_and_malformed_files_are_ordinary_errors() {
+        let _guard = alone();
+        let dir = temp_dir("bad");
+        let text = dir.join("aliases.txt");
+        std::fs::write(&text, "XXL, *LINE\n").unwrap_or_default();
+        let (mut app, _) = app_with_pick(Some(text.to_string_lossy().to_string()));
+        open(&mut app);
+        let before = app.alias_dlg.clone().unwrap_or_default();
+
+        let e = pick_and_import(&mut app).expect_err("a .txt file is not an alias file");
+
+        assert!(e.contains(".pgp"), "{e}");
+        let st = app.alias_dlg.as_ref().expect("the dialog stays open");
+        assert_eq!(st.user, before.user, "the refused file changes no alias");
+        assert_eq!(st.file, before.file);
+        assert!(st.error.as_deref().is_some_and(|e| e.contains(".pgp")), "{:?}", st.error);
+
+        // Malformed lines are warnings with the aliases that did parse, never a panic.
+        let broken = dir.join("broken.pgp");
+        std::fs::write(&broken, "not an alias line\nNOSUCH, *NOTACOMMAND\n; comment\nXXL, *LINE\n").unwrap_or_default();
+        let (mut app, _) = app_with_pick(Some(broken.to_string_lossy().to_string()));
+        open(&mut app);
+        pick_and_import(&mut app).expect("malformed lines are warnings");
+        let st = app.alias_dlg.as_ref().expect("the dialog stays open");
+        assert_eq!(st.user.get("xxl").map(String::as_str), Some("line"));
+        assert!(st.warnings.len() >= 2, "{:?}", st.warnings);
+        assert!(st.error.is_none(), "{:?}", st.error);
+
+        // A file that cannot be read is an error, reported in the dialog.
+        let missing = dir.join("missing.pgp");
+        let (mut app, _) = app_with_pick(Some(missing.to_string_lossy().to_string()));
+        open(&mut app);
+        let e = pick_and_import(&mut app).expect_err("a missing file is an ordinary error");
+        assert!(e.contains("missing.pgp"), "{e}");
+        assert!(app.alias_dlg.as_ref().is_some_and(|st| st.error.is_some()));
+
+        clear(&mut app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_import_folder_round_trips_through_prefs() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.ui.last_pgp_dir = Some("/tmp/our-aliases".into());
+        let saved = app.prefs_json();
+        assert!(saved.contains("lastPgpDir"), "{saved}");
+
+        let mut restored = CadApp::new(Session::new(), Services::default());
+        restored.load_prefs(&saved);
+        assert_eq!(restored.ui.last_pgp_dir.as_deref(), Some("/tmp/our-aliases"));
+
+        restored.load_prefs(r#"{"lastPgpDir": 3}"#);
+        assert_eq!(restored.ui.last_pgp_dir.as_deref(), Some("/tmp/our-aliases"), "malformed values are ignored");
+        restored.load_prefs(r#"{"lastPgpDir": ""}"#);
+        assert_eq!(restored.ui.last_pgp_dir.as_deref(), Some("/tmp/our-aliases"), "an empty value is ignored");
+    }
+
+    #[test]
+    fn no_picker_points_at_aliasedit_text_without_changing_aliases() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        open(&mut app);
+        let before = app.alias_dlg.clone();
+        let e = pick_and_import(&mut app).expect_err("the web has no native picker");
+        assert!(e.contains("ALIASEDIT"), "{e}");
+        assert!(e.contains("contents"), "the web is told to give the file's contents: {e}");
+        assert!(e.contains("text"), "the web is told which parameter carries the contents: {e}");
+        assert!(!e.contains("path"), "the web has no file system, so a path is not the supported form: {e}");
+        let st = app.alias_dlg.as_ref().expect("the dialog stays open");
+        assert_eq!(st.user, before.as_ref().map(|b| b.user.clone()).unwrap_or_default());
+        assert!(st.error.as_deref().is_some_and(|e| e.contains("ALIASEDIT")));
     }
 }

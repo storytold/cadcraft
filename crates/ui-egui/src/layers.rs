@@ -218,7 +218,7 @@ fn natural_lower(s: &str) -> String {
 /// The Layer Properties Manager window.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
-    let sid = egui::Id::new("lpm_state");
+    let sid = egui::Id::unique("lpm_state");
     let mut st: LpmState = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
     let mut actions: Vec<(&str, Value)> = Vec::new();
     let Ok(dst) = app.session.state() else {
@@ -249,7 +249,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         None => "Layer Properties Manager",
     };
     egui::Window::new(crate::i18n::t(title))
-        .id(egui::Id::new("lpm_window"))
+        .id(egui::Id::unique("lpm_window"))
         .open(open)
         .default_size(vec2(1180.0, 440.0))
         .min_width(640.0)
@@ -281,7 +281,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // Layer states.
                 ui.label(crate::tl!("Layer State"));
                 let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
-                egui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
                         if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
                             st.state_sel = Some(s.clone());
@@ -302,7 +302,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 {
                     actions.push(("layerstate.delete", json!({ "name": s })));
                 }
-                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text(crate::tl!("New state name")).desired_width(120.0));
+                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text(crate::tl!("New state name")).desired_width(120.0))
+                    .on_hover_text(crate::tl!("New state name"));
                 if ui.add_enabled(!st.state_name.trim().is_empty(), egui::Button::new(crate::tl!("Save State"))).clicked() {
                     let n = st.state_name.trim().to_string();
                     actions.push(("layerstate.save", json!({ "name": n })));
@@ -310,7 +311,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     st.state_name.clear();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text(crate::tl!("Search for layer")).desired_width(160.0));
+                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text(crate::tl!("Search for layer")).desired_width(160.0))
+                        .on_hover_text(crate::tl!("Search for layer"));
                     icons::paint(
                         ui.painter(),
                         Rect::from_center_size(ui.cursor().right_center() - vec2(8.0, 0.0), vec2(14.0, 14.0)),
@@ -375,7 +377,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                 }
                                 ui.end_row();
                                 for l in &shown {
-                                    row(ui, l, &cur, &used, vp.as_ref(), &linetypes, &library, &mut st, &mut actions);
+                                    row(
+                                        ui,
+                                        LayerRow {
+                                            layer: l,
+                                            current: &cur,
+                                            used: &used,
+                                            viewport: vp.as_ref(),
+                                            linetypes: &linetypes,
+                                            library: &library,
+                                            state: &mut st,
+                                            actions: &mut actions,
+                                        },
+                                    );
                                     ui.end_row();
                                 }
                             },
@@ -403,87 +417,22 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn row(
-    ui: &mut egui::Ui,
-    l: &Layer,
-    cur: &str,
-    used: &std::collections::HashSet<String>,
-    vp: Option<&(Handle, cadcraft_doc::Viewport)>,
-    linetypes: &[cadcraft_doc::Linetype],
-    library: &[String],
-    st: &mut LpmState,
-    actions: &mut Vec<(&'static str, Value)>,
-) {
+/// One Layer Properties Manager row.
+struct LayerRow<'a> {
+    layer: &'a Layer,
+    current: &'a str,
+    used: &'a std::collections::HashSet<String>,
+    viewport: Option<&'a (Handle, cadcraft_doc::Viewport)>,
+    linetypes: &'a [cadcraft_doc::Linetype],
+    library: &'a [String],
+    state: &'a mut LpmState,
+    actions: &'a mut Vec<(&'static str, Value)>,
+}
+
+fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
+    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, state: st, actions } = args;
     let t = Tokens::get();
-    let name = l.name.clone();
-    let current = name.eq_ignore_ascii_case(cur);
-    let is_used = used.contains(&name.to_ascii_lowercase());
-    let selected = st.selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&name));
-    // Status.
-    let (sr, sresp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
-    if selected {
-        ui.painter().rect_filled(sr, 2.0, t.accent.gamma_multiply(0.35));
-    }
-    status_icon(ui.painter(), sr.shrink(2.0), current, is_used);
-    let tip = if current {
-        "Current layer"
-    } else if is_used {
-        "Layer contains objects (double-click to make current)"
-    } else {
-        "Layer is empty (double-click to make current)"
-    };
-    if sresp.on_hover_text(crate::i18n::t(tip)).double_clicked() {
-        actions.push(("layer.current", json!({ "name": name })));
-    }
-    // Name (double-click or F2-style rename).
-    match st.renaming.clone() {
-        Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
-            let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::new(("lpm_rename", &name))));
-            if !r.has_focus() && !r.lost_focus() {
-                r.request_focus();
-            }
-            if r.lost_focus() {
-                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if !cancel && buf.trim() != name && !buf.trim().is_empty() {
-                    actions.push(("layer.set", json!({ "name": name, "newName": buf.trim() })));
-                    st.selected = Some(buf.trim().to_string());
-                }
-                st.renaming = None;
-            } else {
-                st.renaming = Some((n, buf));
-            }
-        }
-        _ => {
-            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
-            if selected {
-                ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
-            } else if r.hovered() {
-                ui.painter().rect_filled(nr, 2.0, t.control_hover.gamma_multiply(0.5));
-            }
-            ui.painter().text(pos2(nr.left() + 4.0, nr.center().y), egui::Align2::LEFT_CENTER, &name, crate::theme::body(), t.text);
-            if r.clicked() {
-                st.selected = Some(name.clone());
-            }
-            if r.double_clicked() && name != "0" && !name.eq_ignore_ascii_case("Defpoints") {
-                st.renaming = Some((name.clone(), name.clone()));
-            }
-            r.context_menu(|ui| {
-                if ui.button(crate::tl!("Set Current")).clicked() {
-                    actions.push(("layer.current", json!({ "name": name })));
-                    ui.close();
-                }
-                if ui.button(crate::tl!("Rename Layer")).clicked() {
-                    st.renaming = Some((name.clone(), name.clone()));
-                    ui.close();
-                }
-                if ui.button(crate::tl!("Delete Layer")).clicked() {
-                    actions.push(("layer.delete", json!({ "name": name })));
-                    ui.close();
-                }
-            });
-        }
-    }
+    let name = layer_identity(ui, l, cur, used, st, actions);
     // On / Freeze / Lock / Plot.
     if icons::button(ui, if l.on { Icon::Bulb } else { Icon::BulbOff }, 20.0, "On/Off", false).clicked() {
         actions.push(("layer.set", json!({ "name": name, "on": !l.on })));
@@ -503,7 +452,7 @@ fn row(
         actions.push(("layer.set", json!({ "name": name, "plot": !l.plot })));
     }
     // Color.
-    if let Some(c) = color_button(ui, egui::Id::new(("lpm_color", &name)), l.color, false, 96.0) {
+    if let Some(c) = color_button(ui, egui::Id::unique(("lpm_color", &name)), l.color, false, 96.0) {
         actions.push(("layer.set", json!({ "name": name, "color": c.name() })));
     }
     // Linetype.
@@ -524,7 +473,7 @@ fn row(
         })
         .inner;
     egui::Popup::from_toggle_button_response(&lt_resp)
-        .id(egui::Id::new(("lpm_lt", &name)))
+        .id(egui::Id::unique(("lpm_lt", &name)))
         .width(240.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
@@ -580,7 +529,7 @@ fn row(
         })
         .inner;
     egui::Popup::from_toggle_button_response(&lw_resp)
-        .id(egui::Id::new(("lpm_lw", &name)))
+        .id(egui::Id::unique(("lpm_lw", &name)))
         .width(170.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
@@ -611,7 +560,7 @@ fn row(
             });
         });
     // Transparency (commits when the drag or edit ends).
-    let tid = egui::Id::new(("lpm_tr", &name));
+    let tid = egui::Id::unique(("lpm_tr", &name));
     let mut tr = ui.data_mut(|d| d.get_temp::<u8>(tid)).unwrap_or(l.transparency);
     let r = ui.add(egui::DragValue::new(&mut tr).range(0..=90).speed(0.5));
     if r.dragged() || r.has_focus() {
@@ -632,7 +581,7 @@ fn row(
         }
         let vc = v.layer_colors.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)).map(|(_, c)| *c);
         ui.horizontal(|ui| {
-            if let Some(c) = color_button(ui, egui::Id::new(("lpm_vpcolor", &name)), vc.unwrap_or(l.color), false, 96.0) {
+            if let Some(c) = color_button(ui, egui::Id::unique(("lpm_vpcolor", &name)), vc.unwrap_or(l.color), false, 96.0) {
                 actions.push(("vplayer", json!({ "handle": h.hex(), "colors": { name.clone(): c.name() } })));
             }
             if vc.is_some() && ui.small_button("×").on_hover_text(crate::tl!("Remove the viewport override")).clicked() {
@@ -653,7 +602,9 @@ fn row(
     // Description (double-click to edit).
     match st.describing.clone() {
         Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
-            let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(200.0).id(egui::Id::new(("lpm_desc", &name))));
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut buf).desired_width(200.0).id(egui::Id::unique(("lpm_desc", &name))))
+                .accessible_name(crate::tl!("Description"));
             if !r.has_focus() && !r.lost_focus() {
                 r.request_focus();
             }
@@ -676,7 +627,88 @@ fn row(
     }
 }
 
-/// Lower-case names of layers with objects on them.
+fn layer_identity(
+    ui: &mut egui::Ui,
+    l: &Layer,
+    cur: &str,
+    used: &std::collections::HashSet<String>,
+    st: &mut LpmState,
+    actions: &mut Vec<(&'static str, Value)>,
+) -> String {
+    let t = Tokens::get();
+    let name = l.name.clone();
+    let current = name.eq_ignore_ascii_case(cur);
+    let is_used = used.contains(&name.to_ascii_lowercase());
+    let selected = st.selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&name));
+    // Status.
+    let (sr, sresp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
+    if selected {
+        ui.painter().rect_filled(sr, 2.0, t.accent.gamma_multiply(0.35));
+    }
+    status_icon(ui.painter(), sr.shrink(2.0), current, is_used);
+    let tip = if current {
+        "Current layer"
+    } else if is_used {
+        "Layer contains objects (double-click to make current)"
+    } else {
+        "Layer is empty (double-click to make current)"
+    };
+    if sresp.on_hover_text(crate::i18n::t(tip)).double_clicked() {
+        actions.push(("layer.current", json!({ "name": name })));
+    }
+    // Name (double-click or F2-style rename).
+    match st.renaming.clone() {
+        Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::unique(("lpm_rename", &name))))
+                .accessible_name(crate::tl!("Name"));
+            if !r.has_focus() && !r.lost_focus() {
+                r.request_focus();
+            }
+            if r.lost_focus() {
+                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if !cancel && buf.trim() != name && !buf.trim().is_empty() {
+                    actions.push(("layer.set", json!({ "name": name, "newName": buf.trim() })));
+                    st.selected = Some(buf.trim().to_string());
+                }
+                st.renaming = None;
+            } else {
+                st.renaming = Some((n, buf));
+            }
+        }
+        _ => {
+            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
+            if selected {
+                ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
+            } else if r.hovered() {
+                ui.painter().rect_filled(nr, 2.0, t.control_hover.gamma_multiply(0.5));
+            }
+            ui.painter().text(pos2(nr.left() + 4.0, nr.center().y), egui::Align2::LEFT_CENTER, &name, crate::theme::body(), t.text);
+            if r.clicked() {
+                st.selected = Some(name.clone());
+            }
+            if r.double_clicked() && name != "0" && !name.eq_ignore_ascii_case("Defpoints") {
+                st.renaming = Some((name.clone(), name.clone()));
+            }
+            r.context_menu(|ui| {
+                if ui.button(crate::tl!("Set Current")).clicked() {
+                    actions.push(("layer.current", json!({ "name": name })));
+                    ui.close();
+                }
+                if ui.button(crate::tl!("Rename Layer")).clicked() {
+                    st.renaming = Some((name.clone(), name.clone()));
+                    ui.close();
+                }
+                if ui.button(crate::tl!("Delete Layer")).clicked() {
+                    actions.push(("layer.delete", json!({ "name": name })));
+                    ui.close();
+                }
+            });
+        }
+    }
+    name
+}
+
 fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     let ents = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));
@@ -750,7 +782,7 @@ mod tests {
                 dialog(&mut app, ui.ctx(), &mut open);
             });
             out.textures_delta.clear();
-            let id = egui::LayerId::new(egui::Order::Middle, egui::Id::new("lpm_window"));
+            let id = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lpm_window"));
             heights.push(ctx.memory(|m| m.area_rect(id.id)).map_or(0.0, |r| r.height()));
         }
         let (first, last) = (heights[5], heights[29]);
