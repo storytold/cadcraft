@@ -194,11 +194,10 @@ fn drawn_at(d: &Drawing, x0: f64) -> bool {
     l.prims.iter().any(|p| l.points(p).iter().all(|q| q.x >= x0 - 0.5 && q.x < x0 + 5.0))
 }
 
-/// A block reference on a layer that is off hides what its block has on layer 0 (and its
-/// attributes without properties of their own), as AutoCAD does, but still shows the objects and
-/// attributes on layers of their own that are on. A frozen layer hides all of it.
-#[test]
-fn a_block_reference_on_a_layer_that_is_off_still_shows_its_own_layers() {
+/// A block `KKS` with a line on layer 0 (x 0..4), a line on layer OWN (x 10..14), an attribute
+/// definition on TXT, referenced on layer INS with that attribute (x 20) and one without a
+/// definition (x 30), which follows the reference.
+fn kks_drawing() -> Drawing {
     let mut d = Drawing::new_imperial();
     layer(&mut d, "TXT", 2, Lineweight::ByLayer);
     layer(&mut d, "OWN", 3, Lineweight::ByLayer);
@@ -237,30 +236,125 @@ fn a_block_reference_on_a_layer_that_is_off_still_shows_its_own_layers() {
         clip: None,
     };
     d.add(&Space::Model, on("INS"), EntityKind::Insert(ins)).unwrap();
-    assert_eq!([0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)), [true; 4], "layer on: all of it");
+    d
+}
+
+/// Change the block reference of [`kks_drawing`].
+fn modify_reference(d: &mut Drawing, f: impl FnOnce(&mut Entity)) {
+    let h = d.model.iter().find(|e| matches!(e.kind, EntityKind::Insert(_))).unwrap().handle;
+    assert!(d.model.modify(h, f));
+}
+
+/// What a plot of model space draws between x0 and x0 + 5: the layers (indices) it is on.
+fn plotted_at(d: &Drawing, x0: f64) -> Vec<u32> {
+    let l = cadcraft_render::build_plot(d, &Space::Model, &Options::default());
+    let mut v: Vec<u32> =
+        (0..l.prims.len()).filter(|&i| l.points(&l.prims[i]).iter().all(|q| q.x >= x0 - 0.5 && q.x < x0 + 5.0)).map(|i| l.prim_layers[i]).collect();
+    v.dedup();
+    v
+}
+
+fn layer_index(d: &Drawing, name: &str) -> u32 {
+    d.layers.iter().position(|l| l.name == name).map(|i| i as u32).unwrap()
+}
+
+const XS: [f64; 4] = [0.0, 10.0, 20.0, 30.0];
+
+/// A block reference on a layer that is off hides what its block has on layer 0 (and its
+/// attributes without properties of their own), as AutoCAD does, but still shows the objects and
+/// attributes on layers of their own that are on. A frozen layer hides all of it.
+#[test]
+fn a_block_reference_on_a_layer_that_is_off_still_shows_its_own_layers() {
+    let mut d = kks_drawing();
+    assert_eq!(XS.map(|x| drawn_at(&d, x)), [true; 4], "layer on: all of it");
 
     d.layer_mut("INS").unwrap().on = false;
     assert_eq!(
-        [0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)),
+        XS.map(|x| drawn_at(&d, x)),
         [false, true, true, false],
         "layer off: layer 0 and the attribute that follows the reference go, the own layers stay"
     );
-
     // In a plot each part is on its own PDF layer: the attribute on TXT, not on the reference's
-    // layer that is off (whose PDF layer starts hidden).
-    let l = cadcraft_render::build_plot(&d, &Space::Model, &Options::default());
-    let index = |name: &str| d.layers.iter().position(|l| l.name == name).map(|i| i as u32);
-    let layers_at = |x0: f64| -> Vec<u32> {
-        let mut v: Vec<u32> = (0..l.prims.len())
-            .filter(|&i| l.points(&l.prims[i]).iter().all(|q| q.x >= x0 - 0.5 && q.x < x0 + 5.0))
-            .map(|i| l.prim_layers[i])
-            .collect();
-        v.dedup();
-        v
-    };
-    assert_eq!(layers_at(10.0), vec![index("OWN").unwrap()]);
-    assert_eq!(layers_at(20.0), vec![index("TXT").unwrap()]);
+    // layer that is off (whose PDF layer starts hidden); the hidden parts aren't plotted at all.
+    assert_eq!(plotted_at(&d, 0.0), Vec::<u32>::new());
+    assert_eq!(plotted_at(&d, 10.0), vec![layer_index(&d, "OWN")]);
+    assert_eq!(plotted_at(&d, 20.0), vec![layer_index(&d, "TXT")]);
+    assert_eq!(plotted_at(&d, 30.0), Vec::<u32>::new());
 
     d.layer_mut("INS").unwrap().frozen = true;
-    assert_eq!([0.0, 10.0, 20.0, 30.0].map(|x| drawn_at(&d, x)), [false; 4], "frozen: none of it");
+    assert_eq!(XS.map(|x| drawn_at(&d, x)), [false; 4], "frozen: none of it");
+}
+
+/// A reference on a layer that isn't plotted is drawn in full on screen; in a plot it keeps its
+/// parts on plotted layers of their own, as a layer that is off does.
+#[test]
+fn a_block_reference_on_a_layer_that_is_not_plotted_still_plots_its_own_layers() {
+    let mut d = kks_drawing();
+    d.layer_mut("INS").unwrap().plot = false;
+    assert_eq!(XS.map(|x| drawn_at(&d, x)), [true; 4], "on screen: all of it");
+    let plotted = XS.map(|x| !plotted_at(&d, x).is_empty());
+    assert_eq!(plotted, [false, true, true, false]);
+}
+
+/// An invisible reference hides all of its block, whatever the layers.
+#[test]
+fn an_invisible_block_reference_shows_nothing_of_its_block() {
+    let mut d = kks_drawing();
+    modify_reference(&mut d, |e| e.common.visible = false);
+    assert_eq!(XS.map(|x| drawn_at(&d, x)), [false; 4]);
+    d.layer_mut("INS").unwrap().on = false;
+    assert_eq!(XS.map(|x| drawn_at(&d, x)), [false; 4]);
+}
+
+/// A layer frozen in a viewport hides a reference on it there entirely, as a frozen layer does.
+#[test]
+fn a_block_reference_on_a_layer_frozen_in_the_viewport_shows_nothing_there() {
+    let seen = |frozen: &[&str]| {
+        let mut d = kks_drawing();
+        let vp = Viewport {
+            center: Vec3::new(50.0, 50.0, 0.0),
+            width: 80.0,
+            height: 40.0,
+            view_center: Vec2::new(17.0, 0.0),
+            view_height: 40.0,
+            id: 2,
+            locked: false,
+            frozen_layers: frozen.iter().map(|s| s.to_string()).collect(),
+            layer_colors: Vec::new(),
+            clip: None,
+            on: true,
+            twist: 0.0,
+        };
+        d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+        let l = build(&d, &Space::Paper("Layout1".into()), &Options::default());
+        l.prims.iter().filter(|p| p.handle == VIEWPORT_CONTENT).count()
+    };
+    let all = seen(&[]);
+    assert!(all > 0);
+    assert!(seen(&["OWN"]) < all, "a part's own layer frozen there hides that part");
+    assert_eq!(seen(&["INS"]), 0, "the reference's layer frozen there hides all of it");
+}
+
+/// The XCLIP frame belongs to the reference: plotted with XCLIPFRAME 1 while its layer is on,
+/// not while it is off, when the parts on layers of their own are still plotted.
+#[test]
+fn the_clip_frame_of_a_block_reference_on_a_layer_that_is_off_is_not_plotted() {
+    let mut d = kks_drawing();
+    d.header.set_i64("XCLIPFRAME", 1);
+    modify_reference(&mut d, |e| {
+        if let EntityKind::Insert(ins) = &mut e.kind {
+            ins.clip = Some(cadcraft_doc::ClipBoundary::new(vec![Vec2::new(-2.0, -3.0), Vec2::new(40.0, 3.0)]));
+        }
+    });
+    let frame = |d: &Drawing| {
+        let l = cadcraft_render::build_plot(d, &Space::Model, &Options::default());
+        l.prims.iter().any(|p| {
+            let b = Bounds2::from_points(l.points(p).to_vec());
+            b.min.x < -1.0 && b.max.x > 39.0
+        })
+    };
+    assert!(frame(&d), "layer on: the frame is plotted");
+    d.layer_mut("INS").unwrap().on = false;
+    assert!(!frame(&d), "layer off: no frame");
+    assert_eq!(plotted_at(&d, 10.0), vec![layer_index(&d, "OWN")], "the part on its own layer still is");
 }

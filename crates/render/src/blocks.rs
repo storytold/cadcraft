@@ -141,6 +141,10 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
                 }
             }
         }
+        // In plots each attribute is on its own layer (that of the reference when it follows the
+        // reference): what the reference drew before them is the reference's.
+        let reference_layer = common_layer(ctx, &e.common);
+        claim_layer(b, ctx, reference_layer);
         for a in &ins.attribs {
             if attmode == 0 || (a.invisible && attmode != 2) {
                 continue;
@@ -152,10 +156,6 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
-            // In plots each attribute is on its own layer (that of the reference when it follows
-            // the reference): what the reference drew before it is the reference's.
-            let reference_layer = common_layer(ctx, &e.common);
-            claim_layer(b, ctx, reference_layer);
             let (ink, lw, shown, t, layer) = match (def, a.props.is_empty()) {
                 // Without a definition or properties of its own it follows the reference, hidden
                 // with it.
