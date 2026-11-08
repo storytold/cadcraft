@@ -417,10 +417,11 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         }
     }
     if proxies {
+        f.complete_class_table = classes.iter().filter(|(k, _, _)| k == "CLASS").count() <= MAX_OBJECTS;
         f.class_order = class_order;
     }
     for (kind, _, t) in &classes {
-        if kind == "CLASS" && val(t, 1).is_some_and(|n| types.contains(&up(&n))) && f.classes.len() < MAX_OBJECTS {
+        if kind == "CLASS" && (f.complete_class_table || val(t, 1).is_some_and(|n| types.contains(&up(&n)))) && f.classes.len() < MAX_OBJECTS {
             f.classes.push(t.iter().map(raw).collect());
         }
     }
@@ -705,6 +706,8 @@ pub(crate) fn unknown_entity(u: &Unknown, e: &Entity, owner: &str, paper: bool) 
             }
             _ if in_group => continue,
             5 | 67 => continue,
+            // After a subclass marker, 330 can be proxy data even without a source owner.
+            100 => owner_seen = true,
             330 if !owner_seen => {
                 owner_seen = true;
                 continue;
@@ -922,7 +925,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     for (i, n) in recs.iter().filter(|r| r.kind == "CLASS").filter_map(|r| val(body(r), 1)).map(|n| up(&n)).chain(appended).enumerate() {
         numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
     }
-    let renumber = |old: Option<i64>| class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied());
+    let renumber = |old| proxy_class_number(f, &numbers, old);
     // Entities of types CADCraft doesn't model, placed among the written ones.
     let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
     for list in planned.values_mut() {
@@ -1031,11 +1034,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         if r.kind == "BLOCK" {
             block = up(&val(b, 2).unwrap_or_default());
         }
-        if r.kind == "ENDSEC" && r.sec == "CLASSES" {
-            for c in f.classes.iter().filter(|c| c.iter().find(|t| t.code == 1).is_some_and(|n| !class_names.contains(&up(&n.value)))) {
-                out.push(Tag::s(0, "CLASS"));
-                out.extend(c.iter().map(tag));
-            }
+        if source_class_record(f, r, &recs, tags, &class_names, &mut out) {
+            continue;
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
             for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
@@ -1076,6 +1076,50 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+}
+
+/// Complete source tables keep positional identities even when names repeat.
+fn proxy_class_number(f: &Foreign, numbers: &HashMap<String, i64>, old: Option<i64>) -> Option<i64> {
+    if f.complete_class_table {
+        class_index(old).filter(|&i| i < f.classes.len()).and(old)
+    } else {
+        class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied())
+    }
+}
+
+/// Source classes precede decoder-owned classes so proxy positions stay stable.
+fn source_class_record(f: &Foreign, record: &Rec, recs: &[Rec], tags: &[Tag], class_names: &HashSet<String>, out: &mut Vec<Tag>) -> bool {
+    if record.sec != "CLASSES" {
+        return false;
+    }
+    if !f.complete_class_table {
+        if record.kind == "ENDSEC" {
+            for class in f.classes.iter().filter(|c| c.iter().find(|t| t.code == 1).is_some_and(|n| !class_names.contains(&up(&n.value)))) {
+                out.push(Tag::s(0, "CLASS"));
+                out.extend(class.iter().map(tag));
+            }
+        }
+        return false;
+    }
+    if record.kind == "CLASS" {
+        return true;
+    }
+    if record.kind != "ENDSEC" {
+        return false;
+    }
+    for class in &f.classes {
+        out.push(Tag::s(0, "CLASS"));
+        out.extend(class.iter().map(tag));
+    }
+    let source_names: HashSet<_> = f.classes.iter().filter_map(|c| c.iter().find(|t| t.code == 1)).map(|t| up(&t.value)).collect();
+    for class in recs.iter().filter(|r| r.sec == "CLASSES" && r.kind == "CLASS") {
+        let body = tags.get(class.start + 1..class.end).unwrap_or_default();
+        if val(body, 1).is_some_and(|n| !source_names.contains(&up(&n))) {
+            out.push(Tag::s(0, "CLASS"));
+            out.extend_from_slice(body);
+        }
+    }
+    false
 }
 
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of
