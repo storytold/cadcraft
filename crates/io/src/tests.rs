@@ -2787,6 +2787,24 @@ fn hatch_edges_keep_full_circles_splines_and_clockwise_ellipses() {
     near(hatch_edge_extents(&ellipse(1)), [-5.0, 0.0, 5.0, 2.5]);
 }
 
+/// A solid HATCH loop flagged as not closed (92 bit 32), here three lines that don't meet, isn't
+/// filled: joined into one polygon it filled a wedge between the lines. The closed loop stays.
+#[test]
+fn hatch_loop_flagged_not_closed_is_not_filled() {
+    let line = |x0: f64, y0: f64, x1: f64, y1: f64| format!("72\n1\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n");
+    let square = [line(0.0, 0.0, 1.0, 0.0), line(1.0, 0.0, 1.0, 1.0), line(1.0, 1.0, 0.0, 1.0), line(0.0, 1.0, 0.0, 0.0)].concat();
+    let open = [line(10.0, 0.0, 10.0, 50.0), line(40.0, 30.0, 40.0, 20.0), line(30.0, 40.0, 30.0, 10.0)].concat();
+    let text = format!(
+        "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n1\n2\nSOLID\n70\n1\n71\n0\n\
+         91\n2\n92\n1\n93\n4\n{square}97\n0\n92\n33\n93\n3\n{open}97\n0\n75\n0\n76\n1\n98\n0\n0\nENDSEC\n0\nEOF\n"
+    );
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = hatches(&d);
+    assert_eq!(h[0].loops.len(), 1, "only the closed loop is kept");
+    let b = d.extents(&Space::Model);
+    assert!(b.max.x <= 1.0 + 1e-9 && b.max.y <= 1.0 + 1e-9, "extents {b:?}");
+}
+
 /// Issue #923: a HATCH spline edge caps its degree at 10 like the SPLINE reader does, both when the
 /// knots are valid for the stated degree and when the reader falls back to the control polygon.
 #[test]
