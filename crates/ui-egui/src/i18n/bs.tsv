@@ -1459,3 +1459,5 @@ menu	Modify	Izmijeni
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Crtež se promijenio. Zatvorite prozor i otvorite ga ponovo.
+	Objects on locked layers can't be selected	Objekti na zaključanim slojevima ne mogu se odabrati
+	They are still shown and snapped to, like a blueprint.	I dalje se prikazuju i hvataju, kao podloga.

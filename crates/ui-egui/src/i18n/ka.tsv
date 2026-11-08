@@ -1472,3 +1472,5 @@ menu	View	ხედი
 	Text to find	მოსაძებნი ტექსტი
 	Whole words	მთლიანი სიტყვები
 	Nothing found	ვერაფერი მოიძებნა
+	Objects on locked layers can't be selected	ჩაკეტილ შრეებზე ობიექტების არჩევა შეუძლებელია
+	They are still shown and snapped to, like a blueprint.	ისინი კვლავ ჩანს და მათზე მიბმა შესაძლებელია, როგორც ესკიზზე.

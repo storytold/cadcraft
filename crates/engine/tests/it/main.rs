@@ -78,6 +78,7 @@ mod leader_command;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lisp_corpus;
 mod lisp_undo_in_routine;
+mod locked_unselectable;
 mod malformed_handles;
 mod matchprop;
 mod measure_distance_snapping;
