@@ -28,6 +28,7 @@
 	= Equals	= Igual a
 	> Greater than	> Mayor que
 	A drawing opened from a file keeps that file's format.	Un dibujo abierto desde un archivo conserva el formato de ese archivo.
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un atajo que asignes tiene prioridad sobre el de CADCraft. Los cambios se aplican al momento y se conservan para la próxima vez.
 	A variable name starts with a letter and has only letters, digits and _	El nombre de una variable empieza por una letra y solo lleva letras, dígitos y _
 	About	Acerca de
 	About CADCraft	Acerca de CADCraft
@@ -36,8 +37,15 @@
 	Add Leader	Añadir directriz
 	Add Vertex	Añadir vértice
 	Add/Delete Scales...	Añadir/eliminar escalas...
+	Add: Pick points	Añadir: elegir puntos
+	Add: Select objects	Añadir: seleccionar objetos
 	Additional angles	Ángulos adicionales
+	Add…	Añadir…
+	Alias	Alias
+	Alias file: {file}	Archivo de alias: {file}
+	Aliases are saved in your CADCraft profile and survive restarts.	Los alias se guardan en tu perfil de CADCraft y se conservan al reiniciar.
 	Align	Alinear
+	Align Multileaders	Alinear directrices múltiples
 	Align Text	Alinear texto
 	Aligned	Alineada
 	All	Todas
@@ -46,7 +54,9 @@
 	All Used Layers	Todas las capas usadas
 	All files	Todos los archivos
 	An array that would create more objects than this is refused.	Se rechaza una matriz que crearía más objetos que este límite.
+	Analyze Usage	Analizar uso
 	Angle	Ángulo
+	Angstroms	Ángstroms
 	Angular	Angular
 	Annotation Visibility	Visibilidad de anotaciones
 	Annotation scale	Escala de anotación
@@ -55,14 +65,18 @@
 	Apparent Intersection	Intersección aparente
 	Append to current selection set	Añadir al conjunto de selección actual
 	Apply	Aplicar
+	Apply to Layout	Aplicar a la presentación
 	Apply to:	Aplicar a:
 	Apply true color	Aplicar color verdadero
 	Arc	Arco
 	Arc Length	Longitud de arco
+	Architectural	Arquitectónico
 	Area	Área
 	Arrange Panel	Organizar panel
 	Array	Matriz
 	Arrow size	Tamaño de flecha
+	Associative	Asociativo
+	Astronomical Units	Unidades astronómicas
 	Attach	Adjuntar
 	Attach DWG...	Adjuntar DWG...
 	Attribute	Atributo
@@ -74,7 +88,33 @@
 	AutoConstrain	Restricciones automáticas
 	Automatic save every	Guardado automático cada
 	Automatic save file location	Ubicación de los archivos de guardado automático
+	Back to CADCraft's shortcut	Volver al atajo de CADCraft
+	Backup copies are off, so the current file will be replaced.	Las copias de seguridad están desactivadas, así que el archivo actual se sustituirá.
 	Backup copy	Copia de seguridad
+	Block to create or edit	Bloque que crear o editar
+	Bottom left	Abajo a la izquierda
+	Bottom right	Abajo a la derecha
+	Boundaries	Contornos
+	Boundaries picked: {n}	Contornos elegidos: {n}
+	Break-line Symbol	Símbolo de línea de rotura
+	Center the plot	Centrar el trazado
+	Centered	Centrado
+	Centimeters	Centímetros
+	Change	Cambiar
+	Change Properties	Cambiar propiedades
+	Choose the command the alias starts.	Elige el comando que inicia el alias.
+	Clear Recent Files	Borrar archivos recientes
+	Click the ruler to add a tab stop, right-click to remove one	Haz clic en la regla para añadir una tabulación; clic derecho para quitarla
+	Click to set new origin	Haz clic para fijar el nuevo origen
+	Clip Xref	Delimitar referencia externa
+	Close Block Editor	Cerrar editor de bloques
+	Collect	Agrupar
+	Collect Multileaders	Agrupar directrices múltiples
+	Color 1	Color 1
+	Color 2	Color 2
+	Command	Comando
+	Command Mode	Modo de comando
+	Convert Text to Mtext	Convertir texto en texto multilínea
 	Create backup copy with each save	Crear una copia de seguridad en cada guardado
 	Axis, End	Eje, extremo
 	B	N
@@ -143,6 +183,42 @@
 	Close All Other Drawings	Cerrar todos los demás dibujos
 	Close Array Editing	Cerrar la edición de matriz
 	Close Comparison	Cerrar comparación
+	Create separate hatches	Crear sombreados independientes
+	Crossing selection color:	Color de la selección por captura:
+	Curved	Curvo
+	Custom	Personalizado
+	Customize	Personalizar
+	DView	DView
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 y anteriores los conservan. Usa Guardar como para conservarlos en el dibujo.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF los conserva. Usa Guardar como para conservarlos en el dibujo.
+	Decameters	Decámetros
+	Decimal	Decimal
+	Decimal Degrees	Grados decimales
+	Decimeters	Decímetros
+	Default Mode	Modo predeterminado
+	Default to boundary extents	Usar la extensión del contorno por defecto
+	Define each corner of the selection window with a separate click.	Define cada esquina de la ventana de selección con un clic distinto.
+	Deg/Min/Sec	Grados/Min/Seg
+	Discard	Descartar
+	Don't Save	No guardar
+	Drag Dynamic Grip	Arrastrar pinzamiento dinámico
+	Drawing Units	Unidades de dibujo
+	Dynamic Block Data	Datos de bloque dinámico
+	Dynamic Block Grips	Pinzamientos de bloque dinámico
+	Dynamic Block Reference	Referencia a bloque dinámico
+	ENTER	INTRO
+	Edit Block Definition	Editar definición de bloque
+	Edit Command Aliases (PGP)...	Editar alias de comandos (PGP)...
+	Edit Mode	Modo de edición
+	Edit Multileader	Editar directriz múltiple
+	Edit…	Editar…
+	Engineering	Ingeniería
+	Enter block names to extract	Introduce los nombres de los bloques que extraer
+	Enter geometric characteristic	Introduce la característica geométrica
+	Enter name of LISP file to load	Introduce el nombre del archivo LISP que cargar
+	Evaluate LISP	Evaluar LISP
+	Exclude:	Excluir:
+	Explode Attributes to Text	Descomponer atributos en texto
 	Export Comparison	Exportar comparación
 	Closed	Cerrada
 	Coincident	Coincidente
@@ -342,6 +418,7 @@
 	Export Table	Exportar tabla
 	Export to PDF...	Exportar a PDF...
 	Export...	Exportar...
+	Express Tools	Express Tools
 	Expression	Expresión
 	Extend	Alargar
 	Extension	Extensión
@@ -349,6 +426,7 @@
 	External Reference	Referencia externa
 	External References	Referencias externas
 	Extrude	Extruir
+	Feet	Pies
 	File	Archivo
 	File Tab	Pestañas de archivos
 	Fillet	Empalme
@@ -358,10 +436,14 @@
 	Find...	Buscar...
 	First	Primero
 	First commit	Primer commit
+	First corner	Primera esquina
 	Fit Points	Puntos de ajuste
+	Fit to paper	Ajustar al papel
 	Fix	Fijar
 	Flatten Objects	Aplanar objetos
+	Font	Fuente
 	Format	Formato
+	Fractional	Fraccionario
 	Freehand	Mano alzada
 	Freeze	Inutilizar
 	Freeze Layer	Inutilizar capa
@@ -379,11 +461,13 @@
 	Get Variable	Consultar variable
 	Get View	Consultar vista
 	Get from the Drawing	Obtener del dibujo
+	Gigameters	Gigámetros
 	Global	Global
 	Global width	Anchura global
 	Grab bag	Miscelánea
 	Gradient	Degradado
 	Gradient...	Degradado...
+	Grads	Grados centesimales
 	Green	Verde
 	Grid (F7)	Rejilla (F7)
 	Grid Display	Mostrar rejilla
@@ -397,18 +481,26 @@
 	Grip Scale	Escalar con pinzamientos
 	Grip Stretch	Estirar con pinzamientos
 	Grip size	Tamaño de los pinzamientos
+	Grips	Pinzamientos
 	Group	Agrupar
 	Group Edit	Editar grupo
 	Group Options	Opciones de grupo
 	Group Selection	Selección de grupo
+	Groups	Grupos
 	Hatch	Sombreado
 	Hatch Edit	Editar sombreado
 	Hatch Patterns	Patrones de sombreado
+	Hatch Pick	Elegir sombreado
+	Hatch and Gradient	Sombreado y degradado
+	Hatch origin	Origen del sombreado
 	Hatch...	Sombreado...
+	Hatches	Sombreados
+	Hectometers	Hectómetros
 	Height	Altura
 	Height: {height}	Altura: {height}
 	Helix	Hélice
 	Help	Ayuda
+	Hemispherical	Hemisférico
 	Hide All	Ocultar todo
 	Hide All Constraint Bars	Ocultar todas las barras de restricciones
 	Hide All Dynamic Dimensions	Ocultar todas las cotas dinámicas
@@ -423,14 +515,23 @@
 	HorizontalDistance	Distancia horizontal
 	How to apply:	Cómo aplicar:
 	ID Point	Coordenadas de un punto
+	Ignore	Ignorar
+	Imperial (inches)	Imperial (pulgadas)
+	Implied Loops	Bucles implícitos
 	Import	Importar
+	Import and replace	Importar y reemplazar
 	Import...	Importar...
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Importar: aquí no hay diálogo de archivos; ejecuta ALIASEDIT con el contenido del archivo en su parámetro text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Importar un archivo reemplaza tus {n} alias y los cambios que aún no se hayan aplicado.
+	Import…	Importar…
 	In	Acercar
 	In-window Menu Bar	Barra de menús en la ventana
+	Inches	Pulgadas
 	Include in new selection set	Incluir en el nuevo conjunto de selección
 	Increment angle	Incremento angular
 	Index Color	Color indexado
 	Index color: {index}	Color indexado: {index}
+	Indicate selection area	Indicar el área de selección
 	Infer Constraints	Inferir restricciones
 	Inquiry	Consultar
 	Insert	Insertar
@@ -444,27 +545,39 @@
 	Insertion X	Inserción X
 	Insertion Y	Inserción Y
 	Insertion Z	Inserción Z
+	Insertion scale	Escala de inserción
 	Inspect Constraints	Inspeccionar restricciones
 	Inspect Drawing	Inspeccionar dibujo
 	Inspection	Inspección
 	Interface Language	Idioma de la interfaz
 	Interface Theme	Tema de la interfaz
 	Interface language	Idioma de la interfaz
+	Interface scale	Escala de la interfaz
 	Interface theme	Tema de la interfaz
 	Intersect	Intersección
 	Intersection	Intersección
+	Inverted	Invertido
+	Island	Isla
+	Island detection	Detección de islas
 	Isolate	Aislar
 	Isolate Layer	Aislar capa
 	Isolate Objects	Aislar objetos
 	Isometric Drafting	Dibujo isométrico
 	Isometric Plane	Plano isométrico
 	Isometric snap	Forzar cursor isométrico
+	Italic	Cursiva
 	Jogged	Con recodo
 	Jogged Linear	Lineal con recodo
 	Join	Unir
 	Join the ArtCraft Discord…	Únete al Discord de ArtCraft…
 	Join us on Discord	Únete a nosotros en Discord
+	Justify	Justificar
+	Keep my aliases	Conservar mis alias
 	Keep the system cursor visible over the drawing area	Mantener visible el cursor del sistema sobre el área de dibujo
+	Keyboard Shortcuts	Atajos de teclado
+	Keyboard Shortcuts...	Atajos de teclado...
+	Kilometers	Kilómetros
+	Landscape	Horizontal
 	Language	Idioma
 	Largest array	Matriz más grande
 	Last	Último
@@ -488,6 +601,7 @@
 	Layout	Presentación
 	Layout list	Lista de presentaciones
 	Layout paper	Papel de la presentación
+	Layouts	Presentaciones
 	Leader	Directriz
 	Leaders Only	Solo directrices
 	Left	Izquierda
@@ -496,6 +610,8 @@
 	Length Y	Longitud Y
 	Lengthen	Longitud
 	Light	Claro
+	Light Years	Años luz
+	Limits	Límites
 	Line	Línea
 	Line delta	Diferencia de líneas
 	Linear	Lineal
@@ -506,8 +622,10 @@
 	Linetype	Tipo de línea
 	Linetype Scale	Escala del tipo de línea
 	Linetype scale	Escala del tipo de línea
+	Load Application...	Cargar aplicación...
 	Loaded	Cargada
 	Lock viewport	Bloquear ventana gráfica
+	Longer click duration:	Duración del clic largo:
 	Ltscale	Escala de tipo de línea
 	Linetype...	Tipo de línea...
 	Lineweight	Grosor de línea
@@ -544,8 +662,15 @@
 	Measure Geometry	Medir geometría
 	Merge Cells	Combinar celdas
 	Merged PRs	PR integradas
+	Meters	Metros
+	Metric (millimetres)	Métrico (milímetros)
+	Microinches	Micropulgadas
+	Microns	Micras
 	Mid Between 2 Points	Punto medio entre 2 puntos
 	Midpoint	Punto medio
+	Miles	Millas
+	Millimeters	Milímetros
+	Mils	Milésimas de pulgada
 	Mirror	Simetría
 	Model	Modelo
 	Model Space (in viewport)	Espacio modelo (en ventana gráfica)
@@ -553,8 +678,10 @@
 	Modeling	Modelado
 	Models	Modelos
 	Modify	Modificar
+	More than {n} aliases.	Más de {n} alias.
 	More toolbar commands	Más comandos de la barra de herramientas
 	Move	Desplazar
+	Move/Copy/Rotate	Desplazar/Copiar/Girar
 	Multileader	Directriz múltiple
 	Multileader Style...	Estilo de directriz múltiple...
 	Multileader style	Estilo de directriz múltiple
@@ -562,8 +689,10 @@
 	Multiline Style...	Estilo de línea múltiple...
 	Multiline Text	Texto multilínea
 	Multiline Text...	Texto multilínea...
+	Multiline text	Texto multilínea
 	Multiline...	Línea múltiple...
 	Multiple	Varios
+	Multiple Insert	Inserción múltiple
 	Multiple Point	Puntos múltiples
 	My	Mías
 	My properties: not available yet	Mis propiedades: aún no disponible
@@ -572,7 +701,9 @@
 	Name (A–Z)	Nombre (A–Z)
 	Named Viewports...	Ventanas gráficas con nombre...
 	Named Views...	Vistas con nombre...
+	Nanometers	Nanómetros
 	Nearest	Cercano
+	Needs Ctrl, Alt or a function key	Necesita Ctrl, Alt o una tecla de función
 	New	Nuevo
 	New (metric)	Nuevo (métrico)
 	New Drawing	Nuevo dibujo
@@ -582,15 +713,19 @@
 	New Layout	Nueva presentación
 	New VP Freeze	Inutilizar en nuevas ventanas gráficas
 	New Viewports...	Nuevas ventanas gráficas...
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Los dibujos nuevos y el primero al iniciar usan estas unidades, salvo que haya una plantilla predeterminada (QNEWTEMPLATE).
+	New block	Bloque nuevo
 	New from Template...	Nuevo desde plantilla...
 	New layout	Nueva presentación
 	New state name	Nombre del nuevo estado
 	Next Change	Cambio siguiente
 	No	No
+	No alias file loaded. REINIT replaces these aliases with a file's.	No hay ningún archivo de alias cargado. REINIT sustituye estos alias por los de un archivo.
 	No blocks defined in this drawing.	No hay bloques definidos en este dibujo.
 	No contributor data was built into this copy.	Esta copia no incluye datos de colaboradores.
 	No external references are attached.	No hay referencias externas adjuntas.
 	No model credits were built into this copy.	Esta copia no incluye créditos de modelos.
+	No objects selected and no command running:	Sin objetos seleccionados ni comando en curso:
 	No saved layer states	No hay estados de capas guardados
 	No selection	Sin selección
 	Node	Nodo
@@ -609,9 +744,13 @@
 	Object Snap Tracking	Rastreo de referencia a objetos
 	Object Snap Tracking (F11)	Rastreo de referencia a objetos (F11)
 	Object Snap Tracking Settings	Configuración del rastreo de referencia a objetos
+	Object grouping	Agrupación de objetos
+	Object selection limit for display of grips	Límite de objetos seleccionados para mostrar pinzamientos
 	Object snap aperture	Apertura de referencia a objetos
 	Object snap marker size	Tamaño del marcador de referencia a objetos
 	Object type:	Tipo de objeto:
+	Objects on locked layers	Objetos en capas bloqueadas
+	Objects selected and no command running:	Con objetos seleccionados y sin comando en curso:
 	Oblique	Oblicua
 	Off	Desactivado
 	Offset	Desfase
@@ -623,28 +762,41 @@
 	Oops	Restaurar objetos borrados
 	Open	Abrir
 	Open (⌘O)	Abrir (⌘O)
+	Open Recent	Abrir recientes
 	Open Sample Drawing	Abrir dibujo de ejemplo
 	Open Xref	Abrir referencia externa
 	Open and Save	Abrir y guardar
+	Open in Block Editor	Abrir en el editor de bloques
 	Open sample drawing	Abrir dibujo de ejemplo
 	Open...	Abrir...
 	Operator:	Operador:
+	Opposite corner	Esquina opuesta
 	Options	Opciones
 	Options...	Opciones...
 	Orbit	Órbita
 	Ordinate	Coordenadas
+	Orientation	Orientación
+	Origin: {x}, {y}	Origen: {x}, {y}
 	Ortho (F8)	Ortogonal (F8)
 	Ortho Mode	Modo ortogonal
 	Ortho Mode (F8)	Modo ortogonal (F8)
 	Osnap Settings...	Configuración de referencia a objetos...
 	Out	Alejar
+	Outer	Exterior
 	Over-constrained	Restricciones excesivas
 	Overlay	Superposición
+	Overline	Sobrerrayado
 	Override	Modificar
 	PAPER	PAPEL
+	Paper size	Tamaño del papel
+	Parsecs	Pársecs
 	Paste to Command Line	Pegar en la línea de comandos
 	Percent	Porcentaje
 	Pickbox size	Tamaño de la caja de selección
+	Plot area	Área de trazado
+	Plot object lineweights	Trazar los grosores de línea de los objetos
+	Plot offset	Desfase del trazado
+	Plot transparency	Trazar la transparencia
 	Plotter Manager	Administrador de trazadores
 	Plotter Manager...	Administrador de trazadores...
 	Polar (distance < angle)	Polares (distancia < ángulo)
@@ -685,9 +837,16 @@
 	PolarSnap	Forzar cursor polar
 	Polygonal Viewport	Ventana gráfica poligonal
 	Polyline Edit	Editar polilínea
+	Portrait	Vertical
+	Press the keys	Pulsa las teclas
+	Preview	Vista previa
 	Previous Change	Cambio anterior
+	Printer/plotter	Impresora/trazador
 	Profiles	Perfiles
 	QuickCalc Pick	Designar para la calculadora rápida
+	Radians	Radianes
+	Raster Image Reference...	Referencia a imagen ráster...
+	Raster Images	Imágenes ráster
 	Recalculate Table Formulas	Recalcular fórmulas de tabla
 	Recent Commands	Comandos recientes
 	Recent Input	Entradas recientes
@@ -700,54 +859,111 @@
 	Reload	Volver a cargar
 	Reload All	Volver a cargar todas
 	Remove Vertex	Eliminar vértice
+	Repeat last command	Repetir el último comando
+	Replaces the shortcut of {commands}	Sustituye el atajo de {commands}
 	Reset Panel Layout	Restablecer disposición de paneles
 	Reset keeps the interface language.	Restablecer conserva el idioma de la interfaz.
 	Reset to Defaults	Restablecer valores predeterminados
+	Right-Click Customization	Personalización del clic derecho
+	Right-Click Customization...	Personalización del clic derecho...
+	Run ALIASEDIT with the file's contents using its text parameter.	Ejecuta ALIASEDIT con el contenido del archivo en su parámetro text.
+	Run Script...	Ejecutar script...
 	SVG drawings (SVG, SVGZ)	Dibujos SVG (SVG, SVGZ)
+	Sample output	Ejemplo del resultado
+	Save Anyway	Guardar de todos modos
+	Save Block	Guardar bloque
+	Save Block As	Guardar bloque como
+	Save Layout as Template	Guardar presentación como plantilla
+	Save alias	Guardar alias
+	Save cancelled: {path} was not changed.	Guardado cancelado: {path} no se ha modificado.
+	Save changes to block "{name}"?	¿Guardar los cambios en el bloque "{name}"?
+	Save changes to {name}?	¿Guardar los cambios en {name}?
 	Save new drawings as	Guardar los dibujos nuevos como
 	Saved Path	Ruta guardada
+	Saving {name} will remove content	Al guardar {name} se perderá contenido
 	Scale List...	Lista de escalas...
+	Scientific	Científico
 	Screen magnifiers, screen readers and recorders follow the system cursor.	Las lupas, los lectores de pantalla y las grabadoras siguen el cursor del sistema.
 	Select Similar	Seleccionar similares
+	Select boundaries to remove	Selecciona los contornos que quitar
 	Select objects first, then choose a command	Seleccionar primero los objetos y luego elegir un comando
+	Select using two clicks only	Seleccionar solo con dos clics
 	Selection	Selección
+	Selection Area Effect	Efecto del área de selección
+	Selection Preview Filter	Filtro de vista previa de la selección
+	Selection area opacity:	Opacidad del área de selección:
+	Selection effect color	Color del efecto de selección
+	Selection modes	Modos de selección
+	Selection preview	Vista previa de la selección
 	Send Hatches to Back	Enviar sombreados al fondo
 	Send Under Objects	Enviar por debajo de objetos
 	Set Current Viewport	Establecer ventana gráfica actual
+	Set Dynamic Property	Fijar propiedad dinámica
 	Set Table Cell Style	Establecer estilo de celda de tabla
 	Settings...	Configuración...
+	Shape	Forma
+	Sheet Books to PDF...	Cuadernos de planos a PDF...
+	Shortcut Menu	Menú contextual
+	Shortcut Menu: always enabled	Menú contextual: siempre activado
+	Shortcut Menu: enabled when command options are present	Menú contextual: activado cuando el comando tiene opciones
 	Show Annotative Objects	Mostrar objetos anotativos
 	Show Quick Properties for selected objects	Mostrar las propiedades rápidas de los objetos seleccionados
 	Show and hide the tools of this category	Mostrar y ocultar las herramientas de esta categoría
 	Show command prompting near the crosshairs	Mostrar las solicitudes de comandos junto al cursor en cruz
+	Show grips	Mostrar pinzamientos
 	Show in Tool Sets	Mostrar en los conjuntos de herramientas
 	Snap Overrides	Anulaciones de referencia a objetos
 	Snap type	Tipo de forzado de cursor
 	Snap, grid, polar tracking and Dynamic Input:	Forzar cursor, rejilla, rastreo polar y entrada dinámica:
 	Solid Editing	Edición de sólidos
+	Specified origin	Origen especificado
+	Spherical	Esférico
 	Spline Edit	Editar spline
 	Stretch Vertex	Estirar vértice
+	Surveyor's Units	Unidades topográficas
 	Synchronize Multiple-scale Positions	Sincronizar posiciones de varias escalas
 	Table Breaks	Divisiones de tabla
 	Table Cell Style	Estilo de celda de tabla
+	Tables	Tablas
 	Temporary track point	Punto de rastreo temporal
 	Text Objects Only	Solo objetos de texto
+	Text color	Color del texto
 	Thaw Layer	Reutilizar capa
 	The aperture is how near the cursor must come to a point for an object snap to find it.	La apertura indica cuánto debe acercarse el cursor a un punto para que la referencia a objetos lo encuentre.
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	El archivo actual no parece completo, así que {name} se queda como está y el archivo actual se sustituirá.
+	The current file is kept as {name} until the next save.	El archivo actual se conserva como {name} hasta el próximo guardado.
+	This drawing	Este dibujo
+	This format can't keep these objects yet: {objects}.	Este formato aún no puede conservar estos objetos: {objects}.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Clic derecho según duración: un clic rápido equivale a Intro; mantenerlo abre el menú
 	To	A
 	Tolerance...	Tolerancia...
+	Top left	Arriba a la izquierda
+	Top right	Arriba a la derecha
 	Track orthogonally only	Rastrear solo ortogonalmente
 	Track using all polar angle settings	Rastrear con todos los ángulos polares configurados
 	Turn On Layer	Activar capa
+	Turn on time-sensitive right-click	Activar el clic derecho según su duración
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Desactivado, un clic derecho durante un comando siempre abre el menú contextual.
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Desactivado, un clic derecho durante un comando hace lo que indique la personalización del clic derecho para el modo de comando.
+	Type an alias name.	Escribe un nombre de alias.
+	US Survey Feet	Pies topográficos de EE. UU.
+	US Survey Inch	Pulgada topográfica de EE. UU.
+	US Survey Mile	Milla topográfica de EE. UU.
+	US Survey Yard	Yarda topográfica de EE. UU.
+	Underline	Subrayado
+	Unitless	Sin unidades
+	Units	Unidades
 	Units Conversion	Conversión de unidades
+	Units of new drawings	Unidades de los dibujos nuevos
+	Units to scale inserted content	Unidades para escalar el contenido insertado
 	Unload	Descargar
 	Unloaded	Descargada
 	Unlock viewport	Desbloquear ventana gráfica
 	Unreferenced	Sin referencias
 	Unresolved	Sin resolver
+	Unsaved changes	Cambios sin guardar
 	Update Data Links	Actualizar vínculos de datos
+	Use current origin	Usar el origen actual
 	Use for this layout	Usar en esta presentación
 	Display plot styles	Mostrar estilos de trazado
 	No plot style tables.	No hay tablas de estilos de trazado.
@@ -827,7 +1043,18 @@
 	Add to Working Set	Añadir al conjunto de trabajo
 	Edit Reference In-Place	Editar referencia in situ
 	Save Reference Edits	Guardar cambios de la referencia
+	Visual Effect Settings	Parámetros de efectos visuales
+	Visual Effect Settings...	Parámetros de efectos visuales...
+	When a command is active	Con un comando activo
+	When no command is active	Sin ningún comando activo
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Durante un comando, un clic rápido equivale a Intro y uno más largo abre el menú contextual.
+	While a command runs:	Durante un comando:
+	Window <	Ventana <
+	Window selection color:	Color de la selección por ventana:
 	Working Set	Conjunto de trabajo
+	X offset (mm)	Desfase X (mm)
+	Xref	Referencia externa
+	Xref Clip Frame	Marco de delimitación de referencias externas
 	Xref and Block In-place Editing	Edición in situ de xrefs y bloques
 	Rename Dimension Style	Renombrar estilo de cota
 	Rename Layer	Renombrar capa
@@ -1194,9 +1421,13 @@
 	Write Block	Escribir bloque
 	X	X
 	Xline	Línea auxiliar
+	Xrefs	Referencias externas
 	Y	Y
+	Y offset (mm)	Desfase Y (mm)
+	Yards	Yardas
 	Yellow	Amarillo
 	Yes	Sí
+	Your changes will be lost if you don't save them.	Si no los guardas, perderás los cambios.
 	Zoom	Zoom
 	Zoom All	Zoom a todo
 	Zoom Dynamic	Zoom dinámico
@@ -1207,13 +1438,21 @@
 	Zoom Previous	Zoom anterior
 	Zoom Realtime	Zoom en tiempo real
 	Zoom Window	Zoom por ventana
+	built-in	integrado
+	contains authoring elements. Open in Block Editor?	contiene elementos de creación. ¿Abrir en el editor de bloques?
 	error	error
+	milliseconds	milisegundos
 	min	min
 	objects	objetos
+	overrides built-in	sustituye al integrado
+	{alias} is already defined; select it and use Edit.	{alias} ya está definido; selecciónalo y usa Editar.
+	{command} is an unknown command.	{command} no es un comando conocido.
 	{contributors} · {commits}	{contributors} · {commits}
+	{count} more types	{count} tipos más
 	{kind} (constraint {id})	{kind} (restricción {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Restricción {kind} {name} = {expression}  (doble clic para editar)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	{n} more warnings; see the command line.	{n} avisos más; consulta la línea de comandos.
 	ƒx  New User Parameter	ƒx  Nuevo parámetro de usuario
 	ΔLOC	ΔLíneas
 	−Bin	−Bin
@@ -1269,4 +1508,4 @@
 	Nothing found	Nothing found
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
-	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+	The drawing changed. Close the window and open it again.	El dibujo ha cambiado. Cierra la ventana y vuelve a abrirla.
