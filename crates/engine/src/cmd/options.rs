@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad};
 use crate::{Result, Session, Settings};
 
 /// The profile variables, in the order [`profile`] lists them.
@@ -52,6 +52,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "PICKADD",
     "PICKDRAG",
     "MAXARRAY",
+    "MEASUREINIT",
 ];
 
 /// The most profile entries [`restore`] reads (a saved profile is untrusted input).

@@ -3,7 +3,7 @@
 //! other applications' xdata), never the session's ghost storey.
 #![cfg(not(target_arch = "wasm32"))]
 
-use cadcraft_doc::*;
+use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, RawTag, Space, Storey, StoreyView, Storeys};
 use cadcraft_geom::Vec3;
 
 fn line(d: &mut Drawing, x: f64, storey: Option<u32>, other_app: bool) -> Handle {

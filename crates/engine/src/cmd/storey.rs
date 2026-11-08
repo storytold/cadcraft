@@ -16,7 +16,7 @@ use cadcraft_doc::{Drawing, Entity, Handle, Storey, Storeys};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, find_command, str_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Commands that may change objects on every storey: they act on the drawing's tables (layers,

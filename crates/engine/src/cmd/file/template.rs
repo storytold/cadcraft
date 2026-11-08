@@ -10,7 +10,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use cadcraft_doc::Drawing;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{Result, Session, bad, io};
 
 /// The default template (profile setting, process-wide like FONTALT): empty = none.
 fn default_template() -> MutexGuard<'static, String> {
@@ -59,7 +59,8 @@ pub(super) fn run_new(s: &mut Session, p: &Value) -> Result<Option<Value>> {
         && hi.y > lo.y
     {
         let center = cadcraft_geom::Vec2::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0);
-        st.set_view_quiet(crate::View { center, height: (hi.y - lo.y).max(1e-6) });
+        let twist = st.view().twist;
+        st.set_view_quiet(crate::View { center, height: (hi.y - lo.y).max(1e-6), twist });
     }
     Ok(Some(json!({ "index": i, "title": title, "template": path })))
 }

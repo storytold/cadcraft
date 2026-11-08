@@ -15,7 +15,7 @@ fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
     let (x, y): (f64, f64) = (x.parse().map_err(|_| "x")?, y.parse().map_err(|_| "y")?);
     let mut d = Drawing::new_metric();
     d.header.set("INSBASE", HVal::Point(Vec3::new(x, y, 0.0)));
-    for i in 0..30 {
+    for i in 0..30u32 {
         let layer = format!("A-WALL-{i:02}-their naming");
         d.layers.push(Layer::new(&layer));
         let y = 200.0 + f64::from(i);
@@ -37,6 +37,7 @@ fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     // A multileader showing their DOOR in place of text.
     let ml = cadcraft_engine::doc::MLeader {

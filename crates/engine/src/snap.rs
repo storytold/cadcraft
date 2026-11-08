@@ -78,10 +78,51 @@ impl SnapHit {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SnapCurve {
-    /// A circle, or the circle an arc lies on.
+    /// A circle, or the circle an arc lies on; an arc's sweep is carried by [`SnapCurve::Arc`].
     Circle { center: Vec2, radius: f64 },
+    /// An arc: the points of `Circle { center, radius }` swept CCW from `start` to `end` (radians).
+    Arc { center: Vec2, radius: f64, start: f64, end: f64 },
     /// The infinite line through `a` and `b` (a line, xline or ray).
     Line { a: Vec2, b: Vec2 },
+}
+
+impl SnapCurve {
+    /// Whether `p` lies on the drawn curve: always on a circle or a line, and only within the
+    /// sweep on an arc. Tangent and perpendicular solutions on an arc's circle that fall off the
+    /// arc are filtered out with this, so they never snap into the gap.
+    pub fn contains(&self, p: Vec2) -> bool {
+        match self {
+            // A zero sweep is how a full circle is stored (see `fix_circle`): the whole circle.
+            SnapCurve::Arc { center, radius, start, end } => {
+                (*start - *end).abs() < 1e-12 || cadcraft_geom::Arc::new(*center, *radius, *start, *end).contains_angle(center.angle_to(p))
+            }
+            _ => true,
+        }
+    }
+    /// Points on the curve whose tangent passes through `p` (a circle's or an arc's).
+    fn tangents(&self, p: Vec2) -> Vec<Vec2> {
+        match self {
+            SnapCurve::Circle { center, radius } | SnapCurve::Arc { center, radius, .. } => {
+                Circle::new(*center, *radius).tangent_points(p).into_iter().filter(|t| self.contains(*t)).collect()
+            }
+            SnapCurve::Line { .. } => Vec::new(),
+        }
+    }
+    /// Points on the curve whose perpendicular passes through `p`; `picked` is where the curve
+    /// was picked, kept when `p` is the center of a circle or arc (every radius is perpendicular).
+    fn perpendiculars(&self, p: Vec2, picked: Vec2) -> Vec<Vec2> {
+        match self {
+            SnapCurve::Circle { center, radius } | SnapCurve::Arc { center, radius, .. } => {
+                let u = (p - *center).normalized();
+                if u == Vec2::ZERO {
+                    vec![Circle::new(*center, *radius).closest(picked)]
+                } else {
+                    [*center + u * *radius, *center - u * *radius].into_iter().filter(|q| self.contains(*q)).collect()
+                }
+            }
+            SnapCurve::Line { a, b } => line_dir(*a, *b).map(|_| vec![cadcraft_geom::Line::new(*a, *b).project(p)]).unwrap_or_default(),
+        }
+    }
 }
 
 /// A deferred tangent ([`mode::TAN`]) or perpendicular ([`mode::PER`]) snap, picked while there
@@ -106,6 +147,18 @@ pub fn tangent_point_in_direction(curve: &SnapCurve, dir: f64, hint: Vec2) -> Op
             let c1 = *center + Vec2::new(n.cos(), n.sin()) * *radius;
             let c2 = *center - Vec2::new(n.cos(), n.sin()) * *radius;
             Some(if c1.dist(hint) < c2.dist(hint) { c1 } else { c2 })
+        }
+        SnapCurve::Arc { center, radius, start, end } => {
+            let n = dir + std::f64::consts::FRAC_PI_2;
+            let c1 = *center + Vec2::new(n.cos(), n.sin()) * *radius;
+            let c2 = *center - Vec2::new(n.cos(), n.sin()) * *radius;
+            let on = cadcraft_geom::Arc::new(*center, *radius, *start, *end);
+            let ok = |c: Vec2| on.contains_angle(center.angle_to(c));
+            let (c1, c2) = (ok(c1).then_some(c1), ok(c2).then_some(c2));
+            match (c1, c2) {
+                (Some(a), Some(b)) => Some(if a.dist(hint) < b.dist(hint) { a } else { b }),
+                (a, b) => a.or(b),
+            }
         }
         _ => None,
     }
@@ -430,7 +483,12 @@ fn finish(
             if osmode & mode::PER != 0 {
                 match p {
                     Prim::Seg(Segment::Line(l)) => cands.push((mode::PER, l.project(bp))),
-                    Prim::Seg(Segment::Arc { arc, .. }) => cands.push((mode::PER, Circle::new(arc.center, arc.radius).closest(bp))),
+                    // Both antipodes, filtered to the arc's sweep: a perpendicular in the gap is
+                    // not offered, and the far side is still found.
+                    Prim::Seg(Segment::Arc { arc, .. }) => {
+                        let curve = SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end };
+                        cands.extend(curve.perpendiculars(bp, bp).into_iter().map(|q| (mode::PER, q)));
+                    }
                     Prim::Circle(c) => cands.push((mode::PER, c.closest(bp))),
                     Prim::Infinite { base: b0, dir, .. } => cands.push((mode::PER, *b0 + *dir * (bp - *b0).dot(*dir))),
                     Prim::Ellipse(e) => cands.extend(curves::ellipse_perpendiculars(e, bp).into_iter().map(|q| (mode::PER, q))),
@@ -440,7 +498,12 @@ fn finish(
             }
             if osmode & mode::TAN != 0 {
                 let pts = match p {
-                    Prim::Seg(Segment::Arc { arc, .. }) => Circle::new(arc.center, arc.radius).tangent_points(bp),
+                    // Only the tangent points that lie on the arc itself (not its circle).
+                    Prim::Seg(Segment::Arc { arc, .. }) => Circle::new(arc.center, arc.radius)
+                        .tangent_points(bp)
+                        .into_iter()
+                        .filter(|t| arc.contains_angle(arc.center.angle_to(*t)))
+                        .collect(),
                     Prim::Circle(c) => c.tangent_points(bp),
                     Prim::Ellipse(e) => curves::ellipse_tangents(e, bp),
                     Prim::Spline(s) => curves::spline_tangents(s, bp),
@@ -532,101 +595,110 @@ impl Sink<'_> {
                 }
                 None => p,
             };
-            let cands = &mut *self.cands;
-            match &p {
-                Prim::Seg(s) => {
-                    if osmode & mode::END != 0 {
-                        cands.push((mode::END, s.start()));
-                        cands.push((mode::END, s.end()));
-                    }
-                    if osmode & mode::MID != 0 {
-                        cands.push((mode::MID, s.mid()));
-                    }
-                    if let Segment::Arc { arc, .. } = s {
-                        if osmode & mode::CEN != 0 {
-                            cands.push((mode::CEN, arc.center));
-                        }
-                        if osmode & mode::QUA != 0 {
-                            for k in 0..4 {
-                                let a = k as f64 * PI / 2.0;
-                                if arc.contains_angle(a) {
-                                    cands.push((mode::QUA, Vec2::polar(arc.center, arc.radius, a)));
-                                }
-                            }
-                        }
-                    }
-                }
-                Prim::Circle(c) => {
-                    if osmode & mode::CEN != 0 {
-                        cands.push((mode::CEN, c.center));
-                    }
-                    if osmode & mode::QUA != 0 {
-                        for k in 0..4 {
-                            cands.push((mode::QUA, Vec2::polar(c.center, c.radius, k as f64 * PI / 2.0)));
-                        }
-                    }
-                }
-                Prim::Ellipse(el) => {
-                    if osmode & mode::CEN != 0 {
-                        cands.push((mode::CEN, el.center));
-                    }
-                    if osmode & mode::QUA != 0 {
-                        // Only the quadrant points the arc passes through.
-                        for k in 0..4 {
-                            let t = k as f64 * PI / 2.0;
-                            if cadcraft_geom::angle_in_sweep(t, el.start, el.end) {
-                                cands.push((mode::QUA, el.at_param(t)));
-                            }
-                        }
-                    }
-                    if osmode & mode::END != 0 && !el.is_full() {
-                        cands.push((mode::END, el.at_param(el.start)));
-                        cands.push((mode::END, el.at_param(el.end)));
-                    }
-                    if osmode & mode::MID != 0
-                        && let Some(m) = curves::ellipse_mid(el)
-                    {
-                        cands.push((mode::MID, m));
-                    }
-                }
-                Prim::Spline(s) => {
-                    if osmode & mode::END != 0 && !s.closed {
-                        let (lo, hi) = s.domain();
-                        cands.push((mode::END, s.eval(lo)));
-                        cands.push((mode::END, s.eval(hi)));
-                    }
-                    if osmode & mode::MID != 0
-                        && let Some(m) = curves::spline_mid(s)
-                    {
-                        cands.push((mode::MID, m));
-                    }
-                }
-                Prim::Point(pt) => {
-                    if osmode & mode::NOD != 0 && matches!(kind, EntityKind::Point(_)) {
-                        cands.push((mode::NOD, *pt));
-                    }
-                }
-                Prim::Infinite { base, .. } => {
-                    if osmode & mode::END != 0 && matches!(kind, EntityKind::Ray(_)) {
-                        cands.push((mode::END, *base));
-                    }
-                }
-                Prim::Fill(_) => {}
-            }
-            self.near.push(p);
+            self.primitive(kind, p);
         }
         if osmode & mode::GCEN != 0 {
-            // The centroid of the area a closed polyline or spline encloses.
-            let pts = match kind {
-                EntityKind::LwPolyline(pl) if pl.closed => {
-                    cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: true }.tessellate(self.aperture / 10.0)
+            self.closed_centroid(kind, &at);
+        }
+    }
+
+    fn primitive(&mut self, kind: &EntityKind, p: Prim) {
+        let osmode = self.osmode;
+        let cands = &mut *self.cands;
+        match &p {
+            Prim::Seg(s) => {
+                if osmode & mode::END != 0 {
+                    cands.push((mode::END, s.start()));
+                    cands.push((mode::END, s.end()));
                 }
-                EntityKind::Spline(s) if s.closed => s.tessellate(1e-3),
-                _ => Vec::new(),
-            };
-            if let Some(c) = centroid(&pts) {
-                self.cands.push((mode::GCEN, at(c)));
+                if osmode & mode::MID != 0 {
+                    cands.push((mode::MID, s.mid()));
+                }
+                if let Segment::Arc { arc, .. } = s {
+                    if osmode & mode::CEN != 0 {
+                        cands.push((mode::CEN, arc.center));
+                    }
+                    if osmode & mode::QUA != 0 {
+                        for k in 0..4 {
+                            let a = k as f64 * PI / 2.0;
+                            if arc.contains_angle(a) {
+                                cands.push((mode::QUA, Vec2::polar(arc.center, arc.radius, a)));
+                            }
+                        }
+                    }
+                }
             }
+            Prim::Circle(c) => {
+                if osmode & mode::CEN != 0 {
+                    cands.push((mode::CEN, c.center));
+                }
+                if osmode & mode::QUA != 0 {
+                    for k in 0..4 {
+                        cands.push((mode::QUA, Vec2::polar(c.center, c.radius, k as f64 * PI / 2.0)));
+                    }
+                }
+            }
+            Prim::Ellipse(el) => {
+                if osmode & mode::CEN != 0 {
+                    cands.push((mode::CEN, el.center));
+                }
+                if osmode & mode::QUA != 0 {
+                    // Only the quadrant points the arc passes through.
+                    for k in 0..4 {
+                        let t = k as f64 * PI / 2.0;
+                        if cadcraft_geom::angle_in_sweep(t, el.start, el.end) {
+                            cands.push((mode::QUA, el.at_param(t)));
+                        }
+                    }
+                }
+                if osmode & mode::END != 0 && !el.is_full() {
+                    cands.push((mode::END, el.at_param(el.start)));
+                    cands.push((mode::END, el.at_param(el.end)));
+                }
+                if osmode & mode::MID != 0
+                    && let Some(m) = curves::ellipse_mid(el)
+                {
+                    cands.push((mode::MID, m));
+                }
+            }
+            Prim::Spline(s) => {
+                if osmode & mode::END != 0 && !s.closed {
+                    let (lo, hi) = s.domain();
+                    cands.push((mode::END, s.eval(lo)));
+                    cands.push((mode::END, s.eval(hi)));
+                }
+                if osmode & mode::MID != 0
+                    && let Some(m) = curves::spline_mid(s)
+                {
+                    cands.push((mode::MID, m));
+                }
+            }
+            Prim::Point(pt) => {
+                if osmode & mode::NOD != 0 && matches!(kind, EntityKind::Point(_)) {
+                    cands.push((mode::NOD, *pt));
+                }
+            }
+            Prim::Infinite { base, .. } => {
+                if osmode & mode::END != 0 && matches!(kind, EntityKind::Ray(_)) {
+                    cands.push((mode::END, *base));
+                }
+            }
+            Prim::Fill(_) => {}
+        }
+        self.near.push(p);
+    }
+
+    fn closed_centroid(&mut self, kind: &EntityKind, at: &impl Fn(Vec2) -> Vec2) {
+        // The centroid of the area a closed polyline or spline encloses.
+        let pts = match kind {
+            EntityKind::LwPolyline(pl) if pl.closed => {
+                cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: true }.tessellate(self.aperture / 10.0)
+            }
+            EntityKind::Spline(s) if s.closed => s.tessellate(1e-3),
+            _ => Vec::new(),
+        };
+        if let Some(c) = centroid(&pts) {
+            self.cands.push((mode::GCEN, at(c)));
         }
     }
 }
@@ -649,6 +721,7 @@ impl Sink<'_> {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 };
                 block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
             }
@@ -748,22 +821,13 @@ fn prim_near(p: &Prim, probe: &Bounds2, aperture: f64) -> bool {
     b.expand(aperture).intersects(probe)
 }
 
-/// The rotation-and-uniform-scale factor of `m`'s linear part (mirroring allowed), or `None`
-/// when it distorts shapes (non-uniform scale or shear).
-fn similarity_scale(m: &Mat3) -> Option<f64> {
-    let (u, v) = (Vec2::new(m.a, m.b), Vec2::new(m.c, m.d));
-    let (lu, lv) = (u.len(), v.len());
-    let tol = 1e-9 * lu.max(lv);
-    ((lu - lv).abs() <= tol && u.dot(v).abs() <= tol * lu.max(lv) && lu > 0.0).then_some(lu)
-}
-
 /// `p` placed by the affine transform `m`, exactly: circles and arcs under a non-uniform scale
 /// become ellipses and elliptical arcs.
 fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
     let mirror = m.is_mirroring();
     match p {
         Prim::Seg(Segment::Line(l)) => Prim::Seg(Segment::Line(cadcraft_geom::Line::new(m.apply(l.a), m.apply(l.b)))),
-        Prim::Seg(Segment::Arc { arc, ccw }) => match similarity_scale(m) {
+        Prim::Seg(Segment::Arc { arc, ccw }) => match m.similarity_scale() {
             Some(s) => {
                 let c = m.apply(arc.center);
                 let (a0, a1) = (c.angle_to(m.apply(arc.start_point())), c.angle_to(m.apply(arc.end_point())));
@@ -772,14 +836,14 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
             }
             None => {
                 let e = Ellipse { center: arc.center, major: Vec2::X * arc.radius, ratio: 1.0, start: arc.start, end: arc.end };
-                Prim::Ellipse(xform_ellipse(&e, m))
+                Prim::Ellipse(e.transformed(m))
             }
         },
-        Prim::Circle(c) => match similarity_scale(m) {
+        Prim::Circle(c) => match m.similarity_scale() {
             Some(s) => Prim::Circle(Circle::new(m.apply(c.center), c.radius * s)),
-            None => Prim::Ellipse(xform_ellipse(&Ellipse::full(c.center, Vec2::X * c.radius, 1.0), m)),
+            None => Prim::Ellipse(Ellipse::full(c.center, Vec2::X * c.radius, 1.0).transformed(m)),
         },
-        Prim::Ellipse(e) => Prim::Ellipse(xform_ellipse(e, m)),
+        Prim::Ellipse(e) => Prim::Ellipse(e.transformed(m)),
         Prim::Spline(s) => {
             let mut s = s.clone();
             s.control.iter_mut().chain(s.fit.iter_mut()).for_each(|q| *q = m.apply(*q));
@@ -791,31 +855,13 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
     }
 }
 
-/// The image of an ellipse (or elliptical arc) under an affine transform: the conjugate
-/// semi-diameters `A·major`, `A·minor` give the new principal axes; parameters shift with them
-/// (and reverse under a mirroring transform).
-fn xform_ellipse(e: &Ellipse, m: &Mat3) -> Ellipse {
-    let center = m.apply(e.center);
-    let (am, an) = (m.apply_vec(e.major), m.apply_vec(e.minor()));
-    // |am·cos t + an·sin t| is largest at t0: the new major axis.
-    let t0 = 0.5 * (2.0 * am.dot(an)).atan2(am.dot(am) - an.dot(an));
-    let (s0, c0) = t0.sin_cos();
-    let (u, v) = (am * c0 + an * s0, an * c0 - am * s0);
-    let ratio = if u.len() > 0.0 { (v.len() / u.len()).min(1.0) } else { 1.0 };
-    if e.is_full() {
-        return Ellipse::full(center, u, ratio);
-    }
-    let (start, end) = if u.cross(v) >= 0.0 { (e.start - t0, e.end - t0) } else { (t0 - e.end, t0 - e.start) };
-    Ellipse { center, major: u, ratio, start: cadcraft_geom::norm_angle(start), end: cadcraft_geom::norm_angle(end) }
-}
-
 /// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
 fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
     let mut best: Option<(f64, SnapHit)> = None;
     for p in prims {
         let curve = match p {
             Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius },
-            Prim::Seg(Segment::Arc { arc, .. }) => SnapCurve::Circle { center: arc.center, radius: arc.radius },
+            Prim::Seg(Segment::Arc { arc, .. }) => SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end },
             Prim::Seg(Segment::Line(l)) => SnapCurve::Line { a: l.a, b: l.b },
             Prim::Infinite { base, dir, .. } => SnapCurve::Line { a: *base, b: *base + *dir },
             _ => continue,
@@ -826,6 +872,12 @@ fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: 
             }
             SnapCurve::Circle { center, radius } if osmode & mode::PER != 0 => {
                 (mode::PER, "Deferred Perpendicular", Circle::new(center, radius).closest(cursor))
+            }
+            SnapCurve::Arc { center, radius, start, end } if osmode & mode::TAN != 0 => {
+                (mode::TAN, "Deferred Tangent", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
+            }
+            SnapCurve::Arc { center, radius, start, end } if osmode & mode::PER != 0 => {
+                (mode::PER, "Deferred Perpendicular", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
             }
             SnapCurve::Line { a, b } if osmode & mode::PER != 0 => {
                 // Pick on the drawn extent: a segment's own span, an xline/ray anywhere.
@@ -855,18 +907,9 @@ pub fn resolve_deferred(a: LineEnd, b: LineEnd) -> Option<(Vec2, Vec2)> {
             if !p.is_finite() {
                 return None;
             }
-            let cands: Vec<Vec2> = match (d.mode, d.curve) {
-                (mode::TAN, SnapCurve::Circle { center, radius }) => Circle::new(center, radius).tangent_points(p),
-                (mode::PER, SnapCurve::Circle { center, radius }) => {
-                    let u = (p - center).normalized();
-                    if u == Vec2::ZERO {
-                        // Every radius is perpendicular: keep the picked point.
-                        vec![Circle::new(center, radius).closest(d.at)]
-                    } else {
-                        vec![center + u * radius, center - u * radius]
-                    }
-                }
-                (mode::PER, SnapCurve::Line { a, b }) => line_dir(a, b).map(|_| vec![cadcraft_geom::Line::new(a, b).project(p)]).unwrap_or_default(),
+            let cands: Vec<Vec2> = match d.mode {
+                mode::TAN => d.curve.tangents(p),
+                mode::PER => d.curve.perpendiculars(p, d.at),
                 _ => Vec::new(),
             };
             pick_best(cands.into_iter().map(|t| (t, p)), d.at, None)
@@ -882,7 +925,12 @@ pub fn resolve_deferred(a: LineEnd, b: LineEnd) -> Option<(Vec2, Vec2)> {
 /// caller retries swapped).
 fn deferred_pairs(d1: &Deferred, d2: &Deferred) -> Option<Vec<(Vec2, Vec2)>> {
     use SnapCurve::{Circle as C, Line as L};
-    Some(match ((d1.mode, d1.curve), (d2.mode, d2.curve)) {
+    // The math below is on the circle an arc lies on; the sweep is checked afterwards.
+    let circle_of = |c: SnapCurve| match c {
+        SnapCurve::Circle { center, radius } | SnapCurve::Arc { center, radius, .. } => C { center, radius },
+        other => other,
+    };
+    let pairs = match ((d1.mode, circle_of(d1.curve)), (d2.mode, circle_of(d2.curve))) {
         ((mode::TAN, C { center: c1, radius: r1 }), (mode::TAN, C { center: c2, radius: r2 })) => {
             Circle::new(c1, r1).common_tangents(&Circle::new(c2, r2))
         }
@@ -930,7 +978,10 @@ fn deferred_pairs(d1: &Deferred, d2: &Deferred) -> Option<Vec<(Vec2, Vec2)>> {
             vec![(p, cadcraft_geom::Line::new(a2, b2).project(p))]
         }
         _ => return None,
-    })
+    };
+    // A solution on an arc's circle that falls off the arc is no solution: the line would touch
+    // the circle, not the arc that was picked.
+    Some(pairs.into_iter().filter(|(p, q)| d1.curve.contains(*p) && d2.curve.contains(*q)).collect())
 }
 
 /// Unit direction of the line through `a` and `b`, if it has one.
@@ -1191,5 +1242,86 @@ mod tests {
         // Tangent to a line is meaningless.
         let curve = SnapCurve::Line { a: Vec2::ZERO, b: Vec2::X };
         assert!(resolve_deferred(LineEnd::Deferred(Deferred { mode: mode::TAN, curve, at: Vec2::ZERO }), pt(3.0, 3.0)).is_none());
+    }
+
+    /// A drawing with one arc: center (20,0), radius 2, swept CCW from 0° to 90° (the first
+    /// quadrant only, so the rest of its circle is the gap).
+    fn arc_drawing() -> Drawing {
+        let mut d = Drawing::new_imperial();
+        d.add(
+            &Space::Model,
+            Common::default(),
+            EntityKind::Arc(cadcraft_doc::Arc { center: Vec3::new(20.0, 0.0, 0.0), radius: 2.0, start: 0.0, end: std::f64::consts::FRAC_PI_2 }),
+        )
+        .unwrap();
+        d
+    }
+
+    fn on_arc(p: Vec2) -> bool {
+        let a = Vec2::new(20.0, 0.0).angle_to(p);
+        cadcraft_geom::angle_in_sweep(a, 0.0, std::f64::consts::FRAC_PI_2) && (p.dist(Vec2::new(20.0, 0.0)) - 2.0).abs() < 1e-9
+    }
+
+    #[test]
+    fn arc_tangent_only_on_the_arc_not_its_circle() {
+        let d = arc_drawing();
+        // From (20,5), the circle's tangents touch at about ±23.6° from the vertical through the
+        // center: one lands at 90+23.6 = 113.6° (the gap), the other at 90-23.6 = 66.4° (on the
+        // arc). Only the one on the arc may snap.
+        let base = Some(Vec2::new(20.0, 5.0));
+        let t = osnap(&d, &Space::Model, Vec2::new(20.0 + 2.0, 0.0), 8.0, mode::TAN, base, false).expect("the arc's tangent");
+        assert!(on_arc(t.point), "tangent must lie on the arc, got {:?}", t.point);
+        // The other solution is on the circle but off the arc, so it is not offered.
+        let off = Vec2::polar(Vec2::new(20.0, 0.0), 2.0, 113.6f64.to_radians());
+        assert!(!on_arc(off));
+        let none = osnap(&d, &Space::Model, off, 0.05, mode::TAN, base, false);
+        assert!(none.is_none(), "a tangent in the arc's gap must not snap, got {none:?}");
+    }
+
+    #[test]
+    fn arc_perpendicular_clamps_to_the_arc() {
+        let d = arc_drawing();
+        // The foot of the perpendicular from below lands at 270°, in the gap. The opposite
+        // antipode at (20,2) is on the arc. The cursor is 5 units away from it, so the aperture
+        // is a little larger to keep the distance test off the boundary.
+        let h = osnap(&d, &Space::Model, Vec2::new(20.0, -3.0), 5.5, mode::PER, Some(Vec2::new(20.0, -6.0)), false)
+            .expect("the perpendicular on the arc");
+        assert!(on_arc(h.point), "perpendicular must stay on the arc, got {:?}", h.point);
+        assert!(h.point.near(Vec2::new(20.0, 2.0), 1e-9), "the opposite antipode on the arc, got {:?}", h.point);
+    }
+
+    #[test]
+    fn arc_deferred_tangent_keeps_its_sweep() {
+        let d = arc_drawing();
+        let at = Vec2::polar(Vec2::new(20.0, 0.0), 2.0, 45f64.to_radians());
+        let h = osnap(&d, &Space::Model, at, 0.5, mode::TAN, None, true).expect("deferred tangent on the arc");
+        assert_eq!((h.mode, h.name), (mode::TAN, "Deferred Tangent"));
+        let df = h.deferred.unwrap();
+        // The sweep travels with the curve, so a later solve stays on the arc.
+        assert!(matches!(df.curve, SnapCurve::Arc { .. }), "the arc's sweep must be kept: {:?}", df.curve);
+        // A deferred tangent solves to a point on the arc, not into its gap.
+        let solved = resolve_deferred(LineEnd::Deferred(df), pt(10.0, 10.0)).expect("a tangent from (10,10)");
+        // "In the order given": the deferred end solves first.
+        assert!(on_arc(solved.0), "resolved tangent must lie on the arc, got {:?}", solved.0);
+    }
+
+    #[test]
+    fn deferred_tangent_pairs_with_arcs() {
+        // The arc is the top half of a circle at (0,0) r=5.
+        let arc = SnapCurve::Arc { center: Vec2::new(0.0, 0.0), radius: 5.0, start: 0.0, end: std::f64::consts::PI };
+        // The circle is at (10,0) r=5.
+        let circle = SnapCurve::Circle { center: Vec2::new(10.0, 0.0), radius: 5.0 };
+
+        let d_arc = Deferred { mode: mode::TAN, curve: arc, at: Vec2::new(0.0, 5.0) };
+        let d_circle = Deferred { mode: mode::TAN, curve: circle, at: Vec2::new(10.0, 5.0) };
+
+        // Common tangents of the carrier circles: two outer (y=5 and y=-5) and two inner.
+        // The y=-5 tangent touches the arc's circle at (0,-5), which is in the gap.
+        // The y=5 tangent touches at (0,5), on the arc.
+        // The inner tangents touch the left circle at angles that are also not on the top half.
+        // Only the y=5 solution survives the arc's sweep.
+        let solved = resolve_deferred(LineEnd::Deferred(d_arc), LineEnd::Deferred(d_circle)).unwrap();
+        assert!(solved.0.near(Vec2::new(0.0, 5.0), 1e-9), "expected the belt tangent on the top arc, got {:?}", solved.0);
+        assert!(solved.1.near(Vec2::new(10.0, 5.0), 1e-9));
     }
 }

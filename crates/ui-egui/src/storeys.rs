@@ -261,7 +261,7 @@ pub fn active(keys: &StoreyKeys) -> Vec<(KeyboardShortcut, &'static str)> {
 
 /// [`active`], worked out again only when the keys change (the shortcut handler asks every frame).
 pub fn active_cached(ctx: &egui::Context, keys: &StoreyKeys) -> Vec<(KeyboardShortcut, &'static str)> {
-    let id = egui::Id::new("storey_keys_active");
+    let id = egui::Id::unique("storey_keys_active");
     if let Some((k, v)) = ctx.data(|m| m.get_temp::<(StoreyKeys, Vec<(KeyboardShortcut, &'static str)>)>(id))
         && k == *keys
     {
@@ -274,11 +274,11 @@ pub fn active_cached(ctx: &egui::Context, keys: &StoreyKeys) -> Vec<(KeyboardSho
 
 /// Whether a storey shortcut is being recorded (every shortcut stays quiet meanwhile).
 pub fn stop_recording(ctx: &egui::Context) {
-    ctx.data_mut(|m| m.remove::<usize>(egui::Id::new("storey_keys_recording")));
+    ctx.data_mut(|m| m.remove::<usize>(egui::Id::unique("storey_keys_recording")));
 }
 
 pub fn recording(ctx: &egui::Context) -> bool {
-    ctx.data(|m| m.get_temp::<usize>(egui::Id::new("storey_keys_recording"))).is_some()
+    ctx.data(|m| m.get_temp::<usize>(egui::Id::unique("storey_keys_recording"))).is_some()
 }
 
 // ---------------- settings ----------------
@@ -387,7 +387,7 @@ pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         // One name per line, the top storey first.
-        let text_id = egui::Id::new("storey_setup_text");
+        let text_id = egui::Id::unique("storey_setup_text");
         let mut text: String = ui.data(|m| m.get_temp(text_id)).unwrap_or_else(|| setup.template.names.join("\n"));
         ui.vertical(|ui| {
             ui.label(RichText::new(w("Storeys, top first, one per line")).color(t.text_dim).small());
@@ -398,7 +398,7 @@ pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.data_mut(|m| m.insert_temp(text_id, text));
         ui.vertical(|ui| {
             ui.label(RichText::new(w("Start storey (number 0)")).color(t.text_dim).small());
-            egui::ComboBox::from_id_salt("storey_setup_start").selected_text(setup.template.start.clone()).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("storey_setup_start").selected_text(setup.template.start.clone()).show_ui(ui, |ui| {
                 for n in setup.template.names.clone() {
                     ui.selectable_value(&mut setup.template.start, n.clone(), n);
                 }
@@ -414,7 +414,7 @@ pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
                 setup.naming = Naming::Blueprints;
             }
             if let Some(p) = preset {
-                ui.data_mut(|m| m.insert_temp(egui::Id::new("storey_setup_text"), p.names.join("\n")));
+                ui.data_mut(|m| m.insert_temp(egui::Id::unique("storey_setup_text"), p.names.join("\n")));
                 setup.template = p;
             }
             ui.add_space(6.0);
@@ -460,7 +460,7 @@ pub(crate) fn options_tab(app: &mut CadApp, ui: &mut egui::Ui) {
 fn shortcuts_ui(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let ctx = ui.ctx().clone();
-    let rec_id = egui::Id::new("storey_keys_recording");
+    let rec_id = egui::Id::unique("storey_keys_recording");
     let mut recording: Option<usize> = ctx.data(|m| m.get_temp(rec_id));
     // A key pressed while recording becomes that action's shortcut (Esc stops recording).
     if let Some(i) = recording {
@@ -572,7 +572,7 @@ pub(crate) fn storeys_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let selected = st.selection.len();
     // Objects per storey, counted again only when the drawing changed.
     let key = (std::sync::Arc::as_ptr(d) as usize, st.revision);
-    let count_id = ui.id().with("storey_counts");
+    let count_id = ui.scope_id().with("storey_counts");
     let counts: std::sync::Arc<std::collections::HashMap<u32, u64>> = match ui.data(|m| m.get_temp::<((usize, u64), std::sync::Arc<_>)>(count_id)) {
         Some((k, c)) if k == key => c,
         _ => {
@@ -606,7 +606,7 @@ pub(crate) fn storeys_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let mut open_dialog: Option<&str> = None;
     // The storey whose name is being typed over in place: (its name before, the text so far,
     // whether the field has had its focus and selection yet).
-    let edit_id = ui.id().with("storey_rename");
+    let edit_id = ui.scope_id().with("storey_rename");
     let mut editing: Option<(String, String, bool)> = ui.data_mut(|d| d.get_temp(edit_id));
     // A storey made here gets its name typed at once.
     let mut name_new: Option<String> = None;
@@ -653,12 +653,12 @@ pub(crate) fn storeys_section(app: &mut CadApp, ui: &mut egui::Ui) {
             // The storey's number, fixed by its place (0: the start storey).
             let num = RichText::new(format!("{:>3}", r.number)).monospace().color(if r.start { t.accent } else { t.text_dim });
             ui.add_sized(vec2(26.0, 20.0), egui::Label::new(num)).on_hover_text(if r.start { w("Start storey") } else { w("Storey number") });
-            let width = ui.available_width() - 40.0;
+            let width = (ui.available_width() - 40.0).max(20.0);
             // Renaming in place: Enter or a click elsewhere keeps the name, Esc keeps the old one.
             if let Some((before, text, ready)) = editing.as_mut().filter(|e| e.0 == r.name) {
                 let resp = ui.add_sized(
                     vec2(width, 20.0),
-                    egui::TextEdit::singleline(text).id(egui::Id::new(("storey_rename_field", &r.name))).hint_text(w("Storey name")),
+                    egui::TextEdit::singleline(text).id(egui::Id::unique(("storey_rename_field", &r.name))).hint_text(w("Storey name")),
                 );
                 if !*ready {
                     // Focus until the field has it (the command line takes typing from a field without focus),
@@ -858,7 +858,7 @@ pub(crate) fn chooser(app: &mut CadApp, ctx: &egui::Context, open: &mut bool, pi
         items.push((None, crate::tl!("None").to_string(), false));
     }
     let marked = if blueprint { d.ghost_storey } else { Some(d.storeys.current) };
-    let pick_id = egui::Id::new(("storey_chooser", pick));
+    let pick_id = egui::Id::unique(("storey_chooser", pick));
     let start =
         items.iter().position(|i| i.0 == marked && !(elsewhere && i.2)).or_else(|| items.iter().position(|i| !(elsewhere && i.2))).unwrap_or(0);
     let first_frame = ctx.data(|m| m.get_temp::<usize>(pick_id)).is_none();
@@ -904,7 +904,7 @@ pub(crate) fn chooser(app: &mut CadApp, ctx: &egui::Context, open: &mut bool, pi
         Pick::Move => (w("Move to Storey"), format!("{selected} {}", crate::tl!("selected objects, moved in place to"))),
     };
     egui::Window::new(title)
-        .id(egui::Id::new(("storey chooser", pick)))
+        .id(egui::Id::unique(("storey chooser", pick)))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
