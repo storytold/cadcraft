@@ -477,8 +477,12 @@ pub(super) fn read_char(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispEr
             Ok(Flow::Value(Value::Int(i32::try_from(u32::from(c)).unwrap_or(0))))
         }
         None => {
+            let last_unterminated = f.unterminated && f.lines.len() == 1;
             f.lines.pop_front();
             f.pos = 0;
+            if last_unterminated {
+                return Ok(Flow::Value(Value::Nil));
+            }
             Ok(Flow::Value(Value::Int(10)))
         }
     }

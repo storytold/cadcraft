@@ -12,6 +12,8 @@ pub struct LispFile {
     pub lines: std::collections::VecDeque<String>,
     /// How far (bytes) `read-char` has read into the first of `lines`.
     pub pos: usize,
+    /// The last of `lines` had no terminator in the file, so `read-char` gives no 10 after it.
+    pub unterminated: bool,
     pub text: String,
 }
 
@@ -25,12 +27,13 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
         "a" => (true, true),
         _ => return Err(LispError::new(format!("bad argument value: file mode {mode}"))),
     };
-    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), pos: 0, text: String::new() };
+    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), pos: 0, unterminated: false, text: String::new() };
     if !writing {
         match read_text_file(&path) {
             Some(t) => {
                 charge_bytes(t.len())?;
                 f.lines = t.lines().map(str::to_string).collect();
+                f.unterminated = !t.is_empty() && !t.ends_with('\n');
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }

@@ -147,6 +147,16 @@ fn an_ellipse_keeps_its_own_parameter() {
 }
 
 #[test]
+fn a_full_ellipse_queried_near_its_centre_finds_the_minor_end() {
+    let mut s = session();
+    let tau = std::f64::consts::TAU;
+    add(&mut s, "e", EntityKind::Ellipse(Ellipse { center: v3(0.0, 0.0, 0.0), major: v3(10.0, 0.0, 0.0), ratio: 0.1, start: 0.0, end: tau }));
+    // The centre and a point just off it: the nearest point is a minor-axis end (1 away), not a major-axis end (10 away).
+    is_t(&mut s, "(< (distance (vlax-curve-getClosestPointTo e '(0 0)) '(0 0)) 1.0001)");
+    is_t(&mut s, "(< (distance (vlax-curve-getClosestPointTo e '(0.001 0.2)) '(0.001 0.2)) 0.8001)");
+}
+
+#[test]
 fn a_spline_round_trips_parameters_points_and_distances() {
     let mut s = session();
     let sp = Spline::from_fit_points(&[Vec2::new(0.0, 0.0), Vec2::new(3.0, 2.0), Vec2::new(6.0, -1.0), Vec2::new(9.0, 1.0)]);
@@ -232,6 +242,27 @@ fn read_char_and_read_line_share_their_place_in_the_file() {
     std::fs::write(&path, format!("{}\n", "xy".repeat(2000))).unwrap();
     let code = format!("(setq f (open \"{p}\" \"r\") n 0 c (read-char f)) (while (and c (/= c 10)) (setq n (1+ n) c (read-char f))) (close f) n");
     assert_eq!(ok(&mut s, &code), "4000");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A last line with no terminator reads back without an invented 10; CRLF line ends read as 10.
+#[test]
+fn read_char_reproduces_the_final_terminator_state() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("cadcraft-lisp-eof-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("r.txt");
+    let p = path.to_string_lossy().replace('\\', "/");
+    let code = format!("(setq f (open \"{p}\" \"r\")) (list (read-char f) (read-char f) (read-char f) (progn (close f) 1))");
+    std::fs::write(&path, "a").unwrap();
+    assert_eq!(ok(&mut s, &code), "(97 nil nil 1)");
+    std::fs::write(&path, "a\n").unwrap();
+    assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
+    std::fs::write(&path, "a\r\n").unwrap();
+    assert_eq!(ok(&mut s, &code), "(97 10 nil 1)");
+    std::fs::write(&path, "a\nb").unwrap();
+    assert_eq!(ok(&mut s, &code), "(97 10 98 1)");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

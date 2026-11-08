@@ -487,10 +487,17 @@ impl Curve {
         match &self.exact {
             Exact::None => {}
             Exact::Ellipse(e, _) => {
+                let sampled = newton(self, q, t);
+                t = sampled;
                 if self.closed {
-                    t = e.param_of(Vec2::new(q[0], q[1])).rem_euclid(std::f64::consts::TAU);
+                    // The radial parameter can sit on a stationary point that is not the nearest
+                    // (a query at the centre), so it only wins when it is genuinely nearer.
+                    let radial = newton(self, q, e.param_of(Vec2::new(q[0], q[1])).rem_euclid(std::f64::consts::TAU));
+                    let dist = |u: f64| self.point_at_param(u).map_or(f64::INFINITY, |p| dist3(&p, q));
+                    if dist(radial) < dist(sampled) {
+                        t = radial;
+                    }
                 }
-                t = newton(self, q, t);
             }
             Exact::Spline(_) => t = newton(self, q, t),
         }
