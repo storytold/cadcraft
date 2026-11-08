@@ -946,6 +946,7 @@
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Desactivado, un clic derecho durante un comando siempre abre el menú contextual.
 	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Desactivado, un clic derecho durante un comando hace lo que indique la personalización del clic derecho para el modo de comando.
 	Type an alias name.	Escribe un nombre de alias.
+	Type something to find	Escribe algo para buscar
 	US Survey Feet	Pies topográficos de EE. UU.
 	US Survey Inch	Pulgada topográfica de EE. UU.
 	US Survey Mile	Milla topográfica de EE. UU.
@@ -1494,18 +1495,18 @@
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
 	Could not check for updates.	No se pudo buscar actualizaciones.
-	Find All	Find All
-	Find what:	Find what:
-	Match case	Match case
-	Replace	Replace
-	Replace All	Replace All
-	Replace with:	Replace with:
-	Replacement text	Replacement text
-	Results	Results
-	Searches the current space.	Searches the current space.
-	Text to find	Text to find
-	Whole words	Whole words
-	Nothing found	Nothing found
-	Ctrl+Enter to apply	Ctrl+Enter to apply
-	Edit Text	Edit Text
+	Find All	Buscar todo
+	Find what:	Buscar:
+	Match case	Coincidir mayúsculas y minúsculas
+	Replace	Reemplazar
+	Replace All	Reemplazar todo
+	Replace with:	Reemplazar por:
+	Replacement text	Texto de reemplazo
+	Results	Resultados
+	Searches the current space.	Busca en el espacio actual.
+	Text to find	Texto que buscar
+	Whole words	Palabras completas
+	Nothing found	No se encontró nada
+	Ctrl+Enter to apply	Ctrl+Intro para aplicar
+	Edit Text	Editar texto
 	The drawing changed. Close the window and open it again.	El dibujo ha cambiado. Cierra la ventana y vuelve a abrirla.

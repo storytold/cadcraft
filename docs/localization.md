@@ -75,14 +75,14 @@ Görünüm Penceresi); the running app was reviewed by a native speaker, and lin
 proofreading is still to do. The bundled
 egui fonts cover `Ç Ğ İ Ö Ş Ü ç ğ ı ö ş ü`.
 
-Spanish has **1,505 rows**: 1,503 ordinary labels and two `one|other` count templates. It
+Spanish has **1,506 rows**: 1,504 ordinary labels and two `one|other` count templates. It
 covers every marked UI literal and the strings the sibling catalogs translate; no `menu` rows are
 needed, because the plain labels (**Dibujo**, **Acotación**, **Modificar**, **Vista**) already
 read right as menu headings. The interface addresses the user informally (*tú*: "Introduce …",
 "Selecciona …", "Indica …"), and the vocabulary is one name per concept: *capa*, *sombreado*,
 *pinzamientos*, *presentación*, *ventana gráfica*, *trazar*, *contorno*, *delimitar*, *desfase*,
 *empalme*, *chaflán*, *texto multilínea*, *directriz múltiple*, *menú contextual*, *Intro*.
-The catalog was contributed by @PedroGuille and extended in #680; the 239 rows added in
+The catalog was contributed by @PedroGuille and extended in #680; the rows added or changed in
 November 2026 were reviewed by a native Spanish speaker. The older rows have not yet been
 proofread line by line. The bundled egui fonts cover `Á É Í Ó Ú Ü Ñ á é í ó ú ü ñ ¿ ¡`.
 
