@@ -52,6 +52,8 @@ pub struct Session {
     client: Client,
     role: Role,
     session_id: String,
+    /// Who was already in the room when this participant joined, as `welcome` reported them.
+    participants: Vec<Presence>,
     /// Snapshot parts that arrived after the welcome, joined when the last one is in.
     parts: Vec<Snapshot>,
 }
@@ -88,7 +90,7 @@ impl Session {
         };
         let (connection, first) = Connection::connect(url, &hello, timeout).map_err(SessionError::Transport)?;
         match first {
-            ServerMessage::Welcome { session_id, role, version, snapshot, .. } => {
+            ServerMessage::Welcome { session_id, role, version, snapshot, participants, .. } => {
                 let (drawing, shown) = if snapshot.is_empty() {
                     let drawing = replica.ok_or(SessionError::MissingDrawing)?;
                     // The welcome names the room's version; the replica is still behind it and the
@@ -99,7 +101,7 @@ impl Session {
                     let drawing = cadcraft_io::read(&bytes, "snapshot.dxf").map_err(|e| SessionError::Snapshot(e.to_string()))?;
                     (drawing, version)
                 };
-                Ok(Session { connection, client: Client::new(drawing, shown), role, session_id, parts: Vec::new() })
+                Ok(Session { connection, client: Client::new(drawing, shown), role, session_id, participants, parts: Vec::new() })
             }
             ServerMessage::Error { message, .. } => Err(SessionError::Refused(message)),
             other => Err(SessionError::Refused(format!("expected a welcome, got {other:?}"))),
@@ -126,6 +128,11 @@ impl Session {
         &self.session_id
     }
 
+    /// The participants the welcome named (the others' latest presence).
+    pub fn participants(&self) -> &[Presence] {
+        &self.participants
+    }
+
     /// Send an operation; the replica changes when its answer arrives.
     pub fn submit(&mut self, op: Op) -> Result<(), SessionError> {
         self.client.submit(op.clone());
@@ -135,6 +142,11 @@ impl Session {
     /// Ask to undo this participant's last operation.
     pub fn undo(&mut self, op_id: &str) -> Result<(), SessionError> {
         self.connection.send(&ClientMessage::Undo { op_id: op_id.into() }).map_err(SessionError::Transport)
+    }
+
+    /// Ask to redo this participant's last undone operation.
+    pub fn redo(&mut self, op_id: &str) -> Result<(), SessionError> {
+        self.connection.send(&ClientMessage::Redo { op_id: op_id.into() }).map_err(SessionError::Transport)
     }
 
     /// Tell the others where this participant is looking.
