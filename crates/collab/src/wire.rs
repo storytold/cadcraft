@@ -22,7 +22,7 @@ pub enum OpKind {
 }
 
 /// An operation as a client sends it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Op {
     /// The client's identifier; a repeat is answered from the server's window, never applied twice.

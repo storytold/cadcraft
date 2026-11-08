@@ -662,6 +662,7 @@ dependencies = [
 name = "cadcraft-collab"
 version = "0.17.0"
 dependencies = [
+ "base64 0.22.1",
  "cadcraft-doc",
  "cadcraft-geom",
  "serde",

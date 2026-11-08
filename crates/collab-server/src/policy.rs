@@ -6,31 +6,6 @@
 //! check is here too: the engine has no read-only mode, so a viewer is stopped at this boundary.
 
 use cadcraft_collab::Op;
-use serde::{Deserialize, Serialize};
-
-/// What a participant may do in a session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Role {
-    /// Everything, including closing the session.
-    Owner,
-    /// The drawing: entities, layers, blocks, dimensions, export.
-    Editor,
-    /// Presence and the drawing; no operations.
-    Viewer,
-}
-
-impl Role {
-    /// Whether this role may send operations.
-    pub fn may_write(self) -> bool {
-        !matches!(self, Role::Viewer)
-    }
-
-    /// Whether this role may close the session.
-    pub fn may_close(self) -> bool {
-        matches!(self, Role::Owner)
-    }
-}
 
 /// The most entities, table records and layout changes one operation may change.
 pub const MAX_CHANGES: usize = 5_000;
@@ -110,6 +85,7 @@ pub fn changes_too_many(changes: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cadcraft_collab::Role;
     use cadcraft_collab::{OpContext, OpKind};
     use cadcraft_doc::Space;
     use serde_json::json;

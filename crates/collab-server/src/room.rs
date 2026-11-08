@@ -2,12 +2,13 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, TableRegistry, TableRenames, diff_all};
+use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role, TableRegistry, TableRenames, diff_all};
 use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
 
-use crate::policy::{Role, changes_too_many, deny_reason, size_reason};
+use crate::policy::{changes_too_many, deny_reason, size_reason};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
