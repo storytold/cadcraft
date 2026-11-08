@@ -3,12 +3,10 @@
 //! one, the DWG gets the source DXF's classes in their places, so every proxy names its own class.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{BufReader, Cursor};
 
 use acadrust::CadDocument;
 use acadrust::classes::{DxfClass, ProxyFlags};
 use acadrust::entities::{EntityType, ExtendedEntityData, ProxyEntityData};
-use acadrust::io::dxf::reader::{DxfStreamReader, DxfTextReader};
 use acadrust::objects::{ObjectType, ProxyPayload};
 
 fn class_number(index: usize) -> Result<i16, String> {
@@ -190,23 +188,43 @@ fn registered_text(raw: &acadrust::entities::RawRecord) -> Result<ProxyPayload, 
     Ok(ProxyPayload::from_bits(&bytes, count))
 }
 
-/// The bridge decoder's ASCII text stream, with the source's declared legacy encoding.
-pub(super) fn text_reader(dxf: &[u8]) -> Option<DxfTextReader<Cursor<&[u8]>>> {
+/// ASCII DXF pairs decoded with the bridge's public code-page and escape codecs. A malformed
+/// pair yields `None`, so both class scans fall back rather than guessing its identity.
+pub(super) fn text_pairs(dxf: &[u8]) -> Option<impl Iterator<Item = Option<(i32, String)>> + '_> {
+    use acadrust::io::dxf::code_page::{decode_legacy_escapes, encoding_from_code_page};
+
     if dxf.starts_with(b"AutoCAD Binary DXF") {
         return None;
     }
-    // Use the same text decoder as the bridge reader. Raw DXF strings may contain CIF/MIF
-    // escapes, including an escaped literal backslash, or bytes in a declared legacy code page.
-    let mut reader = DxfTextReader::new(BufReader::new(Cursor::new(dxf))).ok()?;
     let version =
         super::native::header_value(dxf, b"$ACADVER").and_then(|(_, v)| std::str::from_utf8(v).ok()).map(acadrust::DxfVersion::from_version_string);
-    if version.is_some_and(|v| v < acadrust::DxfVersion::AC1021)
-        && let Some((_, page)) = super::native::header_value(dxf, b"$DWGCODEPAGE")
-        && let Some(encoding) = std::str::from_utf8(page).ok().and_then(acadrust::io::dxf::code_page::encoding_from_code_page)
-    {
-        reader.set_encoding(encoding);
-    }
-    Some(reader)
+    let unicode = version.is_some_and(|v| v >= acadrust::DxfVersion::AC1021);
+    let encoding = if version.is_some_and(|v| v < acadrust::DxfVersion::AC1021) {
+        super::native::header_value(dxf, b"$DWGCODEPAGE").and_then(|(_, page)| std::str::from_utf8(page).ok()).and_then(encoding_from_code_page)
+    } else {
+        None
+    };
+    let mut lines = dxf.split(|b| *b == b'\n').map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+    Some(std::iter::from_fn(move || {
+        let code = lines.next()?;
+        let Some(value) = lines.next() else { return (!code.trim_ascii().is_empty()).then_some(None) };
+        let pair = || {
+            let code = std::str::from_utf8(code).ok()?.trim().parse().ok()?;
+            let text = if let Some(encoding) = encoding {
+                encoding.decode(value).0.into_owned()
+            } else if unicode {
+                String::from_utf8_lossy(value).into_owned()
+            } else {
+                // The decoder uses UTF-8 with Latin-1 fallback when no encoding was declared.
+                std::str::from_utf8(value).map_or_else(|_| value.iter().map(|&b| char::from(b)).collect(), str::to_string)
+            };
+            let text = decode_legacy_escapes(&text);
+            // DXF's escaped control characters are decoded after CIF/MIF, as in the bridge.
+            let text = text.replace("^J", "\n").replace("^M", "\r").replace("^I", "\t").replace("^ ", "^");
+            Some((code, text))
+        };
+        Some(pair())
+    }))
 }
 
 /// The CLASS records of an ASCII DXF, in CLASSES order and numbered by place from 500 (DXF
@@ -215,11 +233,12 @@ pub(super) fn text_reader(dxf: &[u8]) -> Option<DxfTextReader<Cursor<&[u8]>>> {
 /// flags or instance count out of range, more classes than the numbers allow. Then
 /// `proxy_classes` matches the classes by name instead.
 pub(super) fn source_classes(dxf: &[u8]) -> Option<Vec<DxfClass>> {
-    let mut reader = text_reader(dxf)?;
+    let pairs = text_pairs(dxf)?;
     let mut records: Vec<Vec<(i32, String)>> = Vec::new();
     let (mut section, mut in_classes) = (false, false);
-    while let Some(pair) = reader.read_pair().ok()? {
-        match (pair.code, pair.value_string.as_str()) {
+    for pair in pairs {
+        let (code, value) = pair?;
+        match (code, value.as_str()) {
             (0, "ENDSEC") if in_classes => break,
             (0, "SECTION") => section = true,
             (2, name) if section => {

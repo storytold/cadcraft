@@ -1023,12 +1023,12 @@ mod native {
     /// CADCraft's own bridge DXF is always ASCII, and only a binary DXF given to the public
     /// conversion functions comes here.
     pub(super) fn dxf_class_names(dxf: &[u8]) -> Option<Vec<String>> {
-        use acadrust::io::dxf::reader::DxfStreamReader;
-        let mut reader = super::proxy_transport::text_reader(dxf)?;
+        let pairs = super::proxy_transport::text_pairs(dxf)?;
         let mut names = Vec::new();
         let (mut section, mut in_classes, mut in_class) = (false, false, false);
-        while let Some(pair) = reader.read_pair().ok()? {
-            match (pair.code, pair.value_string.as_str()) {
+        for pair in pairs {
+            let (code, value) = pair?;
+            match (code, value.as_str()) {
                 (0, "ENDSEC") if in_classes => break,
                 (0, "SECTION") => section = true,
                 (2, name) if section => {
