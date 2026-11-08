@@ -1,6 +1,7 @@
 //! One room: the authoritative drawing, the order of operations and the answers they get.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
 
 use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role, TableRegistry, TableRenames, diff_all};
 use cadcraft_doc::Drawing;
@@ -78,6 +79,7 @@ pub struct Room {
     version: u64,
     applied: VecDeque<Applied>,
     journal: VecDeque<Applied>,
+    journal_path: Option<PathBuf>,
 }
 
 impl Room {
@@ -90,7 +92,7 @@ impl Room {
         session.set_record_undo(false);
         let mut registry = TableRegistry::new();
         registry.reconcile(session.doc().map_err(|_| RoomError::NoDrawing)?);
-        Ok(Room { session, registry, version: 0, applied: VecDeque::new(), journal: VecDeque::new() })
+        Ok(Room { session, registry, version: 0, applied: VecDeque::new(), journal: VecDeque::new(), journal_path: None })
     }
 
     /// The authoritative drawing, for a snapshot or a test replica.
@@ -192,6 +194,62 @@ impl Room {
         Ok(room)
     }
 
+    /// Persist every applied operation to `path`, one JSON line each.
+    ///
+    /// The journal is what a restart replays on top of the last snapshot (ADR-0005). A write that
+    /// fails is reported to the caller that set the path, not to a participant; the room keeps
+    /// working, and the next compaction writes a fresh snapshot.
+    pub fn with_journal(mut self, path: impl Into<PathBuf>) -> Result<Self, RoomError> {
+        let path = path.into();
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| RoomError::Io(e.to_string()))?;
+        }
+        std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| RoomError::Io(e.to_string()))?;
+        self.journal_path = Some(path);
+        Ok(self)
+    }
+
+    /// Restore a snapshot and replay the journal tail written by [`Room::with_journal`].
+    pub fn restore_with_journal(snapshot: &Snapshot, journal: &Path) -> Result<Self, RoomError> {
+        let mut room = Room::restore(snapshot)?;
+        let text = std::fs::read_to_string(journal).unwrap_or_default();
+        let mut entries: Vec<Applied> =
+            text.lines().filter_map(|line| serde_json::from_str::<Applied>(line).ok()).filter(|a| a.version > snapshot.version).collect();
+        entries.sort_by_key(|a| a.version);
+        for applied in entries {
+            if applied.version != room.version.saturating_add(1) {
+                return Err(RoomError::Io(format!(
+                    "the journal goes from version {} to {}, with {} missing",
+                    room.version,
+                    applied.version,
+                    applied.version - room.version - 1
+                )));
+            }
+            let doc = room.session.doc_mut().map_err(|_| RoomError::NoDrawing)?;
+            cadcraft_collab::apply(doc, &applied.changes).map_err(|e| RoomError::Io(e.to_string()))?;
+            room.version = applied.version;
+            room.remember_memory_only(applied);
+        }
+        Ok(room)
+    }
+
+    /// Write a snapshot to `snapshot` (bytes and a `.version` file beside it) and empty the
+    /// journal: everything it held is in the snapshot now.
+    pub fn compact(&mut self, snapshot: &Path) -> Result<(), RoomError> {
+        let saved = self.snapshot()?;
+        let temporary = snapshot.with_extension("dxf.tmp");
+        std::fs::write(&temporary, &saved.bytes).map_err(|e| RoomError::Io(e.to_string()))?;
+        std::fs::rename(&temporary, snapshot).map_err(|e| RoomError::Io(e.to_string()))?;
+        std::fs::write(snapshot.with_extension("version"), saved.version.to_string()).map_err(|e| RoomError::Io(e.to_string()))?;
+        self.journal.clear();
+        if let Some(path) = &self.journal_path {
+            std::fs::write(path, b"").map_err(|e| RoomError::Io(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// Apply a journal tail (operations after the snapshot) in order, ignoring the answers.
     pub fn replay(&mut self, ops: &[Op]) -> Result<(), RoomError> {
         for op in ops {
@@ -219,6 +277,19 @@ impl Room {
     }
 
     fn remember(&mut self, applied: Applied) {
+        if let Some(path) = &self.journal_path
+            && let Ok(line) = serde_json::to_string(&applied)
+            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        {
+            use std::io::Write as _;
+            let _ = writeln!(file, "{line}");
+        }
+        self.remember_memory_only(applied);
+    }
+
+    /// Add an applied operation to the windows without writing it again (a replayed line is
+    /// already in the file).
+    fn remember_memory_only(&mut self, applied: Applied) {
         self.applied.push_back(applied.clone());
         while self.applied.len() > IDEMPOTENCY_WINDOW {
             self.applied.pop_front();
@@ -477,5 +548,72 @@ mod policy_tests {
         }
         assert_eq!(room.version(), 0);
         assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn workspace() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cadcraft-journal-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.subsec_nanos()).unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_journal_replays_on_top_of_a_snapshot() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        room.compact(&state).unwrap();
+        room.apply(&line_op("c", 6.0)).unwrap();
+
+        let bytes = std::fs::read(&state).unwrap();
+        let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+        let restored = Room::restore_with_journal(&Snapshot { version, bytes }, &journal).unwrap();
+
+        assert_eq!(restored.version(), 3);
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_journal_with_a_gap_is_refused() {
+        let dir = workspace();
+        let full = dir.join("full.jsonl");
+        let tail = dir.join("tail.jsonl");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&full).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        let text = std::fs::read_to_string(&full).unwrap();
+        let last = text.lines().last().unwrap().to_string();
+        std::fs::write(&tail, format!("{last}\n")).unwrap();
+
+        let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
+        assert!(Room::restore_with_journal(&snapshot, &tail).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

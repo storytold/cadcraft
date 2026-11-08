@@ -91,11 +91,20 @@ fn load(args: &Args) -> Result<Room, String> {
         && let Ok(bytes) = std::fs::read(state)
         && let Ok(version) = std::fs::read_to_string(state_version(state)).and_then(|text| text.trim().parse::<u64>().map_err(std::io::Error::other))
     {
-        return Room::restore(&Snapshot { version, bytes }).map_err(|e| e.to_string());
+        return Room::restore_with_journal(&Snapshot { version, bytes }, &journal_path(state)).map_err(|e| e.to_string());
     }
     let bytes = std::fs::read(&args.file).map_err(|e| format!("{}: {e}", args.file.display()))?;
     let drawing = cadcraft_io::read(&bytes, &args.file).map_err(|e| e.to_string())?;
-    Room::new(drawing).map_err(|e| e.to_string())
+    let room = Room::new(drawing).map_err(|e| e.to_string())?;
+    match &args.state {
+        Some(state) => room.with_journal(journal_path(state)).map_err(|e| e.to_string()),
+        None => Ok(room),
+    }
+}
+
+/// The journal beside a snapshot, one applied operation per line.
+fn journal_path(state: &std::path::Path) -> PathBuf {
+    state.with_extension("jsonl")
 }
 
 /// The file beside a snapshot that holds its version.
