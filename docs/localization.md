@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), or **ქართული** (Georgian).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **繁體中文** (Traditional Chinese, Taiwan), **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), or **ქართული** (Georgian).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,9 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`. Unsupported languages fall back to English.
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`.
+Chinese is resolved by script and region: `zh-TW`, `zh-Hant`, `zh-HK` and `zh-MO` → `zh-TW`,
+while `zh`, `zh-CN`, `zh-Hans` and `zh-SG` → `zh`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
 
@@ -22,7 +24,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, and `ka`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `zh-TW`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, and `ka`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -45,6 +47,23 @@ the Ukrainian reference, the current Czech catalog, Options, prompts, dialogs, a
 The translations are original, AI-assisted Korean CAD terminology (for example, 도면층,
 치수, 모깎기, 모따기, 간격띄우기 and 객체 스냅). Independent native proofreading and
 platform-specific layout/IME validation remain follow-up work.
+
+Traditional Chinese (Taiwan) has **1,478 rows**: 1,472 ordinary labels, four contextual menu
+headings (**繪製**, **修改**, **標註**, **檢視**) and two count templates, which read the same in both
+forms because Chinese has no grammatical plural. It covers the union of the existing catalogs —
+every marked UI literal, prompts, dialogs, Options and tooltips. Terminology follows, in order,
+AutoCAD Taiwan's official vocabulary (**圖面**, **圖塊**, **標註**, **圖層性質**, **掣點**,
+**物件鎖點**, **視埠**, **配置**, **剖面線**, **聚合線**, **雲形線**, **出圖**), then Microsoft
+Taiwan's, then common Taiwan usage. The translation was written from CADCraft's English strings;
+the Simplified catalog, converted with OpenCC, served only as a starting point. It uses Taiwan
+standard glyphs (台, 群, 里) and keeps clickable command keywords in English (`Top`, `Zero`,
+`_tan to`, `nX`/`nXP`). It renders like Simplified Chinese, with an installed CJK font or an
+embedded CJK face: PingFang on macOS, Microsoft JhengHei (微軟正黑體) on Windows, Noto Sans CJK TC
+on Linux/FreeBSD, each falling back to the Simplified faces (Microsoft YaHei, Noto Sans CJK SC,
+WenQuanYi) when the Traditional one is missing. A build that embeds Traditional Chinese faces from
+`CRAFT_FONTS_DIR` (the Windows test package ships 源流明體 TW) puts them ahead of the installed
+fonts; the embedded `Hant` face comes first among them. The work is AI-assisted and has not yet
+been proofread line by line by a native speaker.
 
 Brazilian Portuguese has 1,447 catalog rows and also covers the reference catalog, every marked UI
 literal and the strings the sibling catalogs translate: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and

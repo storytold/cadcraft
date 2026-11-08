@@ -33,6 +33,8 @@ pub enum Preference {
     French,
     #[serde(rename = "zh")]
     Chinese,
+    #[serde(rename = "zh-TW")]
+    ChineseTraditional,
     #[serde(rename = "it")]
     Italian,
     #[serde(rename = "ko")]
@@ -54,7 +56,7 @@ pub enum Preference {
 }
 
 impl Preference {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -66,6 +68,7 @@ impl Preference {
         Self::Russian,
         Self::French,
         Self::Chinese,
+        Self::ChineseTraditional,
         Self::Italian,
         Self::Korean,
         Self::Swedish,
@@ -116,6 +119,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::ChineseTraditional => "zh-TW",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -141,6 +145,7 @@ impl Preference {
             Self::Russian => "Русский",
             Self::French => "Français",
             Self::Chinese => "简体中文",
+            Self::ChineseTraditional => "繁體中文",
             Self::Italian => "Italiano",
             Self::Korean => {
                 if crate::theme::shows_hangul(CURRENT.with(Cell::get)) {
@@ -195,6 +200,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::ChineseTraditional => "zh-TW",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -220,7 +226,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 19] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -251,6 +257,16 @@ pub static LANGUAGES: [Language; 19] = [
     // Chinese has no grammatical plural: both `@plural` forms read the same. Its glyphs come from
     // an installed CJK font (`theme::cjk_font`); without one the interface stays English.
     Language { code: "zh", name: "简体中文", source: include_str!("i18n/zh.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    // Traditional Chinese (Taiwan): the same CJK font rule as Simplified; its own catalog uses
+    // AutoCAD Taiwan terminology. Both `@plural` forms read the same, as in Chinese.
+    Language {
+        code: "zh-TW",
+        name: "繁體中文",
+        source: include_str!("i18n/zh_tw.tsv"),
+        plural: plural_en,
+        plural_forms: 2,
+        catalog: OnceLock::new(),
+    },
     // Italian integer plurals (CLDR `it`) follow the English rule: one (1), other.
     Language { code: "it", name: "Italiano", source: include_str!("i18n/it.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Korean has one integer plural form and needs a Hangul-capable interface font.
@@ -283,9 +299,30 @@ pub static LANGUAGES: [Language; 19] = [
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
 /// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
+/// Chinese is the exception: an explicit script subtag decides (`zh-Hant`, `zh-Hans`), else a
+/// Taiwan, Hong Kong or Macao region does (`zh-TW`, `zh_HK`, `zh-MO`); every other `zh*` tag
+/// selects `zh`.
 pub fn locale_language(tag: &str) -> Option<&'static str> {
-    let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
-    LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
+    let mut subtags = tag.trim().split(['-', '_', '.', '@']);
+    let primary = subtags.next()?;
+    let language = LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary)))?;
+    if language.code == "zh" {
+        // `zh-Hant`, `zh-Hant-HK` and `zh-TW` are Traditional; `zh-Hans`, `zh-Hans-HK`,
+        // `zh-CN`, `zh-SG` and a bare `zh` are Simplified.
+        let parts: Vec<&str> = subtags.collect();
+        let has = |want: &str| parts.iter().any(|part| part.eq_ignore_ascii_case(want));
+        let traditional = if has("hant") {
+            true
+        } else if has("hans") {
+            false
+        } else {
+            ["tw", "hk", "mo"].iter().any(|region| has(region))
+        };
+        if traditional {
+            return Some("zh-TW");
+        }
+    }
+    Some(language.code)
 }
 
 thread_local! {

@@ -830,6 +830,13 @@ fn non_unicode_output_names() {
         n.extend_from_slice(ext.as_bytes());
         s.0.join(OsString::from_vec(n))
     };
+    // APFS (macOS) rejects names that are not valid UTF-8 (EILSEQ), so there is nothing to test
+    // there; other filesystems take them as given.
+    let probe = latin1("probe");
+    if std::fs::File::create(&probe).is_err() {
+        return;
+    }
+    std::fs::remove_file(&probe).expect("remove probe file");
     let run = |args: Vec<OsString>| {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = cadcraft_cli::run(args, &mut out, &mut err);
