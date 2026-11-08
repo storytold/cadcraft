@@ -287,11 +287,20 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
                 craft_ui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
-                        if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
-                            // Choosing a state switches the layers at once.
-                            st.state_sel = Some(s.clone());
-                            actions.push(("layerstate.restore", json!({ "name": s })));
-                        }
+                        ui.horizontal(|ui| {
+                            // Deletes this state without restoring it first (choosing it would).
+                            if icons::button(ui, Icon::Close, 18.0, "Delete Layer State", false).clicked() {
+                                if st.state_sel.as_deref() == Some(s) {
+                                    st.state_sel = None;
+                                }
+                                actions.push(("layerstate.delete", json!({ "name": s })));
+                            }
+                            if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
+                                // Choosing a state switches the layers at once.
+                                st.state_sel = Some(s.clone());
+                                actions.push(("layerstate.restore", json!({ "name": s })));
+                            }
+                        });
                     }
                     if states.is_empty() {
                         ui.label(RichText::new(crate::tl!("No saved layer states")).color(t.text_dim));
@@ -419,7 +428,12 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
     ctx.data_mut(|dd| dd.insert_temp(sid, st));
     for (c, p) in actions {
+        // PURGE clears the selection; deleting empty layers removes no object, so it stays.
+        let keep = (c == "purge").then(|| app.session.selection());
         let _ = app.run(c, p);
+        if let Some(sel) = keep {
+            app.session.set_selection(sel);
+        }
     }
 }
 
