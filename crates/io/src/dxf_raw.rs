@@ -521,8 +521,10 @@ fn retained_objects(
     // One pass with `kept` the objects an earlier pass kept: a null-owner object goes with the
     // first of its hard owners that is kept.
     let mut pass = |kept: &HashMap<usize, bool>| {
+        // Previously live objects already have a proved path to a retained owner. Seed that
+        // proof before traversal, so mutual hard owners cannot hide it from their children.
+        let mut retained: HashMap<usize, bool> = kept.iter().filter(|(_, live)| **live).map(|(&i, &live)| (i, live)).collect();
         let kept = |h: &str| by_handle.get(h).and_then(|i| kept.get(i)) == Some(&true);
-        let mut retained = HashMap::new();
         for index in 0..objects.len() {
             let mut path = Vec::new();
             let mut current = index;
@@ -595,16 +597,18 @@ fn held(tags: &[Tag]) -> impl Iterator<Item = String> + '_ {
 /// The objects that own each object by a hard owner reference (group 360), in file order:
 /// `child handle → owner handles`.
 fn hard_owners<S: AsRef<str>>(objects: impl Iterator<Item = (String, impl Iterator<Item = S>)>) -> HashMap<String, Vec<String>> {
-    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    // Membership is hashed, while the vector keeps file order. A long list of distinct
+    // holders for one child must not scan all earlier holders once per reference.
+    let mut out: HashMap<String, (Vec<String>, HashSet<String>)> = HashMap::new();
     for (h, children) in objects {
         for c in children {
-            let owners = out.entry(norm(c.as_ref())).or_default();
-            if !owners.contains(&h) {
+            let (owners, seen) = out.entry(norm(c.as_ref())).or_default();
+            if seen.insert(h.clone()) {
                 owners.push(h.clone());
             }
         }
     }
-    out
+    out.into_iter().map(|(child, (owners, _))| (child, owners)).collect()
 }
 
 /// An object's owner: its group 330, or for one whose owner is null (another application's
@@ -974,8 +978,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         })
         .collect();
     let alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
+        // Keep established live paths available to descendants during this pass as well.
+        let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
-        let mut alive_memo: HashMap<String, bool> = HashMap::new();
         for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
         {
             alive_memo.insert(o.handle.hex(), false);
@@ -1331,4 +1336,29 @@ fn seed(tags: &[Tag]) -> u64 {
 /// The largest handle of a record (groups 5 and 105).
 fn max_handle(tags: &[Tag]) -> u64 {
     tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).max().unwrap_or(0)
+}
+
+#[cfg(test)]
+mod hard_owner_tests {
+    use super::hard_owners;
+
+    #[test]
+    fn holders_are_unique_in_first_seen_order() {
+        let objects =
+            [("10".to_string(), ["00a", "A"].into_iter()), ("20".to_string(), ["A", "00A"].into_iter()), ("10".to_string(), ["A", "A"].into_iter())];
+        let owners = hard_owners(objects.into_iter());
+        assert_eq!(owners.get("A").unwrap(), &["10", "20"]);
+        assert_eq!(owners.len(), 1);
+    }
+
+    #[test]
+    fn many_distinct_holders_keep_file_order() {
+        let count = 10_000;
+        let owners = hard_owners((0..count).map(|i| (format!("{i:X}"), ["FFFF", "FFFF"].into_iter())));
+        let holders = owners.get("FFFF").unwrap();
+        assert_eq!(holders.len(), count);
+        for (i, holder) in holders.iter().enumerate() {
+            assert_eq!(holder, &format!("{i:X}"));
+        }
+    }
 }
