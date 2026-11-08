@@ -728,6 +728,7 @@ dependencies = [
 name = "cadcraft-fonts"
 version = "0.17.0"
 dependencies = [
+ "cadcraft-dxf",
  "cadcraft-geom",
  "encoding_rs",
  "harfrust 0.14.0",
