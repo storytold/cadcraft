@@ -5,7 +5,8 @@
 use cadcraft_io::{read, read_dxf, write, write_dxf};
 
 /// A named object dictionary entry `OTHER_APP` (a dictionary) with an XRECORD that holds a second
-/// XRECORD by a 360 reference; the second one's owner is null.
+/// XRECORD by a 360 reference; the second one's owner is null. An object nothing keeps names the
+/// second XRECORD by a 360 first.
 fn source() -> String {
     let groups: &[(i32, &str)] = &[
         (0, "SECTION"),
@@ -26,6 +27,15 @@ fn source() -> String {
         (100, "AcDbDictionary"),
         (3, "OTHER_APP"),
         (350, "50"),
+        // An object nothing keeps (null owner, no holder) that also names the held record by a
+        // 360, before the holder does: it is dropped, and the held record stays with the holder.
+        (0, "XRECORD"),
+        (5, "60"),
+        (330, "0"),
+        (100, "AcDbXrecord"),
+        (280, "1"),
+        (1, "stray"),
+        (360, "52"),
         (0, "DICTIONARY"),
         (5, "50"),
         (330, "C"),
@@ -76,6 +86,7 @@ fn check(text: &str, label: &str) {
     let Some((_, held_handle)) = holder.iter().find(|(c, _)| *c == "360") else { panic!("{label}: the holder holds nothing: {holder:?}") };
     let held = with("held");
     assert!(held.contains(&("5", *held_handle)), "{label}: the holder's 360 names the held record: {holder:?} {held:?}");
+    assert!(!records.iter().any(|r| r.contains(&("1", "stray"))), "{label}: the object nothing keeps is dropped");
 }
 
 #[test]

@@ -517,65 +517,104 @@ fn retained_objects(
     // hundreds of thousands of groups) would be read once per child (#862).
     let mut xdict_memo: HashMap<usize, bool> = HashMap::new();
     let mut is_xdict = |index: usize| *xdict_memo.entry(index).or_insert_with(|| is_xdict(index));
-    let hard_owners = hard_owners(objects.iter().map(|(_, _, t)| *t));
-    let mut retained = HashMap::new();
-    for index in 0..objects.len() {
-        let mut path = Vec::new();
-        let mut current = index;
-        let keep = loop {
-            if let Some(&known) = retained.get(&current) {
-                break known;
-            }
-            if path.contains(&current) || path.len() >= MAX_DEPTH {
-                break false;
-            }
-            path.push(current);
-            let Some((_, _, tags)) = objects.get(current) else { break false };
-            let header = head(tags);
-            let Some(handle) = header.handle else { break false };
-            let Some(owner) = owner_of(header.owner, &handle, &hard_owners) else { break false };
-            if by_handle.get(&handle) != Some(&current) {
-                break false;
-            }
-            if root == Some(owner.as_str()) {
-                break root_key(&handle).is_some_and(|key| !modelled_key(key));
-            }
-            if let Some(&parent) = by_handle.get(&owner) {
-                if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
+    let hard = hard_owners(objects.iter().filter_map(|(_, _, t)| Some((head(t).handle?, held(t)))));
+    // One pass with `kept` the objects an earlier pass kept: a null-owner object goes with the
+    // first of its hard owners that is kept.
+    let mut pass = |kept: &HashMap<usize, bool>| {
+        let kept = |h: &str| by_handle.get(h).and_then(|i| kept.get(i)) == Some(&true);
+        let mut retained = HashMap::new();
+        for index in 0..objects.len() {
+            let mut path = Vec::new();
+            let mut current = index;
+            let keep = loop {
+                if let Some(&known) = retained.get(&current) {
+                    break known;
+                }
+                if path.contains(&current) || path.len() >= MAX_DEPTH {
                     break false;
                 }
-                current = parent;
-                continue;
+                path.push(current);
+                let Some((_, _, tags)) = objects.get(current) else { break false };
+                let header = head(tags);
+                let Some(handle) = header.handle else { break false };
+                let Some(owner) = owner_of(header.owner, &handle, &hard, kept) else { break false };
+                if by_handle.get(&handle) != Some(&current) {
+                    break false;
+                }
+                if root == Some(owner.as_str()) {
+                    break root_key(&handle).is_some_and(|key| !modelled_key(key));
+                }
+                if let Some(&parent) = by_handle.get(&owner) {
+                    if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
+                        break false;
+                    }
+                    current = parent;
+                    continue;
+                }
+                if is_xdict(current) {
+                    break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
+                }
+                break entities.get(&owner) == Some(&true);
+            };
+            for visited in path {
+                retained.insert(visited, keep);
             }
-            if is_xdict(current) {
-                break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
-            }
-            break entities.get(&owner) == Some(&true);
-        };
-        for visited in path {
-            retained.insert(visited, keep);
         }
-    }
-    retained
+        retained
+    };
+    settle(&hard, |kept| pass(kept))
 }
 
-/// The object that owns each object by a hard owner reference (group 360), the first one
-/// to name it: `child handle → owner handle`.
-fn hard_owners<'a>(objects: impl Iterator<Item = &'a [Tag]>) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for t in objects {
-        let Some(h) = head(t).handle else { continue };
-        for c in t.iter().take_while(|g| g.code < 1000).filter(|g| g.code == 360) {
-            out.entry(norm(&c.str())).or_insert_with(|| h.clone());
+/// Run `pass` until what it keeps settles. The first pass sees nothing kept, so a null-owner
+/// object goes with its first hard owner; while one of its other hard owners is kept and that
+/// one is not, the next pass moves it there. A file where no object has two hard owners takes
+/// one pass; otherwise it stops when a pass changes nothing, after at most [`MAX_DEPTH`] more.
+fn settle<K: Eq + std::hash::Hash>(
+    hard: &HashMap<String, Vec<String>>,
+    mut pass: impl FnMut(&HashMap<K, bool>) -> HashMap<K, bool>,
+) -> HashMap<K, bool> {
+    let mut kept = pass(&HashMap::new());
+    if hard.values().all(|owners| owners.len() < 2) {
+        return kept;
+    }
+    for _ in 0..MAX_DEPTH {
+        let next = pass(&kept);
+        if next == kept {
+            break;
+        }
+        kept = next;
+    }
+    kept
+}
+
+/// The handles an object names by a hard owner reference (group 360).
+fn held(tags: &[Tag]) -> impl Iterator<Item = String> + '_ {
+    tags.iter().take_while(|g| g.code < 1000).filter(|g| g.code == 360).map(|g| g.str())
+}
+
+/// The objects that own each object by a hard owner reference (group 360), in file order:
+/// `child handle → owner handles`.
+fn hard_owners<S: AsRef<str>>(objects: impl Iterator<Item = (String, impl Iterator<Item = S>)>) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for (h, children) in objects {
+        for c in children {
+            let owners = out.entry(norm(c.as_ref())).or_default();
+            if !owners.contains(&h) {
+                owners.push(h.clone());
+            }
         }
     }
     out
 }
 
 /// An object's owner: its group 330, or for one whose owner is null (another application's
-/// proxy that another proxy holds) the object that hard-owns it ([`hard_owners`]).
-fn owner_of(owner: Option<String>, handle: &str, hard: &HashMap<String, String>) -> Option<String> {
-    owner.filter(|o| o != "0").or_else(|| hard.get(handle).cloned())
+/// proxy that another proxy holds) the object that hard-owns it ([`hard_owners`]): the first
+/// one that is `kept`, or else the first one.
+fn owner_of(owner: Option<String>, handle: &str, hard: &HashMap<String, Vec<String>>, kept: impl Fn(&str) -> bool) -> Option<String> {
+    owner.filter(|o| o != "0").or_else(|| {
+        let owners = hard.get(handle)?;
+        owners.iter().find(|o| kept(o)).or_else(|| owners.first()).cloned()
+    })
 }
 
 /// Proxy records (DXF Reference, ACAD_PROXY_OBJECT and ACAD_PROXY_ENTITY): another application's
@@ -922,50 +961,55 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     let objs: HashMap<String, &ForeignObject> = f.objects.iter().map(|o| (o.handle.hex(), o)).collect();
     let dict_entries: HashMap<String, &str> = f.dictionary.iter().map(|(k, h)| (h.hex(), k.as_str())).collect();
     let nod = f.targets.iter().filter(|(_, k)| k.0 == "NOD" && k.1.is_empty()).map(|(h, _)| h.hex()).collect::<HashSet<_>>();
-    let kept_tags: Vec<Vec<Tag>> = f.objects.iter().map(|o| o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect()).collect();
-    let hard = hard_owners(kept_tags.iter().map(Vec::as_slice));
-    let owners: HashMap<String, String> = f
+    let hard = hard_owners(
+        f.objects.iter().map(|o| (o.handle.hex(), o.tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 360).map(|t| t.value.trim()))),
+    );
+    // Each kept object's own owner (group 330), read one record at a time.
+    let own: HashMap<String, Option<String>> = f
         .objects
         .iter()
-        .zip(&kept_tags)
-        .filter_map(|(o, t)| {
-            let h = o.handle.hex();
-            let owner = owner_of(head(t).owner, &h, &hard)?;
-            Some((h, owner))
+        .map(|o| {
+            let t: Vec<Tag> = o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect();
+            (o.handle.hex(), head(&t).owner)
         })
         .collect();
-    let mut alive_memo: HashMap<String, bool> = HashMap::new();
-    for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
-        alive_memo.insert(o.handle.hex(), false);
-    }
-    for o in &f.objects {
-        let mut path: Vec<String> = Vec::new();
-        let mut cur = o.handle.hex();
-        let verdict = loop {
-            if let Some(&v) = alive_memo.get(&cur) {
-                break v;
-            }
-            if path.contains(&cur) || path.len() >= MAX_DEPTH {
-                break false;
-            }
-            path.push(cur.clone());
-            let Some(owner) = owners.get(&cur).cloned() else { break false };
-            if objs.contains_key(&owner) {
-                cur = owner;
-                continue;
-            }
-            if nod.contains(&owner) {
-                break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
-            }
-            if attached.contains(&cur) {
-                break true;
-            }
-            break unknown.contains(&owner) && written.contains(&owner);
-        };
-        for p in path {
-            alive_memo.insert(p, verdict);
+    let alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
+        let kept = |h: &str| kept.get(h) == Some(&true);
+        let mut alive_memo: HashMap<String, bool> = HashMap::new();
+        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
+        {
+            alive_memo.insert(o.handle.hex(), false);
         }
-    }
+        for o in &f.objects {
+            let mut path: Vec<String> = Vec::new();
+            let mut cur = o.handle.hex();
+            let verdict = loop {
+                if let Some(&v) = alive_memo.get(&cur) {
+                    break v;
+                }
+                if path.contains(&cur) || path.len() >= MAX_DEPTH {
+                    break false;
+                }
+                path.push(cur.clone());
+                let Some(owner) = owner_of(own.get(&cur).cloned().flatten(), &cur, &hard, kept) else { break false };
+                if objs.contains_key(&owner) {
+                    cur = owner;
+                    continue;
+                }
+                if nod.contains(&owner) {
+                    break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
+                }
+                if attached.contains(&cur) {
+                    break true;
+                }
+                break unknown.contains(&owner) && written.contains(&owner);
+            };
+            for p in path {
+                alive_memo.insert(p, verdict);
+            }
+        }
+        alive_memo
+    });
     // New handles for the written kept objects, above every written handle and the seed.
     let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
     let mut alive: HashMap<String, String> = HashMap::new();
