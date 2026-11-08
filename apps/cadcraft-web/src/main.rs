@@ -155,6 +155,10 @@ mod web {
             {
                 create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
             }
+            // Whole-drawing previews (BEDIT's Edit Block Definition, #2291) and large command
+            // previews outgrow wgpu's default 256 MiB buffer cap, which left the canvas black:
+            // ask for what the adapter supports, as the desktop app does.
+            cadcraft_ui_egui::gpu::request_adapter_buffer_limit(&mut options.wgpu_options.wgpu_setup);
             let result = eframe::WebRunner::new()
                 .start(
                     canvas,
