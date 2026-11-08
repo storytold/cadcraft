@@ -271,14 +271,18 @@ impl StretchM {
                         Some(store.map(|st| st.iter().filter(|e| crate::select::selectable(d, e)).map(|e| e.handle).collect()).unwrap_or_default())
                     }
                     "l" | "last" => Some(
-                        store.and_then(|st| st.iter().filter(|e| crate::select::selectable(d, e)).last()).map(|e| vec![e.handle]).unwrap_or_default(),
+                        store
+                            .and_then(|st| st.last())
+                            .filter(|e| !crate::select::locked_against_selection(d, e))
+                            .map(|e| vec![e.handle])
+                            .unwrap_or_default(),
                     ),
                     "p" | "previous" => Some(
                         s.state()?
                             .previous_selection
                             .iter()
                             .copied()
-                            .filter(|h| d.entity(*h).is_some_and(|e| crate::select::selectable(d, e)))
+                            .filter(|h| !d.entity(*h).is_some_and(|e| crate::select::locked_against_selection(d, e)))
                             .collect(),
                     ),
                     _ => {
