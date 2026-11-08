@@ -97,7 +97,7 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && entity_bounds(d, e, 0).contains(p)) || in_blank_mtext(e, p) || in_text(d, e, p) {
+    if (filled && entity_bounds(d, e, 0).contains(p)) || in_blank_mtext(d, e, p) || in_text(d, e, p) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
@@ -167,15 +167,26 @@ fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
 
 /// The frame a blank MTEXT is picked in (#2810): its insertion point, rotation and the box before
 /// turning (`x0, x1, y0, y1` about the insertion point): its width (the text height when it has
-/// none) by its text height, placed by its attachment point. `None` for any other entity, or a
-/// blank MTEXT without a usable size or position.
-fn blank_mtext_frame(e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
+/// none) by its text height, placed by its attachment point, at the size it draws at the current
+/// annotation scale. `None` for any other entity, a blank MTEXT without a usable size or position,
+/// or an annotative one the current annotation scale hides.
+fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
     let EntityKind::MText(t) = &e.kind else { return None };
     if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
         return None;
     }
-    let w = if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
-    let h = t.height;
+    // Sized as `anno_scaled` sizes it; the insertion point stays.
+    let f = match d.anno_draw(e) {
+        cadcraft_doc::AnnoDraw::Plain => 1.0,
+        cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
+        cadcraft_doc::AnnoDraw::Scaled(_) => 1.0,
+        cadcraft_doc::AnnoDraw::Hidden => return None,
+    };
+    let w = f * if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
+    let h = f * t.height;
+    if !w.is_finite() || !h.is_finite() {
+        return None;
+    }
     let dx = match t.attach {
         2 | 5 | 8 => -w / 2.0,
         3 | 6 | 9 => -w,
@@ -191,15 +202,15 @@ fn blank_mtext_frame(e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
 
 /// The box around a blank MTEXT's turned frame, for the spatial index and windows (a crossing
 /// window may catch a little extra near a corner, as it does for other text).
-pub(crate) fn blank_mtext_box(e: &Entity) -> Option<Bounds2> {
-    let (o, rot, [x0, x1, y0, y1]) = blank_mtext_frame(e)?;
+pub(crate) fn blank_mtext_box(d: &Drawing, e: &Entity) -> Option<Bounds2> {
+    let (o, rot, [x0, x1, y0, y1]) = blank_mtext_frame(d, e)?;
     let corners = [Vec2::new(x0, y1), Vec2::new(x1, y1), Vec2::new(x1, y0), Vec2::new(x0, y0)];
     Some(Bounds2::from_points(corners.map(|c| o + c.rotate(rot))))
 }
 
 /// Whether `p` is on a blank MTEXT: inside its box turned with the text, not the larger box around it.
-fn in_blank_mtext(e: &Entity, p: Vec2) -> bool {
-    let Some((o, rot, [x0, x1, y0, y1])) = blank_mtext_frame(e) else { return false };
+fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+    let Some((o, rot, [x0, x1, y0, y1])) = blank_mtext_frame(d, e) else { return false };
     let q = (p - o).rotate(-rot);
     q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1
 }
@@ -208,7 +219,7 @@ fn in_blank_mtext(e: &Entity, p: Vec2) -> bool {
 /// empty) the box it is picked in.
 pub(crate) fn pick_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
     let b = entity_bounds(d, e, 0);
-    if b.is_empty() { blank_mtext_box(e).unwrap_or(b) } else { b }
+    if b.is_empty() { blank_mtext_box(d, e).unwrap_or(b) } else { b }
 }
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
@@ -635,6 +646,29 @@ mod tests {
         assert_eq!(at(4.955, 1.418), Some(h));
         // Inside the box around the turned one, but local (2.87, 2.96) is above the text.
         assert_eq!(at(1.0, 4.0), None);
+    }
+
+    /// An annotative blank MTEXT is picked in the box it draws at the current annotation scale,
+    /// and not at all while that scale hides it.
+    #[test]
+    fn an_annotative_blank_mtext_is_picked_at_its_drawn_size() {
+        let mut d = Drawing::new_metric();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        let common = Common { anno_scales: vec![half], ..Common::default() };
+        // Middle-centre at 1:2: twice the size, x -10..10, y -2.5..2.5.
+        let h = d.add(&Space::Model, common, mtext_at(" ", 5, 0.0)).unwrap();
+        let at = |d: &Drawing, x: f64, y: f64| pick(d, &Space::Model, Vec2::new(x, y), 0.05);
+        assert_eq!(at(&d, 8.0, 2.0), Some(h), "inside the scaled box");
+        assert_eq!(at(&d, 11.0, 0.0), None, "outside the scaled box");
+        let w = Bounds2::new(Vec2::new(7.0, 1.0), Vec2::new(9.0, 2.0));
+        assert_eq!(select_window(&d, &Space::Model, w, true), vec![h], "crossing the scaled box");
+        // At 1:1 with only supported scales shown, the object is hidden: nothing to pick.
+        d.header.set_str("CANNOSCALE", "1:1");
+        d.header.set_i64("ANNOALLVISIBLE", 0);
+        assert_eq!(at(&d, 0.0, 0.0), None, "hidden");
+        let w = Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0));
+        assert!(select_window(&d, &Space::Model, w, true).is_empty(), "hidden, crossing");
     }
 
     /// A drawing large enough for the spatial index must still offer a blank MTEXT as a candidate.
