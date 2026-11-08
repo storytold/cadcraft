@@ -2,6 +2,8 @@
 //! the one written as `*Paper_Space` (the DWG header's paper space block), the others
 //! `*Paper_SpaceN`. Saving used to make the first tab the active one again.
 
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+
 use std::io::Cursor;
 
 use cadcraft_doc::{Common, Drawing, EntityKind, Layout, Line, Space};

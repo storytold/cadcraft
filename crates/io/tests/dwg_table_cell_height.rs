@@ -1,5 +1,5 @@
 //! TABLE heights inherit from the table style unless the file records a cell override.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use cadcraft_doc::{Common, Drawing, EntityKind, Space, Table, TableCell, TableStyle};
 
