@@ -198,6 +198,11 @@ fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
         }
     }
     assert_eq!(g40_indices.len(), 24);
+    // Group 40 stores two 3x4 matrices row by row:
+    // Matrix 1 (elements 0..11): inverse insert transform
+    // Matrix 2 (elements 12..23): boundary transform
+    // Index 15 = Matrix 2 row 0, col 3 (Tx translation)
+    // Index 19 = Matrix 2 row 1, col 3 (Ty translation)
     lines[g40_indices[15]] = "10.0".to_string();
     lines[g40_indices[19]] = "5.0".to_string();
 
