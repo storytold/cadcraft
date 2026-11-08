@@ -171,3 +171,48 @@ fn hostile_spatial_filters_do_not_panic() {
         let _ = read(bad.as_bytes(), "a.dxf");
     }
 }
+
+#[test]
+fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
+    let mut d = Drawing::new_metric();
+    let mut block = Block::new("P");
+    block.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(100.0, 100.0, 0.0) })));
+    d.blocks.insert("P".into(), Arc::new(block));
+    let clip = ClipBoundary::new(vec![Vec2::new(20.0, 20.0), Vec2::new(80.0, 80.0)]);
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Insert(Insert { block: "P".into(), insert: Vec3::new(150.0, 0.0, 0.0), clip: Some(clip), ..Insert::default() }),
+    )
+    .unwrap();
+    let text = String::from_utf8(save(&d, "a.dxf", Version::R2018)).unwrap();
+
+    let mut lines: Vec<String> = text.lines().map(|l| l.trim().to_string()).collect();
+    let at = lines.windows(2).position(|w| w[0] == "0" && w[1] == "SPATIAL_FILTER").unwrap();
+    let end = (at + 2..lines.len()).step_by(2).find(|i| lines[*i] == "0").unwrap();
+
+    let mut g40_indices = Vec::new();
+    for i in (at..end).step_by(2) {
+        if lines[i] == "40" {
+            g40_indices.push(i + 1);
+        }
+    }
+    assert_eq!(g40_indices.len(), 24);
+    lines[g40_indices[15]] = "10.0".to_string();
+    lines[g40_indices[19]] = "5.0".to_string();
+
+    let mutated = lines.join("\r\n") + "\r\n";
+    let loaded = read(mutated.as_bytes(), "a.dxf").unwrap();
+    let loaded_clips = clips(&loaded);
+    let ins_clip = loaded_clips[0].as_ref().expect("clip must be preserved");
+    assert!(ins_clip.points[0].near(Vec2::new(30.0, 25.0), 1e-9));
+    assert!(ins_clip.points[1].near(Vec2::new(90.0, 85.0), 1e-9));
+
+    for v in [Version::R2004, Version::R2010, Version::R2018] {
+        let dxf_back = read(&save(&loaded, "resaved.dxf", v), "resaved.dxf").unwrap();
+        same(&clips(&dxf_back), &clips(&loaded));
+
+        let dwg_back = read(&save(&loaded, "resaved.dwg", v), "resaved.dwg").unwrap();
+        same(&clips(&dwg_back), &clips(&loaded));
+    }
+}
