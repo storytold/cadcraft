@@ -268,6 +268,8 @@ pub struct CadApp {
     pub remote_presence: std::collections::BTreeMap<String, cadcraft_collab::Presence>,
     /// The version of the shared drawing this app shows.
     pub collab_version: u64,
+    /// Whether the shared session's participant list is open.
+    pub show_participants: bool,
     collab_seq: u64,
     last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
@@ -365,6 +367,7 @@ impl CadApp {
             collab: None,
             remote_presence: std::collections::BTreeMap::new(),
             collab_version: 0,
+            show_participants: false,
             collab_seq: 0,
             last_presence: None,
             capture_geometry: None,

@@ -18,6 +18,8 @@ pub enum Request {
     Presence(Presence),
     /// Undo this participant's last operation.
     Undo(String),
+    /// Redo this participant's last undone operation.
+    Redo(String),
     /// Write the file the cabinet stores, at this version.
     Commit(u64),
 }
@@ -88,6 +90,10 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
         }
     };
     let _ = ready.send(Ok(session.role()));
+    // The welcome lists who is already here; the UI shows them before the first presence frame.
+    for presence in session.participants() {
+        let _ = updates.send(Update::Presence(presence.clone()));
+    }
     loop {
         loop {
             match requests.try_recv() {
@@ -105,6 +111,12 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
                 }
                 Ok(Request::Undo(op_id)) => {
                     if session.undo(&op_id).is_err() {
+                        let _ = updates.send(Update::Lost("the connection closed".into()));
+                        return;
+                    }
+                }
+                Ok(Request::Redo(op_id)) => {
+                    if session.redo(&op_id).is_err() {
                         let _ = updates.send(Update::Lost("the connection closed".into()));
                         return;
                     }
@@ -163,6 +175,9 @@ impl crate::CadApp {
 
     /// Apply what the shared session sent and report where this participant is looking.
     pub fn collab_tick(&mut self, ctx: &egui::Context) {
+        if self.collab.is_some() && self.show_participants {
+            self.participants_window(ctx);
+        }
         let (updates, role) = match &self.collab {
             Some(collab) => (collab.poll(), collab.role()),
             None => return,
@@ -198,6 +213,8 @@ impl crate::CadApp {
                 }
                 Update::Lost(reason) => {
                     self.session.echo(format!("shared session ended: {reason}"));
+                    self.remote_presence.clear();
+                    self.show_participants = false;
                     self.collab = None;
                 }
             }
@@ -238,7 +255,10 @@ impl crate::CadApp {
             return Some(Ok(serde_json::json!({ "queued": true })));
         }
         if id == "redo" || id == "mr" {
-            return Some(Err("redo is not available in a shared session yet".into()));
+            let op_id = format!("local-redo-{}", self.collab_seq);
+            self.collab_seq = self.collab_seq.saturating_add(1);
+            collab.send(Request::Redo(op_id));
+            return Some(Ok(serde_json::json!({ "queued": true })));
         }
         if matches!(id, "save" | "qsave" | "saveas") {
             let version = self.collab_version;
@@ -262,6 +282,86 @@ impl crate::CadApp {
         self.collab_seq = self.collab_seq.saturating_add(1);
         collab.send(Request::Op(op));
         Some(Ok(serde_json::json!({ "queued": true })))
+    }
+
+    /// Show who is in the shared session, with each participant's place in the drawing.
+    fn participants_window(&mut self, ctx: &egui::Context) {
+        let Some(collab) = &self.collab else {
+            self.show_participants = false;
+            return;
+        };
+        let role = collab.role();
+        let mut open = self.show_participants;
+        let mut leave = false;
+        let people: Vec<(String, String)> = self
+            .remote_presence
+            .values()
+            .map(|presence| {
+                let space = match &presence.space {
+                    cadcraft_doc::Space::Model => crate::i18n::t("model space").to_string(),
+                    cadcraft_doc::Space::Paper(name) => name.clone(),
+                };
+                let layer = if presence.layer.is_empty() { crate::i18n::t("no active layer").to_string() } else { presence.layer.clone() };
+                (presence.actor.clone(), format!("{space} · {layer}"))
+            })
+            .collect();
+        egui::Window::new(crate::i18n::t("Shared session")).open(&mut open).resizable(false).show(ctx, |ui| {
+            ui.label(format!("{}: {}", crate::i18n::t("You"), role_name(role)));
+            ui.separator();
+            if people.is_empty() {
+                ui.label(crate::i18n::t("No other participants"));
+            }
+            for (actor, place) in &people {
+                ui.label(format!("{actor} — {place}"));
+            }
+            ui.separator();
+            if ui.button(crate::i18n::t("Leave session")).clicked() {
+                leave = true;
+            }
+        });
+        self.show_participants = open;
+        if leave {
+            self.leave_shared();
+        }
+    }
+
+    /// Disconnect from the shared session and go back to the local drawing.
+    pub fn leave_shared(&mut self) {
+        if self.collab.take().is_some() {
+            self.remote_presence.clear();
+            self.show_participants = false;
+            self.session.echo("shared session: left");
+        }
+    }
+}
+
+/// The participant's role in words.
+fn role_name(role: Role) -> &'static str {
+    match role {
+        Role::Owner => crate::i18n::t("owner"),
+        Role::Editor => crate::i18n::t("editor"),
+        Role::Viewer => crate::i18n::t("viewer"),
+    }
+}
+
+/// UI-only commands of a shared session: the participant list and leaving it.
+pub fn route(app: &mut crate::CadApp, id: &str, _params: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
+    match id {
+        "ui.collab.participants" => {
+            if app.collab.is_none() {
+                return Some(Err("this drawing is not shared".into()));
+            }
+            app.show_participants = !app.show_participants;
+            Some(Ok(serde_json::json!({ "participants": app.show_participants })))
+        }
+        "ui.collab.leave" => {
+            if app.collab.is_none() {
+                return Some(Err("this drawing is not shared".into()));
+            }
+            app.leave_shared();
+            Some(Ok(serde_json::json!({ "left": true })))
+        }
+        _ => None,
     }
 }
 
