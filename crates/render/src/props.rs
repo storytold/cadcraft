@@ -11,7 +11,7 @@ pub(crate) fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
 
 /// The layer an object with properties `c` is drawn on: layer "0" inside a block takes the block
 /// reference's layer.
-fn effective_layer<'a>(ctx: &'a Ctx, c: &'a cadcraft_doc::Common) -> &'a str {
+pub(crate) fn effective_layer<'a>(ctx: &'a Ctx, c: &'a cadcraft_doc::Common) -> &'a str {
     if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() }
 }
 

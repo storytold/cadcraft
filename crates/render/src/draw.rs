@@ -1,7 +1,7 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
-use super::props::{contents_outlive_layer, resolve, transparency};
+use super::props::{contents_outlive_layer, effective_layer, resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
     Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
@@ -11,7 +11,7 @@ use super::{
 /// The layer an object with properties `c` is drawn on, as an index in the layer table: layer 0
 /// inside a block is the block reference's layer.
 pub(crate) fn common_layer(ctx: &Ctx, c: &cadcraft_doc::Common) -> u32 {
-    let name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
+    let name = effective_layer(ctx, c);
     ctx.d.layers.iter().position(|l| l.name.eq_ignore_ascii_case(name)).and_then(|i| u32::try_from(i).ok()).unwrap_or(NO_LAYER)
 }
 
