@@ -184,7 +184,9 @@ enum Atom {
     Para(usize),
 }
 
-/// Upper bound on parsed atoms (hostile contents).
+/// Upper bound on parsed atoms (words, spaces and paragraph breaks) per MTEXT. Hostile contents
+/// are cut here: once more than this many atoms are parsed, `parse` stops reading and the rest
+/// of the contents is silently dropped from the layout. There is no warning to the caller.
 const MAX_ATOMS: usize = 200_000;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
@@ -439,8 +441,14 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'W' => {
                         let (a, n) = arg(&chars, i);
                         i = n;
-                        if let Some(v) = num(a.trim_end_matches(['x', 'X'])).filter(|v| *v > 0.01 && *v < 100.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.wf = v);
+                        // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
+                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                            Some(r) => (true, num(r)),
+                            None => (false, num(&a)),
+                        };
+                        if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
+                            // Relative factors compound; keep the result within the absolute range.
+                            derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
                         }
                     }
                     'Q' => {
@@ -973,6 +981,29 @@ mod tests {
         // Shrinking is bounded too.
         let tiny = lay(&format!("{}A", "\\H0.000001x;".repeat(60)), 0.0);
         assert!(tiny.bounds.height() > 0.0);
+    }
+
+    /// The width factor of the last format `parse` derived.
+    fn last_wf(contents: &str, base_wf: f64) -> f64 {
+        let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: base_wf, oblique: 0.0, valign: 1 };
+        parse(contents, base).1.last().map_or(f64::NAN, |f| f.wf)
+    }
+
+    #[test]
+    fn width_factor_x_is_relative() {
+        assert_eq!(last_wf("\\W2;a", 1.5), 2.0, "absolute sets the factor");
+        assert_eq!(last_wf("\\W2x;a", 1.5), 3.0, "x multiplies the current factor");
+        assert_eq!(last_wf("\\W2;\\W2x;a", 1.0), 4.0, "relative builds on the last absolute");
+        assert_eq!(last_wf("\\W0.5X;a", 1.0), 0.5, "capital X too");
+        // Hostile: a long relative chain stays inside the absolute range.
+        let chain = "\\W99x;".repeat(50);
+        assert_eq!(last_wf(&chain, 1.0), 100.0);
+        let down = "\\W0.02x;".repeat(50);
+        assert_eq!(last_wf(&down, 1.0), 0.01);
+        // Out of range or not a number: ignored.
+        assert_eq!(last_wf("\\W1e999x;a", 1.5), 1.5);
+        assert_eq!(last_wf("\\WNaNx;a", 1.5), 1.5);
+        assert_eq!(last_wf("\\Wx;a", 1.5), 1.5);
     }
 
     #[test]
