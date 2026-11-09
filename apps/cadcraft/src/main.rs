@@ -165,6 +165,14 @@ fn services() -> Services {
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| lisp_dialog(dir).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);
+            let dialog = match dir {
+                Some(dir) => dialog.set_directory(dir),
+                None => dialog,
+            };
+            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 
