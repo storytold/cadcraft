@@ -222,7 +222,7 @@ fn candidates(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     let space = s.space();
     Ok(s.doc()?
         .space(&space)
-        .map(|st| st.iter().take(MAX_SCAN).filter(|e| !matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_))).map(|e| e.handle).collect())
+        .map(|st| st.iter().take(MAX_SCAN).filter(|e| !crate::select::kept_as_read(&e.kind)).map(|e| e.handle).collect())
         .unwrap_or_default())
 }
 

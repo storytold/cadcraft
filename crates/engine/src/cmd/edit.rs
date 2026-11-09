@@ -591,7 +591,7 @@ fn run_select(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         // Handles named outright, less the proxies: no selection takes one in.
         let d = s.doc()?;
-        targets(s, p)?.into_iter().filter(|h| !d.entity(*h).is_some_and(|e| matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_)))).collect()
+        targets(s, p)?.into_iter().filter(|h| !d.entity(*h).is_some_and(|e| crate::select::kept_as_read(&e.kind))).collect()
     };
     let mut sel = if add { s.selection() } else { Vec::new() };
     sel.extend(picked);

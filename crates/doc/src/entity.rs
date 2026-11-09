@@ -67,6 +67,13 @@ pub struct Unknown {
     pub graphics: Vec<Entity>,
 }
 
+impl Unknown {
+    /// Whether this is an OLE2FRAME (the type name is matched without regard to case).
+    pub fn is_ole_frame(&self) -> bool {
+        self.dxf_type.eq_ignore_ascii_case("OLE2FRAME")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EntityKind {
@@ -370,9 +377,13 @@ impl EntityKind {
                 i.scale.y *= s;
                 i.scale.z *= s;
                 i.rotation = cadcraft_geom::norm_angle(i.rotation + rot);
+                // Mirrored as AutoCAD 2024 mirrors a block reference: the X scale factor
+                // negated, the rotation 180 degrees plus twice the mirror line's angle less the
+                // old one, and a MINSERT grid's columns running the other way.
                 if mirror {
-                    i.scale.y = -i.scale.y;
-                    i.rotation = cadcraft_geom::norm_angle(rot - (i.rotation - rot));
+                    i.scale.x = -i.scale.x;
+                    i.rotation = cadcraft_geom::norm_angle(std::f64::consts::PI + rot - (i.rotation - rot));
+                    i.col_spacing = -i.col_spacing;
                 }
                 for a in &mut i.attribs {
                     transform_text(&mut a.text, m, s, rot, false);
@@ -473,6 +484,7 @@ impl EntityKind {
                 let a = if mirror { t.rotation() } else { t.rotation() + rot };
                 t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
             }
+            EntityKind::Unknown(u) if u.is_ole_frame() => crate::ole_frame_transform(&mut u.tags, m),
             EntityKind::Unknown(_) => {}
         }
     }
