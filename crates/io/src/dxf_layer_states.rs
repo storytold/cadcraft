@@ -29,6 +29,11 @@ pub(crate) const KEY: &str = "ACAD_LAYERSTATES";
 /// The prefix of a true colour in group 92.
 const TRUE_COLOR: u32 = 0xC200_0000;
 
+/// The bytes of layers the states of one file may copy (CWE-400). Each entry of a state is a copy
+/// of the drawing's layer, its names and description included, so without a bound a small file
+/// naming one layer with a long description in a great many entries would take gigabytes.
+pub(crate) const MAX_COPIED_BYTES: usize = 256 << 20;
+
 /// Which of `states` go into AutoCAD's dictionary (the others into CADCraft's record).
 pub(crate) fn in_acad(states: &[LayerState]) -> Vec<bool> {
     let mut seen: HashSet<String> = HashSet::with_capacity(states.len());
@@ -151,8 +156,12 @@ pub(crate) struct Lookup<'a> {
 }
 
 /// The state `name` from its XRECORD's groups. A layer whose record is gone (AutoCAD keeps a
-/// purged layer's entry, measured) is skipped.
-pub(crate) fn read(name: &str, tags: &[Tag], lookup: &Lookup) -> LayerState {
+/// purged layer's entry, measured) is skipped. A layer named in two entries is in the state once,
+/// the later entry's groups over the earlier one's, as restoring both in turn did: AutoCAD 2024
+/// restores the later one (measured with entries that each set every property). Each copy of a
+/// layer is charged to `budget`, the file's [`MAX_COPIED_BYTES`]; once it is spent, the entries
+/// left are left out.
+pub(crate) fn read(name: &str, tags: &[Tag], lookup: &Lookup, budget: &mut usize) -> LayerState {
     let mut st = LayerState { name: name.to_string(), ..LayerState::default() };
     // The data follows the subclass marker (an XRECORD without one holds none).
     let start = tags.iter().position(|t| t.code == 100 && t.str().trim() == "AcDbXrecord").map_or(tags.len(), |i| i + 1);
@@ -167,17 +176,31 @@ pub(crate) fn read(name: &str, tags: &[Tag], lookup: &Lookup) -> LayerState {
         }
     }
     let rest = body.get(first..).unwrap_or_default();
+    // The index in the state of each layer by its LAYER handle.
+    let mut index: HashMap<String, usize> = HashMap::new();
     let mut at = 0;
     while let Some(group) = rest.get(at..) {
         let Some(head) = group.first() else { break };
         let len = group.iter().skip(1).position(|t| t.code == 330).map_or(group.len(), |n| n + 1);
         at += len;
-        if let Some(mut l) = (lookup.layer)(&head.str()) {
-            entry(&mut l, group.get(1..len).unwrap_or_default(), lookup);
+        let groups = group.get(1..len).unwrap_or_default();
+        let key = head.str().trim().to_ascii_uppercase();
+        if let Some(slot) = index.get(&key).and_then(|&i| st.layers.get_mut(i)) {
+            entry(slot, groups, lookup);
+        } else if let Some(mut l) = (lookup.layer)(&head.str()) {
+            let Some(left) = budget.checked_sub(cost(&l)) else { break };
+            *budget = left;
+            entry(&mut l, groups, lookup);
+            index.insert(key, st.layers.len());
             st.layers.push(l);
         }
     }
     st
+}
+
+/// The bytes a copy of layer `l` takes.
+fn cost(l: &Layer) -> usize {
+    std::mem::size_of::<Layer>() + l.name.len() + l.linetype.len() + l.description.len() + l.plot_style.len()
 }
 
 /// A layer's properties from the groups after its handle.
@@ -223,5 +246,49 @@ fn entry(l: &mut Layer, groups: &[Tag], lookup: &Lookup) {
     }
     if let Some(v) = true_color {
         l.color = Color::True(Rgb::from_u32(v & 0x00FF_FFFF));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A state's XRECORD groups with an entry per (layer handle, colour index).
+    fn tags(entries: &[(&str, i64)]) -> Vec<Tag> {
+        let mut t = vec![Tag::s(100, "AcDbXrecord"), Tag::i(280, 1), Tag::i(91, 2047), Tag::s(302, "0")];
+        for (h, aci) in entries {
+            t.extend([Tag::s(330, *h), Tag::i(90, 8)]);
+            // 0: no colour group.
+            if *aci != 0 {
+                t.push(Tag::i(62, *aci));
+            }
+        }
+        t
+    }
+
+    #[test]
+    fn a_layer_named_twice_takes_its_last_entry_and_copies_stop_at_the_budget() {
+        let layer = |h: &str| match h {
+            "A1" => Some(Layer::new("A")),
+            "B1" => Some(Layer::new("B")),
+            _ => None,
+        };
+        let none = |_: &str| None::<String>;
+        let lookup = Lookup { layer: &layer, ltype: &none, pstyle: &none, colour_dependent: true };
+        let colours = |st: &LayerState| st.layers.iter().map(|l| (l.name.clone(), l.color)).collect::<Vec<_>>();
+        // AutoCAD 2024 restores the last of two entries of one layer (measured: green, then blue,
+        // restores blue); it stays in the first one's place. A later entry without a colour keeps
+        // the earlier one's, as restoring both in turn did.
+        let mut budget = MAX_COPIED_BYTES;
+        let st = read("S", &tags(&[("A1", 3), ("B1", 2), ("A1", 5), ("B1", 0)]), &lookup, &mut budget);
+        assert_eq!(colours(&st), [("A".to_string(), Color::Index(5)), ("B".to_string(), Color::Index(2))]);
+        // Each new copy is charged (a repeated entry copies nothing); past the budget the rest of
+        // the entries, and of the file's states, are left out.
+        let one = cost(&Layer::new("A"));
+        let mut budget = one;
+        let st = read("S", &tags(&[("A1", 3), ("A1", 4), ("B1", 5)]), &lookup, &mut budget);
+        assert_eq!((colours(&st), budget), (vec![("A".to_string(), Color::Index(4))], 0));
+        let st = read("T", &tags(&[("B1", 2)]), &lookup, &mut budget);
+        assert!(st.layers.is_empty());
     }
 }
