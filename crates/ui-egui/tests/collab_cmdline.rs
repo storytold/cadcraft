@@ -86,7 +86,7 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     assert!(
         error.to_string().contains(
-            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
+            "line, circle, arc, polyline, ellipse, rect, text, dimlinear, dimaligned, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
         ),
         "{error}"
     );
@@ -1621,6 +1621,146 @@ fn imageattach_puts_its_object_on_the_authors_layer() {
     assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
     let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
     assert_eq!(layers, vec!["DETAILS"], "the image is on its author's layer");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's command");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn two_replicas_that_draw_an_arc_and_a_dimaligned_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    // Each participant types one of the two new commands; the change set carries both.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "arc 0,0 10 0 90");
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "dimaligned 0,0 10,0 5,2");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the arc and the dimension");
+    let arc = alice
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|entity| match &entity.kind {
+            EntityKind::Arc(arc) => Some(arc.clone()),
+            _ => None,
+        })
+        .expect("the arc arrived");
+    assert!((arc.radius - 10.0).abs() < 1e-9, "the radius is the one typed");
+    assert!((arc.start - 0.0_f64.to_radians()).abs() < 1e-9 && (arc.end - 90.0_f64.to_radians()).abs() < 1e-9, "the angles are degrees in the line");
+    let dimensions = alice.doc().unwrap().model.iter().filter(|entity| matches!(entity.kind, EntityKind::Dimension(_))).count();
+    assert_eq!(dimensions, 1, "the aligned dimension arrived");
+}
+
+#[test]
+fn a_refused_arc_or_dimaligned_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    // Two real steps after the first, so a refused line that pushed an undo step would show.
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    session.execute("rectang", &json!({"p1": [30.0, 0.0], "p2": [40.0, 5.0]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+
+    let refused = [
+        // An arc with no radius, a non-numeric and an out-of-limit coordinate or angle.
+        "arc 0,0 0 0 90".to_string(),
+        "arc ten,0 1 0 90".to_string(),
+        "arc 0,0 1e13 0 90".to_string(),
+        "arc 1e13,0 1 0 90".to_string(),
+        "arc 0,0 1 zero 90".to_string(),
+        "arc 0,0 1 0 later".to_string(),
+        // An aligned dimension with coincident points, a non-numeric and an out-of-limit point.
+        "dimaligned 0,0 0,0 5,2".to_string(),
+        "dimaligned 0,0 10,0 later,2".to_string(),
+        "dimaligned 0,0 1e13,0 5,2".to_string(),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+    // A refused line leaves no undo step either: the last real step is still the rectangle.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Rectangle"), "no refused line pushed an undo step");
+}
+
+#[test]
+fn undo_and_redo_of_an_arc_and_a_dimaligned_return_the_state_before_and_after() {
+    let mut session = Session::new();
+
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "arc 0,0 10 0 90");
+    let after_arc = session.doc().unwrap().clone();
+    assert_ne!(&after_arc, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Arc"));
+    assert_eq!(session.doc().unwrap(), &before, "undo takes the arc away in one step");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Arc"));
+    assert_eq!(session.doc().unwrap(), &after_arc, "redo draws it again");
+
+    let before_dim = session.doc().unwrap().clone();
+    run(&mut session, "dimaligned 0,0 10,0 5,2");
+    let after_dim = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Aligned"));
+    assert_eq!(session.doc().unwrap(), &before_dim, "undo takes the dimension away in one step");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Aligned"));
+    assert_eq!(session.doc().unwrap(), &after_dim, "redo builds it again");
+}
+
+#[test]
+fn a_remote_arc_and_dimaligned_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant draws an arc and an aligned dimension; both are new objects with no
+    // address to follow, so the receiver's cursor and selection stay where they were.
+    let before = server.doc().unwrap().clone();
+    server.execute("arc", &json!({"center": [30.0, 30.0], "radius": 5.0, "start": 0.0, "end": 90.0})).unwrap();
+    server.execute("dimaligned", &json!({"p1": [0.0, 0.0], "p2": [10.0, 0.0], "at": [5.0, 2.0]})).unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })),
+        "the arc and the dimension arrive as creations"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
+fn arc_and_dimaligned_put_their_objects_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Both commands create objects, so both belong to the layer their author draws on.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "arc 0,0 10 0 90");
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "dimaligned 0,0 10,0 5,2");
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers, vec!["DETAILS", "DETAILS"], "the arc and the dimension are on Bob's layer");
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's command");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
     assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");

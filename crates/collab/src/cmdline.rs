@@ -15,12 +15,14 @@
 //! ```text
 //! line 0,0 100,0 100,50
 //! circle 50,25 12.5
+//! arc 50,25 12.5 0 90
 //! polyline 0,0 100,0 100,50
 //! ellipse 50,25 20,10 30
 //! rect 0,0 100,50
 //! text 10,20 2.5 0 "Shared note"
 //! dimlinear 1A2,1A3 offset 5
 //! dimlinear 1A2,1A3 point 0,20
+//! dimaligned 0,0 10,0 5,2
 //! mleader 1A2 20,10 "Shared note"
 //! spline 0,0 10,5 20,0 30,5
 //! spline 0,0 10,5 20,0 closed
@@ -52,14 +54,16 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 23] = [
+pub const COMMANDS: [&str; 25] = [
     "line",
     "circle",
+    "arc",
     "polyline",
     "ellipse",
     "rect",
     "text",
     "dimlinear",
+    "dimaligned",
     "mleader",
     "spline",
     "block",
@@ -92,12 +96,12 @@ pub struct Command {
 pub enum CmdLineError {
     /// Nothing was typed.
     #[error(
-        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
+        "type a command: line, circle, arc, polyline, ellipse, rect, text, dimlinear, dimaligned, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
     )]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, arc, polyline, ellipse, rect, text, dimlinear, dimaligned, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -125,11 +129,13 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
     match head.as_str() {
         "line" | "l" => line(words.collect()),
         "circle" | "c" => circle(words.collect()),
+        "arc" | "a" => arc(words.collect()),
         "polyline" | "pline" | "pl" => polyline(words.collect()),
         "ellipse" | "el" => ellipse(words.collect()),
         "rect" | "rectangle" | "rec" => rect(words.collect()),
         "text" | "dt" | "dtext" => text_command(words.collect()),
         "dimlinear" | "dli" | "dimlin" => dimlinear(drawing, space, words.collect()),
+        "dimaligned" | "dal" => dimaligned(words.collect()),
         "mleader" | "mld" => mleader(drawing, space, words.collect()),
         "spline" | "spl" => spline(words.collect()),
         "block" | "b" => block_command(drawing, space, words.collect()),
@@ -180,11 +186,13 @@ fn creates_objects(id: &str) -> bool {
         id,
         "line"
             | "circle"
+            | "arc"
             | "pline"
             | "ellipse"
             | "rectang"
             | "text"
             | "dimlinear"
+            | "dimaligned"
             | "mleader"
             | "spline"
             | "block"
@@ -221,6 +229,24 @@ fn circle(words: Vec<&str>) -> Result<Command, CmdLineError> {
     let [x, y] = point(centre, "circle")?;
     let radius = number(radius).filter(|r| *r > 0.0).ok_or_else(|| bad("circle", "the radius must be a positive number"))?;
     Ok(Command { id: "circle", params: json!({ "center": [x, y], "radius": radius }) })
+}
+
+/// `arc cx,cy r start end` — a circular arc by centre, radius and start/end angles in degrees, the
+/// form the engine's `arc` takes as `{center, radius, start, end}`.
+///
+/// A non-positive radius, a radius beyond the drawing's coordinate limit, a non-numeric angle and a
+/// centre outside the limit are refused before an operation exists.
+fn arc(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [centre, radius, start, end] = words.as_slice() else {
+        return Err(bad("arc", "takes a centre, a radius and start and end angles in degrees: arc cx,cy r start end"));
+    };
+    let centre = drawing_point(centre, "arc")?;
+    let radius = number(radius)
+        .filter(|r| *r > 0.0 && r.abs() < MAX_COORDINATE)
+        .ok_or_else(|| bad("arc", "the radius must be a positive number within the drawing's coordinate limit"))?;
+    let start = number(start).ok_or_else(|| bad("arc", "the start angle must be a finite number of degrees"))?;
+    let end = number(end).ok_or_else(|| bad("arc", "the end angle must be a finite number of degrees"))?;
+    Ok(Command { id: "arc", params: json!({ "center": [centre.x, centre.y], "radius": radius, "start": start, "end": end }) })
 }
 
 fn polyline(words: Vec<&str>) -> Result<Command, CmdLineError> {
@@ -363,6 +389,25 @@ fn dimlinear(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Comma
         }
     };
     Ok(Command { id: "dimlinear", params: json!({ "p1": [p1.x, p1.y], "p2": [p2.x, p2.y], "at": [at.x, at.y] }) })
+}
+
+/// `dimaligned x1,y1 x2,y2 ax,ay` — an aligned dimension between two explicit points, with the
+/// dimension line placed at `ax,ay`.
+///
+/// The engine's `dimaligned` takes `{p1, p2, at}` directly, so the addresses alone build the same
+/// dimension on the server and on every replica. A non-numeric or out-of-limit coordinate and two
+/// coincident measured points are refused before an operation exists.
+fn dimaligned(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [first, second, at] = words.as_slice() else {
+        return Err(bad("dimaligned", "takes two measured points and the dimension line's point: dimaligned x1,y1 x2,y2 ax,ay"));
+    };
+    let p1 = drawing_point(first, "dimaligned")?;
+    let p2 = drawing_point(second, "dimaligned")?;
+    let at = drawing_point(at, "dimaligned")?;
+    if zero_length(p1, p2) {
+        return Err(bad("dimaligned", "the two measured points coincide; the dimension has no length"));
+    }
+    Ok(Command { id: "dimaligned", params: json!({ "p1": [p1.x, p1.y], "p2": [p2.x, p2.y], "at": [at.x, at.y] }) })
 }
 
 /// The nearest pair of the two objects' characteristic points, the points a dimension attaches to.
@@ -1398,6 +1443,59 @@ mod tests {
     }
 
     #[test]
+    fn an_arc_takes_a_centre_a_radius_and_angles() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("arc 10,20 2.5 0 90", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "arc");
+        assert_eq!(command.params, json!({ "center": [10.0, 20.0], "radius": 2.5, "start": 0.0, "end": 90.0 }));
+        // The AutoCAD alias works too; angles stay signed degrees.
+        assert_eq!(parse("a 0,0 1 -45 45", &drawing, &Space::Model).unwrap().id, "arc");
+        let before = drawing.clone();
+        for text in [
+            "arc".to_string(),
+            "arc 0,0 0 0 90".to_string(),
+            "arc 0,0 -1 0 90".to_string(),
+            "arc ten,0 1 0 90".to_string(),
+            "arc 0,0 1e13 0 90".to_string(),
+            "arc 1e13,0 1 0 90".to_string(),
+            "arc 0,0 1 zero 90".to_string(),
+            "arc 0,0 1 0 later".to_string(),
+        ] {
+            assert!(parse(&text, &drawing, &Space::Model).is_err(), "{text}");
+        }
+        let error = parse("arc 0,0 1 0 later", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("end angle"), "{error}");
+        let error = parse("arc 0,0 1e13 0 90", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("coordinate limit"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn a_dimaligned_takes_two_points_and_a_placement() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("dimaligned 0,0 10,0 5,2", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "dimaligned");
+        assert_eq!(command.params, json!({ "p1": [0.0, 0.0], "p2": [10.0, 0.0], "at": [5.0, 2.0] }));
+        // The AutoCAD alias works too, and the points need not be axis-aligned.
+        let command = parse("dal 0,0 10,5 5,-2", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params, json!({ "p1": [0.0, 0.0], "p2": [10.0, 5.0], "at": [5.0, -2.0] }));
+        let before = drawing.clone();
+        for text in [
+            "dimaligned".to_string(),
+            "dimaligned 0,0 10,0".to_string(),
+            "dimaligned 0,0 0,0 5,2".to_string(),
+            "dimaligned ten,0 10,0 5,2".to_string(),
+            "dimaligned 0,0 1e13,0 5,2".to_string(),
+            "dimaligned 0,0 10,0 5,later".to_string(),
+        ] {
+            assert!(parse(&text, &drawing, &Space::Model).is_err(), "{text}");
+        }
+        let error = parse("dimaligned 0,0 0,0 5,2", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("coincide"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
     fn an_unknown_command_is_refused_and_changes_nothing() {
         let (drawing, _) = drawing_with_line();
         let before = drawing.clone();
@@ -1405,7 +1503,7 @@ mod tests {
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
         assert!(
             error.to_string().contains(
-                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
+                "line, circle, arc, polyline, ellipse, rect, text, dimlinear, dimaligned, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
             ),
             "{error}"
         );
