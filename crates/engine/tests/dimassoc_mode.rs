@@ -3,10 +3,12 @@ use cadcraft_engine::Session;
 use cadcraft_engine::doc::{Dimension, EntityKind, Handle};
 use serde_json::{Value, json};
 
+/// Read the single entity handle returned by a dimension command.
 fn handle(v: &Value) -> Handle {
     Handle::parse_hex(v["handle"].as_str().unwrap()).unwrap()
 }
 
+/// Clone the asserted dimension so later edits can be compared with its previous state.
 fn dimension(s: &Session, h: Handle) -> Dimension {
     match &s.doc().unwrap().entity(h).unwrap().kind {
         EntityKind::Dimension(d) => d.clone(),
@@ -14,15 +16,18 @@ fn dimension(s: &Session, h: Handle) -> Dimension {
     }
 }
 
+/// Create a synthetic source line and return its first entity handle.
 fn line(s: &mut Session, a: [i32; 2], b: [i32; 2]) -> Handle {
     let v = s.execute("line", &json!({"points": [a, b]})).unwrap();
     Handle::parse_hex(v["handles"][0].as_str().unwrap()).unwrap()
 }
 
+/// Set the drawing-wide associativity mode before creating the test dimensions.
 fn mode(s: &mut Session, n: i32) {
     s.execute("setvar", &json!({"name": "DIMASSOC", "value": n})).unwrap();
 }
 
+/// Typed and JSON dimensions retain their mode through DXF, source edits, undo and redo.
 #[test]
 fn linear_dimensions_respect_the_mode_through_edits_and_dxf() {
     for n in [1, 2] {
@@ -56,6 +61,7 @@ fn linear_dimensions_respect_the_mode_through_edits_and_dxf() {
     }
 }
 
+/// Continue, Baseline and Quick Dimension attach source links only in mode 2.
 #[test]
 fn indexed_chains_and_qdim_respect_the_mode() {
     for n in [1, 2] {
@@ -77,6 +83,7 @@ fn indexed_chains_and_qdim_respect_the_mode() {
     }
 }
 
+/// Even explicitly selected angular source lines produce associations only in mode 2.
 #[test]
 fn explicit_angular_links_respect_the_mode() {
     for n in [1, 2] {
@@ -89,6 +96,7 @@ fn explicit_angular_links_respect_the_mode() {
     }
 }
 
+/// Changing the creation mode preserves old links and does not disable explicit reassociation.
 #[test]
 fn mode_change_keeps_existing_links_and_allows_explicit_reassociation() {
     let mut s = Session::new();
