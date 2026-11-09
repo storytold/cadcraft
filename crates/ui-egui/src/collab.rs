@@ -1,14 +1,27 @@
-//! A shared session's client connection, driven on its own thread.
+//! A shared session's client connection, driven on its own thread (or by the browser's frame).
 //!
-//! A frame never waits on a socket: the worker thread owns the [`cadcraft_collab_client::Session`],
-//! sends queued operations and presence, and forwards what arrives as [`Update`] values. The UI
-//! applies the change sets to its drawing and draws the presence it holds.
+//! A frame never waits on a socket: on the desktop a worker thread owns the
+//! [`cadcraft_collab_client::Session`], sends queued operations and presence, and forwards what
+//! arrives as [`Update`] values. The browser has no threads, so [`Collab`] there owns a
+//! [`cadcraft_collab_client::WebSession`] and drains its socket queue in `poll` once per frame.
+//! The UI applies the change sets to its drawing and draws the presence it holds.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use cadcraft_collab::{Applied, CabinetCommit, Op, Presence, Reject, Role};
-use cadcraft_collab_client::{Event, Session as Remote};
+use cadcraft_collab_client::Event;
+#[cfg(not(target_arch = "wasm32"))]
+use cadcraft_collab_client::Session as Remote;
+
+/// Ask the host page's cabinet to store the shared session (`cadcraft:commit`).
+///
+/// The page that hosts the web build owns the cabinet, so a save asks it to commit the session
+/// instead of the room assembling a file the browser would download. The desktop leaves the hook
+/// unset and the room's own commit (server-to-server, M87) handles the file.
+pub type HostCommitFn = Box<dyn Fn() -> Result<(), String>>;
 
 /// What the UI asks the worker to send.
 pub enum Request {
@@ -57,12 +70,14 @@ pub enum Update {
 }
 
 /// A connection to a shared session.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Collab {
     requests: Sender<Request>,
     updates: Receiver<Update>,
     role: Role,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Collab {
     /// Connect to `url` as `token` for the drawing `doc`.
     pub fn connect(url: &str, token: &str, doc: &str) -> Result<Self, String> {
@@ -98,6 +113,83 @@ impl Collab {
     }
 }
 
+/// A connection to a shared session in the browser.
+///
+/// The browser cannot block and has no worker threads: the socket's callbacks queue what arrives,
+/// and [`Collab::poll`] drains that queue once per frame. The session itself is the same
+/// [`cadcraft_collab_client::WebSession`] the desktop's replica logic uses.
+#[cfg(target_arch = "wasm32")]
+pub struct Collab {
+    session: std::cell::RefCell<cadcraft_collab_client::WebSession>,
+    role: std::cell::Cell<Role>,
+    /// The last transport error, reported once by the next `poll`.
+    error: std::cell::RefCell<Option<String>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Collab {
+    /// Join the session the host page opened (`?host=parent` / `data-host="page"`).
+    ///
+    /// Returns as soon as the socket is dialled: the replica and its participants arrive in a
+    /// later frame, and the host's role gates edits until the welcome names the server's.
+    pub fn connect_host(url: &str, token: &str, doc: &str, role: Role) -> Result<Self, String> {
+        Ok(Collab {
+            session: std::cell::RefCell::new(cadcraft_collab_client::WebSession::connect(url, token, doc, role)?),
+            role: std::cell::Cell::new(role),
+            error: std::cell::RefCell::new(None),
+        })
+    }
+
+    /// What the participant may do (the welcome's role once it arrives).
+    pub fn role(&self) -> Role {
+        self.role.get()
+    }
+
+    /// Send one request; the socket queue carries it now or after the next welcome.
+    pub fn send(&self, request: Request) {
+        let mut session = self.session.borrow_mut();
+        let result = match request {
+            Request::Op(op) => session.submit(op),
+            Request::Presence(presence) => session.presence(presence),
+            Request::Undo(op_id) => session.undo(&op_id),
+            Request::Redo(op_id) => session.redo(&op_id),
+            Request::Commit(version) => session.commit(version),
+            Request::SaveCopy => session.save_copy("save-copy"),
+        };
+        if let Err(message) = result {
+            self.error.replace(Some(message));
+        }
+    }
+
+    /// Drain the socket queue; never blocks.
+    pub fn poll(&self) -> Vec<Update> {
+        let mut updates = Vec::new();
+        if let Some(message) = self.error.borrow_mut().take() {
+            updates.push(Update::Lost(message));
+        }
+        {
+            let mut session = self.session.borrow_mut();
+            for event in session.poll() {
+                match event {
+                    Event::Applied(applied) => updates.push(Update::Applied(applied)),
+                    Event::Rejected(rejected) => updates.push(Update::Rejected(rejected)),
+                    Event::Presence(presence) => updates.push(Update::Presence(presence)),
+                    Event::Committed { version, not_saved, bytes, cabinet } => {
+                        updates.push(Update::Committed { version, not_saved, bytes, cabinet });
+                    }
+                    Event::CommitConflict { version, message } => updates.push(Update::CommitConflict { version, message }),
+                    Event::SaveCopy { version, not_saved, bytes } => updates.push(Update::SaveCopy { version, not_saved, bytes }),
+                    Event::Error { message, .. } => updates.push(Update::Lost(message)),
+                    Event::AssetStored { .. } | Event::Asset { .. } | Event::Pong | Event::Ignored => {}
+                }
+            }
+            self.role.set(session.role());
+        }
+        updates
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, updates: Sender<Update>, ready: Sender<Result<Role, String>>) {
     // A short read timeout lets the worker drain the request queue between messages.
     let mut session = match Remote::connect(&url, &token, &doc, None, Duration::from_millis(250)) {
@@ -196,6 +288,12 @@ impl crate::CadApp {
     pub fn with_collab(mut self, collab: Collab) -> Self {
         self.collab = Some(collab);
         self
+    }
+
+    /// Attach a shared session that arrived after the app was built (the browser's
+    /// `cadcraft:session`, which the host sends after the first frame).
+    pub fn attach_collab(&mut self, collab: Collab) {
+        self.collab = Some(collab);
     }
 
     /// Whether this drawing is being edited together.
@@ -309,6 +407,18 @@ impl crate::CadApp {
             return Some(Ok(serde_json::json!({ "queued": true })));
         }
         if matches!(id, "save" | "qsave" | "saveas") {
+            // A hosted web build leaves the file to the page's cabinet (`cadcraft:commit`): the
+            // cabinet already holds the session and answers `cadcraft:committed` with its version.
+            let host = self.host_commit.as_ref().map(|commit| commit());
+            if let Some(result) = host {
+                return Some(match result {
+                    Ok(()) => {
+                        self.session.echo("shared session: asked the host to store the session");
+                        Ok(serde_json::json!({ "queued": true, "host": true }))
+                    }
+                    Err(message) => Err(message),
+                });
+            }
             let version = self.collab_version;
             collab.send(Request::Commit(version));
             return Some(Ok(serde_json::json!({ "queued": true })));
@@ -504,6 +614,21 @@ impl crate::CadApp {
             self.session.echo("shared session: left");
         }
     }
+
+    /// The host's cabinet stored the shared session (`cadcraft:committed`).
+    ///
+    /// `version` is the cabinet's file version and `etag` names that stored content. The drawing
+    /// is not written locally: the cabinet owns the file (INTEGRATION.md §5.2).
+    pub fn host_commit_result(&mut self, version: u64, etag: String) {
+        self.host_committed = Some((version, etag.clone()));
+        self.last_collab_commit = Some(CommitState {
+            version: self.collab_version,
+            cabinet: Some(CabinetCommit { version, etag: etag.clone() }),
+            not_saved: std::collections::BTreeMap::new(),
+        });
+        self.collab_conflict = None;
+        self.session.echo(format!("shared session: the cabinet stored file version {version} (etag {etag})"));
+    }
 }
 
 /// The participant's role in words.
@@ -555,7 +680,7 @@ pub fn is_structural(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_structural;
+    use super::{CabinetCommit, is_structural};
 
     /// The copy of a refused commit is named after the drawing, not over its file: an extension
     /// stays and `(copy)` goes before it.
@@ -578,5 +703,21 @@ mod tests {
         for command in ["line", "move", "copy", "layer.set", "text.edit", "hatch"] {
             assert!(!is_structural(command), "`{command}` is an ordinary edit");
         }
+    }
+
+    /// `cadcraft:committed` from a hosting page lands in the panel as the cabinet's file version,
+    /// with no local write: the cabinet owns the file (INTEGRATION.md §5.2).
+    #[test]
+    fn a_host_commit_records_the_cabinets_version_and_etag() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.collab_version = 4;
+        app.collab_conflict = Some("the cabinet refused version 4".into());
+        app.host_commit_result(7, "\"e7\"".into());
+        assert_eq!(app.host_committed, Some((7, "\"e7\"".to_string())));
+        let commit = app.last_collab_commit.as_ref().expect("the panel shows the commit");
+        assert_eq!(commit.version, 4, "the drawing version this app shows");
+        assert_eq!(commit.cabinet, Some(CabinetCommit { version: 7, etag: "\"e7\"".into() }));
+        assert!(commit.not_saved.is_empty());
+        assert!(app.collab_conflict.is_none(), "a stored commit clears the refusal");
     }
 }

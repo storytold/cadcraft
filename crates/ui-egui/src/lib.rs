@@ -272,6 +272,12 @@ pub struct CadApp {
     pub last_collab_commit: Option<collab::CommitState>,
     /// Why the cabinet refused the last commit (`409`), while the panel offers a copy.
     pub collab_conflict: Option<String>,
+    /// The page that hosts the web build owns the cabinet's commit: when it set this hook, a
+    /// save in a shared session asks the host to store the session instead of the room writing a
+    /// download. The desktop leaves it unset.
+    pub host_commit: Option<collab::HostCommitFn>,
+    /// The version and etag the host's cabinet confirmed last (`cadcraft:committed`).
+    pub host_committed: Option<(u64, String)>,
     /// Whether the shared session's participant list is open.
     pub show_participants: bool,
     collab_seq: u64,
@@ -373,6 +379,8 @@ impl CadApp {
             collab_version: 0,
             last_collab_commit: None,
             collab_conflict: None,
+            host_commit: None,
+            host_committed: None,
             show_participants: false,
             collab_seq: 0,
             last_presence: None,

@@ -7,18 +7,28 @@
 //! diverge (a global solver, ranged formulas, derived geometry). Optimistic execution, with a
 //! rollback to the confirmed version, is a later layer on top of this one.
 //!
-//! Transport is not part of this type: a WebSocket adapter, a test and an embedded server all call
-//! [`Client::outbox`], [`Client::applied`] and [`Client::resync`].
+//! Transport is not part of the protocol: the blocking desktop transport ([`Session`], behind the
+//! `ws` feature) and the browser transport ([`WebSession`], which has no threads and no blocking
+//! read) drive the same transport-free state machine. A test and an embedded server can call
+//! [`Client::outbox`], [`Client::applied`] and [`Client::resync`] directly.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod client;
+mod driver;
+#[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod session;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod ws;
 
 pub use client::{Client, ClientError};
-pub use session::{Event, Session, SessionError};
-#[cfg(not(target_arch = "wasm32"))]
+pub use driver::{Event, SessionError};
+#[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
+pub use session::Session;
+#[cfg(target_arch = "wasm32")]
+pub use web::WebSession;
+#[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 pub use ws::Connection;

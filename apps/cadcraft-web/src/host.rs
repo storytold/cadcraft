@@ -17,6 +17,10 @@
 //!   make a file the document, so `saveAs` is always `false`.
 //! - `cadcraft:dirty` whenever unsaved changes appear or go away, `cadcraft:failed` when the app
 //!   couldn't start.
+//! - `cadcraft:session` (from the host) opens a collaboration session: the app dials the socket
+//!   itself and never puts the token in a URL or a log. `cadcraft:commit` (to the host) asks the
+//!   cabinet to store the session, and `cadcraft:committed` (from the host) names the file version
+//!   it stored. The cabinet owns the file, so the browser never downloads a commit.
 //!
 //! In both host modes the app starts on the Start tab rather than an empty Drawing1, and the
 //! host guards leaving the page.
@@ -25,7 +29,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use cadcraft_ui_egui::CadApp;
+use cadcraft_ui_egui::collab::HostCommitFn;
 use craft_web_host::web::{FileData, Host, Message};
+
+use crate::host_session::{HostEvent, HostSession};
 
 /// The app id in the host messages (`cadcraft:ready`).
 const APP: &str = "cadcraft";
@@ -41,6 +48,8 @@ thread_local! {
 #[derive(Clone)]
 pub struct Bridge {
     host: Rc<Host>,
+    /// The session the host opened, for `cadcraft:commit`.
+    session_id: Rc<RefCell<Option<String>>>,
 }
 
 impl Bridge {
@@ -48,7 +57,7 @@ impl Bridge {
     /// `data-host="page"` on the canvas, an unframed `?host=parent` page (it stays the normal app
     /// with downloads), or a parent on another origin.
     pub fn connect(canvas: &web_sys::HtmlCanvasElement) -> Option<Self> {
-        Some(Self { host: Rc::new(Host::connect(APP, canvas)?) })
+        Some(Self { host: Rc::new(Host::connect(APP, canvas)?), session_id: Rc::new(RefCell::new(None)) })
     }
 
     /// Make this the bridge [`deliver`] uses.
@@ -64,13 +73,41 @@ impl Bridge {
         let _ = self.host.post_failed(error, None);
     }
 
-    /// Hear drawings from the host; they arrive through the upload inbox.
-    pub fn listen(&self, inbox: crate::upload::Inbox) {
-        self.host.listen(move |message| {
-            if let Message::Open { name, data } = message {
-                receive_open(&name, &data, &inbox);
+    /// Hear drawings and sessions from the host; drawings arrive through the upload inbox, the
+    /// session messages through `events`, which the shell drains each frame.
+    pub fn listen(&self, inbox: crate::upload::Inbox, events: Rc<RefCell<Vec<HostEvent>>>, ctx: egui::Context) {
+        let session_id = self.session_id.clone();
+        self.host.listen(move |message| match message {
+            Message::Open { name, data } => receive_open(&name, &data, &inbox),
+            Message::Session { session_id: id, ws_url, token, role } => match HostSession::new(id, ws_url, token, &role) {
+                Some(session) => {
+                    *session_id.borrow_mut() = Some(session.session_id().to_string());
+                    if let Ok(mut queue) = events.try_borrow_mut() {
+                        queue.push(HostEvent::Session(session));
+                    }
+                    ctx.request_repaint();
+                }
+                None => log::warn!("collaboration session refused: unknown role {role:?}"),
+            },
+            Message::Committed { version, etag } => {
+                if let Ok(mut queue) = events.try_borrow_mut() {
+                    queue.push(HostEvent::Committed { version, etag });
+                }
+                ctx.request_repaint();
             }
+            _ => {}
         });
+    }
+
+    /// `cadcraft:commit`: ask the cabinet to store the session. The cabinet assembles the file
+    /// itself, so no bytes travel and the browser writes nothing.
+    pub fn commit_fn(&self) -> HostCommitFn {
+        let host = self.host.clone();
+        let session = self.session_id.clone();
+        Box::new(move || {
+            let id = session.borrow().clone().ok_or("the page that embeds CADCraft opened no session")?;
+            host.post_commit(&id, None)
+        })
     }
 
     /// After each logic callback (including a hidden tab's): tell the host when unsaved changes

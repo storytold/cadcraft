@@ -699,9 +699,12 @@ dependencies = [
  "cadcraft-collab",
  "cadcraft-doc",
  "cadcraft-io",
+ "js-sys",
  "serde_json",
  "thiserror 2.0.21",
  "tungstenite",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -890,6 +893,7 @@ dependencies = [
 name = "cadcraft-web"
 version = "0.17.0"
 dependencies = [
+ "cadcraft-collab",
  "cadcraft-engine",
  "cadcraft-fonts",
  "cadcraft-io",
@@ -1335,7 +1339,7 @@ dependencies = [
 [[package]]
 name = "craft-web-api"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=fd5e2feff6ea25bed371a99cc732b3968d621505#fd5e2feff6ea25bed371a99cc732b3968d621505"
+source = "git+https://github.com/copoka/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -1346,7 +1350,7 @@ dependencies = [
 [[package]]
 name = "craft-web-host"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=fd5e2feff6ea25bed371a99cc732b3968d621505#fd5e2feff6ea25bed371a99cc732b3968d621505"
+source = "git+https://github.com/copoka/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
 dependencies = [
  "wasm-bindgen",
  "web-sys",
