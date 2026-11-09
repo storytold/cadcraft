@@ -269,6 +269,9 @@ impl crate::CadApp {
             Ok(state) => (state.space.clone(), state.selection.clone()),
             Err(error) => return Some(Err(error.to_string())),
         };
+        // The author's layer travels with the operation: the server has no window to take it from,
+        // and an object it creates must not land on the server drawing's own current layer.
+        let clay = self.session.doc().ok().map(|drawing| drawing.header.str("CLAYER", "0"));
         let kind = if is_structural(id) { cadcraft_collab::OpKind::Structural } else { cadcraft_collab::OpKind::Command };
         let op = Op {
             op_id: format!("local-{}", self.collab_seq),
@@ -277,7 +280,7 @@ impl crate::CadApp {
             kind,
             command: id.to_string(),
             params: params.clone(),
-            context: cadcraft_collab::OpContext { space, selection: Some(selection) },
+            context: cadcraft_collab::OpContext { space, selection: Some(selection), clay },
         };
         self.collab_seq = self.collab_seq.saturating_add(1);
         collab.send(Request::Op(op));

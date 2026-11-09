@@ -33,15 +33,37 @@ impl Session {
     /// Run a command with the space and selection the client named, instead of the session's.
     ///
     /// A server has no window to take a selection from; the operation carries its own context.
+    /// The author's layer is resolved the same way: the operation names it, and objects created
+    /// while the command runs go there. An unknown layer is refused before anything runs, so the
+    /// drawing does not change; the layer is not a session setting, so the server drawing's own
+    /// `CLAYER` is left alone (ADR-0019).
     pub fn execute_intent(&mut self, id: &str, params: &Value, context: &OpContext) -> Result<Value> {
+        let clay = match &context.clay {
+            // The drawing's spelling of the name, so every replica holds the same bytes.
+            Some(layer) => match self.doc()?.layer(layer).map(|found| found.name.clone()) {
+                Some(name) => Some(name),
+                None => {
+                    let shown: String = layer.chars().take(64).collect();
+                    return Err(EngineError::Other(format!("there is no layer `{shown}` in this drawing")));
+                }
+            },
+            None => None,
+        };
         {
             let st = self.state_mut()?;
             st.space = context.space.clone();
             if let Some(selection) = &context.selection {
                 st.selection = selection.clone();
             }
+            st.clay = clay;
         }
-        self.execute(id, params)
+        let result = self.execute(id, params);
+        // The layer belongs to the operation, not to the session: the next command must not
+        // inherit it, and a drawing a commit writes keeps its own `CLAYER`.
+        if let Ok(st) = self.state_mut() {
+            st.clay = None;
+        }
+        result
     }
 
     /// Whether an undoable command records an undo step. A long-lived server session turns this
@@ -115,6 +137,36 @@ mod tests {
         assert_eq!(d.model.len(), 0);
         let sheet = d.layouts.iter().find(|l| l.name == "Sheet1").unwrap();
         assert_eq!(sheet.entities.len(), 1);
+    }
+
+    #[test]
+    fn an_intent_puts_new_objects_on_the_layer_it_names() {
+        let mut s = Session::new();
+        s.doc_mut().unwrap().layers.push(cadcraft_doc::Layer::new("WALLS"));
+        let context = OpContext::in_space(Space::Model).on_layer("walls");
+
+        s.execute_intent("line", &json!({"points": [[0.0, 0.0], [1.0, 0.0]]}), &context).unwrap();
+
+        let d = s.doc().unwrap();
+        let entity = d.model.iter().next().expect("the line");
+        assert_eq!(entity.common.layer, "WALLS", "the drawing's spelling of the layer it named");
+        assert_eq!(d.header.str("CLAYER", "?"), "0", "the server drawing's own current layer is left alone");
+        assert_eq!(s.state().unwrap().clay, None, "the layer belongs to the operation, not the session");
+    }
+
+    #[test]
+    fn an_unknown_layer_is_refused_before_the_drawing_changes() {
+        let mut s = Session::new();
+        let context = OpContext::in_space(Space::Model).on_layer("GHOST");
+        let before = s.doc().unwrap().clone();
+        let revision = s.state().unwrap().revision;
+
+        let error = s.execute_intent("line", &json!({"points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]}), &context).unwrap_err();
+
+        assert!(error.to_string().contains("there is no layer `GHOST` in this drawing"), "{error}");
+        assert_eq!(s.doc().unwrap(), &before, "no object was created, not even the first segment");
+        assert_eq!(s.doc().unwrap().entity_count(), 0);
+        assert_eq!(s.state().unwrap().revision, revision);
     }
 
     #[test]

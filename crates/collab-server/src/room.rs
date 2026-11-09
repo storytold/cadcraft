@@ -558,6 +558,71 @@ mod tests {
         assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
     }
 
+    /// The line operation of an author drawing on `layer`.
+    fn line_op_on_layer(op_id: &str, x: f64, layer: &str) -> Op {
+        Op { context: OpContext::in_space(Space::Model).on_layer(layer), ..line_op(op_id, x) }
+    }
+
+    /// The layer of the object an applied operation created.
+    fn created_layer(applied: &Applied) -> String {
+        applied
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                Change::EntityCreate { entity, .. } => Some(entity.common.layer.clone()),
+                _ => None,
+            })
+            .expect("the operation created an object")
+    }
+
+    #[test]
+    fn an_operation_creates_in_the_layer_it_names_and_a_replica_follows() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+
+        let Outcome::Applied(applied) = room.apply(&line_op_on_layer("walls", 5.0, "walls")).unwrap() else { panic!() };
+
+        assert_eq!(created_layer(&applied), "WALLS", "the drawing's spelling of the layer the operation named");
+        apply(&mut replica, &applied.changes).unwrap();
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        assert_eq!(replica.header.str("CLAYER", "?"), "0", "the recipient's current layer does not switch");
+        assert_eq!(room.drawing().unwrap().header.str("CLAYER", "?"), "0", "nor does the server drawing's");
+    }
+
+    #[test]
+    fn an_operation_for_a_layer_the_room_does_not_have_is_refused_before_the_drawing_changes() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        // Three points: had the command run, the first segment would already exist.
+        let mut op = line_op_on_layer("ghost", 5.0, "GHOST");
+        op.params = json!({ "points": [[5.0, 0.0], [6.0, 0.0], [6.0, 1.0]] });
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("there is no layer `GHOST`"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("no replica has a layer the room does not"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before);
+    }
+
+    #[test]
+    fn undoing_a_step_restores_the_layer_it_changed() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        let Outcome::Applied(_) = room.apply(&line_op_on_layer("walls", 5.0, "WALLS")).unwrap() else { panic!() };
+
+        let Outcome::Applied(undone) = room.undo("u1", "undo-1").unwrap() else { panic!("the step is the latest") };
+
+        assert_eq!(undone.version, 2, "undo is a new operation with its own version");
+        // The layer holds what it held before the step; the drawing's `handseed` stays ahead, as
+        // handles are never reused (ADR-0002).
+        assert_eq!(room.drawing().unwrap().space(&Space::Model), before.space(&Space::Model), "the layer holds what it held before the step");
+        assert_eq!(room.drawing().unwrap().layers, before.layers);
+    }
+
     #[test]
     fn an_operation_is_applied_once() {
         let mut room = Room::new(Drawing::new_metric()).unwrap();
@@ -712,6 +777,23 @@ mod policy_tests {
         }
         assert_eq!(room.version(), 0);
         assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn a_viewer_is_refused_before_the_layer_an_operation_names_is_looked_at() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut op = an_op("line");
+        // A layer the drawing does not have would be `invalid` for an editor; for a viewer the
+        // role comes first, and the drawing is not touched either way.
+        op.context = OpContext::in_space(Space::Model).on_layer("GHOST");
+
+        match room.apply_as(Role::Viewer, &op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("a viewer must not write"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+        assert_eq!(room.drawing().unwrap().header.str("CLAYER", "?"), "0");
     }
 
     #[test]

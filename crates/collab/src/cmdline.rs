@@ -9,6 +9,9 @@
 //! Only the plain drawing commands of the pilot are here. A line the parser refuses never becomes
 //! an operation, so the drawing cannot change; the message says what to type instead.
 //!
+//! An object goes on the layer the author is drawing on: the operation names it in its context,
+//! so a participant's line never lands on the server drawing's own current layer (ADR-0019).
+//!
 //! ```text
 //! line 0,0 100,0 100,50
 //! circle 50,25 12.5
@@ -50,6 +53,9 @@ pub enum CmdLineError {
     /// A handle does not name an object in the space the command acts on.
     #[error("{command}: there is no object {handle} in {space}; address objects by their handles (1A2, 1A3, …)")]
     UnknownHandle { command: &'static str, handle: String, space: String },
+    /// The drawing's current layer does not name a layer in the drawing.
+    #[error("the current layer `{layer}` is not in this drawing; choose one with layer.current")]
+    UnknownLayer { layer: String },
 }
 
 /// Parse `text` into an operation to queue for a shared session.
@@ -75,10 +81,14 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
 
 /// Build the [`Op`] for `text`; `op_id` and `base_version` are the client's, as for any operation.
 ///
-/// The context carries the space but no selection: the parameters address everything they act on,
-/// so the server never reads a selection nobody can see.
+/// The context carries the space, the author's layer and no selection: the parameters address
+/// everything they act on, so the server never reads a selection nobody can see. The layer is
+/// named by the commands that create objects — the server has no window and would otherwise put
+/// them on the server drawing's own current layer (ADR-0019). A drawing whose current layer is
+/// missing is refused here, before an operation exists.
 pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_version: u64) -> Result<Op, CmdLineError> {
     let command = parse(text, drawing, space)?;
+    let clay = if creates_objects(command.id) { Some(current_layer(drawing)?) } else { None };
     Ok(Op {
         op_id: op_id.to_string(),
         actor: String::new(),
@@ -86,8 +96,22 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
         kind: OpKind::Command,
         command: command.id.to_string(),
         params: command.params,
-        context: OpContext { space: space.clone(), selection: None },
+        context: OpContext { space: space.clone(), selection: None, clay },
     })
+}
+
+/// Whether `id` creates objects, and so needs the author's layer to put them on.
+fn creates_objects(id: &str) -> bool {
+    matches!(id, "line" | "circle" | "pline")
+}
+
+/// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
+fn current_layer(drawing: &Drawing) -> Result<String, CmdLineError> {
+    let layer = drawing.header.str("CLAYER", "0");
+    match drawing.layer(&layer) {
+        Some(found) => Ok(found.name.clone()),
+        None => Err(CmdLineError::UnknownLayer { layer }),
+    }
 }
 
 fn line(words: Vec<&str>) -> Result<Command, CmdLineError> {
@@ -352,6 +376,32 @@ mod tests {
         assert_eq!(op.context.space, Space::Model);
         assert_eq!(op.context.selection, None, "explicit addresses mean no selection is sent");
         assert!(op.actor.is_empty(), "the server fills the actor from the JWT");
+    }
+
+    #[test]
+    fn a_command_that_creates_objects_names_the_authors_layer() {
+        let (mut drawing, handle) = drawing_with_line();
+        drawing.layers.push(cadcraft_doc::Layer::new("WALLS"));
+        // The author draws on `walls`; the operation names the drawing's own spelling.
+        drawing.header.set_str("CLAYER", "walls");
+        let op = op_for("line 0,0 10,0", &drawing, &Space::Model, "local-0", 0).unwrap();
+        assert_eq!(op.context.clay.as_deref(), Some("WALLS"));
+        assert_eq!(op_for("circle 0,0 5", &drawing, &Space::Model, "local-1", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        assert_eq!(op_for("polyline 0,0 1,1", &drawing, &Space::Model, "local-2", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        // Commands that only address existing objects do not name a layer.
+        assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
+        assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
+    }
+
+    #[test]
+    fn a_missing_current_layer_is_refused_before_an_operation_exists() {
+        let (mut drawing, _) = drawing_with_line();
+        drawing.header.set_str("CLAYER", "GHOST");
+        let before = drawing.clone();
+        let error = op_for("line 0,0 10,0", &drawing, &Space::Model, "local-0", 0).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownLayer { .. }), "{error}");
+        assert!(error.to_string().contains("the current layer `GHOST` is not in this drawing"), "{error}");
+        assert_eq!(drawing, before, "building an operation never changes the drawing");
     }
 
     #[test]

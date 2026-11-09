@@ -180,3 +180,69 @@ fn a_remote_change_keeps_the_receivers_cursor_and_selection() {
     assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
     assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
 }
+
+/// Add `names` to the authoritative drawing and copy them to every replica the way a table
+/// operation reaches them: as table changes of one change set.
+fn add_layers(server: &mut Session, replicas: &mut [&mut Session], names: &[&str]) {
+    let before = server.doc().unwrap().clone();
+    for name in names {
+        server.execute("layer.new", &json!({ "name": name })).unwrap();
+    }
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let changes = cadcraft_collab::diff_all(&before, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    assert!(!changes.is_empty(), "the layers have to reach the replicas");
+    for replica in replicas.iter_mut() {
+        replica.apply_remote(&changes).unwrap();
+    }
+}
+
+#[test]
+fn two_replicas_on_different_layers_draw_into_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    // Each participant works on their own layer; neither choice is an operation.
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "polyline 20,0 30,0 30,10");
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    assert_eq!(
+        alice.doc().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+        bob.doc().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+        "and on the layers"
+    );
+
+    let layers: Vec<String> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.clone()).collect();
+    assert_eq!(layers, vec!["WALLS", "DETAILS"], "each object is on its author's layer");
+    // Nobody's current layer followed somebody else's drawing.
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn a_layer_only_the_author_has_is_refused_before_the_document_changes() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    // The author made a layer that never reached the session, and draws on it.
+    alice.execute("layer.new", &json!({ "name": "LOCAL" })).unwrap();
+    alice.execute("layer.current", &json!({ "name": "LOCAL" })).unwrap();
+    let before = server.doc().unwrap().clone();
+    let op = {
+        let state = alice.state().unwrap();
+        // Three points: had the command run, the first segment would already be there.
+        cmdline::op_for("line 0,0 10,0 10,5", &state.doc, &state.space, "local-0", 0).unwrap()
+    };
+    assert_eq!(op.context.clay.as_deref(), Some("LOCAL"), "the operation names the layer it would draw on");
+
+    let error = server.execute_intent(&op.command, &op.params, &op.context).unwrap_err();
+
+    assert!(error.to_string().contains("there is no layer `LOCAL`"), "{error}");
+    assert_eq!(server.doc().unwrap(), &before, "nothing was created, not even the first segment");
+    assert_eq!(server.doc().unwrap().entity_count(), 0);
+}

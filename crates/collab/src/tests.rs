@@ -183,6 +183,13 @@ fn an_operation_context_round_trips_through_json() {
     let model: crate::OpContext = serde_json::from_str(r#"{"space":"model","selection":[42]}"#).unwrap();
     assert_eq!(model.space, Space::Model);
     assert_eq!(model.selection, Some(vec![Handle(42)]));
+
+    // The author's layer travels with the operation, and an operation without one stays short.
+    let on_layer = crate::OpContext::in_space(Space::Model).on_layer("WALLS");
+    let json = serde_json::to_string(&on_layer).unwrap();
+    assert_eq!(json, r#"{"space":"model","clay":"WALLS"}"#);
+    assert_eq!(serde_json::from_str::<crate::OpContext>(&json).unwrap(), on_layer);
+    assert!(!json.contains("selection"));
 }
 
 #[test]

@@ -266,11 +266,15 @@ impl Session {
     }
 
     /// Common properties for new objects (CLAYER, CECOLOR, CELTYPE, CELWEIGHT, CELTSCALE).
+    ///
+    /// A layer an operation named (`OpContext.clay`) takes precedence over the drawing's
+    /// `CLAYER` while that operation runs: a shared session has no single author's layer (ADR-0019).
     pub fn current_common(&self) -> Common {
         let Ok(d) = self.doc() else { return Common::default() };
         let h = &d.header;
+        let layer = self.state().ok().and_then(|s| s.clay.clone()).unwrap_or_else(|| h.str("CLAYER", "0"));
         Common {
-            layer: h.str("CLAYER", "0"),
+            layer,
             color: cadcraft_color::Color::from_aci(h.i64("CECOLOR", 256) as i16),
             linetype: h.str("CELTYPE", "ByLayer"),
             lineweight: cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16),
