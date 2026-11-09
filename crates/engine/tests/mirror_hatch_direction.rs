@@ -5,10 +5,12 @@ use cadcraft_engine::doc::{EntityKind, Handle, Hatch};
 use cadcraft_engine::geom::Vec2;
 use serde_json::{Value, json};
 
+/// Create a rectangular hatch with an oblique pattern direction for reflection checks.
 fn fixture() -> (Session, Handle) {
     fixture_with(json!({"pattern": "ANSI31", "angle": 30}))
 }
 
+/// Create a nonassociative rectangular hatch with the supplied synthetic fill parameters.
 fn fixture_with(mut params: Value) -> (Session, Handle) {
     let mut s = Session::new();
     let outline = s.execute("rectang", &json!({"p1": [2, 1], "p2": [8, 4]})).unwrap()["handle"].clone();
@@ -20,6 +22,7 @@ fn fixture_with(mut params: Value) -> (Session, Handle) {
     (s, h)
 }
 
+/// Clone the asserted hatch so its geometry and fill can be compared across edits.
 fn hatch(s: &Session, h: Handle) -> Hatch {
     match &s.doc().unwrap().entity(h).unwrap().kind {
         EntityKind::Hatch(h) => h.clone(),
@@ -27,6 +30,7 @@ fn hatch(s: &Session, h: Handle) -> Hatch {
     }
 }
 
+/// A diagonal mirror reflects the boundary while retaining the fill direction through DXF readback.
 #[test]
 fn diagonal_mirror_keeps_pattern_direction_and_reflects_boundary() {
     let (mut s, source) = fixture();
@@ -45,6 +49,7 @@ fn diagonal_mirror_keeps_pattern_direction_and_reflects_boundary() {
     assert!((saved.angle - before.angle).abs() < 1e-12);
 }
 
+/// Typed MIRROR previews and committed geometry agree, including undo and redo.
 #[test]
 fn typed_mirror_previews_match_the_result_and_undo_redo() {
     let (mut s, h) = fixture();
@@ -83,6 +88,7 @@ fn typed_mirror_previews_match_the_result_and_undo_redo() {
     assert_eq!(hatch(&s, h), after);
 }
 
+/// Patterned and gradient fills keep their definitions when the mirrored result replaces its source.
 #[test]
 fn another_pattern_and_gradient_directions_are_retained() {
     for gradient in [false, true] {
@@ -102,6 +108,7 @@ fn another_pattern_and_gradient_directions_are_retained() {
     }
 }
 
+/// Original asymmetric pattern families retain their line definitions under reflection.
 #[test]
 fn custom_pattern_line_families_are_not_reflected() {
     let (mut s, h) = fixture_with(json!({
@@ -116,6 +123,7 @@ fn custom_pattern_line_families_are_not_reflected() {
     assert_eq!(after.pattern_lines, before.pattern_lines);
 }
 
+/// Solid hatches remain eligible for the shared GPU reflection preview.
 #[test]
 fn solid_fills_can_still_use_the_gpu_preview() {
     let (mut s, h) = fixture_with(json!({"pattern": "SOLID"}));

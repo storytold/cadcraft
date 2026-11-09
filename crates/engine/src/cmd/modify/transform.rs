@@ -27,6 +27,7 @@ pub(super) fn mirror_kind(k: &mut EntityKind, m: &Mat3) {
     }
 }
 
+/// Reflect selected entities with the command policy that retains individual hatch fill directions.
 pub(super) fn mirror_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
     refuse_ole_frames(s, hs, m, copy)?;
     edit_entities(s, hs, copy, |e| mirror_kind(&mut e.kind, m))
@@ -174,6 +175,7 @@ pub(super) fn run_scale(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
+/// Validate MIRROR parameters and apply the reflection, optionally replacing the source entities.
 pub(super) fn run_mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let a = point_req("mirror", p, "p1")?;

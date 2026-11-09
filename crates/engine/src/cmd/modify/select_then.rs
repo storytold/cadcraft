@@ -349,6 +349,7 @@ impl Interactive for SelectThen {
             _ => Prompt::new("", Accept::POINT),
         }
     }
+    /// Advance the selected transform command, applying MIRROR fill policy at commit.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.sel.done {
             match self.sel.feed(s, &i)? {
@@ -458,6 +459,7 @@ impl Interactive for SelectThen {
             _ => Ok(Step::Continue),
         }
     }
+    /// Build bounded transform previews, retaining readable text and hatch fill directions.
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         if self.op == Op::Rotate && self.reference {
             return self.rotate_reference_preview(s, c);
@@ -497,6 +499,7 @@ impl Interactive for SelectThen {
         out.push(line(base, c));
         out
     }
+    /// Separate shared GPU transforms from objects that need an individual MIRROR preview.
     fn drag(&self, s: &Session, c: Vec2) -> Option<crate::prompt::Drag> {
         if (self.op == Op::Rotate && self.reference) || !self.sel.done {
             return None;
