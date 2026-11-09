@@ -176,8 +176,17 @@ fn rename_takes_a_saved_viewport_configuration() {
         ("-RENAME VP CFG2 A<B\n", "Invalid viewport configuration name."),
         ("-RENAME VP CFG2 CFG3\n", "A viewport configuration named \"CFG3\" already exists."),
     ] {
-        assert!(says(&said(&mut s, script), message), "{script}");
+        let log = said(&mut s, script);
+        assert!(says(&log, message), "{script}: {log:?}");
+        // "*Invalid*" follows a name already used only.
+        assert_eq!(says(&log, "*Invalid*"), message.ends_with("already exists."), "{script}: {log:?}");
     }
+    // No new name at all is an invalid one too (measured: CFG1, then Enter).
+    s.cmdline("-RENAME VP CFG2").unwrap();
+    let n = s.log.len();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none() && says(&s.log[n..], "Invalid viewport configuration name."), "{:?}", &s.log[n..]);
+    assert_eq!(names(&s), [("*Active".to_string(), 2), ("CFG2".to_string(), 2), ("CFG3".to_string(), 2)]);
     said(&mut s, "-RENAME VP CFG2 cfg2\n");
     assert_eq!(names(&s), [("*Active".to_string(), 2), ("cfg2".to_string(), 2), ("CFG3".to_string(), 2)]);
     // The new name is compared with the stored one, not with the old name as typed (measured:
@@ -186,10 +195,16 @@ fn rename_takes_a_saved_viewport_configuration() {
     assert_eq!(names(&s)[1].0, "CFG2");
     said(&mut s, "-RENAME VP cfg2 CFG2\n");
     assert_eq!(names(&s)[1].0, "CFG2");
-    said(&mut s, "-RENAME VP CFG2 cfg2\n");
-    // The JSON form too, which never takes the configuration shown.
+    said(&mut s, "-RENAME VP cfg2 cfg2\n");
+    assert_eq!(names(&s)[1].0, "cfg2");
+    // The JSON form too, which never takes the configuration shown, and refuses a name already
+    // used (in any case) or with a character AutoCAD refuses, as for the other tables.
     s.execute("rename", &json!({ "table": "vport", "from": "CFG3", "to": "Pair" })).unwrap();
     assert_eq!(names(&s)[2].0, "Pair");
-    assert!(s.execute("rename", &json!({ "table": "vport", "from": "*Active", "to": "Shown" })).is_err());
-    assert_eq!(names(&s)[0].0, "*Active");
+    for to in ["Shown", "CFG2", "A<B"] {
+        let from = if to == "Shown" { "*Active" } else { "Pair" };
+        assert!(s.execute("rename", &json!({ "table": "vport", "from": from, "to": to })).is_err(), "{from} to {to}");
+    }
+    s.execute("rename", &json!({ "table": "vport", "from": "pair", "to": "PAIR" })).unwrap();
+    assert_eq!(names(&s), [("*Active".to_string(), 2), ("cfg2".to_string(), 2), ("PAIR".to_string(), 2)]);
 }
