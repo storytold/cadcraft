@@ -258,10 +258,14 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 ## 5. Presence (ADR-0006)
 
 Отдельный тип в том же WS, не журналируется, без подтверждений:
-`{space, layout, mspace, cursor:[x,y] (WCS), viewport:{center,height}, selection:[handle], layer}`.
+`{space, layout, mspace, cursor:[x,y] (WCS), viewport:{center,height}, selection:[handle], layer, role?}`.
 ≤10 Гц на клиента, ≤2 KiB, коалесцировать в последнее состояние, при перегрузке
 — drop-stale. TTL 30 с → «неактивен»; `leave`/разрыв WS чистят сразу. Viewer
 шлёт presence, но не `op`. Содержимое чертежа и текст в presence не попадают.
+`role` заполняет **сервер** из claims (как `actor`): клиент не может назвать
+чужую роль, а `welcome.participants[]` с ней даёт кабинету список участников
+с ролями. Поле необязательное: старая сторона его не шлёт и читается как
+раньше (§13.6, `feat/collab-commit-callback` — ADR-0022 в черновике).
 
 ## 6. Undo/redo на пользователя (ADR-0010)
 
@@ -517,9 +521,10 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 4. Место хранения журнала/снапшотов (volume, БД) и TTL после commit.
 5. Нужен ли `read-only` флаг в `Session` (сейчас клиент блокирует до движка, а
    сервер — авторитет) и как пометить «команда меняет документ» в `CommandSpec`.
-6. Различать окна одного пользователя (`clientId` в presence и ключ доски) и
-   отдавать роли в `welcome.participants[]` — иначе два окна одного `sub`
-   перетирают курсор, а панель участников знает роль только про себя.
+6. Различать окна одного пользователя (`clientId` в presence и ключ доски);
+   роли в `welcome.participants[]` уже отдаются (presence несёт `role?`,
+   сервер заполняет его из claims) — остаётся второе окно одного `sub`:
+   оно перетирает курсор, потому что `actor` — это `sub`.
 
 ## 13a. Состояние реализации
 
