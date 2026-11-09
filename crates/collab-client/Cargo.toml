@@ -20,6 +20,7 @@ cadcraft-collab = { workspace = true }
 cadcraft-io = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+web-time = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tungstenite = { version = "0.30", optional = true }

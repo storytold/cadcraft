@@ -17,6 +17,8 @@
 
 mod client;
 mod driver;
+#[cfg(any(target_arch = "wasm32", test))]
+mod join;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod session;
 #[cfg(target_arch = "wasm32")]
@@ -25,7 +27,7 @@ mod web;
 mod ws;
 
 pub use client::{Client, ClientError};
-pub use driver::{Event, SessionError};
+pub use driver::{Event, SessionError, Status};
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 pub use session::Session;
 #[cfg(target_arch = "wasm32")]

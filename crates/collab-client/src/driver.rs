@@ -27,6 +27,22 @@ pub enum SessionError {
     Client(#[from] ClientError),
 }
 
+/// The state of one participant's connection, as a host's sync indicator shows it: the cabinet's
+/// `session-state.status` words are `synced`, `pending`, `offline` and `error` (see
+/// `craft-web-host`). A transport decides [`Status::Offline`] from its socket; the driver-side
+/// state is [`Status::Connecting`], [`Status::InSync`] or [`Status::Pending`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Dialling, or waiting for the `welcome` that brings the replica.
+    Connecting,
+    /// The replica is at the server's version and nothing is waiting for an answer.
+    InSync,
+    /// The socket is open but an operation or a control message is unanswered.
+    Pending,
+    /// The socket closed; a reconnect is scheduled.
+    Offline,
+}
+
 /// What arrived from the server.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {

@@ -18,6 +18,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
+use std::time::Duration;
 
 use cadcraft_collab::{ClientMessage, Op, Presence, Role, ServerMessage};
 use wasm_bindgen::JsCast as _;
@@ -25,7 +26,8 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{CloseEvent, Event as WebEvent, MessageEvent, WebSocket};
 
 use crate::Client;
-use crate::driver::{Driver, Event, hello};
+use crate::driver::{Driver, Event, Status, hello};
+use crate::join::Join as SnapshotJoin;
 
 /// What the frame loop hears from the socket.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +37,17 @@ pub enum Incoming {
     /// One text frame from the server.
     Text(String),
     /// The socket closed; a reconnect is scheduled.
+    Closed,
+}
+
+/// The socket's own state, between messages: what a sync indicator needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketState {
+    /// A socket exists but its `open` event has not fired yet.
+    Connecting,
+    /// The socket is open and can send.
+    Open,
+    /// The socket closed; [`schedule`] will dial again.
     Closed,
 }
 
@@ -84,6 +97,16 @@ impl Socket {
     /// Drain what arrived since the previous frame.
     fn poll(&self) -> Vec<Incoming> {
         self.inner.borrow_mut().incoming.drain(..).collect()
+    }
+
+    /// The socket's state, for the sync indicator.
+    fn state(&self) -> SocketState {
+        let inner = self.inner.borrow();
+        match &inner.socket {
+            Some(socket) if socket.ready_state() == WebSocket::OPEN => SocketState::Open,
+            Some(_) => SocketState::Connecting,
+            None => SocketState::Closed,
+        }
     }
 
     /// Send one text frame; an error means the socket is not open.
@@ -198,13 +221,36 @@ pub struct WebSession {
     socket: Socket,
     doc: String,
     token: String,
+    /// The participant's id, as the `welcome` names it (the token's `sub`).
+    actor_id: Option<String>,
     /// The role the host named; the welcome's role replaces it.
     role: Role,
     driver: Option<Driver>,
+    /// A snapshot being brought in: decoded part by part and read in bounded batches, so a large
+    /// drawing does not freeze the frame that received it.
+    join: Option<Joining>,
     /// Operations and control messages submitted before the first welcome.
     waiting_ops: Vec<Op>,
     waiting: VecDeque<ClientMessage>,
     events: VecDeque<Event>,
+}
+
+/// How much a browser gives one frame to bringing in a snapshot: reading more than this at once
+/// makes the page stutter, and a large drawing is shown as it arrives instead (ADR-0006's pace
+/// idea, applied to the join).
+const JOIN_FRAME: Duration = Duration::from_millis(8);
+/// The most entity records one [`cadcraft_io::Incremental::step`] reads: at 200 000 entities a
+/// record costs tens of microseconds, so this stays near a frame's share.
+const JOIN_BATCH: usize = 256;
+
+/// A snapshot on its way in: its parts are base64-decoded one poll each, then the drawing is read
+/// in bounded steps. Nothing here runs in the `welcome` frame.
+struct Joining {
+    join: SnapshotJoin,
+    role: Role,
+    session_id: String,
+    participants: Vec<Presence>,
+    room_version: u64,
 }
 
 impl fmt::Debug for WebSession {
@@ -226,8 +272,10 @@ impl WebSession {
             socket: Socket::open(url)?,
             doc: doc.to_string(),
             token: token.to_string(),
+            actor_id: None,
             role,
             driver: None,
+            join: None,
             waiting_ops: Vec::new(),
             waiting: VecDeque::new(),
             events: VecDeque::new(),
@@ -237,6 +285,37 @@ impl WebSession {
     /// The participant's role: the welcome's, or the host's until the welcome arrives.
     pub fn role(&self) -> Role {
         self.driver.as_ref().map(Driver::role).unwrap_or(self.role)
+    }
+
+    /// The participant's id (the token's `sub`), once the welcome named it. The host's participant
+    /// list uses it for this participant's own entry.
+    pub fn client_id(&self) -> Option<&str> {
+        self.actor_id.as_deref()
+    }
+
+    /// The connection's state for the cabinet's sync indicator: a closed socket is offline, a
+    /// replica that is still arriving or an unanswered operation is pending, otherwise in sync.
+    pub fn status(&self) -> Status {
+        match self.socket.state() {
+            SocketState::Closed => Status::Offline,
+            SocketState::Connecting => Status::Connecting,
+            SocketState::Open => {
+                if self.join.is_some() {
+                    return Status::Pending;
+                }
+                match &self.driver {
+                    None => Status::Connecting,
+                    Some(driver) if driver.client().outbox().is_empty() => Status::InSync,
+                    Some(_) => Status::Pending,
+                }
+            }
+        }
+    }
+
+    /// The join's progress, once its parts are decoded: entity records read and the file's total.
+    /// `None` when no snapshot is being read.
+    pub fn join_progress(&self) -> Option<(usize, usize)> {
+        self.join.as_ref().and_then(|joining| joining.join.progress())
     }
 
     /// The room's id, once the welcome named it.
@@ -262,6 +341,11 @@ impl WebSession {
     /// Send an operation; the replica changes when its answer arrives. Before the welcome the
     /// operation waits for the replica.
     pub fn submit(&mut self, op: Op) -> Result<(), String> {
+        if self.join.is_some() {
+            // The snapshot being read replaces the replica; submit after it is in.
+            self.waiting_ops.push(op);
+            return Ok(());
+        }
         match &mut self.driver {
             Some(driver) => {
                 driver.client_mut().submit(op.clone());
@@ -345,12 +429,50 @@ impl WebSession {
                 Incoming::Closed => {}
             }
         }
+        self.advance_join();
         self.events.drain(..).collect()
     }
 
+    /// Bring the snapshot in without blocking a frame: one base64 part, the drawing's group scan,
+    /// or a bounded batch of entity records per call, until the frame's share is spent.
+    fn advance_join(&mut self) {
+        let Some(mut joining) = self.join.take() else { return };
+        match joining.join.advance(JOIN_FRAME, JOIN_BATCH) {
+            Ok(true) => {
+                self.join = Some(joining);
+                self.complete_join();
+            }
+            Ok(false) => self.join = Some(joining),
+            Err(error) => {
+                self.events.push_back(Event::Error { code: "session".into(), message: error.to_string(), retryable: false });
+            }
+        }
+    }
+
+    /// The snapshot is read: replace the replica, send what waited for it and catch up with the
+    /// journal tail the welcome named (operations may have been applied while it was read).
+    fn complete_join(&mut self) {
+        let Some(joining) = self.join.take() else { return };
+        let shown = joining.join.version();
+        let Some(drawing) = joining.join.drawing() else { return };
+        let mut driver = Driver::new(Client::new(drawing, shown), joining.role, joining.session_id, joining.participants);
+        for op in std::mem::take(&mut self.waiting_ops) {
+            driver.client_mut().submit(op);
+        }
+        let last_version = driver.resync_from(joining.room_version);
+        self.driver = Some(driver);
+        self.flush();
+        if let Some(last_version) = last_version {
+            let _ = self.send(ClientMessage::Resync { last_version });
+        }
+    }
+
     fn send(&mut self, message: ClientMessage) -> Result<(), String> {
-        if self.driver.is_none() {
-            self.queue(message);
+        if self.driver.is_none() || self.join.is_some() {
+            // Presence is replaced by the next frame; keep the durable messages for the join.
+            if !matches!(message, ClientMessage::Presence { .. }) {
+                self.queue(message);
+            }
             return Ok(());
         }
         let text = serde_json::to_string(&message).map_err(|error| format!("cannot encode a collaboration message: {error}"))?;
@@ -378,8 +500,13 @@ impl WebSession {
 
     fn on_text(&mut self, text: &str) {
         let Ok(message) = serde_json::from_str::<ServerMessage>(text) else { return };
-        if let ServerMessage::Welcome { session_id, role, version, snapshot, participants, .. } = message {
-            self.on_welcome(session_id, role, version, snapshot, participants);
+        if let ServerMessage::Welcome { session_id, actor_id, role, version, snapshot, participants, .. } = message {
+            self.on_welcome(session_id, actor_id, role, version, snapshot, participants);
+            return;
+        }
+        // While a snapshot is being read, the replica it replaces is stale: the tail comes from
+        // the journal after the join, so these messages are not applied twice.
+        if self.join.is_some() {
             return;
         }
         let Some(driver) = &mut self.driver else { return };
@@ -399,12 +526,21 @@ impl WebSession {
     fn on_welcome(
         &mut self,
         session_id: String,
+        actor_id: String,
         role: Role,
         room_version: u64,
         snapshot: Vec<cadcraft_collab::message::Snapshot>,
         participants: Vec<Presence>,
     ) {
-        if let Some(driver) = &mut self.driver {
+        self.actor_id = Some(actor_id);
+        // The welcome names who is already here; show them before the first presence frame, as
+        // the desktop worker does.
+        for presence in &participants {
+            self.events.push_back(Event::Presence(presence.clone()));
+        }
+        if let Some(driver) = &mut self.driver
+            && snapshot.is_empty()
+        {
             match driver.reconnect(session_id, role, participants, room_version, &snapshot) {
                 Ok(last_version) => {
                     self.flush();
@@ -416,27 +552,17 @@ impl WebSession {
             }
             return;
         }
-        let (drawing, shown) = match crate::driver::welcome_drawing(&snapshot, None, None, room_version) {
-            Ok(built) => built,
-            Err(error) => {
-                self.events.push_back(Event::Error { code: "session".into(), message: error.to_string(), retryable: false });
-                return;
-            }
-        };
-        self.driver = Some(Driver::new(Client::new(drawing, shown), role, session_id, participants));
-        // The operations planned before the replica existed go through the same outbox the
-        // native client uses.
-        let waiting = std::mem::take(&mut self.waiting_ops);
-        if let Some(driver) = &mut self.driver {
-            for op in waiting {
-                driver.client_mut().submit(op);
-            }
+        if snapshot.is_empty() {
+            self.events.push_back(Event::Error {
+                code: "session".into(),
+                message: crate::driver::SessionError::MissingDrawing.to_string(),
+                retryable: false,
+            });
+            return;
         }
-        let last_version = self.driver.as_ref().and_then(|driver| driver.resync_from(room_version));
-        self.flush();
-        if let Some(last_version) = last_version {
-            let _ = self.send(ClientMessage::Resync { last_version });
-        }
+        // A snapshot, first join or reconnect: read it across frames instead of freezing this one.
+        // The old replica waits until the new one is in, and a tail is fetched after it.
+        self.join = Some(Joining { join: SnapshotJoin::new(snapshot), role, session_id, participants, room_version });
     }
 
     /// Send the replica's unconfirmed operations and the queued control messages, in order.
@@ -475,8 +601,10 @@ mod tests {
             },
             doc: "plan.dxf".into(),
             token: "jwt-secret".into(),
+            actor_id: None,
             role: Role::Editor,
             driver: None,
+            join: None,
             waiting_ops: Vec::new(),
             waiting: VecDeque::new(),
             events: VecDeque::new(),
