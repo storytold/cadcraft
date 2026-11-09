@@ -347,7 +347,8 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
   `ellipse`, `rect`, `text`, `dimlinear`, `mleader`, `spline`, `block`,
   `insert`, `move`, `copy`, `rotate`,
-  `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `wipeout`, `erase`.
+  `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `wipeout`,
+  `imageattach`, `erase`.
   Синтаксис адресных форм:
   `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
   `ellipse cx,cy rx[,ry] [angle]`, `rect x,y x,y`,
@@ -390,7 +391,19 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   поэтому обе реплики рисуют одно и то же, а правка полилинии позже маску не
   двигает; незамкнутая полилиния, полилиния с дуговым сегментом, меньше трёх
   точек и контур без площади отклоняются до операции; `frames` — переменная
-  чертежа, общей её не делает), `erase H[,H…]`. Строка, которую парсер не
+  чертежа, общей её не делает),
+  `imageattach NAME data BASE64 [at x,y] [width w | scale s] [rotation deg] [name "Title"]`
+  (растровая вставка: `NAME` — только метка, сохраняемая в чертеже, и она
+  обязана оканчиваться на `png`/`jpg`/`jpeg`/`bmp`/`tif`/`tiff`; байты едут в
+  `data` как base64 и декодируются сервером и автором, файл по клиентскому
+  пути сервер не открывает (ADR-0021); `at` — нижний левый угол, по умолчанию
+  `0,0`; ширина — в единицах чертежа (`width`) или `scale` при ширине 1;
+  `rotation` в градусах; `name` переопределяет имя определения. Нечисловая
+  координата, отсутствующая или битая base64, не-растровое расширение, данные
+  сверх лимита операции 1 MiB, пустое имя и ненулевой поворот без ширины или
+  масштаба отклоняются до операции; растр в change set не едет — получатель
+  видит ту же рамку и метку, а пиксели остаются у автора),
+  `erase H[,H…]`. Строка, которую парсер не
   разобрал целиком, отклоняется до создания операции, поэтому документ не
   меняется.
 - **Presence на экране:** курсоры и имена других участников рисуются в текущем
@@ -434,6 +447,10 @@ Headless, 2–3 клиента, in-process сервер (без GUI); `cargo tes
     открытие в LibreCAD/QCAD (ручной gate, отмечен в PR).
 13. Round-trip: commit → reopen → геометрия, слои, блоки, `foreign` совпадают
     (по `io::roundtrip::compare`).
+14. Растр: `imageattach` с `data` доходит до двух реплик одной рамкой и меткой;
+    операция без `data` отклоняется сервером до мутации, а битая base64,
+    не-растровое расширение и данные сверх лимита — парсером; undo/redo —
+    один шаг, пиксели в change set не едут (ADR-0021).
 
 ## 11a. Ревью и его замечания
 
@@ -453,6 +470,10 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 документа, число участников. Логи: `sub`, `opId`, `version`, коды ошибок; без
 содержимого, без токенов, без путей пользователя. Снапшоты не отдаются в
 кабинет; commit — по контракту кабинета. Антивирус/аудит — на стороне кабинета.
+`imageattach` в совместной сессии принимает растр только в `data` (≤1 MiB на
+операцию): `path` — метка, сервер не открывает файл по клиентскому пути и не
+отвечает, существует ли он (ADR-0021). Серверное хранилище вложений (`--assets`)
+с проверкой после нормализации и `realpath` — следующий срез.
 
 ## 13. Открытые вопросы
 
@@ -475,16 +496,15 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 
 | Слой | Что | Проверка |
 |---|---|---|
-| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018) | 64 теста + 1 doctest |
+| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018), растр в операции (ADR-0021) | 66 тестов + 1 doctest |
 | engine | `apply_remote`, `execute_intent`, `set_record_undo` | 452 lib-теста |
-| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown | 40 + e2e |
+| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown, data-only `imageattach` (ADR-0021) | 43 + e2e |
 | `cadcraft-collab-client` | реплика, порядок версий, resync, reconnect, события | 5 тестов |
-| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 22 адресуемые команды | 260 lib (1 ignored), `collab_cmdline` 50 |
+| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 23 адресуемые команды | 260 lib (1 ignored), `collab_cmdline` 55 |
 
-Осталось до приёмки: `imageattach` в совместной сессии (нужен ADR о доверии к
-путям — сервер не читает файловую систему по клиентскому пути; черновик в
-`cadcraft/docs/collab/adr-drafts.md`), открытие commit-файла в LibreCAD/QCAD,
-web-режим через `craft-web-host`.
+Осталось до приёмки: открытие commit-файла в LibreCAD/QCAD, web-режим через
+`craft-web-host`, серверное хранилище вложений (`--assets`) — отдельный срез
+ADR-0021, не входящий в data-only `imageattach`.
 
 ## 14. План поставки
 
