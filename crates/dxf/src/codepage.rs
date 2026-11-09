@@ -176,18 +176,18 @@ pub(crate) fn decode(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
     }
 }
 
-/// The `$DWGCODEPAGE` value of an ASCII DXF file: the line two lines after a `$DWGCODEPAGE`
-/// line (the group code `3` between them), looked for in the HEADER section only (the scan stops
-/// at the first `ENDSEC`). Works on the raw bytes, before they are decoded.
-fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
+/// The value of the header variable `name` (group `code` after it) of an ASCII DXF file: looked
+/// for in the HEADER section only (the scan stops at the first `ENDSEC`). Works on the raw bytes,
+/// before they are decoded.
+fn ascii_header_value<'a>(bytes: &'a [u8], name: &[u8], code: &[u8]) -> Option<&'a [u8]> {
     let mut lines = bytes.split(|&b| b == b'\n').map(<[u8]>::trim_ascii);
     while let Some(line) = lines.next() {
         if line == b"ENDSEC" {
             return None;
         }
-        if line.eq_ignore_ascii_case(b"$DWGCODEPAGE") {
+        if line.eq_ignore_ascii_case(name) {
             return match (lines.next(), lines.next()) {
-                (Some(b"3"), Some(value)) => Some(value),
+                (Some(c), Some(value)) if c == code => Some(value),
                 _ => None,
             };
         }
@@ -195,13 +195,22 @@ fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// The `$DWGCODEPAGE` value of an ASCII DXF file.
+fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
+    ascii_header_value(bytes, b"$DWGCODEPAGE", b"3")
+}
+
 /// Decode a whole ASCII DXF file. Valid UTF-8 is read as UTF-8: R2007+ files, pure-ASCII files,
-/// and older files from writers that ignored the code page. Anything else is decoded from the
-/// file's `$DWGCODEPAGE`, or from Windows-1252 (the usual `ANSI_1252`) when the header has none
-/// or names a code page CADCraft doesn't know, which is logged as a warning.
+/// and older files from writers that ignored the code page. The one exception is a pre-2007
+/// `DOS864` file, whose `%` bytes are U+066A even when every byte is ASCII. Anything else is
+/// decoded from the file's `$DWGCODEPAGE`, or from Windows-1252 (the usual `ANSI_1252`) when the
+/// header has none or names a code page CADCraft doesn't know, which is logged as a warning.
 pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
     if let Ok(s) = std::str::from_utf8(bytes) {
-        return Cow::Borrowed(s);
+        if !s.contains('%') || !is_pre_2007_dos864(bytes) {
+            return Cow::Borrowed(s);
+        }
+        return decode(bytes, Decoder::Dos864);
     }
     let d = match ascii_code_page(bytes) {
         Some(name) => {
@@ -214,6 +223,13 @@ pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
         None => Decoder::Utf8,
     };
     decode(bytes, d)
+}
+
+/// True for an ASCII-only file whose header names `DOS864` and is not R2007+ (which is UTF-8).
+fn is_pre_2007_dos864(bytes: &[u8]) -> bool {
+    bytes.is_ascii()
+        && ascii_code_page(bytes).is_some_and(|n| n.eq_ignore_ascii_case(b"DOS864"))
+        && !ascii_header_value(bytes, b"$ACADVER", b"1").is_some_and(|v| Version::for_acadver(&String::from_utf8_lossy(v)).is_some_and(Version::utf8))
 }
 
 /// The text state of a binary DXF file, learnt from its header as the tags go by: `$ACADVER`
@@ -362,6 +378,15 @@ mod tests {
                 assert_eq!(decode_code_page(&[b], cp).as_deref(), Some(char::from(b).to_string().as_str()), "{cp} {b:#x}");
             }
         }
+    }
+
+    #[test]
+    fn ascii_only_dos864_file_keeps_the_arabic_percent_sign() {
+        let file = |ver: &str, cp: &str| format!("0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\n{ver}\n9\n$DWGCODEPAGE\n3\n{cp}\n0\nENDSEC\n1\n50%\n");
+        assert!(decode_ascii_file(file("AC1015", "DOS864").as_bytes()).ends_with("50\u{066A}\n"));
+        // Other code pages, and R2007+ files (UTF-8), keep `%`.
+        assert!(decode_ascii_file(file("AC1015", "DOS437").as_bytes()).ends_with("50%\n"));
+        assert!(decode_ascii_file(file("AC1021", "DOS864").as_bytes()).ends_with("50%\n"));
     }
 
     #[test]

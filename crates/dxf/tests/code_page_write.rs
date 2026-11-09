@@ -28,13 +28,15 @@ fn contains(bytes: &[u8], part: &[u8]) -> bool {
 #[test]
 fn text_is_written_in_the_code_page() {
     // (code page, text, the bytes written for it)
-    let cases: [(&str, &str, &[u8]); 7] = [
+    let cases: [(&str, &str, &[u8]); 8] = [
         ("ANSI_1252", "Ação € 图", b"A\xE7\xE3o \x80 \\U+56FE"),
         ("ANSI_1251", "Слой é", b"\xD1\xEB\xEE\xE9 \\U+00E9"),
         ("ANSI_932", "表図面 é", b"\x95\x5C\x90\x7D\x96\xCA \\U+00E9"),
         ("DOS850", "Größe €", b"Gr\x94\xE1e \\U+20AC"),
         // DOS 864: byte 0x25 is the Arabic percent sign, so a literal `%` is escaped.
         ("DOS864", "50% \u{066A}\u{00B0}", b"50\\U+0025 %\x80"),
+        // Only the percent sign: every byte is ASCII, and it still reads back as U+066A.
+        ("DOS864", "50\u{066A}", b"50%"),
         ("ANSI_1252", "😀", b"\\U+D83D\\U+DE00"),
         // A code page CADCraft doesn't know: everything non-ASCII is escaped.
         ("ANSI_1361", "Ação", b"A\\U+00E7\\U+00E3o"),
