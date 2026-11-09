@@ -458,7 +458,9 @@ impl CadApp {
             return;
         }
         if self.is_shared() {
-            self.session.echo("a shared session takes commands with explicit parameters; the interactive command line is not available yet");
+            self.session.echo(
+                "a shared session has no interactive prompt; type a complete command, e.g. `line 0,0 10,0`, `circle 5,5 2` or `move 1A2 delta 10,0`",
+            );
             return;
         }
         if let Err(e) = self.session.start(name) {
@@ -477,9 +479,9 @@ impl CadApp {
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if self.is_shared() {
-            let message = "a shared session takes commands with explicit parameters; the interactive command line is not available yet".to_string();
-            self.session.echo(message.clone());
-            return Some(message);
+            // A shared session has no prompt to fill in: the line names its own points and objects
+            // and goes to the server as one operation (see `collab::collab_cmdline`).
+            return self.collab_cmdline(text);
         }
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");

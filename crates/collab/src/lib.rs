@@ -35,6 +35,7 @@
 
 mod apply;
 mod change;
+pub mod cmdline;
 mod context;
 mod diff;
 mod error;

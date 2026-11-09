@@ -284,6 +284,47 @@ impl crate::CadApp {
         Some(Ok(serde_json::json!({ "queued": true })))
     }
 
+    /// Submit a complete command line to the shared session.
+    ///
+    /// A shared session has no interactive prompt, so the line must name everything it acts on:
+    /// points by coordinates and objects by handle (see [`cadcraft_collab::cmdline`]). A line the
+    /// parser refuses never becomes an operation — the drawing cannot change — and the refusal is
+    /// echoed; it is also returned, as a later operation's rejection would be.
+    pub fn collab_cmdline(&mut self, text: &str) -> Option<String> {
+        let role = self.collab.as_ref().map(Collab::role)?;
+        if !role.may_write() {
+            let message = "this shared session is read-only".to_string();
+            self.session.echo(message.clone());
+            return Some(message);
+        }
+        let op = {
+            let state = match self.session.state() {
+                Ok(state) => state,
+                Err(error) => {
+                    let message = error.to_string();
+                    self.session.echo(message.clone());
+                    return Some(message);
+                }
+            };
+            let op_id = format!("local-{}", self.collab_seq);
+            cadcraft_collab::cmdline::op_for(text, &state.doc, &state.space, &op_id, self.collab_version)
+        };
+        match op {
+            Ok(op) => {
+                if let Some(collab) = &self.collab {
+                    collab.send(Request::Op(op));
+                }
+                self.collab_seq = self.collab_seq.saturating_add(1);
+                None
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.session.echo(message.clone());
+                Some(message)
+            }
+        }
+    }
+
     /// Show who is in the shared session, with each participant's place in the drawing.
     fn participants_window(&mut self, ctx: &egui::Context) {
         let Some(collab) = &self.collab else {
