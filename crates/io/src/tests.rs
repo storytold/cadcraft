@@ -3649,3 +3649,13 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// A layer state of CADCraft's own record from before states had a mask, a current layer and a
+/// description (its JSON holds only the name and the layers) restores every property and names no
+/// current layer.
+#[test]
+fn a_layer_state_saved_before_masks_restores_everything() {
+    let states = crate::dxf_ext::parse_layer_states(r#"{"version":1,"states":[{"name":"S","layers":[]}]}"#).unwrap();
+    let got: Vec<(&str, u32, &str, &str)> = states.iter().map(|s| (s.name.as_str(), s.mask, s.current.as_str(), s.description.as_str())).collect();
+    assert_eq!(got, [("S", LayerState::ALL, "", "")]);
+}

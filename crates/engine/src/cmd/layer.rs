@@ -663,6 +663,46 @@ mod tests {
         assert_eq!(s.doc().unwrap().layer("A").unwrap().description, "kept");
     }
 
+    /// Plotting, freezing in new viewports, linetype, lineweight, plot style and transparency each
+    /// come back under their own mask bit only: a state of one bit restores that property and
+    /// leaves the other five as they are.
+    #[test]
+    fn layer_state_restores_each_property_under_its_own_bit_only() {
+        use cadcraft_doc::{Drawing, LayerState as S, Lineweight};
+        let mut s = Session::new();
+        s.execute("layer.new", &json!({ "name": "A" })).unwrap();
+        s.execute("layerstate.save", &json!({ "name": "all" })).unwrap();
+        let saved = s.doc().unwrap().layer_states[0].clone();
+        let props = |d: &Drawing| {
+            let l = d.layer("A").unwrap();
+            (l.plot, l.vp_freeze_new, l.linetype.clone(), l.lineweight, l.plot_style.clone(), l.transparency)
+        };
+        let change = |d: &mut Drawing| {
+            let l = d.layer_mut("A").unwrap();
+            (l.plot, l.vp_freeze_new, l.linetype, l.lineweight, l.plot_style, l.transparency) =
+                (false, true, "DASHED".into(), Lineweight::from_dxf(50), "Thick".into(), 40);
+        };
+        let before = props(s.doc().unwrap());
+        change(s.doc_mut().unwrap());
+        let after = props(s.doc().unwrap());
+        for bit in [S::PLOT, S::VP_FREEZE_NEW, S::LINETYPE, S::LINEWEIGHT, S::PLOT_STYLE, S::TRANSPARENCY] {
+            let name = format!("b{bit}");
+            s.doc_mut().unwrap().layer_states.push(S { name: name.clone(), mask: bit | 512, ..saved.clone() });
+            change(s.doc_mut().unwrap());
+            s.execute("layerstate.restore", &json!({ "name": name })).unwrap();
+            let mut want = after.clone();
+            match bit {
+                S::PLOT => want.0 = before.0,
+                S::VP_FREEZE_NEW => want.1 = before.1,
+                S::LINETYPE => want.2.clone_from(&before.2),
+                S::LINEWEIGHT => want.3 = before.3,
+                S::PLOT_STYLE => want.4.clone_from(&before.4),
+                _ => want.5 = before.5,
+            }
+            assert_eq!(props(s.doc().unwrap()), want, "mask {bit}");
+        }
+    }
+
     #[test]
     fn rejected_layer_set_changes_nothing() {
         let mut s = Session::new();
