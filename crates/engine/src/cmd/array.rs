@@ -256,8 +256,18 @@ fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) ->
         return Err(super::modify::ole_refusal());
     }
     let mut n = 0;
+    // An operation in a shared session names the author's layer (`context.clay`, ADR-0019); the
+    // copies are new objects, so they go there instead of staying on their source's layer.
+    let clay = s.state().ok().and_then(|st| st.clay.clone());
     for m in &mats {
-        n += transform_entities(s, hs, m, true)?.len();
+        let made = transform_entities(s, hs, m, true)?;
+        if let Some(layer) = &clay {
+            let d = s.doc_mut()?;
+            for h in &made {
+                d.modify_entity(*h, |e| e.common.layer = layer.clone())?;
+            }
+        }
+        n += made.len();
     }
     Ok(n)
 }

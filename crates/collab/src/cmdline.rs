@@ -24,16 +24,21 @@
 //! rotate 1A2 base 0,0 45
 //! mirror 1A2,1A3 0,0 0,100
 //! scale 1A2,1A3 base 0,0 2
+//! offset 1A2 distance 5 side 0,10
+//! trim 1A2 edge 1A3 at 2,0
+//! array 1A2 rows 2 cols 3 step 20,10
 //! erase 1A2,1A3
 //! ```
 
-use cadcraft_doc::{Drawing, Handle, Space};
+use cadcraft_doc::geom::{Arc, Line, Segment, Vec2};
+use cadcraft_doc::{Drawing, Handle, Prim, Space, entity_bounds};
 use serde_json::{Value, json};
 
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 11] = ["line", "circle", "polyline", "ellipse", "rect", "move", "copy", "rotate", "mirror", "scale", "erase"];
+pub const COMMANDS: [&str; 14] =
+    ["line", "circle", "polyline", "ellipse", "rect", "move", "copy", "rotate", "mirror", "scale", "offset", "trim", "array", "erase"];
 
 /// One line of text, parsed into a command and its explicit parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,11 +53,11 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase")]
+    #[error("type a command: line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase")]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -88,6 +93,9 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "rotate" | "ro" => rotate(drawing, space, words.collect()),
         "mirror" | "mi" => mirror(drawing, space, words.collect()),
         "scale" | "sc" => scale(drawing, space, words.collect()),
+        "offset" | "o" => offset(drawing, space, words.collect()),
+        "trim" | "tr" => trim(drawing, space, words.collect()),
+        "array" | "ar" | "arr" => array(drawing, space, words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -119,7 +127,7 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 /// A copy or a mirror inherits the source objects' layers, and a scale changes objects in place,
 /// so only these commands draw new geometry on a layer of their own (ADR-0019).
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang")
+    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "offset" | "array")
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -361,6 +369,208 @@ fn scale(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, 
     Ok(Command { id: "scale", params: json!({ "handles": hex(&handles), "base": [x, y], "factor": factor }) })
 }
 
+/// `offset H distance d side x,y` — copy the named object `d` away, to the side of the point.
+///
+/// The engine's OFFSET asks for a distance and a point on the side to offset to; both are spelled
+/// out here. The copy goes on the author's layer (`context.clay`), as the shared session's other
+/// object-creating commands do (ADR-0019); `layer: "current"` makes the engine read the layer the
+/// operation named.
+fn offset(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((address, rest)) = words.split_first() else {
+        return Err(bad("offset", "address the object to offset: offset 1A2 distance d side x,y"));
+    };
+    // `offset distance 5 side 0,1` has no address: the keyword is not a handle.
+    if address.eq_ignore_ascii_case("distance") || address.eq_ignore_ascii_case("side") {
+        return Err(bad("offset", "address the object to offset: offset 1A2 distance d side x,y"));
+    }
+    let handles = handles("offset", address)?;
+    let [handle] = handles.as_slice() else {
+        return Err(bad("offset", "takes one object: offset 1A2 distance d side x,y"));
+    };
+    check_in_space(drawing, space, "offset", &handles)?;
+    let [distance_kw, distance, side_kw, side] = rest else {
+        return Err(bad("offset", "give the distance and the side: offset 1A2 distance d side x,y"));
+    };
+    if !distance_kw.eq_ignore_ascii_case("distance") || !side_kw.eq_ignore_ascii_case("side") {
+        return Err(bad("offset", "give the distance and the side: offset 1A2 distance d side x,y"));
+    }
+    // AutoCAD's OFFSET wants a positive distance; a zero or negative one is not an offset.
+    let distance = number(distance).filter(|d| *d > 0.0).ok_or_else(|| bad("offset", "the distance must be a positive number"))?;
+    let [x, y] = point(side, "offset")?;
+    Ok(Command { id: "offset", params: json!({ "handle": handle.hex(), "distance": distance, "side": [x, y], "layer": "current" }) })
+}
+
+/// `trim H edge H2[,H3] at x,y` — cut `H` at the crossings with the named edges, removing the
+/// piece that holds the pick point `x,y`.
+///
+/// A trim without a crossing has nothing to cut, so the crossing is checked here, before an
+/// operation exists; when the geometry cannot be measured exactly the operation is left to the
+/// engine, which refuses it without changing the drawing.
+fn trim(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((address, rest)) = words.split_first() else {
+        return Err(bad("trim", "address the object to trim: trim 1A2 edge 1A3 at x,y"));
+    };
+    // `trim edge 1A3 at 0,0` has no address: the keyword is not a handle.
+    if address.eq_ignore_ascii_case("edge") || address.eq_ignore_ascii_case("at") {
+        return Err(bad("trim", "address the object to trim: trim 1A2 edge 1A3 at x,y"));
+    }
+    let targets = handles("trim", address)?;
+    let [target] = targets.as_slice() else {
+        return Err(bad("trim", "takes one object: trim 1A2 edge 1A3 at x,y"));
+    };
+    check_in_space(drawing, space, "trim", &targets)?;
+    let [edge_kw, edges, at_kw, pick] = rest else {
+        return Err(bad("trim", "give the cutting edges and the pick: trim 1A2 edge 1A3 at x,y"));
+    };
+    if !edge_kw.eq_ignore_ascii_case("edge") || !at_kw.eq_ignore_ascii_case("at") {
+        return Err(bad("trim", "give the cutting edges and the pick: trim 1A2 edge 1A3 at x,y"));
+    }
+    let edges = handles("trim", edges)?;
+    if edges.is_empty() {
+        return Err(bad("trim", "give at least one cutting edge: trim 1A2 edge 1A3 at x,y"));
+    }
+    if edges.contains(target) {
+        return Err(bad("trim", "an object cannot be its own cutting edge"));
+    }
+    check_in_space(drawing, space, "trim", &edges)?;
+    let [x, y] = point(pick, "trim")?;
+    if meets(drawing, space, *target, &edges) == Some(false) {
+        return Err(bad("trim", "the object does not meet the cutting edge; there is nothing to trim"));
+    }
+    Ok(Command { id: "trim", params: json!({ "handle": target.hex(), "edges": hex(&edges), "pick": [x, y] }) })
+}
+
+/// `array H[,H…] rows r cols c step dx,dy` — a rectangular array of separate copies.
+///
+/// `dx` is the column step (along x) and `dy` the row step (along y), as the classic -ARRAY lays
+/// them out: the source objects stay in row 0, column 0, every other item is a copy. Row and
+/// column counts of at least one, at least two items in all, and a non-zero step in each growing
+/// direction are required before an operation exists. Copies go on the author's layer
+/// (`context.clay`, ADR-0019).
+fn array(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("array", "address the objects to array: array 1A2[,1A3] rows r cols c step dx,dy"));
+    };
+    // `array rows 2 cols 3 step 10,10` has no address: the keyword is not a handle.
+    if ["rows", "cols", "step"].iter().any(|keyword| addresses.eq_ignore_ascii_case(keyword)) {
+        return Err(bad("array", "address the objects to array: array 1A2[,1A3] rows r cols c step dx,dy"));
+    }
+    let handles = handles("array", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("array", "address the objects to array: array 1A2[,1A3] rows r cols c step dx,dy"));
+    }
+    check_in_space(drawing, space, "array", &handles)?;
+    let [rows_kw, rows, cols_kw, cols, step_kw, step] = rest else {
+        return Err(bad("array", "give the rows, the columns and the step: array 1A2 rows r cols c step dx,dy"));
+    };
+    if !rows_kw.eq_ignore_ascii_case("rows") || !cols_kw.eq_ignore_ascii_case("cols") || !step_kw.eq_ignore_ascii_case("step") {
+        return Err(bad("array", "give the rows, the columns and the step: array 1A2 rows r cols c step dx,dy"));
+    }
+    let rows = whole(rows, "array", "rows")?;
+    let cols = whole(cols, "array", "cols")?;
+    let count = rows.checked_mul(cols).filter(|n| *n >= 2).ok_or_else(|| {
+        bad("array", "the rows and columns must be at least 1 each and make at least two items: array 1A2 rows 2 cols 3 step dx,dy")
+    })?;
+    // Keep a hostile line from reaching the engine with a count no drawing could hold.
+    if count > MAX_ARRAY_ITEMS {
+        return Err(bad("array", format!("the array would make {count} items; the most one line may name is {MAX_ARRAY_ITEMS}")));
+    }
+    let [dx, dy] = point(step, "array")?;
+    if cols > 1 && dx.abs() < 1e-12 {
+        return Err(bad("array", "the column step must be non-zero when there is more than one column"));
+    }
+    if rows > 1 && dy.abs() < 1e-12 {
+        return Err(bad("array", "the row step must be non-zero when there is more than one row"));
+    }
+    Ok(Command {
+        id: "array",
+        params: json!({
+            "handles": hex(&handles),
+            "type": "rectangular",
+            "rows": rows,
+            "cols": cols,
+            "rowSpacing": dy,
+            "colSpacing": dx,
+            "associative": false
+        }),
+    })
+}
+
+/// The most items one `array` line may make; the engine's MAXARRAY (at most ten million) is the
+/// number a drawing could hold, this keeps the operation itself small.
+const MAX_ARRAY_ITEMS: u64 = 100_000;
+
+/// A whole, positive count.
+fn whole(text: &str, command: &'static str, label: &str) -> Result<u64, CmdLineError> {
+    text.parse::<u64>()
+        .ok()
+        .filter(|n| *n >= 1)
+        .ok_or_else(|| bad(command, format!("`{}` is not a whole number of at least 1 for {label}", brief(text))))
+}
+
+/// Whether the target meets any of the edges: `Some(false)` means it certainly does not, `None`
+/// that the geometry could not be measured and the engine has to decide.
+fn meets(drawing: &Drawing, space: &Space, target: Handle, edges: &[Handle]) -> Option<bool> {
+    let store = drawing.space(space)?;
+    let entity = store.get(target)?;
+    let target_segments = segments(&entity.kind)?;
+    let bounds = entity_bounds(drawing, entity, 0);
+    let mut measured = true;
+    for edge in edges {
+        let Some(other) = store.get(*edge) else { return Some(false) };
+        let Some(edge_segments) = segments(&other.kind) else {
+            measured = false;
+            continue;
+        };
+        if !bounds.intersects(&entity_bounds(drawing, other, 0)) {
+            continue;
+        }
+        if target_segments.iter().any(|a| edge_segments.iter().any(|b| !cadcraft_doc::geom::intersect_segments(a, b).is_empty())) {
+            return Some(true);
+        }
+    }
+    measured.then_some(false)
+}
+
+/// `kind` as line and arc segments, for the trim crossing check; `None` when it has no measurable
+/// geometry (a block reference or an object the engine handles some other way).
+fn segments(kind: &cadcraft_doc::EntityKind) -> Option<Vec<Segment>> {
+    let prims = kind.prims();
+    if prims.is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for prim in prims {
+        match prim {
+            Prim::Seg(segment) => out.push(segment),
+            Prim::Circle(circle) => {
+                out.push(Segment::Arc { arc: Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU - 1e-12), ccw: true })
+            }
+            Prim::Infinite { base, dir, .. } => {
+                let far = dir * 1e8;
+                out.push(Segment::Line(Line::new(base - far, base + far)));
+            }
+            Prim::Ellipse(ellipse) => {
+                let mut points = Vec::new();
+                ellipse.tessellate(ellipse.major.len() * 1e-4, &mut points);
+                push_polyline(&mut out, &points);
+            }
+            Prim::Spline(spline) => push_polyline(&mut out, &spline.tessellate(1e-4)),
+            Prim::Fill(points) => push_polyline(&mut out, &points),
+            Prim::Point(_) => {}
+        }
+    }
+    Some(out)
+}
+
+fn push_polyline(out: &mut Vec<Segment>, points: &[Vec2]) {
+    for pair in points.windows(2) {
+        if let [a, b] = pair {
+            out.push(Segment::Line(Line::new(*a, *b)));
+        }
+    }
+}
+
 fn handles(command: &'static str, addresses: &str) -> Result<Vec<Handle>, CmdLineError> {
     addresses.split(',').map(|address| Handle::parse_hex(address).ok_or_else(|| bad(command, "address objects by handle, e.g. 1A2,1A3"))).collect()
 }
@@ -461,7 +671,10 @@ mod tests {
         let before = drawing.clone();
         let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
-        assert!(error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"), "{error}");
+        assert!(
+            error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"),
+            "{error}"
+        );
         assert_eq!(drawing, before, "parsing must not change the drawing");
     }
 
@@ -673,6 +886,113 @@ mod tests {
     }
 
     #[test]
+    fn an_offset_addresses_its_object_distance_and_side() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("offset {address} distance 2.5 side 0,1"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "offset");
+        assert_eq!(command.params, json!({ "handle": address.clone(), "distance": 2.5, "side": [0.0, 1.0], "layer": "current" }));
+        assert_eq!(parse(&format!("o {address} distance 1 side -1,0"), &drawing, &Space::Model).unwrap().id, "offset");
+        // A zero or negative distance is not an offset.
+        for text in [format!("offset {address} distance 0 side 0,1"), format!("offset {address} distance -2 side 0,1")] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().contains("the distance must be a positive number"), "{error}");
+        }
+        // The keyword without an address says what is missing.
+        let error = parse("offset distance 2 side 0,1", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the object to offset"), "{error}");
+        // Offset takes one object.
+        let error = parse(&format!("offset {address},{address} distance 2 side 0,1"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("takes one object"), "{error}");
+        // A handle that names nothing in this drawing.
+        let error = parse("offset FF distance 2 side 0,1", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("offset: there is no object FF"), "{error}");
+    }
+
+    #[test]
+    fn a_trim_addresses_its_object_edge_and_pick() {
+        let mut drawing = Drawing::new_metric();
+        let target = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let edge = add_line(&mut drawing, [5.0, -5.0], [5.0, 5.0]);
+        let far = add_line(&mut drawing, [0.0, 100.0], [10.0, 100.0]);
+
+        let command = parse(&format!("trim {} edge {} at 8,0", target.hex(), edge.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "trim");
+        assert_eq!(command.params, json!({ "handle": target.hex(), "edges": [edge.hex()], "pick": [8.0, 0.0] }));
+        assert_eq!(parse(&format!("tr {} edge {} at 8,0", target.hex(), edge.hex()), &drawing, &Space::Model).unwrap().id, "trim");
+        // A target that the cutting edge never meets has nothing to trim, so no operation is built.
+        let error = parse(&format!("trim {} edge {} at 8,0", target.hex(), far.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("does not meet the cutting edge"), "{error}");
+        // The keywords are missing.
+        let error = parse(&format!("trim {} {} at 8,0", target.hex(), edge.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give the cutting edges and the pick"), "{error}");
+        // An object cannot be its own cutting edge.
+        let error = parse(&format!("trim {} edge {} at 8,0", target.hex(), target.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("cannot be its own cutting edge"), "{error}");
+        // The keyword without an address says what is missing.
+        let error = parse("trim edge 1A3 at 0,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the object to trim"), "{error}");
+        // Handles that name nothing in this drawing.
+        let error = parse("trim FF edge 1A3 at 0,0", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("trim: there is no object FF"), "{error}");
+        let error = parse(&format!("trim {} edge FF at 0,0", target.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("trim: there is no object FF"), "{error}");
+    }
+
+    #[test]
+    fn an_array_addresses_its_objects_rows_columns_and_step() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("array {address} rows 2 cols 3 step 20,10"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "array");
+        assert_eq!(
+            command.params,
+            json!({
+                "handles": [address.clone()],
+                "type": "rectangular",
+                "rows": 2,
+                "cols": 3,
+                "rowSpacing": 10.0,
+                "colSpacing": 20.0,
+                "associative": false
+            })
+        );
+        assert_eq!(parse(&format!("ar {address} rows 1 cols 4 step 5,0"), &drawing, &Space::Model).unwrap().id, "array");
+        assert_eq!(parse(&format!("arr {address} rows 4 cols 1 step 0,5"), &drawing, &Space::Model).unwrap().id, "array");
+        // Counts of zero, a one-item array, and a zero step where the array grows are all refused.
+        for text in [
+            format!("array {address} rows 0 cols 3 step 10,10"),
+            format!("array {address} rows 2 cols 0 step 10,10"),
+            format!("array {address} rows -1 cols 3 step 10,10"),
+            format!("array {address} rows 1 cols 1 step 10,10"),
+            format!("array {address} rows 2 cols 3 step 0,10"),
+            format!("array {address} rows 2 cols 3 step 10,0"),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("array:"), "{text}: {error}");
+        }
+        // The keyword without an address says what is missing.
+        let error = parse("array rows 2 cols 3 step 10,10", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the objects to array"), "{error}");
+        // A handle that names nothing in this drawing.
+        let error = parse("array FF rows 2 cols 3 step 10,10", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("array: there is no object FF"), "{error}");
+    }
+
+    fn add_line(drawing: &mut Drawing, a: [f64; 2], b: [f64; 2]) -> Handle {
+        drawing
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) }),
+            )
+            .unwrap()
+    }
+
+    #[test]
     fn an_unaddressable_move_says_what_is_wrong() {
         let (drawing, _) = drawing_with_line();
         // No object named at all.
@@ -739,6 +1059,26 @@ mod tests {
         // in place. Neither draws on the author's current layer.
         assert_eq!(op_for(&format!("mirror {} 0,0 0,5", handle.hex()), &drawing, &Space::Model, "local-9", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("scale {} base 0,0 2", handle.hex()), &drawing, &Space::Model, "local-10", 0).unwrap().context.clay, None);
+        // An offset and an array make new objects; they go on the author's layer too.
+        assert_eq!(
+            op_for(&format!("offset {} distance 1 side 0,1", handle.hex()), &drawing, &Space::Model, "local-11", 0).unwrap().context.clay.as_deref(),
+            Some("WALLS")
+        );
+        assert_eq!(
+            op_for(&format!("array {} rows 2 cols 2 step 10,10", handle.hex()), &drawing, &Space::Model, "local-12", 0)
+                .unwrap()
+                .context
+                .clay
+                .as_deref(),
+            Some("WALLS")
+        );
+        // A trim changes the object in place, so it does not name a layer.
+        let target = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let edge = add_line(&mut drawing, [5.0, -5.0], [5.0, 5.0]);
+        assert_eq!(
+            op_for(&format!("trim {} edge {} at 8,0", target.hex(), edge.hex()), &drawing, &Space::Model, "local-13", 0).unwrap().context.clay,
+            None
+        );
     }
 
     #[test]

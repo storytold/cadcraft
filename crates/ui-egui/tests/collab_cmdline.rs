@@ -80,7 +80,10 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
-    assert!(error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"), "{error}");
+    assert!(
+        error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"),
+        "{error}"
+    );
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
     assert_eq!(session.state().unwrap().revision, before_revision, "and does not redraw");
 }
@@ -127,6 +130,40 @@ fn a_refused_ellipse_mirror_or_scale_does_not_change_the_drawing() {
         format!("scale {line} base 0,0 -1"),
         format!("scale {line} 0,0 2"),
         "scale FF base 0,0 2".to_string(),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+}
+
+#[test]
+fn a_refused_offset_trim_or_array_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("line", &json!({"points": [[0.0, 100.0], [10.0, 100.0]]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let line = state.doc.model.iter().next().expect("the line").handle.hex();
+    let far = state.doc.model.iter().nth(1).expect("the far line").handle.hex();
+
+    // A zero or negative offset, a trim with no crossing, a self-edge, counts of zero, a one-item
+    // array, a zero step and handles that name nothing: none of them becomes an operation.
+    let refused = [
+        "offset FF distance 2 side 0,1".to_string(),
+        format!("offset {line} distance 0 side 0,1"),
+        format!("offset {line} distance -2 side 0,1"),
+        format!("trim {line} edge {far} at 8,0"),
+        format!("trim {line} edge {line} at 8,0"),
+        "trim FF edge 1A3 at 0,0".to_string(),
+        format!("array {line} rows 0 cols 3 step 10,10"),
+        format!("array {line} rows 2 cols 0 step 10,10"),
+        format!("array {line} rows 1 cols 1 step 10,10"),
+        format!("array {line} rows 2 cols 3 step 0,10"),
+        "array FF rows 2 cols 3 step 10,10".to_string(),
     ];
     for text in &refused {
         let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
@@ -302,6 +339,84 @@ fn two_replicas_that_scale_converge() {
 }
 
 #[test]
+fn two_replicas_that_offset_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    let line = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    // Bob offsets Alice's line by two units towards positive y.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("offset {} distance 2 side 0,1", line.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the offset");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the source stays and the offset is a second line");
+    assert!(alice.doc().unwrap().entity(line).is_some(), "the source line stays");
+    assert!(
+        alice.doc().unwrap().model.iter().any(|entity| {
+            let EntityKind::Line(l) = &entity.kind else { return false };
+            (l.a.y - 2.0).abs() < 1e-9 && (l.b.y - 2.0).abs() < 1e-9
+        }),
+        "the offset copy is two units away"
+    );
+}
+
+#[test]
+fn two_replicas_that_trim_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "line 5,-5 5,5");
+    let target = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let edge = bob.doc().unwrap().model.iter().nth(1).expect("the edge arrived").handle;
+    // Alice trims the line at the crossing with the edge, removing the piece holding 8,0.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, &format!("trim {} edge {} at 8,0", target.hex(), edge.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the trim");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the trimmed line keeps its handle and the edge stays");
+    let EntityKind::Line(l) = &alice.doc().unwrap().entity(target).expect("the trimmed line is still there").kind else {
+        panic!("a trimmed line is still a line")
+    };
+    assert!((l.b.x - 5.0).abs() < 1e-9, "the piece past the crossing was removed, got {:?}", l.b);
+}
+
+#[test]
+fn two_replicas_that_array_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 0,0 1");
+    let circle = bob.doc().unwrap().model.iter().next().expect("the circle arrived").handle;
+    // Two rows and three columns: the source plus five copies.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("array {} rows 2 cols 3 step 20,10", circle.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the array");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 6, "six items in all");
+    let centres: Vec<(f64, f64)> = alice
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .map(|entity| {
+            let EntityKind::Circle(c) = &entity.kind else { panic!("an array of circles is circles") };
+            (c.center.x, c.center.y)
+        })
+        .collect();
+    for expected in [(0.0, 0.0), (20.0, 0.0), (40.0, 0.0), (0.0, 10.0), (20.0, 10.0), (40.0, 10.0)] {
+        assert!(
+            centres.iter().any(|got| (got.0 - expected.0).abs() < 1e-9 && (got.1 - expected.1).abs() < 1e-9),
+            "missing the item at {expected:?} in {centres:?}"
+        );
+    }
+}
+
+#[test]
 fn undo_of_each_new_command_returns_the_state_before_it() {
     let mut session = Session::new();
     session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
@@ -355,6 +470,51 @@ fn undo_of_ellipse_mirror_and_scale_returns_the_state_before_it() {
     assert_ne!(session.doc().unwrap(), &before, "the scale moved the line's far end");
     assert_eq!(session.undo().unwrap().as_deref(), Some("Scale"));
     assert_eq!(session.doc().unwrap(), &before, "undo of the scale restores the line");
+}
+
+#[test]
+fn undo_and_redo_of_offset_trim_and_array_return_the_state_before_and_after() {
+    // Offset: one step, undone and redone as a whole.
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let line = session.doc().unwrap().model.iter().next().expect("the line").handle;
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("offset {} distance 2 side 0,1", line.hex()));
+    let after = session.doc().unwrap().clone();
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Offset"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the offset removes the copy");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Offset"));
+    assert_eq!(session.doc().unwrap(), &after, "redo puts the copy back");
+
+    // Trim: the cut is one step; redo cuts again.
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("line", &json!({"points": [[5.0, -5.0], [5.0, 5.0]]})).unwrap();
+    let target = session.doc().unwrap().model.iter().next().expect("the line").handle;
+    let edge = session.doc().unwrap().model.iter().nth(1).expect("the edge").handle;
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("trim {} edge {} at 8,0", target.hex(), edge.hex()));
+    let after = session.doc().unwrap().clone();
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Trim"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the trim restores the whole line");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Trim"));
+    assert_eq!(session.doc().unwrap(), &after, "redo trims it again");
+
+    // Array: all copies are one step.
+    let mut session = Session::new();
+    session.execute("circle", &json!({"center": [0.0, 0.0], "radius": 1.0})).unwrap();
+    let circle = session.doc().unwrap().model.iter().next().expect("the circle").handle;
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("array {} rows 2 cols 3 step 20,10", circle.hex()));
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 6);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Array"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the array removes every copy");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Array"));
+    assert_eq!(session.doc().unwrap(), &after, "redo makes every copy again");
 }
 
 /// Run a one-line command the way [`submit`] does, but against one session.
@@ -476,6 +636,73 @@ fn a_remote_ellipse_mirror_and_scale_keep_the_receivers_cursor_and_selection() {
     assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
     assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
     assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
+fn a_remote_offset_trim_and_array_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    server.execute("line", &json!({"points": [[5.0, -10.0], [5.0, 10.0]]})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    let edge = receiver.doc().unwrap().model.iter().nth(2).expect("the edge arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant offsets the line, trims it at the edge and arrays the circle.
+    let before = server.doc().unwrap().clone();
+    server.execute("offset", &json!({"handle": line.hex(), "distance": 2.0, "side": [0.0, 1.0], "layer": "current"})).unwrap();
+    server.execute("trim", &json!({"handle": line.hex(), "edges": [edge.hex()], "pick": [8.0, 0.0]})).unwrap();
+    server.execute(
+        "array",
+        &json!({"handles": [circle.hex()], "type": "rectangular", "rows": 2, "cols": 3, "rowSpacing": 10.0, "colSpacing": 20.0, "associative": false}),
+    )
+    .unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })),
+        "the offset and the array arrive as creations"
+    );
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityReplace { handle, .. } if *handle == line)),
+        "the trimmed line arrives as a replacement"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
+fn offset_and_array_put_their_objects_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Alice draws on WALLS; Bob offsets the line and arrays it, so his copies are on DETAILS.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    let line = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("offset {} distance 2 side 0,1", line.hex()));
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("array {} rows 2 cols 2 step 20,20", line.hex()));
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 1, "the source line stays on its author's layer: {layers:?}");
+    assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 4, "the offset and three array copies are on Bob's: {layers:?}");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
 }
 
 /// Add `names` to the authoritative drawing and copy them to every replica the way a table
