@@ -112,12 +112,25 @@ changes = [
   {t:"entity.order", handle, order},
   {t:"table.create|table.update|table.rename|table.delete", recordId, kind, …},
   {t:"layout.create|layout.rename|layout.delete", recordId, …},
+  {t:"block.create", name, properties, entities},
+  {t:"block.delete", name},
   {t:"drawing.header", key, value}
 ]
 ```
 
-Производное не едет: блоки `*D`/`*T` генерируются при записи
-(`io/src/dxf_write/blocks.rs:19`), решатель и ассоциативность — на сервере.
+**Блоки едут целиком (ADR-0020).** Объекты блока живут в `Block::entities`, а не
+в пространстве, поэтому дельта сущностей их не несёт: реплика, получившая
+только ссылку (`entity.create` с `Insert`), нарисовала бы пустоту. Поэтому
+`diff_all` сравнивает таблицу блоков (`Arc::ptr_eq`, затем содержимое) и шлёт
+`block.create` — свойства определения плюс его объекты в порядке отрисовки —
+до изменений сущностей, а `block.delete` — когда определение исчезло. Так undo
+создания блока снимает определение и на репликах, а redo возвращает его.
+Внутренние handle блока выдаёт сервер; получатель поднимает `handseed`
+(ADR-0002).
+
+Производное не едет: анонимные блоки `*D`/`*T`, которые CADCraft генерирует
+при записи DXF, в дельту не входят; блоки, созданные командой в сессии, —
+входят (см. выше).
 
 **Идентификаторы (ADR-0002).**
 - Сущность — `Handle(u64)`, выдаёт сервер из `handseed`; он стабилен и переживает
@@ -332,7 +345,8 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   для каскадов), viewer получает отказ; командная строка в совместной сессии
   принимает только однострочные команды с явными адресами
   (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
-  `ellipse`, `rect`, `text`, `dimlinear`, `spline`, `move`, `copy`, `rotate`,
+  `ellipse`, `rect`, `text`, `dimlinear`, `mleader`, `spline`, `block`,
+  `insert`, `move`, `copy`, `rotate`,
   `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `erase`. Синтаксис
   адресных форм:
   `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
@@ -344,8 +358,19 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   `d` влево от `H1 → H2`) или `dimlinear H1,H2 point x,y` (размерная линия в
   точке `x,y`); одинаковые handle, объект без характерной точки и нулевая длина
   отклоняются до операции,
+  `mleader H[,H…] x,y "text"` (выноска: стрелка в ближайшей характерной точке
+  каждого названного объекта, посадка в точке `x,y`, текст в кавычках; пустой
+  текст, объект без характерной точки и посадка на последнюю точку стрелки
+  отклоняются до операции),
   `spline x,y x,y x,y [x,y…] [closed]` (3–64 точки подгонки, необязательное
   замыкание; точка вне лимита координат чертежа и меньше трёх точек
+  отклоняются до операции),
+  `block NAME base x,y H[,H…]` (новый блок из названных объектов с базовой
+  точкой; объекты становятся одной ссылкой на него — умолчание BLOCK
+  «Convert»; пустое, анонимное (`*…`) или уже занятое имя отклоняются до
+  операции, определение уезжает репликам как `block.create`, ADR-0020),
+  `insert NAME at x,y [scale s] [angle a]` (вставка блока по имени; масштаб
+  положительный, угол в градусах; имя, которого нет в чертеже, и масштаб ≤ 0
   отклоняются до операции),
   `move H[,H…] delta dx,dy` (или `from x,y to x,y`), `copy H[,H…] dx,dy`,
   `rotate H[,H…] base x,y angle`, `mirror H[,H…] x1,y1 x2,y2`,
@@ -444,14 +469,14 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 
 | Слой | Что | Проверка |
 |---|---|---|
-| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями | 22 теста |
-| engine | `apply_remote`, `execute_intent`, `set_record_undo` | 5 тестов |
-| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown | 36 + 3 e2e |
+| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018) | 62 теста + 1 doctest |
+| engine | `apply_remote`, `execute_intent`, `set_record_undo` | 452 lib-теста |
+| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown | 40 + e2e |
 | `cadcraft-collab-client` | реплика, порядок версий, resync, reconnect, события | 5 тестов |
-| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии | 223 lib-теста, `cargo check` |
+| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 21 адресуемая команда | 260 lib (1 ignored), `collab_cmdline` 44 |
 
-Осталось до приёмки: интерактивные команды в совместном режиме, замеры 200k
-сущностей, открытие commit-файла в LibreCAD/QCAD, web-режим через
+Осталось до приёмки: остальные адресные команды (`image`, `wipeout` и прочие
+по ADR-0018 п.5), открытие commit-файла в LibreCAD/QCAD, web-режим через
 `craft-web-host`.
 
 ## 14. План поставки
