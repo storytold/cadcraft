@@ -599,6 +599,9 @@ fn push_string(s: &str, strings: Strings, out: &mut Vec<u8>) {
                 out.extend_from_slice(b"\\U+005C");
             }
             (c, Strings::Utf8) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+            (c, Strings::Escaped(Some(d))) if d.shadows_ascii(c) => {
+                let _ = write!(out, "\\U+{:04X}", u32::from(c));
+            }
             (c, _) if c.is_ascii() => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
             (c, Strings::Escaped(Some(d))) if code_page_bytes(c, d, escape_at(i + 1), out) => {}
             (c, Strings::Escaped(_)) => {

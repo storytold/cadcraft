@@ -25,6 +25,19 @@ pub(crate) enum Decoder {
     Encoding(&'static Encoding),
     /// Single-byte DOS code page: ASCII, then these 128 characters for bytes 0x80–0xFF.
     Table(&'static [char; 128]),
+    /// DOS 864: like [`Decoder::Table`], but byte 0x25 is U+066A ARABIC PERCENT SIGN, not `%`.
+    Dos864,
+}
+
+/// What byte 0x25 of DOS 864 stands for.
+const DOS864_PERCENT: char = '\u{066A}';
+
+impl Decoder {
+    /// True when the ASCII character `c` is not what its byte means in this code page, so a
+    /// writer has to escape it.
+    pub(crate) fn shadows_ascii(self, c: char) -> bool {
+        matches!(self, Decoder::Dos864) && c == '%'
+    }
 }
 
 /// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when CADCraft doesn't
@@ -69,7 +82,7 @@ pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
         "DOS860" => return Some(Decoder::Table(&dos::DOS860)),
         "DOS861" => return Some(Decoder::Table(&dos::DOS861)),
         "DOS863" => return Some(Decoder::Table(&dos::DOS863)),
-        "DOS864" => return Some(Decoder::Table(&dos::DOS864)),
+        "DOS864" => return Some(Decoder::Dos864),
         "DOS865" => return Some(Decoder::Table(&dos::DOS865)),
         "DOS869" => return Some(Decoder::Table(&dos::DOS869)),
         _ => return None,
@@ -116,6 +129,14 @@ pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
             let Some(i) = t.iter().position(|&x| x == c).and_then(|i| u8::try_from(i).ok()) else { return false };
             out.push(0x80 | i);
         }
+        Decoder::Dos864 => {
+            if c == DOS864_PERCENT {
+                out.push(b'%');
+            } else {
+                let Some(i) = dos::DOS864.iter().position(|&x| x == c).and_then(|i| u8::try_from(i).ok()) else { return false };
+                out.push(0x80 | i);
+            }
+        }
     }
     true
 }
@@ -128,6 +149,21 @@ pub(crate) fn decode(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
             Err(_) => encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes).0,
         },
         Decoder::Encoding(e) => e.decode_without_bom_handling(bytes).0,
+        Decoder::Dos864 => {
+            if bytes.is_ascii() && !bytes.contains(&b'%') {
+                return Cow::Borrowed(std::str::from_utf8(bytes).unwrap_or_default());
+            }
+            Cow::Owned(
+                bytes
+                    .iter()
+                    .map(|&b| match b {
+                        b'%' => DOS864_PERCENT,
+                        _ if b.is_ascii() => char::from(b),
+                        _ => dos::DOS864.get(usize::from(b & 0x7F)).copied().unwrap_or('\u{FFFD}'),
+                    })
+                    .collect(),
+            )
+        }
         Decoder::Table(t) => match std::str::from_utf8(bytes) {
             Ok(s) if s.is_ascii() => Cow::Borrowed(s),
             _ => Cow::Owned(
@@ -304,6 +340,25 @@ mod tests {
         assert_eq!(d(b"x", "ANSI_1361"), None);
         assert_eq!(d(b"x", "EBCDIC"), None);
         assert_eq!(d(b"x", ""), None);
+    }
+
+    #[test]
+    fn dos864_percent_is_the_arabic_percent_sign() {
+        // Byte 0x25 is U+066A in CP864 (Python's cp864 agrees); the rest of the low half is ASCII.
+        assert_eq!(decode_code_page(b"50%", "DOS864").as_deref(), Some("50\u{066A}"));
+        assert_eq!(decode_code_page(b"a%\x80%", "dos864").as_deref(), Some("a\u{066A}\u{00B0}\u{066A}"));
+        assert_eq!(decode_code_page(b"50&", "DOS864").as_deref(), Some("50&"));
+        // The other DOS pages keep `%`.
+        assert_eq!(decode_code_page(b"50%", "DOS437").as_deref(), Some("50%"));
+        // Every other low byte of every table is ASCII.
+        for cp in ["DOS437", "DOS850", "DOS852", "DOS720", "DOS737", "DOS775", "DOS855", "DOS857", "DOS860", "DOS861", "DOS863", "DOS864", "DOS865", "DOS869"] {
+            for b in 0u8..0x80 {
+                if b == 0x25 && cp == "DOS864" {
+                    continue;
+                }
+                assert_eq!(decode_code_page(&[b], cp).as_deref(), Some(char::from(b).to_string().as_str()), "{cp} {b:#x}");
+            }
+        }
     }
 
     #[test]
