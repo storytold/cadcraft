@@ -11,7 +11,7 @@
 //! the same DWG version (an older DWG can't hold everything: a 2004 field has no value flags or
 //! format), read back; CADCraft's DWG must hold the same objects. When the DWG is the DXF's own
 //! version, that reference is also checked against the DXF as read.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use std::fmt::Write as _;
 use std::io::Cursor;
