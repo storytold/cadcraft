@@ -347,8 +347,8 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
   `ellipse`, `rect`, `text`, `dimlinear`, `mleader`, `spline`, `block`,
   `insert`, `move`, `copy`, `rotate`,
-  `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `erase`. Синтаксис
-  адресных форм:
+  `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `wipeout`, `erase`.
+  Синтаксис адресных форм:
   `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
   `ellipse cx,cy rx[,ry] [angle]`, `rect x,y x,y`,
   `text x,y height angle "content"` (содержимое в кавычках, `\"`/`\\` —
@@ -384,7 +384,13 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   названным замкнутым объектам — кругу, замкнутой полилинии, полному эллипсу
   или замкнутому сплайну; `associative: false`, `separate: false`,
   `style: normal`; незамкнутый контур, неизвестный шаблон и нулевой масштаб
-  отклоняются до операции), `erase H[,H…]`. Строка, которую парсер не
+  отклоняются до операции),
+  `wipeout x,y x,y x,y [x,y…]` или `wipeout H` (маскирующий полигон по точкам
+  или по замкнутой полилинии, названной handle; маска едет точками границы,
+  поэтому обе реплики рисуют одно и то же, а правка полилинии позже маску не
+  двигает; незамкнутая полилиния, полилиния с дуговым сегментом, меньше трёх
+  точек и контур без площади отклоняются до операции; `frames` — переменная
+  чертежа, общей её не делает), `erase H[,H…]`. Строка, которую парсер не
   разобрал целиком, отклоняется до создания операции, поэтому документ не
   меняется.
 - **Presence на экране:** курсоры и имена других участников рисуются в текущем
@@ -469,15 +475,16 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 
 | Слой | Что | Проверка |
 |---|---|---|
-| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018) | 62 теста + 1 doctest |
+| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018) | 64 теста + 1 doctest |
 | engine | `apply_remote`, `execute_intent`, `set_record_undo` | 452 lib-теста |
 | `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown | 40 + e2e |
 | `cadcraft-collab-client` | реплика, порядок версий, resync, reconnect, события | 5 тестов |
-| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 21 адресуемая команда | 260 lib (1 ignored), `collab_cmdline` 44 |
+| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 22 адресуемые команды | 260 lib (1 ignored), `collab_cmdline` 50 |
 
-Осталось до приёмки: остальные адресные команды (`image`, `wipeout` и прочие
-по ADR-0018 п.5), открытие commit-файла в LibreCAD/QCAD, web-режим через
-`craft-web-host`.
+Осталось до приёмки: `imageattach` в совместной сессии (нужен ADR о доверии к
+путям — сервер не читает файловую систему по клиентскому пути; черновик в
+`cadcraft/docs/collab/adr-drafts.md`), открытие commit-файла в LibreCAD/QCAD,
+web-режим через `craft-web-host`.
 
 ## 14. План поставки
 
