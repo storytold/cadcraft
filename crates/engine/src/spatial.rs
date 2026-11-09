@@ -54,7 +54,7 @@ impl ChunkIx {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
                 let b = entity_bounds_cached(d, e, 0, &mut cache);
-                if b.is_empty() { crate::select::blank_mtext_box(d, e).unwrap_or(b) } else { b }
+                crate::select::pick_bounds(d, e, b)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
