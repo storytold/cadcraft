@@ -69,6 +69,42 @@ pub fn decode_code_page(bytes: &[u8], code_page: &str) -> Option<String> {
     decoder(code_page).map(|d| decode(bytes, d).into_owned())
 }
 
+/// The code page a pre-2007 file's text is written in, or `None` for pure ASCII with escapes:
+/// when CADCraft doesn't know `code_page`, and for `ASCII` (the reader takes such files as
+/// Windows-1252, but a writer must keep them ASCII) and `UTF8`/`UNICODE`, which no pre-2007
+/// reader expects.
+pub(crate) fn encoder(code_page: &str) -> Option<Decoder> {
+    if code_page.trim().eq_ignore_ascii_case("ASCII") {
+        return None;
+    }
+    decoder(code_page).filter(|d| !matches!(d, Decoder::Utf8))
+}
+
+/// Append the bytes of the non-ASCII character `c` in the code page `d`, and return true, when
+/// the code page has it; otherwise append nothing and return false (the caller escapes it).
+pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
+    let mut buf = [0; 4];
+    match d {
+        // Not a pre-2007 code page ([`encoder`] never gives it): escaped.
+        Decoder::Utf8 => return false,
+        Decoder::Encoding(e) => {
+            let (bytes, _, unmappable) = e.encode(c.encode_utf8(&mut buf));
+            // A code page byte that is ASCII would read back as another character, and a NUL,
+            // CR or LF would break the group, so only all-high-bit sequences or proper double-byte
+            // characters are kept (their trail byte may be ASCII, as in Shift-JIS).
+            if unmappable || bytes.is_empty() || !bytes.first().is_some_and(|b| *b >= 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+                return false;
+            }
+            out.extend_from_slice(&bytes);
+        }
+        Decoder::Table(t) => {
+            let Some(i) = t.iter().position(|&x| x == c).and_then(|i| u8::try_from(i).ok()) else { return false };
+            out.push(0x80 | i);
+        }
+    }
+    true
+}
+
 /// Decode bytes with a decoder. UTF-8 that isn't valid falls back to Windows-1252.
 pub(crate) fn decode(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
     match d {
@@ -93,7 +129,7 @@ pub(crate) fn decode(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
 /// line (the group code `3` between them), looked for in the HEADER section only (the scan stops
 /// at the first `ENDSEC`). Works on the raw bytes, before they are decoded.
 fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
-    let mut lines = bytes.split(|&b| b == b'\n').map(<[u8]>::trim_ascii);
+    let mut lines = bytes.split(|&b| b == b'\n' || b == b'\r').map(<[u8]>::trim_ascii).filter(|l| !l.is_empty());
     while let Some(line) = lines.next() {
         if line == b"ENDSEC" {
             return None;
@@ -108,10 +144,35 @@ fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// Decode a whole ASCII DXF file. Valid UTF-8 is read as UTF-8: R2007+ files, pure-ASCII files,
-/// and older files from writers that ignored the code page. Anything else is decoded from the
-/// file's `$DWGCODEPAGE`, or from Windows-1252 (the usual `ANSI_1252`) when the header has none
-/// or names a code page CADCraft doesn't know, which is logged as a warning.
+impl Decoder {
+    /// True for the multi-byte East Asian code pages (Shift-JIS, GBK, EUC-KR/Wansung, Big5).
+    /// Their short double-byte strings are often also valid UTF-8, so UTF-8 is only trusted for
+    /// a whole file there (see [`decode_ascii_file`] and [`BinaryText`]).
+    fn is_east_asian(self) -> bool {
+        use encoding_rs as e;
+        matches!(self, Decoder::Encoding(x) if x == e::SHIFT_JIS || x == e::GBK || x == e::EUC_KR || x == e::BIG5)
+    }
+}
+
+/// Decode one line of an ASCII DXF file: valid UTF-8 is read as UTF-8 (R2007+ files, pure-ASCII
+/// text, and older files from writers that ignored the code page); anything else comes from the
+/// code page `d`, so one stray byte spoils one line, not the whole file. Binary strings don't use
+/// this rule: a pre-R2007 binary file has no way to escape to UTF-8, so its strings are read
+/// from the code page (see [`BinaryText::string`]).
+pub(crate) fn decode_text(bytes: &[u8], d: Decoder) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(_) => decode(bytes, d),
+    }
+}
+
+/// Decode a whole ASCII DXF file. A file that is valid UTF-8 throughout is UTF-8. Otherwise, for
+/// a single-byte code page, each line is decoded on its own (see [`decode_text`]): lines that
+/// aren't valid UTF-8 come from the file's `$DWGCODEPAGE`, or from Windows-1252 (the usual
+/// `ANSI_1252`) when the header has none or names a code page CADCraft doesn't know, which is
+/// logged as a warning. For a multi-byte East Asian code page the whole file is decoded from
+/// that code page, because a short double-byte string (two half-width katakana, many kanji
+/// pairs) can be valid UTF-8 by accident and must not be misread line by line.
 pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
     if let Ok(s) = std::str::from_utf8(bytes) {
         return Cow::Borrowed(s);
@@ -126,10 +187,19 @@ pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
         }
         None => Decoder::Utf8,
     };
-    decode(bytes, d)
+    if d.is_east_asian() {
+        return decode(bytes, d);
+    }
+    // Split after each line terminator (CR, LF or CRLF are all ASCII, so they never occur inside
+    // a multi-byte character of the supported code pages) and decode each line on its own.
+    let mut out = String::with_capacity(bytes.len());
+    for line in bytes.split_inclusive(|&b| b == b'\n' || b == b'\r') {
+        out.push_str(&decode_text(line, d));
+    }
+    Cow::Owned(out)
 }
 
-/// The text state of a binary DXF file, learnt from its header as the tags go by: `$ACADVER`
+/// The text state of a binary DXF file, learnt from the header as the tags go by: `$ACADVER`
 /// (R2007+ strings are UTF-8) and `$DWGCODEPAGE` (the code page of older files). Both come
 /// first in the HEADER section and are ASCII, so every later string is decoded right.
 #[derive(Default)]
@@ -138,6 +208,12 @@ pub(crate) struct BinaryText {
     var: Option<HeaderVar>,
     utf8: bool,
     code_page: Option<Decoder>,
+    /// Decode every string of an East Asian code page file from the code page, never as UTF-8
+    /// (the second pass of [`BinaryText::needs_code_page_pass`]).
+    code_page_only: bool,
+    /// Non-ASCII strings seen under an East Asian code page: valid UTF-8 / not valid UTF-8.
+    ea_utf8: bool,
+    ea_other: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,12 +223,40 @@ enum HeaderVar {
 }
 
 impl BinaryText {
+    /// The state for the second pass over a file whose strings are a mix of valid UTF-8 and
+    /// not: every string of an East Asian code page is decoded from that code page.
+    pub(crate) fn code_page_pass() -> Self {
+        Self { code_page_only: true, ..Self::default() }
+    }
+
+    /// True when the file declared a multi-byte East Asian code page and its non-ASCII strings are
+    /// not all valid UTF-8 although some are: those can be short double-byte strings that look
+    /// like UTF-8 by accident, so the file must be parsed again with [`Self::code_page_pass`]. (A
+    /// file whose strings are all valid UTF-8 is UTF-8; one with none is plainly the code page.)
+    pub(crate) fn needs_code_page_pass(&self) -> bool {
+        !self.code_page_only && self.ea_utf8 && self.ea_other
+    }
+
     /// Decode one string value of group `code` and update the state from it. Strings of R2007+
-    /// files, and of files without a code page, are UTF-8 when valid (else Windows-1252); older
-    /// files' strings are in their code page.
+    /// files, and of files without a code page, are UTF-8 when valid (else Windows-1252); a
+    /// pre-R2007 file's strings are in its code page, which a binary DXF cannot escape to, so
+    /// they are read from the code page even when their bytes are valid UTF-8 by accident —
+    /// except under an East Asian code page, where a file of all-valid-UTF-8 strings is taken
+    /// as UTF-8 (see [`Self::needs_code_page_pass`]).
     pub(crate) fn string(&mut self, code: i32, raw: &[u8]) -> String {
         let d = if self.utf8 { Decoder::Utf8 } else { self.code_page.unwrap_or(Decoder::Utf8) };
-        let s = decode(raw, d).into_owned();
+        let s = if d.is_east_asian() && !self.code_page_only {
+            if !raw.is_ascii() {
+                if std::str::from_utf8(raw).is_ok() {
+                    self.ea_utf8 = true;
+                } else {
+                    self.ea_other = true;
+                }
+            }
+            decode_text(raw, d).into_owned()
+        } else {
+            decode(raw, d).into_owned()
+        };
         match (code, self.var.take()) {
             (9, _) => {
                 self.var = match s.trim() {

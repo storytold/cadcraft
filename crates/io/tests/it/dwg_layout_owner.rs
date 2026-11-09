@@ -2,6 +2,8 @@
 //! by their own block (entity mode 0 and its handle). Written as "paper space" (mode 1), AutoCAD
 //! put them on the first layout and left theirs empty.
 
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+
 use std::io::Cursor;
 
 use cadcraft_doc::{Circle, Common, Drawing, EntityKind, Layout, Line, Space};
