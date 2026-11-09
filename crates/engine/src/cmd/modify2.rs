@@ -124,10 +124,13 @@ pub(crate) fn as_lwpoly(k: &EntityKind) -> Option<LwPolyline> {
 }
 
 /// The polyline PEDIT turns a line or an arc into, and the normal it faces, as AutoCAD 2024 makes
-/// them (measured): at the line's height or the arc's centre height, the way the arc faces, and
-/// up for a line whatever its normal; the thickness stays the object's. A sloped line still comes
-/// out at elevation 0: AutoCAD makes a polyline in the line's vertical plane, which a CADCraft
-/// polyline can't be. A polyline is returned as it is.
+/// them (measured): facing the way the arc faces, and up for a line whatever its normal; at the
+/// line's height, or at the arc's centre height measured along its normal (a mirrored arc whose
+/// centre is at world Z -5 gives elevation 5, one at Z 5 elevation -5); the thickness stays the
+/// object's. A sloped line still comes out at elevation 0: AutoCAD makes a polyline in the line's
+/// vertical plane, which a CADCraft polyline can't be. An arc in a tilted plane (normal neither up
+/// nor down Z), which CADCraft keeps only approximately, keeps its normal and goes by the sign of
+/// its Z as above; AutoCAD's result for one isn't measured. A polyline is returned as it is.
 pub(crate) fn polyline_of(e: &Entity) -> Option<(LwPolyline, Vec3)> {
     let mut pl = as_lwpoly(&e.kind)?;
     let normal = e.common.extrusion;
