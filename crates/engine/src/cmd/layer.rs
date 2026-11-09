@@ -419,7 +419,10 @@ fn run_state_restore(s: &mut Session, p: &Value) -> Result<Value> {
 /// layer is never frozen; other properties (descriptions, names) stay as they are.
 pub(crate) fn restore_state(d: &mut cadcraft_doc::Drawing, st: &cadcraft_doc::LayerState) {
     use cadcraft_doc::LayerState as S;
-    if let Some(l) = d.layer(&st.current).filter(|l| !l.frozen || st.mask & S::FROZEN != 0) {
+    // A frozen layer only thaws with Frozen in the mask and an entry of its own: without one
+    // AutoCAD 2024 keeps the current layer (measured).
+    let thaws = |l: &Layer| st.mask & S::FROZEN != 0 && st.layers.iter().any(|saved| saved.name.eq_ignore_ascii_case(&l.name));
+    if let Some(l) = d.layer(&st.current).filter(|l| !l.frozen || thaws(l)) {
         let name = l.name.clone();
         d.header.set_str("CLAYER", &name);
     }
@@ -634,6 +637,30 @@ mod tests {
         (thaw.name, thaw.current) = ("thaw".into(), "B".into());
         s.doc_mut().unwrap().layer_states.push(thaw);
         s.execute("layerstate.restore", &json!({ "name": "thaw" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "B");
+        assert!(!d.layer("B").unwrap().frozen);
+        // Frozen in the mask, but no entry for B (a state written elsewhere): nothing would thaw
+        // B, so A stays current and B frozen (AutoCAD 2024, measured).
+        let mut no_entry = s.doc().unwrap().layer_states[0].clone();
+        (no_entry.name, no_entry.current) = ("no entry".into(), "B".into());
+        no_entry.layers.retain(|l| l.name != "B");
+        s.doc_mut().unwrap().layer_states.push(no_entry);
+        s.execute("layer.current", &json!({ "name": "A" })).unwrap();
+        s.execute("layer.set", &json!({ "name": "B", "frozen": true })).unwrap();
+        s.execute("layerstate.restore", &json!({ "name": "no entry" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "A");
+        assert!(d.layer("B").unwrap().frozen);
+        // An entry spelled in another case is B's (layer names ignore case, as the restore of the
+        // properties does): B is thawed and made current.
+        let mut other_case = s.doc().unwrap().layer_states[0].clone();
+        (other_case.name, other_case.current) = ("other case".into(), "B".into());
+        for l in other_case.layers.iter_mut().filter(|l| l.name == "B") {
+            l.name = "b".into();
+        }
+        s.doc_mut().unwrap().layer_states.push(other_case);
+        s.execute("layerstate.restore", &json!({ "name": "other case" })).unwrap();
         let d = s.doc().unwrap();
         assert_eq!(d.header.str("CLAYER", ""), "B");
         assert!(!d.layer("B").unwrap().frozen);
