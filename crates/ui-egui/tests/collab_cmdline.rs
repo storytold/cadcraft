@@ -86,7 +86,7 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     assert!(
         error.to_string().contains(
-            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
+            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
         ),
         "{error}"
     );
@@ -1459,4 +1459,169 @@ fn a_layer_only_the_author_has_is_refused_before_the_document_changes() {
     assert!(error.to_string().contains("there is no layer `LOCAL`"), "{error}");
     assert_eq!(server.doc().unwrap(), &before, "nothing was created, not even the first segment");
     assert_eq!(server.doc().unwrap().entity_count(), 0);
+}
+
+/// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+/// The app installs the raster reader from the lower layer; the test installs the same decoder so
+/// IMAGEATTACH really decodes the bytes the operation carries.
+fn install_image_decoder() {
+    fn decode(bytes: &[u8]) -> Result<cadcraft_doc::Raster, String> {
+        let image = image::load_from_memory(bytes).map_err(|error| error.to_string())?.into_rgba8();
+        cadcraft_doc::Raster::new(image.width(), image.height(), image.into_raw()).ok_or_else(|| "the image is empty".to_string())
+    }
+    cadcraft_engine::cmd::file::set_image_decoder(decode);
+}
+
+#[test]
+fn two_replicas_that_attach_an_image_converge() {
+    install_image_decoder();
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    // The bytes travel in the operation; the file name is only the label saved in the drawing
+    // (ADR-0021). The placement, the width, the rotation and the name are explicit.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, &format!("imageattach site.png data {PNG_1X1} at 10,5 width 100 rotation 15 name \"Site\""));
+    // A second participant attaches another image, sized with `scale`.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("imageattach logo.jpg data {PNG_1X1} scale 2"));
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the images");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2);
+    let images: Vec<(String, String)> = alice
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|entity| match &entity.kind {
+            EntityKind::Image(image) => Some((image.path.clone(), image.name.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        images,
+        vec![("site.png".to_string(), "Site".to_string()), ("logo.jpg".to_string(), "logo".to_string())],
+        "both replicas save the same label and definition name"
+    );
+    assert!(alice.doc().unwrap().rasters.is_empty(), "the pixels stay with the author");
+    assert!(bob.doc().unwrap().rasters.is_empty(), "the change set carries the placement, not the raster");
+    assert!(!server.doc().unwrap().rasters.is_empty(), "the server decoded the bytes the operation carried");
+}
+
+#[test]
+fn a_refused_imageattach_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    // Two real steps after the first, so a refused line that pushed an undo step would show.
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    session.execute("rectang", &json!({"p1": [30.0, 0.0], "p2": [40.0, 5.0]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let over_limit = "A".repeat((1 << 20) - 4096 + 1);
+
+    let refused = [
+        // Nothing to attach, no bytes, the file-reading form instead of `data`.
+        "imageattach".to_string(),
+        "imageattach map.png".to_string(),
+        format!("imageattach map.png {PNG_1X1}"),
+        format!("imageattach map.png path {PNG_1X1}"),
+        // Empty and broken base64.
+        "imageattach map.png data \"\"".to_string(),
+        "imageattach map.png data not-base64!".to_string(),
+        // A label that is not a raster type.
+        format!("imageattach notes.txt data {PNG_1X1}"),
+        // Data over the operation's limit.
+        format!("imageattach map.png data {over_limit}"),
+        // A coordinate that is not a number.
+        format!("imageattach map.png data {PNG_1X1} at ten,5"),
+        // An empty name.
+        format!("imageattach map.png data {PNG_1X1} name \"\""),
+        // A rotation with no size to rotate.
+        format!("imageattach map.png data {PNG_1X1} rotation 15"),
+        // A size given twice and a zero size.
+        format!("imageattach map.png data {PNG_1X1} width 10 scale 2"),
+        format!("imageattach map.png data {PNG_1X1} width 0"),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{}", &text[..text.len().min(48)]);
+        assert_eq!(session.doc().unwrap(), &*before, "`{}` never becomes an operation", &text[..text.len().min(48)]);
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{}` does not redraw", &text[..text.len().min(48)]);
+    }
+    // A refused line leaves no undo step either: the last real step is still the rectangle.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Rectangle"), "no refused line pushed an undo step");
+}
+
+#[test]
+fn undo_and_redo_of_an_imageattach_return_the_state_before_and_after() {
+    install_image_decoder();
+    let mut session = Session::new();
+    let before = session.doc().unwrap().clone();
+
+    run(&mut session, &format!("imageattach map.png data {PNG_1X1} at 1,2 width 10"));
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 1);
+    assert!(matches!(session.doc().unwrap().model.iter().next().expect("the image").kind, EntityKind::Image(_)));
+    assert_ne!(&after, &before);
+
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Raster Image Reference..."));
+    assert_eq!(session.doc().unwrap(), &before, "undo removes the image and its pixels in one step");
+    assert!(session.doc().unwrap().rasters.is_empty());
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Raster Image Reference..."));
+    assert_eq!(session.doc().unwrap(), &after, "redo attaches it again");
+}
+
+#[test]
+fn a_remote_imageattach_keeps_the_receivers_cursor_and_selection() {
+    install_image_decoder();
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let created = cadcraft_collab::diff_all(&empty, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant attaches an image; it is one new object with no address to follow.
+    let before = server.doc().unwrap().clone();
+    server.execute("imageattach", &json!({"path": "map.png", "data": PNG_1X1, "at": [0.0, 0.0], "width": 10.0})).unwrap();
+    let remote = cadcraft_collab::diff_all(&before, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    assert!(remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })), "the image arrives as a creation");
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model));
+    assert!(receiver.doc().unwrap().rasters.is_empty(), "the receiver does not get the author's pixels");
+}
+
+#[test]
+fn imageattach_puts_its_object_on_the_authors_layer() {
+    install_image_decoder();
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Bob attaches the image; it belongs to the layer he is drawing on, not the server's.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("imageattach plan.png data {PNG_1X1} at 0,0 width 50"));
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the image");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers, vec!["DETAILS"], "the image is on its author's layer");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's command");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
 }

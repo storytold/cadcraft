@@ -9,7 +9,7 @@ use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
 
-use crate::policy::{changes_too_many, deny_reason, size_reason};
+use crate::policy::{changes_too_many, deny_reason, params_reason, size_reason};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -110,6 +110,10 @@ pub struct Room {
 impl Room {
     /// A room whose authoritative drawing is `drawing`.
     pub fn new(drawing: Drawing) -> Result<Self, RoomError> {
+        // An IMAGEATTACH operation carries the raster bytes, and the engine needs a reader to
+        // decode them; the room is the one that executes it, so it installs the same reader the
+        // apps do (ADR 0021). The room never opens a file by a client's path.
+        crate::install_raster_reader();
         let mut session = Session::empty();
         session.docs.push(cadcraft_engine::DocState::new(drawing, "Drawing1", None));
         session.active = 0;
@@ -160,6 +164,9 @@ impl Room {
         }
         if let Some(reason) = deny_reason(&op.command) {
             return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "forbidden".into(), message: reason.into(), retryable: false }));
+        }
+        if let Some(reason) = params_reason(op) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "invalid".into(), message: reason.into(), retryable: false }));
         }
         if let Some(reason) = size_reason(op) {
             return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "too-large".into(), message: reason.into(), retryable: false }));
@@ -606,6 +613,46 @@ mod tests {
         }
         assert_eq!(room.version(), 0);
         assert_eq!(room.drawing().unwrap(), &before);
+    }
+
+    /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+    #[test]
+    fn an_imageattach_without_data_is_refused_before_the_drawing_changes() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        let mut op = line_op("image", 0.0);
+        op.command = "imageattach".into();
+        op.params = json!({ "path": "map.png", "at": [0.0, 0.0] });
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("never reads a file by the client's path"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("a shared session never reads a file by the client's path"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before, "nothing was read and nothing changed");
+        assert!(room.drawing().unwrap().rasters.is_empty());
+    }
+
+    #[test]
+    fn an_imageattach_with_data_creates_the_image_and_a_replica_follows() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+        let mut op = line_op("image", 0.0);
+        op.command = "imageattach".into();
+        op.params = json!({ "path": "map.png", "data": PNG_1X1, "at": [10.0, 5.0], "width": 100.0 });
+
+        let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an image with its bytes is a drawing operation") };
+        assert!(applied.changes.iter().any(|change| matches!(change, Change::EntityCreate { .. })), "the image arrives as a creation");
+        apply(&mut replica, &applied.changes).unwrap();
+
+        assert_eq!(room.version(), 1);
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model), "the replicas agree on the image's placement");
+        assert!(replica.rasters.is_empty(), "the pixels are the author's; the change set carries the placement only");
     }
 
     #[test]

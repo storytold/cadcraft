@@ -20,6 +20,15 @@ mod room;
 
 pub use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role};
 pub use net::{Metrics, Server};
-pub use policy::{MAX_CHANGES, MAX_OP_BYTES, MAX_PARTICIPANTS, changes_too_many, deny_reason, size_reason};
+pub use policy::{MAX_CHANGES, MAX_OP_BYTES, MAX_PARTICIPANTS, changes_too_many, deny_reason, params_reason, size_reason};
 pub use presence::{PRESENCE_TTL, PresenceBoard};
 pub use room::{CommitFormat, Committed, Room, RoomError, Snapshot};
+
+/// Install the raster reader the authoritative session uses for `imageattach`.
+///
+/// The operation carries the image bytes in `data` (ADR 0021), and the room decodes them with the
+/// same reader the apps install. Without a reader the engine refuses the command, so the room
+/// installs one when it is created; calling this again is harmless.
+pub fn install_raster_reader() {
+    cadcraft_engine::cmd::file::set_image_decoder(|bytes| cadcraft_io::raster::decode(bytes).map_err(|error| error.to_string()));
+}

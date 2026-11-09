@@ -38,8 +38,12 @@
 //! hatch 1A2,1A3 pattern ANSI31 scale 2 angle 45
 //! wipeout 0,0 10,0 10,10
 //! wipeout 1A2
+//! imageattach map.png data iVBORw0KGgo… at 10,5 width 100 rotation 15 name "Site map"
 //! erase 1A2,1A3
 //! ```
+//!
+//! `imageattach` carries the raster bytes in `data`: a shared session never reads a file by the
+//! client's path, so `path` (the first word) is only the label saved in the drawing (ADR-0021).
 
 use cadcraft_doc::geom::{Arc, Line, Segment, Vec2};
 use cadcraft_doc::{Drawing, Entity, Handle, Prim, Space, entity_bounds};
@@ -48,7 +52,7 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 22] = [
+pub const COMMANDS: [&str; 23] = [
     "line",
     "circle",
     "polyline",
@@ -70,6 +74,7 @@ pub const COMMANDS: [&str; 22] = [
     "array",
     "hatch",
     "wipeout",
+    "imageattach",
     "erase",
 ];
 
@@ -87,12 +92,12 @@ pub struct Command {
 pub enum CmdLineError {
     /// Nothing was typed.
     #[error(
-        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
+        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
     )]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -139,6 +144,7 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "array" | "ar" | "arr" => array(drawing, space, words.collect()),
         "hatch" | "h" | "bh" => hatch_command(drawing, space, words.collect()),
         "wipeout" | "wi" => wipeout(drawing, space, words.collect()),
+        "imageattach" | "iat" => imageattach(words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -187,6 +193,7 @@ fn creates_objects(id: &str) -> bool {
             | "array"
             | "hatch"
             | "wipeout"
+            | "imageattach"
     )
 }
 
@@ -1012,6 +1019,144 @@ fn wipeout_boundary(drawing: &Drawing, space: &Space, address: &str) -> Result<V
     Ok(polyline.vertices.iter().map(|vertex| vertex.p).collect())
 }
 
+/// `imageattach PATH data BASE64 [at x,y] [width w | scale s] [rotation deg] [name "Title"]` — put
+/// a raster image into the drawing from the bytes the line carries.
+///
+/// A shared session never opens a file by a path the client chose: the server would read it from
+/// its own disk, and the other participants would see another image or a crossed-out frame
+/// (ADR-0021). The first word is therefore only the label saved in the drawing and must name a
+/// raster type (PNG, JPEG, BMP or TIFF); the pixels travel in `data`, base64, within the
+/// operation's size limit. `at` defaults to the origin, `width` is the image's width in drawing
+/// units (`scale` is that width at scale 1 = one drawing unit), `rotation` is in degrees and `name`
+/// overrides the definition name. A non-numeric coordinate, missing or broken base64, a non-raster
+/// extension, data over the limit, an empty name and a rotation without a size are refused before
+/// an operation exists.
+fn imageattach(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    const IMAGE: &str = "imageattach";
+    let syntax = "imageattach map.png data <base64> [at x,y] [width w | scale s] [rotation deg] [name \"Title\"]";
+    let Some((label, rest)) = words.split_first() else {
+        return Err(bad(IMAGE, format!("give the file name and its bytes: {syntax}")));
+    };
+    let path = unquote(label);
+    if path.is_empty() {
+        return Err(bad(IMAGE, "the file name is empty"));
+    }
+    if path.chars().count() > MAX_IMAGE_PATH {
+        return Err(bad(IMAGE, format!("the file name is longer than {MAX_IMAGE_PATH} characters")));
+    }
+    if !raster_extension(&path) {
+        return Err(bad(
+            IMAGE,
+            "the file name must end in png, jpg, jpeg, bmp, tif or tiff; a shared session takes the raster bytes in `data`, not a file by that name",
+        ));
+    }
+    let Some((keyword, rest)) = rest.split_first() else {
+        return Err(bad(IMAGE, format!("give the image bytes: {syntax}")));
+    };
+    if !keyword.eq_ignore_ascii_case("data") {
+        return Err(bad(IMAGE, format!("an image in a shared session carries its bytes, not a file to read: {syntax}")));
+    }
+    let Some((word, rest)) = rest.split_first() else {
+        return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
+    };
+    let data = unquote(word);
+    if data.is_empty() {
+        return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
+    }
+    if data.len() > MAX_IMAGE_DATA {
+        return Err(bad(IMAGE, format!("the image data is larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} base64 characters)")));
+    }
+    let bytes = crate::message::decode_bytes(&data).map_err(|_| bad(IMAGE, "`data` is not valid base64"))?;
+    if bytes.is_empty() {
+        return Err(bad(IMAGE, "`data` decodes to no image bytes"));
+    }
+    if bytes.len() > MAX_IMAGE_DATA {
+        return Err(bad(IMAGE, format!("the image bytes are larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} bytes)")));
+    }
+    let mut at = [0.0, 0.0];
+    let mut width = None;
+    let mut scale = None;
+    let mut rotation = 0.0;
+    let mut name: Option<String> = None;
+    let mut index = 0;
+    while index < rest.len() {
+        let keyword = rest[index];
+        let Some(value) = rest.get(index + 1).copied() else {
+            return Err(bad(IMAGE, format!("`{}` needs a value", brief(keyword))));
+        };
+        index += 2;
+        match keyword.to_ascii_lowercase().as_str() {
+            "at" => {
+                let corner = drawing_point(value, IMAGE)?;
+                at = [corner.x, corner.y];
+            }
+            "width" => {
+                let w = number(value).filter(|w| *w > 0.0).ok_or_else(|| bad(IMAGE, "the width must be a positive number"))?;
+                width = Some(w);
+            }
+            "scale" => {
+                let s = number(value).filter(|s| *s > 0.0).ok_or_else(|| bad(IMAGE, "the scale must be a positive number"))?;
+                scale = Some(s);
+            }
+            "rotation" => {
+                rotation = number(value).ok_or_else(|| bad(IMAGE, "the rotation must be a finite number of degrees"))?;
+            }
+            "name" => {
+                let text = unquote(value);
+                if text.trim().is_empty() {
+                    return Err(bad(IMAGE, "the name is empty"));
+                }
+                name = Some(text);
+            }
+            _ => {
+                return Err(bad(
+                    IMAGE,
+                    format!("`{}` is not a parameter; use at x,y, width w, scale s, rotation deg and name \"…\"", brief(keyword)),
+                ));
+            }
+        }
+    }
+    if width.is_some() && scale.is_some() {
+        return Err(bad(IMAGE, "give the size once: width w or scale s"));
+    }
+    if rotation != 0.0 && width.is_none() && scale.is_none() {
+        return Err(bad(IMAGE, "a rotation needs a size: give width w or scale s, or leave the rotation out"));
+    }
+    let mut params = json!({ "path": path, "data": data, "at": at });
+    if let Some(width) = width {
+        params["width"] = json!(width);
+    } else if let Some(scale) = scale {
+        params["scale"] = json!(scale);
+    }
+    if rotation != 0.0 {
+        params["rotation"] = json!(rotation);
+    }
+    if let Some(name) = name {
+        params["name"] = json!(name);
+    }
+    Ok(Command { id: "imageattach", params })
+}
+
+/// The longest file label one line may carry: the engine's own limit on an image path.
+const MAX_IMAGE_PATH: usize = 4096;
+
+/// The most base64 text one line may carry. A shared session's operation is at most 1 MiB of JSON
+/// parameters (`cadcraft-collab-server::policy::MAX_OP_BYTES`); base64 inflates the bytes by a third
+/// and the rest of the parameters need room, so the image text is bounded below that limit.
+const MAX_IMAGE_DATA: usize = (1 << 20) - 4096;
+
+/// Whether `path` names a raster type IMAGEATTACH decodes: PNG, JPEG, BMP or TIFF.
+fn raster_extension(path: &str) -> bool {
+    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let Some((stem, extension)) = file.rsplit_once('.') else { return false };
+    !stem.is_empty() && matches!(extension.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff")
+}
+
+/// A word as text: the inside of a `"…"` token, else the word itself.
+fn unquote(word: &str) -> String {
+    quoted(word).unwrap_or_else(|| word.to_string())
+}
+
 /// Whether the object encloses an area: the boundary kinds the engine's HATCH accepts when it is
 /// given handles (`crates/engine/src/cmd/hatch.rs::closed_loop`), checked before an operation
 /// exists so a line that hatches nothing is refused on the author's side.
@@ -1260,7 +1405,7 @@ mod tests {
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
         assert!(
             error.to_string().contains(
-                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
+                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout, imageattach or erase"
             ),
             "{error}"
         );
@@ -1745,6 +1890,77 @@ mod tests {
         assert_eq!(drawing, before, "a refused line never changes the drawing");
     }
 
+    /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+    #[test]
+    fn an_imageattach_carries_the_bytes_and_its_placement() {
+        let drawing = Drawing::new_metric();
+        let command = parse(&format!("imageattach map.png data {PNG_1X1}"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "imageattach");
+        assert_eq!(command.params["path"], "map.png", "the first word is the label saved in the drawing");
+        assert_eq!(command.params["data"], PNG_1X1, "the pixels travel in the operation");
+        assert_eq!(command.params["at"], json!([0.0, 0.0]), "no `at` means the origin");
+
+        // The alias works; the placement, the width, the rotation and the definition name are
+        // explicit parameters, and a quoted label may hold spaces.
+        let text = format!("iat \"site plan.png\" data {PNG_1X1} at 10,5 width 100 rotation 15 name \"Site map\"");
+        let command = parse(&text, &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["path"], "site plan.png");
+        assert_eq!(command.params["at"], json!([10.0, 5.0]), "the lower-left corner");
+        assert_eq!(command.params["width"], 100.0);
+        assert_eq!(command.params["rotation"], 15.0);
+        assert_eq!(command.params["name"], "Site map");
+        // `scale` is the same width at scale 1; the extension is not case-sensitive.
+        let command = parse(&format!("imageattach logo.JPG data {PNG_1X1} scale 2"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["scale"], 2.0);
+        assert!(command.params.get("width").is_none());
+    }
+
+    #[test]
+    fn an_unaddressable_imageattach_is_refused_before_an_operation_exists() {
+        let drawing = Drawing::new_metric();
+        let before = drawing.clone();
+        let over_limit = "A".repeat(MAX_IMAGE_DATA + 1);
+        let refused = [
+            // No label, no bytes, no `data` keyword.
+            "imageattach".to_string(),
+            "imageattach map.png".to_string(),
+            format!("imageattach map.png {PNG_1X1}"),
+            format!("imageattach map.png path {PNG_1X1}"),
+            "imageattach map.png data".to_string(),
+            // Empty and broken base64.
+            "imageattach map.png data \"\"".to_string(),
+            "imageattach map.png data not-base64!".to_string(),
+            // A label that is not a raster type, or has no extension at all.
+            format!("imageattach notes.txt data {PNG_1X1}"),
+            format!("imageattach map data {PNG_1X1}"),
+            // Data over the operation's limit.
+            format!("imageattach map.png data {over_limit}"),
+            // Non-numeric coordinates, an empty name, a rotation without a size.
+            format!("imageattach map.png data {PNG_1X1} at ten,5"),
+            format!("imageattach map.png data {PNG_1X1} name \"\""),
+            format!("imageattach map.png data {PNG_1X1} rotation 15"),
+            // A size given twice, a zero size and an unknown parameter.
+            format!("imageattach map.png data {PNG_1X1} width 10 scale 2"),
+            format!("imageattach map.png data {PNG_1X1} width 0"),
+            format!("imageattach map.png data {PNG_1X1} colour red"),
+        ];
+        for text in &refused {
+            let error = parse(text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("imageattach:"), "{}: {error}", &text[..text.len().min(48)]);
+        }
+        let error = parse(&format!("imageattach notes.txt data {PNG_1X1}"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("png, jpg, jpeg, bmp, tif or tiff"), "{error}");
+        let error = parse("imageattach map.png data not-base64!", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("not valid base64"), "{error}");
+        let error = parse(&format!("imageattach map.png data {over_limit}"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("1 MiB limit"), "{error}");
+        let error = parse(&format!("imageattach map.png data {PNG_1X1} rotation 15"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("rotation needs a size"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
     #[test]
     fn a_dimlinear_measures_between_two_objects() {
         let mut drawing = Drawing::new_metric();
@@ -2127,6 +2343,11 @@ mod tests {
             Some("WALLS")
         );
         assert_eq!(op_for("wipeout 0,60 10,60 10,70", &drawing, &Space::Model, "local-22", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        // An image is a new object too, and its layer travels with the operation.
+        assert_eq!(
+            op_for(&format!("imageattach map.png data {PNG_1X1}"), &drawing, &Space::Model, "local-23", 0).unwrap().context.clay.as_deref(),
+            Some("WALLS")
+        );
     }
 
     #[test]

@@ -77,6 +77,22 @@ pub fn size_reason(op: &Op) -> Option<&'static str> {
     }
 }
 
+/// Why `op` may not run in a shared session, or `None` when it may.
+///
+/// `imageattach` names an image file in the drawing. Without `data` the engine would open that file
+/// on the **server's** disk at a path the client chose, and the other participants would see a
+/// different image or a crossed-out frame. A shared session therefore takes the raster bytes in the
+/// operation and rejects the file-reading form before the drawing changes (ADR 0021).
+pub fn params_reason(op: &Op) -> Option<&'static str> {
+    if op.command.trim().eq_ignore_ascii_case("imageattach") {
+        let has_data = op.params.get("data").and_then(|value| value.as_str()).is_some_and(|data| !data.trim().is_empty());
+        if !has_data {
+            return Some("imageattach needs the image bytes in `data`; a shared session never reads a file by the client's path");
+        }
+    }
+    None
+}
+
 /// Whether a change set exceeds [`MAX_CHANGES`].
 pub fn changes_too_many(changes: usize) -> bool {
     changes > MAX_CHANGES
@@ -167,5 +183,19 @@ mod tests {
     fn the_change_limit_is_inclusive() {
         assert!(!changes_too_many(MAX_CHANGES));
         assert!(changes_too_many(MAX_CHANGES + 1));
+    }
+
+    #[test]
+    fn imageattach_needs_its_bytes_in_the_operation() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        // The client's path is only a label: the bytes must travel with the operation.
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png" }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": "  " }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": 7 }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": png }))).is_none());
+        // Every other drawing command is untouched by the rule.
+        assert!(params_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
+        // The command name is matched the way the engine spells it, ignoring case.
+        assert!(params_reason(&op("ImageAttach", json!({ "path": "map.png" }))).is_some());
     }
 }
