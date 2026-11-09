@@ -10,7 +10,8 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
 use super::super::qselect::wildcard;
-use super::super::*;
+use super::super::{CommandSpec, bad, point_param, str_param};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step, View};
 
 /// Most names one Delete or list takes.
@@ -109,15 +110,25 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         (Space::Paper(l), false) => Some(l.clone()),
         _ => None,
     };
+    // The view this saves: the viewport's model view inside an MSPACE viewport, else the screen.
+    let frame = if in_viewport { st.zoom_frame() } else { st.view() };
+    // The view twist goes with the view (paper space has none).
+    let twist = if layout.is_some() { 0.0 } else { frame.twist };
     let (center, height, width) = match window {
         Some(b) => {
             if !(b.width() > 1e-12 && b.height() > 1e-12 && b.min.is_finite() && b.max.is_finite()) {
                 return Err(EngineError::Other("The window has no area.".into()));
             }
-            (b.center(), b.height(), b.width())
+            // In a twisted view the window's box on screen is larger than its world box.
+            let (center, width, height) = crate::View::twisted_box(b, twist);
+            // Turning corners near the number limit can overflow: save no view that can't be restored.
+            if !(center.is_finite() && width.is_finite() && height.is_finite() && width > 1e-12 && height > 1e-12) {
+                return Err(EngineError::Other("The window is too large for a twisted view.".into()));
+            }
+            (center, height, width)
         }
         None => {
-            let f = if in_viewport { st.zoom_frame() } else { st.view() };
+            let f = frame;
             let aspect = if in_viewport { st.zoom_aspect(w / h.max(1.0)) } else { w / h.max(1.0) };
             (f.center, f.height, f.height * aspect)
         }
@@ -138,7 +149,7 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         }
         d.views.retain(|v| !v.name.eq_ignore_ascii_case(old));
     }
-    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout });
+    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist, layout });
     let msg = if replaced.is_some() { format!("View \"{name}\" replaced.") } else { format!("View \"{name}\" saved.") };
     Ok(json!({ "name": name, "center": [center.x, center.y], "height": height, "width": width, "message": msg }))
 }
@@ -167,7 +178,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             let st = s.state_mut()?;
             st.mspace = None;
             let height = v.height.max(v.width / (w / h.max(1.0)).max(1e-9));
-            st.set_view(View { center: v.center, height });
+            st.set_view(View { center: v.center, height, twist: 0.0 });
         }
         None => {
             // A model space view: into the active MSPACE viewport, else on the Model tab.
@@ -176,21 +187,18 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             }
             let (w, h) = s.viewport_px;
             let st = s.state_mut()?;
+            // In an unlocked MSPACE viewport the saved twist turns the viewport (an edit of the
+            // viewport, recorded as the command's undo step).
             let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-9);
-            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect) });
+            let twist = cadcraft_geom::norm_angle(v.twist);
+            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect), twist });
         }
     }
     let mut msg = format!("View \"{}\" restored.", v.name);
     if let Some(state) = &v.layer_state {
         let d = s.doc_mut()?;
         match d.layer_states.iter().find(|l| l.name.eq_ignore_ascii_case(state)).cloned() {
-            Some(saved) => {
-                for layer in saved.layers {
-                    if let Some(l) = d.layer_mut(&layer.name) {
-                        *l = layer;
-                    }
-                }
-            }
+            Some(saved) => super::super::layer::restore_layers(d, saved.layers),
             None => msg.push_str(&format!(" Its layer snapshot \"{state}\" is missing.")),
         }
     }

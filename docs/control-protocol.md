@@ -49,8 +49,8 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `cmdline.state` | | Current prompt, keywords, accepted input kinds, history tail. |
 | `engine.execute` | `{command, params}` | Run any command with JSON parameters. Never opens a dialog. `command` is an alias of this method, with the same parameters and result. |
 | `engine.commands` | | Every command: id, label, menu path, shortcut, aliases, params doc, enabled. |
-| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo) and entities with handles and geometry. |
-| `ui.inspect` | | UI state, canvas rect, view, cursor and snap, performance counters; `closePrompt`: the drawing a "Save changes?" prompt is asking about (null when none); and actual egui keyboard focus (`focus.id`, `focus.label`, `focus.role`). |
+| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo, and what reading the file left out: `skipped` records by section, `readNotes` in words) and entities with handles and geometry. |
+| `ui.inspect` | | UI state, canvas rect, view, cursor and snap, performance counters (`uiFrames`, `passIndex` included); `closePrompt`: the drawing a "Save changes?" prompt is asking about (null when none); and actual egui keyboard focus (`focus.id`, `focus.label`, `focus.role`). |
 | `ui.elements` | `{label?, role?, focused?}` | Observed toolbar, tab, drafting and layer-palette controls from the latest UI frame. Filters match exactly. Each entry has its real egui `id`, label, role, rectangle `[x,y,width,height]`, enabled/visible/selected state and current focus. |
 | `ui.menu.list` / `ui.menu.invoke` | `{command}` | The menu tree; invoke an item like a click (interactive). |
 | `ui.pointer` | `{x, y, space?: "world"\|"screen", button?, action?: "click"\|"move"}` | Click in the drawing area (world coordinates by default). Right button = Enter. |
@@ -60,8 +60,8 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `ui.set` | UiState fields | Show/hide palettes, toolbars, command line, ViewCube…; `theme: "system"\|"light"\|"dark"` (also `engine.execute` with `ui.theme {theme}`); `ui.inspect` reports the theme shown (`theme`: light/dark). `animations: "system"\|"on"\|"off"` (also `ui.animations {animations}`) shows or hides animation effects (dialog and menu fades, smoothed scrolling), `system` following the operating system's setting; `ui.inspect` reports whether they show (`animations`: true/false). `saveFormat: "dxf"\|"dwg"` (also `ui.saveformat {format}`) is the format Save As suggests for new drawings; `saveVersion: "2000"`…`"2018"` (also `ui.saveversion {version}`) the version it saves them in (SAVEAS also takes `version` and `binary` directly). |
 | `ui.resize` | `{width, height}` | Resize the window. |
 | `ui.focus` | | Activate the native window. Does not assign focus to a widget. |
-| `ui.screenshot` | `{path?}` | PNG of the window (needs a presented frame). |
-| `ui.render` | `{path?, width?, height?, fit?}` | Headless render. `fit` (default true) frames the whole drawing; `false` uses the current view. Replies `{pngBase64, width, height, bytes, path?}`. |
+| `ui.screenshot` | `{path?}` | PNG of the window (needs a presented frame). Bounded: at most 4 queued/in-flight/completed requests, 64 MiB per image and 64 MiB total (completed but undrained images still count), an 8 s deadline, and cancellation when the document or keyboard focus changes while the request is outstanding. A queued request adopts the settled window size when issued. After issue, a change in window size, scale, OS window focus, minimization or occlusion cancels it. Every reply carries `request`; failures include `ok:false,error`. Files are written only after the deadline and identity checks pass. Without `path`, each request gets a unique PNG in a private owner-only per-process directory under the temp dir (created exclusively; an existing symlink is never followed), so concurrent app instances cannot collide; the caller owns those files and should remove them when done. In the web build there is no file system: `path` is ignored and the PNG comes back inline (`pngBase64`, `width`, `height`, `bytes`). |
+| `ui.render` | `{path?, width?, height?, fit?, window?, background?, plot_style?}` | Headless render. `fit` (default true) frames the whole drawing; `false` uses the current view; `window` `[[x0, y0], [x1, y1]]` shows just that area (drawing units). `background`: `"dark"` (the canvas; the default without a plot style), `"white"` (the default with one, as a plot prints on paper), `"paper"` or `"#rrggbb"`; colour 7 is drawn white on a dark background and black on a light one, as on a plot. `plot_style`: a plot style table, built-in (`monochrome.ctb` prints every colour black, `grayscale.ctb` grey; `default.ctb`, `default.stb`, `monochrome.stb`) or one the drawing holds; `"none"` (or `""`) draws every object with its own properties, also in a layout whose page setup shows plot styles (without `plot_style` such a layout draws with its table, as on screen). An unknown `background` or `plot_style` is refused. Replies `{pngBase64, width, height, bytes, path?}`. |
 | `app.open` / `app.save` / `app.quit` | `{path}` | File operations. |
 | `control.methods` | | Every method this server answers: `{method, params, description}`. Headless (`cadcraft-cli mcp`) lists only the methods it serves. |
 | `ping` | | Replies `"pong"`. A cheap health check. |
@@ -124,7 +124,7 @@ height and related chrome choices. It does not store drawings, command buffers, 
 current Start tab. The default directory is `~/Library/Application Support/CADCraft` on macOS,
 `%APPDATA%/CADCraft` on Windows, and `$XDG_CONFIG_HOME/cadcraft` or `~/.config/cadcraft` elsewhere.
 Set `CADCRAFT_CONFIG_DIR` to a private directory for an isolated profile; an explicitly empty
-value disables workspace reads and writes. An invalid, oversized or newer-version file is
+value disables all settings reads and writes (workspace, logs, autosave, plotters). An invalid, oversized or newer-version file is
 reported and left untouched, with persistence disabled for that launch. Repair or move that
 file before restarting to resume saving workspace choices.
 
@@ -134,7 +134,7 @@ Tool Sets, Layers, and Properties can be regrouped, split, floated within the ap
 
 Panel IDs: `toolSets`, `layers`, `properties`, `externalReferences`. The protected center is `canvas`.
 
-`ui.dock` accepts `operation`; basic per-panel operations also require `panel`. The advanced `resizeSplit` operation below uses a split `path` instead of a panel. Basic operations are `open`, `close`, `activate`, `float` (with finite positive `rect: [x, y, width, height]`), or `move` (with `target` and `zone: center|left|right|top|bottom`). Center groups with the target; side zones split beside it. `ui.dock.reset` restores the default arrangement. Invalid moves return an error without changing the layout.
+`ui.dock` accepts `operation`; basic per-panel operations also require `panel`. The advanced `resizeSplit` operation below uses a split `path` instead of a panel. Basic operations are `open`, `close`, `activate`, `float` (with finite positive `rect: [x, y, width, height]`), or `move` (with `target` and `zone: center|tab|left|right|top|bottom|above|below`, default `center`). Center and tab group with the target; side zones split beside it; above and below add a group in a floating window. `open` and `activate` show a hidden panel at its last place and select it. `ui.dock.reset` restores the default arrangement. Invalid moves return an error without changing the layout.
 
 The QuickCalc palette (`quickCalc`) is not part of the default arrangement. Typed `QUICKCALC`/`QC`
 and `ui.panel.quickcalc` explicitly open and activate it: it floats the first time and later
@@ -150,9 +150,9 @@ Advanced `ui.dock` operations use the same validated transaction as pointer gest
 `moveFloating` updates `rect`, `resizeSplit` accepts a boolean child `path` and
 `size` (`{"Ratio":0.5}`, `{"FixedFirst":280}`, or `{"FixedSecond":280}`),
 `setStackOpen` takes `open`, and `resizeStack` takes a point `height` or null.
-A center `move` can include `before` (panel ID or null to append) for tab order.
+A center or tab `move` can include `before` (panel ID or null to append) for tab order.
 The equivalent `{"action": ...}` form accepts a serialized shared docking action;
-this is also the form emitted by the renderer. Protected-canvas and app-specific panel
+this is also the form emitted by the renderer, and it takes every action of craft-ui's docking, group, column and window moves included. Protected-canvas and app-specific panel
 rules apply equally to both forms.
 
 ## Command-line replies
@@ -188,9 +188,10 @@ Select a language with `engine.execute` and the UI command `ui.language`:
 {"id":1,"method":"engine.execute","params":{"command":"ui.language","params":{"lang":"uk"}}}
 ```
 
-Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar` and `hu`.
+Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el` and `ka`.
 Chinese needs an installed CJK font, Arabic an installed Arabic font; Korean needs a font covering the Korean interface from the
-optional craft-fonts input or the operating system. Without a suitable font, the saved choice is
+optional craft-fonts input or the operating system; Georgian needs the `Geor` face from craft-fonts (an installed font
+does not count). Without a suitable font, the saved choice is
 retained and the result's `shown` is `en`. `ui.set` also accepts
 `{"interfaceLanguage":"uk"}`; `ui.inspect` reports the saved choice in its UI state.
 Invalid choices leave the current language unchanged. Menus, command labels and prompt text

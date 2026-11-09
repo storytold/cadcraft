@@ -465,6 +465,26 @@ impl Family<'_> {
         self.origin + p.rotate(self.ang)
     }
 
+    /// The range of the lines swept, in this frame: the boundary's extent, cut to the view's
+    /// when there is one, and the view's x extent that spans are cut to. Spans are cut to the
+    /// view's extent only: they already lie within the boundary, and cutting them to its extent
+    /// too would move an end that sits on a boundary corner by a rounding error, so a view
+    /// covering the hatch would change its lines. `None` when the view misses the boundary.
+    fn lines_range(&self, bb: &Bounds2, view: Option<&Bounds2>) -> Option<(Vec2, Vec2, Option<(f64, f64)>)> {
+        let (mut lo, mut hi) = (bb.min, bb.max);
+        let mut span_cut = None;
+        if let Some(v) = view {
+            let vb = Bounds2::from_points(v.corners().iter().map(|p| self.to_local(*p)));
+            if vb.is_empty() || !vb.intersects(bb) {
+                return None;
+            }
+            lo = Vec2::new(lo.x.max(vb.min.x), lo.y.max(vb.min.y));
+            hi = Vec2::new(hi.x.min(vb.max.x), hi.y.min(vb.max.y));
+            span_cut = Some((vb.min.x, vb.max.x));
+        }
+        Some((lo, hi, span_cut))
+    }
+
     /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
     fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
@@ -472,21 +492,7 @@ impl Family<'_> {
         if bb.is_empty() {
             return;
         }
-        // The lines swept: the boundary's extent, cut to the view's (its corners in this frame)
-        // when there is one. Spans are cut to the view's extent only: they already lie within the
-        // boundary, and cutting them to its extent too would move an end that sits on a boundary
-        // corner by a rounding error, so a view covering the hatch would change its lines.
-        let (mut lo, mut hi) = (bb.min, bb.max);
-        let mut span_cut = None;
-        if let Some(v) = view {
-            let vb = Bounds2::from_points(v.corners().iter().map(|p| self.to_local(*p)));
-            if vb.is_empty() || !vb.intersects(&bb) {
-                return;
-            }
-            lo = Vec2::new(lo.x.max(vb.min.x), lo.y.max(vb.min.y));
-            hi = Vec2::new(hi.x.min(vb.max.x), hi.y.min(vb.max.y));
-            span_cut = Some((vb.min.x, vb.max.x));
-        }
+        let Some((lo, hi, span_cut)) = self.lines_range(&bb, view) else { return };
         let shift_per_line = self.delta.rotate(-self.ang).x;
         let k0 = (lo.y / self.spacing).floor() as i64;
         let k1 = (hi.y / self.spacing).ceil() as i64;
@@ -504,17 +510,7 @@ impl Family<'_> {
                 return;
             }
             let y = k as f64 * self.spacing;
-            let mut xs: Vec<f64> = Vec::new();
-            for l in &local {
-                let n = l.len();
-                for i in 0..n {
-                    let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
-                    if (a.y > y) != (b.y > y) {
-                        xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
-                    }
-                }
-            }
-            xs.sort_by(f64::total_cmp);
+            let xs = crossings(&local, y);
             let offset = shift_per_line * k as f64;
             for span in xs.chunks(2) {
                 let [x0, x1] = span else { continue };
@@ -528,14 +524,14 @@ impl Family<'_> {
                 if solid_line {
                     out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
                 } else {
-                    self.dash(x0, x1, y, offset, pat_len, out, work);
+                    self.dash((x0, x1), y, offset, pat_len, out, work);
                 }
             }
         }
     }
 
     /// The dashes and dots of the span `x0..x1` of the line at `y`, phase anchored at x = `offset`.
-    fn dash(&self, x0: f64, x1: f64, y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         let start_rep = ((x0 - offset) / pat_len).floor();
         let mut x = offset + start_rep * pat_len;
         let mut guard = 0;
@@ -563,6 +559,22 @@ impl Family<'_> {
             }
         }
     }
+}
+
+/// The x positions where the boundary loops cross the horizontal line at `y`, in order.
+fn crossings(local: &[Vec<Vec2>], y: f64) -> Vec<f64> {
+    let mut xs: Vec<f64> = Vec::new();
+    for l in local {
+        let n = l.len();
+        for i in 0..n {
+            let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
+            if (a.y > y) != (b.y > y) {
+                xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+            }
+        }
+    }
+    xs.sort_by(f64::total_cmp);
+    xs
 }
 
 #[cfg(test)]

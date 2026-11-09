@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_doc::Handle;
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{CommandSpec, bad};
+
+use super::super::always;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

@@ -94,6 +94,7 @@
 	Blend	Плавне з'єднання
 	Block	Блок
 	Block Attribute Manager...	Диспетчер атрибутів блоків...
+	Block Description...	Опис блока...
 	Block Editor	Редактор блоків
 	Block Reference	Посилання на блок
 	Block...	Блок...
@@ -138,12 +139,15 @@
 	Clear	Очистити
 	Clip	Обрізати
 	Clip Viewport	Обрізати видовий екран
+	Clip Xref	Обрізати зовнішнє посилання
+	Xref Clip Frame	Рамка обрізки зовнішнього посилання
 	Clipboard	Буфер обміну
 	Close	Закрити
 	Close All	Закрити всі
 	Close All Other Drawings	Закрити всі інші креслення
 	Closed	Замкнений
 	Close Comparison	Закрити порівняння
+	Export Comparison	Експортувати порівняння
 	Coincident	Збіг
 	Collapse Palettes	Згорнути палітри
 	Collapse Tool Sets	Згорнути набори інструментів
@@ -191,11 +195,15 @@
 	Current selection	Поточний вибір
 	Current: {color}	Поточний: {color}
 	Cut	Вирізати
+	Cut with Base Point	Вирізати з базовою точкою
 	Cyan	Блакитний
 	Cylinder	Циліндр
 	DWG	DWG
 	DWG Reference...	Посилання на DWG...
+	Raster Image Reference...	Посилання на растрове зображення...
+	Raster Images	Растрові зображення
 	DXF	DXF
+	DView	Динамічний вид
 	Dark	Темна
 	Data Extraction...	Вилучення даних...
 	Default	Типово
@@ -283,7 +291,7 @@
 	Enter a vertex editing option	Введіть параметр редагування вершини
 	Enter an option	Введіть параметр
 	Enter angle of xline	Введіть кут допоміжної прямої
-	Enter angle of xline (0) or	Введіть кут допоміжної прямої (0) або
+	Enter angle of xline (0)	Введіть кут допоміжної прямої (0)
 	Enter area of rectangle in current units	Введіть площу прямокутника в поточних одиницях
 	Enter attribute prompt	Введіть підказку атрибута
 	Enter attribute tag name	Введіть ім'я тегу атрибута
@@ -294,7 +302,7 @@
 	Enter default attribute value	Введіть типове значення атрибута
 	Enter degree of spline	Введіть степінь сплайна
 	Enter delta angle	Введіть зміну кута
-	Enter delta length or	Введіть зміну довжини або
+	Enter delta length	Введіть зміну довжини
 	Enter dimension text	Введіть розмірний текст
 	Enter dimension text (<> = measurement)	Введіть розмірний текст (<> = виміряне значення)
 	Enter dimension value or [name=expression]	Введіть розмірне значення або [name=expression]
@@ -551,6 +559,7 @@
 	N	Пн
 	Name	Назва
 	Name (A–Z)	Назва (А–Я)
+	Named Viewports...	Іменовані видові екрани...
 	Named Views...	Іменовані види...
 	Nearest	Найближча точка
 	New	Створити
@@ -594,6 +603,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Одна з програм Crafting Apps від команди та спільноти ArtCraft.
 	Only in this drawing: {n}	Лише в цьому кресленні: {n}
 	Only in {name}: {n}	Лише в {name}: {n}
+	Oops	Відновити стерті об'єкти
 	Open (⌘O)	Відкрити (⌘O)
 	Open Sample Drawing	Відкрити зразок креслення
 	Open sample drawing	Відкрити зразок креслення
@@ -748,6 +758,7 @@
 	Rename Text Style	Перейменувати текстовий стиль
 	Rename...	Перейменувати...
 	Repeat {command}	Повторити {command}
+	Replace Block...	Замінити блок...
 	Requires a point (x,y, @dx,dy or @d<a).	Потрібна точка (x,y, @dx,dy або @d<a).
 	Reset Palettes	Скинути палітри
 	Restore	Відновити
@@ -797,8 +808,8 @@
 	Select an arc or circle	Виберіть дугу або коло
 	Select an arc.	Виберіть дугу.
 	Select an object	Виберіть об'єкт
-	Select an object to change or	Виберіть об'єкт для зміни або
-	Select an object to measure or	Виберіть об'єкт для вимірювання або
+	Select an object to change	Виберіть об'єкт для зміни
+	Select an object to measure	Виберіть об'єкт для вимірювання
 	Select an object.	Виберіть об'єкт.
 	Select an open curve.	Виберіть незамкнену криву.
 	Select an open line, arc, polyline, ellipse arc or spline.	Виберіть незамкнений відрізок, дугу, полілінію, еліптичну дугу або сплайн.
@@ -812,9 +823,8 @@
 	Select first line	Виберіть перший відрізок
 	Select first line or arc	Виберіть перший відрізок або дугу
 	Select first object	Виберіть перший об'єкт
-	Select first object or	Виберіть перший об'єкт або
 	Select first point	Виберіть першу точку
-	Select nested objects to copy or	Виберіть вкладені об'єкти для копіювання або
+	Select nested objects to copy	Виберіть вкладені об'єкти для копіювання
 	Select object	Виберіть об'єкт
 	Select object to dimension	Виберіть об'єкт для нанесення розміру
 	Select object to divide	Виберіть об'єкт для поділу
@@ -835,7 +845,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Виберіть одну полілінію (Multiple доступно через JSON).
 	Select path curve	Виберіть криву траєкторії
 	Select point or object	Виберіть точку або об'єкт
-	Select polyline or	Виберіть полілінію або
+	Select polyline	Виберіть полілінію
 	Select second line	Виберіть другий відрізок
 	Select second line or shift-select to apply corner	Виберіть другий відрізок або виберіть із Shift, щоб утворити кут
 	Select second object	Виберіть другий об'єкт
@@ -895,9 +905,8 @@
 	Specify axis endpoint of ellipse	Укажіть кінцеву точку осі еліпса
 	Specify base diameter	Укажіть діаметр основи
 	Specify base point	Укажіть базову точку
-	Specify base point or	Укажіть базову точку або
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажіть базову точку або зміщення (перетягуйте середньою кнопкою миші для панорамування)
-	Specify base radius or	Укажіть радіус основи або
+	Specify base radius	Укажіть радіус основи
 	Specify center of donut	Укажіть центр кільця
 	Specify center of ellipse	Укажіть центр еліпса
 	Specify center of polygon	Укажіть центр багатокутника
@@ -939,7 +948,7 @@
 	Specify first point on circle: _tan to	Укажіть першу точку на колі: _tan до
 	Specify first source point	Укажіть першу вихідну точку
 	Specify height	Укажіть висоту
-	Specify helix height or	Укажіть висоту спіралі або
+	Specify helix height	Укажіть висоту спіралі
 	Specify included angle	Укажіть кут між сторонами
 	Specify insertion base point	Укажіть базову точку вставлення
 	Specify insertion point	Укажіть точку вставлення
@@ -1023,7 +1032,6 @@
 	Specify new width for all segments	Укажіть нову ширину всіх сегментів
 	Specify next point	Укажіть наступну точку
 	Specify offset distance	Укажіть відстань зміщення
-	Specify offset distance or	Укажіть відстань зміщення або
 	Specify opposite corner	Укажіть протилежний кут
 	Specify other corner point	Укажіть іншу кутову точку
 	Specify other endpoint of axis	Укажіть іншу кінцеву точку осі
@@ -1036,7 +1044,6 @@
 	Specify radius of circle	Укажіть радіус кола
 	Specify rotation angle	Укажіть кут повороту
 	Specify rotation angle of text	Укажіть кут повороту тексту
-	Specify rotation angle or	Укажіть кут повороту або
 	Specify scale factor	Укажіть коефіцієнт масштабу
 	Specify second angle endpoint	Укажіть другу кінцеву точку кута
 	Specify second break point	Укажіть другу точку розриву
@@ -1069,9 +1076,9 @@
 	Specify third source point or <continue>	Укажіть третю вихідну точку або <продовжити>
 	Specify through point	Укажіть точку, через яку проходить пряма
 	Specify top diameter	Укажіть діаметр вершини
-	Specify top radius or	Укажіть радіус вершини або
+	Specify top radius	Укажіть радіус вершини
 	Specify total angle	Укажіть загальний кут
-	Specify total length or	Укажіть загальну довжину або
+	Specify total length	Укажіть загальну довжину
 	Specify width for rectangles	Укажіть ширину прямокутників
 	Sphere	Сфера
 	Spline	Сплайн
@@ -1278,6 +1285,8 @@
 	Automatic save every	Автозбереження кожні
 	min	хв
 	Automatic save file location	Папка файлів автозбереження
+	Backup copy	Резервна копія
+	Create backup copy with each save	Створювати резервну копію під час кожного збереження
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Креслення, що ще не мають файлу, зберігаються в типовій версії. 0 хвилин вимикає автозбереження.
 	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Клік правою кнопкою з урахуванням часу: швидкий клік — Enter, утримання відкриває меню
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Якщо вимкнено, клік правою кнопкою під час команди завжди відкриває контекстне меню.
@@ -1355,13 +1364,61 @@
 	More than {n} aliases.	Понад {n} псевдонімів.
 	Alias file: {file}	Файл псевдонімів: {file}
 	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонімів не завантажено. REINIT замінює ці псевдоніми псевдонімами з файлу.
+	Aliases are saved in your CADCraft profile and survive restarts.	Псевдоніми зберігаються в профілі CADCraft і не зникають після перезапуску.
 	Alias	Псевдонім
 	Command	Команда
 	overrides built-in	замінює вбудований
 	built-in	вбудований
 	Add…	Додати…
 	Edit…	Змінити…
+	Import…	Імпортувати…
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Імпорт: тут немає діалогу вибору файлів; запустіть ALIASEDIT із вмістом файлу в параметрі text.
+	{n} more warnings; see the command line.	Ще {n} попереджень; див. командний рядок.
+	Alias files (PGP)	Файли псевдонімів (PGP)
 	Save alias	Зберегти псевдонім
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+	Check for Updates…	Перевірити оновлення…
+	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
+	Could not check for updates.	Не вдалося перевірити оновлення.
+	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Find All	Find All
+	Find what:	Find what:
+	Match case	Match case
+	Replace	Replace
+	Replace All	Replace All
+	Replace with:	Replace with:
+	Replacement text	Replacement text
+	Results	Results
+	Searches the current space.	Searches the current space.
+	Text to find	Text to find
+	Whole words	Whole words
+	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Креслення змінилося. Закрийте вікно та відкрийте його знову.
+	Keyboard Shortcuts...	Комбінації клавіш...
+	Keyboard Shortcuts	Комбінації клавіш
+	Replaces the shortcut of {commands}	Замінює комбінацію клавіш команди: {commands}
+	Needs Ctrl, Alt or a function key	Потрібна клавіша Ctrl, Alt або функціональна клавіша
+	Press the keys	Натисніть клавіші
+	Back to CADCraft's shortcut	Повернути комбінацію CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Ваша комбінація клавіш має перевагу над комбінацією CADCraft. Зміни застосовуються одразу й зберігаються.
+	Right-Click Customization...	Налаштування правої кнопки...
+	Right-Click Customization	Налаштування правої кнопки
+	Turn on time-sensitive right-click	Увімкнути залежне від часу клацання правою кнопкою
+	Longer click duration:	Тривалість довгого клацання:
+	milliseconds	мілісекунд
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Під час команди коротке клацання — Enter, довше відкриває контекстне меню.
+	Default Mode	Режим за замовчуванням
+	No objects selected and no command running:	Нічого не вибрано й команда не виконується:
+	Edit Mode	Режим редагування
+	Objects selected and no command running:	Об'єкти вибрано, команда не виконується:
+	Repeat last command	Повторити останню команду
+	Shortcut Menu	Контекстне меню
+	Command Mode	Режим команди
+	While a command runs:	Під час виконання команди:
+	ENTER	Клавіша Enter
+	Shortcut Menu: always enabled	Контекстне меню: завжди
+	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри

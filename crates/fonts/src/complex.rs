@@ -1,14 +1,18 @@
-//! Lines with right-to-left text: the line is split into bidi runs in display order
+//! Lines with right-to-left text or Thai: the line is split into bidi runs in display order
 //! ([`crate::bidi::visual_runs`]), each run into pieces by the font that draws them (the text's
 //! font, a fallback font for characters it lacks, or the stroke font), and each font piece is
 //! shaped with `harfrust` (OpenType GSUB/GPOS: Arabic contextual forms, lam-alef and other
 //! ligatures, mark positioning, mirroring) before its glyphs are placed. Shaping happens per
 //! piece in the font that draws it, so Arabic in a stroke-font style is joined by the fallback
 //! font. Fonts without OpenType Arabic features get Unicode presentation forms instead.
+//!
+//! Thai is left to right but needs the shaper too: a consonant carries up to two stacked marks
+//! above (a vowel, then a tone mark) and one below, placed by the font's `mark`/`mkmk`
+//! positioning; letters with a descender (ฐ, ญ) lose it under a below vowel (`ccmp`); and sara
+//! am (ำ) splits into nikhahit and sara aa with the nikhahit moved before any tone mark.
 
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 
 use cadcraft_geom::Vec2;
 
@@ -17,6 +21,17 @@ use crate::{Shaped, bidi, stroke};
 
 /// Longest line (characters) laid out this way; longer lines keep one glyph per character.
 const MAX_CHARS: usize = 10_000;
+
+/// Whether a line is laid out here rather than one glyph per character: it has right-to-left
+/// text, or Thai (see the module notes).
+pub(crate) fn needed(s: &str) -> bool {
+    s.chars().any(|c| bidi::is_rtl(c) || is_thai(c))
+}
+
+/// Whether `c` is in the Thai block.
+pub(crate) fn is_thai(c: char) -> bool {
+    matches!(c, '\u{0E00}'..='\u{0E7F}')
+}
 
 /// What draws a piece of a run.
 #[derive(Clone)]
@@ -49,20 +64,21 @@ impl Src {
 
 /// Shape one line containing right-to-left text in `primary` (None: the stroke font), with the
 /// same conventions as the left-to-right paths: baseline at y = 0, x from 0, text height = cap
-/// height, `%%` codes decoded. `None` when the line is too long (the caller then lays it out one
-/// glyph per character) or shaping failed.
-pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
+/// height, `%%` codes decoded. `base_rtl` is the line's direction (`None`: that of its first
+/// strong character). `None` when the line is too long (the caller then lays it out one glyph
+/// per character) or shaping failed.
+pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     let chars = crate::decode_controls(s);
     if chars.is_empty() || chars.len() > MAX_CHARS {
         return None;
     }
     // A last-resort guard around the bidi and shaping libraries: a panic in them must not take
     // the drawing down with it (the line then falls back to one glyph per character).
-    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique))).ok()
+    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique, base_rtl))).ok()
 }
 
 /// Lay out decoded directional runs, keeping advances and decoration spans for empty glyphs.
-fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64) -> Shaped {
+fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
@@ -75,7 +91,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let mut x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
     let mut stroke_last = false;
-    for (run, rtl) in bidi::visual_runs(&cs, None) {
+    for (run, rtl) in bidi::visual_runs(&cs, base_rtl) {
         let mut pieces = itemize(&cs, run, primary);
         if rtl {
             pieces.reverse();
@@ -101,7 +117,11 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                     }
                 }
                 Src::Face(face) => {
-                    for g in shape_run(face, &cs, r, rtl) {
+                    let glyphs = shape_run(face, &cs, r.clone(), rtl);
+                    // Right-to-left runs stay outlines only: their glyphs come in display order
+                    // and include ligatures (lam-alef) that stand for several characters.
+                    let shows = if rtl { Vec::new() } else { glyph_chars(face, &cs, &glyphs, r.end) };
+                    for (n, g) in glyphs.iter().enumerate() {
                         let outline = ttf::glyph_by_id(face, g.gid);
                         let k = h / outline.cap * wf;
                         let dy = g.dy * h / outline.cap;
@@ -109,7 +129,14 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                             for p in contours.iter_mut().flatten() {
                                 *p += Vec2::new(dy * shear, dy);
                             }
-                            out.glyphs.push(contours);
+                            let origin = Vec2::new(x + g.dx * k + dy * shear, dy);
+                            let text = shows
+                                .get(n)
+                                .copied()
+                                .flatten()
+                                .filter(|c| !c.is_whitespace())
+                                .and_then(|c| ttf::text_glyph_at(&outline, c, origin, h / outline.cap, wf, shear));
+                            out.push_glyph(contours, text);
                         }
                         let adv = g.advance * k;
                         let (u, o) = flags(g.cluster);
@@ -183,9 +210,9 @@ struct Glyph {
 /// Shape characters `r` of `cs` (one direction, one face) into glyphs in display order.
 fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph> {
     let run = cs.get(r.clone()).unwrap_or_default();
-    // Shares the face's bytes instead of copying them.
-    let bytes: Arc<dyn AsRef<[u8]> + Send + Sync> = face.bytes.clone();
-    let Some(font) = harfrust::Font::new(bytes, face.index) else { return Vec::new() };
+    // Keep the shared font bytes: shaping a run must not clone the entire font file.
+    let source = harfrust::font::Blob::Shared(face.bytes.clone());
+    let Some(font) = harfrust::Font::new(source, face.index) else { return Vec::new() };
     let shaper = harfrust::ShaperFont::new(&font);
     let mut buf = harfrust::Buffer::new();
     let arabic = run.iter().any(|c| matches!(*c, '\u{0600}'..='\u{08FF}'));
@@ -200,11 +227,10 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
     }
     buf.set_direction(if rtl { harfrust::Direction::RightToLeft } else { harfrust::Direction::LeftToRight });
     buf.guess_segment_properties();
-    // Without a plan, shaping fails only on an already shaped buffer or an unset direction.
     if harfrust::shape(&shaper, &mut buf, harfrust::ShapeOptions::new()).is_err() {
         return Vec::new();
     }
-    let k = 1000.0 / f64::from(font.units_per_em().max(1));
+    let k = 1000.0 / f64::from(shaper.units_per_em().max(1));
     buf.glyph_infos()
         .iter()
         .zip(buf.glyph_positions())
@@ -218,9 +244,100 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
         .collect()
 }
 
+/// Longest cluster whose glyphs are matched to its characters by glyph id; the glyphs of a
+/// longer one (a hostile run of thousands of stacked marks) take its characters in order.
+const MAX_MATCHED_CLUSTER: usize = 32;
+
+/// The character each glyph of a left-to-right run shows, for output that keeps text as text
+/// ([`crate::TextGlyph`]). The shaper reorders, splits and substitutes glyphs inside a cluster
+/// (a letter with its marks), so within each cluster a glyph that is a character's own glyph
+/// takes that character first, then the other glyphs take the cluster's remaining characters in
+/// order. Each character is shown once: a glyph left over (the second half of a split Thai sara
+/// am) shows none and is drawn as an outline only.
+fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Option<char>> {
+    let mut out: Vec<Option<char>> = vec![None; glyphs.len()];
+    let mut i = 0;
+    while let Some(cluster) = glyphs.get(i).map(|g| g.cluster) {
+        let j = glyphs.iter().skip(i).position(|g| g.cluster != cluster).map_or(glyphs.len(), |n| i + n);
+        // Clusters ascend in a left-to-right run: this one's characters end where the next starts.
+        let to = glyphs.get(j).map_or(end, |g| g.cluster).clamp(cluster, end.max(cluster));
+        let chars = cs.get(cluster..to).unwrap_or_default();
+        let mut free: Vec<Option<char>> = chars.iter().copied().map(Some).collect();
+        if chars.len() <= MAX_MATCHED_CLUSTER {
+            let ids = face.glyph_ids(chars);
+            for n in i..j {
+                let gid = glyphs.get(n).map(|g| g.gid);
+                let own = ids.iter().zip(&free).position(|(id, f)| f.is_some() && *id == gid);
+                if let (Some(p), Some(o)) = (own, out.get_mut(n)) {
+                    *o = free.get_mut(p).and_then(Option::take);
+                }
+            }
+        }
+        let mut rest = free.into_iter().flatten();
+        for o in out.iter_mut().take(j).skip(i).filter(|o| o.is_none()) {
+            *o = rest.next();
+        }
+        i = j;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single empty glyph with a positive advance, without relying on installed fonts.
+    fn empty_glyph_face() -> Face {
+        let mut head = vec![0_u8; 54];
+        head[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        head[18..20].copy_from_slice(&1000_u16.to_be_bytes());
+        let mut hhea = vec![0_u8; 36];
+        hhea[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        hhea[4..6].copy_from_slice(&800_i16.to_be_bytes());
+        hhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
+        hhea[34..36].copy_from_slice(&1_u16.to_be_bytes());
+        let tables = [
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"hmtx", vec![1, 244, 0, 0]),      // Advance 500, left side bearing 0.
+            (*b"maxp", vec![0, 0, 80, 0, 0, 1]), // Version 0.5, one glyph.
+        ];
+        let mut bytes = vec![0_u8; 12 + tables.len() * 16];
+        bytes[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        bytes[4..6].copy_from_slice(&4_u16.to_be_bytes());
+        bytes[6..8].copy_from_slice(&64_u16.to_be_bytes());
+        bytes[8..10].copy_from_slice(&2_u16.to_be_bytes());
+        for (i, (tag, data)) in tables.into_iter().enumerate() {
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(0);
+            }
+            let record = 12 + i * 16;
+            let offset = u32::try_from(bytes.len()).unwrap();
+            let len = u32::try_from(data.len()).unwrap();
+            bytes[record..record + 4].copy_from_slice(&tag);
+            bytes[record + 8..record + 12].copy_from_slice(&offset.to_be_bytes());
+            bytes[record + 12..record + 16].copy_from_slice(&len.to_be_bytes());
+            bytes.extend(data);
+        }
+        Face::new(std::sync::Arc::new(bytes), 0).expect("synthetic font parses")
+    }
+
+    /// Empty complex glyphs retain spacing and underlines without adding geometry or text slots.
+    #[test]
+    fn empty_complex_glyph_keeps_advance_without_geometry() {
+        let face = empty_glyph_face();
+        let shaped = shape(Some(&face), " ", 1.0, 1.0, 0.0, None).expect("shapes empty glyph");
+        assert!(shaped.width > 0.0, "the font's advance is retained");
+        assert!(shaped.is_empty());
+        assert!(shaped.glyphs.is_empty());
+        assert!(shaped.text.is_empty());
+
+        let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0, None).expect("shapes decorated empty glyph");
+        assert_eq!(underlined.width, shaped.width);
+        assert!(underlined.glyphs.is_empty());
+        assert!(underlined.text.is_empty());
+        assert!(!underlined.strokes.is_empty(), "decoration spans survive an empty outline");
+    }
 
     #[test]
     fn stroke_font_rtl_lines_keep_latin_and_digits_in_the_stroke_font() {
@@ -228,7 +345,7 @@ mod tests {
         // missing-glyph boxes, the digits stay stroke glyphs, in the middle of the line (between
         // the two words), and the measured width matches the shaped one.
         let s = "قیمت 25 تومان";
-        let sh = shape(None, s, 1.0, 1.0, 0.0).unwrap_or_default();
+        let sh = shape(None, s, 1.0, 1.0, 0.0, None).unwrap_or_default();
         assert!(sh.width > 0.0);
         assert!((crate::line_width(s, 1.0, 1.0) - sh.width).abs() < 1e-9);
         let digits: Vec<f64> = sh.strokes.iter().filter(|st| !(st.len() == 5 && st.first() == st.last())).flatten().map(|p| p.x).collect();
@@ -322,13 +439,115 @@ mod tests {
     }
 
     #[test]
+    fn thai_lines_are_shaped_and_latin_lines_are_not() {
+        assert!(needed("ระดับดินเดิม") && needed("ขนาด 50x50 mm.") && needed("\u{0E4C}"));
+        assert!(needed("abc سلام"));
+        assert!(!needed("50x50 mm.") && !needed("Ünïcödé %%c25") && !needed(""));
+    }
+
+    fn glyph(cluster: usize) -> Glyph {
+        Glyph { gid: 0, cluster, advance: 500.0, dx: 0.0, dy: 0.0 }
+    }
+
+    /// Without installed fonts: a face that maps no character, so glyphs take their cluster's
+    /// characters in order.
+    #[test]
+    fn glyphs_show_their_cluster_characters_once() {
+        let face = empty_glyph_face();
+        let cs: Vec<char> = "xabcd".chars().collect();
+        // A run from index 1: cluster 1 has "ab" (two glyphs), cluster 3 has "cd" and a split
+        // character's extra glyph, which shows nothing.
+        let gs = Vec::from([1, 1, 3, 3, 3].map(glyph));
+        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![Some('a'), Some('b'), Some('c'), Some('d'), None]);
+        // Clusters out of order, past the run or past the line show nothing and don't panic.
+        let gs = Vec::from([3, 1, usize::MAX, 9].map(glyph));
+        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![None, Some('a'), None, None]);
+        assert!(glyph_chars(&face, &cs, &[], 5).is_empty());
+        // A cluster longer than the matching limit still shows each character once, in order.
+        let long: Vec<char> = std::iter::once('ก').chain(std::iter::repeat_n('\u{0E48}', MAX_CHARS)).collect();
+        let gs: Vec<Glyph> = (0..long.len()).map(|_| glyph(0)).collect();
+        let shows = glyph_chars(&face, &long, &gs, long.len());
+        assert_eq!(shows.first(), Some(&Some('ก')));
+        assert!(shows.iter().all(Option::is_some));
+    }
+
+    /// An installed font with Thai, or `None` (the tests then skip).
+    fn thai_face() -> Option<Face> {
+        ttf::fallback_for('\u{0E01}').filter(|f| ['\u{0E14}', '\u{0E34}', '\u{0E4C}', '\u{0E33}', '\u{0E10}'].iter().all(|c| f.has_glyph(*c)))
+    }
+
+    /// Lowest point of the glyph that shows `c`.
+    fn bottom_of(sh: &Shaped, c: char) -> Option<f64> {
+        let t = sh.text.iter().find(|t| t.ch == c)?;
+        sh.glyphs.get(t.outline)?.iter().flatten().map(|p| p.y).reduce(f64::min)
+    }
+
+    #[test]
+    fn thai_marks_stack_in_an_installed_font() {
+        let Some(face) = thai_face() else { return };
+        let shape = |s: &str| ttf::shape(&face, s, 1.0, 1.0, 0.0).expect("the face parses");
+        // Thanthakhat over sara i (ดิ์) sits above the vowel, higher than over the bare consonant
+        // (ด์): the font's mark-to-mark positioning. One glyph per character drew both marks at
+        // the same height, on top of each other.
+        let stacked = shape("ดิ์");
+        let alone = shape("ด์");
+        let (Some(over_vowel), Some(over_letter)) = (bottom_of(&stacked, '\u{0E4C}'), bottom_of(&alone, '\u{0E4C}')) else {
+            panic!("thanthakhat drawn as text: {:?}", stacked.text.iter().map(|t| t.ch).collect::<String>())
+        };
+        assert!(over_vowel > over_letter + 0.05, "stacked {over_vowel} vs alone {over_letter}");
+        // Every character is written as text exactly once, however the shaper reorders, splits
+        // (sara am) or substitutes (ฐ without its tail under sara u) the glyphs.
+        for s in ["ดิ์", "น้ำ", "ฐุ", "ปั้น", "จีรศักดิ์"] {
+            let mut shown: Vec<char> = shape(s).text.iter().map(|t| t.ch).collect();
+            let mut typed: Vec<char> = s.chars().collect();
+            shown.sort_unstable();
+            typed.sort_unstable();
+            assert_eq!(shown, typed, "{s}");
+        }
+        // Measured and laid-out widths agree, in the face and in a stroke-font style.
+        let s = "ทาสีขาว 50x50 mm.";
+        assert!((ttf::width(&face, s, 1.0, 1.0).unwrap_or_default() - shape(s).width).abs() < 1e-9);
+        assert!((crate::line_width(s, 1.0, 1.0) - crate::shape_stroke(s, 1.0, 1.0, 0.0).width).abs() < 1e-9);
+        // In a stroke-font style Thai comes from the fallback font as text, without
+        // missing-glyph boxes, and the Latin stays in the stroke font.
+        let sh = crate::shape_stroke("ระดับดินเดิม +0.00", 1.0, 1.0, 0.0);
+        assert!(!sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last()), "no missing-glyph boxes");
+        assert_eq!(sh.text.len(), "ระดับดินเดิม".chars().count());
+        assert!(!sh.strokes.is_empty(), "\"+0.00\" in the stroke font");
+    }
+
+    #[test]
+    fn hostile_thai_lines_never_panic() {
+        for s in [
+            "\u{0E33}\u{0E33}\u{0E33}",
+            "\u{0E4C}\u{0E49}\u{0E34}",
+            "ก\u{0E49}\u{0E49}\u{0E49}\u{0E33}\u{0E33}",
+            "%%u\u{0E34}%%o",
+            "\u{0E01}\u{200D}\u{0E33}\u{10FFFF}",
+        ] {
+            let _ = crate::shape_stroke(s, f64::NAN, -1.0, f64::INFINITY);
+            let _ = crate::line_width(s, 0.0, 0.0);
+            if let Some(face) = thai_face() {
+                let _ = ttf::shape(&face, s, f64::NAN, 0.0, f64::NAN);
+                let _ = ttf::width(&face, s, -1.0, f64::INFINITY);
+            }
+        }
+        // One consonant under thousands of tone marks: a single huge cluster.
+        let marks = format!("ก{}", "\u{0E48}".repeat(MAX_CHARS - 1));
+        assert!(crate::shape_stroke(&marks, 1.0, 1.0, 0.0).width > 0.0);
+        let long = "ก".repeat(MAX_CHARS + 1);
+        assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
+        assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
+    }
+
+    #[test]
     fn hostile_rtl_lines_never_panic() {
         for s in ["\u{202E}%%u\u{05D0}%%", "\u{2067}\u{0644}\u{0627}\u{2069}%%o", "\u{064E}\u{064E}\u{05D0}", "\u{05D0}\u{E000}\u{10FFFF}"] {
             let _ = crate::shape_stroke(s, f64::NAN, -1.0, f64::INFINITY);
             let _ = crate::line_width(s, 0.0, 0.0);
         }
         let long = "\u{05D0}b ".repeat(MAX_CHARS);
-        assert!(shape(None, &long, 1.0, 1.0, 0.0).is_none());
+        assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
     }
 }
