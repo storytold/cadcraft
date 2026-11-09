@@ -344,14 +344,17 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   presence ≤10 Гц; `CadApp::run` отправляет не-UI команды как `Op` (structural —
   для каскадов), viewer получает отказ; командная строка в совместной сессии
   принимает только однострочные команды с явными адресами
-  (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
-  `ellipse`, `rect`, `text`, `dimlinear`, `mleader`, `spline`, `block`,
-  `insert`, `move`, `copy`, `rotate`,
+  (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `arc`,
+  `polyline`, `ellipse`, `rect`, `text`, `dimlinear`, `dimaligned`,
+  `mleader`, `spline`, `block`, `insert`, `move`, `copy`, `rotate`,
   `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `wipeout`,
   `imageattach`, `erase`.
   Синтаксис адресных форм:
   `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
   `ellipse cx,cy rx[,ry] [angle]`, `rect x,y x,y`,
+  `arc cx,cy r start end` (дуга по центру, радиусу и углам начала и конца в
+  градусах, как у движковой `arc`; неположительный радиус, координата или
+  радиус за лимитом чертежа и нечисловой угол отклоняются до операции),
   `text x,y height angle "content"` (содержимое в кавычках, `\"`/`\\` —
   экранирование; пустой текст и неположительная высота отклоняются),
   `dimlinear H1,H2 offset d` (линейный размер между характерными точками двух
@@ -359,6 +362,10 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   `d` влево от `H1 → H2`) или `dimlinear H1,H2 point x,y` (размерная линия в
   точке `x,y`); одинаковые handle, объект без характерной точки и нулевая длина
   отклоняются до операции,
+  `dimaligned x1,y1 x2,y2 ax,ay` (выровненный размер между двумя явными
+  точками `x1,y1` и `x2,y2`; размерная линия проходит через точку `ax,ay`;
+  нечисловая или вне-лимитная координата и совпавшие измеряемые точки
+  отклоняются до операции),
   `mleader H[,H…] x,y "text"` (выноска: стрелка в ближайшей характерной точке
   каждого названного объекта, посадка в точке `x,y`, текст в кавычках; пустой
   текст, объект без характерной точки и посадка на последнюю точку стрелки
