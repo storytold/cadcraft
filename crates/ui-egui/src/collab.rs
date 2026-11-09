@@ -403,8 +403,8 @@ impl crate::CadApp {
         if self.collab.is_some() && self.show_participants {
             self.participants_window(ctx);
         }
-        let (updates, role) = match &self.collab {
-            Some(collab) => (collab.poll(), collab.role()),
+        let updates = match &self.collab {
+            Some(collab) => collab.poll(),
             None => return,
         };
         if !updates.is_empty() {
@@ -462,9 +462,8 @@ impl crate::CadApp {
                 }
             }
         }
-        if !role.may_write() {
-            return;
-        }
+        // A viewer still reports where it looks (ADR-0006): only operations are refused, in
+        // `collab_command`/`collab_cmdline` and by the server.
         let now = web_time::Instant::now();
         if self.last_presence.is_none_or(|last| now.duration_since(last) >= std::time::Duration::from_millis(100)) {
             self.last_presence = Some(now);
