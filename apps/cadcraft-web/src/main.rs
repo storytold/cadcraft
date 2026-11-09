@@ -32,10 +32,12 @@ mod web {
     use cadcraft_ui_egui::{CadApp, Services};
     use wasm_bindgen::JsCast as _;
 
-    use crate::host_session::{HostAction, HostEvent, HostState};
+    use crate::host_session::{HostAction, HostEvent, HostPublisher, HostState};
 
     const CANVAS_ID: &str = "cadcraft_canvas";
     const LOADING_ID: &str = "cadcraft_loading";
+    /// The host's `presence` pace: a few messages a second at most (craft-web-host).
+    const PRESENCE_MS: f64 = 100.0;
 
     /// The app, the files File > Open… and drag and drop read for it in the background, the
     /// host page (`?host=parent`, or `data-host="page"` on the canvas), the browser's
@@ -51,6 +53,8 @@ mod web {
         Option<String>,
         Rc<RefCell<Vec<HostEvent>>>,
         HostState,
+        /// Decides which `session-state`/`presence` messages the cabinet needs.
+        HostPublisher,
     );
 
     impl Shell {
@@ -74,6 +78,35 @@ mod web {
                 }
             }
         }
+
+        /// Tell the cabinet the sync state and who is here: `cadcraft:session-state` when either
+        /// changes, `cadcraft:presence` at the sync server's pace. Leaving a session posts
+        /// `offline` once and resets the publisher for the next one.
+        fn publish_host_state(&mut self) {
+            let Some(bridge) = self.2.clone() else { return };
+            if !self.0.is_shared() {
+                if self.7.started() {
+                    if let Err(message) = bridge.post_session_state("offline", &[]) {
+                        log::warn!("session-state: {message}");
+                    }
+                    self.7.reset();
+                }
+                return;
+            }
+            let status = self.0.collab_status().map_or("offline", |status| status.word());
+            let participants = self.0.session_participants();
+            if let Some((status, people)) = self.7.session_state(status, &participants)
+                && let Err(message) = bridge.post_session_state(&status, &people)
+            {
+                log::warn!("session-state: {message}");
+            }
+            let now = js_sys::Date::now();
+            if let Some(people) = self.7.presence(now, &participants, PRESENCE_MS)
+                && let Err(message) = bridge.post_presence(&people)
+            {
+                log::warn!("presence: {message}");
+            }
+        }
     }
 
     impl eframe::App for Shell {
@@ -88,6 +121,8 @@ mod web {
             self.1.drain(&mut self.0);
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
+            // After the frame: the session's status and presence are what this frame settled.
+            self.publish_host_state();
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
             // The crate suppresses duplicates, so reporting after every logic callback
@@ -246,7 +281,7 @@ mod web {
                             bridge.post_ready();
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
-                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None, host_events, HostState::default())))
+                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None, host_events, HostState::default(), HostPublisher::default())))
                     }),
                 )
                 .await;

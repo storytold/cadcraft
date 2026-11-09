@@ -29,7 +29,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use cadcraft_ui_egui::CadApp;
-use cadcraft_ui_egui::collab::HostCommitFn;
+use cadcraft_ui_egui::collab::{HostCommitFn, SessionParticipant};
+use craft_web_host::Participant;
 use craft_web_host::web::{FileData, Host, Message};
 
 use crate::host_session::{HostEvent, HostSession};
@@ -71,6 +72,17 @@ impl Bridge {
 
     pub fn post_failed(&self, error: &str) {
         let _ = self.host.post_failed(error, None);
+    }
+
+    /// `cadcraft:session-state`: the cabinet's sync indicator and who is here. The crate sends it
+    /// as the contract describes; the shell decides when a change is worth a message.
+    pub fn post_session_state(&self, status: &str, participants: &[SessionParticipant]) -> Result<(), String> {
+        self.host.post_session_state(status, &host_people(participants))
+    }
+
+    /// `cadcraft:presence`: the participant list at the sync server's pace.
+    pub fn post_presence(&self, participants: &[SessionParticipant]) -> Result<(), String> {
+        self.host.post_presence(&host_people(participants))
     }
 
     /// Hear drawings and sessions from the host; drawings arrive through the upload inbox, the
@@ -127,6 +139,14 @@ impl Bridge {
 pub fn deliver(name: &str, _mime: &str, bytes: &[u8]) -> Result<(), String> {
     let bridge = BRIDGE.with(|b| b.borrow().clone()).ok_or("the page that embeds CADCraft is gone")?;
     bridge.post_save(name, bytes)
+}
+
+/// The crate's participant shape, from the session's.
+fn host_people(participants: &[SessionParticipant]) -> Vec<Participant> {
+    participants
+        .iter()
+        .map(|participant| Participant { client_id: participant.client_id.clone(), role: participant.role.clone(), color: participant.color.clone() })
+        .collect()
 }
 
 /// The `cadcraft:open` payload, `{ name, bytes }` where `bytes` holds a drawing: it opens like a

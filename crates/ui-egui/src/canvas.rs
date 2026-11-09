@@ -426,6 +426,12 @@ fn presence_color(actor: &str) -> Color32 {
     Color32::from_rgb(channel(r), channel(g), channel(b))
 }
 
+/// [`presence_color`] as a CSS colour (`#rrggbb`), for the host bridge's participant list.
+pub(crate) fn presence_color_hex(actor: &str) -> String {
+    let color = presence_color(actor);
+    format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
+}
+
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
     let app = &mut *frame.app;
     let painter = frame.painter;

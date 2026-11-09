@@ -23,6 +23,44 @@ use cadcraft_collab_client::Session as Remote;
 /// unset and the room's own commit (server-to-server, M87) handles the file.
 pub type HostCommitFn = Box<dyn Fn() -> Result<(), String>>;
 
+/// The sync state the cabinet's indicator shows (`session-state.status`): the contract's words are
+/// `synced`, `pending`, `offline` and `error`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncStatus {
+    /// The socket is dialling or the replica is still arriving.
+    Connecting,
+    /// The replica is at the server's version and nothing is waiting.
+    Synced,
+    /// An operation is unanswered, or the replica is catching up after a reconnect.
+    Pending,
+    /// The socket closed; a reconnect is scheduled.
+    Offline,
+    /// The session failed in a way a reconnect will not fix.
+    Error,
+}
+
+impl SyncStatus {
+    /// The host contract's word for this state.
+    pub fn word(self) -> &'static str {
+        match self {
+            SyncStatus::Connecting | SyncStatus::Pending => "pending",
+            SyncStatus::Synced => "synced",
+            SyncStatus::Offline | SyncStatus::Error => "offline",
+        }
+    }
+}
+
+/// One participant as the cabinet's list shows them, in the host bridge's shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionParticipant {
+    /// Stable for the session: the server's client id (the token's `sub`).
+    pub client_id: String,
+    /// `owner`, `editor` or `viewer`, as the server named it.
+    pub role: String,
+    /// The colour the cursors use, `#rrggbb`.
+    pub color: Option<String>,
+}
+
 /// What the UI asks the worker to send.
 pub enum Request {
     /// An operation.
@@ -95,6 +133,18 @@ impl Collab {
         self.role
     }
 
+    /// The desktop join blocks until the welcome, so a live connection is in sync; the worker
+    /// reports a lost connection as [`Update::Lost`], which detaches the session.
+    pub fn status(&self) -> SyncStatus {
+        SyncStatus::Synced
+    }
+
+    /// The desktop `Session` does not expose its token's `sub`; the participant list still names
+    /// everyone whose presence arrived.
+    pub fn client_id(&self) -> Option<String> {
+        None
+    }
+
     /// Queue a message for the worker.
     pub fn send(&self, request: Request) {
         let _ = self.requests.send(request);
@@ -143,6 +193,21 @@ impl Collab {
     /// What the participant may do (the welcome's role once it arrives).
     pub fn role(&self) -> Role {
         self.role.get()
+    }
+
+    /// The connection's state for the cabinet's sync indicator.
+    pub fn status(&self) -> SyncStatus {
+        match self.session.borrow().status() {
+            cadcraft_collab_client::Status::Connecting => SyncStatus::Connecting,
+            cadcraft_collab_client::Status::InSync => SyncStatus::Synced,
+            cadcraft_collab_client::Status::Pending => SyncStatus::Pending,
+            cadcraft_collab_client::Status::Offline => SyncStatus::Offline,
+        }
+    }
+
+    /// The participant's id (the token's `sub`), once the welcome named it.
+    pub fn client_id(&self) -> Option<String> {
+        self.session.borrow().client_id().map(str::to_string)
     }
 
     /// Send one request; the socket queue carries it now or after the next welcome.
@@ -301,6 +366,38 @@ impl crate::CadApp {
         self.collab.is_some()
     }
 
+    /// The sync state the cabinet's indicator shows, while a session is attached.
+    pub fn collab_status(&self) -> Option<SyncStatus> {
+        self.collab.as_ref().map(Collab::status)
+    }
+
+    /// Who is in the session, in the host bridge's shape: this participant (once the welcome names
+    /// their id) and everyone whose presence arrived. Each role is the server's; the colours match
+    /// the cursors on the canvas.
+    pub fn session_participants(&self) -> Vec<SessionParticipant> {
+        let Some(collab) = &self.collab else { return Vec::new() };
+        let mut people = Vec::with_capacity(self.remote_presence.len() + 1);
+        if let Some(id) = collab.client_id() {
+            people.push(SessionParticipant {
+                color: Some(crate::canvas::presence_color_hex(&id)),
+                client_id: id,
+                role: role_tag(collab.role()).to_string(),
+            });
+        }
+        for presence in self.remote_presence.values() {
+            people.push(SessionParticipant {
+                color: Some(crate::canvas::presence_color_hex(&presence.actor)),
+                client_id: presence.actor.clone(),
+                // The server fills the role; a presence from a server that predates roles cannot
+                // claim one, and the list must not offer an edit the server would refuse.
+                role: role_tag(presence.role.unwrap_or(Role::Viewer)).to_string(),
+            });
+        }
+        people.sort_by(|a, b| a.client_id.cmp(&b.client_id));
+        people.dedup_by(|a, b| a.client_id == b.client_id);
+        people
+    }
+
     /// Apply what the shared session sent and report where this participant is looking.
     pub fn collab_tick(&mut self, ctx: &egui::Context) {
         if self.collab.is_some() && self.show_participants {
@@ -373,6 +470,8 @@ impl crate::CadApp {
             self.last_presence = Some(now);
             let presence = Presence {
                 actor: String::new(),
+                // The server names the role from the token; a client must not claim one.
+                role: None,
                 space: self.session.state().map(|state| state.space.clone()).unwrap_or_default(),
                 cursor: Some([self.session.cursor.x, self.session.cursor.y]),
                 selection: self.session.selection(),
@@ -637,6 +736,15 @@ fn role_name(role: Role) -> &'static str {
         Role::Owner => crate::i18n::t("owner"),
         Role::Editor => crate::i18n::t("editor"),
         Role::Viewer => crate::i18n::t("viewer"),
+    }
+}
+
+/// The server's word for the role, as the host contract names it.
+fn role_tag(role: Role) -> &'static str {
+    match role {
+        Role::Owner => "owner",
+        Role::Editor => "editor",
+        Role::Viewer => "viewer",
     }
 }
 

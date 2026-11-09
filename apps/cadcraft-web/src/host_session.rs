@@ -9,6 +9,7 @@
 use std::fmt;
 
 use cadcraft_collab::Role;
+use cadcraft_ui_egui::collab::SessionParticipant;
 
 /// The session the host opened. A credential-bearing value: its `Debug` prints the token as
 /// `<redacted>`, and it is never put in a URL, a log or storage.
@@ -114,10 +115,59 @@ impl HostState {
     }
 }
 
+/// Decides which host messages the cabinet needs: `session-state` when the status or the
+/// participant list changes, `presence` at the sync server's pace (10 Hz) and only when the list
+/// changed. Kept without a browser so the pacing is tested natively.
+#[derive(Debug, Default)]
+pub struct HostPublisher {
+    /// The last `(status, participants)` a `session-state` carried.
+    last_state: Option<(String, Vec<SessionParticipant>)>,
+    /// The participant list a `presence` last carried, and when.
+    last_presence: Option<Vec<SessionParticipant>>,
+    last_presence_ms: Option<f64>,
+}
+
+impl HostPublisher {
+    /// The `session-state` to post, if the status or the participants changed since the last one.
+    pub fn session_state(&mut self, status: &str, participants: &[SessionParticipant]) -> Option<(String, Vec<SessionParticipant>)> {
+        let signature = (status.to_string(), participants.to_vec());
+        if self.last_state.as_ref() == Some(&signature) {
+            return None;
+        }
+        self.last_state = Some(signature.clone());
+        Some(signature)
+    }
+
+    /// The participant list to post as `presence`, if it changed since the last post and at least
+    /// `every_ms` have passed (the host contract asks for a few times a second at most).
+    pub fn presence(&mut self, now_ms: f64, participants: &[SessionParticipant], every_ms: f64) -> Option<Vec<SessionParticipant>> {
+        if self.last_presence.as_deref() == Some(participants) {
+            return None;
+        }
+        if let Some(last) = self.last_presence_ms
+            && now_ms - last < every_ms
+        {
+            return None;
+        }
+        self.last_presence_ms = Some(now_ms);
+        self.last_presence = Some(participants.to_vec());
+        Some(participants.to_vec())
+    }
+
+    /// Forget what was sent: the next session starts with a fresh state.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Whether a `session-state` has been sent in this session.
+    pub fn started(&self) -> bool {
+        self.last_state.is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     /// A `cadcraft:session` message starts a connection, keeps the role the host named and never
     /// prints the token.
     #[test]
@@ -157,5 +207,49 @@ mod tests {
         let state = HostState::default();
         assert!(state.session.is_none());
         assert!(state.committed.is_none());
+    }
+
+    fn people(ids: &[(&str, &str)]) -> Vec<SessionParticipant> {
+        ids.iter().map(|(id, role)| SessionParticipant { client_id: (*id).to_string(), role: (*role).to_string(), color: None }).collect()
+    }
+
+    /// The cabinet hears the sync status and the participant list when they change, but not the
+    /// same state twice: an idle session must not repaint the host every frame.
+    #[test]
+    fn session_state_is_sent_on_a_change_only() {
+        let mut publisher = HostPublisher::default();
+        let here = people(&[("a", "editor"), ("v", "viewer")]);
+        assert_eq!(publisher.session_state("synced", &here), Some(("synced".to_string(), here.clone())));
+        assert_eq!(publisher.session_state("synced", &here), None, "the same state is not repeated");
+        assert_eq!(publisher.session_state("pending", &here), Some(("pending".to_string(), here.clone())));
+        let fewer = people(&[("a", "editor")]);
+        assert_eq!(publisher.session_state("synced", &fewer), Some(("synced".to_string(), fewer)));
+        assert!(publisher.started());
+    }
+
+    /// Presence follows the list at the server's pace: a join or a role change is posted once, and
+    /// a second change inside the window waits for the next one.
+    #[test]
+    fn presence_follows_the_list_at_the_presence_pace() {
+        let mut publisher = HostPublisher::default();
+        let one = people(&[("a", "editor")]);
+        assert_eq!(publisher.presence(1_000.0, &one, 100.0), Some(one.clone()));
+        assert_eq!(publisher.presence(1_050.0, &one, 100.0), None, "unchanged");
+        let two = people(&[("a", "editor"), ("v", "viewer")]);
+        assert_eq!(publisher.presence(1_060.0, &two, 100.0), None, "inside the window");
+        // The change is still pending after the window: the next frame posts it.
+        assert_eq!(publisher.presence(1_120.0, &two, 100.0), Some(two.clone()));
+        assert_eq!(publisher.presence(1_180.0, &two, 100.0), None, "unchanged again");
+    }
+
+    /// Leaving the session resets the publisher, so the next one starts with its own state.
+    #[test]
+    fn leaving_resets_the_publisher() {
+        let mut publisher = HostPublisher::default();
+        let one = people(&[("a", "editor")]);
+        assert!(publisher.session_state("synced", &one).is_some());
+        publisher.reset();
+        assert!(!publisher.started());
+        assert_eq!(publisher.session_state("synced", &one), Some(("synced".to_string(), one)));
     }
 }
