@@ -268,6 +268,10 @@ pub struct CadApp {
     pub remote_presence: std::collections::BTreeMap<String, cadcraft_collab::Presence>,
     /// The version of the shared drawing this app shows.
     pub collab_version: u64,
+    /// The last commit the shared session reported, for the panel (TASK §6).
+    pub last_collab_commit: Option<collab::CommitState>,
+    /// Why the cabinet refused the last commit (`409`), while the panel offers a copy.
+    pub collab_conflict: Option<String>,
     /// Whether the shared session's participant list is open.
     pub show_participants: bool,
     collab_seq: u64,
@@ -367,6 +371,8 @@ impl CadApp {
             collab: None,
             remote_presence: std::collections::BTreeMap::new(),
             collab_version: 0,
+            last_collab_commit: None,
+            collab_conflict: None,
             show_participants: false,
             collab_seq: 0,
             last_presence: None,

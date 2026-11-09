@@ -14,12 +14,14 @@
 
 mod assets;
 pub mod auth;
+mod cabinet;
 mod net;
 mod policy;
 mod presence;
 mod room;
 
 pub use assets::{AssetError, AssetLimits, AssetStore, MAX_ASSET_BYTES, MAX_ASSET_FILES, MAX_ASSET_TOTAL, Stored};
+pub use cabinet::{Cabinet, CabinetConfig, DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_MS, PublishError, Published};
 pub use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role};
 pub use net::{Metrics, Server};
 pub use policy::{MAX_CHANGES, MAX_OP_BYTES, MAX_PARTICIPANTS, changes_too_many, deny_reason, params_reason, size_reason};

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use cadcraft_collab::Role;
 use cadcraft_collab_server::auth::{Authenticator, Claims, JwtAuthenticator, StaticAuthenticator};
-use cadcraft_collab_server::{AssetStore, Room, Server, Snapshot};
+use cadcraft_collab_server::{AssetStore, Cabinet, CabinetConfig, DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_MS, Room, Server, Snapshot};
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -47,6 +47,22 @@ struct Args {
     /// store and `imageattach` takes its bytes in the operation only (ADR 0021).
     #[arg(long)]
     assets: Option<PathBuf>,
+    /// The cabinet's commit endpoint (`http://…/api/v1/internal/office/sessions/{sessionId}/commit`).
+    /// When set, the room posts every commit there instead of answering with the file (M87).
+    #[arg(long)]
+    cabinet_url: Option<String>,
+    /// A file holding the cabinet service token for `--cabinet-url`.
+    #[arg(long)]
+    cabinet_token_file: Option<PathBuf>,
+    /// The cabinet's file id this room serves (with `--cabinet-url`).
+    #[arg(long)]
+    file_id: Option<String>,
+    /// Deadline for one cabinet request, in milliseconds.
+    #[arg(long, default_value_t = DEFAULT_TIMEOUT_MS)]
+    cabinet_timeout_ms: u64,
+    /// Attempts for a transient cabinet failure (`409`/`401`/`413` are never retried).
+    #[arg(long, default_value_t = DEFAULT_ATTEMPTS)]
+    cabinet_attempts: u32,
     /// Seconds between snapshots.
     #[arg(long, default_value_t = 30)]
     snapshot_secs: u64,
@@ -68,6 +84,9 @@ fn main() -> Result<(), String> {
         None => None,
     };
     let mut room = load(&args)?;
+    if let Some(cabinet) = cabinet(&args)? {
+        room = room.with_cabinet(cabinet);
+    }
     if let Some(assets) = &assets {
         room = room.with_assets(Arc::clone(assets));
     }
@@ -145,6 +164,39 @@ fn load(args: &Args) -> Result<Room, String> {
         Some(state) => room.with_journal(journal_path(state)).map_err(|e| e.to_string()),
         None => Ok(room),
     }
+}
+
+/// The cabinet commit callback, when the deployment configured one (M87).
+///
+/// The token comes from a file, never from the process list or an environment dump; the URL and
+/// the file id are required together with it.
+fn cabinet(args: &Args) -> Result<Option<Arc<Cabinet>>, String> {
+    let Some(url) = &args.cabinet_url else {
+        if args.cabinet_token_file.is_some() || args.file_id.is_some() {
+            return Err("--cabinet-token-file and --file-id need --cabinet-url".into());
+        }
+        return Ok(None);
+    };
+    let Some(path) = &args.cabinet_token_file else {
+        return Err("--cabinet-url needs --cabinet-token-file".into());
+    };
+    let Some(file_id) = &args.file_id else {
+        return Err("--cabinet-url needs --file-id".into());
+    };
+    if !url.starts_with("http://") {
+        return Err("--cabinet-url must start with http:// (TLS belongs to the proxy)".into());
+    }
+    let token = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?.trim().to_string();
+    if token.is_empty() {
+        return Err(format!("{}: the cabinet token is empty", path.display()));
+    }
+    Ok(Some(Arc::new(Cabinet::new(CabinetConfig {
+        url: url.clone(),
+        token,
+        file_id: file_id.clone(),
+        timeout: Duration::from_millis(args.cabinet_timeout_ms),
+        attempts: args.cabinet_attempts,
+    }))))
 }
 
 /// The journal beside a snapshot, one applied operation per line.

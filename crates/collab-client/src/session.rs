@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use cadcraft_collab::message::Snapshot;
-use cadcraft_collab::{Applied, ClientInfo, ClientMessage, Op, Presence, Reject, Role, ServerMessage};
+use cadcraft_collab::{Applied, CabinetCommit, ClientInfo, ClientMessage, Op, Presence, Reject, Role, ServerMessage};
 use cadcraft_doc::Drawing;
 
 use crate::{Client, ClientError, Connection};
@@ -36,8 +36,14 @@ pub enum Event {
     Rejected(Reject),
     /// Another participant's view.
     Presence(Presence),
-    /// A commit answer.
-    Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
+    /// A commit answer. With `cabinet` the room published the file itself (M87): `bytes` is
+    /// empty and the client must not write the drawing anywhere else.
+    Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8>, cabinet: Option<CabinetCommit> },
+    /// The cabinet refused the commit with `409`: the file changed outside the session. The room
+    /// keeps the file it built for [`Event::SaveCopy`]; the cabinet is not overwritten.
+    CommitConflict { version: u64, message: String },
+    /// The file of a refused commit, to save as a copy (TASK §6).
+    SaveCopy { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
     /// An attachment is in the room's store.
     AssetStored { sha256: String, bytes: u64, stored: bool },
     /// The bytes of an attachment the room stores.
@@ -163,6 +169,11 @@ impl Session {
         self.connection.send(&ClientMessage::Commit { expected_version }).map_err(SessionError::Transport)
     }
 
+    /// Ask for the file of a commit the cabinet refused with `409`, to save as a copy.
+    pub fn save_copy(&mut self, op_id: &str) -> Result<(), SessionError> {
+        self.connection.send(&ClientMessage::SaveCopy { op_id: op_id.into() }).map_err(SessionError::Transport)
+    }
+
     /// Ask for the journal tail after `last_version`, or a snapshot when it is gone.
     pub fn resync(&mut self, last_version: u64) -> Result<(), SessionError> {
         self.connection.send(&ClientMessage::Resync { last_version }).map_err(SessionError::Transport)
@@ -193,9 +204,17 @@ impl Session {
                 }
                 ServerMessage::Presence { presence } => return Ok(Event::Presence(presence)),
                 ServerMessage::Rejected { rejected } => return Ok(Event::Rejected(rejected)),
-                ServerMessage::CommitResult { version, not_saved, bytes_base64 } => {
+                ServerMessage::CommitResult { version, not_saved, bytes_base64, cabinet } => {
                     let bytes = cadcraft_collab::message::decode_bytes(&bytes_base64).map_err(SessionError::Snapshot)?;
-                    return Ok(Event::Committed { version, not_saved, bytes });
+                    return Ok(Event::Committed { version, not_saved, bytes, cabinet });
+                }
+                ServerMessage::Committed { version, not_saved, cabinet } => {
+                    return Ok(Event::Committed { version, not_saved, bytes: Vec::new(), cabinet: Some(cabinet) });
+                }
+                ServerMessage::CommitConflict { version, message } => return Ok(Event::CommitConflict { version, message }),
+                ServerMessage::SaveCopyResult { version, not_saved, bytes_base64 } => {
+                    let bytes = cadcraft_collab::message::decode_bytes(&bytes_base64).map_err(SessionError::Snapshot)?;
+                    return Ok(Event::SaveCopy { version, not_saved, bytes });
                 }
                 ServerMessage::AssetStored { sha256, bytes, stored } => return Ok(Event::AssetStored { sha256, bytes, stored }),
                 ServerMessage::Asset { sha256, bytes_base64 } => {

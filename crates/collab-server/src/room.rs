@@ -10,6 +10,7 @@ use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
 
 use crate::assets::{AssetError, AssetStore};
+use crate::cabinet::{Cabinet, Published};
 use crate::policy::{changes_too_many, deny_reason, params_reason, size_reason};
 
 use serde::{Deserialize, Serialize};
@@ -108,6 +109,16 @@ pub struct Room {
     redo: BTreeMap<String, Vec<RedoStep>>,
     /// Where `imageattach` bytes live, when the deployment gave the room `--assets` (ADR 0021).
     assets: Option<Arc<AssetStore>>,
+    /// The cabinet that takes the room's commits, when this deployment publishes them (M87).
+    cabinet: Option<Arc<Cabinet>>,
+    /// The etag the cabinet returned with the last accepted commit; the next sends it as
+    /// `expectedVersion`, so a file changed outside the session is refused with `409`.
+    cabinet_etag: Option<String>,
+    /// The last file a commit built. A repeated commit of the same version is answered from it,
+    /// and a `409` keeps it so the owner can save the room's work as a copy (TASK §6).
+    last_commit: Option<Committed>,
+    /// Why the cabinet refused the last commit with `409`, until a commit is accepted.
+    conflict: Option<String>,
 }
 
 impl Room {
@@ -134,7 +145,68 @@ impl Room {
             undo: BTreeMap::new(),
             redo: BTreeMap::new(),
             assets: None,
+            cabinet: None,
+            cabinet_etag: None,
+            last_commit: None,
+            conflict: None,
         })
+    }
+
+    /// Give the room a cabinet to publish commits to (M87).
+    pub fn with_cabinet(mut self, cabinet: Arc<Cabinet>) -> Self {
+        self.cabinet = Some(cabinet);
+        self
+    }
+
+    /// The cabinet this room publishes to, when the deployment configured one.
+    pub fn cabinet(&self) -> Option<Arc<Cabinet>> {
+        self.cabinet.clone()
+    }
+
+    /// The etag the cabinet returned with the last accepted commit.
+    pub fn cabinet_etag(&self) -> Option<&str> {
+        self.cabinet_etag.as_deref()
+    }
+
+    /// The cabinet accepted a commit: the next one expects this etag.
+    pub fn accept_cabinet(&mut self, published: &Published) {
+        self.cabinet_etag = Some(published.etag.clone());
+        self.conflict = None;
+    }
+
+    /// Keep the file a commit built, so a repeat is idempotent and a refused one can be saved.
+    pub fn remember_commit(&mut self, committed: &Committed) {
+        self.last_commit = Some(committed.clone());
+        self.conflict = None;
+    }
+
+    /// The cabinet refused the commit with `409`: keep the file and the reason for the panel.
+    pub fn remember_conflict(&mut self, committed: &Committed, message: impl Into<String>) {
+        self.conflict = Some(message.into());
+        if self.last_commit.as_ref().is_none_or(|last| last.version != committed.version) {
+            self.last_commit = Some(committed.clone());
+        }
+    }
+
+    /// Why the cabinet refused the last commit, while the panel still offers its file as a copy.
+    pub fn conflict(&self) -> Option<&str> {
+        self.conflict.as_deref()
+    }
+
+    /// The last file a commit built, if this room has one.
+    pub fn last_commit(&self) -> Option<&Committed> {
+        self.last_commit.as_ref()
+    }
+
+    /// Take the file of a refused commit; the caller sends it to the owner exactly once.
+    ///
+    /// A copy is only offered while the cabinet's refusal stands: an accepted commit means the
+    /// room's work is stored and there is nothing to rescue.
+    pub fn take_refused_copy(&mut self) -> Option<Committed> {
+        self.conflict.as_ref()?;
+        let copy = self.last_commit.clone();
+        self.conflict = None;
+        copy
     }
 
     /// Give the room its attachment store (ADR 0021).

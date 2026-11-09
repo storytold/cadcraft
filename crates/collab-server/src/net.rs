@@ -16,11 +16,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cadcraft_collab::message::{Snapshot, encode_bytes};
-use cadcraft_collab::{ClientMessage, Outcome, Reject, ServerMessage};
+use cadcraft_collab::{CabinetCommit, ClientMessage, Outcome, Reject, ServerMessage};
 use tungstenite::{Message, WebSocket, accept};
 
 use crate::assets::{AssetError, AssetStore};
 use crate::auth::{Authenticator, Claims};
+use crate::cabinet::PublishError;
 use crate::{CommitFormat, PresenceBoard, Room};
 
 /// How long a socket waits for a message before the loop drains its send queue.
@@ -41,6 +42,10 @@ pub struct Metrics {
     pub rejected: AtomicU64,
     /// Messages that could not be handled.
     pub errors: AtomicU64,
+    /// Commits the cabinet stored (M87).
+    pub commits: AtomicU64,
+    /// Commits the cabinet refused with `409` (the file changed elsewhere).
+    pub conflicts: AtomicU64,
 }
 
 impl Metrics {
@@ -51,6 +56,8 @@ impl Metrics {
              # TYPE cadcraft_collab_operations_total counter\ncadcraft_collab_operations_total{{result=\"applied\"}} {}\n\
              cadcraft_collab_operations_total{{result=\"rejected\"}} {}\n\
              # TYPE cadcraft_collab_errors_total counter\ncadcraft_collab_errors_total {}\n\
+             # TYPE cadcraft_collab_commits_total counter\ncadcraft_collab_commits_total {}\n\
+             # TYPE cadcraft_collab_commit_conflicts_total counter\ncadcraft_collab_commit_conflicts_total {}\n\
              # TYPE cadcraft_collab_version gauge\ncadcraft_collab_version {}\n\
              # TYPE cadcraft_collab_journal_length gauge\ncadcraft_collab_journal_length {}\n\
              # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n",
@@ -58,6 +65,8 @@ impl Metrics {
             self.applied.load(Ordering::Relaxed),
             self.rejected.load(Ordering::Relaxed),
             self.errors.load(Ordering::Relaxed),
+            self.commits.load(Ordering::Relaxed),
+            self.conflicts.load(Ordering::Relaxed),
             version,
             journal,
             participants,
@@ -296,23 +305,119 @@ impl Server {
             }
             ClientMessage::Resync { last_version } => self.resync(last_version, tx),
             ClientMessage::Commit { expected_version } => {
-                let committed = {
+                if !claims.role.may_write() {
+                    let _ = tx.send(ServerMessage::Rejected {
+                        rejected: Reject {
+                            op_id: "commit".into(),
+                            code: "forbidden".into(),
+                            message: "a viewer cannot commit".into(),
+                            retryable: false,
+                        },
+                    });
+                    return true;
+                }
+                let (committed, cabinet, expected) = {
                     let room = lock(&self.room);
-                    if expected_version == room.version() { room.commit(CommitFormat::Dxf).ok() } else { None }
+                    if expected_version != room.version() {
+                        let _ = tx.send(ServerMessage::Error {
+                            code: "stale".into(),
+                            message: "the drawing moved; resynchronise before committing".into(),
+                            retryable: true,
+                        });
+                        return true;
+                    }
+                    match room.commit(CommitFormat::Dxf) {
+                        Ok(committed) => (committed, room.cabinet(), room.cabinet_etag().map(str::to_string)),
+                        Err(error) => {
+                            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                            let _ = tx.send(ServerMessage::Error { code: "commit".into(), message: error.to_string(), retryable: true });
+                            return true;
+                        }
+                    }
                 };
-                let message = match committed {
-                    Some(committed) => ServerMessage::CommitResult {
-                        version: committed.version,
-                        not_saved: committed.not_saved,
-                        bytes_base64: encode_bytes(&committed.bytes),
+                match cabinet {
+                    // The cabinet owns the file: the room posts it and every participant is told
+                    // the stored version; nobody writes the file locally (TASK §6).
+                    Some(cabinet) => match cabinet.publish(&self.session, &committed.bytes, committed.version, expected.as_deref()) {
+                        Ok(published) => {
+                            self.metrics.commits.fetch_add(1, Ordering::Relaxed);
+                            {
+                                let mut room = lock(&self.room);
+                                room.accept_cabinet(&published);
+                                room.remember_commit(&committed);
+                            }
+                            let message = ServerMessage::Committed {
+                                version: committed.version,
+                                not_saved: committed.not_saved.clone(),
+                                cabinet: CabinetCommit { version: published.version, etag: published.etag },
+                            };
+                            let _ = tx.send(message.clone());
+                            self.broadcast(Some(&claims.sub), message);
+                        }
+                        Err(PublishError::Conflict(message)) => {
+                            self.metrics.conflicts.fetch_add(1, Ordering::Relaxed);
+                            lock(&self.room).remember_conflict(&committed, message.clone());
+                            let _ = tx.send(ServerMessage::CommitConflict { version: committed.version, message });
+                        }
+                        Err(PublishError::Unauthorized) => {
+                            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                            let _ = tx.send(ServerMessage::Error {
+                                code: "cabinet-unauthorized".into(),
+                                message: "the cabinet refused the service token".into(),
+                                retryable: false,
+                            });
+                        }
+                        Err(PublishError::TooLarge) => {
+                            let _ = tx.send(ServerMessage::Error {
+                                code: "cabinet-too-large".into(),
+                                message: "the cabinet refused the committed file: too large".into(),
+                                retryable: false,
+                            });
+                        }
+                        Err(PublishError::Refused(message)) => {
+                            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                            let _ = tx.send(ServerMessage::Error { code: "cabinet-refused".into(), message, retryable: false });
+                        }
+                        Err(PublishError::Transport(message)) => {
+                            self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                            let _ = tx.send(ServerMessage::Error { code: "cabinet-unreachable".into(), message, retryable: true });
+                        }
                     },
-                    None => ServerMessage::Error {
-                        code: "stale".into(),
-                        message: "the drawing moved; resynchronise before committing".into(),
-                        retryable: true,
-                    },
-                };
-                let _ = tx.send(message);
+                    // No cabinet: the participant writes the file itself, as before.
+                    None => {
+                        lock(&self.room).remember_commit(&committed);
+                        let _ = tx.send(ServerMessage::CommitResult {
+                            version: committed.version,
+                            not_saved: committed.not_saved,
+                            bytes_base64: encode_bytes(&committed.bytes),
+                            cabinet: None,
+                        });
+                    }
+                }
+            }
+            ClientMessage::SaveCopy { op_id } => {
+                if !claims.role.may_write() {
+                    let _ = tx.send(ServerMessage::Rejected {
+                        rejected: Reject { op_id, code: "forbidden".into(), message: "a viewer cannot save a copy".into(), retryable: false },
+                    });
+                    return true;
+                }
+                match lock(&self.room).take_refused_copy() {
+                    Some(copy) => {
+                        let _ = tx.send(ServerMessage::SaveCopyResult {
+                            version: copy.version,
+                            not_saved: copy.not_saved,
+                            bytes_base64: encode_bytes(&copy.bytes),
+                        });
+                    }
+                    None => {
+                        let _ = tx.send(ServerMessage::Error {
+                            code: "no-copy".into(),
+                            message: "there is no refused commit to save".into(),
+                            retryable: false,
+                        });
+                    }
+                }
             }
             ClientMessage::AssetPut { sha256, bytes_base64 } => {
                 if !claims.role.may_write() {

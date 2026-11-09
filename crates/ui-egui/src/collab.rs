@@ -7,7 +7,7 @@
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::Duration;
 
-use cadcraft_collab::{Applied, Op, Presence, Reject, Role};
+use cadcraft_collab::{Applied, CabinetCommit, Op, Presence, Reject, Role};
 use cadcraft_collab_client::{Event, Session as Remote};
 
 /// What the UI asks the worker to send.
@@ -22,6 +22,19 @@ pub enum Request {
     Redo(String),
     /// Write the file the cabinet stores, at this version.
     Commit(u64),
+    /// Ask for the file of a commit the cabinet refused with `409` (TASK §6).
+    SaveCopy,
+}
+
+/// The state the shared-session panel shows after a commit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommitState {
+    /// The drawing's version the file was written from.
+    pub version: u64,
+    /// The cabinet's answer when the room published the file itself (M87).
+    pub cabinet: Option<CabinetCommit>,
+    /// What the format could not keep.
+    pub not_saved: std::collections::BTreeMap<String, usize>,
 }
 
 /// What the worker reports to the UI.
@@ -32,8 +45,13 @@ pub enum Update {
     Rejected(Reject),
     /// Another participant's view.
     Presence(Presence),
-    /// The file a commit produced.
-    Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
+    /// The file a commit produced. With `cabinet` the cabinet already stored it (M87): the
+    /// drawing is not written anywhere else.
+    Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8>, cabinet: Option<CabinetCommit> },
+    /// The cabinet refused the commit with `409`: the file changed outside the session.
+    CommitConflict { version: u64, message: String },
+    /// The file of a refused commit, to save as a copy (TASK §6).
+    SaveCopy { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
     /// The connection ended; the message says why.
     Lost(String),
 }
@@ -127,6 +145,12 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
                         return;
                     }
                 }
+                Ok(Request::SaveCopy) => {
+                    if session.save_copy("save-copy").is_err() {
+                        let _ = updates.send(Update::Lost("the connection closed".into()));
+                        return;
+                    }
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
@@ -141,8 +165,14 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
             Ok(Event::Presence(presence)) => {
                 let _ = updates.send(Update::Presence(presence));
             }
-            Ok(Event::Committed { version, not_saved, bytes }) => {
-                let _ = updates.send(Update::Committed { version, not_saved, bytes });
+            Ok(Event::Committed { version, not_saved, bytes, cabinet }) => {
+                let _ = updates.send(Update::Committed { version, not_saved, bytes, cabinet });
+            }
+            Ok(Event::CommitConflict { version, message }) => {
+                let _ = updates.send(Update::CommitConflict { version, message });
+            }
+            Ok(Event::SaveCopy { version, not_saved, bytes }) => {
+                let _ = updates.send(Update::SaveCopy { version, not_saved, bytes });
             }
             Ok(Event::Error { message, .. }) => {
                 let _ = updates.send(Update::Lost(message));
@@ -197,25 +227,43 @@ impl crate::CadApp {
                 Update::Presence(presence) => {
                     self.remote_presence.insert(presence.actor.clone(), presence);
                 }
-                Update::Committed { version, not_saved, bytes } => {
-                    let path = self.session.state().ok().and_then(|state| state.path.clone());
-                    let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
-                    let temporary = format!("{path}.tmp");
-                    match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
-                        Ok(()) => {
-                            self.session.echo(format!("shared session: wrote {path} (version {version})"));
-                            if !not_saved.is_empty() {
-                                self.session.echo(format!("the format did not keep: {not_saved:?}"));
+                Update::Committed { version, not_saved, bytes, cabinet } => {
+                    self.last_collab_commit = Some(CommitState { version, cabinet: cabinet.clone(), not_saved: not_saved.clone() });
+                    self.collab_conflict = None;
+                    match cabinet {
+                        // The cabinet owns the file: writing it here too would create a second
+                        // copy of the drawing, so a hosted session only reports where it went.
+                        Some(cabinet) => self.session.echo(format!(
+                            "shared session: the cabinet stored version {version} as file version {} (etag {})",
+                            cabinet.version, cabinet.etag
+                        )),
+                        None => {
+                            let path = self.session.state().ok().and_then(|state| state.path.clone());
+                            let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
+                            let temporary = format!("{path}.tmp");
+                            match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
+                                Ok(()) => self.session.echo(format!("shared session: wrote {path} (version {version})")),
+                                Err(error) => self.session.echo(format!("shared session: could not write {path}: {error}")),
                             }
                         }
-                        Err(error) => self.session.echo(format!("shared session: could not write {path}: {error}")),
                     }
+                    if !not_saved.is_empty() {
+                        self.session.echo(format!("the format did not keep: {not_saved:?}"));
+                    }
+                }
+                Update::CommitConflict { version, message } => {
+                    self.collab_conflict = Some(message.clone());
+                    self.session.echo(format!("shared session: the cabinet refused version {version}: {message}"));
+                }
+                Update::SaveCopy { version, not_saved, bytes } => {
+                    self.save_room_copy(version, &bytes, &not_saved);
                 }
                 Update::Lost(reason) => {
                     self.session.echo(format!("shared session ended: {reason}"));
                     self.remote_presence.clear();
                     self.show_participants = false;
                     self.collab = None;
+                    self.collab_conflict = None;
                 }
             }
         }
@@ -337,6 +385,9 @@ impl crate::CadApp {
         let role = collab.role();
         let mut open = self.show_participants;
         let mut leave = false;
+        let mut save_copy = false;
+        let conflict = self.collab_conflict.clone();
+        let last_commit = self.last_collab_commit.clone();
         let people: Vec<(String, String)> = self
             .remote_presence
             .values()
@@ -358,14 +409,89 @@ impl crate::CadApp {
             for (actor, place) in &people {
                 ui.label(format!("{actor} — {place}"));
             }
+            if let Some(commit) = &last_commit {
+                ui.separator();
+                match &commit.cabinet {
+                    Some(cabinet) => {
+                        ui.label(format!(
+                            "{} {} · {} {}",
+                            crate::i18n::t("Stored by the cabinet, drawing version"),
+                            commit.version,
+                            crate::i18n::t("file version"),
+                            cabinet.version
+                        ));
+                        ui.label(format!("etag {}", cabinet.etag));
+                    }
+                    None => {
+                        ui.label(format!("{} {}", crate::i18n::t("Committed drawing version"), commit.version));
+                    }
+                }
+                if !commit.not_saved.is_empty() {
+                    ui.colored_label(ui.visuals().warn_fg_color, format!("{} {:?}", crate::i18n::t("The format did not keep"), commit.not_saved));
+                }
+            }
+            if let Some(conflict) = &conflict {
+                ui.separator();
+                ui.colored_label(ui.visuals().error_fg_color, conflict);
+                if ui.button(crate::i18n::t("Save a copy...")).clicked() {
+                    save_copy = true;
+                }
+            }
             ui.separator();
             if ui.button(crate::i18n::t("Leave session")).clicked() {
                 leave = true;
             }
         });
         self.show_participants = open;
+        if save_copy && let Some(collab) = &self.collab {
+            collab.send(Request::SaveCopy);
+            self.session.echo("shared session: preparing a copy of the room's file");
+        }
         if leave {
             self.leave_shared();
+        }
+    }
+
+    /// The name a copy of the room's file gets: the drawing's name with `(copy)` before its
+    /// extension.
+    fn room_copy_name(&self) -> String {
+        let name = self
+            .session
+            .state()
+            .ok()
+            .and_then(|state| state.path.clone())
+            .or_else(|| self.session.state().ok().map(|state| state.title.clone()))
+            .unwrap_or_else(|| "cadcraft-shared.dxf".to_string());
+        match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => format!("{stem} (copy).{ext}"),
+            _ => format!("{name} (copy)"),
+        }
+    }
+
+    /// Save the file of a commit the cabinet refused (`409`) as a copy (TASK §6).
+    ///
+    /// The cabinet is not written and the drawing is not marked saved: this is only the owner's
+    /// work under a name they choose.
+    fn save_room_copy(&mut self, version: u64, bytes: &[u8], not_saved: &std::collections::BTreeMap<String, usize>) {
+        let name = self.room_copy_name();
+        #[cfg(not(target_arch = "wasm32"))]
+        match self.services.pick_save.as_ref().and_then(|pick| pick(&name)) {
+            Some(path) => match std::fs::write(&path, bytes) {
+                Ok(()) => self.session.echo(format!("shared session: saved a copy as {path} (version {version})")),
+                Err(error) => self.session.echo(format!("shared session: could not save a copy as {path}: {error}")),
+            },
+            None => self.session.echo(format!("shared session: did not save a copy of version {version}")),
+        }
+        #[cfg(target_arch = "wasm32")]
+        match cadcraft_engine::cmd::file::deliver() {
+            Some(deliver) => match deliver(&name, "application/octet-stream", bytes) {
+                Ok(()) => self.session.echo(format!("shared session: downloaded a copy as {name} (version {version})")),
+                Err(error) => self.session.echo(format!("shared session: could not download a copy as {name}: {error}")),
+            },
+            None => self.session.echo(format!("shared session: this build cannot save a copy of version {version}")),
+        }
+        if !not_saved.is_empty() {
+            self.session.echo(format!("the format did not keep: {not_saved:?}"));
         }
     }
 
@@ -374,6 +500,7 @@ impl crate::CadApp {
         if self.collab.take().is_some() {
             self.remote_presence.clear();
             self.show_participants = false;
+            self.collab_conflict = None;
             self.session.echo("shared session: left");
         }
     }
@@ -398,6 +525,18 @@ pub fn route(app: &mut crate::CadApp, id: &str, _params: &serde_json::Value) -> 
             app.show_participants = !app.show_participants;
             Some(Ok(serde_json::json!({ "participants": app.show_participants })))
         }
+        "ui.collab.save_copy" => {
+            if app.collab.is_none() {
+                return Some(Err("this drawing is not shared".into()));
+            }
+            if app.collab_conflict.is_none() {
+                return Some(Err("there is no refused commit to save".into()));
+            }
+            if let Some(collab) = &app.collab {
+                collab.send(Request::SaveCopy);
+            }
+            Some(Ok(serde_json::json!({ "queued": true })))
+        }
         "ui.collab.leave" => {
             if app.collab.is_none() {
                 return Some(Err("this drawing is not shared".into()));
@@ -417,6 +556,19 @@ pub fn is_structural(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_structural;
+
+    /// The copy of a refused commit is named after the drawing, not over its file: an extension
+    /// stays and `(copy)` goes before it.
+    #[test]
+    fn a_room_copy_is_named_after_the_drawing() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!(app.room_copy_name(), "Drawing1 (copy)");
+        app.session.state_mut().unwrap().path = Some("/tmp/plan.dxf".into());
+        assert_eq!(app.room_copy_name(), "/tmp/plan (copy).dxf");
+        app.session.state_mut().unwrap().path = None;
+        app.session.state_mut().unwrap().title = "Drawing2".into();
+        assert_eq!(app.room_copy_name(), "Drawing2 (copy)");
+    }
 
     #[test]
     fn cascades_are_structural_and_plain_edits_are_not() {

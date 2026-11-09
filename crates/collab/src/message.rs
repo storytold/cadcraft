@@ -73,6 +73,12 @@ pub enum ClientMessage {
     Resync { last_version: u64 },
     /// Ask for the file to be written (ADR-0009).
     Commit { expected_version: u64 },
+    /// Ask for the file a commit the cabinet refused with `409` built (TASK §6).
+    ///
+    /// The room keeps the refused file until the next accepted commit; the answer is
+    /// [`ServerMessage::SaveCopyResult`]. The cabinet is never written by this request: the owner
+    /// saves the room's work under a path of their own.
+    SaveCopy { op_id: String },
     /// Store the bytes of an attachment under their content address (ADR 0021).
     ///
     /// The room checks the address against the bytes and its limits before anything is written;
@@ -131,6 +137,41 @@ pub enum ServerMessage {
         not_saved: std::collections::BTreeMap<String, usize>,
         /// The file, base64 for JSON.
         bytes_base64: String,
+        /// The cabinet's answer when the room publishes the commit itself (M87). With a cabinet
+        /// the file is already stored there; the client must not write it anywhere else.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cabinet: Option<CabinetCommit>,
+    },
+    /// The cabinet stored the room's commit (M87).
+    ///
+    /// This answer carries no bytes: the cabinet owns the file now, and every participant sees
+    /// that it was stored.
+    Committed {
+        /// The drawing's version the file was written from.
+        version: u64,
+        /// What the format could not keep.
+        not_saved: std::collections::BTreeMap<String, usize>,
+        /// The cabinet's version and etag.
+        cabinet: CabinetCommit,
+    },
+    /// The cabinet refused the commit with `409`: the file changed outside the session.
+    ///
+    /// The room built the file and keeps it for [`ClientMessage::SaveCopy`]; the session does not
+    /// overwrite the cabinet's newer version.
+    CommitConflict {
+        /// The drawing's version the file was written from.
+        version: u64,
+        /// Why the cabinet refused it.
+        message: String,
+    },
+    /// The file of a refused commit, for the owner to save as a copy (TASK §6).
+    SaveCopyResult {
+        /// The drawing's version the file was written from.
+        version: u64,
+        /// What the format could not keep.
+        not_saved: std::collections::BTreeMap<String, usize>,
+        /// The file, base64 for JSON.
+        bytes_base64: String,
     },
     /// An attachment is in the room's store; it was already there when `stored` is false.
     AssetStored {
@@ -152,6 +193,16 @@ pub enum ServerMessage {
     Error { code: String, message: String, retryable: bool },
     /// Heartbeat answer.
     Pong,
+}
+
+/// The cabinet's answer to a commit it stored (M87, `INTEGRATION.md` §5.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CabinetCommit {
+    /// The cabinet's new file version.
+    pub version: u64,
+    /// The cabinet's etag for that version; the next commit sends it as `expectedVersion`.
+    pub etag: String,
 }
 
 /// A drawing at one version, as the server sends it.
@@ -220,6 +271,7 @@ pub fn decode_bytes(text: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn a_snapshot_is_split_into_parts_and_joins_back() {
@@ -284,5 +336,45 @@ mod tests {
         let json = serde_json::to_value(&asset).unwrap();
         assert_eq!(json["type"], json!("asset"));
         assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), asset);
+    }
+
+    #[test]
+    fn a_cabinet_commit_and_its_refusal_round_trip() {
+        let committed = ServerMessage::Committed {
+            version: 4,
+            not_saved: BTreeMap::from([("SAT".to_string(), 2)]),
+            cabinet: CabinetCommit { version: 9, etag: "\"e9\"".into() },
+        };
+        let json = serde_json::to_value(&committed).unwrap();
+        assert_eq!(json["type"], json!("committed"));
+        assert_eq!(json["cabinet"]["version"], json!(9));
+        assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), committed);
+
+        let conflict = ServerMessage::CommitConflict { version: 4, message: "the file changed outside the session".into() };
+        let json = serde_json::to_value(&conflict).unwrap();
+        assert_eq!(json["type"], json!("commitConflict"));
+        assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), conflict);
+
+        let copy = ClientMessage::SaveCopy { op_id: "c1".into() };
+        let json = serde_json::to_value(&copy).unwrap();
+        assert_eq!(json["type"], json!("saveCopy"));
+        assert_eq!(serde_json::from_value::<ClientMessage>(json).unwrap(), copy);
+
+        let result = ServerMessage::SaveCopyResult { version: 4, not_saved: BTreeMap::new(), bytes_base64: "aGVsbG8=".into() };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["type"], json!("saveCopyResult"));
+        assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), result);
+    }
+
+    #[test]
+    fn an_old_commit_result_without_a_cabinet_still_parses() {
+        let old = serde_json::json!({
+            "type": "commitResult",
+            "version": 2,
+            "not_saved": {},
+            "bytes_base64": "aGVsbG8="
+        });
+        let message: ServerMessage = serde_json::from_value(old).unwrap();
+        assert!(matches!(message, ServerMessage::CommitResult { cabinet: None, .. }));
     }
 }
