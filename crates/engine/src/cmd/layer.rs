@@ -413,7 +413,11 @@ fn run_state_save(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
     let layers = d.layers.clone();
     let current = d.header.str("CLAYER", "0");
-    d.layer_states.retain(|st| st.name != name);
+    // A state of this name in any case is replaced, so a drawing keeps one state per name, as in
+    // AutoCAD 2024, which finds states without regard to case. AutoCAD's -LAYER stAte Save and
+    // layerstate-save refuse `s1` after `S1` and keep `S1` (measured), as the command line here
+    // does; this command replaces instead, as it does a state of the same spelling.
+    d.layer_states.retain(|st| !st.name.eq_ignore_ascii_case(&name));
     d.layer_states.push(S { mask, ..S::new(name, layers, current) });
     ok()
 }
