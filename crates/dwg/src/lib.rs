@@ -1953,7 +1953,9 @@ mod tests {
 
     /// A 2010+ DWG's table style row cell styles carry the style's margins, as the reference app
     /// writes them: without them it reads the margins as 0.06 where the drawing has 1.0 (#2920).
-    /// DWG 2004 has no row cell styles and keeps the margins in the style itself.
+    /// DWG 2004 has no row cell styles and keeps the margins in the style itself. The rows also
+    /// keep the attributes the style gives them: borders, fill, text style, alignment, height and
+    /// colour.
     #[cfg(not(no_dwg_bridge))]
     #[test]
     fn table_style_row_cell_styles_keep_the_margins() {
@@ -1984,6 +1986,59 @@ mod tests {
             let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
             assert!(["_TITLE", "_HEADER", "_DATA"].iter().all(|n| names.contains(n)), "{version}: {names:?}");
             assert!(rows.iter().all(|r| (r.1, r.2, r.3, r.4, r.5) == (1, 1.0, 0.25, 1.0, 0.25)), "{version}: {rows:?}");
+            // The rows' other attributes are what the writer builds from the style's row styles as
+            // the converter reads them from the DXF: borders (the grid flag is set for a hidden
+            // edge, the reverse of `is_invisible`), fill, text style, alignment, height, colour.
+            let src = read(dxf.clone());
+            let mut checked = 0;
+            for o in back.objects.values() {
+                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
+                let Some(acadrust::objects::ObjectType::TableStyle(from)) =
+                    src.objects.values().find(|o| matches!(o, acadrust::objects::ObjectType::TableStyle(t) if t.name == s.name))
+                else {
+                    panic!("{version}: no source table style {}", s.name);
+                };
+                for (_, row) in &s.modern_overrides {
+                    let want = match row.name.as_str() {
+                        "_TITLE" => &from.title_row_style,
+                        "_HEADER" => &from.header_row_style,
+                        "_DATA" => &from.data_row_style,
+                        other => panic!("{version}: unexpected row {other}"),
+                    };
+                    let (c, tag) = (&row.cell_style, format!("{version} {} {}", s.name, row.name));
+                    let edges = [
+                        (1, &want.top_border),
+                        (2, &want.horizontal_inside_border),
+                        (4, &want.bottom_border),
+                        (8, &want.left_border),
+                        (16, &want.vertical_inside_border),
+                        (32, &want.right_border),
+                    ];
+                    assert_eq!(c.borders.len(), edges.len(), "{tag}: borders");
+                    for (got, (mask, border)) in c.borders.iter().zip(edges) {
+                        assert_eq!(got.index_mask, mask, "{tag}: border order");
+                        let b = &got.border;
+                        assert_eq!(b.is_invisible, !border.is_invisible, "{tag}: border {mask} visibility");
+                        assert_eq!(b.border_type, border.border_type, "{tag}: border {mask} type");
+                        assert_eq!(b.line_weight, border.line_weight, "{tag}: border {mask} weight");
+                        assert_eq!(b.color, border.color, "{tag}: border {mask} colour");
+                        assert_eq!(b.double_line_spacing, border.double_line_spacing, "{tag}: border {mask} spacing");
+                    }
+                    let fill = if want.fill_enabled { want.fill_color } else { acadrust::types::Color::None };
+                    assert_eq!(c.background_color, fill, "{tag}: fill");
+                    let f = &c.content_format;
+                    assert_eq!(f.cell_alignment, want.alignment as i32, "{tag}: alignment");
+                    assert_eq!(f.text_height, want.text_height, "{tag}: text height");
+                    assert_eq!(f.content_color, want.text_color, "{tag}: text colour");
+                    // Handles are the DWG's own: compare the style they name. A style the source
+                    // doesn't have falls to Standard.
+                    let wanted = src.text_styles.get(&want.text_style_name).map_or("Standard", |t| t.name.as_str());
+                    let got = back.text_styles.iter().find(|t| t.handle == f.text_style).map(|t| t.name.as_str());
+                    assert_eq!(got.map(str::to_ascii_lowercase), Some(wanted.to_ascii_lowercase()), "{tag}: text style");
+                    checked += 1;
+                }
+            }
+            assert!(checked >= 3, "{version}: only {checked} rows checked");
         }
     }
 
