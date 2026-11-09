@@ -107,13 +107,14 @@ impl Objects {
             colour_dependent: d.header.i64("PSTYLEMODE", 1) != 0,
         };
         let mut out = Vec::new();
+        let mut budget = crate::dxf_layer_states::MAX_COPIED_BYTES;
         for h in &self.xrecord_order {
             let (Some(tags), Some(name)) = (self.xrecords.get(h), self.names.get(h)) else { continue };
             if out.len() >= crate::dxf_ext::MAX_LAYER_STATES {
                 break;
             }
             if owner(tags).is_some_and(|o| dicts.contains(o.as_str())) {
-                out.push(crate::dxf_layer_states::read(name, tags, &lookup));
+                out.push(crate::dxf_layer_states::read(name, tags, &lookup, &mut budget));
             }
         }
         out

@@ -221,6 +221,12 @@ fn json_layer_states_take_a_mask_and_find_names_in_any_case() {
     s.execute("layerstate.rename", &json!({ "from": "m", "to": "M2" })).unwrap();
     s.execute("layerstate.delete", &json!({ "name": "on" })).unwrap();
     assert_eq!(states(&s), [state("M2", LayerState::ALL)]);
+    // A name -LAYER stAte Save refuses is refused here too, and nothing is saved.
+    let long = "x".repeat(256);
+    for name in ["", " ", "a<b", "a\nb", long.as_str()] {
+        assert!(s.execute("layerstate.save", &json!({ "name": name })).is_err(), "{name:?}");
+    }
+    assert_eq!(states(&s), [state("M2", LayerState::ALL)]);
     // Save onto a name another state has in another case replaces that state, as one spelled the
     // same: AutoCAD 2024 keeps one state per name in any case.
     s.execute("layerstate.save", &json!({ "name": "m2", "mask": LayerState::ON })).unwrap();

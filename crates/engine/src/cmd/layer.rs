@@ -401,6 +401,11 @@ fn all_layers(s: &mut Session, f: fn(&mut Layer)) -> Result<Value> {
 fn run_state_save(s: &mut Session, p: &Value) -> Result<Value> {
     use cadcraft_doc::LayerState as S;
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.save", "`name` is required"))?.to_string();
+    // As -LAYER stAte Save and layerstate.rename take names: none empty, over 255 characters, with a
+    // control character or with one AutoCAD 2024 refuses (measured for Save).
+    if !valid_name(&name) {
+        return Err(bad("layerstate.save", "invalid name"));
+    }
     // The properties restoring sets; bit 512, which no property toggles, is always set, as AutoCAD
     // 2024 saves it (measured: On alone is 513).
     let mask = match p.get("mask") {
