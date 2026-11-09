@@ -318,6 +318,7 @@ pub(super) struct ChainM {
 }
 
 impl ChainM {
+    /// Remember the starting dimension independently of links created by this command.
     pub(super) fn new(s: &Session, baseline: bool) -> Self {
         ChainM { baseline, seed: s.last_dim, created: Vec::new() }
     }
@@ -340,6 +341,7 @@ impl Interactive for ChainM {
             .default("Select")
             .base_opt(last_linear(s).map(|d| if self.baseline { d.p13.xy() } else { d.p14.xy() }))
     }
+    /// Add a chain link or undo only links created since the command began.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(p) => {

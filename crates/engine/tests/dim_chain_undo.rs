@@ -4,6 +4,7 @@ use cadcraft_engine::Session;
 use cadcraft_geom::Vec2;
 use serde_json::json;
 
+/// Clone an asserted dimension for stable comparisons across interactive edits.
 fn dimension(s: &Session, h: Handle) -> Dimension {
     match &s.doc().unwrap().entity(h).unwrap().kind {
         EntityKind::Dimension(d) => d.clone(),
@@ -11,11 +12,13 @@ fn dimension(s: &Session, h: Handle) -> Dimension {
     }
 }
 
+/// Create the original linear dimension from which a Continue or Baseline chain starts.
 fn seed(s: &mut Session) -> Handle {
     s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [10, 0], "at": [5, 4]})).unwrap();
     s.last_dim.unwrap()
 }
 
+/// Exercise empty and repeated local Undo, replacement previews, and session undo/redo for a chain.
 fn check_undo(cmd: &str) {
     let mut s = Session::new();
     let original = seed(&mut s);
@@ -68,11 +71,13 @@ fn check_undo(cmd: &str) {
     assert_eq!(dimension(&s, replacement), replacement_dim);
 }
 
+/// Continue restarts from the seed endpoint after all new links have been undone.
 #[test]
 fn dimcontinue_undo_allows_a_replacement_from_the_seed() {
     check_undo("dimcontinue");
 }
 
+/// Baseline restarts from the seed origin and spacing after all new links have been undone.
 #[test]
 fn dimbaseline_undo_allows_a_replacement_from_the_seed() {
     check_undo("dimbaseline");
