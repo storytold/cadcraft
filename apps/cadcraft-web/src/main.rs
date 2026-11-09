@@ -112,6 +112,8 @@ mod web {
         Services { pick_save: Some(Box::new(|name: &str| Some(name.to_string()))), no_file_system: true, ..Services::default() }
     }
 
+    /// Install logging and the I/O hooks, connect an embedding host when there is one, ask the
+    /// wgpu device for the adapter's largest buffer, and start eframe's web runner on the canvas.
     pub fn start() {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
