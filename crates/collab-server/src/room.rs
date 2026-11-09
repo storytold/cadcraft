@@ -9,6 +9,7 @@ use cadcraft_doc::Drawing;
 use cadcraft_engine::Session;
 use cadcraft_io::{SaveOptions, read, write_with};
 
+use crate::assets::{AssetError, AssetStore};
 use crate::policy::{changes_too_many, deny_reason, params_reason, size_reason};
 
 use serde::{Deserialize, Serialize};
@@ -105,6 +106,8 @@ pub struct Room {
     journal_path: Option<PathBuf>,
     undo: BTreeMap<String, Vec<UndoStep>>,
     redo: BTreeMap<String, Vec<RedoStep>>,
+    /// Where `imageattach` bytes live, when the deployment gave the room `--assets` (ADR 0021).
+    assets: Option<Arc<AssetStore>>,
 }
 
 impl Room {
@@ -130,7 +133,17 @@ impl Room {
             journal_path: None,
             undo: BTreeMap::new(),
             redo: BTreeMap::new(),
+            assets: None,
         })
+    }
+
+    /// Give the room its attachment store (ADR 0021).
+    ///
+    /// `imageattach` then takes its bytes from the store by content address, and bytes sent
+    /// inline are stored under their address, so the drawing's label points at the room's copy.
+    pub fn with_assets(mut self, assets: Arc<AssetStore>) -> Self {
+        self.assets = Some(assets);
+        self
     }
 
     /// The authoritative drawing, for a snapshot or a test replica.
@@ -182,8 +195,24 @@ impl Room {
                 retryable: false,
             }));
         }
+        let prepared = match self.prepare_attachment(op) {
+            Ok(prepared) => prepared,
+            Err(refusal) if refusal.code == "internal" => return Err(RoomError::Io(refusal.message)),
+            Err(refusal) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op.op_id.clone(),
+                    code: refusal.code.into(),
+                    message: refusal.message,
+                    retryable: false,
+                }));
+            }
+        };
+        let params = prepared.as_ref().map(|prepared| &prepared.params).unwrap_or(&op.params);
         let before = self.drawing()?.clone();
-        if let Err(error) = self.session.execute_intent(&op.command, &op.params, &op.context) {
+        if let Err(error) = self.session.execute_intent(&op.command, params, &op.context) {
+            if let Some(prepared) = &prepared {
+                self.discard_attachment(prepared);
+            }
             return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "invalid".into(), message: error.to_string(), retryable: false }));
         }
         let after = self.drawing()?.clone();
@@ -196,6 +225,9 @@ impl Room {
                 if let Ok(doc) = self.session.doc_mut() {
                     *doc = before;
                 }
+                if let Some(prepared) = &prepared {
+                    self.discard_attachment(prepared);
+                }
                 return Ok(Outcome::Rejected(Reject {
                     op_id: op.op_id.clone(),
                     code: "invalid".into(),
@@ -207,6 +239,9 @@ impl Room {
         if changes_too_many(changes.len()) {
             if let Ok(doc) = self.session.doc_mut() {
                 *doc = before;
+            }
+            if let Some(prepared) = &prepared {
+                self.discard_attachment(prepared);
             }
             return Ok(Outcome::Rejected(Reject {
                 op_id: op.op_id.clone(),
@@ -475,6 +510,89 @@ impl Room {
     }
 }
 
+/// A refusal the room turns into a `rejected` answer before the drawing changes.
+struct AttachmentRefusal {
+    /// `invalid` or `limit`; `internal` becomes a `RoomError`.
+    code: &'static str,
+    message: String,
+}
+
+/// An `imageattach` whose bytes came from the room's store; the parameters the engine runs with.
+struct PreparedAttachment {
+    params: Value,
+    /// The blob this operation created, removed again if the engine refuses the image.
+    created: Option<String>,
+}
+
+impl Room {
+    /// Resolve an `imageattach` against the room's store (ADR 0021).
+    ///
+    /// Inline `data` is stored under its content address and the drawing gets the store's label;
+    /// `asset` is read from the store, and the bytes are handed to the engine as `data`. Either
+    /// way the client's path is a label only: nothing is opened by it.
+    fn prepare_attachment(&self, op: &Op) -> Result<Option<PreparedAttachment>, AttachmentRefusal> {
+        if !op.command.trim().eq_ignore_ascii_case("imageattach") {
+            return Ok(None);
+        }
+        let mut params = op.params.clone();
+        let data = params.get("data").and_then(Value::as_str).map(str::trim).filter(|data| !data.is_empty());
+        let asset = params.get("asset").and_then(Value::as_str).map(str::trim).filter(|asset| !asset.is_empty());
+        let Some(store) = &self.assets else {
+            // Without a store an address has no bytes behind it; the engine must not fall back to
+            // opening the client's label as a file.
+            return match (data, asset) {
+                (None, Some(_)) => {
+                    Err(AttachmentRefusal { code: "invalid", message: "this room has no attachment store; send the image bytes in `data`".into() })
+                }
+                _ => Ok(None),
+            };
+        };
+        match (data.map(str::to_string), asset.map(str::to_string)) {
+            (Some(data), _) => {
+                let bytes = cadcraft_collab::message::decode_bytes(&data)
+                    .map_err(|_| AttachmentRefusal { code: "invalid", message: "`data` is not valid base64".into() })?;
+                let id = cadcraft_collab::asset_id(&bytes);
+                let stored = store.put(&id, &bytes).map_err(refusal)?;
+                params["path"] = Value::String(stored.label);
+                let created = stored.stored.then_some(id);
+                Ok(Some(PreparedAttachment { params, created }))
+            }
+            (None, Some(id)) => {
+                let bytes = store.get(&id).map_err(refusal)?;
+                let label = store.label(&id).map_err(refusal)?.ok_or_else(|| AttachmentRefusal {
+                    code: "invalid",
+                    message: "no attachment with this id is stored in this room; store it before referring to it".into(),
+                })?;
+                params["data"] = Value::String(cadcraft_collab::message::encode_bytes(&bytes));
+                params["path"] = Value::String(label);
+                Ok(Some(PreparedAttachment { params, created: None }))
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// Remove a blob this operation wrote when the engine refused the image.
+    fn discard_attachment(&self, prepared: &PreparedAttachment) {
+        if let (Some(store), Some(id)) = (&self.assets, &prepared.created) {
+            let _ = store.remove(id);
+        }
+    }
+}
+
+/// The room's answer to an attachment store error: a client fault (`invalid`, `limit`) or the
+/// room's own failure (`internal`, turned into a [`RoomError`]).
+fn refusal(error: AssetError) -> AttachmentRefusal {
+    match error {
+        AssetError::TooLarge { .. } | AssetError::TooManyFiles { .. } | AssetError::Quota { .. } => {
+            AttachmentRefusal { code: "limit", message: error.to_string() }
+        }
+        AssetError::Io(_) => AttachmentRefusal { code: "internal", message: error.to_string() },
+        AssetError::BadId | AssetError::Mismatch | AssetError::NotAnImage | AssetError::NotFound | AssetError::BadRoom { .. } => {
+            AttachmentRefusal { code: "invalid", message: error.to_string() }
+        }
+    }
+}
+
 /// The rename pairs swapped, for the inverse change set.
 fn reverse_renames(renames: &TableRenames) -> TableRenames {
     TableRenames {
@@ -522,7 +640,6 @@ fn renames_of(command: &str, params: &Value, before: &Drawing, after: &Drawing) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_collab::apply;
     use cadcraft_collab::{Change, OpContext};
     use cadcraft_doc::geom::Vec3;
     use cadcraft_doc::{Common, EntityKind, Layer, Line, Space};
@@ -559,7 +676,7 @@ mod tests {
         let mut replica = room.drawing().unwrap().clone();
         for op in [line_op("a", 0.0), line_op("b", 5.0)] {
             let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an ordinary line must apply") };
-            apply(&mut replica, &applied.changes).unwrap();
+            cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
         }
         assert_eq!(room.version(), 2);
         assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
@@ -590,7 +707,7 @@ mod tests {
         let Outcome::Applied(applied) = room.apply(&line_op_on_layer("walls", 5.0, "walls")).unwrap() else { panic!() };
 
         assert_eq!(created_layer(&applied), "WALLS", "the drawing's spelling of the layer the operation named");
-        apply(&mut replica, &applied.changes).unwrap();
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
         assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
         assert_eq!(replica.header.str("CLAYER", "?"), "0", "the recipient's current layer does not switch");
         assert_eq!(room.drawing().unwrap().header.str("CLAYER", "?"), "0", "nor does the server drawing's");
@@ -648,7 +765,7 @@ mod tests {
 
         let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an image with its bytes is a drawing operation") };
         assert!(applied.changes.iter().any(|change| matches!(change, Change::EntityCreate { .. })), "the image arrives as a creation");
-        apply(&mut replica, &applied.changes).unwrap();
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
 
         assert_eq!(room.version(), 1);
         assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model), "the replicas agree on the image's placement");
@@ -758,7 +875,7 @@ mod tests {
         let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!() };
         assert_eq!(applied.changes.len(), 1, "a rename is one change: {:?}", applied.changes);
         assert!(matches!(applied.changes[0], Change::TableRename { .. }));
-        apply(&mut replica, &applied.changes).unwrap();
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
         assert_eq!(
             replica.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
             room.drawing().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>()
@@ -1165,5 +1282,199 @@ mod large_tests {
         let restored = Room::restore(&snapshot).unwrap();
         assert_eq!(restored.drawing().unwrap().entity_count(), 10_001);
         assert_eq!(restored.version(), room.version());
+    }
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use crate::assets::AssetLimits;
+    use cadcraft_collab::OpContext;
+    use cadcraft_collab::asset_id;
+    use cadcraft_doc::{EntityKind, Space};
+    use serde_json::json;
+
+    /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+    fn png() -> Vec<u8> {
+        cadcraft_collab::message::decode_bytes(PNG_1X1).expect("the fixture is base64")
+    }
+
+    fn workspace(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cadcraft-room-assets-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.subsec_nanos()).unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    fn image_op(op_id: &str) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "imageattach".into(),
+            params: json!({ "path": "../../etc/passwd.png", "at": [0.0, 0.0], "width": 10.0 }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn image_path(room: &Room) -> String {
+        room.drawing()
+            .unwrap()
+            .space(&Space::Model)
+            .expect("the model space")
+            .iter()
+            .find_map(|entity| match &entity.kind {
+                EntityKind::Image(image) => Some(image.path.clone()),
+                _ => None,
+            })
+            .expect("the operation created an image")
+    }
+
+    #[test]
+    fn an_inline_image_is_stored_and_the_drawing_names_the_room_copy() {
+        let dir = workspace("inline");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut replica = room.drawing().unwrap().clone();
+        let bytes = png();
+        let id = asset_id(&bytes);
+        let mut op = image_op("inline");
+        op.params["data"] = json!(PNG_1X1);
+        op.params["path"] = json!("map.png");
+
+        let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an image with its bytes is a drawing operation") };
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+
+        assert_eq!(image_path(&room), format!("demo/{id}.png"), "the label names the room's copy, not the client's path");
+        assert_eq!(image_path(&Room::restore(&room.snapshot().unwrap()).unwrap()), format!("demo/{id}.png"));
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model), "the replicas agree on the label");
+        assert_eq!(store.get(&id).unwrap(), bytes, "the bytes are in the store");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_asset_reference_reads_the_store_and_never_the_clients_path() {
+        let dir = workspace("reference");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let bytes = png();
+        let id = asset_id(&bytes);
+        store.put(&id, &bytes).unwrap();
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut op = image_op("reference");
+        // `asset` and `path` are different things: the path stays a label and is ignored.
+        op.params["asset"] = json!(id);
+        op.params["path"] = json!("../../etc/passwd.png");
+
+        let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!("a stored attachment is a drawing operation") };
+        assert_eq!(image_path(&room), format!("demo/{id}.png"));
+        assert_eq!(room.drawing().unwrap().rasters.len(), 1, "the engine decoded the stored bytes");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_asset_is_refused_before_the_drawing_changes() {
+        let dir = workspace("missing");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(store);
+        let before = room.drawing().unwrap().clone();
+        let mut op = image_op("missing");
+        op.params["asset"] = json!("0".repeat(64));
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("no attachment"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("a missing attachment cannot be attached"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before);
+        assert!(room.drawing().unwrap().rasters.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_image_does_not_leave_a_blob_in_the_store() {
+        let dir = workspace("failed");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        // A PNG signature the decoder refuses: the store accepts the format, the engine rejects it.
+        let damaged = b"\x89PNG\r\n\x1a\nnot really a png";
+        let mut op = image_op("damaged");
+        op.params["data"] = json!(cadcraft_collab::message::encode_bytes(damaged));
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "invalid"),
+            Outcome::Applied(_) => panic!("a damaged image cannot be attached"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(store.usage().unwrap(), (0, 0), "the blob written for the refused operation was removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_room_quota_refuses_before_the_store_or_the_drawing_changes() {
+        let dir = workspace("quota");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap().with_limits(AssetLimits { max_bytes: 8, max_files: 10, max_total: 100 }));
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut op = image_op("quota");
+        op.params["data"] = json!(PNG_1X1);
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "limit"),
+            Outcome::Applied(_) => panic!("an image over the room's limit cannot be stored"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(store.usage().unwrap(), (0, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_address_without_a_store_is_refused_and_no_label_is_opened() {
+        // A label that exists on this server's disk: had the engine read it, the image would
+        // attach, which is exactly what a shared session must not do.
+        let dir = workspace("no-store");
+        let label = dir.join("map.png");
+        std::fs::write(&label, png()).unwrap();
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut op = image_op("no-store");
+        op.params["asset"] = json!("0".repeat(64));
+        op.params["path"] = json!(label.to_string_lossy());
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("no attachment store"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("an address without a store has no bytes"),
+        }
+        assert_eq!(room.version(), 0);
+        assert!(room.drawing().unwrap().rasters.is_empty(), "the file beside the label was not read");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_restart_keeps_the_attachment_the_drawing_names() {
+        let dir = workspace("restart");
+        let bytes = png();
+        let id = asset_id(&bytes);
+        let label = {
+            let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+            let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(store);
+            let mut op = image_op("persist");
+            op.params["data"] = json!(PNG_1X1);
+            let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!() };
+            image_path(&room)
+        };
+        let reopened = AssetStore::new(&dir, "demo").unwrap();
+        assert_eq!(reopened.get(&id).unwrap(), bytes);
+        assert_eq!(reopened.label(&id).unwrap().as_deref(), Some(label.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

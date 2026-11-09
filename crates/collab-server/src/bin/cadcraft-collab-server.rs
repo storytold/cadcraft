@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use cadcraft_collab::Role;
 use cadcraft_collab_server::auth::{Authenticator, Claims, JwtAuthenticator, StaticAuthenticator};
-use cadcraft_collab_server::{Room, Server, Snapshot};
+use cadcraft_collab_server::{AssetStore, Room, Server, Snapshot};
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -43,6 +43,10 @@ struct Args {
     /// Where to write the periodic DXF snapshot.
     #[arg(long)]
     state: Option<PathBuf>,
+    /// The root of this room's attachment store (`--assets <dir>`); absent means the room has no
+    /// store and `imageattach` takes its bytes in the operation only (ADR 0021).
+    #[arg(long)]
+    assets: Option<PathBuf>,
     /// Seconds between snapshots.
     #[arg(long, default_value_t = 30)]
     snapshot_secs: u64,
@@ -57,8 +61,21 @@ struct Args {
 fn main() -> Result<(), String> {
     let args = Args::parse();
     let auth = authenticator(&args)?;
-    let room = load(&args)?;
-    let server = Arc::new(Server::new(room, auth, args.session.clone(), "cadcraft"));
+    // The room and the transport share one store; it is created before the drawing so a bad
+    // `--assets` fails at startup, not on the first image.
+    let assets = match &args.assets {
+        Some(root) => Some(Arc::new(AssetStore::new(root, &args.session).map_err(|e| e.to_string())?)),
+        None => None,
+    };
+    let mut room = load(&args)?;
+    if let Some(assets) = &assets {
+        room = room.with_assets(Arc::clone(assets));
+    }
+    let mut server = Server::new(room, auth, args.session.clone(), "cadcraft");
+    if let Some(assets) = assets {
+        server = server.with_assets(assets);
+    }
+    let server = Arc::new(server);
     let (addr, _accept_loop) = server.bind(args.listen).map_err(|e| e.to_string())?;
     println!("cadcraft-collab-server: session {} listening on ws://{addr}", args.session);
 

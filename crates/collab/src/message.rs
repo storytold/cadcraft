@@ -73,6 +73,21 @@ pub enum ClientMessage {
     Resync { last_version: u64 },
     /// Ask for the file to be written (ADR-0009).
     Commit { expected_version: u64 },
+    /// Store the bytes of an attachment under their content address (ADR 0021).
+    ///
+    /// The room checks the address against the bytes and its limits before anything is written;
+    /// an attachment is never read by a name a client chose.
+    AssetPut {
+        /// SHA-256 of `bytes_base64`, lower-case hexadecimal.
+        sha256: String,
+        /// The attachment's bytes, base64 for JSON.
+        bytes_base64: String,
+    },
+    /// Fetch the bytes of an attachment the drawing refers to (ADR 0021).
+    AssetGet {
+        /// SHA-256 of the bytes, lower-case hexadecimal.
+        sha256: String,
+    },
     /// Heartbeat; also renews the lease.
     Ping,
 }
@@ -115,6 +130,22 @@ pub enum ServerMessage {
         /// What the format could not keep.
         not_saved: std::collections::BTreeMap<String, usize>,
         /// The file, base64 for JSON.
+        bytes_base64: String,
+    },
+    /// An attachment is in the room's store; it was already there when `stored` is false.
+    AssetStored {
+        /// The content address.
+        sha256: String,
+        /// Its size in bytes.
+        bytes: u64,
+        /// Whether this call wrote it (deduplication keeps one copy per address).
+        stored: bool,
+    },
+    /// The bytes of an attachment the room stores.
+    Asset {
+        /// The content address.
+        sha256: String,
+        /// The bytes, base64 for JSON.
         bytes_base64: String,
     },
     /// Something went wrong outside an operation (auth, lease, limits).
@@ -230,5 +261,28 @@ mod tests {
         let json = serde_json::to_value(&message).unwrap();
         assert_eq!(json["type"], json!("applied"));
         assert_eq!(json["applied"]["version"], json!(1));
+    }
+
+    #[test]
+    fn an_attachment_put_and_its_answers_round_trip() {
+        let put = ClientMessage::AssetPut { sha256: "00".repeat(32), bytes_base64: "aGVsbG8=".into() };
+        let json = serde_json::to_value(&put).unwrap();
+        assert_eq!(json["type"], json!("assetPut"));
+        assert_eq!(serde_json::from_value::<ClientMessage>(json).unwrap(), put);
+
+        let get = ClientMessage::AssetGet { sha256: "00".repeat(32) };
+        let json = serde_json::to_value(&get).unwrap();
+        assert_eq!(json["type"], json!("assetGet"));
+        assert_eq!(serde_json::from_value::<ClientMessage>(json).unwrap(), get);
+
+        let stored = ServerMessage::AssetStored { sha256: "00".repeat(32), bytes: 5, stored: true };
+        let json = serde_json::to_value(&stored).unwrap();
+        assert_eq!(json["type"], json!("assetStored"));
+        assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), stored);
+
+        let asset = ServerMessage::Asset { sha256: "00".repeat(32), bytes_base64: "aGVsbG8=".into() };
+        let json = serde_json::to_value(&asset).unwrap();
+        assert_eq!(json["type"], json!("asset"));
+        assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), asset);
     }
 }

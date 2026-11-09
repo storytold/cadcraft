@@ -193,3 +193,91 @@ fn a_reconnecting_client_catches_up() {
     assert_eq!(b.version(), 2);
     assert_eq!(b.drawing().space(&Space::Model), a.drawing().space(&Space::Model));
 }
+
+/// A message from `connection` that satisfies `pick`, skipping anything else it receives.
+fn next_where<T>(connection: &mut Connection, mut pick: impl FnMut(ServerMessage) -> Option<T>) -> T {
+    for _ in 0..32 {
+        if let Some(value) = pick(connection.receive().expect("a message")) {
+            return value;
+        }
+    }
+    panic!("no expected message");
+}
+
+#[test]
+fn attachments_are_stored_and_served_by_content_address() {
+    let dir = std::env::temp_dir().join(format!(
+        "cadcraft-ws-assets-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.subsec_nanos()).unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Arc::new(cadcraft_collab_server::AssetStore::new(&dir, "s1").unwrap());
+    let room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+    let auth = Arc::new(StaticAuthenticator::new([
+        ("token-a".to_string(), Claims { sub: "a".into(), doc: "d1".into(), role: Role::Editor }),
+        ("token-v".to_string(), Claims { sub: "v".into(), doc: "d1".into(), role: Role::Viewer }),
+    ]));
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft").with_assets(store));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{addr}");
+    let timeout = Duration::from_secs(3);
+
+    let (mut a, _welcome_a) = Connection::connect(&url, &hello("token-a"), timeout).unwrap();
+    let (mut v, _welcome_v) = Connection::connect(&url, &hello("token-v"), timeout).unwrap();
+
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+    let bytes = cadcraft_collab::message::decode_bytes(PNG_1X1).unwrap();
+    let id = cadcraft_collab::asset_id(&bytes);
+
+    a.send(&ClientMessage::AssetPut { sha256: id.clone(), bytes_base64: PNG_1X1.into() }).unwrap();
+    let stored = next_where(&mut a, |message| match message {
+        ServerMessage::AssetStored { sha256, bytes, stored } => Some((sha256, bytes, stored)),
+        _ => None,
+    });
+    assert_eq!(stored, (id.clone(), bytes.len() as u64, true));
+
+    // A repeat is deduplicated, not a second file.
+    a.send(&ClientMessage::AssetPut { sha256: id.clone(), bytes_base64: PNG_1X1.into() }).unwrap();
+    let again = next_where(&mut a, |message| match message {
+        ServerMessage::AssetStored { stored, .. } => Some(stored),
+        _ => None,
+    });
+    assert!(!again, "the second put finds the blob");
+
+    // A viewer may read an attachment; the bytes come back unchanged.
+    v.send(&ClientMessage::AssetGet { sha256: id.clone() }).unwrap();
+    let fetched = next_where(&mut v, |message| match message {
+        ServerMessage::Asset { sha256, bytes_base64 } => Some((sha256, bytes_base64)),
+        _ => None,
+    });
+    assert_eq!(fetched.0, id);
+    assert_eq!(cadcraft_collab::message::decode_bytes(&fetched.1).unwrap(), bytes);
+
+    // A viewer cannot store one.
+    v.send(&ClientMessage::AssetPut { sha256: id.clone(), bytes_base64: PNG_1X1.into() }).unwrap();
+    let refused = next_where(&mut v, |message| match message {
+        ServerMessage::Error { code, .. } => Some(code),
+        _ => None,
+    });
+    assert_eq!(refused, "forbidden");
+
+    // A foreign address is not found rather than read from somewhere else.
+    v.send(&ClientMessage::AssetGet { sha256: "0".repeat(64) }).unwrap();
+    let missing = next_where(&mut v, |message| match message {
+        ServerMessage::Error { code, .. } => Some(code),
+        _ => None,
+    });
+    assert_eq!(missing, "not-found");
+
+    // The operation refers to the stored bytes by address; both replicas get the same label.
+    let mut op = line_op("a", "image", 0.0);
+    op.command = "imageattach".into();
+    op.params = json!({ "path": "../../etc/passwd.png", "asset": id, "at": [0.0, 0.0], "width": 10.0 });
+    a.send(&ClientMessage::Op { op }).unwrap();
+    let applied_a = next_applied(&mut a, 1);
+    let applied_v = next_applied(&mut v, 1);
+    assert_eq!(applied_a, applied_v);
+    assert_eq!(server.room().drawing().unwrap().entity_count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -38,6 +38,10 @@ pub enum Event {
     Presence(Presence),
     /// A commit answer.
     Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
+    /// An attachment is in the room's store.
+    AssetStored { sha256: String, bytes: u64, stored: bool },
+    /// The bytes of an attachment the room stores.
+    Asset { sha256: String, bytes: Vec<u8> },
     /// The heartbeat answer.
     Pong,
     /// The server reports a problem outside an operation.
@@ -164,6 +168,20 @@ impl Session {
         self.connection.send(&ClientMessage::Resync { last_version }).map_err(SessionError::Transport)
     }
 
+    /// Store an attachment's bytes under their content address (ADR 0021).
+    ///
+    /// The address must be [`cadcraft_collab::asset_id`] of `bytes`; the room checks it again and
+    /// never reads a file by a name this client chose.
+    pub fn put_asset(&mut self, sha256: &str, bytes: &[u8]) -> Result<(), SessionError> {
+        let bytes_base64 = cadcraft_collab::message::encode_bytes(bytes);
+        self.connection.send(&ClientMessage::AssetPut { sha256: sha256.into(), bytes_base64 }).map_err(SessionError::Transport)
+    }
+
+    /// Ask the room for an attachment's bytes by their content address.
+    pub fn get_asset(&mut self, sha256: &str) -> Result<(), SessionError> {
+        self.connection.send(&ClientMessage::AssetGet { sha256: sha256.into() }).map_err(SessionError::Transport)
+    }
+
     /// Wait for one message and apply it to the replica.
     pub fn next_event(&mut self) -> Result<Event, SessionError> {
         loop {
@@ -178,6 +196,11 @@ impl Session {
                 ServerMessage::CommitResult { version, not_saved, bytes_base64 } => {
                     let bytes = cadcraft_collab::message::decode_bytes(&bytes_base64).map_err(SessionError::Snapshot)?;
                     return Ok(Event::Committed { version, not_saved, bytes });
+                }
+                ServerMessage::AssetStored { sha256, bytes, stored } => return Ok(Event::AssetStored { sha256, bytes, stored }),
+                ServerMessage::Asset { sha256, bytes_base64 } => {
+                    let bytes = cadcraft_collab::message::decode_bytes(&bytes_base64).map_err(SessionError::Snapshot)?;
+                    return Ok(Event::Asset { sha256, bytes });
                 }
                 ServerMessage::Pong => return Ok(Event::Pong),
                 ServerMessage::Error { code, message, retryable } => return Ok(Event::Error { code, message, retryable }),

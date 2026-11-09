@@ -41,11 +41,13 @@
 //! wipeout 0,0 10,0 10,10
 //! wipeout 1A2
 //! imageattach map.png data iVBORw0KGgo… at 10,5 width 100 rotation 15 name "Site map"
+//! imageattach map.png asset <sha256> at 10,5 width 100
 //! erase 1A2,1A3
 //! ```
 //!
-//! `imageattach` carries the raster bytes in `data`: a shared session never reads a file by the
-//! client's path, so `path` (the first word) is only the label saved in the drawing (ADR-0021).
+//! `imageattach` carries the raster bytes in `data`, or names bytes the room already stores by
+//! their SHA-256 in `asset`: a shared session never reads a file by the client's path, so `path`
+//! (the first word) is only the label saved in the drawing (ADR-0021).
 
 use cadcraft_doc::geom::{Arc, Line, Segment, Vec2};
 use cadcraft_doc::{Drawing, Entity, Handle, Prim, Space, entity_bounds};
@@ -1078,7 +1080,7 @@ fn wipeout_boundary(drawing: &Drawing, space: &Space, address: &str) -> Result<V
 /// an operation exists.
 fn imageattach(words: Vec<&str>) -> Result<Command, CmdLineError> {
     const IMAGE: &str = "imageattach";
-    let syntax = "imageattach map.png data <base64> [at x,y] [width w | scale s] [rotation deg] [name \"Title\"]";
+    let syntax = "imageattach map.png data <base64> | asset <sha256> [at x,y] [width w | scale s] [rotation deg] [name \"Title\"]";
     let Some((label, rest)) = words.split_first() else {
         return Err(bad(IMAGE, format!("give the file name and its bytes: {syntax}")));
     };
@@ -1092,32 +1094,43 @@ fn imageattach(words: Vec<&str>) -> Result<Command, CmdLineError> {
     if !raster_extension(&path) {
         return Err(bad(
             IMAGE,
-            "the file name must end in png, jpg, jpeg, bmp, tif or tiff; a shared session takes the raster bytes in `data`, not a file by that name",
+            "the file name must end in png, jpg, jpeg, bmp, tif or tiff; a shared session takes the raster bytes in `data` or by their content address in `asset`, not a file by that name",
         ));
     }
     let Some((keyword, rest)) = rest.split_first() else {
-        return Err(bad(IMAGE, format!("give the image bytes: {syntax}")));
+        return Err(bad(IMAGE, format!("give the image bytes or their content address: {syntax}")));
     };
-    if !keyword.eq_ignore_ascii_case("data") {
-        return Err(bad(IMAGE, format!("an image in a shared session carries its bytes, not a file to read: {syntax}")));
-    }
-    let Some((word, rest)) = rest.split_first() else {
-        return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
+    let (data, asset, rest) = if keyword.eq_ignore_ascii_case("data") {
+        let Some((word, rest)) = rest.split_first() else {
+            return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
+        };
+        let data = unquote(word);
+        if data.is_empty() {
+            return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
+        }
+        if data.len() > MAX_IMAGE_DATA {
+            return Err(bad(IMAGE, format!("the image data is larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} base64 characters)")));
+        }
+        let bytes = crate::message::decode_bytes(&data).map_err(|_| bad(IMAGE, "`data` is not valid base64"))?;
+        if bytes.is_empty() {
+            return Err(bad(IMAGE, "`data` decodes to no image bytes"));
+        }
+        if bytes.len() > MAX_IMAGE_DATA {
+            return Err(bad(IMAGE, format!("the image bytes are larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} bytes)")));
+        }
+        (Some(data), None, rest)
+    } else if keyword.eq_ignore_ascii_case("asset") {
+        let Some((word, rest)) = rest.split_first() else {
+            return Err(bad(IMAGE, "`asset` is empty; give the SHA-256 of the image bytes"));
+        };
+        let id = unquote(word);
+        if !crate::asset::is_asset_id(&id) {
+            return Err(bad(IMAGE, "`asset` must be the SHA-256 of the image bytes: 64 lower-case hexadecimal characters"));
+        }
+        (None, Some(id), rest)
+    } else {
+        return Err(bad(IMAGE, format!("an image in a shared session carries its bytes or their content address, not a file to read: {syntax}")));
     };
-    let data = unquote(word);
-    if data.is_empty() {
-        return Err(bad(IMAGE, "`data` is empty; give the image file's bytes as base64"));
-    }
-    if data.len() > MAX_IMAGE_DATA {
-        return Err(bad(IMAGE, format!("the image data is larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} base64 characters)")));
-    }
-    let bytes = crate::message::decode_bytes(&data).map_err(|_| bad(IMAGE, "`data` is not valid base64"))?;
-    if bytes.is_empty() {
-        return Err(bad(IMAGE, "`data` decodes to no image bytes"));
-    }
-    if bytes.len() > MAX_IMAGE_DATA {
-        return Err(bad(IMAGE, format!("the image bytes are larger than the operation's 1 MiB limit ({MAX_IMAGE_DATA} bytes)")));
-    }
     let mut at = [0.0, 0.0];
     let mut width = None;
     let mut scale = None;
@@ -1167,7 +1180,13 @@ fn imageattach(words: Vec<&str>) -> Result<Command, CmdLineError> {
     if rotation != 0.0 && width.is_none() && scale.is_none() {
         return Err(bad(IMAGE, "a rotation needs a size: give width w or scale s, or leave the rotation out"));
     }
-    let mut params = json!({ "path": path, "data": data, "at": at });
+    let mut params = json!({ "path": path, "at": at });
+    if let Some(data) = data {
+        params["data"] = json!(data);
+    }
+    if let Some(asset) = asset {
+        params["asset"] = json!(asset);
+    }
     if let Some(width) = width {
         params["width"] = json!(width);
     } else if let Some(scale) = scale {
@@ -2013,6 +2032,12 @@ mod tests {
         let command = parse(&format!("imageattach logo.JPG data {PNG_1X1} scale 2"), &drawing, &Space::Model).unwrap();
         assert_eq!(command.params["scale"], 2.0);
         assert!(command.params.get("width").is_none());
+        // An attachment already in the room's store is named by its address; no bytes travel.
+        let id = "0123456789abcdef".repeat(4);
+        let command = parse(&format!("imageattach map.png asset {id} at 1,2"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["asset"], id.as_str());
+        assert!(command.params.get("data").is_none(), "the room reads the stored bytes");
+        assert_eq!(command.params["path"], "map.png", "the label is replaced by the store's when the room applies it");
     }
 
     #[test]
@@ -2043,6 +2068,13 @@ mod tests {
             format!("imageattach map.png data {PNG_1X1} width 10 scale 2"),
             format!("imageattach map.png data {PNG_1X1} width 0"),
             format!("imageattach map.png data {PNG_1X1} colour red"),
+            // A content address that is not the 64 lower-case hex characters of a SHA-256, or is
+            // mixed with inline bytes.
+            "imageattach map.png asset".to_string(),
+            "imageattach map.png asset ../etc/passwd".to_string(),
+            format!("imageattach map.png asset {}", "A".repeat(64)),
+            format!("imageattach map.png asset {}", "0".repeat(63)),
+            format!("imageattach map.png asset {} data {PNG_1X1}", "0".repeat(64)),
         ];
         for text in &refused {
             let error = parse(text, &drawing, &Space::Model).unwrap_err();

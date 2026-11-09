@@ -19,6 +19,7 @@ use cadcraft_collab::message::{Snapshot, encode_bytes};
 use cadcraft_collab::{ClientMessage, Outcome, Reject, ServerMessage};
 use tungstenite::{Message, WebSocket, accept};
 
+use crate::assets::{AssetError, AssetStore};
 use crate::auth::{Authenticator, Claims};
 use crate::{CommitFormat, PresenceBoard, Room};
 
@@ -73,6 +74,8 @@ pub struct Server {
     app: String,
     session: String,
     metrics: Arc<Metrics>,
+    /// Attachments of this room; `None` when the deployment did not give `--assets` (ADR 0021).
+    assets: Option<Arc<AssetStore>>,
 }
 
 impl Server {
@@ -86,7 +89,15 @@ impl Server {
             app: app.into(),
             session: session_id.into(),
             metrics: Arc::new(Metrics::default()),
+            assets: None,
         }
+    }
+
+    /// Serve attachments from `assets` as well; the room must be given the same store
+    /// ([`Room::with_assets`]) so an operation and the store agree on the room (ADR 0021).
+    pub fn with_assets(mut self, assets: Arc<AssetStore>) -> Self {
+        self.assets = Some(assets);
+        self
     }
 
     /// The counters of this room.
@@ -303,6 +314,60 @@ impl Server {
                 };
                 let _ = tx.send(message);
             }
+            ClientMessage::AssetPut { sha256, bytes_base64 } => {
+                if !claims.role.may_write() {
+                    let _ = tx.send(ServerMessage::Error {
+                        code: "forbidden".into(),
+                        message: "a viewer may read attachments, not store them".into(),
+                        retryable: false,
+                    });
+                    return true;
+                }
+                let Some(store) = &self.assets else {
+                    let _ = tx.send(ServerMessage::Error {
+                        code: "unsupported".into(),
+                        message: "this room has no attachment store".into(),
+                        retryable: false,
+                    });
+                    return true;
+                };
+                let Some(bytes) = cadcraft_collab::message::decode_bytes(&bytes_base64).ok() else {
+                    let _ = tx.send(ServerMessage::Error {
+                        code: "invalid".into(),
+                        message: "the attachment bytes are not valid base64".into(),
+                        retryable: false,
+                    });
+                    return true;
+                };
+                match store.put(&sha256, &bytes) {
+                    Ok(stored) => {
+                        let _ = tx.send(ServerMessage::AssetStored { sha256: stored.sha256, bytes: stored.bytes, stored: stored.stored });
+                    }
+                    Err(error) => {
+                        self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(asset_error(&error));
+                    }
+                }
+            }
+            ClientMessage::AssetGet { sha256 } => {
+                let Some(store) = &self.assets else {
+                    let _ = tx.send(ServerMessage::Error {
+                        code: "unsupported".into(),
+                        message: "this room has no attachment store".into(),
+                        retryable: false,
+                    });
+                    return true;
+                };
+                match store.get(&sha256) {
+                    Ok(bytes) => {
+                        let _ = tx.send(ServerMessage::Asset { sha256, bytes_base64: cadcraft_collab::message::encode_bytes(&bytes) });
+                    }
+                    Err(error) => {
+                        self.metrics.errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(asset_error(&error));
+                    }
+                }
+            }
             ClientMessage::Ping => {
                 let _ = tx.send(ServerMessage::Pong);
             }
@@ -382,4 +447,15 @@ fn read_client(socket: &mut WebSocket<TcpStream>) -> io::Result<Option<ClientMes
         Ok(Message::Text(text)) => Ok(serde_json::from_str(text.as_str()).ok()),
         _ => Ok(None),
     }
+}
+
+/// The client-facing answer to a store error; no path or contents are echoed.
+fn asset_error(error: &AssetError) -> ServerMessage {
+    let (code, retryable) = match error {
+        AssetError::TooLarge { .. } | AssetError::TooManyFiles { .. } | AssetError::Quota { .. } => ("limit", false),
+        AssetError::NotFound => ("not-found", false),
+        AssetError::Io(_) => ("internal", true),
+        AssetError::BadId | AssetError::Mismatch | AssetError::NotAnImage | AssetError::BadRoom { .. } => ("invalid", false),
+    };
+    ServerMessage::Error { code: code.into(), message: error.to_string(), retryable }
 }

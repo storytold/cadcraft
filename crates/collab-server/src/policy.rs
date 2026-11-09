@@ -79,16 +79,26 @@ pub fn size_reason(op: &Op) -> Option<&'static str> {
 
 /// Why `op` may not run in a shared session, or `None` when it may.
 ///
-/// `imageattach` names an image file in the drawing. Without `data` the engine would open that file
+/// `imageattach` names an image file in the drawing. Without bytes the engine would open that file
 /// on the **server's** disk at a path the client chose, and the other participants would see a
 /// different image or a crossed-out frame. A shared session therefore takes the raster bytes in the
-/// operation and rejects the file-reading form before the drawing changes (ADR 0021).
+/// operation (`data`) or their content address in the room's store (`asset`, ADR 0021), and rejects
+/// the file-reading form before the drawing changes.
 pub fn params_reason(op: &Op) -> Option<&'static str> {
     if op.command.trim().eq_ignore_ascii_case("imageattach") {
         let has_data = op.params.get("data").and_then(|value| value.as_str()).is_some_and(|data| !data.trim().is_empty());
-        if !has_data {
-            return Some("imageattach needs the image bytes in `data`; a shared session never reads a file by the client's path");
-        }
+        let asset = op.params.get("asset").and_then(|value| value.as_str()).map(str::trim).filter(|asset| !asset.is_empty());
+        return match (has_data, asset) {
+            (true, Some(_)) => Some("give the image bytes in `data` or their content address in `asset`, not both"),
+            (true, None) => None,
+            (false, None) => Some(
+                "imageattach needs the image bytes in `data` or their content address in `asset`; a shared session never reads a file by the client's path",
+            ),
+            (false, Some(asset)) if !cadcraft_collab::is_asset_id(asset) => {
+                Some("`asset` must be the SHA-256 of the image bytes: 64 lower-case hexadecimal characters")
+            }
+            (false, Some(_)) => None,
+        };
     }
     None
 }

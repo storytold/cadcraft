@@ -34,6 +34,7 @@
 #![forbid(unsafe_code)]
 
 mod apply;
+pub mod asset;
 mod change;
 pub mod cmdline;
 mod context;
@@ -48,6 +49,7 @@ mod wire;
 mod tests;
 
 pub use apply::apply;
+pub use asset::{ASSET_ID_LEN, asset_extension, asset_id, is_asset_id};
 pub use change::{Anchor, Change};
 pub use context::OpContext;
 pub use diff::{diff, diff_all, diff_tables};
