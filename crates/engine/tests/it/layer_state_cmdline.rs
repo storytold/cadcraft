@@ -225,9 +225,11 @@ fn json_layer_states_take_a_mask_and_find_names_in_any_case() {
     // same: AutoCAD 2024 keeps one state per name in any case.
     s.execute("layerstate.save", &json!({ "name": "m2", "mask": LayerState::ON })).unwrap();
     assert_eq!(states(&s), [state("m2", 513)]);
-    // Names that differ only in case (a file can hold both, and AutoCAD 2024 opens it): the one
-    // spelled so, though the other comes first.
+    // Names that differ only in case (a file can hold both, and AutoCAD 2024 opens it): Save and
+    // Delete take the one spelled so, though the other comes first, and leave the other.
     s.doc_mut().unwrap().layer_states.insert(0, LayerState::new("M2", Vec::new(), ""));
+    s.execute("layerstate.save", &json!({ "name": "m2", "mask": LayerState::ON | LayerState::FROZEN })).unwrap();
+    assert_eq!(states(&s), [state("M2", LayerState::ALL), state("m2", 515)]);
     s.execute("layerstate.delete", &json!({ "name": "m2" })).unwrap();
     assert_eq!(states(&s), [state("M2", LayerState::ALL)]);
 }
