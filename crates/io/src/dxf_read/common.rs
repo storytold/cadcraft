@@ -159,10 +159,15 @@ pub(super) fn run_points(vertices: &[PolyVertex], elevation: f64, closed: bool) 
     pts.into_iter().map(|p| p.to3(elevation)).collect()
 }
 
+/// The most vertices one tilted run is flattened to: past it, bulged edges are kept as their
+/// chords, so a file full of arcs can't ask for gigabytes (one arc adds at most 4,096 more).
+const MAX_TILTED_VERTICES: usize = 1_000_000;
+
 /// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
 /// tilted arc is an elliptical arc there, so each bulged edge is flattened (within a thousandth
-/// of the edge's own size), its width spread evenly along it; vertices that start straight
-/// edges keep their widths. Also gives the mean WCS Z, the elevation the flattened run takes.
+/// of the edge's own size, up to [`MAX_TILTED_VERTICES`] in all), its width spread evenly along
+/// it; vertices that start straight edges keep their widths. Also gives the mean WCS Z, the
+/// elevation the flattened run takes.
 pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
     let m = cadcraft_geom::Mat4::ocs(n);
     let mut local: Vec<PolyVertex> = Vec::with_capacity(vertices.len());
@@ -175,7 +180,7 @@ pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], c
             None
         };
         match next {
-            Some(w) if v.bulge != 0.0 => {
+            Some(w) if v.bulge != 0.0 && local.len() < MAX_TILTED_VERTICES => {
                 let arc = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false };
                 // From the edge's own size, so a long edge elsewhere can't flatten a small arc away.
                 let b = arc.bounds();

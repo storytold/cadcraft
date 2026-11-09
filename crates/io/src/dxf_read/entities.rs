@@ -173,6 +173,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {
@@ -287,7 +288,9 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
                 view_center: t.view_center(12, 17, twist),
                 view_height: t.fd(45, 1.0),
-                id: t.i(69).unwrap_or(0) as u32,
+                // ZWCAD writes -1 (unknown): 0 here, numbered in order by the reader (#1463).
+                // Group 69 is 16-bit: other out-of-range values are unknown too, never truncated.
+                id: t.i(69).filter(|i| (1..=32767).contains(i)).unwrap_or(0) as u32,
                 locked: t.i(90).unwrap_or(0) & 16384 != 0,
                 frozen_layers: crate::dxf_ext::read_frozen(tags),
                 layer_colors: crate::dxf_ext::read_layer_colors(tags),
