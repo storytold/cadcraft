@@ -16,8 +16,11 @@
 //! line 0,0 100,0 100,50
 //! circle 50,25 12.5
 //! polyline 0,0 100,0 100,50
+//! rect 0,0 100,50
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
+//! copy 1A2,1A3 delta 10,0
+//! rotate 1A2 base 0,0 45
 //! erase 1A2,1A3
 //! ```
 
@@ -27,7 +30,7 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 5] = ["line", "circle", "polyline", "move", "erase"];
+pub const COMMANDS: [&str; 8] = ["line", "circle", "polyline", "move", "erase", "rect", "copy", "rotate"];
 
 /// One line of text, parsed into a command and its explicit parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,10 +45,10 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle, polyline, move or erase")]
+    #[error("type a command: line, circle, polyline, move, erase, rect, copy or rotate")]
     Empty,
     /// The command is not one of [`COMMANDS`].
-    #[error("`{0}` is not available one line at a time in a shared session; use line, circle, polyline, move or erase")]
+    #[error("`{0}` is not available one line at a time in a shared session; use line, circle, polyline, move, erase, rect, copy or rotate")]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
     #[error("{command}: {detail}")]
@@ -73,7 +76,10 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "line" | "l" => line(words.collect()),
         "circle" | "c" => circle(words.collect()),
         "polyline" | "pline" | "pl" => polyline(words.collect()),
+        "rect" | "rectangle" | "rec" => rect(words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
+        "copy" | "co" | "cp" => copy(drawing, space, words.collect()),
+        "rotate" | "ro" => rotate(drawing, space, words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -102,7 +108,7 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 
 /// Whether `id` creates objects, and so needs the author's layer to put them on.
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline")
+    matches!(id, "line" | "circle" | "pline" | "rectang")
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -138,6 +144,19 @@ fn polyline(words: Vec<&str>) -> Result<Command, CmdLineError> {
     let points = words.iter().map(|word| point(word, "polyline")).collect::<Result<Vec<[f64; 2]>, CmdLineError>>()?;
     // The engine command is `pline`; the line spells the familiar name.
     Ok(Command { id: "pline", params: json!({ "vertices": points }) })
+}
+
+fn rect(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [first, second] = words.as_slice() else {
+        return Err(bad("rect", "takes two opposite corners: rect x,y x,y"));
+    };
+    let [x1, y1] = point(first, "rect")?;
+    let [x2, y2] = point(second, "rect")?;
+    if (x2 - x1).abs() < 1e-12 || (y2 - y1).abs() < 1e-12 {
+        return Err(bad("rect", "the corners form a rectangle with no area; give two different corners"));
+    }
+    // The engine command is `rectang`; the line spells the familiar name.
+    Ok(Command { id: "rectang", params: json!({ "p1": [x1, y1], "p2": [x2, y2] }) })
 }
 
 fn erase(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
@@ -184,6 +203,61 @@ fn move_(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, 
         }
     };
     Ok(Command { id: "move", params })
+}
+
+fn copy(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("copy", "address the objects to copy: copy 1A2[,1A3] delta dx,dy"));
+    };
+    // `copy delta 10,0` has no address: the keyword is not a handle, so say what is missing.
+    if addresses.eq_ignore_ascii_case("delta") || addresses.eq_ignore_ascii_case("from") {
+        return Err(bad("copy", "address the objects to copy: copy 1A2[,1A3] delta dx,dy"));
+    }
+    let handles = handles("copy", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("copy", "address the objects to copy: copy 1A2[,1A3] delta dx,dy"));
+    }
+    check_in_space(drawing, space, "copy", &handles)?;
+    let params = match rest {
+        [delta] => {
+            let [dx, dy] = point(delta, "copy")?;
+            json!({ "handles": hex(&handles), "delta": [dx, dy] })
+        }
+        [keyword, delta] if keyword.eq_ignore_ascii_case("delta") => {
+            let [dx, dy] = point(delta, "copy")?;
+            json!({ "handles": hex(&handles), "delta": [dx, dy] })
+        }
+        _ => {
+            return Err(bad("copy", "give a displacement: copy 1A2[,1A3] delta dx,dy"));
+        }
+    };
+    Ok(Command { id: "copy", params })
+}
+
+fn rotate(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("rotate", "address the objects to rotate: rotate 1A2[,1A3] base x,y angle"));
+    };
+    // `rotate base 0,0 45` has no address: the keyword is not a handle, so say what is missing.
+    if addresses.eq_ignore_ascii_case("base") {
+        return Err(bad("rotate", "address the objects to rotate: rotate 1A2[,1A3] base x,y angle"));
+    }
+    let handles = handles("rotate", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("rotate", "address the objects to rotate: rotate 1A2[,1A3] base x,y angle"));
+    }
+    check_in_space(drawing, space, "rotate", &handles)?;
+    let params = match rest {
+        [keyword, base, angle] if keyword.eq_ignore_ascii_case("base") => {
+            let [x, y] = point(base, "rotate")?;
+            let angle = number(angle).ok_or_else(|| bad("rotate", "the angle must be a finite number of degrees"))?;
+            json!({ "handles": hex(&handles), "base": [x, y], "angle": angle })
+        }
+        _ => {
+            return Err(bad("rotate", "give the base point and the angle in degrees: rotate 1A2[,1A3] base x,y angle"));
+        }
+    };
+    Ok(Command { id: "rotate", params })
 }
 
 fn handles(command: &'static str, addresses: &str) -> Result<Vec<Handle>, CmdLineError> {
@@ -286,7 +360,7 @@ mod tests {
         let before = drawing.clone();
         let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
-        assert!(error.to_string().contains("line, circle, polyline, move or erase"), "{error}");
+        assert!(error.to_string().contains("line, circle, polyline, move, erase, rect, copy or rotate"), "{error}");
         assert_eq!(drawing, before, "parsing must not change the drawing");
     }
 
@@ -331,6 +405,71 @@ mod tests {
         assert!(error.to_string().contains("at least two points"), "{error}");
         let error = parse("polyline 0,0 nowhere", &drawing, &Space::Model).unwrap_err();
         assert_eq!(error.to_string(), "polyline: `nowhere` is not a point; give x,y");
+    }
+
+    #[test]
+    fn a_rect_is_two_opposite_corners() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("rect 0,0 100,50", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "rectang", "the engine command id");
+        assert_eq!(command.params, json!({ "p1": [0.0, 0.0], "p2": [100.0, 50.0] }));
+        assert_eq!(parse("rectangle -5,-5 5,5", &drawing, &Space::Model).unwrap().id, "rectang");
+        assert_eq!(parse("rec 0,0 1,1", &drawing, &Space::Model).unwrap().id, "rectang");
+        // Two corners, no more.
+        let error = parse("rect 0,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("takes two opposite corners"), "{error}");
+        let error = parse("rect 0,0 1,1 2,2", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("takes two opposite corners"), "{error}");
+        // A rectangle with no area is refused here, not on the server.
+        let error = parse("rect 0,0 0,50", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("rectangle with no area"), "{error}");
+        let error = parse("rect 0,0 100,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("rectangle with no area"), "{error}");
+    }
+
+    #[test]
+    fn a_copy_addresses_its_objects_and_a_displacement() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("copy {address} 10,-2.5"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "copy");
+        assert_eq!(command.params, json!({ "handles": [address.clone()], "delta": [10.0, -2.5] }));
+        // The `delta` keyword and the AutoCAD aliases work too.
+        assert_eq!(parse(&format!("co {address} delta 1,1"), &drawing, &Space::Model).unwrap().id, "copy");
+        assert_eq!(parse(&format!("cp {address} 1,1"), &drawing, &Space::Model).unwrap().id, "copy");
+        // No displacement at all.
+        let error = parse(&format!("copy {address}"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give a displacement"), "{error}");
+        // The keyword without an address says what is missing instead of complaining about `delta`.
+        let error = parse("copy delta 10,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the objects to copy"), "{error}");
+        // A handle that names nothing in this drawing.
+        let error = parse("copy FF 1,1", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("copy: there is no object FF"), "{error}");
+    }
+
+    #[test]
+    fn a_rotate_names_its_base_point_and_the_angle_in_degrees() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("rotate {address} base 10,20 45"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "rotate");
+        assert_eq!(command.params, json!({ "handles": [address.clone()], "base": [10.0, 20.0], "angle": 45.0 }));
+        assert_eq!(parse(&format!("ro {address} base 0,0 -90.5"), &drawing, &Space::Model).unwrap().id, "rotate");
+        // No angle.
+        let error = parse(&format!("rotate {address} base 0,0"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give the base point and the angle"), "{error}");
+        // The keyword without an address.
+        let error = parse("rotate base 0,0 45", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the objects to rotate"), "{error}");
+        // A handle that names nothing in this drawing.
+        let error = parse("rotate FF base 0,0 45", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("rotate: there is no object FF"), "{error}");
+        // An angle that is not a number.
+        let error = parse(&format!("rotate {address} base 0,0 later"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("finite number of degrees"), "{error}");
     }
 
     #[test]
@@ -388,9 +527,13 @@ mod tests {
         assert_eq!(op.context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("circle 0,0 5", &drawing, &Space::Model, "local-1", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("polyline 0,0 1,1", &drawing, &Space::Model, "local-2", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        assert_eq!(op_for("rect 0,0 10,5", &drawing, &Space::Model, "local-5", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         // Commands that only address existing objects do not name a layer.
         assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
+        // A copy inherits the source objects' layers; a rotate changes them in place.
+        assert_eq!(op_for(&format!("copy {} 1,1", handle.hex()), &drawing, &Space::Model, "local-6", 0).unwrap().context.clay, None);
+        assert_eq!(op_for(&format!("rotate {} base 0,0 45", handle.hex()), &drawing, &Space::Model, "local-7", 0).unwrap().context.clay, None);
     }
 
     #[test]

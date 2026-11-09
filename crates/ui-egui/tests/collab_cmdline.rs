@@ -80,9 +80,28 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
-    assert!(error.to_string().contains("line, circle, polyline, move or erase"), "{error}");
+    assert!(error.to_string().contains("line, circle, polyline, move, erase, rect, copy or rotate"), "{error}");
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
     assert_eq!(session.state().unwrap().revision, before_revision, "and does not redraw");
+}
+
+#[test]
+fn a_refused_rect_copy_or_rotate_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let line = state.doc.model.iter().next().expect("the line").handle.hex();
+
+    // A rectangle with no area; handles that name nothing; a rotate without a base point.
+    let refused = ["rect 0,0 0,5".to_string(), "copy FF 1,1".to_string(), format!("rotate {line} base 0,0"), "rotate FF base 0,0 45".to_string()];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
 }
 
 #[test]
@@ -137,6 +156,126 @@ fn a_remote_erase_and_polyline_keep_the_receivers_cursor_and_selection() {
     receiver.apply_remote(&remote).unwrap();
 
     assert_eq!(receiver.selection(), vec![kept], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
+fn two_replicas_that_draw_a_rect_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the rectangle");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 1, "a rectangle is one object");
+    let rect = alice.doc().unwrap().model.iter().next().expect("the rectangle arrived");
+    match &rect.kind {
+        EntityKind::LwPolyline(pl) => {
+            assert!(pl.closed, "the rectangle is a closed polyline");
+            assert_eq!(pl.vertices.len(), 4, "four corners");
+        }
+        other => panic!("a rectangle should be a closed polyline, got {other:?}"),
+    }
+}
+
+#[test]
+fn two_replicas_that_copy_and_rotate_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    // Bob copies the rectangle by the handle he got from the change set; no selection is involved.
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("copy {} 20,0", rect.hex()));
+    // Alice rotates both rectangles a quarter turn about the origin.
+    let both = alice.doc().unwrap().model.iter().map(|entity| entity.handle.hex()).collect::<Vec<_>>().join(",");
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, &format!("rotate {both} base 0,0 90"));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the copy and the rotation");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap());
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the copy is a second object");
+    for entity in alice.doc().unwrap().model.iter() {
+        let EntityKind::LwPolyline(pl) = &entity.kind else { panic!("a rotated rectangle is still a polyline") };
+        for vertex in &pl.vertices {
+            assert!(vertex.p.x <= 1e-9, "a quarter turn puts every corner at x <= 0, got {:?}", vertex.p);
+            assert!(vertex.p.y >= -1e-9, "a quarter turn puts every corner at y >= 0, got {:?}", vertex.p);
+        }
+    }
+}
+
+#[test]
+fn undo_of_each_new_command_returns_the_state_before_it() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let line = session.doc().unwrap().model.iter().next().expect("the line").handle;
+
+    // The rectangle is a step of its own.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "rect 0,0 10,5");
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Rectangle"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the rectangle returns the drawing before it");
+
+    // So is the copy.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("copy {} 5,0", line.hex()));
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Copy"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the copy removes the copy");
+
+    // And the rotation puts the line back where it was.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("rotate {} base 0,0 45", line.hex()));
+    assert_ne!(session.doc().unwrap(), &before, "the rotation moved the line");
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Rotate"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the rotation puts the line back");
+}
+
+/// Run a one-line command the way [`submit`] does, but against one session.
+fn run(session: &mut Session, text: &str) {
+    let op = {
+        let state = session.state().unwrap();
+        cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap()
+    };
+    session.execute(&op.command, &op.params).unwrap();
+}
+
+#[test]
+fn a_remote_rect_copy_and_rotate_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant draws a rectangle, copies the line and rotates the circle.
+    let before = server.doc().unwrap().clone();
+    server.execute("rectang", &json!({"p1": [30.0, 0.0], "p2": [40.0, 5.0]})).unwrap();
+    server.execute("copy", &json!({"handles": [line.hex()], "delta": [0.0, 30.0]})).unwrap();
+    server.execute("rotate", &json!({"handles": [circle.hex()], "base": [0.0, 0.0], "angle": 90.0})).unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })),
+        "the rectangle and the copy arrive as creations"
+    );
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityReplace { handle, .. } if *handle == circle)),
+        "the rotated circle arrives as a replacement"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "a surviving entity keeps its place in the selection");
     assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
     assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
 }
