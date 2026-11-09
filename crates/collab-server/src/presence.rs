@@ -75,7 +75,7 @@ mod tests {
     use cadcraft_doc::Space;
 
     fn presence(actor: &str) -> Presence {
-        Presence { actor: actor.into(), space: Space::Model, cursor: Some([1.0, 2.0]), selection: vec![], layer: "0".into(), view: None }
+        Presence { actor: actor.into(), role: None, space: Space::Model, cursor: Some([1.0, 2.0]), selection: vec![], layer: "0".into(), view: None }
     }
 
     #[test]

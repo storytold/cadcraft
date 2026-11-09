@@ -7,12 +7,19 @@
 use cadcraft_doc::{Handle, Space};
 use serde::{Deserialize, Serialize};
 
+use crate::Role;
+
 /// A participant's view, as sent to the others.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Presence {
     /// Who is looking (the JWT `sub`).
     pub actor: String,
+    /// What the participant may do, as the server knows it. A client cannot claim a role: the
+    /// server fills this in from the token before it stores or forwards the presence, so the
+    /// cabinet's participant list can name each role instead of guessing one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
     /// Model space or one layout.
     pub space: Space,
     /// The cursor in world coordinates, when the pointer is over the drawing area.

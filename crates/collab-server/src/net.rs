@@ -297,9 +297,11 @@ impl Server {
                 }
             }
             ClientMessage::Presence { presence } => {
-                // The token says who this is; a client cannot label its cursor as someone else.
+                // The token says who this is; a client cannot label its cursor as someone else,
+                // nor claim another role: the server fills both from the claims.
                 let mut presence = presence;
                 presence.actor = claims.sub.clone();
+                presence.role = Some(claims.role);
                 lock(&self.presence).update(presence.clone(), Instant::now());
                 self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });
             }

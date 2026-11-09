@@ -281,3 +281,79 @@ fn attachments_are_stored_and_served_by_content_address() {
     assert_eq!(server.room().drawing().unwrap().entity_count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A participant's presence carries the role the token named, not the one the client claimed, and
+/// a newcomer's `welcome` lists it: the cabinet can show who may edit without asking the client.
+#[test]
+fn presence_carries_the_servers_role_and_the_welcome_lists_it() {
+    let room = Room::new(Drawing::new_metric()).unwrap();
+    let auth = Arc::new(StaticAuthenticator::new([
+        ("token-a".to_string(), Claims { sub: "a".into(), doc: "d1".into(), role: Role::Editor }),
+        ("token-v".to_string(), Claims { sub: "v".into(), doc: "d1".into(), role: Role::Viewer }),
+    ]));
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{addr}");
+    let timeout = Duration::from_secs(3);
+
+    let (mut a, _welcome_a) = Connection::connect(&url, &hello("token-a"), timeout).unwrap();
+    // The client claims ownership; the server must ignore the claim.
+    let claim = cadcraft_collab::Presence {
+        actor: "somebody-else".into(),
+        role: Some(Role::Owner),
+        space: Space::Model,
+        cursor: Some([1.0, 2.0]),
+        selection: vec![],
+        layer: "0".into(),
+        view: None,
+    };
+    a.send(&ClientMessage::Presence { presence: claim }).unwrap();
+
+    let (mut v, welcome_v) = Connection::connect(&url, &hello("token-v"), timeout).unwrap();
+    let participants = match welcome_v {
+        ServerMessage::Welcome { participants, .. } => participants,
+        other => panic!("expected welcome, got {other:?}"),
+    };
+    let listed = participants.iter().find(|presence| presence.actor == "a").expect("a is listed");
+    assert_eq!(listed.role, Some(Role::Editor), "the token's role, not the claimed one");
+
+    v.send(&ClientMessage::Presence {
+        presence: cadcraft_collab::Presence {
+            actor: "not-v".into(),
+            role: Some(Role::Owner),
+            space: Space::Model,
+            cursor: Some([3.0, 4.0]),
+            selection: vec![],
+            layer: "0".into(),
+            view: None,
+        },
+    })
+    .unwrap();
+    let seen = next_where(&mut a, |message| match message {
+        ServerMessage::Presence { presence } => Some(presence),
+        _ => None,
+    });
+    assert_eq!(seen.actor, "v", "the token names the actor");
+    assert_eq!(seen.role, Some(Role::Viewer), "and the role");
+
+    // The two participants see each other: a's next frame reaches the viewer with its role.
+    a.send(&ClientMessage::Presence {
+        presence: cadcraft_collab::Presence {
+            actor: String::new(),
+            role: None,
+            space: Space::Model,
+            cursor: Some([5.0, 6.0]),
+            selection: vec![],
+            layer: "0".into(),
+            view: None,
+        },
+    })
+    .unwrap();
+    let seen_by_v = next_where(&mut v, |message| match message {
+        ServerMessage::Presence { presence } => Some(presence),
+        _ => None,
+    });
+    assert_eq!(seen_by_v.actor, "a");
+    assert_eq!(seen_by_v.role, Some(Role::Editor));
+    assert_eq!(seen_by_v.cursor, Some([5.0, 6.0]));
+}
