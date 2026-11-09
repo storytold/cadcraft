@@ -332,12 +332,21 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   для каскадов), viewer получает отказ; командная строка в совместной сессии
   принимает только однострочные команды с явными адресами
   (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
-  `ellipse`, `rect`, `text`, `move`, `copy`, `rotate`, `mirror`, `scale`,
-  `offset`, `trim`, `array`, `hatch`, `erase`. Синтаксис адресных форм:
+  `ellipse`, `rect`, `text`, `dimlinear`, `spline`, `move`, `copy`, `rotate`,
+  `mirror`, `scale`, `offset`, `trim`, `array`, `hatch`, `erase`. Синтаксис
+  адресных форм:
   `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
   `ellipse cx,cy rx[,ry] [angle]`, `rect x,y x,y`,
   `text x,y height angle "content"` (содержимое в кавычках, `\"`/`\\` —
   экранирование; пустой текст и неположительная высота отклоняются),
+  `dimlinear H1,H2 offset d` (линейный размер между характерными точками двух
+  объектов; размерная линия параллельна измеряемой на подписанном расстоянии
+  `d` влево от `H1 → H2`) или `dimlinear H1,H2 point x,y` (размерная линия в
+  точке `x,y`); одинаковые handle, объект без характерной точки и нулевая длина
+  отклоняются до операции,
+  `spline x,y x,y x,y [x,y…] [closed]` (3–64 точки подгонки, необязательное
+  замыкание; точка вне лимита координат чертежа и меньше трёх точек
+  отклоняются до операции),
   `move H[,H…] delta dx,dy` (или `from x,y to x,y`), `copy H[,H…] dx,dy`,
   `rotate H[,H…] base x,y angle`, `mirror H[,H…] x1,y1 x2,y2`,
   `scale H[,H…] base x,y factor`,
