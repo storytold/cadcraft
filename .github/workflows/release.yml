@@ -18,6 +18,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Regenerates contributors/contributors.json for the release commit; every build bundles it.
+  credits:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: storytold/craft-common-actions/.github/workflows/refresh-contributors.yml@main
   git-sources:
     name: Git dependencies come from storytold
     runs-on: ubuntu-latest
@@ -58,7 +64,7 @@ jobs:
           PY
 
   release:
-    needs: git-sources
+    needs: [git-sources, credits]
     permissions:
       # The reusable release workflow tags and uploads the draft release.
       contents: write
@@ -70,6 +76,7 @@ jobs:
       app-title: CADCraft
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
+      contributors-artifact: ${{ needs.credits.outputs.artifact-name }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -85,3 +92,4 @@ jobs:
       AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
       AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+      LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
