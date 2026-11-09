@@ -97,6 +97,7 @@ fn dim_header_vars(w: &mut W, d: &Drawing) {
     }
 }
 
+/// Write modelled HEADER variables with their declared DXF group types, then retained extras.
 pub(super) fn header_vars(w: &mut W, d: &Drawing) {
     for (name, code) in HEADER_VARS {
         let Some(v) = d.header.get(name) else { continue };

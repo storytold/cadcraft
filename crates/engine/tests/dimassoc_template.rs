@@ -8,6 +8,7 @@ use serde_json::json;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
+/// A saved template supplies each new drawing with its mode and remains independent of later edits.
 #[test]
 fn setvar_saveas_and_new_from_a_real_template_keep_dimassoc() {
     set_io(IoHooks {

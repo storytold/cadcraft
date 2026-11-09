@@ -2,6 +2,7 @@
 use cadcraft_doc::Drawing;
 use cadcraft_io::{SaveOptions, Version, read_dxf, write, write_with};
 
+/// Extract every DIMASSOC HEADER entry so duplicate or mistyped values fail the assertions.
 fn dimassoc_groups(bytes: &[u8]) -> Vec<(i32, i64)> {
     let tags = cadcraft_dxf::parse(bytes).unwrap();
     let header = cadcraft_dxf::sections(&tags).into_iter().find(|s| s.name == "HEADER").unwrap();
@@ -14,6 +15,7 @@ fn dimassoc_groups(bytes: &[u8]) -> Vec<(i32, i64)> {
     found
 }
 
+/// All supported modes use group 280 and survive each tested DXF version and encoding.
 #[test]
 fn new_drawing_modes_use_group_280_in_ascii_and_binary_dxf() {
     for mode in [0, 1, 2] {
@@ -30,6 +32,7 @@ fn new_drawing_modes_use_group_280_in_ascii_and_binary_dxf() {
     }
 }
 
+/// Editing an imported mode replaces its stored value without emitting a second HEADER entry.
 #[test]
 fn an_imported_mode_can_be_changed_without_a_stale_or_duplicate_header() {
     let source = b"0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$DIMASSOC\n280\n1\n0\nENDSEC\n0\nEOF\n";
@@ -50,6 +53,7 @@ mod native {
     use cadcraft_io::read;
     use std::io::Cursor;
 
+    /// The DWG reader supplements DIMASSOC when the intermediate DXF writer omits it.
     #[test]
     fn dwg_decode_keeps_the_mode_even_when_the_dxf_bridge_omits_it() {
         for mode in [0, 1, 2] {
@@ -61,6 +65,7 @@ mod native {
         }
     }
 
+    /// DWG drawings and templates retain every mode in both the native header and readback.
     #[test]
     fn dwg_and_dwt_keep_the_mode_in_the_native_header_and_after_reopen() {
         for mode in [0, 1, 2] {
