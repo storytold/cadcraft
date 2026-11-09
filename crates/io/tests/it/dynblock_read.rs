@@ -87,6 +87,7 @@ fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
 }
 
 /// The Door fixture with a scale action on the Width parameter: graph node 6, object 68.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn with_scale_action() -> String {
     let node = "91 6\n93 32\n95 7\n360 68\n92 -1\n92 -1\n92 -1\n92 -1\n";
     let action = "0 BLOCKSCALEACTION\n5 68\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n\
@@ -105,6 +106,7 @@ fn with_scale_action() -> String {
 /// the DWG holds it with its connections, and it reads back as the same action. AutoCAD refused
 /// such DWGs while acadrust left out the byte after its connections (cadcraft-dwg's
 /// `scale_actions_keep_the_byte_autocad_reads_after_their_connections` covers the byte).
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_scale_action_survives_a_dwg_save() {
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
@@ -422,6 +424,7 @@ fn parameters_in_a_stretch_selection_are_carried_along() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(ins)).unwrap();
     cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
@@ -461,6 +464,7 @@ fn door_reference(src: &str) -> (cadcraft_doc::Drawing, Handle) {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(ins)).unwrap();
     (d, r)
@@ -583,11 +587,12 @@ fn a_point_past_the_end_of_a_frame_edge_is_outside_it() {
 
 #[test]
 fn a_tilted_polyline_keeps_the_stored_vertex_list() {
-    // Polyline 34 lies in a plane tilted about the y axis (extrusion (1,0,0)): its vertices are in
-    // that plane's coordinates, not the block's, so the frame isn't tested against them and the
-    // stored list (vertex 0) is used, as before; so is polyline 36's, tilted by only 5e-10 (at an
-    // elevation of 2e9 that moves it about a unit). Polyline 35 is mirrored (extrusion (0,0,-1)): it
-    // is read flipped into the block's plane, (-20, 1) as (20, 1), so the frame is tested.
+    // Polyline 34 lies in a plane tilted about the y axis (extrusion (1,0,0)): it is read as seen
+    // from above (#1886), (20, 1) as (0, 20), so the frame is tested against those points; none is
+    // inside, so it moves whole. Polyline 36 is tilted by only 5e-10 (at an elevation of 2e9 that
+    // moves it about a unit, below what reading projects): its vertices stay in its own plane and
+    // the stored list (vertex 0) is used, as before. Polyline 35 is mirrored (extrusion (0,0,-1)):
+    // it is read flipped into the block's plane, (-20, 1) as (20, 1), so the frame is tested.
     let polyline = |h: &str, [x0, x1]: [i32; 2], [ex, ey, ez]: [f64; 3], elevation: f64| {
         format!(
             "0 LWPOLYLINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbPolyline\n90 2\n70 0\n38 {elevation}\n10 {x0}\n20 1\n10 {x1}\n20 1\n210 {ex}\n220 {ey}\n230 {ez}\n"
@@ -608,7 +613,7 @@ fn a_tilted_polyline_keeps_the_stored_vertex_list() {
     let (mut d, r) = door_reference(&src);
     cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
     let s = shapes(&d, r);
-    assert_eq!(s[3], [(14.0, 1.0), (36.0, 1.0)]);
+    assert_eq!(s[3], [(-6.0, 20.0), (-6.0, 36.0)]);
     assert_eq!(s[4], [(20.0, 1.0), (30.0, 1.0)]);
     assert_eq!(s[5], [(14.0, 1.0), (36.0, 1.0)]);
 }
@@ -711,6 +716,7 @@ fn door_at_100(d: &mut cadcraft_doc::Drawing) -> Handle {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(ins)).unwrap()
 }

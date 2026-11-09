@@ -19,8 +19,6 @@ pub struct Runtime {
     disabled: bool,
     /// Help ▸ Check for Updates… was chosen; the next frame's `tick` starts it with the context.
     check_requested: bool,
-    /// The check-result dialog is open (from a requested check until it is closed).
-    result_open: bool,
     /// The current result was already written to the command history.
     result_echoed: bool,
     /// Help ▸ Check for Updates… was chosen in a build with updates turned off: say so in a
@@ -35,7 +33,6 @@ impl Default for Runtime {
             enabled: false,
             disabled: updates_disabled(std::env::var("CADCRAFT_DISABLE_UPDATES").ok().as_deref()),
             check_requested: false,
-            result_open: false,
             result_echoed: false,
             disabled_notice_open: false,
         }
@@ -57,7 +54,6 @@ pub fn check_now(app: &mut CadApp) {
         return;
     }
     app.updates_rt.check_requested = true;
-    app.updates_rt.result_open = true;
     app.updates_rt.result_echoed = false;
 }
 
@@ -76,20 +72,22 @@ pub fn tick(app: &mut CadApp, ctx: &egui::Context) {
     let outcome = match rt.updater.status() {
         Status::UpToDate => Some(crate::tl!("CADCraft is up to date.")),
         Status::Failed(_) => Some(crate::tl!("Could not check for updates.")),
-        Status::Idle | Status::Checking => None,
-    };
-    let Some(message) = outcome else {
-        // A check that found an update leaves `Idle`; the prompt takes over from the dialog.
-        if rt.result_open && matches!(rt.updater.status(), Status::Idle) {
-            rt.result_open = false;
+        Status::Idle | Status::Checking | Status::Installing | Status::Ready | Status::Managed | Status::Updated(_) | Status::InstallFailed(_) => {
+            None
         }
-        return;
     };
-    if !rt.result_open {
-        rt.updater.dismiss_status();
-    } else if !std::mem::replace(&mut rt.result_echoed, true) {
+    if let Some(message) = outcome
+        && !std::mem::replace(&mut rt.result_echoed, true)
+    {
         app.session.echo(message);
     }
+}
+
+/// Whether the check result window shows: for every status but idle (a requested check, and the
+/// first start after an update, which reports that it installed or why it failed), and never
+/// over the startup prompt.
+fn result_window_shows(status: &Status, prompt_open: bool) -> bool {
+    !prompt_open && !matches!(status, Status::Idle)
 }
 
 /// Draw the prompt while there is one and act on its answer.
@@ -113,26 +111,25 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
         return;
     }
-    // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
+    // The close for a ready update waits until no drawing holds unsaved changes.
     let clean = !app.session.docs.iter().any(|d| d.is_dirty());
     let rt = &mut app.updates_rt;
-    if rt.result_open {
+    if result_window_shows(rt.updater.status(), rt.updater.prompt_open()) {
         match CheckResultDialog::new(&crate::UPDATE_APP, VERSION).show(ctx, rt.updater.status()) {
-            CheckResultResponse::Close => {
-                rt.result_open = false;
-                rt.updater.dismiss_status();
-            }
+            CheckResultResponse::Close => rt.updater.dismiss_status(),
             CheckResultResponse::CheckAgain => {
                 rt.result_echoed = false;
                 rt.check_requested = true;
             }
+            // The next `show_if` asks the window to close once nothing is unsaved.
+            CheckResultResponse::RestartToUpdate => rt.updater.restart_to_update(),
             CheckResultResponse::None => {}
         }
     }
     match app.updates_rt.updater.show_if(ctx, clean) {
         Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
-        // The guarded close path asks about unsaved changes; the restart helper relaunches once the
-        // process has exited.
+        // The guarded close path asks about unsaved changes. The install helper starts when the
+        // app exits and drops the updater.
         Action::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         Action::None => {}
     }
@@ -150,27 +147,49 @@ fn updates_disabled(value: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn development_opt_out_blocks_startup_and_manual_release_checks() {
         let mut app = crate::CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
         app.updates_rt.disabled = true;
         app.enable_update_check();
         assert!(!app.updates_rt.enabled);
-        super::check_now(&mut app);
+        check_now(&mut app);
         assert!(!app.updates_rt.check_requested);
-        assert!(!app.updates_rt.result_open);
         // The answer is a window, not only a command-history line.
         assert!(app.updates_rt.disabled_notice_open);
         let ctx = egui::Context::default();
-        super::tick(&mut app, &ctx);
-        assert!(matches!(app.updates_rt.updater.status(), craft_update::updater::Status::Idle));
+        tick(&mut app, &ctx);
+        assert!(matches!(app.updates_rt.updater.status(), Status::Idle));
+        // No check-result window either: with updates off the updater stays idle.
+        assert!(!result_window_shows(app.updates_rt.updater.status(), app.updates_rt.updater.prompt_open()));
     }
 
     #[test]
     fn development_update_opt_out_preserves_default_release_policy() {
-        assert!(super::updates_disabled(Some("1")));
-        assert!(super::updates_disabled(Some("true")));
-        assert!(!super::updates_disabled(None));
-        assert!(!super::updates_disabled(Some("0")));
+        assert!(updates_disabled(Some("1")));
+        assert!(updates_disabled(Some("true")));
+        assert!(!updates_disabled(None));
+        assert!(!updates_disabled(Some("0")));
+    }
+
+    #[test]
+    fn result_window_shows_every_status_but_idle() {
+        let shown = [
+            Status::Checking,
+            Status::UpToDate,
+            Status::Failed("no network".into()),
+            Status::Installing,
+            Status::Ready,
+            Status::Managed,
+            Status::Updated("0.2.0".into()),
+            Status::InstallFailed("disk full".into()),
+        ];
+        for status in &shown {
+            assert!(result_window_shows(status, false), "{status:?}");
+            assert!(!result_window_shows(status, true), "{status:?} over the prompt");
+        }
+        assert!(!result_window_shows(&Status::Idle, false));
     }
 }
