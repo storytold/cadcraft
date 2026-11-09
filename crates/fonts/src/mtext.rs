@@ -202,6 +202,15 @@ pub(crate) fn takes_arg(code: char) -> bool {
     matches!(code, 'f' | 'F' | 'H' | 'W' | 'Q' | 'T' | 'A' | 'C' | 'c' | 'p')
 }
 
+/// A size code's argument (`\H`, `\W`, `\T`): `2x` multiplies the current value (`true`),
+/// `2` sets it; `None` when it isn't a number.
+fn factor(a: &str) -> (bool, Option<f64>) {
+    match a.trim().strip_suffix(['x', 'X']) {
+        Some(r) => (true, num(r)),
+        None => (false, num(a)),
+    }
+}
+
 /// The line-spacing factor to lay out with: AutoCAD's 0.25..=4 range, 1 for a missing or
 /// non-finite value.
 pub(crate) fn sane_line_spacing(v: f64) -> f64 {
@@ -434,10 +443,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'H' => {
                         let (a, n) = arg(&chars, i);
                         i = n;
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
+                        let (rel, v) = factor(&a);
                         if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
                             // Relative heights compound; keep the result within 1e-3..1e3 times the
                             // MTEXT's own height, never infinite.
@@ -448,22 +454,23 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                         let (a, n) = arg(&chars, i);
                         i = n;
                         // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
+                        let (rel, v) = factor(&a);
                         if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
                             // Relative factors compound; keep the result within the absolute range.
                             derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
                         }
                     }
                     'T' => {
-                        // Tracking, as a factor of the normal spacing ("\T1.55;", also "\T1.55x;").
-                        // The format allows 0.75 to 4; a value outside is held to that range.
+                        // Tracking, as a factor of the normal spacing: `\T1.55;` sets it, `\T2x;`
+                        // multiplies the current one (like `\W` and `\H`). The format allows 0.75 to
+                        // 4; a value outside, or a product outside, is held to that range.
                         let (a, n) = arg(&chars, i);
                         i = n;
-                        if let Some(v) = num(a.trim_end_matches(['x', 'X'])).filter(|v| *v > 0.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.tracking = v.clamp(MIN_TRACKING, MAX_TRACKING));
+                        let (rel, v) = factor(&a);
+                        if let Some(v) = v.filter(|v| *v > 0.0) {
+                            derive(&mut fmts, &mut cur, &|f| {
+                                f.tracking = (if rel { f.tracking * v } else { v }).clamp(MIN_TRACKING, MAX_TRACKING);
+                            });
                         }
                     }
                     'Q' => {
@@ -1022,7 +1029,8 @@ mod tests {
             let tracked = width(&format!("\\T{t};HHHH"));
             assert!((tracked - normal - 3.0 * advance * (t - 1.0)).abs() < 1e-6, "\\T{t}: {tracked} vs {normal}");
         }
-        assert!((width("\\T1.55x;HHHH") - width("\\T1.55;HHHH")).abs() < 1e-9, "an x suffix reads the same");
+        assert!((width("\\T1.55x;HHHH") - width("\\T1.55;HHHH")).abs() < 1e-9, "x multiplies the normal spacing");
+        assert!((width("\\T2;\\T1.5x;HHHH") - width("\\T3;HHHH")).abs() < 1e-9, "x multiplies the current tracking");
         // Only the text after the code, up to the end of its group, is tracked.
         let grouped = width("{\\T2;HH}HH");
         assert!(width("{HH}HH") < grouped && grouped < width("\\T2;HHHH"), "{grouped}");
@@ -1179,10 +1187,29 @@ mod tests {
 
     /// The width factor of the last format `parse` derived.
     fn last_wf(contents: &str, base_wf: f64) -> f64 {
-        let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: base_wf, tracking: 1.0, oblique: 0.0, valign: 1 };
+        let base =
+            Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: base_wf, tracking: 1.0, oblique: 0.0, valign: 1 };
         parse(contents, base).1.last().map_or(f64::NAN, |f| f.wf)
     }
 
+    /// The tracking of the last format `parse` derived.
+    fn last_tracking(contents: &str) -> f64 {
+        let base =
+            Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, tracking: 1.0, oblique: 0.0, valign: 1 };
+        parse(contents, base).1.last().map_or(f64::NAN, |f| f.tracking)
+    }
+
+    /// `\T2x;` multiplies the current tracking, as `\W2x;` does the width factor; the product is
+    /// held to the format's 0.75..=4.
+    #[test]
+    fn tracking_x_is_relative() {
+        assert_eq!(last_tracking("\\T2;a"), 2.0, "absolute sets it");
+        assert_eq!(last_tracking("\\T2;\\T1.5x;a"), 3.0, "x multiplies the current tracking");
+        assert_eq!(last_tracking("\\T1.5X;a"), 1.5, "capital X too, from the normal spacing");
+        assert_eq!(last_tracking(&"\\T3x;".repeat(10)), 4.0, "a long chain stays in range");
+        assert_eq!(last_tracking("\\T2;\\T0.1x;a"), 0.75);
+        assert_eq!(last_tracking("\\Tx;\\T0x;\\T-2x;a"), 1.0, "nothing to read, or not positive: ignored");
+    }
 
     #[test]
     fn width_factor_x_is_relative() {
