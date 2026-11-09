@@ -223,8 +223,11 @@ fn layer_filters_next_to_the_states_are_kept() {
     let base = write_dxf(&drawing());
     let p = pairs(&base);
     let h = |k| fresh(&p, k);
-    let (x, y, r2, f, fr) = (h(1), h(2), h(3), h(4), h(5));
-    let mut objects = dictionaries(&p, &x, &y, &[("S2", &r2)], &[("ACAD_LAYERFILTERS", &f)]);
+    let (x, y, r2, f, fr, gone) = (h(1), h(2), h(3), h(4), h(5), h(6));
+    // Two entries whose objects the file doesn't have (a handle of nothing, and a null one): they
+    // aren't written into the table's dictionary.
+    let extra = [("ACAD_LAYERFILTERS", f.as_str()), ("OTHER_GONE", gone.as_str()), ("OTHER_NULL", "0")];
+    let mut objects = dictionaries(&p, &x, &y, &[("S2", &r2)], &extra);
     objects.extend(s2(&p, &r2, &y));
     objects.extend([g("0", "DICTIONARY"), g("5", &f), g("102", "{ACAD_REACTORS"), g("330", &x), g("102", "}"), g("330", &x)]);
     objects.extend([g("100", "AcDbDictionary"), g("281", "1"), g("3", "Walls"), g("350", &fr)]);
@@ -274,7 +277,7 @@ fn layer_filters_next_to_the_states_are_kept() {
 #[test]
 fn view_snapshots_and_names_twice_in_another_case_stay_in_cadcrafts_record() {
     let mut d = drawing();
-    for name in ["Plan", "*VIEW Front", "PLAN", "Wände", "WÄNDE"] {
+    for name in ["Plan", "*VIEW Front", "PLAN", "Wände", "WÄNDE", "", " "] {
         d.layer_states.push(LayerState::new(name, d.layers.clone(), "A"));
     }
     let text = write_dxf(&d);
@@ -288,7 +291,8 @@ fn view_snapshots_and_names_twice_in_another_case_stay_in_cadcrafts_record() {
     assert!(text.contains("CADCRAFT_LAYERSTATES"));
     let back = read(text.as_bytes(), "v.dxf").unwrap();
     // AutoCAD's states first, then CADCraft's own.
-    let want: Vec<LayerState> = [0, 3, 1, 2, 4].iter().map(|&i| d.layer_states[i].clone()).collect();
+    // (A blank name can't be a key of AutoCAD's dictionary: those stay in CADCraft's record too.)
+    let want: Vec<LayerState> = [0, 3, 1, 2, 4, 5, 6].iter().map(|&i| d.layer_states[i].clone()).collect();
     assert_eq!(back.layer_states, want);
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -363,6 +367,30 @@ fn a_state_in_both_records_is_read_from_autocads() {
     let text = text.replace("*VIEW S", "S");
     let back = read(text.as_bytes(), "both.dxf").unwrap();
     assert_eq!(back.layer_states.iter().map(|s| (s.name.as_str(), s.current.as_str())).collect::<Vec<_>>(), [("S", "A")]);
+}
+
+#[test]
+fn states_past_the_limit_are_left_out_and_the_rest_come_in_file_order() {
+    // A hostile file with one state more than the reader keeps (100 000): the last one in the file
+    // is left out, and the others come in file order, here the reverse of their names' order.
+    const LIMIT: u64 = 100_000;
+    let base = write_dxf(&drawing());
+    let p = pairs(&base);
+    let first = u64::from_str_radix(&fresh(&p, 0), 16).unwrap();
+    let h = |k: u64| format!("{:X}", first + k);
+    let (x, y) = (h(1), h(2));
+    let names: Vec<String> = (0..=LIMIT).map(|i| format!("S{:06}", LIMIT + 1 - i)).collect();
+    let records: Vec<String> = (0..=LIMIT).map(|i| h(3 + i)).collect();
+    let entries: Vec<(&str, &str)> = names.iter().map(String::as_str).zip(records.iter().map(String::as_str)).collect();
+    let mut objects = dictionaries(&p, &x, &y, &entries, &[]);
+    for r in &records {
+        objects.extend([g("0", "XRECORD"), g("5", r), g("330", &y), g("100", "AcDbXrecord")]);
+        objects.extend([g("280", "1"), g("91", "2047"), g("301", ""), g("290", "0"), g("302", "0")]);
+    }
+    let d = read(inject(&base, &x, objects).as_bytes(), "many.dxf").unwrap();
+    let names: Vec<&str> = d.layer_states.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names.len(), 100_000);
+    assert_eq!((names.first().copied(), names.get(1).copied(), names.last().copied()), (Some("S100001"), Some("S100000"), Some("S000002")));
 }
 
 #[test]
