@@ -20,6 +20,7 @@ cadcraft-collab-server \
   --secret-file /run/secrets/office-sync-hs256 \
   --issuer cabinet --audience office-sync \
   --state /var/lib/office-sync/6f1c.dxf \
+  --assets /var/lib/office-sync/assets \
   --snapshot-secs 30 \
   --http 127.0.0.1:8788
 ```
@@ -80,6 +81,28 @@ its queued operations are re-sent and the `opId` window answers repeats.
 DXF keeps what CADCraft does not model (unknown entities, other applications'
 objects, xdata) through the writer's raw pass; DWG through the bridge does not.
 The snapshot is DXF for that reason; `commit` may write either format.
+
+## Attachments (`--assets`)
+
+`imageattach` never reads a file by a path a client names (ADR 0021). The room
+takes the raster bytes in the operation (`data`, at most the 1 MiB message
+limit) or by their content address (`asset`, SHA-256) from a store given with
+`--assets <dir>`. The store keeps one directory per room (`<dir>/<session>/`),
+names every blob `<sha256>.<ext>` with the extension taken from the bytes'
+signature, and deduplicates by address. `assetPut` stores bytes (editor and
+owner only) after checking the address against them; `assetGet` serves them to
+any authenticated participant of that room, viewers included. There is no
+message that takes a file name.
+
+Limits are per room: 256 MiB per blob, 1000 blobs, 2 GiB in total. They are
+counted from the disk, so a restart neither loses blobs nor resets the quota;
+a blob that was already stored is accepted without taking more space. A missing
+id answers `not-found`; an address that is not 64 lower-case hex characters, a
+blob that does not hash to its id, and bytes that are not a PNG/JPEG/BMP/TIFF
+answer `invalid`; a limit answers `limit`. A symlink inside the store that
+resolves outside the room's directory is treated as missing. Without
+`--assets`, `imageattach` still accepts inline `data` but refuses an `asset`
+address: the engine must never fall back to opening the label as a file.
 
 ## Commit
 

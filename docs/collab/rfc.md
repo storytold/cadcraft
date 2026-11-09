@@ -164,7 +164,8 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 
 Имена и поля — по общему конверту `.craft/protocol/ARCHITECTURE.md` §2: `hello`,
 `welcome`, `op`, `undo`, `redo`, `applied`, `rejected`, `presence`, `resync`,
-`snapshot`, `commit`, `commit-result`, `error`, `ping`/`pong`. Приложение
+`snapshot`, `commit`, `commit-result`, `asset-put`, `asset-get`, `asset-stored`,
+`asset`, `error`, `ping`/`pong`. Приложение
 уточняет только тело `target`/`payload` и `result`.
 
 | Тип | Направление | Поля | Семантика |
@@ -181,6 +182,10 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 | `snapshot` | S→C | `{version, seq, more, bytesBase64, sha256}` | чанки по 1 MiB (`seq` с 0, `more` у всех кроме последнего); клиент сбрасывает непринятую очередь |
 | `commit` | C→S | `{expectedVersion}` | запрос сборки файла (ADR-0009) |
 | `commit-result` | S→C | `{version, sha256, bytes?, notSaved, path?}` | результат commit |
+| `asset-put` | C→S | `{sha256, bytesBase64}` | байты вложения под адресом; сервер сверяет SHA-256 и лимиты комнаты (ADR-0021) |
+| `asset-get` | C→S | `{sha256}` | байты вложения по адресу |
+| `asset-stored` | S→C | `{sha256, bytes, stored}` | блоб в хранилище; `stored:false` — дедупликация |
+| `asset` | S→C | `{sha256, bytesBase64}` | байты вложения |
 | `error` | S→C | `{code, message, retryable}` | общие ошибки (auth, lease, лимиты) |
 | `ping`/`pong` | C↔S | `{}` | lease продлевается `ping` |
 
@@ -477,10 +482,15 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 документа, число участников. Логи: `sub`, `opId`, `version`, коды ошибок; без
 содержимого, без токенов, без путей пользователя. Снапшоты не отдаются в
 кабинет; commit — по контракту кабинета. Антивирус/аудит — на стороне кабинета.
-`imageattach` в совместной сессии принимает растр только в `data` (≤1 MiB на
-операцию): `path` — метка, сервер не открывает файл по клиентскому пути и не
-отвечает, существует ли он (ADR-0021). Серверное хранилище вложений (`--assets`)
-с проверкой после нормализации и `realpath` — следующий срез.
+`imageattach` в совместной сессии не открывает файл по клиентскому пути:
+`path` — метка чертежа, растр приходит в `data` (≤1 MiB на операцию) или
+берётся из серверного хранилища вложений (`--assets`) по адресу содержимого
+`asset` = SHA-256 (ADR-0021). Хранилище контент-адресное: комната принимает
+байты (`assetPut`), сверяет адрес с байтами, пишет `<room>/<sha256>.<ext>`
+(расширение — по сигнатуре, не по имени клиента) и дедуплицирует; отдаёт
+(`assetGet`) только участнику этой комнаты. Лимиты на комнату: 256 MiB на
+блоб, 1000 блобов, 2 GiB; считаются по диску, поэтому рестарт не сбрасывает
+квоту. Симлинк, ведущий наружу корня комнаты, считается отсутствующим.
 
 ## 13. Открытые вопросы
 
@@ -503,15 +513,15 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 
 | Слой | Что | Проверка |
 |---|---|---|
-| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018), растр в операции (ADR-0021) | 66 тестов + 1 doctest |
+| `cadcraft-collab` | change set, diff по чанкам, apply, `OpContext`, presence, конверт, snapshot частями, блоки целиком (ADR-0020), `cmdline` (ADR-0018), растр в операции и адрес вложения (ADR-0021) | 71 тест + 1 doctest |
 | engine | `apply_remote`, `execute_intent`, `set_record_undo` | 452 lib-теста |
-| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown, data-only `imageattach` (ADR-0021) | 43 + e2e |
+| `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown, хранилище вложений `--assets` (ADR-0021) | 60 + e2e |
 | `cadcraft-collab-client` | реплика, порядок версий, resync, reconnect, события | 5 тестов |
 | UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 23 адресуемые команды | 260 lib (1 ignored), `collab_cmdline` 55 |
 
-Осталось до приёмки: открытие commit-файла в LibreCAD/QCAD, web-режим через
-`craft-web-host`, серверное хранилище вложений (`--assets`) — отдельный срез
-ADR-0021, не входящий в data-only `imageattach`.
+Осталось до приёмки: открытие commit-файла в LibreCAD/QCAD и web-режим через
+`craft-web-host`. Серверное хранилище вложений (`--assets`) реализовано
+отдельным срезом ADR-0021.
 
 ## 14. План поставки
 
