@@ -804,9 +804,9 @@ mod native {
         dropped
     }
 
-    /// Header variables the DWG reader fills in but acadrust's DXF writer (0.6.3) leaves out of
+    /// Header variables the DWG reader fills in but acadrust's DXF writer (0.6.6) leaves out of
     /// the HEADER section: (name, group code, value).
-    fn unwritten_header_vars(h: &acadrust::document::HeaderVariables) -> [(&'static str, i32, String); 7] {
+    fn unwritten_header_vars(h: &acadrust::document::HeaderVariables) -> [(&'static str, i32, String); 8] {
         [
             // DWG holds radians; `$ANGBASE` is in degrees.
             ("$ANGBASE", 50, h.angle_base.to_degrees().to_string()),
@@ -816,6 +816,7 @@ mod native {
             ("$CHAMFERB", 40, h.chamfer_distance_b.to_string()),
             ("$ELEVATION", 40, h.elevation.to_string()),
             ("$THICKNESS", 40, h.thickness.to_string()),
+            ("$DIMASSOC", 280, h.dimension_associativity.to_string()),
         ]
     }
 

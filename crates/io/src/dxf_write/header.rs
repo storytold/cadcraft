@@ -26,6 +26,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CELTSCALE", 40),
     ("DIMSCALE", 40),
     ("DIMSTYLE", 2),
+    ("DIMASSOC", 280),
     ("LUNITS", 70),
     ("LUPREC", 70),
     ("AUNITS", 70),
@@ -122,7 +123,7 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                     w.f(c, f);
                 }
             }
-            (c @ (62 | 70 | 290 | 370), v) => {
+            (c @ (62 | 70 | 280 | 290 | 370), v) => {
                 if let Some(i) = v.as_i64() {
                     w.s(9, format!("${name}"));
                     w.i(c, i);
