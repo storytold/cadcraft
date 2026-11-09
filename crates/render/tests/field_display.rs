@@ -108,9 +108,10 @@ fn background_follows_rotated_text_and_attributes() {
         // A rotated box is not axis-aligned, so test containment in its own frame.
         let (c, s) = (deg.to_radians().cos(), deg.to_radians().sin());
         let local = |p: cadcraft_geom::Vec2| (p.x * c + p.y * s, -p.x * s + p.y * c);
-        let (lx0, lx1, ly0, ly1) = grey.iter().map(|p| local(*p)).fold((f64::MAX, f64::MIN, f64::MAX, f64::MIN), |a, (x, y)| {
-            (a.0.min(x), a.1.max(x), a.2.min(y), a.3.max(y))
-        });
+        let (lx0, lx1, ly0, ly1) = grey
+            .iter()
+            .map(|p| local(*p))
+            .fold((f64::MAX, f64::MIN, f64::MAX, f64::MIN), |a, (x, y)| (a.0.min(x), a.1.max(x), a.2.min(y), a.3.max(y)));
         for g in glyphs {
             let (x, y) = local(g);
             assert!(x >= lx0 - eps && x <= lx1 + eps && y >= ly0 - eps && y <= ly1 + eps, "{deg} deg: glyph point {g:?} outside the box");
