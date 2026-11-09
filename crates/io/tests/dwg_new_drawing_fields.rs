@@ -18,7 +18,10 @@ const TWO: &str = "File %<\\AcVar DWGNAME \\CcValue \"plan.dxf\">% on %<\\AcVar 
 const EXPR: &str = "Twice: %<\\AcExpr (%<\\AcVar LTSCALE \\CcValue \"1.000000\">%*2) \\f \"%lu2\" \\CcValue \"2.0000\">%";
 
 fn new_drawing() -> Drawing {
-    let mut d = Drawing::new_metric();
+    with_fields(Drawing::new_metric())
+}
+
+fn with_fields(mut d: Drawing) -> Drawing {
     for (i, c) in [DATE, TWO, EXPR].into_iter().enumerate() {
         let t = MText {
             insert: cadcraft_geom::Vec3::new(0.0, -10.0 * i as f64, 0.0),
@@ -106,4 +109,34 @@ fn a_drawing_without_fields_saves_as_before() {
     let d = Drawing::new_metric();
     let dwg = write_with(&d, "plain.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
     assert!(fields_of(dwg).is_empty());
+}
+
+/// An R2000 file (`$ACADVER` AC1015) whose named object dictionary holds an XRECORD, which
+/// CADCraft keeps without modelling it.
+const R2000_WITH_XRECORD: &str = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1015\n  9\n$HANDSEED\n  5\nFFF\n  0\nENDSEC\n\
+  0\nSECTION\n  2\nOBJECTS\n  0\nDICTIONARY\n  5\nC\n330\n0\n100\nAcDbDictionary\n281\n1\n  3\nRETAINED_NOTE\n350\n300\n\
+  0\nXRECORD\n  5\n300\n330\nC\n100\nAcDbXrecord\n280\n1\n  1\nretained note\n  0\nENDSEC\n  0\nEOF\n";
+
+/// A drawing imported from an R2000 file with a retained object, then given fields, is saved like
+/// a new one: the fields keep their values and formats, and the retained object is still there.
+#[test]
+fn fields_added_to_an_r2000_drawing_with_retained_objects_survive() {
+    let imported = read(R2000_WITH_XRECORD.as_bytes(), "old.dxf").unwrap();
+    assert_eq!(imported.foreign.version.as_deref(), Some("AC1015"));
+    assert!(imported.foreign.objects.iter().any(|o| o.kind == "XRECORD"), "the XRECORD is kept");
+    let d = with_fields(imported);
+    let dwg = write_with(&d, "old.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    let fields = fields_of(dwg.clone());
+    assert_eq!(fields.len(), 8, "3 `_text` fields and 5 field codes");
+    let dates: Vec<_> = fields.iter().filter(|f| f.code == "\\AcVar Date \\f \"dd/MM/yyyy\"").collect();
+    assert_eq!(dates.len(), 2);
+    for f in dates {
+        assert_eq!((f.value.format.as_str(), f.value_string.as_str()), ("dd/MM/yyyy", "03/11/2026"));
+    }
+    let expr: Vec<_> = fields.iter().filter(|f| f.code.starts_with("\\AcExpr")).collect();
+    assert_eq!((expr[0].value.format.as_str(), expr[0].value_string.as_str()), ("%lu2", "2.0000"));
+    let back = read(&dwg, "old.dwg").unwrap();
+    assert_eq!(contents(&back), [DATE, TWO, EXPR]);
+    let note = |d: &Drawing| d.foreign.objects.iter().any(|o| o.kind == "XRECORD" && o.tags.iter().any(|t| t.value == "retained note"));
+    assert!(note(&back), "the retained XRECORD survives the save");
 }

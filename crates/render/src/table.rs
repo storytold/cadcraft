@@ -385,7 +385,8 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
             oblique: ts.oblique,
             ..cadcraft_fonts::MTextParams::new(tx.at, tx.height)
         };
-        let layout = cadcraft_fonts::layout_mtext_with(&tx.text, &mp);
+        // A field shows its cached value, as in an MTEXT.
+        let layout = cadcraft_fonts::layout_mtext_with(&cadcraft_doc::fields::display_mtext(&tx.text), &mp);
         for piece in &layout.pieces {
             b.shaped(ctx, style_ink(tx.color, rgb), lw, &piece.shaped);
         }

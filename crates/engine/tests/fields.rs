@@ -1,7 +1,7 @@
 //! FIELD, UPDATEFIELD, DWGPROPS and SPELL (#532).
 
 use cadcraft_doc::fields;
-use cadcraft_doc::{EntityKind, Handle};
+use cadcraft_doc::{Common, EntityKind, Handle, Space};
 use cadcraft_engine::Session;
 use serde_json::json;
 
@@ -51,6 +51,26 @@ fn object_property_fields_follow_the_object() {
     // An object field needs a handle; unknown names are refused.
     assert!(s.execute("field", &json!({"at": [0, 0], "field": "object"})).is_err());
     assert!(s.execute("field", &json!({"at": [0, 0], "field": "no such thing!"})).is_err());
+}
+
+/// A hatch's Area field is its filled area, islands subtracted (odd parity), as AREA reports it.
+#[test]
+fn hatch_area_field_subtracts_islands() {
+    let square = |x: f64, y: f64, side: f64| {
+        let v: Vec<_> = [(x, y), (x + side, y), (x + side, y + side), (x, y + side)].iter().map(|(x, y)| json!({"p": {"x": x, "y": y}})).collect();
+        json!({"vertices": v})
+    };
+    let mut s = Session::new();
+    let area = |s: &mut Session, loops: Vec<serde_json::Value>| {
+        let hatch: cadcraft_doc::Hatch = serde_json::from_value(json!({"pattern": "SOLID", "solid": true, "loops": loops})).unwrap();
+        let h = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Hatch(hatch)).unwrap();
+        let r = s.execute("field", &json!({"at": [0, 0], "field": "object", "handle": h.hex(), "property": "area"})).unwrap();
+        r["value"].as_str().unwrap().to_string()
+    };
+    // A 10 x 10 outer loop with a 2 x 2 island: 96, not 104.
+    assert_eq!(area(&mut s, vec![square(0.0, 0.0, 10.0), square(4.0, 4.0, 2.0)]), "96.0000");
+    // An island inside the island's hole is filled again: 100 - 36 + 4.
+    assert_eq!(area(&mut s, vec![square(0.0, 0.0, 10.0), square(2.0, 2.0, 6.0), square(4.0, 4.0, 2.0)]), "68.0000");
 }
 
 #[test]

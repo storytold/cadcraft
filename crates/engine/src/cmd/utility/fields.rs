@@ -8,7 +8,7 @@
 
 use cadcraft_doc::fields::{self, Field, FieldKind};
 use cadcraft_doc::{EntityKind, Handle, MText, Prim, Space};
-use cadcraft_geom::{Polyline, Vec2, Vec3};
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase};
@@ -165,27 +165,13 @@ fn length_of(k: &EntityKind) -> Option<f64> {
     any.then_some(total)
 }
 
-/// Area of a closed object.
-fn area_of(k: &EntityKind) -> Option<f64> {
-    match k {
-        EntityKind::Circle(c) => Some(c.radius * c.radius * std::f64::consts::PI),
-        EntityKind::LwPolyline(pl) => Some(Polyline { vertices: pl.vertices.clone(), closed: true }.area().abs()),
-        EntityKind::Ellipse(e) => {
-            let a = e.major.xy().len();
-            Some(std::f64::consts::PI * a * a * e.ratio)
-        }
-        EntityKind::Hatch(h) => Some(h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.area().abs()).sum()),
-        _ => None,
-    }
-}
-
 /// The value of an object property, or `None` (no such object or property).
 fn object_value(s: &Session, h: Handle, property: &str, format: Option<&str>) -> Option<String> {
     let d = s.doc().ok()?;
     let e = d.entity(h)?;
     let num = |v: f64| format_number(s, v, format);
     match property.to_ascii_lowercase().as_str() {
-        "area" => num(area_of(&e.kind)?),
+        "area" => num(super::super::inquiry::object_area(s, h).ok()?.0),
         "length" | "perimeter" | "circumference" => num(length_of(&e.kind)?),
         "radius" => match &e.kind {
             EntityKind::Circle(c) => num(c.radius),

@@ -103,7 +103,8 @@ fn field_display(b: &Builder, ctx: &Ctx) -> bool {
     !b.plotting && b.opts.fill && ctx.d.header.i64("FIELDDISPLAY", 1) != 0
 }
 
-/// A grey box behind `pts` (geometry of text turned by `rotation` about `origin`), padded by a
+/// A grey box behind `strokes` (glyphs already turned by `rotation` about `origin`; the box is
+/// measured in the text's own frame and turned back, so it follows the text), padded by a
 /// sixth of the text height.
 fn field_background(b: &mut Builder, ctx: &Ctx, strokes: &[Vec<Vec2>], origin: Vec2, rotation: f64, height: f64) {
     let rot = if rotation.is_finite() { rotation } else { 0.0 };
@@ -123,11 +124,9 @@ pub(crate) fn field_text_background(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc
     if !field_display(b, ctx) || !cadcraft_doc::fields::has_fields(&t.value) {
         return;
     }
-    // Shaped unturned, then turned about the justification point with the text.
-    let flat = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
-    let (sh, _) = place_text_entity(ctx.d, &flat, shown);
-    // Aligned and fit text run from the insertion point to the second point: their angle comes
-    // from the two points, not from `rotation`.
+    // The glyphs as drawn (already turned). Aligned and fit text run from the insertion point to
+    // the second point: their angle comes from the two points, not from `rotation`.
+    let (sh, _) = place_text_entity(ctx.d, t, shown);
     let rot = match (t.halign, t.align_pt) {
         (cadcraft_doc::HAlign::Aligned | cadcraft_doc::HAlign::Fit, Some(p2)) => t.insert.xy().angle_to(p2.xy()),
         _ => t.rotation,
