@@ -1951,22 +1951,164 @@ mod tests {
         assert_eq!(Some(doc.header.current_text_style_handle), romans);
     }
 
+    /// What a table style gives one of its rows, written out by hand for
+    /// `table_style_row_cell_styles_keep_the_style`: the six edges as (grid mask, hidden in the
+    /// source, line weight, colour index) in the order top, horizontal inside, bottom, left,
+    /// vertical inside, right; the fill (enabled, colour index), text style, alignment, height and
+    /// text colour index; and what the DWG row carries besides.
+    #[cfg(not(no_dwg_bridge))]
+    struct StyleRow {
+        name: &'static str,
+        edges: [(i32, bool, i16, i16); 6],
+        fill: (bool, i16),
+        text_style: &'static str,
+        alignment: acadrust::objects::CellAlignment,
+        height: f64,
+        text_colour: i16,
+        merge_flags: i32,
+        style_type: i32,
+    }
+
+    /// The three rows' values; every edge differs from every other, in the rows and between them.
+    #[cfg(not(no_dwg_bridge))]
+    fn style_rows() -> [StyleRow; 3] {
+        use acadrust::objects::CellAlignment;
+        [
+            StyleRow {
+                name: "_TITLE",
+                edges: [(1, false, 5, 11), (2, true, 9, 12), (4, false, 13, 13), (8, true, 15, 14), (16, false, 18, 15), (32, true, 20, 16)],
+                fill: (true, 30),
+                text_style: "Standard",
+                alignment: CellAlignment::TopCenter,
+                height: 0.5,
+                text_colour: 1,
+                merge_flags: 0x8000,
+                style_type: 1,
+            },
+            StyleRow {
+                name: "_HEADER",
+                edges: [(1, true, 25, 21), (2, false, 30, 22), (4, true, 35, 23), (8, false, 40, 24), (16, true, 50, 25), (32, false, 53, 26)],
+                fill: (false, 40),
+                text_style: "ROMANS",
+                alignment: CellAlignment::MiddleRight,
+                height: 0.3,
+                text_colour: 3,
+                merge_flags: 0,
+                style_type: 1,
+            },
+            StyleRow {
+                name: "_DATA",
+                edges: [(1, false, 60, 31), (2, true, 70, 32), (4, true, 80, 33), (8, false, 90, 34), (16, true, 100, 35), (32, false, 106, 36)],
+                fill: (true, 50),
+                text_style: "Standard",
+                alignment: CellAlignment::BottomLeft,
+                height: 0.2,
+                text_colour: 5,
+                merge_flags: 0,
+                style_type: 2,
+            },
+        ]
+    }
+
+    /// Gives a table style the margins and the three rows' values.
+    #[cfg(not(no_dwg_bridge))]
+    fn give_style_rows(s: &mut acadrust::objects::TableStyle, rows: &[StyleRow]) {
+        use acadrust::types::{Color, LineWeight};
+        // Different margins each way, so a swapped pair shows.
+        s.horizontal_margin = 1.0;
+        s.vertical_margin = 0.25;
+        for r in rows {
+            let row = match r.name {
+                "_TITLE" => &mut s.title_row_style,
+                "_HEADER" => &mut s.header_row_style,
+                _ => &mut s.data_row_style,
+            };
+            for &(mask, hidden, weight, colour) in &r.edges {
+                let b = match mask {
+                    1 => &mut row.top_border,
+                    2 => &mut row.horizontal_inside_border,
+                    4 => &mut row.bottom_border,
+                    8 => &mut row.left_border,
+                    16 => &mut row.vertical_inside_border,
+                    _ => &mut row.right_border,
+                };
+                b.is_invisible = hidden;
+                b.line_weight = LineWeight::Value(weight);
+                b.color = Color::from_index(colour);
+            }
+            row.fill_enabled = r.fill.0;
+            row.fill_color = Color::from_index(r.fill.1);
+            row.text_style_name = r.text_style.to_string();
+            row.alignment = r.alignment;
+            row.text_height = r.height;
+            row.text_color = Color::from_index(r.text_colour);
+        }
+    }
+
+    /// Asserts a DWG table style row has what `want` says; `tag` names it in a failure.
+    #[cfg(not(no_dwg_bridge))]
+    fn assert_style_row(
+        tag: &str,
+        row: &acadrust::objects::NamedTableCellStyle,
+        want: &StyleRow,
+        text_styles: &acadrust::tables::Table<acadrust::tables::TextStyle>,
+    ) {
+        use acadrust::objects::TableBorderType;
+        use acadrust::types::{Color, LineWeight};
+        let c = &row.cell_style;
+        assert_eq!(
+            (c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin),
+            (1, 1.0, 0.25, 1.0, 0.25),
+            "{tag}: margins"
+        );
+        assert_eq!(c.merge_flags, want.merge_flags, "{tag}: merge flags");
+        assert_eq!(row.style_type, want.style_type, "{tag}: style type");
+        // The grid flag is set for a hidden edge: the reverse of `is_invisible`. A DXF table style
+        // holds no border type or double spacing, so those stay the default.
+        assert_eq!(c.borders.len(), 6, "{tag}: borders");
+        for (got, &(mask, hidden, weight, colour)) in c.borders.iter().zip(&want.edges) {
+            assert_eq!(got.index_mask, mask, "{tag}: border order");
+            let b = &got.border;
+            assert_eq!(b.is_invisible, !hidden, "{tag}: border {mask} visibility");
+            assert_eq!(b.border_type, TableBorderType::Single, "{tag}: border {mask} type");
+            assert_eq!(b.line_weight, LineWeight::Value(weight), "{tag}: border {mask} weight");
+            assert_eq!(b.color, Color::from_index(colour), "{tag}: border {mask} colour");
+            assert_eq!(b.double_line_spacing, 0.0, "{tag}: border {mask} spacing");
+        }
+        let fill = if want.fill.0 { Color::from_index(want.fill.1) } else { Color::None };
+        assert_eq!(c.background_color, fill, "{tag}: fill");
+        let f = &c.content_format;
+        assert_eq!(f.cell_alignment, want.alignment as i32, "{tag}: alignment");
+        assert_eq!(f.text_height, want.height, "{tag}: text height");
+        assert_eq!(f.content_color, Color::from_index(want.text_colour), "{tag}: text colour");
+        // Handles are the DWG's own: compare the style they name.
+        let got = text_styles.iter().find(|t| t.handle == f.text_style).map(|t| t.name.as_str());
+        assert_eq!(got.map(str::to_ascii_lowercase), Some(want.text_style.to_ascii_lowercase()), "{tag}: text style");
+    }
+
     /// A 2010+ DWG's table style row cell styles carry the style's margins, as the reference app
     /// writes them: without them it reads the margins as 0.06 where the drawing has 1.0 (#2920).
     /// DWG 2004 has no row cell styles and keeps the margins in the style itself. The rows also
     /// keep the attributes the style gives them: borders, fill, text style, alignment, height and
-    /// colour.
+    /// colour. The style is given a value of its own for each of them, differing between the six
+    /// edges and between the rows, and the expected values are written out by hand, so a swapped
+    /// edge, a swapped row or a broken lookup fails.
     #[cfg(not(no_dwg_bridge))]
     #[test]
-    fn table_style_row_cell_styles_keep_the_margins() {
-        let read = |dxf: Vec<u8>| acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf)).unwrap().read().unwrap();
-        let mut doc = read(MINIMAL_DXF.into());
+    fn table_style_row_cell_styles_keep_the_style() {
+        use acadrust::objects::ObjectType;
+        // A drawing with a ROMANS text style, for one row to use.
+        let style = "  0\nSTYLE\n  5\n1F0\n100\nAcDbSymbolTableRecord\n100\nAcDbTextStyleTableRecord\n  2\nROMANS\n 70\n0\n";
+        let style = format!("{style} 40\n0\n 41\n1\n 50\n0\n 71\n0\n 42\n2.5\n  3\nromans.shx\n  4\n\n");
+        let head = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  0\nENDSEC\n";
+        let dxf = format!("{head}  0\nSECTION\n  2\nTABLES\n  0\nTABLE\n  2\nSTYLE\n 70\n1\n{style}  0\nENDTAB\n  0\nENDSEC\n  0\nEOF\n");
+        let rows = style_rows();
+        // Parsed once; the DWG is made from the DXF it is written to at each version.
+        let mut doc = acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf.into_bytes())).unwrap().read().unwrap();
         let mut styles = 0;
         for o in doc.objects.values_mut() {
-            let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
-            // Different margins each way, so a swapped pair shows.
-            s.horizontal_margin = 1.0;
-            s.vertical_margin = 0.25;
+            let ObjectType::TableStyle(s) = o else { continue };
+            give_style_rows(s, &rows);
             styles += 1;
         }
         assert!(styles > 0, "the drawing has no table style");
@@ -1974,71 +2116,19 @@ mod tests {
         for version in ["AC1024", "AC1027", "AC1032"] {
             let dwg = dxf_to_dwg_as(&dxf, version).unwrap();
             let back = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
-            let mut rows = Vec::new();
-            for o in back.objects.values() {
-                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
-                assert_eq!((s.horizontal_margin, s.vertical_margin), (1.0, 0.25), "{version} {}", s.name);
-                for (_, row) in &s.modern_overrides {
-                    let c = &row.cell_style;
-                    rows.push((row.name.clone(), c.margin_override_flags, c.horizontal_margin, c.vertical_margin, c.right_margin, c.bottom_margin));
-                }
-            }
-            let names: Vec<_> = rows.iter().map(|r| r.0.as_str()).collect();
-            assert!(["_TITLE", "_HEADER", "_DATA"].iter().all(|n| names.contains(n)), "{version}: {names:?}");
-            assert!(rows.iter().all(|r| (r.1, r.2, r.3, r.4, r.5) == (1, 1.0, 0.25, 1.0, 0.25)), "{version}: {rows:?}");
-            // The rows' other attributes are what the writer builds from the style's row styles as
-            // the converter reads them from the DXF: borders (the grid flag is set for a hidden
-            // edge, the reverse of `is_invisible`), fill, text style, alignment, height, colour.
-            let src = read(dxf.clone());
             let mut checked = 0;
             for o in back.objects.values() {
-                let acadrust::objects::ObjectType::TableStyle(s) = o else { continue };
-                let Some(acadrust::objects::ObjectType::TableStyle(from)) =
-                    src.objects.values().find(|o| matches!(o, acadrust::objects::ObjectType::TableStyle(t) if t.name == s.name))
-                else {
-                    panic!("{version}: no source table style {}", s.name);
-                };
+                let ObjectType::TableStyle(s) = o else { continue };
+                assert_eq!((s.horizontal_margin, s.vertical_margin), (1.0, 0.25), "{version} {}", s.name);
+                let names: Vec<_> = s.modern_overrides.iter().map(|(_, r)| r.name.as_str()).collect();
+                assert_eq!(names, ["_TITLE", "_HEADER", "_DATA"], "{version} {}: rows", s.name);
                 for (_, row) in &s.modern_overrides {
-                    let want = match row.name.as_str() {
-                        "_TITLE" => &from.title_row_style,
-                        "_HEADER" => &from.header_row_style,
-                        "_DATA" => &from.data_row_style,
-                        other => panic!("{version}: unexpected row {other}"),
-                    };
-                    let (c, tag) = (&row.cell_style, format!("{version} {} {}", s.name, row.name));
-                    let edges = [
-                        (1, &want.top_border),
-                        (2, &want.horizontal_inside_border),
-                        (4, &want.bottom_border),
-                        (8, &want.left_border),
-                        (16, &want.vertical_inside_border),
-                        (32, &want.right_border),
-                    ];
-                    assert_eq!(c.borders.len(), edges.len(), "{tag}: borders");
-                    for (got, (mask, border)) in c.borders.iter().zip(edges) {
-                        assert_eq!(got.index_mask, mask, "{tag}: border order");
-                        let b = &got.border;
-                        assert_eq!(b.is_invisible, !border.is_invisible, "{tag}: border {mask} visibility");
-                        assert_eq!(b.border_type, border.border_type, "{tag}: border {mask} type");
-                        assert_eq!(b.line_weight, border.line_weight, "{tag}: border {mask} weight");
-                        assert_eq!(b.color, border.color, "{tag}: border {mask} colour");
-                        assert_eq!(b.double_line_spacing, border.double_line_spacing, "{tag}: border {mask} spacing");
-                    }
-                    let fill = if want.fill_enabled { want.fill_color } else { acadrust::types::Color::None };
-                    assert_eq!(c.background_color, fill, "{tag}: fill");
-                    let f = &c.content_format;
-                    assert_eq!(f.cell_alignment, want.alignment as i32, "{tag}: alignment");
-                    assert_eq!(f.text_height, want.text_height, "{tag}: text height");
-                    assert_eq!(f.content_color, want.text_color, "{tag}: text colour");
-                    // Handles are the DWG's own: compare the style they name. A style the source
-                    // doesn't have falls to Standard.
-                    let wanted = src.text_styles.get(&want.text_style_name).map_or("Standard", |t| t.name.as_str());
-                    let got = back.text_styles.iter().find(|t| t.handle == f.text_style).map(|t| t.name.as_str());
-                    assert_eq!(got.map(str::to_ascii_lowercase), Some(wanted.to_ascii_lowercase()), "{tag}: text style");
+                    let want = rows.iter().find(|r| r.name == row.name).expect("a row of the three");
+                    assert_style_row(&format!("{version} {} {}", s.name, row.name), row, want, &back.text_styles);
                     checked += 1;
                 }
             }
-            assert!(checked >= 3, "{version}: only {checked} rows checked");
+            assert_eq!(checked, 3 * styles, "{version}: rows checked");
         }
     }
 
