@@ -3647,3 +3647,31 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// The bounded-step reader builds exactly the one-call reader's drawing, at any budget.
+#[test]
+fn incremental_reader_matches_read_at_every_budget() {
+    let bytes = include_bytes!("../../../examples/apartment.dxf");
+    let complete = read(bytes, "apartment.dxf").unwrap();
+    for budget in [1, 2, 7, 64, 4096] {
+        let mut reader = read_incremental(bytes).unwrap();
+        let mut steps = 0;
+        while !reader.step(budget).unwrap() {
+            steps += 1;
+            assert!(steps < 1_000_000, "the loop must finish");
+        }
+        assert_eq!(reader.read_records(), reader.total_records(), "all entity records at budget {budget}");
+        assert_eq!(reader.drawing(), complete, "the same drawing at budget {budget}");
+    }
+}
+
+/// A written drawing with a polyline and a block reads back the same through the bounded steps.
+#[test]
+fn incremental_reader_keeps_a_written_drawing() {
+    let drawing = sample();
+    let bytes = write(&drawing, "incremental.dxf").unwrap();
+    let complete = read(&bytes, "incremental.dxf").unwrap();
+    let mut reader = read_incremental(&bytes).unwrap();
+    while !reader.step(3).unwrap() {}
+    assert_eq!(reader.drawing(), complete);
+}
