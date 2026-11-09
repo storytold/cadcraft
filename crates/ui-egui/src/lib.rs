@@ -244,13 +244,14 @@ pub struct Services {
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
 }
 
-/// The file dialog to show: Open, Save with the suggested file name, or APPLOAD's `.lsp` picker
-/// starting in the given folder (empty for the default one).
+/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pick {
     Open,
     Save(String),
     Lisp(String),
+    Pgp(String),
 }
 
 /// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
@@ -464,6 +465,7 @@ impl CadApp {
             Pick::Open => self.services.pick_open.is_some(),
             Pick::Save(_) => self.services.pick_save.is_some(),
             Pick::Lisp(_) => self.services.pick_lisp.is_some(),
+            Pick::Pgp(_) => self.services.pick_pgp.is_some(),
         };
         if !available {
             return None;
@@ -495,6 +497,7 @@ impl CadApp {
             Pick::Open => self.services.pick_open.as_ref().and_then(|f| f()),
             Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
             Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
+            Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
         };
         Some(match path {
             Some(path) => then(self, path),
