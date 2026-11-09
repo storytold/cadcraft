@@ -12,8 +12,10 @@
 //! ```text
 //! line 0,0 100,0 100,50
 //! circle 50,25 12.5
+//! polyline 0,0 100,0 100,50
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
+//! erase 1A2,1A3
 //! ```
 
 use cadcraft_doc::{Drawing, Handle, Space};
@@ -22,12 +24,12 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 3] = ["line", "circle", "move"];
+pub const COMMANDS: [&str; 5] = ["line", "circle", "polyline", "move", "erase"];
 
 /// One line of text, parsed into a command and its explicit parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Command {
-    /// The engine command id (`"line"`, `"circle"`, `"move"`).
+    /// The engine command id (`"line"`, `"circle"`, `"pline"`, `"move"`, `"erase"`).
     pub id: &'static str,
     /// The command's JSON parameters, with every address spelled out.
     pub params: Value,
@@ -37,24 +39,24 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle or move")]
+    #[error("type a command: line, circle, polyline, move or erase")]
     Empty,
     /// The command is not one of [`COMMANDS`].
-    #[error("`{0}` is not available one line at a time in a shared session; use line, circle or move")]
+    #[error("`{0}` is not available one line at a time in a shared session; use line, circle, polyline, move or erase")]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
     #[error("{command}: {detail}")]
     BadArguments { command: &'static str, detail: String },
     /// A handle does not name an object in the space the command acts on.
-    #[error("move: there is no object {handle} in {space}; address objects by their handles (1A2, 1A3, …)")]
-    UnknownHandle { handle: String, space: String },
+    #[error("{command}: there is no object {handle} in {space}; address objects by their handles (1A2, 1A3, …)")]
+    UnknownHandle { command: &'static str, handle: String, space: String },
 }
 
 /// Parse `text` into an operation to queue for a shared session.
 ///
-/// `drawing` and `space` are the author's current view: a move must address objects that exist in
-/// the space the operation names, so a typo is refused here instead of moving nothing on the
-/// server. The drawing is only read.
+/// `drawing` and `space` are the author's current view: a command that addresses existing objects
+/// must name objects in the space the operation names, so a typo is refused here instead of moving
+/// or erasing nothing on the server. The drawing is only read.
 pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, CmdLineError> {
     let mut words = text.split_whitespace();
     let Some(head) = words.next() else {
@@ -64,7 +66,9 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
     match head.as_str() {
         "line" | "l" => line(words.collect()),
         "circle" | "c" => circle(words.collect()),
+        "polyline" | "pline" | "pl" => polyline(words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
+        "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
 }
@@ -103,6 +107,30 @@ fn circle(words: Vec<&str>) -> Result<Command, CmdLineError> {
     Ok(Command { id: "circle", params: json!({ "center": [x, y], "radius": radius }) })
 }
 
+fn polyline(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    if words.len() < 2 {
+        return Err(bad("polyline", "needs at least two points: polyline x,y x,y [x,y …]"));
+    }
+    let points = words.iter().map(|word| point(word, "polyline")).collect::<Result<Vec<[f64; 2]>, CmdLineError>>()?;
+    // The engine command is `pline`; the line spells the familiar name.
+    Ok(Command { id: "pline", params: json!({ "vertices": points }) })
+}
+
+fn erase(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("erase", "address the objects to erase: erase 1A2[,1A3]"));
+    };
+    if !rest.is_empty() {
+        return Err(bad("erase", "takes only handles: erase 1A2[,1A3]"));
+    }
+    let handles = handles("erase", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("erase", "address the objects to erase: erase 1A2[,1A3]"));
+    }
+    check_in_space(drawing, space, "erase", &handles)?;
+    Ok(Command { id: "erase", params: json!({ "handles": hex(&handles) }) })
+}
+
 fn move_(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
     let Some((addresses, rest)) = words.split_first() else {
         return Err(bad("move", "address the objects to move: move 1A2[,1A3] delta dx,dy"));
@@ -112,16 +140,11 @@ fn move_(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, 
     if addresses.eq_ignore_ascii_case("delta") || addresses.eq_ignore_ascii_case("from") {
         return Err(bad("move", "address the objects to move: move 1A2[,1A3] delta dx,dy"));
     }
-    let handles = handles(addresses)?;
+    let handles = handles("move", addresses)?;
     if handles.is_empty() {
         return Err(bad("move", "address the objects to move: move 1A2[,1A3] delta dx,dy"));
     }
-    let store = drawing.space(space).ok_or_else(|| bad("move", "the active layout is not in this drawing"))?;
-    for handle in &handles {
-        if store.get(*handle).is_none() {
-            return Err(CmdLineError::UnknownHandle { handle: handle.hex(), space: space_name(space) });
-        }
-    }
+    check_in_space(drawing, space, "move", &handles)?;
     let params = match rest {
         [keyword, delta] if keyword.eq_ignore_ascii_case("delta") => {
             let [dx, dy] = point(delta, "move")?;
@@ -139,8 +162,19 @@ fn move_(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, 
     Ok(Command { id: "move", params })
 }
 
-fn handles(addresses: &str) -> Result<Vec<Handle>, CmdLineError> {
-    addresses.split(',').map(|address| Handle::parse_hex(address).ok_or_else(|| bad("move", "address objects by handle, e.g. 1A2,1A3"))).collect()
+fn handles(command: &'static str, addresses: &str) -> Result<Vec<Handle>, CmdLineError> {
+    addresses.split(',').map(|address| Handle::parse_hex(address).ok_or_else(|| bad(command, "address objects by handle, e.g. 1A2,1A3"))).collect()
+}
+
+/// Refuse handles that name nothing in `space` before an operation is built (ADR-0018).
+fn check_in_space(drawing: &Drawing, space: &Space, command: &'static str, handles: &[Handle]) -> Result<(), CmdLineError> {
+    let store = drawing.space(space).ok_or_else(|| bad(command, "the active layout is not in this drawing"))?;
+    for handle in handles {
+        if store.get(*handle).is_none() {
+            return Err(CmdLineError::UnknownHandle { command, handle: handle.hex(), space: space_name(space) });
+        }
+    }
+    Ok(())
 }
 
 fn hex(handles: &[Handle]) -> Vec<String> {
@@ -226,10 +260,53 @@ mod tests {
     fn an_unknown_command_is_refused_and_changes_nothing() {
         let (drawing, _) = drawing_with_line();
         let before = drawing.clone();
-        let error = parse("erase 1A2", &drawing, &Space::Model).unwrap_err();
+        let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
-        assert!(error.to_string().contains("line, circle or move"), "{error}");
+        assert!(error.to_string().contains("line, circle, polyline, move or erase"), "{error}");
         assert_eq!(drawing, before, "parsing must not change the drawing");
+    }
+
+    #[test]
+    fn an_erase_addresses_its_objects_by_handle() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("erase {address}"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "erase");
+        assert_eq!(command.params, json!({ "handles": [address.clone()] }));
+        // The AutoCAD aliases work too.
+        assert_eq!(parse(&format!("e {address}"), &drawing, &Space::Model).unwrap().id, "erase");
+        assert_eq!(parse(&format!("delete {address}"), &drawing, &Space::Model).unwrap().id, "erase");
+        // Erasing needs an address: there is no selection to fall back on in a shared session.
+        let error = parse("erase", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the objects to erase"), "{error}");
+        // And no trailing arguments.
+        let error = parse(&format!("erase {address} now"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("takes only handles"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_erase_handle_is_refused_before_an_operation_exists() {
+        let (drawing, _) = drawing_with_line();
+        let before = drawing.clone();
+        let error = parse("erase 1FF", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("erase: there is no object 1FF"), "{error}");
+        assert_eq!(drawing, before);
+    }
+
+    #[test]
+    fn a_polyline_is_two_or_more_points() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("polyline 0,0 100,0 100,50", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "pline", "the engine command id");
+        assert_eq!(command.params, json!({ "vertices": [[0.0, 0.0], [100.0, 0.0], [100.0, 50.0]] }));
+        assert_eq!(parse("pline 0,0 1,1", &drawing, &Space::Model).unwrap().id, "pline");
+        assert_eq!(parse("pl 0,0 1,1", &drawing, &Space::Model).unwrap().id, "pline");
+        // One point is not a polyline.
+        let error = parse("polyline 0,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("at least two points"), "{error}");
+        let error = parse("polyline 0,0 nowhere", &drawing, &Space::Model).unwrap_err();
+        assert_eq!(error.to_string(), "polyline: `nowhere` is not a point; give x,y");
     }
 
     #[test]

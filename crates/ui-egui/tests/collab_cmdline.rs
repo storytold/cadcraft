@@ -8,7 +8,7 @@
 
 use cadcraft_collab::cmdline;
 use cadcraft_collab::diff;
-use cadcraft_doc::Space;
+use cadcraft_doc::{EntityKind, Space};
 use cadcraft_engine::Session;
 use serde_json::json;
 
@@ -39,6 +39,7 @@ fn two_replicas_that_type_commands_converge() {
     // Each one types its own command; the result reaches both through the change set.
     submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
     submit(&mut server, &mut [&mut alice, &mut bob], 1, "circle 5,5 2");
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "polyline 20,0 30,0 30,10");
 
     // Bob addresses Alice's line by the handle the change set gave him; no selection is involved.
     let line = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
@@ -46,7 +47,27 @@ fn two_replicas_that_type_commands_converge() {
 
     assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree");
     assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 3);
+}
+
+#[test]
+fn two_replicas_that_erase_and_draw_a_polyline_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "polyline 20,0 30,0 30,10");
     assert_eq!(alice.doc().unwrap().entity_count(), 2);
+
+    // Bob erases Alice's line by the handle he got from the change set.
+    let line = bob.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Line(_))).expect("the line arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("erase {}", line.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the erase");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap());
+    assert_eq!(alice.doc().unwrap().entity_count(), 1, "only the polyline is left");
+    assert!(alice.doc().unwrap().entity(line).is_none());
 }
 
 #[test]
@@ -59,9 +80,65 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
-    assert!(error.to_string().contains("line, circle or move"), "{error}");
+    assert!(error.to_string().contains("line, circle, polyline, move or erase"), "{error}");
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
     assert_eq!(session.state().unwrap().revision, before_revision, "and does not redraw");
+}
+
+#[test]
+fn an_erase_of_an_unknown_handle_is_refused_before_it_is_sent() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+
+    let error = cmdline::op_for("erase 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
+
+    assert!(error.to_string().contains("erase: there is no object 1FF"), "{error}");
+    assert_eq!(session.doc().unwrap(), &*before);
+}
+
+#[test]
+fn undo_of_an_erase_brings_the_entity_back() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let line = session.doc().unwrap().model.iter().next().expect("the line").handle;
+
+    // The step goes through the same operation the command line builds.
+    let op = cmdline::op_for(&format!("erase {}", line.hex()), session.doc().unwrap(), &Space::Model, "local-0", 0).unwrap();
+    session.execute(&op.command, &op.params).unwrap();
+    assert!(session.doc().unwrap().entity(line).is_none(), "the erase removed the line");
+
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Erase"));
+    assert!(session.doc().unwrap().entity(line).is_some(), "undo brings the line back");
+}
+
+#[test]
+fn a_remote_erase_and_polyline_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("line", &json!({"points": [[20.0, 0.0], [30.0, 0.0]]})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let kept = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let erased = receiver.doc().unwrap().model.iter().nth(1).expect("the second line arrived").handle;
+    receiver.set_selection(vec![kept]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant erases one entity and draws a polyline.
+    let before = server.doc().unwrap().clone();
+    server.execute("erase", &json!({"handles": [erased.hex()]})).unwrap();
+    server.execute("pline", &json!({"vertices": [[50.0, 50.0], [60.0, 50.0], [60.0, 60.0]]})).unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityDelete { handle } if *handle == erased)));
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![kept], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
 }
 
 #[test]
