@@ -28,6 +28,36 @@ cadcraft-collab-server \
 `--dev-token token:editor` (repeatable) replaces `--secret-file` for tests and a
 single-tenant deployment. Never use it where the cabinet signs tokens.
 
+## Commit callback (M87)
+
+With a cabinet beside the room, the room publishes every commit itself; no tab
+has to stay open:
+
+```bash
+  --cabinet-url http://cabinet-backend:8080/api/v1/internal/office/sessions/{sessionId}/commit \
+  --cabinet-token-file /run/secrets/craft-callback-token \
+  --file-id 42
+```
+
+`{sessionId}` and `{fileId}` in the URL are substituted; the body is
+`{fileId, name, bytes(base64), sha256, version, expectedVersion?}` and the
+cabinet answers `{version, etag}`. The next commit sends that `etag` as
+`expectedVersion`.
+
+- `200` → the room broadcasts `committed` with the cabinet's `version`/`etag`
+  and **does not send the file to the clients**; a hosted session never writes a
+  second local copy.
+- `409` → `commit-conflict` to the requester; the room keeps the built file for
+  `save-copy`, and never overwrites the cabinet.
+- `401`/`413` → an error with `cabinet-unauthorized`/`cabinet-too-large`, no
+  retry. A network failure or `5xx` is retried with the same body
+  (`--cabinet-attempts`, default 3).
+- The token comes from a file, never from the process list or a log. `https://`
+  is refused: TLS belongs to the proxy.
+
+Without `--cabinet-url` the room keeps the old behaviour: `commit-result` with
+the file goes to the requester, and the desktop app writes it locally.
+
 ## Transport and TLS
 
 The listener speaks plain WebSocket; the deployment terminates WSS (nginx,

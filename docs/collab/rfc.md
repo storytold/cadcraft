@@ -164,7 +164,8 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 
 Имена и поля — по общему конверту `.craft/protocol/ARCHITECTURE.md` §2: `hello`,
 `welcome`, `op`, `undo`, `redo`, `applied`, `rejected`, `presence`, `resync`,
-`snapshot`, `commit`, `commit-result`, `asset-put`, `asset-get`, `asset-stored`,
+`snapshot`, `commit`, `commit-result`, `committed`, `commit-conflict`,
+`save-copy`, `save-copy-result`, `asset-put`, `asset-get`, `asset-stored`,
 `asset`, `error`, `ping`/`pong`. Приложение
 уточняет только тело `target`/`payload` и `result`.
 
@@ -181,7 +182,11 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 | `resync` | C→S | `{lastVersion}` | догон или база + хвост |
 | `snapshot` | S→C | `{version, seq, more, bytesBase64, sha256}` | чанки по 1 MiB (`seq` с 0, `more` у всех кроме последнего); клиент сбрасывает непринятую очередь |
 | `commit` | C→S | `{expectedVersion}` | запрос сборки файла (ADR-0009) |
-| `commit-result` | S→C | `{version, sha256, bytes?, notSaved, path?}` | результат commit |
+| `commit-result` | S→C | `{version, bytesBase64, notSaved, cabinet?}` | файл клиенту, когда кабинет не принимает commit сам; `cabinet` — ответ кабинета (M87) |
+| `committed` | S→C | `{version, notSaved, cabinet:{version, etag}}` | кабинет сохранил файл; байт нет, локальная запись запрещена |
+| `commit-conflict` | S→C | `{version, message}` | кабинет ответил `409`: файл изменён извне, комната его не перезаписывает |
+| `save-copy` | C→S | `{opId}` | файл отклонённого commit для «сохранить копию» (TASK §6) |
+| `save-copy-result` | S→C | `{version, bytesBase64, notSaved}` | байты копии; кабинет не пишется, сессия не считается сохранённой |
 | `asset-put` | C→S | `{sha256, bytesBase64}` | байты вложения под адресом; сервер сверяет SHA-256 и лимиты комнаты (ADR-0021) |
 | `asset-get` | C→S | `{sha256}` | байты вложения по адресу |
 | `asset-stored` | S→C | `{sha256, bytes, stored}` | блоб в хранилище; `stored:false` — дедупликация |
@@ -304,12 +309,21 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
    `acadrust` в **дочернем процессе** (`cadcraft_dwg::worker`) с таймаутом и
    размерным лимитом. Падение конвертера → `error{code:"dwg-failed"}`; DXF-версия
    при этом не теряется, сессия жива.
-4. Ответ кабинету: `{bytes|uploadUrl, sha256, version, notSaved}`; кабинет
-   создаёт новую версию, **предыдущую сохраняет**, пишет `notSaved` в аудит.
-5. Внешнее изменение файла → `409`, предложение «сохранить копию»; сессия не
-   перезаписывает.
-6. Повторный commit с тем же `opId`/версией идемпотентен.
-7. Приёмка: committed `.dxf` открывается в LibreCAD и QCAD без потерь геометрии
+4. Комната отправляет финальный файл в кабинет сама (M87, `INTEGRATION.md`
+   §5.2): `POST /api/v1/internal/office/sessions/{sessionId}/commit` с
+   `{fileId, name, bytes(base64), sha256, version, expectedVersion?}` и
+   сервисным токеном. Кабинет создаёт новую версию, **предыдущую сохраняет**,
+   пишет `notSaved` в аудит и отвечает `{version, etag}`. Комната рассылает
+   `committed` всем участникам; клиенты не пишут файл локально — кабинет уже
+   владеет им.
+5. Внешнее изменение файла → `409` (несовпадение `expectedVersion` с etag
+   кабинета), предложение «сохранить копию»: комната хранит собранный файл и
+   отдаёт его по `save-copy`, сессия не перезаписывает кабинет.
+6. Повторный commit с тем же `opId`/версией идемпотентен; `401`/`413` не
+   повторяются, сетевой сбой и `5xx` повторяются с тем же телом.
+7. Без `--cabinet-url` комната работает как раньше: `commit-result` с байтами
+   получает запросивший, и только вне кабинета файл пишется локально.
+8. Приёмка: committed `.dxf` открывается в LibreCAD и QCAD без потерь геометрии
    и слоёв; `.dwg` — в доступном просмотрщике; `notSaved` совпадает с ожидаемым.
 
 ## 9. Сервер
