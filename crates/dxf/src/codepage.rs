@@ -351,7 +351,10 @@ mod tests {
         // The other DOS pages keep `%`.
         assert_eq!(decode_code_page(b"50%", "DOS437").as_deref(), Some("50%"));
         // Every other low byte of every table is ASCII.
-        for cp in ["DOS437", "DOS850", "DOS852", "DOS720", "DOS737", "DOS775", "DOS855", "DOS857", "DOS860", "DOS861", "DOS863", "DOS864", "DOS865", "DOS869"] {
+        for cp in [
+            "DOS437", "DOS850", "DOS852", "DOS720", "DOS737", "DOS775", "DOS855", "DOS857", "DOS860", "DOS861", "DOS863", "DOS864", "DOS865",
+            "DOS869",
+        ] {
             for b in 0u8..0x80 {
                 if b == 0x25 && cp == "DOS864" {
                     continue;
