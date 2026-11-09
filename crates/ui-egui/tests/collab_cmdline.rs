@@ -81,7 +81,9 @@ fn a_refused_line_does_not_change_the_drawing() {
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
     assert!(
-        error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"),
+        error
+            .to_string()
+            .contains("line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
         "{error}"
     );
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
@@ -171,6 +173,39 @@ fn a_refused_offset_trim_or_array_does_not_change_the_drawing() {
         assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
         assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
     }
+}
+
+#[test]
+fn a_refused_text_or_hatch_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("rectang", &json!({"p1": [0.0, 0.0], "p2": [10.0, 5.0]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let line = state.doc.model.iter().next().expect("the line").handle.hex();
+    let rect = state.doc.model.iter().nth(1).expect("the rectangle").handle.hex();
+
+    // An empty or unquoted text, a height that is not positive, an open or unknown boundary, a
+    // zero scale and an unknown pattern: none of them becomes an operation.
+    let refused = [
+        "text 0,0 1 0 \"\"".to_string(),
+        "text 0,0 1 0 unquoted".to_string(),
+        "text 0,0 0 0 \"note\"".to_string(),
+        "text 0,0 1 0 \"unterminated".to_string(),
+        format!("hatch {line} pattern ANSI31 scale 1 angle 0"),
+        format!("hatch {rect} pattern ANSI31 scale 0 angle 0"),
+        format!("hatch {rect} pattern NOPE scale 1 angle 0"),
+        "hatch FF pattern ANSI31 scale 1 angle 0".to_string(),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+    // A refused line leaves no undo step either: the last real step is still the rectangle.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Rectangle"), "no refused line pushed an undo step");
 }
 
 #[test]
@@ -417,6 +452,48 @@ fn two_replicas_that_array_converge() {
 }
 
 #[test]
+fn two_replicas_that_draw_text_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "text 10,20 2.5 30 \"Shared note\"");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the text");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 1, "a text is one object");
+    let text = alice.doc().unwrap().model.iter().next().expect("the text arrived");
+    let EntityKind::Text(t) = &text.kind else { panic!("expected a text, got {:?}", text.kind) };
+    assert_eq!(t.value, "Shared note");
+    assert!((t.insert.x - 10.0).abs() < 1e-12 && (t.insert.y - 20.0).abs() < 1e-12, "the insertion point, got {:?}", t.insert);
+    assert!((t.height - 2.5).abs() < 1e-12, "the height, got {}", t.height);
+    assert!((t.rotation - 30f64.to_radians()).abs() < 1e-12, "the angle in radians, got {}", t.rotation);
+}
+
+#[test]
+fn two_replicas_that_hatch_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    // Bob hatches Alice's rectangle by the handle the change set gave him.
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("hatch {} pattern ANSI31 scale 2 angle 45", rect.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the hatch");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the boundary stays and the hatch is a second object");
+    let hatch = alice.doc().unwrap().model.iter().find(|entity| matches!(entity.kind, EntityKind::Hatch(_))).expect("the hatch arrived");
+    let EntityKind::Hatch(h) = &hatch.kind else { panic!("expected a hatch") };
+    assert_eq!(h.pattern, "ANSI31");
+    assert!((h.scale - 2.0).abs() < 1e-12, "the pattern scale, got {}", h.scale);
+    assert!((h.angle - 45f64.to_radians()).abs() < 1e-12, "the angle in radians, got {}", h.angle);
+    assert!(!h.associative, "a line's hatch is a static fill, not an association");
+    assert_eq!(h.loops.len(), 1, "one closed boundary makes one loop");
+}
+
+#[test]
 fn undo_of_each_new_command_returns_the_state_before_it() {
     let mut session = Session::new();
     session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
@@ -515,6 +592,34 @@ fn undo_and_redo_of_offset_trim_and_array_return_the_state_before_and_after() {
     assert_eq!(session.doc().unwrap(), &before, "undo of the array removes every copy");
     assert_eq!(session.redo().unwrap().as_deref(), Some("Array"));
     assert_eq!(session.doc().unwrap(), &after, "redo makes every copy again");
+}
+
+#[test]
+fn undo_and_redo_of_text_and_hatch_return_the_state_before_and_after() {
+    let mut session = Session::new();
+    session.execute("rectang", &json!({"p1": [0.0, 0.0], "p2": [10.0, 5.0]})).unwrap();
+    let rect = session.doc().unwrap().model.iter().next().expect("the rectangle").handle;
+
+    // The hatch is one step; undo takes the fill away, redo puts it back.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("hatch {} pattern ANSI31 scale 2 angle 45", rect.hex()));
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Hatch..."));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the hatch removes the fill");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Hatch..."));
+    assert_eq!(session.doc().unwrap(), &after, "redo fills it again");
+
+    // So is the text.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "text 20,10 1 0 \"Note\"");
+    let after = session.doc().unwrap().clone();
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Single Line Text"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the text removes it");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Single Line Text"));
+    assert_eq!(session.doc().unwrap(), &after, "redo writes it again");
 }
 
 /// Run a one-line command the way [`submit`] does, but against one session.
@@ -681,6 +786,50 @@ fn a_remote_offset_trim_and_array_keep_the_receivers_cursor_and_selection() {
 }
 
 #[test]
+fn a_remote_text_and_hatch_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant writes a note and fills the circle; both are new objects.
+    let before = server.doc().unwrap().clone();
+    server.execute("text", &json!({"at": [30.0, 30.0], "text": "remote", "height": 1.0})).unwrap();
+    server
+        .execute(
+            "hatch",
+            &json!({
+                "handles": [circle.hex()],
+                "pattern": "ANSI31",
+                "scale": 1.0,
+                "angle": 0.0,
+                "associative": false,
+                "separate": false,
+                "style": "normal"
+            }),
+        )
+        .unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().filter(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })).count() >= 2,
+        "the text and the hatch arrive as creations"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
 fn offset_and_array_put_their_objects_on_the_authors_layer() {
     let mut server = Session::new();
     let mut alice = Session::new();
@@ -700,6 +849,31 @@ fn offset_and_array_put_their_objects_on_the_authors_layer() {
     let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
     assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 1, "the source line stays on its author's layer: {layers:?}");
     assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 4, "the offset and three array copies are on Bob's: {layers:?}");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn text_and_hatch_put_their_objects_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Alice draws the boundary; Bob hatches it and writes his note, so both are on DETAILS.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("hatch {} pattern ANSI31 scale 2 angle 45", rect.hex()));
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "text 12,5 1 0 \"note\"");
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 1, "the boundary stays on Alice's layer: {layers:?}");
+    assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 2, "Bob's hatch and text are on his: {layers:?}");
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
     assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");

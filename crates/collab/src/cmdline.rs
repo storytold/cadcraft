@@ -18,6 +18,7 @@
 //! polyline 0,0 100,0 100,50
 //! ellipse 50,25 20,10 30
 //! rect 0,0 100,50
+//! text 10,20 2.5 0 "Shared note"
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
 //! copy 1A2,1A3 delta 10,0
@@ -27,6 +28,7 @@
 //! offset 1A2 distance 5 side 0,10
 //! trim 1A2 edge 1A3 at 2,0
 //! array 1A2 rows 2 cols 3 step 20,10
+//! hatch 1A2,1A3 pattern ANSI31 scale 2 angle 45
 //! erase 1A2,1A3
 //! ```
 
@@ -37,8 +39,9 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 14] =
-    ["line", "circle", "polyline", "ellipse", "rect", "move", "copy", "rotate", "mirror", "scale", "offset", "trim", "array", "erase"];
+pub const COMMANDS: [&str; 16] = [
+    "line", "circle", "polyline", "ellipse", "rect", "text", "move", "copy", "rotate", "mirror", "scale", "offset", "trim", "array", "hatch", "erase",
+];
 
 /// One line of text, parsed into a command and its explicit parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,11 +56,11 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase")]
+    #[error("type a command: line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase")]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -77,7 +80,7 @@ pub enum CmdLineError {
 /// must name objects in the space the operation names, so a typo is refused here instead of moving
 /// or erasing nothing on the server. The drawing is only read.
 pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, CmdLineError> {
-    let mut words = text.split_whitespace();
+    let mut words = tokenize(text).into_iter();
     let Some(head) = words.next() else {
         return Err(CmdLineError::Empty);
     };
@@ -88,6 +91,7 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "polyline" | "pline" | "pl" => polyline(words.collect()),
         "ellipse" | "el" => ellipse(words.collect()),
         "rect" | "rectangle" | "rec" => rect(words.collect()),
+        "text" | "dt" | "dtext" => text_command(words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
         "copy" | "co" | "cp" => copy(drawing, space, words.collect()),
         "rotate" | "ro" => rotate(drawing, space, words.collect()),
@@ -96,6 +100,7 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "offset" | "o" => offset(drawing, space, words.collect()),
         "trim" | "tr" => trim(drawing, space, words.collect()),
         "array" | "ar" | "arr" => array(drawing, space, words.collect()),
+        "hatch" | "h" | "bh" => hatch_command(drawing, space, words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -127,7 +132,7 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 /// A copy or a mirror inherits the source objects' layers, and a scale changes objects in place,
 /// so only these commands draw new geometry on a layer of their own (ADR-0019).
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "offset" | "array")
+    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "text" | "offset" | "array" | "hatch")
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -220,6 +225,33 @@ fn rect(words: Vec<&str>) -> Result<Command, CmdLineError> {
     // The engine command is `rectang`; the line spells the familiar name.
     Ok(Command { id: "rectang", params: json!({ "p1": [x1, y1], "p2": [x2, y2] }) })
 }
+
+/// `text x,y height angle "content"` — one line of text.
+///
+/// The content is quoted because it may hold spaces; `\"` and `\\` stand for a quote and a
+/// backslash. Height is in drawing units, the angle in degrees, as the engine's `rotation` is.
+/// Empty text, a non-positive height and an unterminated (or unquoted) string are refused before an
+/// operation exists, so a participant's line never draws nothing.
+fn text_command(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [at, height, angle, content] = words.as_slice() else {
+        return Err(bad("text", "give a point, a height, an angle and the text in double quotes: text x,y height angle \"text\""));
+    };
+    let [x, y] = point(at, "text")?;
+    let height = number(height).filter(|h| *h > 0.0).ok_or_else(|| bad("text", "the height must be a positive number"))?;
+    let angle = number(angle).ok_or_else(|| bad("text", "the angle must be a finite number of degrees"))?;
+    let value = quoted(content).ok_or_else(|| bad("text", "the text must be in double quotes: text x,y height angle \"text\""))?;
+    if value.trim().is_empty() {
+        return Err(bad("text", "the text is empty"));
+    }
+    if value.chars().count() > MAX_TEXT_CHARS {
+        return Err(bad("text", format!("the text is longer than {MAX_TEXT_CHARS} characters")));
+    }
+    Ok(Command { id: "text", params: json!({ "at": [x, y], "height": height, "rotation": angle, "text": value }) })
+}
+
+/// The longest text one line may carry: a shared session's operation has a size limit, and a line
+/// of text is never a drawing's bulk.
+const MAX_TEXT_CHARS: usize = 10_000;
 
 fn erase(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
     let Some((addresses, rest)) = words.split_first() else {
@@ -500,6 +532,89 @@ fn array(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, 
 /// number a drawing could hold, this keeps the operation itself small.
 const MAX_ARRAY_ITEMS: u64 = 100_000;
 
+/// `hatch H[,H…] pattern ANSI31 scale s angle a` — fill the closed objects named by handle.
+///
+/// The pattern, its scale and its angle are named because the server's header may hold another
+/// set; `associative` is false and `separate` false, so the fill is one static hatch over the
+/// boundary as it stands, the same bytes on every replica. A handle that is not a closed boundary
+/// (a circle, a closed polyline, a full ellipse or a closed spline — what the engine's HATCH
+/// accepts) and a zero or negative scale are refused here, before an operation exists.
+fn hatch_command(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("hatch", "address the closed objects to hatch: hatch 1A2[,1A3] pattern ANSI31 scale s angle a"));
+    };
+    // `hatch pattern ANSI31 scale 1 angle 0` has no address: the keyword is not a handle.
+    if ["pattern", "scale", "angle"].iter().any(|keyword| addresses.eq_ignore_ascii_case(keyword)) {
+        return Err(bad("hatch", "address the closed objects to hatch: hatch 1A2[,1A3] pattern ANSI31 scale s angle a"));
+    }
+    let handles = handles("hatch", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("hatch", "address the closed objects to hatch: hatch 1A2[,1A3] pattern ANSI31 scale s angle a"));
+    }
+    check_in_space(drawing, space, "hatch", &handles)?;
+    let [pattern_kw, pattern, scale_kw, scale, angle_kw, angle] = rest else {
+        return Err(bad("hatch", "give the pattern, the scale and the angle: hatch 1A2[,1A3] pattern ANSI31 scale s angle a"));
+    };
+    if !pattern_kw.eq_ignore_ascii_case("pattern") || !scale_kw.eq_ignore_ascii_case("scale") || !angle_kw.eq_ignore_ascii_case("angle") {
+        return Err(bad("hatch", "give the pattern, the scale and the angle: hatch 1A2[,1A3] pattern ANSI31 scale s angle a"));
+    }
+    // The engine stores the pattern upper case; a built-in name is what a shared line may rely on,
+    // a pattern loaded from a .pat file exists only in the drawing that loaded it.
+    let pattern = pattern.trim().to_ascii_uppercase();
+    if cadcraft_doc::library::pattern(&pattern).is_none() {
+        return Err(bad("hatch", format!("unknown pattern `{}`; the shared command line knows the built-in patterns only", brief(&pattern))));
+    }
+    let scale = number(scale).filter(|s| *s > 0.0).ok_or_else(|| bad("hatch", "the scale must be a positive number"))?;
+    let angle = number(angle).ok_or_else(|| bad("hatch", "the angle must be a finite number of degrees"))?;
+    let store = drawing.space(space).ok_or_else(|| bad("hatch", "the active layout is not in this drawing"))?;
+    for handle in &handles {
+        let Some(entity) = store.get(*handle) else {
+            return Err(CmdLineError::UnknownHandle { command: "hatch", handle: handle.hex(), space: space_name(space) });
+        };
+        if !closed_contour(&entity.kind) {
+            return Err(bad(
+                "hatch",
+                format!("object {} is not a closed boundary; hatch a circle, a closed polyline, a full ellipse or a closed spline", handle.hex()),
+            ));
+        }
+    }
+    Ok(Command {
+        id: "hatch",
+        params: json!({
+            "handles": hex(&handles),
+            "pattern": pattern,
+            "scale": scale,
+            "angle": angle,
+            "associative": false,
+            "separate": false,
+            "style": "normal"
+        }),
+    })
+}
+
+/// Whether the object encloses an area: the boundary kinds the engine's HATCH accepts when it is
+/// given handles (`crates/engine/src/cmd/hatch.rs::closed_loop`), checked before an operation
+/// exists so a line that hatches nothing is refused on the author's side.
+fn closed_contour(kind: &cadcraft_doc::EntityKind) -> bool {
+    use cadcraft_doc::EntityKind;
+    match kind {
+        EntityKind::Circle(_) => true,
+        EntityKind::LwPolyline(polyline) => {
+            polyline.closed || polyline.vertices.first().zip(polyline.vertices.last()).is_some_and(|(first, last)| first.p.near(last.p, 1e-9))
+        }
+        EntityKind::Ellipse(ellipse) => cadcraft_doc::geom::Ellipse {
+            center: ellipse.center.xy(),
+            major: ellipse.major.xy(),
+            ratio: ellipse.ratio,
+            start: ellipse.start,
+            end: ellipse.end,
+        }
+        .is_full(),
+        EntityKind::Spline(spline) => spline.closed,
+        _ => false,
+    }
+}
+
 /// A whole, positive count.
 fn whole(text: &str, command: &'static str, label: &str) -> Result<u64, CmdLineError> {
     text.parse::<u64>()
@@ -590,6 +705,58 @@ fn hex(handles: &[Handle]) -> Vec<String> {
     handles.iter().map(|handle| handle.hex()).collect()
 }
 
+/// Split a line into words; a double-quoted word may hold spaces and `\"`/`\\` escapes.
+///
+/// The quotes stay in the token, so only the command that wants a quoted string strips them
+/// ([`quoted`]); an unterminated quote simply runs to the end of the line and is refused there.
+fn tokenize(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
+        if quoted {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        if c.is_whitespace() {
+            if let Some(from) = start.take() {
+                out.push(&text[from..index]);
+            }
+        } else if start.is_none() {
+            start = Some(index);
+            quoted = c == '"';
+        } else if c == '"' {
+            quoted = true;
+        }
+    }
+    if let Some(from) = start {
+        out.push(&text[from..]);
+    }
+    out
+}
+
+/// The inside of a `"…"` token, with `\"` and `\\` unescaped; `None` when it is not quoted.
+fn quoted(token: &str) -> Option<String> {
+    let inner = token.strip_prefix('"')?.strip_suffix('"')?;
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.push(chars.next()?);
+        } else {
+            out.push(c);
+        }
+    }
+    Some(out)
+}
+
 /// `x,y` with finite coordinates.
 fn point(word: &str, command: &'static str) -> Result<[f64; 2], CmdLineError> {
     let mut parts = word.split(',');
@@ -672,7 +839,9 @@ mod tests {
         let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
         assert!(
-            error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale, offset, trim, array or erase"),
+            error
+                .to_string()
+                .contains("line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
             "{error}"
         );
         assert_eq!(drawing, before, "parsing must not change the drawing");
@@ -982,6 +1151,108 @@ mod tests {
         assert!(error.to_string().contains("array: there is no object FF"), "{error}");
     }
 
+    #[test]
+    fn a_text_names_its_point_height_angle_and_quoted_content() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("text 10,20 2.5 30 \"Shared note\"", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "text");
+        assert_eq!(command.params, json!({ "at": [10.0, 20.0], "height": 2.5, "rotation": 30.0, "text": "Shared note" }));
+        // The content may hold spaces, punctuation and an escaped quote.
+        let command = parse("dt 0,0 1 0 \"say \\\"hi\\\", then leave\"", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["text"], "say \"hi\", then leave");
+        // The AutoCAD aliases work too; a negative angle is a rotation the other way.
+        let command = parse("dtext 0,0 1 -45.5 \"x\"", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "text");
+        assert_eq!(command.params["rotation"], -45.5);
+        // An empty quoted string is text with nothing to draw.
+        let error = parse("text 0,0 1 0 \"\"", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("the text is empty"), "{error}");
+        let error = parse("text 0,0 1 0 \"   \"", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("the text is empty"), "{error}");
+    }
+
+    #[test]
+    fn an_unaddressable_text_is_refused_before_an_operation_exists() {
+        let (drawing, _) = drawing_with_line();
+        let before = drawing.clone();
+        for text in [
+            "text 10,20 2.5",
+            "text 10,20 2.5 0",
+            "text 10,20 2.5 0 shared",
+            "text 10,20 2.5 0 \"unterminated",
+            "text 10,20 0 0 \"note\"",
+            "text 10,20 -1 0 \"note\"",
+            "text 10,20 2.5 later \"note\"",
+            "text nowhere 2.5 0 \"note\"",
+            "text 10,20 2.5 0 \"note\" trailing",
+        ] {
+            let error = parse(text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("text:"), "{text}: {error}");
+        }
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn a_hatch_addresses_its_closed_objects_pattern_scale_and_angle() {
+        let mut drawing = Drawing::new_metric();
+        let rect = add_rect(&mut drawing, [0.0, 0.0], [10.0, 5.0]);
+        let command = parse(&format!("hatch {} pattern ansi31 scale 2 angle 45", rect.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "hatch");
+        assert_eq!(
+            command.params,
+            json!({
+                "handles": [rect.hex()],
+                "pattern": "ANSI31",
+                "scale": 2.0,
+                "angle": 45.0,
+                "associative": false,
+                "separate": false,
+                "style": "normal"
+            })
+        );
+        // A solid fill and the AutoCAD aliases work too.
+        assert_eq!(parse(&format!("h {} pattern SOLID scale 1 angle 0", rect.hex()), &drawing, &Space::Model).unwrap().id, "hatch");
+        assert_eq!(parse(&format!("bh {} pattern ANSI31 scale 1 angle 0", rect.hex()), &drawing, &Space::Model).unwrap().id, "hatch");
+    }
+
+    #[test]
+    fn an_unaddressable_hatch_is_refused_before_an_operation_exists() {
+        let mut drawing = Drawing::new_metric();
+        let rect = add_rect(&mut drawing, [0.0, 0.0], [10.0, 5.0]);
+        let line = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let before = drawing.clone();
+        for text in [
+            "hatch pattern ANSI31 scale 1 angle 0".to_string(),
+            format!("hatch {} pattern ANSI31 scale 1", rect.hex()),
+            format!("hatch {} pattern ANSI31 scale 0 angle 0", rect.hex()),
+            format!("hatch {} pattern ANSI31 scale -2 angle 0", rect.hex()),
+            format!("hatch {} pattern ANSI31 scale 1 angle later", rect.hex()),
+            format!("hatch {} pattern NOPE scale 1 angle 0", rect.hex()),
+            // An open line has no inside to fill.
+            format!("hatch {} pattern ANSI31 scale 1 angle 0", line.hex()),
+            // One closed object does not make an open one hatching.
+            format!("hatch {},{} pattern ANSI31 scale 1 angle 0", rect.hex(), line.hex()),
+            "hatch FF pattern ANSI31 scale 1 angle 0".to_string(),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("hatch:"), "{text}: {error}");
+        }
+        let error = parse(&format!("hatch {} pattern ANSI31 scale 1 angle 0", line.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("is not a closed boundary"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    fn add_rect(drawing: &mut Drawing, a: [f64; 2], b: [f64; 2]) -> Handle {
+        let vertices = vec![
+            cadcraft_doc::geom::PolyVertex::new(Vec2::new(a[0], a[1])),
+            cadcraft_doc::geom::PolyVertex::new(Vec2::new(b[0], a[1])),
+            cadcraft_doc::geom::PolyVertex::new(Vec2::new(b[0], b[1])),
+            cadcraft_doc::geom::PolyVertex::new(Vec2::new(a[0], b[1])),
+        ];
+        let polyline = cadcraft_doc::LwPolyline { vertices, closed: true, const_width: 0.0, elevation: 0.0, plinegen: false };
+        drawing.add(&Space::Model, Common::default(), EntityKind::LwPolyline(polyline)).unwrap()
+    }
+
     fn add_line(drawing: &mut Drawing, a: [f64; 2], b: [f64; 2]) -> Handle {
         drawing
             .add(
@@ -1049,6 +1320,7 @@ mod tests {
         assert_eq!(op_for("polyline 0,0 1,1", &drawing, &Space::Model, "local-2", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("rect 0,0 10,5", &drawing, &Space::Model, "local-5", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("ellipse 0,0 5,2", &drawing, &Space::Model, "local-8", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        assert_eq!(op_for("text 0,0 1 0 \"note\"", &drawing, &Space::Model, "local-14", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         // Commands that only address existing objects do not name a layer.
         assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
@@ -1078,6 +1350,16 @@ mod tests {
         assert_eq!(
             op_for(&format!("trim {} edge {} at 8,0", target.hex(), edge.hex()), &drawing, &Space::Model, "local-13", 0).unwrap().context.clay,
             None
+        );
+        // A hatch creates a new object and goes on the author's layer too.
+        let rect = add_rect(&mut drawing, [20.0, 0.0], [30.0, 5.0]);
+        assert_eq!(
+            op_for(&format!("hatch {} pattern ANSI31 scale 1 angle 0", rect.hex()), &drawing, &Space::Model, "local-15", 0)
+                .unwrap()
+                .context
+                .clay
+                .as_deref(),
+            Some("WALLS")
         );
     }
 
