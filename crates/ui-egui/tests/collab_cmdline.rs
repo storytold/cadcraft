@@ -14,6 +14,9 @@ use serde_json::json;
 
 /// Apply `text`, typed by `author`, to the authoritative session and send the change set to every
 /// replica. Returns the number of changes the operation produced.
+///
+/// The set is [`cadcraft_collab::diff_all`], as the room builds it: a block definition is a change
+/// of its own, and its objects live in the block, not in a space's delta.
 fn submit(server: &mut Session, replicas: &mut [&mut Session], author: usize, text: &str) -> usize {
     let op = {
         let state = replicas[author].state().unwrap();
@@ -22,7 +25,8 @@ fn submit(server: &mut Session, replicas: &mut [&mut Session], author: usize, te
     let before = server.doc().unwrap().clone();
     server.execute_intent(&op.command, &op.params, &op.context).unwrap();
     let after = server.doc().unwrap();
-    let changes = diff(&before, after, &Space::Model).unwrap();
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let changes = cadcraft_collab::diff_all(&before, after, &mut registry, &Default::default()).unwrap();
     let n = changes.len();
     for replica in replicas.iter_mut() {
         replica.apply_remote(&changes).unwrap();
@@ -82,7 +86,7 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     assert!(
         error.to_string().contains(
-            "line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
         ),
         "{error}"
     );
@@ -749,6 +753,184 @@ fn a_remote_dimension_and_spline_keep_the_receivers_cursor_and_selection() {
     assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
 }
 
+#[test]
+fn two_replicas_that_lead_and_block_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 0,0 1");
+    // Bob points a multileader at Alice's circle, by the handle the change set gave him.
+    let circle = bob.doc().unwrap().model.iter().next().expect("the circle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("mleader {} 20,20 \"Shared note\"", circle.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the multileader");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the circle and the leader");
+    let leader = alice.doc().unwrap().model.iter().find(|entity| matches!(entity.kind, EntityKind::MLeader(_))).expect("the leader arrived");
+    let EntityKind::MLeader(m) = &leader.kind else { panic!("expected a multileader") };
+    assert_eq!(m.leaders.len(), 1, "one leader line");
+    assert_eq!(m.leaders[0].len(), 1, "one arrowhead, at the circle's point");
+    assert!((m.landing.x - 20.0).abs() < 1e-9 && (m.landing.y - 20.0).abs() < 1e-9, "the landing, got {:?}", m.landing);
+    assert_eq!(m.text.as_ref().map(|text| text.contents.as_str()), Some("Shared note"));
+}
+
+#[test]
+fn two_replicas_that_make_and_insert_a_block_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    let line = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    // Alice turns the line into a block reference at the base point.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, &format!("block DOOR base 0,0 {}", line.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the block");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    let block = alice.doc().unwrap().block("DOOR").expect("the definition reached the replica");
+    assert_eq!(block.entities.len(), 1, "the block carries the line");
+    assert!(alice.doc().unwrap().entity(line).is_none(), "BLOCK's Convert default replaced the line");
+    let first = alice.doc().unwrap().model.iter().find_map(|entity| match &entity.kind {
+        EntityKind::Insert(insert) if insert.block.eq_ignore_ascii_case("DOOR") => Some(insert),
+        _ => None,
+    });
+    assert!(first.is_some(), "the converted objects are one reference to the new block");
+
+    // Bob inserts the block elsewhere, scaled and turned; both replicas get the definition again
+    // (it is unchanged) and the new reference.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "insert DOOR at 50,0 scale 2 angle 90");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the insertion");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap());
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the converted reference and the inserted one");
+    let inserted = alice
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|entity| match &entity.kind {
+            EntityKind::Insert(insert) if (insert.insert.x - 50.0).abs() < 1e-9 => Some(insert),
+            _ => None,
+        })
+        .expect("the inserted reference arrived");
+    assert!((inserted.scale.x - 2.0).abs() < 1e-9, "the scale, got {:?}", inserted.scale);
+    assert!((inserted.rotation - 90f64.to_radians()).abs() < 1e-12, "the angle in radians, got {}", inserted.rotation);
+}
+
+#[test]
+fn a_refused_mleader_block_or_insert_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    // A real step after the line, so a refused line that pushed an undo step would show.
+    session.execute("ellipse", &json!({"center": [40.0, 40.0], "major": [2.0, 0.0], "ratio": 0.5})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let line = state.doc.model.iter().next().expect("the line").handle.hex();
+
+    let refused = [
+        // A leader without an address, with empty text, or on an object with no point.
+        "mleader 20,10 \"note\"".to_string(),
+        format!("mleader {line} 20,10 \"\""),
+        "mleader FF 20,10 \"note\"".to_string(),
+        format!("mleader {line} 20,10 \"unterminated"),
+        // A block with an empty name, an unknown handle or no base point.
+        format!("block \"\" base 0,0 {line}"),
+        "block X base 0,0 FF".to_string(),
+        "block X base 0,0".to_string(),
+        // An insert of an unknown block, a zero scale or a malformed point.
+        "insert NOPE at 0,0".to_string(),
+        "insert NOPE at 0,0 scale 0".to_string(),
+        "insert NOPE at nowhere".to_string(),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+    // A refused line leaves no undo step either: the last real step is still the ellipse.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Ellipse"), "no refused line pushed an undo step");
+}
+
+#[test]
+fn undo_and_redo_of_mleader_block_and_insert_return_the_state_before_and_after() {
+    let mut session = Session::new();
+    session.execute("circle", &json!({"center": [0.0, 0.0], "radius": 1.0})).unwrap();
+    let circle = session.doc().unwrap().model.iter().next().expect("the circle").handle;
+
+    // The multileader is one step; undo takes it away, redo puts it back.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("mleader {} 20,20 \"note\"", circle.hex()));
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Multileader"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the leader removes it");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Multileader"));
+    assert_eq!(session.doc().unwrap(), &after, "redo points it again");
+
+    // Defining the block and converting the circle are one step: undo brings the circle and the
+    // block definition back, redo makes the reference again.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("block PART base 0,0 {}", circle.hex()));
+    let after = session.doc().unwrap().clone();
+    assert!(session.doc().unwrap().block("PART").is_some(), "the definition exists");
+    assert!(session.doc().unwrap().entity(circle).is_none(), "the circle became a reference");
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Make..."));
+    assert_eq!(session.doc().unwrap(), &before, "undo removes the block and restores the circle");
+    assert!(session.doc().unwrap().block("PART").is_none());
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Make..."));
+    assert_eq!(session.doc().unwrap(), &after, "redo makes the block and its reference again");
+
+    // The insertion is a step of its own.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "insert PART at 50,0 scale 2 angle 45");
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), before.entity_count() + 1);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Block..."));
+    assert_eq!(session.doc().unwrap(), &before, "undo takes the inserted reference away");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Block..."));
+    assert_eq!(session.doc().unwrap(), &after, "redo inserts it again");
+}
+
+#[test]
+fn a_remote_mleader_block_and_insert_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let created = cadcraft_collab::diff_all(&empty, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant makes a block from the line, points a leader at the circle and inserts
+    // the block. The line is converted, so it leaves the receiver's selection; the circle stays.
+    let before = server.doc().unwrap().clone();
+    server.execute("block", &json!({"name": "PART", "base": [0.0, 0.0], "handles": [line.hex()], "keep": "convert"})).unwrap();
+    server.execute("mleader", &json!({"points": [[20.0, 20.0], [40.0, 30.0]], "text": "note"})).unwrap();
+    server.execute("insert", &json!({"name": "PART", "at": [50.0, 0.0], "scale": 2.0, "rotation": 90.0})).unwrap();
+    let remote = cadcraft_collab::diff_all(&before, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    assert!(remote.iter().any(|change| matches!(change, cadcraft_collab::Change::BlockCreate { .. })), "the definition travels as its own change");
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })),
+        "the leader and the inserted reference arrive as creations"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![circle], "a surviving entity stays selected; the converted line does not");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
 /// Run a one-line command the way [`submit`] does, but against one session.
 fn run(session: &mut Session, text: &str) {
     let op = {
@@ -1027,6 +1209,42 @@ fn dimlinear_and_spline_put_their_objects_on_the_authors_layer() {
     let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
     assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 2, "the measured circles stay on Alice's layer: {layers:?}");
     assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 2, "Bob's dimension and spline are on his: {layers:?}");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn mleader_block_and_insert_put_their_objects_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Alice draws the line on WALLS; Bob points a leader at it, makes it a block and inserts the
+    // block — all three objects are his and belong on DETAILS.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
+    let line = bob.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("mleader {} 20,20 \"note\"", line.hex()));
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("block PART base 0,0 {}", line.hex()));
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "insert PART at 50,0");
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(
+        layers,
+        vec!["DETAILS", "DETAILS", "DETAILS"],
+        "the leader, the converted block and the inserted one are on Bob's layer; the block's own objects keep the source's"
+    );
+    let block = alice.doc().unwrap().block("PART").expect("the definition reached the replica");
+    assert_eq!(
+        block.entities.iter().map(|entity| entity.common.layer.as_str()).collect::<Vec<_>>(),
+        vec!["WALLS"],
+        "the block keeps the line's layer"
+    );
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
     assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");

@@ -81,7 +81,35 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
         let id = registry.renamed(RecordKind::Layout, from, to);
         changes.push(Change::LayoutRename { id, from: from.clone(), to: to.clone() });
     }
+
+    // Blocks carry their own objects, so an unchanged definition is skipped by its `Arc` and a
+    // changed one travels whole. They are last in the table changes and therefore before every
+    // entity change: a replica that creates a reference after this set already has the block.
+    let old_blocks: HashMap<String, &Arc<cadcraft_doc::Block>> = before.blocks.iter().map(|(k, b)| (k.to_ascii_lowercase(), b)).collect();
+    let new_blocks: HashMap<String, &Arc<cadcraft_doc::Block>> = after.blocks.iter().map(|(k, b)| (k.to_ascii_lowercase(), b)).collect();
+    for (key, old) in &old_blocks {
+        match new_blocks.get(key) {
+            None => changes.push(Change::BlockDelete { name: old.name.clone() }),
+            Some(new) if !Arc::ptr_eq(*old, *new) && ***old != ***new => changes.push(block_change(new)),
+            Some(_) => {}
+        }
+    }
+    for (key, block) in &new_blocks {
+        if !old_blocks.contains_key(key) {
+            changes.push(block_change(block));
+        }
+    }
     changes
+}
+
+/// The change that carries `block` whole: its properties (`Block` serializes without its
+/// entities) and its objects in draw order.
+fn block_change(block: &cadcraft_doc::Block) -> Change {
+    Change::BlockCreate {
+        name: block.name.clone(),
+        properties: serde_json::to_value(block).unwrap_or(serde_json::Value::Null),
+        entities: block.entities.iter().map(|entity| (**entity).clone()).collect(),
+    }
 }
 
 /// Forget a deleted record, or give it an identifier first when the registry had not seen it.

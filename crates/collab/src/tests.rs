@@ -39,6 +39,31 @@ fn diff_and_apply_round_trip() {
 }
 
 #[test]
+fn a_block_definition_travels_with_its_objects() {
+    let before = Drawing::new_metric();
+    let mut after = before.clone();
+    let mut block = cadcraft_doc::Block::new("DOOR");
+    let line = after.new_handle();
+    block.entities.push(Entity::new(line, point(1.0)));
+    after.blocks.insert("DOOR".into(), std::sync::Arc::new(block));
+
+    let mut registry = crate::TableRegistry::new();
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::BlockCreate { name, entities, .. } if name == "DOOR" && entities.len() == 1)), "{changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.blocks, after.blocks, "the definition and its objects arrived");
+    assert!(applied.handseed > line.0, "a later allocation cannot reuse the block's handle");
+
+    // Removing it travels too: an undo of the creation would otherwise leave it behind.
+    let changes = crate::diff_all(&applied, &before, &mut registry, &crate::TableRenames::default()).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::BlockDelete { name } if name == "DOOR")), "{changes:?}");
+    apply(&mut applied, &changes).unwrap();
+    assert!(applied.blocks.is_empty());
+}
+
+#[test]
 fn identical_spaces_have_no_changes() {
     let (before, _) = sample();
     assert!(diff(&before, &before.clone(), &Space::Model).unwrap().is_empty());

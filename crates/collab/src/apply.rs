@@ -61,13 +61,22 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
             Change::TableCreate { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is created with `layout.create`".into()));
             }
+            Change::TableCreate { kind: RecordKind::Block, .. } => {
+                return Err(CollabError::InvalidName("a block is created with `block`".into()));
+            }
             Change::TableRename { kind: RecordKind::Layer, from, to, .. } => rename_layer(drawing, from, to)?,
             Change::TableRename { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is renamed with `layout.rename`".into()));
             }
+            Change::TableRename { kind: RecordKind::Block, .. } => {
+                return Err(CollabError::InvalidName("a block is not renamed through the record registry".into()));
+            }
             Change::TableDelete { kind: RecordKind::Layer, name, .. } => delete_layer(drawing, name)?,
             Change::TableDelete { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is deleted with `layout.delete`".into()));
+            }
+            Change::TableDelete { kind: RecordKind::Block, .. } => {
+                return Err(CollabError::InvalidName("a block travels whole; it is not deleted through the record registry".into()));
             }
             Change::LayoutCreate { name, tab_order, properties, .. } => {
                 if drawing.layouts.iter().any(|l| l.name.eq_ignore_ascii_case(name)) {
@@ -106,6 +115,27 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
                 if drawing.active_layout.as_deref().is_some_and(|active| active.eq_ignore_ascii_case(name)) {
                     drawing.active_layout = None;
                 }
+            }
+            Change::BlockCreate { name, properties, entities } => {
+                let key = drawing.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.clone());
+                let mut block: cadcraft_doc::Block = serde_json::from_value(properties.clone())
+                    .map_err(|_| CollabError::InvalidName(format!("the definition of block `{name}` could not be read")))?;
+                block.name = key.clone();
+                block.entities = EntityStore::default();
+                for entity in entities {
+                    if !drawing.layers.iter().any(|l| l.name.eq_ignore_ascii_case(&entity.common.layer)) {
+                        return Err(CollabError::NoLayer(entity.common.layer.clone()));
+                    }
+                    block.entities.push(entity.clone());
+                    // The server chose the handle; a later local allocation must not reuse it.
+                    drawing.bump_handseed(entity.handle);
+                }
+                drawing.blocks.insert(key, std::sync::Arc::new(block));
+            }
+            Change::BlockDelete { name } => {
+                let key = drawing.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned();
+                let key = key.ok_or_else(|| CollabError::NoRecord(RecordKind::Block, name.clone()))?;
+                drawing.blocks.remove(&key);
             }
         }
     }

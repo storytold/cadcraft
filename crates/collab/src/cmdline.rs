@@ -21,8 +21,11 @@
 //! text 10,20 2.5 0 "Shared note"
 //! dimlinear 1A2,1A3 offset 5
 //! dimlinear 1A2,1A3 point 0,20
+//! mleader 1A2 20,10 "Shared note"
 //! spline 0,0 10,5 20,0 30,5
 //! spline 0,0 10,5 20,0 closed
+//! block DOOR base 0,0 1A2,1A3
+//! insert DOOR at 10,5 scale 2 angle 90
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
 //! copy 1A2,1A3 delta 10,0
@@ -43,7 +46,7 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 18] = [
+pub const COMMANDS: [&str; 21] = [
     "line",
     "circle",
     "polyline",
@@ -51,7 +54,10 @@ pub const COMMANDS: [&str; 18] = [
     "rect",
     "text",
     "dimlinear",
+    "mleader",
     "spline",
+    "block",
+    "insert",
     "move",
     "copy",
     "rotate",
@@ -78,12 +84,12 @@ pub struct Command {
 pub enum CmdLineError {
     /// Nothing was typed.
     #[error(
-        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
     )]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -116,7 +122,10 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "rect" | "rectangle" | "rec" => rect(words.collect()),
         "text" | "dt" | "dtext" => text_command(words.collect()),
         "dimlinear" | "dli" | "dimlin" => dimlinear(drawing, space, words.collect()),
+        "mleader" | "mld" => mleader(drawing, space, words.collect()),
         "spline" | "spl" => spline(words.collect()),
+        "block" | "b" => block_command(drawing, space, words.collect()),
+        "insert" | "i" => insert_command(drawing, space, words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
         "copy" | "co" | "cp" => copy(drawing, space, words.collect()),
         "rotate" | "ro" => rotate(drawing, space, words.collect()),
@@ -157,7 +166,23 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 /// A copy or a mirror inherits the source objects' layers, and a scale changes objects in place,
 /// so only these commands draw new geometry on a layer of their own (ADR-0019).
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "text" | "dimlinear" | "spline" | "offset" | "array" | "hatch")
+    matches!(
+        id,
+        "line"
+            | "circle"
+            | "pline"
+            | "ellipse"
+            | "rectang"
+            | "text"
+            | "dimlinear"
+            | "mleader"
+            | "spline"
+            | "block"
+            | "insert"
+            | "offset"
+            | "array"
+            | "hatch"
+    )
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -376,6 +401,156 @@ const MAX_MEASURE_POINTS: usize = 1000;
 fn zero_length(a: Vec2, b: Vec2) -> bool {
     let scale = 1.0 + a.x.abs().max(a.y.abs()).max(b.x.abs()).max(b.y.abs());
     a.dist(b) <= 1e-9 * scale
+}
+
+/// `mleader H[,H…] x,y "text"` — a multileader that points at the named objects and lands on the
+/// explicit point, with its text in double quotes.
+///
+/// A shared session has no pick for the arrowhead: each handle contributes the object's
+/// characteristic point nearest the landing (the same points a dimension attaches to, see
+/// [`definition_points`]), in the order typed, and the last point of the line is the landing.
+/// One handle is the familiar arrow-to-landing leader; more than one makes a multiline leader
+/// through those objects. Empty text, a handle that names nothing here, an object with no point to
+/// point at, a landing at the drawing's coordinate limit and a landing on the last arrow point are
+/// refused before an operation exists.
+fn mleader(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [addresses, landing, content] = words.as_slice() else {
+        return Err(bad("mleader", "give the objects to point at, the landing point and the text in double quotes: mleader 1A2[,1A3] x,y \"text\""));
+    };
+    let handles = handles("mleader", addresses)?;
+    check_in_space(drawing, space, "mleader", &handles)?;
+    let landing = drawing_point(landing, "mleader")?;
+    let value = quoted(content).ok_or_else(|| bad("mleader", "the text must be in double quotes: mleader 1A2[,1A3] x,y \"text\""))?;
+    if value.trim().is_empty() {
+        return Err(bad("mleader", "the text is empty"));
+    }
+    if value.chars().count() > MAX_TEXT_CHARS {
+        return Err(bad("mleader", format!("the text is longer than {MAX_TEXT_CHARS} characters")));
+    }
+    let mut points = Vec::with_capacity(handles.len() + 1);
+    let mut last = landing;
+    for handle in &handles {
+        let arrow = arrow_point(drawing, space, *handle, landing, "mleader")?;
+        last = arrow;
+        points.push([arrow.x, arrow.y]);
+    }
+    if zero_length(last, landing) {
+        return Err(bad("mleader", "the landing point coincides with the last object's point; there is no leader line"));
+    }
+    points.push([landing.x, landing.y]);
+    // The engine's MLEADER takes the leader's points with the landing last and its text.
+    Ok(Command { id: "mleader", params: json!({ "points": points, "text": value }) })
+}
+
+/// The point of `handle` a leader points at: the object's characteristic point nearest `landing`.
+fn arrow_point(drawing: &Drawing, space: &Space, handle: Handle, landing: Vec2, command: &'static str) -> Result<Vec2, CmdLineError> {
+    let store = drawing.space(space).ok_or_else(|| bad(command, "the active layout is not in this drawing"))?;
+    let entity = store.get(handle).ok_or_else(|| CmdLineError::UnknownHandle { command, handle: handle.hex(), space: space_name(space) })?;
+    let points = definition_points(entity);
+    let nearest = points.into_iter().filter(|point| point.is_finite()).min_by(|a, b| a.dist(landing).total_cmp(&b.dist(landing)));
+    nearest.ok_or_else(|| bad(command, format!("object {} has no point to point at; address a line, arc, circle, polyline or point", handle.hex())))
+}
+
+/// `block NAME base x,y H[,H…]` — a new block named `NAME` from the named objects, with `base` as
+/// its base point; the objects become one reference to it (BLOCK's Convert default).
+///
+/// A name that is empty, longer than [`MAX_BLOCK_NAME`], anonymous (`*…`) or already in the drawing
+/// is refused before an operation exists: a shared session makes new blocks, and redefining one
+/// would change every reference at once (the drawing's blocks travel whole, ADR-0020).
+fn block_command(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let [name, base_kw, base, addresses] = words.as_slice() else {
+        return Err(bad("block", "give the name, the base point and the objects: block NAME base x,y 1A2[,1A3]"));
+    };
+    if !base_kw.eq_ignore_ascii_case("base") {
+        return Err(bad("block", "give the name, the base point and the objects: block NAME base x,y 1A2[,1A3]"));
+    }
+    let name = block_name(name, "block")?;
+    if drawing.block(&name).is_some() {
+        return Err(bad("block", format!("a block named `{}` is already in this drawing; the shared command line makes new blocks", brief(&name))));
+    }
+    let base = drawing_point(base, "block")?;
+    let handles = handles("block", addresses)?;
+    check_in_space(drawing, space, "block", &handles)?;
+    Ok(Command { id: "block", params: json!({ "name": name, "base": [base.x, base.y], "handles": hex(&handles), "keep": "convert" }) })
+}
+
+/// `insert NAME at x,y [scale s] [angle a]` — place a reference to the block named `NAME` at the
+/// point, with a positive scale factor and an angle in degrees (both optional).
+///
+/// The block must already be in the drawing (a shared session's block definitions travel with the
+/// change set, ADR-0020); a zero or negative scale and a name that names nothing are refused
+/// before an operation exists. The reference's handle arrives with the change set, like any other
+/// created object's.
+fn insert_command(drawing: &Drawing, _space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((name, rest)) = words.split_first() else {
+        return Err(bad("insert", "give a block and an insertion point: insert NAME at x,y [scale s] [angle a]"));
+    };
+    let name = block_name(name, "insert")?;
+    let Some(block) = drawing.block(&name) else {
+        return Err(bad("insert", format!("there is no block `{}` in this drawing; define it with block first", brief(&name))));
+    };
+    if block.name.starts_with('*') {
+        return Err(bad("insert", "anonymous blocks cannot be inserted by name"));
+    }
+    let [at_kw, at, tail @ ..] = rest else {
+        return Err(bad("insert", "give the insertion point: insert NAME at x,y [scale s] [angle a]"));
+    };
+    if !at_kw.eq_ignore_ascii_case("at") {
+        return Err(bad("insert", "give the insertion point: insert NAME at x,y [scale s] [angle a]"));
+    }
+    let at = drawing_point(at, "insert")?;
+    let mut scale = 1.0;
+    let mut angle = 0.0;
+    match tail {
+        [] => {}
+        [keyword, value] if keyword.eq_ignore_ascii_case("scale") => scale = insert_scale(value)?,
+        [keyword, value] if keyword.eq_ignore_ascii_case("angle") => angle = insert_angle(value)?,
+        [scale_kw, scale_value, angle_kw, angle_value] if scale_kw.eq_ignore_ascii_case("scale") && angle_kw.eq_ignore_ascii_case("angle") => {
+            scale = insert_scale(scale_value)?;
+            angle = insert_angle(angle_value)?;
+        }
+        _ => return Err(bad("insert", "give the insertion point and optionally a scale and an angle: insert NAME at x,y [scale s] [angle a]")),
+    }
+    Ok(Command { id: "insert", params: json!({ "name": block.name.clone(), "at": [at.x, at.y], "scale": scale, "rotation": angle }) })
+}
+
+/// A positive scale factor for INSERT.
+fn insert_scale(word: &str) -> Result<f64, CmdLineError> {
+    number(word).filter(|s| *s > 0.0).ok_or_else(|| bad("insert", "the scale must be a positive number"))
+}
+
+/// An angle in degrees for INSERT.
+fn insert_angle(word: &str) -> Result<f64, CmdLineError> {
+    number(word).ok_or_else(|| bad("insert", "the angle must be a finite number of degrees"))
+}
+
+/// The longest block name a line may carry (the engine's limit).
+const MAX_BLOCK_NAME: usize = 255;
+
+/// A block name as typed: a bare word, or one in double quotes when it holds spaces.
+///
+/// The name is refused when it is empty, too long, anonymous (`*…`) or holds a character the file
+/// format cannot write, so the engine never has to refuse the operation after it exists.
+fn block_name(word: &str, command: &'static str) -> Result<String, CmdLineError> {
+    let name = match quoted(word) {
+        Some(name) => name,
+        None if word.starts_with('"') => return Err(bad(command, "the block name is missing its closing quote")),
+        None => word.to_string(),
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(bad(command, "the block name is empty; give it a name"));
+    }
+    if name.len() > MAX_BLOCK_NAME {
+        return Err(bad(command, format!("the block name is longer than {MAX_BLOCK_NAME} characters")));
+    }
+    if name.starts_with('*') {
+        return Err(bad(command, "a block name cannot start with `*`; those names are anonymous blocks"));
+    }
+    if name.chars().any(|c| "<>/\\\":;?*|,=`".contains(c)) {
+        return Err(bad(command, "the block name holds a character a name cannot: <>/\\\":;?*|,=`"));
+    }
+    Ok(name.to_string())
 }
 
 /// `spline x,y x,y x,y [closed]` — a curve through 3 to 64 fit points.
@@ -1010,9 +1185,9 @@ mod tests {
         let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
         assert!(
-            error
-                .to_string()
-                .contains("line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
+            error.to_string().contains(
+                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+            ),
             "{error}"
         );
         assert_eq!(drawing, before, "parsing must not change the drawing");
@@ -1504,6 +1679,150 @@ mod tests {
         assert_eq!(drawing, before, "a refused line never changes the drawing");
     }
 
+    #[test]
+    fn a_mleader_points_at_its_objects_and_lands_on_the_point() {
+        let mut drawing = Drawing::new_metric();
+        let a = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let command = parse(&format!("mleader {} 20,10 \"Shared note\"", a.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "mleader");
+        assert_eq!(command.params, json!({ "points": [[10.0, 0.0], [20.0, 10.0]], "text": "Shared note" }));
+        // The AutoCAD alias works, and the content may hold spaces and escaped quotes.
+        let command = parse(&format!("mld {} 20,10 \"say \\\"hi\\\"\"", a.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["text"], "say \"hi\"");
+        // Several objects make one leader through their nearest points, with the landing last.
+        let b = add_line(&mut drawing, [0.0, -5.0], [10.0, -5.0]);
+        let command = parse(&format!("mleader {},{} 20,-10 \"two\"", a.hex(), b.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["points"], json!([[10.0, 0.0], [10.0, -5.0], [20.0, -10.0]]));
+    }
+
+    #[test]
+    fn an_unaddressable_mleader_is_refused_before_an_operation_exists() {
+        let mut drawing = Drawing::new_metric();
+        let line = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        // Text has no characteristic point a leader could attach to.
+        let no_point = drawing
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::Text(cadcraft_doc::Text {
+                    insert: Vec3::new(0.0, 0.0, 0.0),
+                    align_pt: None,
+                    height: 1.0,
+                    value: "x".into(),
+                    rotation: 0.0,
+                    width_factor: 1.0,
+                    oblique: 0.0,
+                    style: "Standard".into(),
+                    halign: cadcraft_doc::HAlign::Left,
+                    valign: cadcraft_doc::VAlign::Baseline,
+                }),
+            )
+            .unwrap();
+        let before = drawing.clone();
+        for text in [
+            // No address: the first word is the landing point, not a handle.
+            "mleader 20,10 \"note\"".to_string(),
+            format!("mleader {} 20,10 \"\"", line.hex()),
+            format!("mleader {} 20,10 note", line.hex()),
+            "mleader FF 20,10 \"note\"".to_string(),
+            format!("mleader {} 10,0 \"note\"", line.hex()),
+            format!("mleader {} nowhere \"note\"", line.hex()),
+            format!("mleader {} 20,10 \"note\"", no_point.hex()),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(!error.to_string().is_empty(), "{text}");
+        }
+        let error = parse(&format!("mleader {} 20,10 \"note\"", no_point.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("has no point to point at"), "{error}");
+        let error = parse(&format!("mleader {} 10,0 \"note\"", line.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("the landing point coincides"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn a_block_names_its_objects_and_base_point() {
+        let mut drawing = Drawing::new_metric();
+        let a = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let command = parse(&format!("block DOOR base 0,0 {}", a.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "block");
+        assert_eq!(command.params, json!({ "name": "DOOR", "base": [0.0, 0.0], "handles": [a.hex()], "keep": "convert" }));
+        // The AutoCAD alias works, and a name with spaces is quoted like the text.
+        let command = parse(&format!("b \"Front Door\" base 1,2 {}", a.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["name"], "Front Door");
+        assert_eq!(command.params["base"], json!([1.0, 2.0]));
+    }
+
+    #[test]
+    fn an_unaddressable_block_is_refused_before_an_operation_exists() {
+        let mut drawing = Drawing::new_metric();
+        let line = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        drawing.blocks.insert("DOOR".into(), std::sync::Arc::new(cadcraft_doc::Block::new("DOOR")));
+        let before = drawing.clone();
+        for text in [
+            // The base point is named; the name comes first.
+            format!("block base 0,0 {}", line.hex()),
+            format!("block DOOR 0,0 {}", line.hex()),
+            // An empty, anonymous, taken or unwritable name.
+            "block \"\" base 0,0 1A2".to_string(),
+            format!("block \"*X\" base 0,0 {}", line.hex()),
+            format!("block door base 0,0 {}", line.hex()),
+            format!("block \"bad,name\" base 0,0 {}", line.hex()),
+            format!("block \"unterminated base 0,0 {}", line.hex()),
+            // Handles that name nothing, and no handle at all.
+            "block PART base 0,0 FF".to_string(),
+            "block PART base 0,0".to_string(),
+            format!("block PART base nowhere {}", line.hex()),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(!error.to_string().is_empty(), "{text}");
+        }
+        let error = parse(&format!("block door base 0,0 {}", line.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("already in this drawing"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn an_insert_names_its_block_point_scale_and_angle() {
+        let mut drawing = Drawing::new_metric();
+        drawing.blocks.insert("DOOR".into(), std::sync::Arc::new(cadcraft_doc::Block::new("DOOR")));
+        let command = parse("insert DOOR at 10,5", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "insert");
+        assert_eq!(command.params, json!({ "name": "DOOR", "at": [10.0, 5.0], "scale": 1.0, "rotation": 0.0 }));
+        // The alias and the optional scale and angle work; the name is not case-sensitive.
+        assert_eq!(parse("i DOOR at 10,5 scale 2", &drawing, &Space::Model).unwrap().params["scale"], 2.0);
+        let command = parse("insert door at 10,5 scale 2 angle 90", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["name"], "DOOR", "the drawing's spelling travels");
+        assert_eq!(command.params["rotation"], 90.0);
+        let command = parse("insert DOOR at 10,5 angle -45", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["rotation"], -45.0);
+    }
+
+    #[test]
+    fn an_unaddressable_insert_is_refused_before_an_operation_exists() {
+        let mut drawing = Drawing::new_metric();
+        drawing.blocks.insert("DOOR".into(), std::sync::Arc::new(cadcraft_doc::Block::new("DOOR")));
+        let before = drawing.clone();
+        for text in [
+            "insert NOPE at 0,0",
+            "insert DOOR 0,0",
+            "insert DOOR at 0,0 scale 0",
+            "insert DOOR at 0,0 scale -1",
+            "insert DOOR at 0,0 angle later",
+            "insert DOOR at nowhere",
+            "insert DOOR at 0,0 scale 2 angle",
+            "insert DOOR at 0,0 later 2",
+            "insert at 0,0",
+        ] {
+            let error = parse(text, &drawing, &Space::Model).unwrap_err();
+            assert!(!error.to_string().is_empty(), "{text}");
+        }
+        let error = parse("insert NOPE at 0,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("there is no block `NOPE`"), "{error}");
+        let error = parse("insert DOOR at 0,0 scale 0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("scale must be a positive number"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
     fn add_rect(drawing: &mut Drawing, a: [f64; 2], b: [f64; 2]) -> Handle {
         let vertices = vec![
             cadcraft_doc::geom::PolyVertex::new(Vec2::new(a[0], a[1])),
@@ -1594,6 +1913,17 @@ mod tests {
             Some("WALLS")
         );
         assert_eq!(op_for("spline 0,0 10,5 20,0", &drawing, &Space::Model, "local-17", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        // A multileader, a new block and a block reference are new objects too.
+        assert_eq!(
+            op_for(&format!("mleader {} 20,10 \"note\"", handle.hex()), &drawing, &Space::Model, "local-18", 0).unwrap().context.clay.as_deref(),
+            Some("WALLS")
+        );
+        assert_eq!(
+            op_for(&format!("block PART base 0,0 {}", handle.hex()), &drawing, &Space::Model, "local-19", 0).unwrap().context.clay.as_deref(),
+            Some("WALLS")
+        );
+        drawing.blocks.insert("PART".into(), std::sync::Arc::new(cadcraft_doc::Block::new("PART")));
+        assert_eq!(op_for("insert PART at 5,5", &drawing, &Space::Model, "local-20", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         // Commands that only address existing objects do not name a layer.
         assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
