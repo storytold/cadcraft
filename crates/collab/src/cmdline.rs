@@ -36,6 +36,8 @@
 //! trim 1A2 edge 1A3 at 2,0
 //! array 1A2 rows 2 cols 3 step 20,10
 //! hatch 1A2,1A3 pattern ANSI31 scale 2 angle 45
+//! wipeout 0,0 10,0 10,10
+//! wipeout 1A2
 //! erase 1A2,1A3
 //! ```
 
@@ -46,7 +48,7 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 21] = [
+pub const COMMANDS: [&str; 22] = [
     "line",
     "circle",
     "polyline",
@@ -67,6 +69,7 @@ pub const COMMANDS: [&str; 21] = [
     "trim",
     "array",
     "hatch",
+    "wipeout",
     "erase",
 ];
 
@@ -84,12 +87,12 @@ pub struct Command {
 pub enum CmdLineError {
     /// Nothing was typed.
     #[error(
-        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
     )]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -135,6 +138,7 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "trim" | "tr" => trim(drawing, space, words.collect()),
         "array" | "ar" | "arr" => array(drawing, space, words.collect()),
         "hatch" | "h" | "bh" => hatch_command(drawing, space, words.collect()),
+        "wipeout" | "wi" => wipeout(drawing, space, words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -182,6 +186,7 @@ fn creates_objects(id: &str) -> bool {
             | "offset"
             | "array"
             | "hatch"
+            | "wipeout"
     )
 }
 
@@ -938,6 +943,75 @@ fn hatch_command(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<C
     })
 }
 
+/// `wipeout x,y x,y x,y [x,y…]` or `wipeout H` — a masking polygon over explicit boundary points
+/// or over the closed polyline named by handle.
+///
+/// A shared session has no pick for the polyline, so the line names it; either form travels as
+/// boundary points, so both replicas draw the same mask even if the polyline is edited later. The
+/// handle's polyline must be closed (by its flag or by repeating the first point) and must have no
+/// arc segments (a bulge), as the engine's WIPEOUT requires. Fewer than three points, a boundary
+/// that encloses no area, a vertex outside the drawing's coordinate limit, a handle that names
+/// nothing here and an object that is not such a polyline are refused before an operation exists.
+/// `frames` (WIPEOUTFRAME) is a drawing variable shared by everyone, not one participant's object,
+/// and is not one-lined.
+fn wipeout(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    const WIPEOUT: &str = "wipeout";
+    let points = match words.as_slice() {
+        [] => return Err(bad(WIPEOUT, "give three or more boundary points or one closed polyline: wipeout x,y x,y x,y [x,y …] | wipeout 1A2")),
+        [address] if !address.contains(',') => wipeout_boundary(drawing, space, address)?,
+        words if words.iter().all(|word| word.contains(',')) => {
+            words.iter().map(|word| drawing_point(word, WIPEOUT)).collect::<Result<Vec<Vec2>, CmdLineError>>()?
+        }
+        _ => return Err(bad(WIPEOUT, "give boundary points or one closed polyline: wipeout x,y x,y x,y [x,y …] | wipeout 1A2")),
+    };
+    if points.len() < 3 {
+        return Err(bad(WIPEOUT, "a wipeout needs three or more boundary points"));
+    }
+    // The engine's own ceiling on generated geometry (`cmd::curves::MAX_GEN`); a line is never a
+    // drawing's bulk.
+    if points.len() > MAX_WIPEOUT_POINTS {
+        return Err(bad(WIPEOUT, format!("the boundary has more than {MAX_WIPEOUT_POINTS} points")));
+    }
+    if points.iter().any(|point| !point.is_finite() || point.x.abs() >= MAX_COORDINATE || point.y.abs() >= MAX_COORDINATE) {
+        return Err(bad(WIPEOUT, "a boundary point is outside the drawing's coordinate limit"));
+    }
+    if cadcraft_doc::geom::shoelace(&points).abs() < 1e-12 {
+        return Err(bad(WIPEOUT, "the boundary encloses no area"));
+    }
+    let points = points.iter().map(|point| [point.x, point.y]).collect::<Vec<_>>();
+    // The engine's WIPEOUT takes the boundary; unlike its `handle` form it never removes the
+    // source polyline, which stays where the author drew it.
+    Ok(Command { id: "wipeout", params: json!({ "points": points }) })
+}
+
+/// The most boundary points one `wipeout` line may carry: the engine's ceiling on generated
+/// geometry (`cmd::curves::MAX_GEN`), so the parser cannot send more than the command accepts.
+const MAX_WIPEOUT_POINTS: usize = 20_000;
+
+/// The boundary of the closed polyline named by `address`, as points, checked the way the engine's
+/// WIPEOUT checks a picked polyline (`crates/engine/src/cmd/draw2/wipeout.rs`).
+fn wipeout_boundary(drawing: &Drawing, space: &Space, address: &str) -> Result<Vec<Vec2>, CmdLineError> {
+    let handles = handles("wipeout", address)?;
+    let [handle] = handles.as_slice() else {
+        return Err(bad("wipeout", "takes one closed polyline: wipeout 1A2"));
+    };
+    check_in_space(drawing, space, "wipeout", &handles)?;
+    let store = drawing.space(space).ok_or_else(|| bad("wipeout", "the active layout is not in this drawing"))?;
+    let entity =
+        store.get(*handle).ok_or_else(|| CmdLineError::UnknownHandle { command: "wipeout", handle: handle.hex(), space: space_name(space) })?;
+    let cadcraft_doc::EntityKind::LwPolyline(polyline) = &entity.kind else {
+        return Err(bad("wipeout", format!("object {} is not a closed polyline; give boundary points instead", handle.hex())));
+    };
+    let closed = polyline.closed || polyline.vertices.first().zip(polyline.vertices.last()).is_some_and(|(first, last)| first.p.near(last.p, 1e-9));
+    if !closed {
+        return Err(bad("wipeout", format!("polyline {} is not closed; close it or give boundary points instead", handle.hex())));
+    }
+    if polyline.vertices.iter().any(|vertex| vertex.bulge.abs() > 1e-12) {
+        return Err(bad("wipeout", "a polyline with arc segments cannot bound a wipeout; give boundary points instead"));
+    }
+    Ok(polyline.vertices.iter().map(|vertex| vertex.p).collect())
+}
+
 /// Whether the object encloses an area: the boundary kinds the engine's HATCH accepts when it is
 /// given handles (`crates/engine/src/cmd/hatch.rs::closed_loop`), checked before an operation
 /// exists so a line that hatches nothing is refused on the author's side.
@@ -1186,7 +1260,7 @@ mod tests {
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
         assert!(
             error.to_string().contains(
-                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+                "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
             ),
             "{error}"
         );
@@ -1589,6 +1663,89 @@ mod tests {
     }
 
     #[test]
+    fn a_wipeout_takes_boundary_points_or_a_closed_polyline() {
+        let mut drawing = Drawing::new_metric();
+        let command = parse("wipeout 0,0 10,0 10,10", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "wipeout");
+        assert_eq!(command.params, json!({ "points": [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]] }));
+        // The alias works too.
+        assert_eq!(parse("wi 0,0 10,0 10,10", &drawing, &Space::Model).unwrap().id, "wipeout");
+
+        // A closed polyline handle travels as its boundary points, so both replicas draw the same
+        // mask and editing the polyline later does not move it.
+        let rect = add_rect(&mut drawing, [20.0, 0.0], [30.0, 5.0]);
+        let command = parse(&format!("wipeout {}", rect.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "wipeout");
+        assert_eq!(command.params, json!({ "points": [[20.0, 0.0], [30.0, 0.0], [30.0, 5.0], [20.0, 5.0]] }));
+    }
+
+    #[test]
+    fn an_unaddressable_wipeout_is_refused_before_an_operation_exists() {
+        let mut drawing = Drawing::new_metric();
+        let rect = add_rect(&mut drawing, [0.0, 0.0], [10.0, 5.0]);
+        let line = add_line(&mut drawing, [0.0, 0.0], [10.0, 0.0]);
+        let open = drawing
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::LwPolyline(cadcraft_doc::LwPolyline {
+                    vertices: vec![
+                        cadcraft_doc::geom::PolyVertex::new(Vec2::new(0.0, 0.0)),
+                        cadcraft_doc::geom::PolyVertex::new(Vec2::new(10.0, 0.0)),
+                        cadcraft_doc::geom::PolyVertex::new(Vec2::new(10.0, 5.0)),
+                    ],
+                    closed: false,
+                    const_width: 0.0,
+                    elevation: 0.0,
+                    plinegen: false,
+                }),
+            )
+            .unwrap();
+        let curved = drawing
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::LwPolyline(cadcraft_doc::LwPolyline {
+                    vertices: vec![
+                        cadcraft_doc::geom::PolyVertex::with_bulge(Vec2::new(40.0, 0.0), 0.5),
+                        cadcraft_doc::geom::PolyVertex::new(Vec2::new(50.0, 0.0)),
+                        cadcraft_doc::geom::PolyVertex::new(Vec2::new(50.0, 5.0)),
+                    ],
+                    closed: true,
+                    const_width: 0.0,
+                    elevation: 0.0,
+                    plinegen: false,
+                }),
+            )
+            .unwrap();
+        let before = drawing.clone();
+        for text in [
+            // Nothing to bound, too few points, a straight line of points.
+            "wipeout".to_string(),
+            "wipeout 0,0 10,0".to_string(),
+            "wipeout 0,0 10,0 20,0".to_string(),
+            // A coordinate that is not a number.
+            "wipeout 0,0 10,0 ten,10".to_string(),
+            // A point and a handle do not mix.
+            format!("wipeout 0,0 10,0 {}", rect.hex()).to_string(),
+            // A handle that names nothing, an object that is not a polyline, an open polyline and
+            // one with an arc segment.
+            "wipeout FF".to_string(),
+            format!("wipeout {}", line.hex()),
+            format!("wipeout {}", open.hex()),
+            format!("wipeout {}", curved.hex()),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("wipeout:"), "{text}: {error}");
+        }
+        let error = parse(&format!("wipeout {}", open.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("is not closed"), "{error}");
+        let error = parse(&format!("wipeout {}", curved.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("arc segments"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
     fn a_dimlinear_measures_between_two_objects() {
         let mut drawing = Drawing::new_metric();
         let point = |drawing: &mut Drawing, x: f64, y: f64| {
@@ -1964,6 +2121,12 @@ mod tests {
                 .as_deref(),
             Some("WALLS")
         );
+        // A wipeout masks the drawing, so it is a new object on the author's layer too.
+        assert_eq!(
+            op_for(&format!("wipeout {}", rect.hex()), &drawing, &Space::Model, "local-21", 0).unwrap().context.clay.as_deref(),
+            Some("WALLS")
+        );
+        assert_eq!(op_for("wipeout 0,60 10,60 10,70", &drawing, &Space::Model, "local-22", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
     }
 
     #[test]

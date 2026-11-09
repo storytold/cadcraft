@@ -86,7 +86,7 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     assert!(
         error.to_string().contains(
-            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+            "line, circle, polyline, ellipse, rect, text, dimlinear, mleader, spline, block, insert, move, copy, rotate, mirror, scale, offset, trim, array, hatch, wipeout or erase"
         ),
         "{error}"
     );
@@ -1245,6 +1245,147 @@ fn mleader_block_and_insert_put_their_objects_on_the_authors_layer() {
         vec!["WALLS"],
         "the block keeps the line's layer"
     );
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn two_replicas_that_wipe_out_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    // A closed polyline reaches every replica the way a drawing command's change set does.
+    let empty = server.doc().unwrap().clone();
+    server.execute("pline", &json!({"vertices": [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]], "closed": true})).unwrap();
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let created = cadcraft_collab::diff_all(&empty, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    alice.apply_remote(&created).unwrap();
+    bob.apply_remote(&created).unwrap();
+    let polyline = bob.doc().unwrap().model.iter().next().expect("the polyline arrived").handle;
+
+    // Bob masks the polyline by the handle the change set gave him; Alice masks an explicit
+    // boundary. The mask is boundary points either way, so both replicas hold the same bytes.
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("wipeout {}", polyline.hex()));
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "wipeout 20,0 30,0 30,10 20,10");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the masks");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 3, "the polyline and the two masks");
+    let boundaries: Vec<Vec<(f64, f64)>> = alice
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|entity| match &entity.kind {
+            EntityKind::Wipeout(wipeout) => Some(wipeout.boundary.iter().map(|point| (point.x, point.y)).collect()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boundaries, vec![vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)], vec![(20.0, 0.0), (30.0, 0.0), (30.0, 10.0), (20.0, 10.0)],]);
+}
+
+#[test]
+fn a_refused_wipeout_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    // An open polyline and two real steps after it, so a refused line that pushed an undo step
+    // would show.
+    session.execute("pline", &json!({"vertices": [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]]})).unwrap();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    session.execute("ellipse", &json!({"center": [40.0, 40.0], "major": [2.0, 0.0], "ratio": 0.5})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let open = state.doc.model.iter().next().expect("the polyline").handle;
+    let line = state.doc.model.iter().nth(1).expect("the line").handle;
+
+    let refused = [
+        // Nothing to bound, too few points, a boundary with no area, a non-numeric coordinate.
+        "wipeout".to_string(),
+        "wipeout 0,60 10,60".to_string(),
+        "wipeout 0,60 10,60 20,60".to_string(),
+        "wipeout 0,60 10,60 ten,70".to_string(),
+        // A point and a handle do not mix; a handle that names nothing or is not a polyline.
+        format!("wipeout 0,60 10,60 {}", open.hex()),
+        "wipeout FF".to_string(),
+        format!("wipeout {}", line.hex()),
+        // An open polyline is not a boundary.
+        format!("wipeout {}", open.hex()),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+    // A refused line leaves no undo step either: the last real step is still the ellipse.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Ellipse"), "no refused line pushed an undo step");
+}
+
+#[test]
+fn undo_and_redo_of_a_wipeout_return_the_state_before_and_after() {
+    let mut session = Session::new();
+    let before = session.doc().unwrap().clone();
+
+    run(&mut session, "wipeout 0,0 10,0 10,10");
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 1);
+    assert!(matches!(session.doc().unwrap().model.iter().next().expect("the mask").kind, EntityKind::Wipeout(_)));
+    assert_ne!(&after, &before);
+
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Wipeout"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the wipeout removes the mask");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Wipeout"));
+    assert_eq!(session.doc().unwrap(), &after, "redo masks again");
+}
+
+#[test]
+fn a_remote_wipeout_keeps_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let mut registry = cadcraft_collab::TableRegistry::new();
+    let created = cadcraft_collab::diff_all(&empty, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant masks part of the drawing; the mask is one new object.
+    let before = server.doc().unwrap().clone();
+    server.execute("wipeout", &json!({"points": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]})).unwrap();
+    let remote = cadcraft_collab::diff_all(&before, server.doc().unwrap(), &mut registry, &Default::default()).unwrap();
+    assert!(remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })), "the mask arrives as a creation");
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
+#[test]
+fn wipeout_puts_its_object_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Alice draws the closed boundary on WALLS; Bob masks it, so his mask is on DETAILS.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("wipeout {}", rect.hex()));
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers, vec!["WALLS", "DETAILS"], "the boundary stays on Alice's layer; Bob's mask is on his");
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
     assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
