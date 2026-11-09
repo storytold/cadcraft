@@ -16,11 +16,14 @@
 //! line 0,0 100,0 100,50
 //! circle 50,25 12.5
 //! polyline 0,0 100,0 100,50
+//! ellipse 50,25 20,10 30
 //! rect 0,0 100,50
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
 //! copy 1A2,1A3 delta 10,0
 //! rotate 1A2 base 0,0 45
+//! mirror 1A2,1A3 0,0 0,100
+//! scale 1A2,1A3 base 0,0 2
 //! erase 1A2,1A3
 //! ```
 
@@ -30,7 +33,7 @@ use serde_json::{Value, json};
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 8] = ["line", "circle", "polyline", "move", "erase", "rect", "copy", "rotate"];
+pub const COMMANDS: [&str; 11] = ["line", "circle", "polyline", "ellipse", "rect", "move", "copy", "rotate", "mirror", "scale", "erase"];
 
 /// One line of text, parsed into a command and its explicit parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -45,10 +48,12 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle, polyline, move, erase, rect, copy or rotate")]
+    #[error("type a command: line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase")]
     Empty,
     /// The command is not one of [`COMMANDS`].
-    #[error("`{0}` is not available one line at a time in a shared session; use line, circle, polyline, move, erase, rect, copy or rotate")]
+    #[error(
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"
+    )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
     #[error("{command}: {detail}")]
@@ -76,10 +81,13 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "line" | "l" => line(words.collect()),
         "circle" | "c" => circle(words.collect()),
         "polyline" | "pline" | "pl" => polyline(words.collect()),
+        "ellipse" | "el" => ellipse(words.collect()),
         "rect" | "rectangle" | "rec" => rect(words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
         "copy" | "co" | "cp" => copy(drawing, space, words.collect()),
         "rotate" | "ro" => rotate(drawing, space, words.collect()),
+        "mirror" | "mi" => mirror(drawing, space, words.collect()),
+        "scale" | "sc" => scale(drawing, space, words.collect()),
         "erase" | "e" | "delete" => erase(drawing, space, words.collect()),
         _ => Err(CmdLineError::UnknownCommand(brief(&head))),
     }
@@ -107,8 +115,11 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 }
 
 /// Whether `id` creates objects, and so needs the author's layer to put them on.
+///
+/// A copy or a mirror inherits the source objects' layers, and a scale changes objects in place,
+/// so only these commands draw new geometry on a layer of their own (ADR-0019).
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline" | "rectang")
+    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang")
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -144,6 +155,49 @@ fn polyline(words: Vec<&str>) -> Result<Command, CmdLineError> {
     let points = words.iter().map(|word| point(word, "polyline")).collect::<Result<Vec<[f64; 2]>, CmdLineError>>()?;
     // The engine command is `pline`; the line spells the familiar name.
     Ok(Command { id: "pline", params: json!({ "vertices": points }) })
+}
+
+/// `ellipse cx,cy rx[,ry] [angle]` — the major radius, the minor radius and the major axis's
+/// direction in degrees, spelled as the engine's `{center, major, ratio}`.
+fn ellipse(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let (centre, sizes, angle) = match words.as_slice() {
+        [centre, sizes] => (*centre, *sizes, None),
+        [centre, sizes, angle] => (*centre, *sizes, Some(*angle)),
+        _ => return Err(bad("ellipse", "takes a centre, its radii and an optional angle: ellipse x,y rx[,ry] [angle]")),
+    };
+    let [cx, cy] = point(centre, "ellipse")?;
+    let [rx, ry] = radii(sizes)?;
+    let angle = match angle {
+        None => 0.0,
+        Some(text) => number(text).ok_or_else(|| bad("ellipse", "the angle must be a finite number of degrees"))?,
+    };
+    let radians = angle.to_radians();
+    if !radians.is_finite() {
+        return Err(bad("ellipse", "the angle must be a finite number of degrees"));
+    }
+    let (sin, cos) = radians.sin_cos();
+    // The engine stores the major axis as a vector from the centre and the minor/major ratio.
+    Ok(Command { id: "ellipse", params: json!({ "center": [cx, cy], "major": [rx * cos, rx * sin], "ratio": ry / rx }) })
+}
+
+/// `rx` or `rx,ry`: two positive radii with the major one first, or one radius for a circle.
+fn radii(word: &str) -> Result<[f64; 2], CmdLineError> {
+    let mut parts = word.split(',');
+    let Some(first) = parts.next() else {
+        return Err(bad("ellipse", "give the radii as rx[,ry], both positive"));
+    };
+    let rx = number(first).filter(|r| *r > 0.0).ok_or_else(|| bad("ellipse", format!("`{}` is not a positive radius", brief(first))))?;
+    let ry = match parts.next() {
+        None => rx,
+        Some(text) => number(text).filter(|r| *r > 0.0).ok_or_else(|| bad("ellipse", format!("`{}` is not a positive radius", brief(text))))?,
+    };
+    if parts.next().is_some() {
+        return Err(bad("ellipse", "give at most two radii: rx[,ry]"));
+    }
+    if ry > rx {
+        return Err(bad("ellipse", "the first radius is the major axis: rx must be at least ry"));
+    }
+    Ok([rx, ry])
 }
 
 fn rect(words: Vec<&str>) -> Result<Command, CmdLineError> {
@@ -260,6 +314,53 @@ fn rotate(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command,
     Ok(Command { id: "rotate", params })
 }
 
+fn mirror(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("mirror", "address the objects to mirror: mirror 1A2[,1A3] x1,y1 x2,y2"));
+    };
+    let handles = handles("mirror", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("mirror", "address the objects to mirror: mirror 1A2[,1A3] x1,y1 x2,y2"));
+    }
+    check_in_space(drawing, space, "mirror", &handles)?;
+    let [first, second] = rest else {
+        return Err(bad("mirror", "give the two points of the mirror line: mirror 1A2[,1A3] x1,y1 x2,y2"));
+    };
+    let [x1, y1] = point(first, "mirror")?;
+    let [x2, y2] = point(second, "mirror")?;
+    // A line whose points coincide has no direction; the engine refuses it too, but say so here,
+    // before an operation exists.
+    if (x1 - x2).abs() < 1e-9 && (y1 - y2).abs() < 1e-9 {
+        return Err(bad("mirror", "the two points of the mirror line coincide; give two different points"));
+    }
+    // The source objects stay: the engine's `erase` is left out, as AutoCAD's default answer.
+    Ok(Command { id: "mirror", params: json!({ "handles": hex(&handles), "p1": [x1, y1], "p2": [x2, y2] }) })
+}
+
+fn scale(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("scale", "address the objects to scale: scale 1A2[,1A3] base x,y factor"));
+    };
+    // `scale base 0,0 2` has no address: the keyword is not a handle, so say what is missing.
+    if addresses.eq_ignore_ascii_case("base") {
+        return Err(bad("scale", "address the objects to scale: scale 1A2[,1A3] base x,y factor"));
+    }
+    let handles = handles("scale", addresses)?;
+    if handles.is_empty() {
+        return Err(bad("scale", "address the objects to scale: scale 1A2[,1A3] base x,y factor"));
+    }
+    check_in_space(drawing, space, "scale", &handles)?;
+    let [keyword, base, factor] = rest else {
+        return Err(bad("scale", "give the base point and the factor: scale 1A2[,1A3] base x,y factor"));
+    };
+    if !keyword.eq_ignore_ascii_case("base") {
+        return Err(bad("scale", "give the base point and the factor: scale 1A2[,1A3] base x,y factor"));
+    }
+    let [x, y] = point(base, "scale")?;
+    let factor = number(factor).filter(|f| *f > 0.0).ok_or_else(|| bad("scale", "the factor must be a positive number"))?;
+    Ok(Command { id: "scale", params: json!({ "handles": hex(&handles), "base": [x, y], "factor": factor }) })
+}
+
 fn handles(command: &'static str, addresses: &str) -> Result<Vec<Handle>, CmdLineError> {
     addresses.split(',').map(|address| Handle::parse_hex(address).ok_or_else(|| bad(command, "address objects by handle, e.g. 1A2,1A3"))).collect()
 }
@@ -360,8 +461,18 @@ mod tests {
         let before = drawing.clone();
         let error = parse("explode 1A2", &drawing, &Space::Model).unwrap_err();
         assert!(matches!(error, CmdLineError::UnknownCommand(_)), "{error}");
-        assert!(error.to_string().contains("line, circle, polyline, move, erase, rect, copy or rotate"), "{error}");
+        assert!(error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"), "{error}");
         assert_eq!(drawing, before, "parsing must not change the drawing");
+    }
+
+    #[test]
+    fn every_command_is_named_in_the_refusals() {
+        let empty = CmdLineError::Empty.to_string();
+        let unknown = CmdLineError::UnknownCommand("explode".into()).to_string();
+        for name in COMMANDS {
+            assert!(empty.contains(name), "`{name}` is missing from `{empty}`");
+            assert!(unknown.contains(name), "`{name}` is missing from `{unknown}`");
+        }
     }
 
     #[test]
@@ -473,6 +584,95 @@ mod tests {
     }
 
     #[test]
+    fn an_ellipse_is_a_centre_radii_and_an_angle() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("ellipse 10,20 5,3", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "ellipse");
+        assert_eq!(command.params, json!({ "center": [10.0, 20.0], "major": [5.0, 0.0], "ratio": 0.6 }));
+        // One radius makes an ellipse with equal axes; the AutoCAD alias works too.
+        let round = parse("el 0,0 5", &drawing, &Space::Model).unwrap();
+        assert_eq!(round.id, "ellipse");
+        assert_eq!(round.params, json!({ "center": [0.0, 0.0], "major": [5.0, 0.0], "ratio": 1.0 }));
+        // An angle in degrees turns the major axis.
+        let turned = parse("ellipse 0,0 4,2 90", &drawing, &Space::Model).unwrap();
+        let major = turned.params["major"].as_array().expect("a major vector");
+        assert!(major[0].as_f64().expect("x").abs() < 1e-12, "{major:?}");
+        assert!((major[1].as_f64().expect("y") - 4.0).abs() < 1e-12, "{major:?}");
+        assert!((turned.params["ratio"].as_f64().expect("ratio") - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_unaddressable_ellipse_is_refused_before_an_operation_exists() {
+        let (drawing, _) = drawing_with_line();
+        let before = drawing.clone();
+        for text in [
+            "ellipse 10,20",
+            "ellipse 10,20 0",
+            "ellipse 10,20 0,2",
+            "ellipse 10,20 5,0",
+            "ellipse 10,20 5,-1",
+            "ellipse 10,20 3,5",
+            "ellipse 10,20 5,3,1",
+            "ellipse 10,20 5,3 later",
+            "ellipse 10,20 5 5,3",
+        ] {
+            let error = parse(text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("ellipse:"), "{text}: {error}");
+        }
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn a_mirror_addresses_its_objects_and_the_two_points_of_its_line() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("mirror {address} 0,0 0,10"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "mirror");
+        assert_eq!(command.params, json!({ "handles": [address.clone()], "p1": [0.0, 0.0], "p2": [0.0, 10.0] }));
+        assert_eq!(parse(&format!("mi {address} -1,-1 1,1"), &drawing, &Space::Model).unwrap().id, "mirror");
+        // No mirror line.
+        let error = parse(&format!("mirror {address}"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give the two points of the mirror line"), "{error}");
+        // A line whose points coincide.
+        let error = parse(&format!("mirror {address} 5,5 5,5"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("coincide"), "{error}");
+        // No address at all: the first word is not a handle.
+        let error = parse("mirror GHI 0,0 1,1", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address objects by handle"), "{error}");
+        // A handle that names nothing in this drawing.
+        let error = parse("mirror FF 0,0 1,1", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("mirror: there is no object FF"), "{error}");
+    }
+
+    #[test]
+    fn a_scale_names_its_base_point_and_the_factor() {
+        let (drawing, handle) = drawing_with_line();
+        let address = handle.hex();
+        let command = parse(&format!("scale {address} base 10,20 2.5"), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "scale");
+        assert_eq!(command.params, json!({ "handles": [address.clone()], "base": [10.0, 20.0], "factor": 2.5 }));
+        assert_eq!(parse(&format!("sc {address} base 0,0 0.5"), &drawing, &Space::Model).unwrap().id, "scale");
+        // No factor, or the keyword without a base point.
+        let error = parse(&format!("scale {address} base 0,0"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give the base point and the factor"), "{error}");
+        let error = parse(&format!("scale {address} 0,0 2"), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("give the base point and the factor"), "{error}");
+        // The keyword without an address.
+        let error = parse("scale base 0,0 2", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("address the objects to scale"), "{error}");
+        // A factor that is not positive.
+        for text in [format!("scale {address} base 0,0 0"), format!("scale {address} base 0,0 -2")] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().contains("the factor must be a positive number"), "{error}");
+        }
+        // A handle that names nothing in this drawing.
+        let error = parse("scale FF base 0,0 2", &drawing, &Space::Model).unwrap_err();
+        assert!(matches!(error, CmdLineError::UnknownHandle { .. }), "{error}");
+        assert!(error.to_string().contains("scale: there is no object FF"), "{error}");
+    }
+
+    #[test]
     fn an_unaddressable_move_says_what_is_wrong() {
         let (drawing, _) = drawing_with_line();
         // No object named at all.
@@ -528,12 +728,17 @@ mod tests {
         assert_eq!(op_for("circle 0,0 5", &drawing, &Space::Model, "local-1", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("polyline 0,0 1,1", &drawing, &Space::Model, "local-2", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("rect 0,0 10,5", &drawing, &Space::Model, "local-5", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        assert_eq!(op_for("ellipse 0,0 5,2", &drawing, &Space::Model, "local-8", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         // Commands that only address existing objects do not name a layer.
         assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
         // A copy inherits the source objects' layers; a rotate changes them in place.
         assert_eq!(op_for(&format!("copy {} 1,1", handle.hex()), &drawing, &Space::Model, "local-6", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("rotate {} base 0,0 45", handle.hex()), &drawing, &Space::Model, "local-7", 0).unwrap().context.clay, None);
+        // A mirror copies the named objects and they keep their own layers; a scale changes them
+        // in place. Neither draws on the author's current layer.
+        assert_eq!(op_for(&format!("mirror {} 0,0 0,5", handle.hex()), &drawing, &Space::Model, "local-9", 0).unwrap().context.clay, None);
+        assert_eq!(op_for(&format!("scale {} base 0,0 2", handle.hex()), &drawing, &Space::Model, "local-10", 0).unwrap().context.clay, None);
     }
 
     #[test]

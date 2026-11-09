@@ -80,7 +80,7 @@ fn a_refused_line_does_not_change_the_drawing() {
 
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
-    assert!(error.to_string().contains("line, circle, polyline, move, erase, rect, copy or rotate"), "{error}");
+    assert!(error.to_string().contains("line, circle, polyline, ellipse, rect, move, copy, rotate, mirror, scale or erase"), "{error}");
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
     assert_eq!(session.state().unwrap().revision, before_revision, "and does not redraw");
 }
@@ -96,6 +96,38 @@ fn a_refused_rect_copy_or_rotate_does_not_change_the_drawing() {
 
     // A rectangle with no area; handles that name nothing; a rotate without a base point.
     let refused = ["rect 0,0 0,5".to_string(), "copy FF 1,1".to_string(), format!("rotate {line} base 0,0"), "rotate FF base 0,0 45".to_string()];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+}
+
+#[test]
+fn a_refused_ellipse_mirror_or_scale_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let line = state.doc.model.iter().next().expect("the line").handle.hex();
+
+    // Radii that are not ellipses; a mirror line with no direction; an unaddressable or
+    // non-positive scale.
+    let refused = [
+        "ellipse 0,0".to_string(),
+        "ellipse 0,0 0".to_string(),
+        "ellipse 0,0 3,5".to_string(),
+        "ellipse 0,0 5,3 later".to_string(),
+        format!("mirror {line} 5,5 5,5"),
+        format!("mirror {line} 0,0"),
+        "mirror FF 0,0 1,1".to_string(),
+        format!("scale {line} base 0,0 0"),
+        format!("scale {line} base 0,0 -1"),
+        format!("scale {line} 0,0 2"),
+        "scale FF base 0,0 2".to_string(),
+    ];
     for text in &refused {
         let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
         assert!(!error.to_string().is_empty(), "{text}");
@@ -208,6 +240,68 @@ fn two_replicas_that_copy_and_rotate_converge() {
 }
 
 #[test]
+fn two_replicas_that_draw_an_ellipse_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "ellipse 10,20 5,3 30");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the ellipse");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 1, "an ellipse is one object");
+    let ellipse = alice.doc().unwrap().model.iter().next().expect("the ellipse arrived");
+    let EntityKind::Ellipse(e) = &ellipse.kind else { panic!("expected an ellipse, got {:?}", ellipse.kind) };
+    assert!((e.ratio - 0.6).abs() < 1e-12, "the minor/major ratio, got {}", e.ratio);
+    assert!((e.center.x - 10.0).abs() < 1e-12 && (e.center.y - 20.0).abs() < 1e-12, "the centre stays put, got {:?}", e.center);
+    assert!((e.major.x.hypot(e.major.y) - 5.0).abs() < 1e-12, "the major radius, got {:?}", e.major);
+}
+
+#[test]
+fn two_replicas_that_mirror_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    // Bob mirrors Alice's rectangle across the x axis by the handle the change set gave him.
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("mirror {} 0,0 1,0", rect.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the mirror");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap());
+    assert_eq!(alice.doc().unwrap().entity_count(), 2, "the source stays and the mirror is a second object");
+    assert!(alice.doc().unwrap().entity(rect).is_some(), "the source rectangle is not erased");
+    let mirrored = alice.doc().unwrap().model.iter().find(|entity| entity.handle != rect).expect("the mirrored copy arrived");
+    let EntityKind::LwPolyline(pl) = &mirrored.kind else { panic!("a mirrored rectangle is still a polyline") };
+    for vertex in &pl.vertices {
+        assert!(vertex.p.y <= 1e-9, "the mirror across the x axis puts every corner at y <= 0, got {:?}", vertex.p);
+    }
+}
+
+#[test]
+fn two_replicas_that_scale_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "rect 0,0 10,5");
+    let rect = bob.doc().unwrap().model.iter().next().expect("the rectangle arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("scale {} base 0,0 2", rect.hex()));
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the scale");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap());
+    assert_eq!(alice.doc().unwrap().entity_count(), 1, "a scale changes the object in place");
+    let EntityKind::LwPolyline(pl) = &alice.doc().unwrap().entity(rect).expect("the rectangle is still there").kind else {
+        panic!("a scaled rectangle is still a polyline")
+    };
+    for vertex in &pl.vertices {
+        assert!(vertex.p.x.abs() <= 20.0 + 1e-9 && vertex.p.y.abs() <= 10.0 + 1e-9, "twice as large, got {:?}", vertex.p);
+    }
+    assert!(pl.vertices.iter().any(|vertex| (vertex.p.x - 20.0).abs() < 1e-9), "the far corner moved to x = 20");
+}
+
+#[test]
 fn undo_of_each_new_command_returns_the_state_before_it() {
     let mut session = Session::new();
     session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
@@ -233,6 +327,34 @@ fn undo_of_each_new_command_returns_the_state_before_it() {
     assert_ne!(session.doc().unwrap(), &before, "the rotation moved the line");
     assert_eq!(session.undo().unwrap().as_deref(), Some("Rotate"));
     assert_eq!(session.doc().unwrap(), &before, "undo of the rotation puts the line back");
+}
+
+#[test]
+fn undo_of_ellipse_mirror_and_scale_returns_the_state_before_it() {
+    let mut session = Session::new();
+    session.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    let line = session.doc().unwrap().model.iter().next().expect("the line").handle;
+
+    // The ellipse is a step of its own.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "ellipse 10,10 4,2");
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Ellipse"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the ellipse returns the drawing before it");
+
+    // So is the mirror: the copy goes and the source stays.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("mirror {} 0,0 0,1", line.hex()));
+    assert_eq!(session.doc().unwrap().entity_count(), 2);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Mirror"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the mirror removes the copy");
+
+    // And the scale puts the line's endpoints back.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("scale {} base 0,0 3", line.hex()));
+    assert_ne!(session.doc().unwrap(), &before, "the scale moved the line's far end");
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Scale"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the scale restores the line");
 }
 
 /// Run a one-line command the way [`submit`] does, but against one session.
@@ -320,6 +442,42 @@ fn a_remote_change_keeps_the_receivers_cursor_and_selection() {
     assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
 }
 
+#[test]
+fn a_remote_ellipse_mirror_and_scale_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("line", &json!({"points": [[0.0, 0.0], [10.0, 0.0]]})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 20.0], "radius": 2.0})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let line = receiver.doc().unwrap().model.iter().next().expect("the line arrived").handle;
+    let circle = receiver.doc().unwrap().model.iter().nth(1).expect("the circle arrived").handle;
+    receiver.set_selection(vec![line, circle]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant draws an ellipse, mirrors the line and scales the circle.
+    let before = server.doc().unwrap().clone();
+    server.execute("ellipse", &json!({"center": [30.0, 30.0], "major": [4.0, 0.0], "ratio": 0.5})).unwrap();
+    server.execute("mirror", &json!({"handles": [line.hex()], "p1": [0.0, 0.0], "p2": [0.0, 10.0]})).unwrap();
+    server.execute("scale", &json!({"handles": [circle.hex()], "base": [0.0, 0.0], "factor": 2.0})).unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })),
+        "the ellipse and the mirrored copy arrive as creations"
+    );
+    assert!(
+        remote.iter().any(|change| matches!(change, cadcraft_collab::Change::EntityReplace { handle, .. } if *handle == circle)),
+        "the scaled circle arrives as a replacement"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![line, circle], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
 /// Add `names` to the authoritative drawing and copy them to every replica the way a table
 /// operation reaches them: as table changes of one change set.
 fn add_layers(server: &mut Session, replicas: &mut [&mut Session], names: &[&str]) {
@@ -347,6 +505,10 @@ fn two_replicas_on_different_layers_draw_into_the_authors_layer() {
 
     submit(&mut server, &mut [&mut alice, &mut bob], 0, "line 0,0 10,0");
     submit(&mut server, &mut [&mut alice, &mut bob], 1, "polyline 20,0 30,0 30,10");
+    // The ellipse is drawn by Alice too; the mirrored copy belongs to the layer of its source.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "ellipse 40,0 3,2");
+    let polyline = bob.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::LwPolyline(_))).expect("the polyline arrived").handle;
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("mirror {} 0,0 1,0", polyline.hex()));
 
     assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
     assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
@@ -357,7 +519,7 @@ fn two_replicas_on_different_layers_draw_into_the_authors_layer() {
     );
 
     let layers: Vec<String> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.clone()).collect();
-    assert_eq!(layers, vec!["WALLS", "DETAILS"], "each object is on its author's layer");
+    assert_eq!(layers, vec!["WALLS", "DETAILS", "WALLS", "DETAILS"], "each object is on its author's layer; a mirror keeps its source's");
     // Nobody's current layer followed somebody else's drawing.
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
