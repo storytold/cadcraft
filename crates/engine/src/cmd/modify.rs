@@ -36,7 +36,7 @@ pub(crate) use oops::{Erased, erase_kept};
 use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::{holds_ole_frame, ole_refusal, refuse_ole_frames, transform_entities};
-use transform::{run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
+use transform::{mirror_entities, mirror_kind, run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
 pub(crate) use trim::{Edges, extend, trim};
 
 pub fn specs() -> Vec<CommandSpec> {

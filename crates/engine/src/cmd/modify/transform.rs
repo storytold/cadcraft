@@ -1,3 +1,4 @@
+use cadcraft_doc::EntityKind;
 use cadcraft_geom::Vec3;
 
 use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, erase_kept, f64_req, json, point_param, point_req, targets};
@@ -7,6 +8,28 @@ use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, er
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
     refuse_ole_frames(s, hs, m, copy)?;
     edit_entities(s, hs, copy, |e| e.kind.transform(m))
+}
+
+/// MIRROR's default hatch policy retains the fill direction while reflecting its boundary.
+/// Keep this in the command layer: a reflection of an entire inserted block still transforms
+/// all of its contents, rather than applying the policy for individually selected hatches.
+pub(super) fn mirror_kind(k: &mut EntityKind, m: &Mat3) {
+    let angles = match k {
+        EntityKind::Hatch(h) => Some((h.angle, h.gradient.as_ref().map(|g| g.angle))),
+        _ => None,
+    };
+    k.transform(m);
+    if let (EntityKind::Hatch(h), Some((angle, gradient_angle))) = (k, angles) {
+        h.angle = angle;
+        if let (Some(g), Some(angle)) = (&mut h.gradient, gradient_angle) {
+            g.angle = angle;
+        }
+    }
+}
+
+pub(super) fn mirror_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
+    refuse_ole_frames(s, hs, m, copy)?;
+    edit_entities(s, hs, copy, |e| mirror_kind(&mut e.kind, m))
 }
 
 /// Scale `hs` by `f` about `base` in 3D, as AutoCAD 2024's SCALE does: about the base point's XY,
@@ -159,6 +182,6 @@ pub(super) fn run_mirror(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("mirror", "mirror line points coincide"));
     }
     let erase_src = bool_or(p, "erase", false);
-    let r = transform_entities(s, &hs, &Mat3::mirror(a, b), !erase_src)?;
+    let r = mirror_entities(s, &hs, &Mat3::mirror(a, b), !erase_src)?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
