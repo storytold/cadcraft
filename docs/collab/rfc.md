@@ -332,9 +332,20 @@ role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при 
   для каскадов), viewer получает отказ; командная строка в совместной сессии
   принимает только однострочные команды с явными адресами
   (`cadcraft_collab::cmdline`, ADR-0018): `line`, `circle`, `polyline`,
-  `ellipse`, `rect`, `move`, `copy`, `rotate`, `mirror`, `scale`, `erase`.
-  Строка, которую парсер не разобрал целиком, отклоняется до создания
-  операции, поэтому документ не меняется.
+  `ellipse`, `rect`, `move`, `copy`, `rotate`, `mirror`, `scale`, `offset`,
+  `trim`, `array`, `erase`. Синтаксис адресных форм:
+  `line x,y x,y [x,y…]`, `circle x,y r`, `polyline x,y x,y [x,y…]`,
+  `ellipse cx,cy rx[,ry] [angle]`, `rect x,y x,y`,
+  `move H[,H…] delta dx,dy` (или `from x,y to x,y`), `copy H[,H…] dx,dy`,
+  `rotate H[,H…] base x,y angle`, `mirror H[,H…] x1,y1 x2,y2`,
+  `scale H[,H…] base x,y factor`,
+  `offset H distance d side x,y` (копия на слое автора, ADR-0019),
+  `trim H edge H[,H…] at x,y` (объект меняется на месте; если кромка не
+  пересекает объект, строка отклоняется до операции),
+  `array H[,H…] rows r cols c step dx,dy` (прямоугольный массив отдельных
+  копий на слое автора, ADR-0019), `erase H[,H…]`. Строка, которую парсер не
+  разобрал целиком, отклоняется до создания операции, поэтому документ не
+  меняется.
 - **Presence на экране:** курсоры и имена других участников рисуются в текущем
   пространстве (цвет по имени, не в журнале); undo/redo перенаправлены на
   серверные сообщения `undo`/`redo`.
