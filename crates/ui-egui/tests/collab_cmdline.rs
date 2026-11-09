@@ -81,9 +81,9 @@ fn a_refused_line_does_not_change_the_drawing() {
     let error = cmdline::op_for("explode 1FF", &state.doc, &state.space, "local-0", 0).unwrap_err();
 
     assert!(
-        error
-            .to_string()
-            .contains("line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
+        error.to_string().contains(
+            "line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        ),
         "{error}"
     );
     assert_eq!(session.doc().unwrap(), &*before, "a refused line never becomes an operation");
@@ -622,6 +622,133 @@ fn undo_and_redo_of_text_and_hatch_return_the_state_before_and_after() {
     assert_eq!(session.doc().unwrap(), &after, "redo writes it again");
 }
 
+#[test]
+fn two_replicas_that_dimension_and_spline_converge() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 0,0 1");
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 20,0 1");
+    // Bob dimensions the distance between the two circles' centres, by the handles he got.
+    let handles: Vec<String> = bob.doc().unwrap().model.iter().map(|entity| entity.handle.hex()).collect();
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("dimlinear {},{} offset 5", handles[0], handles[1]));
+    // Alice draws a spline through three fit points, and closes it.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "spline 0,10 10,15 20,10 closed");
+
+    assert_eq!(alice.doc().unwrap(), bob.doc().unwrap(), "the participants agree on the dimension and the spline");
+    assert_eq!(alice.doc().unwrap(), server.doc().unwrap(), "and agree with the authoritative drawing");
+    assert_eq!(alice.doc().unwrap().entity_count(), 4, "two circles, one dimension and one spline");
+    let dimension = alice.doc().unwrap().model.iter().find(|entity| matches!(entity.kind, EntityKind::Dimension(_))).expect("the dimension arrived");
+    let EntityKind::Dimension(d) = &dimension.kind else { panic!("expected a dimension") };
+    assert!((d.measurement - 20.0).abs() < 1e-9, "the measured distance, got {}", d.measurement);
+    assert!((d.p13.x - 0.0).abs() < 1e-9 && (d.p14.x - 20.0).abs() < 1e-9, "the two measured points, got {:?} and {:?}", d.p13, d.p14);
+    let spline = alice.doc().unwrap().model.iter().find(|entity| matches!(entity.kind, EntityKind::Spline(_))).expect("the spline arrived");
+    let EntityKind::Spline(s) = &spline.kind else { panic!("expected a spline") };
+    assert_eq!(s.fit.len(), 3, "three fit points: {:?}", s.fit);
+    assert!(s.closed, "the `closed` keyword closed the curve");
+}
+
+#[test]
+fn a_refused_dimlinear_or_spline_does_not_change_the_drawing() {
+    let mut session = Session::new();
+    session.execute("circle", &json!({"center": [0.0, 0.0], "radius": 1.0})).unwrap();
+    session.execute("circle", &json!({"center": [20.0, 0.0], "radius": 1.0})).unwrap();
+    // A real step after the circles, so a refused line that pushed an undo step would show.
+    session.execute("ellipse", &json!({"center": [40.0, 40.0], "major": [2.0, 0.0], "ratio": 0.5})).unwrap();
+    let state = session.state().unwrap();
+    let before = state.doc.clone();
+    let before_revision = state.revision;
+    let handles: Vec<String> = state.doc.model.iter().take(2).map(|entity| entity.handle.hex()).collect();
+    let points = |n: usize| (0..n).map(|i| format!("{i},{}", i % 7)).collect::<Vec<_>>().join(" ");
+
+    // One handle, the same handle twice, unknown handles, a non-numeric or out-of-range
+    // placement; a spline of two points, of sixty-five, of the same point and one outside the
+    // drawing's coordinate limit: none of them becomes an operation.
+    let refused = [
+        format!("dimlinear {} offset 5", handles[0]),
+        format!("dimlinear {},{} offset 5", handles[0], handles[0]),
+        "dimlinear FF,1FE offset 5".to_string(),
+        format!("dimlinear {},{} offset later", handles[0], handles[1]),
+        format!("dimlinear {},{} offset 1e13", handles[0], handles[1]),
+        format!("dimlinear {},{}", handles[0], handles[1]),
+        "spline 0,0 1,1".to_string(),
+        format!("spline {}", points(65)),
+        "spline 0,0 1,1 later".to_string(),
+        "spline 0,0 1,1 1e13,0".to_string(),
+        "spline 0,0 0,0 0,0".to_string(),
+    ];
+    for text in &refused {
+        let error = cmdline::op_for(text, &state.doc, &state.space, "local-0", 0).unwrap_err();
+        assert!(!error.to_string().is_empty(), "{text}");
+        assert_eq!(session.doc().unwrap(), &*before, "`{text}` never becomes an operation");
+        assert_eq!(session.state().unwrap().revision, before_revision, "`{text}` does not redraw");
+    }
+    // A refused line leaves no undo step either: the last real step is still the ellipse.
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Ellipse"), "no refused line pushed an undo step");
+}
+
+#[test]
+fn undo_and_redo_of_dimlinear_and_spline_return_the_state_before_and_after() {
+    let mut session = Session::new();
+    session.execute("circle", &json!({"center": [0.0, 0.0], "radius": 1.0})).unwrap();
+    session.execute("circle", &json!({"center": [20.0, 0.0], "radius": 1.0})).unwrap();
+    let handles: Vec<String> = session.doc().unwrap().model.iter().map(|entity| entity.handle.hex()).collect();
+
+    // The dimension is one step; undo takes it away, redo puts it back.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, &format!("dimlinear {},{} offset 5", handles[0], handles[1]));
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 3);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Linear"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the dimension removes it");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Linear"));
+    assert_eq!(session.doc().unwrap(), &after, "redo puts the dimension back");
+
+    // So is the spline, closed or not.
+    let before = session.doc().unwrap().clone();
+    run(&mut session, "spline 0,10 10,15 20,10 closed");
+    let after = session.doc().unwrap().clone();
+    assert_eq!(session.doc().unwrap().entity_count(), 4);
+    assert_ne!(&after, &before);
+    assert_eq!(session.undo().unwrap().as_deref(), Some("Spline"));
+    assert_eq!(session.doc().unwrap(), &before, "undo of the spline removes it");
+    assert_eq!(session.redo().unwrap().as_deref(), Some("Spline"));
+    assert_eq!(session.doc().unwrap(), &after, "redo draws it again");
+}
+
+#[test]
+fn a_remote_dimension_and_spline_keep_the_receivers_cursor_and_selection() {
+    let mut server = Session::new();
+    let mut receiver = Session::new();
+    let empty = receiver.doc().unwrap().clone();
+    server.execute("circle", &json!({"center": [0.0, 0.0], "radius": 1.0})).unwrap();
+    server.execute("circle", &json!({"center": [20.0, 0.0], "radius": 1.0})).unwrap();
+    let created = diff(&empty, server.doc().unwrap(), &Space::Model).unwrap();
+    receiver.apply_remote(&created).unwrap();
+    let first = receiver.doc().unwrap().model.iter().next().expect("the first circle arrived").handle;
+    let second = receiver.doc().unwrap().model.iter().nth(1).expect("the second circle arrived").handle;
+    receiver.set_selection(vec![first, second]);
+    receiver.cursor = cadcraft_geom::Vec2::new(3.0, 4.0);
+
+    // Another participant adds a dimension between the circles and a closed spline.
+    let before = server.doc().unwrap().clone();
+    server.execute("dimlinear", &json!({"p1": [0.0, 0.0], "p2": [20.0, 0.0], "at": [10.0, 5.0]})).unwrap();
+    server.execute("spline", &json!({"fit": [[0.0, 10.0], [10.0, 15.0], [20.0, 10.0]], "closed": true})).unwrap();
+    let remote = diff(&before, server.doc().unwrap(), &Space::Model).unwrap();
+    assert!(
+        remote.iter().filter(|change| matches!(change, cadcraft_collab::Change::EntityCreate { .. })).count() >= 2,
+        "the dimension and the spline arrive as creations"
+    );
+
+    receiver.apply_remote(&remote).unwrap();
+
+    assert_eq!(receiver.selection(), vec![first, second], "an entity that survives the change stays selected");
+    assert_eq!(receiver.cursor, cadcraft_geom::Vec2::new(3.0, 4.0), "the cursor does not follow a remote change");
+    assert_eq!(receiver.doc().unwrap(), server.doc().unwrap());
+}
+
 /// Run a one-line command the way [`submit`] does, but against one session.
 fn run(session: &mut Session, text: &str) {
     let op = {
@@ -874,6 +1001,32 @@ fn text_and_hatch_put_their_objects_on_the_authors_layer() {
     let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
     assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 1, "the boundary stays on Alice's layer: {layers:?}");
     assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 2, "Bob's hatch and text are on his: {layers:?}");
+    assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
+    assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
+    assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");
+}
+
+#[test]
+fn dimlinear_and_spline_put_their_objects_on_the_authors_layer() {
+    let mut server = Session::new();
+    let mut alice = Session::new();
+    let mut bob = Session::new();
+    add_layers(&mut server, &mut [&mut alice, &mut bob], &["WALLS", "DETAILS"]);
+    alice.execute("layer.current", &json!({ "name": "WALLS" })).unwrap();
+    bob.execute("layer.current", &json!({ "name": "DETAILS" })).unwrap();
+
+    // Alice draws the objects to measure; Bob dimensions them and draws his own spline.
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 0,0 1");
+    submit(&mut server, &mut [&mut alice, &mut bob], 0, "circle 20,0 1");
+    let handles: Vec<String> = bob.doc().unwrap().model.iter().map(|entity| entity.handle.hex()).collect();
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, &format!("dimlinear {},{} offset 5", handles[0], handles[1]));
+    submit(&mut server, &mut [&mut alice, &mut bob], 1, "spline 0,10 10,15 20,10");
+
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), bob.doc().unwrap().space(&Space::Model), "the participants agree on the objects");
+    assert_eq!(alice.doc().unwrap().space(&Space::Model), server.doc().unwrap().space(&Space::Model), "and agree with the authoritative drawing");
+    let layers: Vec<&str> = alice.doc().unwrap().model.iter().map(|entity| entity.common.layer.as_str()).collect();
+    assert_eq!(layers.iter().filter(|layer| **layer == "WALLS").count(), 2, "the measured circles stay on Alice's layer: {layers:?}");
+    assert_eq!(layers.iter().filter(|layer| **layer == "DETAILS").count(), 2, "Bob's dimension and spline are on his: {layers:?}");
     assert_eq!(alice.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "nobody's current layer follows somebody else's drawing");
     assert_eq!(bob.doc().unwrap().header.str("CLAYER", "?"), "DETAILS");
     assert_eq!(server.doc().unwrap().header.str("CLAYER", "?"), "0", "the server keeps its own current layer");

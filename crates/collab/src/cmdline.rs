@@ -19,6 +19,10 @@
 //! ellipse 50,25 20,10 30
 //! rect 0,0 100,50
 //! text 10,20 2.5 0 "Shared note"
+//! dimlinear 1A2,1A3 offset 5
+//! dimlinear 1A2,1A3 point 0,20
+//! spline 0,0 10,5 20,0 30,5
+//! spline 0,0 10,5 20,0 closed
 //! move 1A2,1A3 delta 10,0
 //! move 1A2 from 0,0 to 10,0
 //! copy 1A2,1A3 delta 10,0
@@ -33,14 +37,31 @@
 //! ```
 
 use cadcraft_doc::geom::{Arc, Line, Segment, Vec2};
-use cadcraft_doc::{Drawing, Handle, Prim, Space, entity_bounds};
+use cadcraft_doc::{Drawing, Entity, Handle, Prim, Space, entity_bounds};
 use serde_json::{Value, json};
 
 use crate::{Op, OpContext, OpKind};
 
 /// The command names a one-line shared-session command accepts (aliases included below).
-pub const COMMANDS: [&str; 16] = [
-    "line", "circle", "polyline", "ellipse", "rect", "text", "move", "copy", "rotate", "mirror", "scale", "offset", "trim", "array", "hatch", "erase",
+pub const COMMANDS: [&str; 18] = [
+    "line",
+    "circle",
+    "polyline",
+    "ellipse",
+    "rect",
+    "text",
+    "dimlinear",
+    "spline",
+    "move",
+    "copy",
+    "rotate",
+    "mirror",
+    "scale",
+    "offset",
+    "trim",
+    "array",
+    "hatch",
+    "erase",
 ];
 
 /// One line of text, parsed into a command and its explicit parameters.
@@ -56,11 +77,13 @@ pub struct Command {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CmdLineError {
     /// Nothing was typed.
-    #[error("type a command: line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase")]
+    #[error(
+        "type a command: line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+    )]
     Empty,
     /// The command is not one of [`COMMANDS`].
     #[error(
-        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
+        "`{0}` is not available one line at a time in a shared session; use line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"
     )]
     UnknownCommand(String),
     /// The command is known but its arguments do not parse.
@@ -92,6 +115,8 @@ pub fn parse(text: &str, drawing: &Drawing, space: &Space) -> Result<Command, Cm
         "ellipse" | "el" => ellipse(words.collect()),
         "rect" | "rectangle" | "rec" => rect(words.collect()),
         "text" | "dt" | "dtext" => text_command(words.collect()),
+        "dimlinear" | "dli" | "dimlin" => dimlinear(drawing, space, words.collect()),
+        "spline" | "spl" => spline(words.collect()),
         "move" | "m" => move_(drawing, space, words.collect()),
         "copy" | "co" | "cp" => copy(drawing, space, words.collect()),
         "rotate" | "ro" => rotate(drawing, space, words.collect()),
@@ -132,7 +157,7 @@ pub fn op_for(text: &str, drawing: &Drawing, space: &Space, op_id: &str, base_ve
 /// A copy or a mirror inherits the source objects' layers, and a scale changes objects in place,
 /// so only these commands draw new geometry on a layer of their own (ADR-0019).
 fn creates_objects(id: &str) -> bool {
-    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "text" | "offset" | "array" | "hatch")
+    matches!(id, "line" | "circle" | "pline" | "ellipse" | "rectang" | "text" | "dimlinear" | "spline" | "offset" | "array" | "hatch")
 }
 
 /// The layer an object drawn now belongs to: the drawing's `CLAYER`, in the drawing's spelling.
@@ -252,6 +277,152 @@ fn text_command(words: Vec<&str>) -> Result<Command, CmdLineError> {
 /// The longest text one line may carry: a shared session's operation has a size limit, and a line
 /// of text is never a drawing's bulk.
 const MAX_TEXT_CHARS: usize = 10_000;
+
+/// The drawing's coordinate limit, as the DXF reader applies it: a point at or beyond it cannot be
+/// written and read back, so a line that names one is refused before an operation exists.
+const MAX_COORDINATE: f64 = 1e12;
+
+/// `dimlinear H1,H2 offset d` or `dimlinear H1,H2 point x,y` — a linear dimension between two
+/// objects, with the dimension line's placement spelled out.
+///
+/// A shared session has no pick: the measured points are the two objects' characteristic points
+/// (the same points a dimension attaches to, `crates/engine/src/assoc.rs::candidates`), and the
+/// nearest pair of them is measured. `offset d` places the dimension line parallel to the measured
+/// one, signed towards the left of `H1 → H2`; `point x,y` places it at that point. Two identical
+/// handles, a handle that names nothing here, an object with no measurable point and a zero length
+/// are refused before an operation exists.
+fn dimlinear(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let Some((addresses, rest)) = words.split_first() else {
+        return Err(bad("dimlinear", "address the two objects to dimension: dimlinear 1A2,1A3 offset d | point x,y"));
+    };
+    // `dimlinear offset 5` has no address: the keyword is not a handle.
+    if addresses.eq_ignore_ascii_case("offset") || addresses.eq_ignore_ascii_case("point") {
+        return Err(bad("dimlinear", "address the two objects to dimension: dimlinear 1A2,1A3 offset d | point x,y"));
+    }
+    let handles = handles("dimlinear", addresses)?;
+    let [first, second] = handles.as_slice() else {
+        return Err(bad("dimlinear", "takes two objects: dimlinear 1A2,1A3 offset d | point x,y"));
+    };
+    if first == second {
+        return Err(bad("dimlinear", "the two handles name the same object; give two different objects"));
+    }
+    check_in_space(drawing, space, "dimlinear", &handles)?;
+    let (p1, p2) = measured(drawing, space, *first, *second)?;
+    if zero_length(p1, p2) {
+        return Err(bad("dimlinear", "the two points coincide; the dimension has no length"));
+    }
+    let at = match rest {
+        [keyword, offset] if keyword.eq_ignore_ascii_case("offset") => {
+            let offset = number(offset)
+                .filter(|d| d.abs() < MAX_COORDINATE)
+                .ok_or_else(|| bad("dimlinear", "the offset must be a finite number within the drawing's coordinate limit"))?;
+            // The dimension line runs parallel to the measured one, `offset` to its left.
+            let normal = (p2 - p1).perp().normalized();
+            p1.mid(p2) + normal * offset
+        }
+        [keyword, location] if keyword.eq_ignore_ascii_case("point") => drawing_point(location, "dimlinear")?,
+        _ => {
+            return Err(bad("dimlinear", "place the dimension line: dimlinear 1A2,1A3 offset d | point x,y"));
+        }
+    };
+    Ok(Command { id: "dimlinear", params: json!({ "p1": [p1.x, p1.y], "p2": [p2.x, p2.y], "at": [at.x, at.y] }) })
+}
+
+/// The nearest pair of the two objects' characteristic points, the points a dimension attaches to.
+fn measured(drawing: &Drawing, space: &Space, first: Handle, second: Handle) -> Result<(Vec2, Vec2), CmdLineError> {
+    let store = drawing.space(space).ok_or_else(|| bad("dimlinear", "the active layout is not in this drawing"))?;
+    let a = store.get(first).map(|entity| definition_points(entity)).unwrap_or_default();
+    let b = store.get(second).map(|entity| definition_points(entity)).unwrap_or_default();
+    let empty = || bad("dimlinear", "both objects need a point to measure from; dimension a line, arc, circle, polyline or point");
+    let mut best: Option<(f64, Vec2, Vec2)> = None;
+    for p in &a {
+        for q in &b {
+            let distance = p.dist(*q);
+            if best.as_ref().is_none_or(|found| distance < found.0) {
+                best = Some((distance, *p, *q));
+            }
+        }
+    }
+    let (_, p1, p2) = best.ok_or_else(empty)?;
+    if !p1.is_finite() || !p2.is_finite() {
+        return Err(empty());
+    }
+    Ok((p1, p2))
+}
+
+/// The points an object can be dimensioned from, as `assoc::candidates` names them: endpoints and
+/// the midpoint of a line, an arc's ends, centre and midpoint, a circle's centre, a polyline's
+/// vertices and a point. Anything else has no definition point to attach a dimension to.
+fn definition_points(entity: &Entity) -> Vec<Vec2> {
+    use cadcraft_doc::EntityKind;
+    match &entity.kind {
+        EntityKind::Point(p) => vec![p.p.xy()],
+        EntityKind::Line(l) => vec![l.a.xy(), l.b.xy(), l.a.xy().mid(l.b.xy())],
+        EntityKind::Arc(a) => {
+            let arc = cadcraft_doc::geom::Arc::new(a.center.xy(), a.radius, a.start, a.end);
+            vec![arc.start_point(), arc.end_point(), a.center.xy(), arc.mid_point()]
+        }
+        EntityKind::Circle(c) => vec![c.center.xy()],
+        EntityKind::LwPolyline(p) => p.vertices.iter().take(MAX_MEASURE_POINTS).map(|vertex| vertex.p).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The most vertices of one polyline the measured pair searches: a hostile drawing cannot make the
+/// search quadratic without bound.
+const MAX_MEASURE_POINTS: usize = 1000;
+
+/// Whether two points are close enough to call the dimension's length zero.
+fn zero_length(a: Vec2, b: Vec2) -> bool {
+    let scale = 1.0 + a.x.abs().max(a.y.abs()).max(b.x.abs()).max(b.y.abs());
+    a.dist(b) <= 1e-9 * scale
+}
+
+/// `spline x,y x,y x,y [closed]` — a curve through 3 to 64 fit points.
+///
+/// The optional `closed` keyword closes the curve. Fewer than three points, more than
+/// [`MAX_SPLINE_POINTS`], a coordinate that is not a finite number or one at or beyond the
+/// drawing's coordinate limit are refused before an operation exists, as is a set with fewer than
+/// two different points (the engine fits a curve through at least two).
+fn spline(words: Vec<&str>) -> Result<Command, CmdLineError> {
+    let mut words = words;
+    let closed = words.last().is_some_and(|word| word.eq_ignore_ascii_case("closed"));
+    if closed {
+        words.pop();
+    }
+    if words.len() < 3 {
+        return Err(bad("spline", "needs at least three points: spline x,y x,y x,y [closed]"));
+    }
+    if words.len() > MAX_SPLINE_POINTS {
+        return Err(bad("spline", format!("takes at most {MAX_SPLINE_POINTS} points; got {}", words.len())));
+    }
+    let points = words.iter().map(|word| drawing_point(word, "spline")).collect::<Result<Vec<Vec2>, CmdLineError>>()?;
+    let mut distinct: Vec<Vec2> = Vec::new();
+    for point in &points {
+        if !distinct.iter().any(|seen| zero_length(*seen, *point)) {
+            distinct.push(*point);
+        }
+    }
+    if distinct.len() < 2 {
+        return Err(bad("spline", "the points are all the same; give at least two different points"));
+    }
+    let fit = points.iter().map(|point| [point.x, point.y]).collect::<Vec<_>>();
+    let params = if closed { json!({ "fit": fit, "closed": true }) } else { json!({ "fit": fit }) };
+    Ok(Command { id: "spline", params })
+}
+
+/// The most fit points one `spline` line may carry: enough for a drafting curve, small enough to
+/// keep an operation small.
+const MAX_SPLINE_POINTS: usize = 64;
+
+/// `x,y` within the drawing's coordinate limit.
+fn drawing_point(word: &str, command: &'static str) -> Result<Vec2, CmdLineError> {
+    let [x, y] = point(word, command)?;
+    if x.abs() >= MAX_COORDINATE || y.abs() >= MAX_COORDINATE {
+        return Err(bad(command, format!("`{}` is outside the drawing's coordinate limit", brief(word))));
+    }
+    Ok(Vec2::new(x, y))
+}
 
 fn erase(drawing: &Drawing, space: &Space, words: Vec<&str>) -> Result<Command, CmdLineError> {
     let Some((addresses, rest)) = words.split_first() else {
@@ -841,7 +1012,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("line, circle, polyline, ellipse, rect, text, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
+                .contains("line, circle, polyline, ellipse, rect, text, dimlinear, spline, move, copy, rotate, mirror, scale, offset, trim, array, hatch or erase"),
             "{error}"
         );
         assert_eq!(drawing, before, "parsing must not change the drawing");
@@ -1242,6 +1413,97 @@ mod tests {
         assert_eq!(drawing, before, "a refused line never changes the drawing");
     }
 
+    #[test]
+    fn a_dimlinear_measures_between_two_objects() {
+        let mut drawing = Drawing::new_metric();
+        let point = |drawing: &mut Drawing, x: f64, y: f64| {
+            drawing.add(&Space::Model, Common::default(), EntityKind::Point(Point { p: Vec3::new(x, y, 0.0), angle: 0.0 })).unwrap()
+        };
+        let a = point(&mut drawing, 0.0, 0.0);
+        let b = point(&mut drawing, 10.0, 0.0);
+
+        // `offset` puts the dimension line parallel to the measured one, to its left.
+        let command = parse(&format!("dimlinear {},{} offset 5", a.hex(), b.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "dimlinear");
+        assert_eq!(command.params, json!({ "p1": [0.0, 0.0], "p2": [10.0, 0.0], "at": [5.0, 5.0] }));
+        assert_eq!(parse(&format!("dimlin {},{} offset -2", a.hex(), b.hex()), &drawing, &Space::Model).unwrap().params["at"], json!([5.0, -2.0]));
+
+        // `point` places the dimension line directly; the AutoCAD alias works too.
+        let command = parse(&format!("dli {},{} point 0,20", a.hex(), b.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params, json!({ "p1": [0.0, 0.0], "p2": [10.0, 0.0], "at": [0.0, 20.0] }));
+
+        // A line is measured from its nearer characteristic point.
+        let line = add_line(&mut drawing, [3.0, 10.0], [13.0, 10.0]);
+        let command = parse(&format!("dimlinear {},{} offset 1", a.hex(), line.hex()), &drawing, &Space::Model).unwrap();
+        assert_eq!(command.params["p2"], json!([3.0, 10.0]), "the line's end nearest the point");
+    }
+
+    #[test]
+    fn an_unaddressable_dimlinear_is_refused_before_an_operation_exists() {
+        let (mut drawing, point) = drawing_with_line();
+        // A second point at the same place makes a dimension with no length.
+        let coincident = drawing.add(&Space::Model, Common::default(), EntityKind::Point(Point { p: Vec3::new(1.0, 2.0, 0.0), angle: 0.0 })).unwrap();
+        let far = add_line(&mut drawing, [50.0, 50.0], [60.0, 50.0]);
+        let before = drawing.clone();
+        for text in [
+            format!("dimlinear {} offset 5", point.hex()),
+            format!("dimlinear {},{} offset 5", point.hex(), point.hex()),
+            "dimlinear 1FF,1FE offset 5".to_string(),
+            format!("dimlinear {},{} offset 5", point.hex(), coincident.hex()),
+            format!("dimlinear {},{} offset later", point.hex(), far.hex()),
+            format!("dimlinear {},{} offset 1e13", point.hex(), far.hex()),
+            format!("dimlinear {},{}", point.hex(), far.hex()),
+            "dimlinear offset 5".to_string(),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("dimlinear:") || matches!(error, CmdLineError::UnknownHandle { .. }), "{text}: {error}");
+        }
+        let error = parse(&format!("dimlinear {},{} offset 5", point.hex(), coincident.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("the two points coincide"), "{error}");
+        let error = parse(&format!("dimlinear {},{} offset later", point.hex(), far.hex()), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("the offset must be a finite number"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
+    #[test]
+    fn a_spline_is_three_to_sixty_four_points() {
+        let (drawing, _) = drawing_with_line();
+        let command = parse("spline 0,0 10,5 20,0", &drawing, &Space::Model).unwrap();
+        assert_eq!(command.id, "spline");
+        assert_eq!(command.params, json!({ "fit": [[0.0, 0.0], [10.0, 5.0], [20.0, 0.0]] }));
+        // The optional trailing keyword closes the curve; the AutoCAD alias works too.
+        let closed = parse("spl 0,0 10,5 20,0 closed", &drawing, &Space::Model).unwrap();
+        assert_eq!(closed.id, "spline");
+        assert_eq!(closed.params["closed"], true);
+        // Sixty-four points is the most one line may carry.
+        let points = |n: usize| (0..n).map(|i| format!("{i},{}", i % 7)).collect::<Vec<_>>().join(" ");
+        assert_eq!(parse(&format!("spline {}", points(64)), &drawing, &Space::Model).unwrap().id, "spline");
+        let error = parse(&format!("spline {}", points(65)), &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("at most 64 points"), "{error}");
+    }
+
+    #[test]
+    fn an_unaddressable_spline_is_refused_before_an_operation_exists() {
+        let (drawing, _) = drawing_with_line();
+        let before = drawing.clone();
+        let points = |n: usize| (0..n).map(|i| format!("{i},{}", i % 7)).collect::<Vec<_>>().join(" ");
+        for text in [
+            "spline 0,0 1,1".to_string(),
+            format!("spline {}", points(65)),
+            "spline 0,0 1,1 later".to_string(),
+            "spline 0,0 1,1 1e13,0".to_string(),
+            "spline 0,0 0,0 0,0".to_string(),
+        ] {
+            let error = parse(&text, &drawing, &Space::Model).unwrap_err();
+            assert!(error.to_string().starts_with("spline:"), "{text}: {error}");
+        }
+        let error = parse("spline 0,0 1,1", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("at least three points"), "{error}");
+        let error = parse("spline 0,0 1,1 1e13,0", &drawing, &Space::Model).unwrap_err();
+        assert!(error.to_string().contains("outside the drawing's coordinate limit"), "{error}");
+        assert_eq!(drawing, before, "a refused line never changes the drawing");
+    }
+
     fn add_rect(drawing: &mut Drawing, a: [f64; 2], b: [f64; 2]) -> Handle {
         let vertices = vec![
             cadcraft_doc::geom::PolyVertex::new(Vec2::new(a[0], a[1])),
@@ -1321,6 +1583,17 @@ mod tests {
         assert_eq!(op_for("rect 0,0 10,5", &drawing, &Space::Model, "local-5", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("ellipse 0,0 5,2", &drawing, &Space::Model, "local-8", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         assert_eq!(op_for("text 0,0 1 0 \"note\"", &drawing, &Space::Model, "local-14", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
+        // A dimension and a spline are new objects too.
+        let other = add_line(&mut drawing, [20.0, 0.0], [20.0, 10.0]);
+        assert_eq!(
+            op_for(&format!("dimlinear {},{} offset 1", handle.hex(), other.hex()), &drawing, &Space::Model, "local-16", 0)
+                .unwrap()
+                .context
+                .clay
+                .as_deref(),
+            Some("WALLS")
+        );
+        assert_eq!(op_for("spline 0,0 10,5 20,0", &drawing, &Space::Model, "local-17", 0).unwrap().context.clay.as_deref(), Some("WALLS"));
         // Commands that only address existing objects do not name a layer.
         assert_eq!(op_for(&format!("move {} delta 1,1", handle.hex()), &drawing, &Space::Model, "local-3", 0).unwrap().context.clay, None);
         assert_eq!(op_for(&format!("erase {}", handle.hex()), &drawing, &Space::Model, "local-4", 0).unwrap().context.clay, None);
