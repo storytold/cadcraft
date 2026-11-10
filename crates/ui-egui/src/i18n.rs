@@ -270,7 +270,12 @@ pub static LANGUAGES: [Language; 20] = [
         code: "ar", name: "العربية", source: include_str!("i18n/ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new()
     },
     Language {
-        code: "zh-Hant", name: "繁體中文", source: include_str!("i18n/zh-Hant.tsv"), plural: plural_zh, plural_forms: 1, catalog: OnceLock::new()
+        code: "zh-Hant",
+        name: "繁體中文",
+        source: include_str!("i18n/zh-Hant.tsv"),
+        plural: plural_zh,
+        plural_forms: 1,
+        catalog: OnceLock::new(),
     },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
