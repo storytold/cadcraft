@@ -125,15 +125,39 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// What each block's references need from its definition, worked out once per list.
+    blocks: blocks::Plans,
 }
 
-/// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
-/// and entity drawn inside a block counts one). Nested, self-referencing or arrayed block
-/// references in a hostile file would otherwise expand exponentially (`MAX_BLOCK_DEPTH` only
-/// bounds the depth); past the limit the remaining block contents are not drawn.
+/// Upper bound on the block contents drawn per display list (each copy of a block that draws
+/// something, a reference or a MINSERT copy, and each entity drawn inside one counts one;
+/// attribute definitions, which a copy doesn't draw, count nothing). Nested, self-referencing or
+/// arrayed block references in a hostile file would otherwise expand exponentially
+/// (`MAX_BLOCK_DEPTH` only bounds the depth); past the limit the remaining block contents are not
+/// drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
 impl<'a> Builder<'a> {
+    /// An empty list to draw into: with the plot style table `styles`, and `shared_budget` when the
+    /// list is one part of several built side by side that share one expansion budget.
+    fn new(
+        opts: &'a Options,
+        plotting: bool,
+        styles: Option<&'a plotstyle::Styler>,
+        shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        Builder {
+            list: DisplayList::default(),
+            opts,
+            plotting,
+            styles,
+            named: None,
+            shared_budget,
+            transparency: 0,
+            blocks: blocks::Plans::default(),
+        }
+    }
+
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -340,6 +364,9 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            // Empty here: a clipped copy's part is lent the list's plans by `blocks::insert`, and
+            // an attribute part draws no references.
+            blocks: blocks::Plans::default(),
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent.
