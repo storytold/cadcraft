@@ -409,6 +409,10 @@ pub(crate) enum ValueError {
     CmdJson(#[from] serde_json::Error),
     #[error("expected a number of 0 or more, got `{0}`")]
     Tolerance(String),
+    #[error("{axis} must be a finite number of degrees, got `{value}`")]
+    View3dAngle { axis: &'static str, value: String },
+    #[error("expected AZIMUTH,ELEVATION or a preset name")]
+    View3dEmpty,
 }
 
 /// Why `parse` refuses flags clap accepted: clap prints it as a usage error (exit 2).
@@ -433,17 +437,17 @@ impl UsageError {
 
 /// Parse `--view3d AZ,EL` or `--view3d PRESET` into the parameters of the `view3d` command (which
 /// range-checks them and knows the presets).
-pub(crate) fn parse_view3d(text: &str) -> Result<Value, String> {
+pub(crate) fn parse_view3d(text: &str) -> Result<Value, ValueError> {
     let text = text.trim();
     if let Some((az, el)) = text.split_once(',') {
-        let num = |name: &str, v: &str| match v.trim().parse::<f64>() {
+        let num = |axis: &'static str, v: &str| match v.trim().parse::<f64>() {
             Ok(n) if n.is_finite() => Ok(n),
-            _ => Err(format!("{name} must be a finite number of degrees, got `{}`", v.trim())),
+            _ => Err(ValueError::View3dAngle { axis, value: v.trim().to_string() }),
         };
         return Ok(serde_json::json!({ "azimuth": num("azimuth", az)?, "elevation": num("elevation", el)? }));
     }
     if text.is_empty() {
-        return Err("expected AZIMUTH,ELEVATION or a preset name".into());
+        return Err(ValueError::View3dEmpty);
     }
     Ok(serde_json::json!({ "preset": text }))
 }
@@ -641,6 +645,20 @@ mod tests {
             Command::Mcp(m) => Ok(m.target()),
             _ => panic!("{a:?} is not mcp"),
         }
+    }
+
+    /// `--view3d` takes AZ,EL or a preset; a bad value is a typed error whose message names it.
+    #[test]
+    fn view3d_values_parse_or_name_what_is_wrong() {
+        assert_eq!(parse_view3d(" 30 , -20 ").ok(), Some(json!({ "azimuth": 30.0, "elevation": -20.0 })));
+        assert_eq!(parse_view3d("swiso").ok(), Some(json!({ "preset": "swiso" })));
+        let err = |t: &str| parse_view3d(t).err().map(|e| e.to_string());
+        assert_eq!(err("NaN,10").as_deref(), Some("azimuth must be a finite number of degrees, got `NaN`"));
+        assert_eq!(err("10, x ").as_deref(), Some("elevation must be a finite number of degrees, got `x`"));
+        assert!(matches!(parse_view3d("  "), Err(ValueError::View3dEmpty)));
+        // clap reports the value error as a usage error.
+        let refused = parse_args(&["run", "--sample", "--view3d", "inf,0", "--export", "x.png"]).err().map(|e| e.to_string());
+        assert!(refused.as_deref().is_some_and(|m| m.contains("azimuth must be a finite number of degrees")), "{refused:?}");
     }
 
     /// Every file argument's help names each format of the list it uses.
