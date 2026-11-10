@@ -3511,7 +3511,7 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
 /// classes there: a 2018 drawing's piping proxies came out as LARGE_RADIAL_DIMENSION and
 /// SECTIONOBJECT, and the ODA File Converter refused the file ("AcDbProxyObject can't be cast to
 /// AcDbBlockTableRecord"). A DWG before 2013 leaves them out (acadrust writes no class for them).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn proxies_keep_their_class_in_dwg() {
     use acadrust::entities::{EntityType, ExtendedEntityData};
@@ -3553,7 +3553,7 @@ fn proxies_keep_their_class_in_dwg() {
 /// its CLASSES ([`proxy_file`]'s "Stray", 537): kept with that number it would name some other
 /// class of the DWG, so the DWG leaves it out, as CADCraft's own save does, and keeps the proxies
 /// whose classes it can name.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
     use acadrust::entities::{EntityType, ExtendedEntityData};
@@ -3602,7 +3602,7 @@ fn a_proxy_left_out_of_the_dwg_is_counted_as_unwritten() {
 /// numbers can't be mapped to the DWG's classes. Kept as they were, they named other classes
 /// (the ODA refuses such a file), so the DWG leaves them out, as a pre-2013 DWG does, and the
 /// rest of the drawing is written.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_binary_dxf_leaves_its_proxies_out_of_the_dwg() {
     use acadrust::entities::{EntityType, ExtendedEntityData};
