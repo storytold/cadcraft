@@ -127,16 +127,24 @@ mod native {
             mtext_contents(&doc, &mut out)
         }))
         .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
-        if out.exceeded {
-            return Err(format!(
+        let too_big = || {
+            format!(
                 "DWG: converting this {} file produced more than {} of drawing data (the limit); \
                  the file is probably damaged, or uses objects the DWG reader misreads",
                 mb(bytes.len() as u64),
                 mb(limits.max_dxf_bytes as u64)
-            ));
+            )
+        };
+        if out.exceeded {
+            return Err(too_big());
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
-        Ok((add_header_vars(out.buf, &doc.header), notes))
+        // The header variables added after the capped write count toward the limit too.
+        let dxf = add_header_vars(out.buf, &doc.header);
+        if dxf.len() > limits.max_dxf_bytes {
+            return Err(too_big());
+        }
+        Ok((dxf, notes))
     }
 
     /// acadrust 0.6.6's ASCII writer treats a caret followed by a literal space as already
@@ -1664,6 +1672,17 @@ mod tests {
         let _panic = PanicIn::at("post_process");
         let err = dwg_to_dxf(&dwg).unwrap_err();
         assert!(err.contains("the DWG post-processing failed on this file"), "{err}");
+    }
+
+    /// The header variables added after the capped DXF write still count toward
+    /// `max_dxf_bytes`: a limit one byte under the full output is an error, not a longer result.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn the_dxf_size_limit_counts_the_added_header_variables() {
+        let dwg = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap();
+        let (full, _) = dwg_to_dxf_noted(&dwg, Limits::DEFAULT).unwrap();
+        let limits = Limits { max_dxf_bytes: full.len() - 1, ..Limits::DEFAULT };
+        assert!(dwg_to_dxf_noted(&dwg, limits).is_err());
     }
 
     /// The DXF to DWG conversion reports a panic in its fix-ups as an error, not a crash (#2402).
