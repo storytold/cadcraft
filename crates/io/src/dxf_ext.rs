@@ -846,11 +846,15 @@ pub(crate) fn apply_anno(d: &mut cadcraft_doc::Drawing, p: AnnoPayload) {
     }
     // Which layout holds each paper space object, found once: `modify_entity` searches every
     // layout for a handle model space lacks, which a long list of missing handles made quadratic.
-    let in_layout: std::collections::HashMap<Handle, usize> = if p.objects.is_empty() {
-        Default::default()
-    } else {
-        d.layouts.iter().enumerate().flat_map(|(i, l)| l.entities.handles().into_iter().map(move |h| (h, i))).collect()
-    };
+    let mut in_layout: std::collections::HashMap<Handle, usize> = Default::default();
+    if !p.objects.is_empty() {
+        // First layout wins, as `modify_entity` did.
+        for (i, l) in d.layouts.iter().enumerate() {
+            for h in l.entities.handles() {
+                in_layout.entry(h).or_insert(i);
+            }
+        }
+    }
     for o in p.objects {
         let Some(h) = Handle::parse_hex(&o.handle) else { continue };
         let store = if d.model.contains(h) {

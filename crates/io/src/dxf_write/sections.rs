@@ -1213,35 +1213,43 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
 
     // One pass into a new list: inserting each missing count in place shifted every later tag,
     // quadratic in the number of CLASS records.
+    // Tags move by value (no clone), so peak memory stays one list plus one record.
     let old = std::mem::take(tags);
     tags.reserve(old.len());
-    let mut start = 0;
-    while let Some(t) = old.get(start) {
+    let mut it = old.into_iter();
+    let mut pending = it.next();
+    while let Some(t) = pending.take() {
         if t.code != 0 || t.str() != "CLASS" {
-            tags.push(t.clone());
-            start += 1;
+            tags.push(t);
+            pending = it.next();
             continue;
         }
-        let end = old[start + 1..].iter().position(|t| t.code == 0).map_or(old.len(), |i| start + 1 + i);
-        let record = &old[start..end];
+        let mut record = vec![t];
+        for n in it.by_ref() {
+            if n.code == 0 {
+                pending = Some(n);
+                break;
+            }
+            record.push(n);
+        }
         let name = record.iter().skip(1).find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
         let count = counts.get(&name).copied().unwrap_or(0);
         // The first 91 gets the count; without one, a 91 goes in after the first 90.
         let mut added = record.iter().skip(1).any(|t| t.code == 91);
         let mut replaced = false;
-        for (i, t) in record.iter().enumerate() {
-            if i > 0 && t.code == 91 && !replaced {
+        for (i, t) in record.into_iter().enumerate() {
+            let code = t.code;
+            if i > 0 && code == 91 && !replaced {
                 tags.push(Tag::i(91, count));
                 replaced = true;
                 continue;
             }
-            tags.push(t.clone());
-            if i > 0 && t.code == 90 && !added {
+            tags.push(t);
+            if i > 0 && code == 90 && !added {
                 tags.push(Tag::i(91, count));
                 added = true;
             }
         }
-        start = end;
     }
 }
 
