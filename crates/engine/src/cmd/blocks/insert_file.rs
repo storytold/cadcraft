@@ -36,7 +36,7 @@ impl FileRef {
 
     /// Read the file and (re)define its block. Returns the block's name.
     pub fn define(&self, s: &mut Session) -> Result<String> {
-        let src = read_drawing(&self.path)?;
+        let src = read_drawing(s, &self.path)?;
         define_from(s, &src, &self.name)
     }
 }
@@ -67,16 +67,20 @@ pub(super) fn stem(path: &str) -> String {
     }
 }
 
-/// Read a drawing file through the io hooks; a path without extension tries .dwg, then .dxf.
-fn read_drawing(path: &str) -> Result<Drawing> {
+/// Read a drawing file through the io hooks; a path without extension tries .dwg, then .dxf. A relative
+/// path is looked for in the current folder, then the drawing's folder, then the support search path.
+fn read_drawing(s: &Session, path: &str) -> Result<Drawing> {
     let hooks = io().ok_or_else(|| bad("insert", "file formats are not available in this build"))?;
     let has_ext = stem(path) != path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let candidates = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
+    let names = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
     let mut last = None;
-    for p in candidates {
+    for (i, p) in crate::support_path::candidates_of(s, &names).into_iter().enumerate() {
+        let p = p.to_string_lossy().into_owned();
         match read_file(&p) {
             Ok(bytes) => return (hooks.read)(&bytes, &p).map_err(|e| bad("insert", format!("{p}: {e}"))),
-            Err(e) => last = Some(e),
+            // The error shown is the one for the name as given, not for the last folder tried.
+            Err(e) if i < names.len() => last = Some(e),
+            Err(_) => {}
         }
     }
     Err(last.unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
