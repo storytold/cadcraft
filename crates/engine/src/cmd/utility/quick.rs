@@ -508,11 +508,10 @@ impl Interactive for QuickM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(p) => {
-                // A snap may have moved the click onto an edge: the mouse, beside it, is still
-                // inside the area clicked.
+                // A snap may have moved the click onto an edge: the area is the one the mouse is
+                // in (none when it is just outside), never the snapped point's.
                 let shift = s.shift_down;
-                let at = unsnapped(s, p);
-                if !click(&mut self.areas, s, at, shift) && !(at != p && click(&mut self.areas, s, p, shift)) {
+                if !click(&mut self.areas, s, unsnapped(s, p), shift) {
                     s.echo("No closed area there.");
                     return Ok(Step::Continue);
                 }

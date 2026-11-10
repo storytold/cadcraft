@@ -139,6 +139,10 @@ fn a_click_snapped_onto_an_edge_measures_the_area_the_mouse_is_in() {
     let before = refused(&s);
     s.cmdline("#-0.02,2").unwrap();
     assert_eq!(refused(&s), before + 1, "{:?}", s.log);
+    // A click just outside, snapped onto the edge, measures nothing: not the area behind the edge.
+    s.pointer = Some(Vec2::new(-0.02, 2.0));
+    s.input(Input::Point(Vec2::new(0.0, 2.0))).unwrap();
+    assert_eq!(refused(&s), before + 2, "{:?}", s.log);
     s.cancel();
 }
 
