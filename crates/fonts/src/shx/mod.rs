@@ -40,6 +40,7 @@ use cadcraft_geom::Vec2;
 
 use craft_shx::Record;
 pub use craft_shx::{ShxError, ShxKind, compile};
+pub(crate) use table::key;
 pub use table::{
     FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, installed, register, search_path, set_font_dirs,
     set_font_map, set_provider, set_search_path,

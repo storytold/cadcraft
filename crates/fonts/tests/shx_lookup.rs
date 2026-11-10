@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use cadcraft_fonts::shx::{self, FontProvider};
-use cadcraft_fonts::{TextFont, ttf};
+use cadcraft_fonts::{BUILTIN_FONT, TextFont, ttf};
 
 const FONT: &str = "*0,4,lookup test\n6,2,0,0\n*65,4,UCA\n1,064,0\n";
 
@@ -57,9 +57,18 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
     shx::set_provider(None);
     assert!(shx::find("cadcraft-provided.shx").is_none());
 
+    // The SHX fonts of a text style that are missing (a found one, a TrueType name and the built-in
+    // font are not), and what replaces them.
+    assert_eq!(TextFont::missing_shx("cadcraft-missing.shx", "cadcraft-beside.shx"), vec!["cadcraft-missing.shx"]);
+    assert_eq!(TextFont::missing_shx("cadcraft-beside", "cadcraft-missing-big"), vec!["cadcraft-missing-big"]);
+    assert!(TextFont::missing_shx("arial.ttf", "").is_empty());
+    assert!(TextFont::missing_shx(BUILTIN_FONT, "").is_empty());
+    assert_eq!(TextFont::substitute_name(), BUILTIN_FONT);
+
     // FONTALT replaces a missing SHX font (and may name a big font after a comma).
     assert!(!TextFont::resolve("cadcraft-missing.shx").is_shx());
     ttf::set_font_alt("cadcraft-beside.shx");
+    assert_eq!(TextFont::substitute_name(), "cadcraft-beside.shx");
     assert!(TextFont::resolve("cadcraft-missing.shx").is_shx());
     assert!(!TextFont::resolve("").is_shx(), "the built-in font is not replaced");
     ttf::set_font_alt("");

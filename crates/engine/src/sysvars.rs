@@ -72,6 +72,8 @@ const SESSION_VARS: &[&str] = &[
     "DISTANCE",
     "FONTALT",
     "FONTFALLBACK",
+    "SUPPORTPATH",
+    "ACADPREFIX",
     "SAVETIME",
     "SAVEFILEPATH",
     "ISAVEBAK",
@@ -159,6 +161,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Process-wide font substitution (profile settings, not saved in the drawing).
         "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
         "FONTFALLBACK" => json!(cadcraft_fonts::ttf::fallback_fonts()),
+        // The support file search path (folders separated by `;`), where support files such as SHX fonts are
+        // looked for after the drawing's folder. ACADPREFIX reads it, as AutoCAD's does.
+        "SUPPORTPATH" | "ACADPREFIX" => json!(cadcraft_fonts::shx::search_path()),
         // Autosave (profile settings too).
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
@@ -247,6 +252,7 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
 /// Variables `get` reports from session or drawing state that `set` can't change.
 const READ_ONLY: &[&str] = &[
     "CMDNAMES",
+    "ACADPREFIX",
     "DWGNAME",
     "DWGPREFIX",
     "DWGTITLED",
@@ -379,6 +385,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "MEASUREINIT" => st.measureinit = small(v, 1).ok_or_else(bad)? == 1,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
+        "SUPPORTPATH" => cadcraft_fonts::shx::set_search_path(v.as_str().ok_or_else(bad)?),
         "SAVETIME" => crate::autosave::set_savetime(
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),
