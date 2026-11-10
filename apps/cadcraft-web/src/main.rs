@@ -11,6 +11,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_arch = "wasm32")]
+mod api;
+#[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
 mod file_providers;
@@ -164,7 +166,8 @@ mod web {
                     Box::new(move |cc| {
                         // Embedded, the host sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
-                        let mut app = CadApp::new(session, services());
+                        let control = crate::api::install(cc.egui_ctx.clone());
+                        let mut app = CadApp::new(session, services()).with_control(control);
                         // The provider capability is independent of the parent and same-document host modes.
                         // Avoid two hosts competing for the same Save command.
                         if app_bridge.is_none() {
