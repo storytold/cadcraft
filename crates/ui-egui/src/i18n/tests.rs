@@ -166,7 +166,14 @@ fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     // `file_type` doesn't follow links, so a symlink (a directory alias or a file) is skipped,
     // not walked again as a new subtree.
-    let mut paths: Vec<_> = entries.flatten().filter_map(|e| Some((e.path(), e.file_type().ok()?))).collect();
+    // An unreadable entry must fail the scan, not silently shrink the translation report.
+    let mut paths: Vec<_> = entries
+        .map(|e| {
+            let e = e.expect("read module directory entry");
+            let kind = e.file_type().expect("read module entry type");
+            (e.path(), kind)
+        })
+        .collect();
     paths.sort_by(|a, b| a.0.cmp(&b.0));
     for (path, kind) in paths {
         if kind.is_dir() {

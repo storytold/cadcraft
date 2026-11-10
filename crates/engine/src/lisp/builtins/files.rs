@@ -30,8 +30,11 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
                 // Each line has a String header and a separately allocated buffer. Charge a
                 // conservative 64 bytes per line for both, including the allocator's minimum
                 // allocation size, before collecting so many short lines cannot evade the budget.
-                charge_bytes(t.len().saturating_add(t.lines().count().saturating_mul(64)))?;
-                f.lines = t.lines().map(str::to_string).collect();
+                let count = t.lines().count();
+                charge_bytes(t.len().saturating_add(count.saturating_mul(64)))?;
+                // Exact capacity: collecting would grow by doubling and hold unbilled slack.
+                f.lines = std::collections::VecDeque::with_capacity(count);
+                f.lines.extend(t.lines().map(str::to_string));
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }

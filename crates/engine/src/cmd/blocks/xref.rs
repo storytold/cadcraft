@@ -212,7 +212,7 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
         let mut selected = std::collections::HashSet::new();
         for literal in &lits {
             if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
-                if selected.insert(block.name.to_lowercase()) {
+                if selected.insert(block.name.clone()) {
                     names.push(block.name.clone());
                 }
                 continue;
@@ -223,7 +223,7 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
                 if matches.next().is_some() {
                     return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
                 }
-                if selected.insert(block.name.to_lowercase()) {
+                if selected.insert(block.name.clone()) {
                     names.push(block.name.clone());
                 }
             }
