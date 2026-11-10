@@ -76,7 +76,7 @@ impl Session {
     /// kept, at a prompt for [literal](crate::Prompt::literal) text (TEXT's "Enter text", #2994);
     /// anywhere else it is typed as [`Session::typed`] reads it.
     pub(crate) fn typed_exact(&mut self, t: &str) -> Result<()> {
-        if !t.trim().is_empty() && self.current_prompt().is_some_and(|p| p.literal) {
+        if !t.is_empty() && self.current_prompt().is_some_and(|p| p.literal) {
             return self.input(Input::Text(t.to_string()));
         }
         self.typed(t)

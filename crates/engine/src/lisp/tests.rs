@@ -315,6 +315,10 @@ fn command_text_string_keeps_its_spaces() {
     assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[3P, ]\"");
     ok(&mut s, "(command \"_.text\" '(0 5) 2.5 0 \" a  b\")");
     assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[ a  b]\"");
+    // Only spaces is a text too; only "" is Enter.
+    ok(&mut s, "(command \"_.text\" '(0 10) 2.5 0 \"   \")");
+    assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[   ]\"");
+    assert_eq!(ok(&mut s, "(getvar \"CMDACTIVE\")"), "0");
 }
 
 #[test]
