@@ -70,8 +70,13 @@ pub(super) fn findfile(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispErr
     let p = string(&a[0])?;
     // As given (the current folder), then the drawing's folder and the support search path.
     let Some(found) = crate::support_path::find(ctx.s, &p) else { return Ok(Flow::Value(Value::Nil)) };
-    // The name as given when that is where it is; else the full path of the file found.
-    Ok(Flow::Value(if found == std::path::Path::new(p.trim()) { Value::Str(p) } else { Value::str(&found.to_string_lossy()) }))
+    // The name as given when that is where it is; else the full path of the file found (a support
+    // folder may itself be relative).
+    if found == std::path::Path::new(p.trim()) {
+        return Ok(Flow::Value(Value::Str(p)));
+    }
+    let full = if found.is_relative() { std::path::absolute(&found).unwrap_or(found) } else { found };
+    Ok(Flow::Value(Value::str(&full.to_string_lossy())))
 }
 
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
