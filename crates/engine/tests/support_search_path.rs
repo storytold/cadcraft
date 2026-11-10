@@ -101,6 +101,35 @@ fn findfile_and_insert_use_the_support_search_path() {
     assert_eq!(block_names(&s), vec!["blk".to_string()]);
 }
 
+/// `to` relative to the current folder, or `None` when there is no relative path (another drive).
+fn relative_to_cwd(to: &std::path::Path) -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let (from, to): (Vec<_>, Vec<_>) = (cwd.components().collect(), to.components().collect());
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    if common == 0 {
+        return None;
+    }
+    let mut rel: std::path::PathBuf = from.iter().skip(common).map(|_| "..").collect();
+    rel.extend(to.iter().skip(common));
+    Some(rel)
+}
+
+#[test]
+fn findfile_gives_a_full_path_for_a_file_in_a_relative_support_folder() {
+    let _t = turn();
+    let dir = TempDir::new("support-relative");
+    let host = dir.file("host.dxf", "x");
+    let support = dir.join("support");
+    std::fs::create_dir_all(support.join("lib")).unwrap();
+    std::fs::write(support.join("lib").join("blk.dxf"), "x").unwrap();
+    let Some(rel) = relative_to_cwd(&support) else { return };
+    let mut s = opened(&host);
+    s.execute("setvar", &json!({ "name": "SUPPORTPATH", "value": rel.to_string_lossy() })).unwrap();
+    let found = findfile(&mut s, "lib/blk.dxf").expect("found on the relative support folder");
+    assert!(std::path::Path::new(&found).is_absolute(), "{found}");
+    assert_eq!(std::fs::canonicalize(&found).unwrap(), std::fs::canonicalize(support.join("lib/blk.dxf")).unwrap());
+}
+
 #[test]
 fn insert_finds_a_relative_file_in_the_drawings_folder() {
     let _t = turn();
