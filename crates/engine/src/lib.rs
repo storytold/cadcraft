@@ -84,15 +84,14 @@ fn after_command_registry() -> &'static std::sync::RwLock<Vec<AfterCommand>> {
 /// step. An add-on keeps what it derives from the drawing up to date this way (results it
 /// recalculates when an entity it depends on changes).
 pub fn register_after_command(pass: AfterCommand) {
-    if let Ok(mut r) = after_command_registry().write()
-        && !r.iter().any(|p| std::ptr::fn_addr_eq(*p, pass))
-    {
+    let mut r = after_command_registry().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !r.iter().any(|p| std::ptr::fn_addr_eq(*p, pass)) {
         r.push(pass);
     }
 }
 
 pub(crate) fn after_command_passes() -> Vec<AfterCommand> {
-    after_command_registry().read().map(|r| r.clone()).unwrap_or_default()
+    after_command_registry().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 /// `<version> (<commit>)`, what `--version` prints after the program name in the app and the CLI.

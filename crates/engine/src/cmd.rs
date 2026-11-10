@@ -187,16 +187,22 @@ pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
 pub fn register_specs(specs: Vec<CommandSpec>) -> Vec<&'static str> {
     let mut refused = Vec::new();
     let taken: Vec<&'static str> = command_specs().iter().map(|c| c.id).collect();
-    if let Ok(mut e) = extra_specs().lock() {
-        for spec in specs {
-            if taken.contains(&spec.id) || e.iter().any(|c| c.id == spec.id) {
-                refused.push(spec.id);
-            } else {
-                e.push(spec);
-            }
+    let mut added = false;
+    let mut e = extra_specs().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for spec in specs {
+        if taken.contains(&spec.id) || e.iter().any(|c| c.id == spec.id) {
+            refused.push(spec.id);
+        } else {
+            e.push(spec);
+            added = true;
         }
     }
-    CATALOG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    drop(e);
+    // Only a registration that added something rebuilds the catalog: each rebuild keeps a
+    // snapshot for the life of the process.
+    if added {
+        CATALOG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
     refused
 }
 
@@ -210,38 +216,38 @@ pub struct ToolSpec {
     /// JSON Schema of the arguments (the subset the MCP server checks: type, required, properties).
     pub input_schema: Value,
     pub command: &'static str,
+    /// Params set on every call, over the caller's arguments: a JSON object, or `Value::Null`
+    /// for none (any other value is ignored).
     pub fixed: Value,
 }
 
 /// Add MCP tools (see [`ToolSpec`]); a name already registered is replaced. Built-in tool names
 /// always win over registered ones.
 pub fn register_tools(tools: Vec<ToolSpec>) {
-    if let Ok(mut t) = extra_tools_store().lock() {
-        for tool in tools {
-            t.retain(|x| x.name != tool.name);
-            t.push(tool);
-        }
+    let mut t = extra_tools_store().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    for tool in tools {
+        t.retain(|x| x.name != tool.name);
+        t.push(tool);
     }
 }
 
 /// The MCP tools add-ons registered, in registration order.
 pub fn extra_tools() -> Vec<ToolSpec> {
-    extra_tools_store().lock().map(|t| t.clone()).unwrap_or_default()
+    extra_tools_store().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 /// Add a paragraph to the instructions the MCP server gives an agent when it connects (how to
 /// use an add-on's commands). Registering the same text twice keeps one copy.
 pub fn register_mcp_instructions(text: &'static str) {
-    if let Ok(mut t) = mcp_instructions_store().lock()
-        && !t.contains(&text)
-    {
+    let mut t = mcp_instructions_store().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !t.contains(&text) {
         t.push(text);
     }
 }
 
 /// The paragraphs add-ons registered with [`register_mcp_instructions`], in order.
 pub fn mcp_instructions() -> Vec<&'static str> {
-    mcp_instructions_store().lock().map(|t| t.clone()).unwrap_or_default()
+    mcp_instructions_store().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 fn mcp_instructions_store() -> &'static std::sync::Mutex<Vec<&'static str>> {
@@ -268,7 +274,8 @@ fn catalog_cache() -> &'static std::sync::Mutex<Option<(u64, &'static [CommandSp
 
 pub fn command_specs() -> &'static [CommandSpec] {
     let generation = CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
-    let Ok(mut cache) = catalog_cache().lock() else { return &[] };
+    // A poisoned lock is recovered: the cache is only assigned once a catalog is fully built.
+    let mut cache = catalog_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some((g, specs)) = *cache
         && g == generation
     {

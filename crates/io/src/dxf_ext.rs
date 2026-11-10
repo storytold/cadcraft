@@ -43,15 +43,47 @@ pub(crate) const MAX_PLOT_STYLE_NAMES: usize = 100_000;
 /// (one XRECORD per key, JSON chunks like the CADCraft payloads above).
 pub(crate) const EXT_KEY_PREFIX: &str = "CADCRAFT_EXT_";
 
-/// The named-object-dictionary key of an extension value: the prefix, then the key in upper
-/// case with dots as underscores (`acme.survey` is `CADCRAFT_EXT_ACME_SURVEY`).
+/// The readable named-object-dictionary key of an extension value: the prefix, then the key in
+/// upper case with dots as underscores (`acme.survey` is `CADCRAFT_EXT_ACME_SURVEY`). Distinct
+/// keys can share it (`a.b`, `a_b`), so the record also holds the exact key, and the writer
+/// numbers a name already taken.
 pub(crate) fn ext_entry_name(key: &str) -> String {
     format!("{EXT_KEY_PREFIX}{}", key.to_ascii_uppercase().replace('.', "_"))
 }
 
-/// The XRECORD chunks of every persisted extension value: (dictionary key, chunks).
+/// The XRECORD of every persisted extension value: (dictionary key, chunks of
+/// `{"key": <exact key>, "value": <its JSON>}`). Keys go in order and a name already taken gets
+/// `_2`, `_3`… A value whose record would exceed what the reader accepts ([`MAX_PAYLOAD`]) is
+/// not written.
 pub(crate) fn ext_chunks(d: &cadcraft_doc::Drawing) -> Vec<(String, Vec<String>)> {
-    d.ext.to_json().into_iter().filter_map(|(k, v)| serde_json::to_string(&v).ok().map(|j| (ext_entry_name(k), json_chunks(&j)))).collect()
+    let mut used = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (key, value) in d.ext.to_json() {
+        let Ok(json) = serde_json::to_string(&serde_json::json!({ "key": key, "value": value })) else { continue };
+        let chunks = json_chunks(&json);
+        if chunks.iter().map(String::len).sum::<usize>() > MAX_PAYLOAD {
+            continue;
+        }
+        let base = ext_entry_name(key);
+        let mut name = base.clone();
+        let mut n = 2;
+        while !used.insert(name.clone()) {
+            name = format!("{base}_{n}");
+            n += 1;
+        }
+        out.push((name, chunks));
+    }
+    out
+}
+
+/// The exact key and JSON value of an extension XRECORD's text.
+pub(crate) fn parse_ext(text: &str) -> Option<(String, Value)> {
+    if text.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let Value::Object(mut o) = serde_json::from_str::<Value>(text).ok()? else { return None };
+    let Some(Value::String(key)) = o.remove("key") else { return None };
+    Some((key, o.remove("value")?))
 }
 
 /// Caps for hostile input.

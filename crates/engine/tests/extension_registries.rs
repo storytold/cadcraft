@@ -48,10 +48,13 @@ fn count_pass(s: &mut Session, _before: Option<&Arc<Drawing>>, _ok: bool) {
     }
 }
 
-/// Changes the drawing, then panics: its change must not survive.
+/// Changes the drawing and the selection, then panics: its changes must not survive.
 fn broken_pass(s: &mut Session, _before: Option<&Arc<Drawing>>, _ok: bool) {
     if let Ok(d) = s.doc_mut() {
         d.ext.set(BROKEN, Count(0));
+    }
+    if let Ok(st) = s.state_mut() {
+        st.selection = st.doc.space(&Space::Model).map(|m| m.iter().map(|e| e.handle).collect()).unwrap_or_default();
     }
     panic!("an add-on bug");
 }
@@ -78,11 +81,14 @@ fn add_on_commands_and_after_command_passes() {
     assert_eq!(cadcraft_engine::command_specs().len(), before + 1);
     assert!(find_command("test.addline").is_some());
 
-    // An add-on never replaces a built-in command or one registered before.
+    // An add-on never replaces a built-in command or one registered before, and a call that adds
+    // nothing keeps the catalog as it is (no rebuild).
+    let catalog = cadcraft_engine::command_specs().as_ptr();
     let refused = register_specs(vec![CommandSpec::new("line", "Not LINE", add_line), CommandSpec::new("test.addline", "Again", add_line)]);
     assert_eq!(refused, vec!["line", "test.addline"]);
     assert_eq!(find_command("line").map(|c| c.label), Some("Line"));
     assert_eq!(cadcraft_engine::command_specs().len(), before + 1);
+    assert_eq!(cadcraft_engine::command_specs().as_ptr(), catalog);
 
     // The pass runs after the add-on's command and after built-in ones, in the same undo step.
     register_after_command(count_pass);
@@ -99,9 +105,11 @@ fn add_on_commands_and_after_command_passes() {
     // A pass that panics is undone and reported; the passes after it still run.
     register_after_command(broken_pass);
     register_after_command(after_pass);
+    assert!(s.selection().is_empty());
     s.execute("test.addline", &json!({})).unwrap();
     let d = s.doc().unwrap();
     assert_eq!(count(&s), Some(2));
     assert!(d.ext.get::<Count>(BROKEN).is_none(), "the broken pass's change was skipped");
+    assert!(s.selection().is_empty(), "the broken pass's selection was skipped");
     assert_eq!(d.ext.get::<Count>(AFTER), Some(&Count(2)));
 }

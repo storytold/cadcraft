@@ -89,3 +89,32 @@ fn extension_data_without_a_loader_refused_or_whose_loader_panics_is_not_loaded(
     let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
     assert!(back.ext.is_empty(), "{:?}", back.ext.keys().collect::<Vec<_>>());
 }
+
+fn load_note_2(v: Value) -> Option<Arc<dyn ExtData>> {
+    load_note(v)
+}
+
+fn load_note_3(v: Value) -> Option<Arc<dyn ExtData>> {
+    load_note(v)
+}
+
+#[test]
+fn keys_with_the_same_dictionary_name_keep_their_own_values() {
+    // `test.same`, `test_same` and `TEST.SAME` all read as `CADCRAFT_EXT_TEST_SAME`; `test.same.2`
+    // reads as the name the writer gives the second of them.
+    let keys = ["test.same", "test_same", "TEST.SAME", "test.same.2"];
+    cadcraft_doc::ext::register_loader(keys[0], load_note);
+    cadcraft_doc::ext::register_loader(keys[1], load_note_2);
+    cadcraft_doc::ext::register_loader(keys[2], load_note_3);
+    cadcraft_doc::ext::register_loader(keys[3], load_note);
+    let mut d = Drawing::new_metric();
+    for k in keys {
+        d.ext.set(k, Note { text: format!("value of {k}") });
+    }
+    let text = cadcraft_io::write_dxf(&d);
+    let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+    for k in keys {
+        assert_eq!(back.ext.get::<Note>(k).map(|n| n.text.as_str()), Some(format!("value of {k}").as_str()), "{k}");
+    }
+    assert_eq!(text.lines().filter(|l| l.trim().starts_with("CADCRAFT_EXT_TEST_SAME")).count(), 4);
+}

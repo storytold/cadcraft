@@ -421,12 +421,14 @@ impl Session {
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);
         // Passes add-ons registered (`register_after_command`). One that panics is reported, the
-        // drawing goes back to what it was before that pass, and the next passes still run.
+        // drawing and selection go back to what they were before that pass, and the next passes
+        // still run. Saving the drawing shares it (an `Arc`); it is copied only if the pass edits.
         for pass in crate::after_command_passes() {
-            let saved = self.state().ok().map(|st| Arc::clone(&st.doc));
+            let saved = self.state().ok().map(|st| (Arc::clone(&st.doc), st.selection.clone()));
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pass(self, before, ok))).is_err() {
-                if let (Some(doc), Ok(st)) = (saved, self.state_mut()) {
+                if let (Some((doc, selection)), Ok(st)) = (saved, self.state_mut()) {
                     st.doc = doc;
+                    st.selection = selection;
                 }
                 self.echo("A post-command pass of an add-on failed; its changes were skipped.".to_string());
             }

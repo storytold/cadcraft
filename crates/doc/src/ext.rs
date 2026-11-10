@@ -7,7 +7,7 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// A value stored in [`Extensions`]. Unwind-safe, so a [`crate::Drawing`] stays unwind-safe.
 pub trait ExtData: Any + Send + Sync + std::panic::RefUnwindSafe + std::panic::UnwindSafe + std::fmt::Debug {
@@ -30,19 +30,17 @@ fn loaders() -> &'static Mutex<BTreeMap<&'static str, Loader>> {
 
 /// Registers how a key's JSON becomes a value again (once per key, at startup).
 pub fn register_loader(key: &'static str, loader: Loader) {
-    if let Ok(mut l) = loaders().lock() {
-        l.insert(key, loader);
-    }
+    loaders().lock().unwrap_or_else(PoisonError::into_inner).insert(key, loader);
 }
 
 /// The loader registered for a key, if any.
 pub fn loader_for(key: &str) -> Option<Loader> {
-    loaders().lock().ok().and_then(|l| l.get(key).copied())
+    loaders().lock().unwrap_or_else(PoisonError::into_inner).get(key).copied()
 }
 
 /// Every key a loader is registered for, in order.
 pub fn registered_keys() -> Vec<&'static str> {
-    loaders().lock().map(|l| l.keys().copied().collect()).unwrap_or_default()
+    loaders().lock().unwrap_or_else(PoisonError::into_inner).keys().copied().collect()
 }
 
 /// Type-erased, cheaply cloneable extension values keyed by name.

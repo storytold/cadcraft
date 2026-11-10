@@ -83,6 +83,11 @@ impl Objects {
     /// The text of the CADCraft XRECORD stored under `key` in a dictionary (its 1/3 strings).
     pub(super) fn xrecord_text(&self, key: &str) -> Option<String> {
         let h = self.names.iter().find(|(_, n)| n.as_str() == key).map(|(h, _)| h)?;
+        self.xrecord_text_at(h)
+    }
+
+    /// The text of the XRECORD with handle `h` (its 1/3 strings).
+    fn xrecord_text_at(&self, h: &str) -> Option<String> {
         let tags = self.xrecords.get(h)?;
         let mut text = String::new();
         for t in tags.iter().filter(|t| t.code == 1 || t.code == 3) {
@@ -92,6 +97,31 @@ impl Objects {
             text.push_str(&t.str());
         }
         Some(text)
+    }
+
+    /// Extension values other crates keep on the drawing: each `CADCRAFT_EXT_` XRECORD names its
+    /// exact key and is rebuilt through the loader registered for it. Records go in name order,
+    /// and the first for a key wins. A key with no loader, or a loader that refuses the value or
+    /// panics, loses that value, not the drawing.
+    fn apply_extensions(&self, d: &mut Drawing) {
+        let keys = cadcraft_doc::ext::registered_keys();
+        if keys.is_empty() {
+            return;
+        }
+        let mut records: Vec<(&String, &String)> =
+            self.names.iter().filter(|(_, n)| n.starts_with(crate::dxf_ext::EXT_KEY_PREFIX)).map(|(h, n)| (n, h)).collect();
+        records.sort();
+        for (_, h) in records {
+            let Some((key, value)) = self.xrecord_text_at(h).and_then(|t| crate::dxf_ext::parse_ext(&t)) else { continue };
+            let Some(&key) = keys.iter().find(|k| **k == key) else { continue };
+            if d.ext.get_arc(key).is_some() {
+                continue;
+            }
+            let Some(loader) = cadcraft_doc::ext::loader_for(key) else { continue };
+            if let Ok(Some(v)) = std::panic::catch_unwind(|| loader(value)) {
+                d.ext.set_arc(key, v);
+            }
+        }
     }
 
     fn apply_table_styles(&self, d: &mut Drawing) {
@@ -193,16 +223,7 @@ impl Objects {
         }
         self.apply_table_styles(d);
         self.apply_table_style_fixes(d, rx);
-        // Extension values other crates keep on the drawing: each registered key's XRECORD is
-        // rebuilt through its loader. A loader that panics loses its value, not the drawing.
-        for key in cadcraft_doc::ext::registered_keys() {
-            let Some(text) = self.xrecord_text(&crate::dxf_ext::ext_entry_name(key)) else { continue };
-            let Some(loader) = cadcraft_doc::ext::loader_for(key) else { continue };
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
-            if let Ok(Some(v)) = std::panic::catch_unwind(|| loader(value)) {
-                d.ext.set_arc(key, v);
-            }
-        }
+        self.apply_extensions(d);
         // Parametric constraints and parameters.
         if let Some((c, p)) = self.xrecord_text(crate::dxf_ext::CONSTRAINTS_KEY).and_then(|t| crate::dxf_ext::parse_constraints(&t)) {
             d.constraints = c;
