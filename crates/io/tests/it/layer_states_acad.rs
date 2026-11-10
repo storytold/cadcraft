@@ -275,6 +275,40 @@ fn layer_filters_next_to_the_states_are_kept() {
 }
 
 #[test]
+fn entries_whose_names_differ_only_in_case_open_as_one_state() {
+    // AutoCAD 2024 opens the entries `S` and `s` of one ACAD_LAYERSTATES dictionary as one state:
+    // named as the first entry in the dictionary and holding the last entry's record (measured with
+    // the records in one file order and the entries in both dictionary orders, so the first entry's
+    // record came first in the file once and last once). Here S2's record (mask 2047) comes first in
+    // the file, then state T's, then S7's (66049); the merged state stays where S2's record is.
+    let base = write_dxf(&drawing());
+    let p = pairs(&base);
+    let h = |k| fresh(&p, k);
+    let (x, y, r2, r7, rt) = (h(1), h(2), h(3), h(4), h(5));
+    let states = |d: &Drawing| d.layer_states.iter().map(|s| (s.name.clone(), s.mask)).collect::<Vec<_>>();
+    for (pair, name, mask) in [([("S", r2.as_str()), ("s", r7.as_str())], "S", 66049), ([("s", r7.as_str()), ("S", r2.as_str())], "s", 2047)] {
+        let entries = [pair[0], ("T", rt.as_str()), pair[1]];
+        let mut objects = dictionaries(&p, &x, &y, &entries, &[]);
+        objects.extend(s2(&p, &r2, &y));
+        objects.extend(s7(&p, &rt, &y));
+        objects.extend(s7(&p, &r7, &y));
+        let d = read(inject(&base, &x, objects).as_bytes(), "case.dxf").unwrap();
+        let want = [(name.to_string(), mask), ("T".to_string(), 66049)];
+        assert_eq!(states(&d), want, "{entries:?}");
+        // Written back, they are the states AutoCAD opened.
+        let back = read(write_dxf(&d).as_bytes(), "back.dxf").unwrap();
+        assert_eq!(states(&back), want, "{entries:?}");
+    }
+    // A record the dictionary lists as `s` but another object owns isn't a state, and doesn't stand
+    // in for S's record either.
+    let mut objects = dictionaries(&p, &x, &y, &[("S", r2.as_str()), ("s", r7.as_str())], &[]);
+    objects.extend(s2(&p, &r2, &y));
+    objects.extend(s7(&p, &r7, &x));
+    let d = read(inject(&base, &x, objects).as_bytes(), "stray.dxf").unwrap();
+    assert_eq!(states(&d), [("S".to_string(), 2047)]);
+}
+
+#[test]
 fn view_snapshots_and_names_twice_in_another_case_stay_in_cadcrafts_record() {
     let mut d = drawing();
     for name in ["Plan", "*VIEW Front", "PLAN", "Wände", "WÄNDE", "", " "] {
