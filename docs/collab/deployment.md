@@ -1,0 +1,125 @@
+# CADCraft collaboration: deployment
+
+How `cadcraft-collab-server` runs, what it expects from the cabinet and what it
+guarantees. The protocol and its decisions are in `rfc.md` and
+`.craft/bus/decisions/0001-0010`.
+
+## One process, one drawing
+
+One process serves one drawing (`--file`). A room is authoritative for that
+drawing: it applies every operation, orders them, and answers with the change
+set. Several drawings are several processes; a crashing room costs that drawing
+only. The limit is deliberate: a 200k-entity `Drawing` is not a shared OOM
+domain.
+
+```bash
+cadcraft-collab-server \
+  --listen 127.0.0.1:8787 \
+  --file /srv/office/drawings/plan.dxf \
+  --session 6f1c… \
+  --secret-file /run/secrets/office-sync-hs256 \
+  --issuer cabinet --audience office-sync \
+  --state /var/lib/office-sync/6f1c.dxf \
+  --snapshot-secs 30 \
+  --http 127.0.0.1:8788
+```
+
+`--dev-token token:editor` (repeatable) replaces `--secret-file` for tests and a
+single-tenant deployment. Never use it where the cabinet signs tokens.
+
+## Transport and TLS
+
+The listener speaks plain WebSocket; the deployment terminates WSS (nginx,
+Traefik, the cabinet's ingress) and forwards to it on loopback or a private
+network. The token travels in the first message, not in the URL, so a proxy log
+never holds it.
+
+## Authentication and roles
+
+The first message is `hello` with a JWT. The server verifies HS256 with the
+cabinet's session secret and, when given, the `iss` and `aud` claims. The role
+comes from the token:
+
+| role | may |
+|---|---|
+| `viewer` | receive the drawing, presence, resync; no operations, no commit |
+| `editor` | operations on the drawing, commit |
+| `owner` | the same, plus closing the session |
+
+The role is checked on **every** operation, because the engine has no read-only
+mode. Revoking access means closing the connection; the room drops the
+participant's presence at once.
+
+## What a room refuses
+
+- Commands that leave the drawing: `open`, `save`, `saveas`, `new`, `quit`,
+  `recover`, `audit`, `purge`, `plot`, `export`, `script`, `undo`, `redo`,
+  `xref`, `document.bytes`, `lisp*`, `ui.*`, `app.*`, `file.*`, `plot*`.
+- Operations whose parameters exceed 1 MiB, or whose change set exceeds 5000
+  objects: `rejected{code:"too-large"}`, nothing changes.
+- A `structural` operation built on a version that has moved:
+  `rejected{code:"stale"}`, no retry storm; the room's order decides.
+
+## State, snapshots and restarts
+
+The authoritative drawing lives in memory. Every applied operation is appended
+to a journal (`--state.jsonl`, one JSON line per operation); every
+`--snapshot-secs` the room writes its DXF to `--state` (temporary file + rename)
+with the version beside it (`--state.version`) and empties the journal, because
+the snapshot now holds everything the journal did.
+
+On start the snapshot is preferred over `--file`, and the journal tail is
+replayed on top of it: a restart loses at most the operations after the last
+snapshot. A gap in the journal (a line missing or out of order) is refused at
+start rather than guessed at — the room does not come up with a wrong drawing;
+the operator keeps the previous snapshot or reopens the file.
+
+A client that resumes from a version older than the snapshot is sent a snapshot;
+its queued operations are re-sent and the `opId` window answers repeats.
+
+DXF keeps what CADCraft does not model (unknown entities, other applications'
+objects, xdata) through the writer's raw pass; DWG through the bridge does not.
+The snapshot is DXF for that reason; `commit` may write either format.
+
+## Commit
+
+`commit{expectedVersion}` writes the file from the authoritative drawing and
+answers `commit-result` with the bytes (base64), the version and `notSaved`: what
+the format could not keep, counted **before** writing. The cabinet must:
+
+1. keep the previous version and write the new one;
+2. show `notSaved` to the user and record it in the audit;
+3. refuse a commit built on a moved version (the server answers `stale`), and a
+   file changed outside the session (`409` from the cabinet).
+
+## Health, metrics, limits
+
+- `GET /healthz`, `GET /readyz` → `200 ok`. With `--idle-secs` (default 600) the
+process writes a final snapshot and exits after that long with no participants; a
+participant who connects resets the timer.
+- `GET /metrics` (Prometheus text): connections, applied/rejected operations,
+  errors, version, journal length, participants.
+- Limits: 8 participants per room, 1 MiB per message, 5000 objects per
+  operation, 30 s presence TTL, 50 ms read poll. The read poll bounds latency of
+  a broadcast to one socket; the per-participant send queue keeps a slow writer
+  from blocking the room.
+
+## Logs
+
+The server prints its session and address at start and nothing per operation.
+Application logs use `sub`, `opId`, version and error codes; they never include
+drawing content, tokens or user paths.
+
+## What is still missing for a first production deployment
+
+- The desktop app joins a session with `--collab-url`, `--collab-doc` and
+  `CADCRAFT_COLLAB_TOKEN` (the environment keeps the token out of the process
+  list), sends every command that is not a UI/view command through
+  `collab_command`, draws the other participants' cursors and names in the space
+  being shown, and maps undo to the server's per-user step; the interactive
+  command line is refused in a shared session, and the web build's flag is not
+  wired yet.
+- WSS termination tested against the cabinet's ingress, and the cabinet's ACL
+  and secret provisioning exercised end to end.
+- The web build's session messages (`cadcraft:session`, presence, commit) through
+  `craft-web-host` in `storytold/craft-libs`.

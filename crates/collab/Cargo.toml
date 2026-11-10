@@ -1,0 +1,19 @@
+[package]
+name = "cadcraft-collab"
+description = "CADCraft collaboration protocol: change set types, drawing diff and remote-change application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cadcraft-doc = { workspace = true }
+serde = { workspace = true }
+base64 = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+cadcraft-geom = { workspace = true }

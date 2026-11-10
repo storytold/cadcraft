@@ -289,6 +289,10 @@ fn main() -> eframe::Result {
     let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
     let vars = env::Env::read();
     let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
+    let collab = match (launch.collab_url, launch.collab_token, launch.collab_doc) {
+        (Some(url), Some(token), Some(doc)) => Some((url, token, doc)),
+        _ => None,
+    };
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
@@ -361,6 +365,22 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            if let Some((url, token, doc)) = collab.clone() {
+                // A shared session's drawing comes from the server; a local empty drawing gives the
+                // change sets somewhere to land until the first snapshot arrives.
+                if app.session.doc().is_err() {
+                    app.session.new_drawing(false);
+                }
+                match cadcraft_ui_egui::collab::Collab::connect(&url, &token, &doc) {
+                    Ok(collab) => {
+                        app = app.with_collab(collab);
+                    }
+                    Err(error) => {
+                        eprintln!("collab: {error}");
+                        app.set_status(format!("collab: {error}"));
+                    }
+                }
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
