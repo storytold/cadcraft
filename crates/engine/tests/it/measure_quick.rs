@@ -97,6 +97,13 @@ fn islands_crossed_like_a_plus_leave_out_their_union() {
     // 400 less the plus: two 4 x 16 strips sharing a 4 x 4 square.
     assert!(close(&r["area"], 400.0 - 112.0), "{r}");
     assert!(close(&r["perimeter"], 80.0 + 64.0), "{r}");
+
+    // Strips of different sizes: the smaller one crosses the larger, it isn't inside it.
+    let mut s = drawing((1200.0, 800.0), &["rectang 0,0 20,20", "rectang 8,3 12,17", "rectang 2,8 18,12", "zoom e"]);
+    let r = s.execute("measuregeom", &json!({ "mode": "quick", "areas": [[1, 1]] })).unwrap();
+    // 4 x 14 and 16 x 4 sharing a 4 x 4 square: 104, with an outline of 36 + 40 - 16.
+    assert!(close(&r["area"], 400.0 - 104.0), "{r}");
+    assert!(close(&r["perimeter"], 80.0 + 60.0), "{r}");
 }
 
 /// Review on #2776: a circle met by several axes gives its radius once.

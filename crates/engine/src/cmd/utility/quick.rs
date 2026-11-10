@@ -323,9 +323,11 @@ impl QuickArea {
 fn islands(found: Vec<HatchLoop>, tol: f64) -> Vec<HatchLoop> {
     let flat: Vec<Vec<Vec2>> = found.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(tol)).collect();
     let size: Vec<f64> = flat.iter().map(|p| cadcraft_geom::shoelace(p).abs()).collect();
+    // Island `i` is in island `j` when all of it is: every corner inside and no edges crossing (a
+    // smaller strip crossing a larger one has points inside it too, but isn't in it).
     let inside = |i: usize, j: usize| -> bool {
         let (Some(pi), Some(pj)) = (flat.get(i), flat.get(j)) else { return false };
-        size.get(j) > size.get(i) && cadcraft_geom::region::interior_point(pi).is_some_and(|q| cadcraft_geom::point_in_polygon(pj, q))
+        size.get(j) > size.get(i) && pi.iter().all(|q| cadcraft_geom::point_in_polygon(pj, *q)) && !edges_cross(pi, pj)
     };
     // The outermost islands: those in no other one.
     let top: Vec<usize> = (0..found.len()).filter(|&i| !(0..found.len()).any(|j| j != i && inside(i, j))).collect();
