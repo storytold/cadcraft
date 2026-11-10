@@ -125,6 +125,9 @@ pub struct Session {
     /// every frame; `None` when the mouse is off the drawing): MEASUREGEOM Quick measures there,
     /// so a snap to an edge doesn't carry a click out of the area it was made in.
     pub pointer: Option<Vec2>,
+    /// A token typed at the command line (or read from a script) is being taken: its point is
+    /// the one typed, not one near the mouse.
+    pub(crate) typing: bool,
     /// Origin of the point currently being fed by `input_snapped`; never reused by typed points.
     picked_viewport: Option<snap::ViewportPoint>,
     /// The last drawing comparison (COMPARE), drawn over the drawing it was made for.
@@ -198,6 +201,7 @@ impl Session {
             ctrl_down: false,
             shift_down: false,
             pointer: None,
+            typing: false,
             picked_viewport: None,
             compare: None,
             tracking: snap::tracking::Tracker::default(),

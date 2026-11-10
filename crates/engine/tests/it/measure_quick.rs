@@ -131,9 +131,14 @@ fn a_click_snapped_onto_an_edge_measures_the_area_the_mouse_is_in() {
     s.pointer = Some(Vec2::new(0.02, 2.0));
     s.input(Input::Point(Vec2::new(0.0, 2.0))).unwrap();
     assert!(s.log.iter().any(|l| l.contains("Area = 50.0000")), "{:?}", s.log);
-    // A typed point far from the mouse is measured where it was typed.
+    // A point far from the mouse is measured where it was given.
     s.input(Input::Point(Vec2::new(40.0, 40.0))).unwrap();
     assert!(s.log.iter().any(|l| l.contains("No closed area there.")), "{:?}", s.log);
+    // A point typed just outside, next to the mouse just inside: the typed point is measured.
+    let refused = |s: &Session| s.log.iter().filter(|l| l.contains("No closed area there.")).count();
+    let before = refused(&s);
+    s.cmdline("#-0.02,2").unwrap();
+    assert_eq!(refused(&s), before + 1, "{:?}", s.log);
     s.cancel();
 }
 

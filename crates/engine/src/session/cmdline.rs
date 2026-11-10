@@ -67,9 +67,13 @@ impl Session {
         }
     }
 
-    /// One token typed while a command runs.
+    /// One token typed while a command runs. While it is taken, [`Session::typing`] says so: a
+    /// point typed here is not where the mouse is.
     pub(crate) fn typed(&mut self, t: &str) -> Result<()> {
-        self.typed_token(t, true)
+        let was = std::mem::replace(&mut self.typing, true);
+        let r = self.typed_token(t, true);
+        self.typing = was;
+        r
     }
 
     /// One token typed while a command runs; `lisp` evaluates a LISP expression first. The value

@@ -536,8 +536,12 @@ impl Interactive for QuickM {
 }
 
 /// The point under the mouse when `p` is it moved by a snap (within a few pick boxes of it),
-/// else `p` (a typed point, or no mouse).
+/// else `p`: a point typed at the command line or in a script is the one typed, even next to
+/// the mouse, and without a mouse there is nothing else.
 fn unsnapped(s: &Session, p: Vec2) -> Vec2 {
+    if s.typing {
+        return p;
+    }
     let near = super::super::curves::pick_aperture(s) * 4.0;
     s.pointer.filter(|q| q.is_finite() && q.dist(p) <= near).unwrap_or(p)
 }
