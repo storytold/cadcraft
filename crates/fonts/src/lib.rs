@@ -353,6 +353,29 @@ impl TextFont {
         }
         ttf::find(alt_main).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
     }
+    /// The SHX font files a text style names (main font, then big font, as written) that
+    /// [`TextFont::resolve_style`] can't find, so that it draws another font instead. A name
+    /// that isn't an SHX file (a TrueType family, the built-in font) is never listed.
+    pub fn missing_shx(font: &str, big_font: &str) -> Vec<String> {
+        let (font, big_font) = (font.trim(), big_font.trim());
+        let mut missing = Vec::new();
+        // A name with no extension may be an installed TrueType family: `resolve_style` tries that first.
+        let shx_name = font.to_ascii_lowercase().ends_with(".shx");
+        if shx::key(font).is_some() && shx::find(font).is_none() && (shx_name || ttf::find(font).is_none()) {
+            missing.push(font.to_string());
+        }
+        if shx::key(big_font).is_some() && shx::find(big_font).is_none() {
+            missing.push(big_font.to_string());
+        }
+        missing
+    }
+
+    /// What replaces a missing SHX font: the FONTALT font when it can be found, else the built-in font.
+    pub fn substitute_name() -> String {
+        let alt = ttf::font_alt();
+        let main = alt.split_once(',').map_or(alt.as_str(), |(a, _)| a).trim();
+        if !main.is_empty() && (shx::find(main).is_some() || ttf::find(main).is_some()) { main.to_string() } else { BUILTIN_FONT.to_string() }
+    }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
     }

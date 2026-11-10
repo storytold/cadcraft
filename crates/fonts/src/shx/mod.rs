@@ -40,6 +40,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use cadcraft_geom::Vec2;
 
 pub use compile::compile;
+pub(crate) use table::key;
 pub use table::{
     FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, installed, register, search_path, set_font_dirs,
     set_font_map, set_provider, set_search_path,

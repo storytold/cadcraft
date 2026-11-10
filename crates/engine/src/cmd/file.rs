@@ -330,7 +330,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let mut drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
@@ -340,7 +340,55 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
         cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
     }
+    // Said once, here, so the OPEN reply and the command line both carry it. The web build gets its font
+    // files after the drawing, so it can't tell yet.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(note) = missing_fonts_note(&drawing) {
+        drawing.read_notes.push(note);
+    }
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+}
+
+/// Most missing fonts and styles per font a [`missing_fonts_note`] names.
+#[cfg(not(target_arch = "wasm32"))]
+const NOTE_FONTS: usize = 8;
+#[cfg(not(target_arch = "wasm32"))]
+const NOTE_STYLES: usize = 3;
+
+/// The note for a drawing whose text styles name SHX fonts that can't be found: which fonts, the styles
+/// that use them, what is drawn instead and how to add the font's folder. `None` when none is missing.
+#[cfg(not(target_arch = "wasm32"))]
+fn missing_fonts_note(d: &Drawing) -> Option<String> {
+    // (font as written, styles that name it), in order of first use.
+    let mut missing: Vec<(String, Vec<&str>)> = Vec::new();
+    for st in &d.text_styles {
+        for font in cadcraft_fonts::TextFont::missing_shx(&st.font, &st.big_font) {
+            let file = font.rsplit(['/', '\\']).next().unwrap_or(&font).to_string();
+            match missing.iter_mut().find(|(f, _)| f.eq_ignore_ascii_case(&file)) {
+                Some((_, styles)) => styles.push(&st.name),
+                None => missing.push((file, vec![&st.name])),
+            }
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = missing
+        .iter()
+        .take(NOTE_FONTS)
+        .map(|(font, styles)| {
+            let more = styles.len().saturating_sub(NOTE_STYLES);
+            let shown = styles.iter().take(NOTE_STYLES).copied().collect::<Vec<_>>().join(", ");
+            if more > 0 { format!("{font} (styles {shown} and {more} more)") } else { format!("{font} (style {shown})") }
+        })
+        .collect();
+    let more = missing.len().saturating_sub(NOTE_FONTS);
+    let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
+    Some(format!(
+        "Font not found, drawn with {} instead: {}{tail}. Add its folder with SETVAR SUPPORTPATH.",
+        cadcraft_fonts::TextFont::substitute_name(),
+        list.join("; ")
+    ))
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
