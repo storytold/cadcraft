@@ -131,6 +131,7 @@ fn selected_tags(ents: &[std::sync::Arc<cadcraft_doc::Entity>], d: &Drawing, o: 
             selected.push(tag);
         }
     };
+    let mut scanned = std::collections::HashSet::new();
     for entity in ents {
         let EntityKind::Insert(ins) = &entity.kind else { continue };
         let anonymous = ins.block.starts_with('*') || d.block(&ins.block).is_some_and(|b| b.anonymous);
@@ -140,9 +141,14 @@ fn selected_tags(ents: &[std::sync::Arc<cadcraft_doc::Entity>], d: &Drawing, o: 
         for attribute in &ins.attribs {
             add(&attribute.tag);
         }
-        if let Some(block) = d.block(&ins.block) {
+        // A block's constants are read once, however many inserts reference it.
+        if scanned.insert(ins.block.as_str())
+            && let Some(block) = d.block(&ins.block)
+        {
             for entity in block.entities.iter() {
-                if let EntityKind::AttDef(attribute) = &entity.kind && attribute.constant {
+                if let EntityKind::AttDef(attribute) = &entity.kind
+                    && attribute.constant
+                {
                     add(&attribute.tag);
                 }
             }

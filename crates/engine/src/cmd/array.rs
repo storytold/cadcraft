@@ -193,7 +193,19 @@ pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
     let p = d.array_params(e)?;
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
-    let mut out = Vec::new();
+    // Count first: a hostile array must be refused before any entity is cloned.
+    let total = blk
+        .entities
+        .iter()
+        .map(|it| match &it.kind {
+            EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&p.source) => d.block(&i.block).map_or(1, |b| b.entities.len()),
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add);
+    if total > MAX_EXPLODED_OBJECTS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(total);
     for item in blk.entities.iter() {
         let item = placed(e, item, &m);
         let source = match &item.kind {
@@ -202,9 +214,6 @@ pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
         };
         match source {
             Some((im, b)) => {
-                if out.len().saturating_add(b.entities.len()) > MAX_EXPLODED_OBJECTS {
-                    return None;
-                }
                 out.extend(b.entities.iter().map(|se| placed(&item, se, &im)));
             }
             None => out.push(item),
