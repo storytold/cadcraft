@@ -94,7 +94,7 @@ fn read_file(path: &str, host: Option<&str>, chosen: bool) -> std::result::Resul
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (path, host);
+        let _ = (path, host, chosen);
         Err("files are not available on the web".into())
     }
 }
@@ -404,7 +404,8 @@ impl Interactive for ImageM {
         match self.stage {
             Stage::File => {
                 let Input::Text(t) = i else { return Ok(Step::Continue) };
-                let path = t.trim().to_string();
+                // A path copied with its quotes ("Copy as path") names the file inside them.
+                let path = t.trim().trim_matches('"').trim().to_string();
                 if path.is_empty() {
                     return Ok(Step::Continue);
                 }
@@ -419,6 +420,14 @@ impl Interactive for ImageM {
                 };
                 let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
                 s.echo(format!("Base image size: Width: 1, Height: {:.6}, Unitless", h / w));
+                // A drawing without a folder yet found a relative name in the working folder:
+                // it keeps the full path, which still names that file once the drawing is saved.
+                let path = match s.state()?.path.as_ref() {
+                    None if std::path::Path::new(&path).is_relative() => {
+                        std::path::absolute(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(path)
+                    }
+                    _ => path,
+                };
                 self.file = Some((path, raster));
                 self.stage = Stage::Point;
             }

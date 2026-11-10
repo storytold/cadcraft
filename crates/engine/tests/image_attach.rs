@@ -311,6 +311,64 @@ fn imageattach_reads_the_chosen_file_not_pixels_kept_under_its_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Review on #2769: a path copied with its quotes is found; a relative name typed in a drawing
+/// without a folder yet keeps its full path, so the drawing still finds it once saved elsewhere.
+#[test]
+fn imageattach_takes_quoted_paths_and_keeps_full_paths_in_new_drawings() {
+    use cadcraft_engine::Input;
+    hooks();
+    let dir = folder("quoted");
+    let file = dir.join("my photo.png");
+    std::fs::write(&file, png()).unwrap();
+    let mut s = Session::new();
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(format!("\"{}\"", file.to_string_lossy()))).unwrap();
+    assert!(s.prompt_text().contains("Specify insertion point"), "{} {:?}", s.prompt_text(), s.log);
+    s.cancel();
+
+    // A bare name, found in the working folder (the crate's, when tests run).
+    let name = format!("imageattach-cwd-{}.png", std::process::id());
+    let here = std::env::current_dir().unwrap().join(&name);
+    std::fs::write(&here, png()).unwrap();
+    s.start("imageattach").unwrap();
+    s.input(Input::Text(name.clone())).unwrap();
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    let _ = std::fs::remove_file(&here);
+    let stored = images(&s).pop().map(|i| i.path).unwrap_or_default();
+    assert!(Path::new(&stored).is_absolute() && stored.ends_with(&name), "{stored}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review on #2769: a file named relative to the drawing's folder is stored so, and found
+/// again when the saved drawing is opened.
+#[test]
+fn imageattach_beside_the_drawing_is_found_again_on_open() {
+    use cadcraft_engine::Input;
+    hooks();
+    let dir = folder("beside");
+    std::fs::create_dir_all(dir.join("maps")).unwrap();
+    std::fs::write(dir.join("maps").join("site.png"), png()).unwrap();
+    let host = dir.join("host.dxf");
+    std::fs::write(&host, cadcraft_io::write(&Drawing::new_metric(), "host.dxf").unwrap()).unwrap();
+    let mut s = Session::new();
+    open(&mut s, &host);
+    s.start("imageattach").unwrap();
+    s.input(Input::Text("maps/site.png".into())).unwrap();
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    assert_eq!(images(&s).pop().map(|i| i.path).as_deref(), Some("maps/site.png"));
+    s.execute("qsave", &json!({})).unwrap();
+
+    let mut s = Session::new();
+    open(&mut s, &host);
+    assert!(s.doc().unwrap().rasters.get("maps/site.png").is_some(), "{:?}", s.log);
+    assert_eq!(listed(&mut s)[0]["status"], "Loaded");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A file given at the prompt is that file or none: a missing one is not replaced by a file of
 /// the same name beside the drawing. A relative name is taken from the drawing's folder.
 #[test]
