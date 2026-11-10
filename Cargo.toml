@@ -71,7 +71,7 @@ egui-wgpu = "0.37"
 # Monotonic time on native and web (performance.now on wasm).
 web-time = "1.1"
 # craft-update: app-specific pretend versions apply to startup and manual checks.
-craft-update = { git = "https://github.com/dotCooCoo/craft-libs", version = "=0.1.0", rev = "c7c84230631cbc01ee928f0a0e0d838b1ed612ae", features = ["egui"] }
+craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "1b34eba41e62138fc2438d2734523b302840b45d", features = ["egui"] }
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false }
 
