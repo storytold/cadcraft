@@ -12,8 +12,8 @@
 //!
 //! States AutoCAD's dictionary can't hold stay in CADCraft's own record (`CADCRAFT_LAYERSTATES`):
 //! the view layer snapshots (`*VIEW name`), and a name that repeats an earlier one in another
-//! case (of states `S` and `s` in one dictionary AutoCAD 2024 lists only `S`, and restoring `s`
-//! restores `S`, measured).
+//! case: AutoCAD 2024 opens the entries `S` and `s` of one dictionary as one state, named as the
+//! first entry and holding the last one's record (measured), and so does the reader here.
 
 use std::collections::{HashMap, HashSet};
 

@@ -8,6 +8,8 @@ use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup
 pub(super) struct Objects {
     /// Dictionary entry handle (upper case) → entry name.
     names: HashMap<String, String>,
+    /// (dictionary handle, entry handle), both upper case, in the order the dictionaries list them.
+    entry_order: Vec<(String, String)>,
     /// SCALE objects (the annotation scale list), in file order.
     scales: Vec<cadcraft_doc::AnnoScale>,
     /// XRECORD handle (upper case) → its groups.
@@ -52,7 +54,11 @@ impl Objects {
                             if let Some(n) = name.take()
                                 && self.names.len() < MAX_OBJECTS
                             {
-                                self.names.insert(t.str().trim().to_ascii_uppercase(), n);
+                                let entry = t.str().trim().to_ascii_uppercase();
+                                if self.entry_order.len() < MAX_OBJECTS {
+                                    self.entry_order.push((h.clone(), entry.clone()));
+                                }
+                                self.names.insert(entry, n);
                             }
                         }
                         _ => {}
@@ -85,7 +91,10 @@ impl Objects {
     }
 
     /// The layer states of the LAYER table's `ACAD_LAYERSTATES` dictionary (its XRECORDs, in file
-    /// order), read with the drawing's layers and linetypes.
+    /// order), read with the drawing's layers and linetypes. Entries whose names differ only in case
+    /// are one state, as AutoCAD 2024 opens them (measured with `S` and `s` in both orders): named as
+    /// the first of them in the dictionary, holding the last one's record, where the first of their
+    /// records comes in the file.
     fn acad_layer_states(&self, d: &Drawing, rx: &Rx) -> Vec<cadcraft_doc::LayerState> {
         let dicts: std::collections::HashSet<&str> =
             self.names.iter().filter(|(_, n)| n.eq_ignore_ascii_case(crate::dxf_layer_states::KEY)).map(|(h, _)| h.as_str()).collect();
@@ -106,14 +115,34 @@ impl Objects {
             pstyle: &pstyle_of,
             colour_dependent: d.header.i64("PSTYLEMODE", 1) != 0,
         };
+        let ours = |tags: &[Tag]| owner(tags).is_some_and(|o| dicts.contains(o.as_str()));
+        // By lower-case name: the first entry's name and the last entry's record, in dictionary order.
+        let mut first: HashMap<String, &String> = HashMap::new();
+        let mut last: HashMap<String, &Vec<Tag>> = HashMap::new();
+        for (dict, h) in &self.entry_order {
+            if dicts.contains(dict.as_str())
+                && let (Some(name), Some(tags)) = (self.names.get(h), self.xrecords.get(h))
+                && ours(tags)
+            {
+                first.entry(name.to_ascii_lowercase()).or_insert(name);
+                last.insert(name.to_ascii_lowercase(), tags);
+            }
+        }
         let mut out = Vec::new();
+        let mut taken = std::collections::HashSet::new();
         let mut budget = crate::dxf_layer_states::MAX_COPIED_BYTES;
         for h in &self.xrecord_order {
             let (Some(tags), Some(name)) = (self.xrecords.get(h), self.names.get(h)) else { continue };
             if out.len() >= crate::dxf_ext::MAX_LAYER_STATES {
                 break;
             }
-            if owner(tags).is_some_and(|o| dicts.contains(o.as_str())) {
+            if !ours(tags) {
+                continue;
+            }
+            let key = name.to_ascii_lowercase();
+            if taken.insert(key.clone()) {
+                let name = first.get(&key).copied().unwrap_or(name);
+                let tags = last.get(&key).copied().unwrap_or(tags);
                 out.push(crate::dxf_layer_states::read(name, tags, &lookup, &mut budget));
             }
         }
