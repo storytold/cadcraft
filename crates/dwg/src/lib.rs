@@ -65,7 +65,9 @@ fn mb(n: u64) -> String {
 #[cfg(not(no_dwg_bridge))]
 pub mod worker;
 #[cfg(not(no_dwg_bridge))]
-pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_noted, serve_if_asked, use_own_worker, use_worker};
+pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_kept_noted, encode_noted, serve_if_asked, use_own_worker, use_worker};
+#[cfg(not(no_dwg_bridge))]
+mod proxy_transport;
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -107,6 +109,13 @@ mod native {
         }
         let mut notes = read_notes(&outcome.stats);
         let mut doc = outcome.document;
+        notes.extend(
+            guarded(AssertUnwindSafe(|| application_objects(&mut doc))).map_err(|_| "the DWG application object conversion failed".to_string())?,
+        );
+        // After application_objects, so the proxy objects it makes are numbered as the DXF's.
+        notes.extend(
+            guarded(AssertUnwindSafe(|| super::proxy_transport::prepare(&mut doc))).map_err(|_| "the DWG proxy conversion failed".to_string())?,
+        );
         let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
@@ -390,6 +399,214 @@ mod native {
         std::panic::catch_unwind(f).map_err(|_| ())
     }
 
+    /// The version a proxy record of a DWG of `version` names its format by (Open Design
+    /// Specification for .dwg, proxy objects): 19 for R13, 21 for R14, 23 for 2000, 25 for 2004,
+    /// 27 for 2007, 29 for 2010, 31 for 2013 and 33 for 2018; `None` for any other version.
+    pub(super) fn proxy_dwg_version(version: acadrust::DxfVersion) -> Option<i32> {
+        Some(match version.version_code() {
+            1012 => 19,
+            1014 => 21,
+            1015 => 23,
+            1018 => 25,
+            1021 => 27,
+            1024 => 29,
+            1027 => 31,
+            1032 => 33,
+            _ => return None,
+        })
+    }
+
+    /// Objects of another application's class that acadrust keeps only as their DWG record
+    /// (`ObjectType::Unknown`, which has no DXF form): its DXF writer left them out, and the
+    /// references to them went with them (a dimension's extension dictionary entry naming its
+    /// application data, say), with no note. Each is carried as a proxy object of its class instead
+    /// (DXF Reference, ACAD_PROXY_OBJECT), so the DXF keeps it and a DWG written from that DXF has it
+    /// again: its common object data (owner, reactors, extension dictionary) and the streams after
+    /// it (data bits, R2007+ strings, object references), as the Open Design Specification for .dwg
+    /// splits an object record. Objects of the drawing database's own classes are not turned into
+    /// another application's proxies. What is still without a DXF form is named in the notes, so a
+    /// save over the original is not mistaken for a complete one.
+    fn application_objects(doc: &mut acadrust::CadDocument) -> Vec<String> {
+        use acadrust::objects::{ObjectType, ProxyObject};
+        let classes: Vec<acadrust::classes::DxfClass> = doc.classes.iter().cloned().collect();
+        let source = doc.dwg_source_version.unwrap_or(doc.version);
+        if let Some(dwg_version) = proxy_dwg_version(source) {
+            let maintenance = i32::from(doc.maintenance_version);
+            for object in doc.objects.values_mut() {
+                let ObjectType::Unknown { handle, raw_dwg_data: Some(data), raw_dwg_handle_bits, raw_dwg_version: Some(version), type_name, .. } =
+                    &*object
+                else {
+                    continue;
+                };
+                if !application_class(&classes, type_name) {
+                    continue;
+                }
+                let raw = acadrust::entities::RawRecord { data: data.clone(), handle_bits: *raw_dwg_handle_bits, version: *version };
+                let handle = *handle;
+                // A record that doesn't split stays as it was, and is named below.
+                let Ok(Ok(record)) = std::panic::catch_unwind(AssertUnwindSafe(|| object_record(&raw, handle.value()))) else { continue };
+                let Some(class) = classes.iter().find(|c| c.class_number == record.kind && !c.is_an_entity) else { continue };
+                *object = ObjectType::ProxyObject(ProxyObject {
+                    handle,
+                    owner: record.owner,
+                    reactors: record.reactors,
+                    xdictionary_handle: record.xdictionary,
+                    proxy_id: 499,
+                    class_id: i32::from(class.class_number),
+                    dwg_version,
+                    maintenance_version: maintenance,
+                    version: (maintenance << 16) | dwg_version,
+                    payload: record.payload,
+                    text_payload: record.text_payload,
+                    object_ids: record.object_ids,
+                    ..Default::default()
+                });
+            }
+        }
+        let mut left: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for object in doc.objects.values() {
+            if let ObjectType::Unknown { type_name, raw_dxf_codes: None, .. } = object {
+                let n = left.entry(type_name.as_str()).or_insert(0);
+                *n = n.saturating_add(1);
+            }
+        }
+        if left.is_empty() {
+            return Vec::new();
+        }
+        let total = left.values().fold(0usize, |a, n| a.saturating_add(*n));
+        let mut list: Vec<String> = left.iter().take(NOTE_TYPES).map(|(t, n)| format!("{t:.60} × {n}")).collect();
+        if left.len() > NOTE_TYPES {
+            list.push(format!("{} more types", left.len() - NOTE_TYPES));
+        }
+        vec![format!(
+            "DWG: {total} objects of types CADCraft doesn't keep were left out ({}); saving over the original file would lose them",
+            list.join(", ")
+        )]
+    }
+
+    /// Whether `name` is an object class of another application, which only that application
+    /// rebuilds: not one of the drawing database's own classes (`AcDb…`/`ACDB…`/`ACAD_…`), whose
+    /// leftovers the database regenerates itself.
+    fn application_class(classes: &[acadrust::classes::DxfClass], name: &str) -> bool {
+        classes.iter().any(|c| {
+            !c.is_an_entity
+                && c.dxf_name.eq_ignore_ascii_case(name)
+                && !c.cpp_class_name.starts_with("AcDb")
+                && !["ACDB", "ACAD_", "ACAD"].iter().any(|p| c.dxf_name.to_ascii_uppercase().starts_with(p))
+        })
+    }
+
+    /// An application object acadrust kept only as its record: the parts a proxy object carries.
+    struct ObjectRecord {
+        kind: i16,
+        owner: acadrust::types::Handle,
+        reactors: Vec<acadrust::types::Handle>,
+        xdictionary: Option<acadrust::types::Handle>,
+        payload: acadrust::objects::ProxyPayload,
+        text_payload: acadrust::objects::ProxyPayload,
+        object_ids: Vec<acadrust::objects::ProxyObjectReference>,
+    }
+
+    /// Split an object record into its common object data and the uninterpreted streams after it
+    /// (data bits, R2007+ strings and object references), as an application object's proxy holds
+    /// them (Open Design Specification for .dwg, common object data and proxy objects). The record
+    /// is hostile: sizes are checked against it, and acadrust's checked stream reader does the rest.
+    fn object_record(raw: &acadrust::entities::RawRecord, handle: u64) -> Result<ObjectRecord, String> {
+        use acadrust::io::dwg::{
+            DwgVersion, dwg_reference_type::DwgReferenceType, dwg_stream_readers::object_reader::DwgObjectReader,
+            dwg_stream_writers::bit_writer::DwgBitWriter,
+        };
+        use acadrust::objects::{ProxyObjectReference, ProxyPayload, ProxyReferenceKind};
+        use acadrust::types::{DxfVersion, Handle};
+        if raw.data.len() > 32 << 20 {
+            return Err("object record exceeds the transport limit".into());
+        }
+        let handle_bits = usize::try_from(raw.handle_bits).map_err(|_| "object has a negative handle stream size")?;
+        let total_bits = raw.data.len().checked_mul(8).ok_or("object record is too large")?;
+        if handle_bits > total_bits {
+            return Err("object handle stream exceeds its record".into());
+        }
+        let version = DwgVersion::from_dxf_version(raw.version).map_err(|e| e.to_string())?;
+        let mut frame = DwgBitWriter::new(version, raw.version);
+        frame.write_modular_short(raw.data.len());
+        if raw.version >= DxfVersion::AC1024 {
+            frame.write_modular_char(handle_bits);
+        }
+        frame.write_bytes(&raw.data);
+        let reader = DwgObjectReader::new(frame.into_bytes(), raw.version, std::collections::HashMap::new()).map_err(|e| e.to_string())?;
+        let (kind, mut streams) = reader.read_record_at(0).map_err(|e| e.to_string())?;
+        if kind < 500 {
+            return Err("object has no application class".into());
+        }
+        let common = reader.read_common_non_entity_data(&mut streams, kind);
+        streams.check_error().map_err(|e| e.to_string())?;
+        if common.common.handle != handle {
+            return Err("object record names another handle".into());
+        }
+        let read_bits = |count: usize, bit: &mut dyn FnMut() -> bool| -> Result<ProxyPayload, String> {
+            if count > total_bits {
+                return Err("object stream exceeds its record".into());
+            }
+            let n = u32::try_from(count).map_err(|_| "object stream is too large")?;
+            let mut bytes = vec![0u8; count.div_ceil(8)];
+            for index in 0..count {
+                if bit()
+                    && let Some(b) = bytes.get_mut(index / 8)
+                {
+                    *b |= 0x80 >> (index % 8);
+                }
+            }
+            Ok(ProxyPayload::from_bits(&bytes, n))
+        };
+        let main = usize::try_from(streams.main_remaining_bits()).map_err(|_| "object body has an invalid size")?;
+        let payload = read_bits(main, &mut || streams.read_bit())?;
+        let text_payload = if raw.version >= DxfVersion::AC1021 {
+            let bits = usize::try_from(streams.text_remaining_bits()).map_err(|_| "object has a negative string stream size")?;
+            read_bits(bits, &mut || streams.read_text_bit())?
+        } else {
+            ProxyPayload::default()
+        };
+        // Every reference to the end of the handle stream, null ones too: an object keeps a null pointer in its
+        // field's place, and the references after it are the next fields' (as acadrust reads a proxy's own). R2010+
+        // records give the stream's exact length; the bits of its last byte past it are padding.
+        let mut object_ids = Vec::new();
+        let mut left = if raw.version >= DxfVersion::AC1024 {
+            streams.get_handle_bits().max(0).min(streams.handle_remaining_bits())
+        } else {
+            streams.handle_remaining_bits()
+        };
+        while left >= 8 {
+            if object_ids.len() >= 100_000 {
+                return Err("object has too many references".into());
+            }
+            let before = streams.handle_remaining_bits();
+            let (target, reference) = streams.read_handle_reference(handle);
+            let used = before.saturating_sub(streams.handle_remaining_bits());
+            if used <= 0 || used > left {
+                break;
+            }
+            left -= used;
+            let kind = match reference {
+                DwgReferenceType::SoftOwnership => ProxyReferenceKind::SoftOwnership,
+                DwgReferenceType::HardOwnership => ProxyReferenceKind::HardOwnership,
+                DwgReferenceType::SoftPointer => ProxyReferenceKind::SoftPointer,
+                DwgReferenceType::HardPointer => ProxyReferenceKind::HardPointer,
+                DwgReferenceType::Undefined => ProxyReferenceKind::Undefined,
+            };
+            object_ids.push(ProxyObjectReference { handle: Handle::from(target), kind });
+        }
+        streams.check_error().map_err(|e| e.to_string())?;
+        Ok(ObjectRecord {
+            kind,
+            owner: Handle::from(common.owner_handle),
+            reactors: common.reactors.into_iter().map(Handle::from).collect(),
+            xdictionary: common.xdictionary_handle.map(Handle::from),
+            payload,
+            text_payload,
+            object_ids,
+        })
+    }
+
     /// [`table_merges`] visiting at most `budget` cells in all; a range that would pass it is
     /// left unmerged. Returns the cells visited.
     fn table_merges_within(doc: &mut acadrust::CadDocument, budget: usize) -> usize {
@@ -652,7 +869,7 @@ mod native {
     /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
     /// (AC1018).
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
-        convert(dxf, None).map(|(dwg, _)| dwg)
+        convert(dxf, None, None).map(|(dwg, _)| dwg)
     }
 
     /// Convert DXF bytes into a DWG file of `version`, a code from [`super::VERSIONS`] ("AC1032"),
@@ -665,7 +882,32 @@ mod native {
     /// DXF type it can't write (other programs' custom entities and objects that the DWG reader
     /// didn't read from a DWG of this version), empty when the DWG keeps everything.
     pub fn dxf_to_dwg_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
-        let v = match version.trim().to_ascii_uppercase().as_str() {
+        convert(dxf, Some(writable(version)?), None)
+    }
+
+    /// Like [`dxf_to_dwg_as`], for a DXF that declares an older version than the groups it carries
+    /// over from another file. CADCraft's R2000 DWG bridge holds the objects it keeps without
+    /// modelling them (render settings, fields, associative and dynamic block data) as they were
+    /// read from a file of version `kept` ("AC1032"), and acadrust reads several of those
+    /// differently by version: read as R2000, an AC1032 file's mental ray render settings came out
+    /// a class version too high, for which the ODA rejects the whole DWG, and a field lost its
+    /// cached value. So the DXF is read as `kept` declares. A `kept` version that is unknown, or
+    /// not newer than the DXF's own, changes nothing.
+    pub fn dxf_to_dwg_kept_as(dxf: &[u8], version: &str, kept: &str) -> Result<Vec<u8>, String> {
+        dxf_to_dwg_kept_noted(dxf, version, kept).map(|(dwg, _)| dwg)
+    }
+
+    /// [`dxf_to_dwg_kept_as`], also returning what the DWG writer left out, as
+    /// [`dxf_to_dwg_noted`] does.
+    pub fn dxf_to_dwg_kept_noted(dxf: &[u8], version: &str, kept: &str) -> Result<(Vec<u8>, super::Unwritten), String> {
+        let kept = acadrust::DxfVersion::from_version_string(kept.trim().to_ascii_uppercase().as_str());
+        let kept = (kept != acadrust::DxfVersion::Unknown).then_some(kept);
+        convert(dxf, Some(writable(version)?), kept)
+    }
+
+    /// The DWG version for a code from [`super::VERSIONS`].
+    fn writable(version: &str) -> Result<acadrust::DxfVersion, String> {
+        Ok(match version.trim().to_ascii_uppercase().as_str() {
             "AC1015" => acadrust::DxfVersion::AC1015,
             "AC1018" => acadrust::DxfVersion::AC1018,
             "AC1021" => acadrust::DxfVersion::AC1021,
@@ -673,8 +915,72 @@ mod native {
             "AC1027" => acadrust::DxfVersion::AC1027,
             "AC1032" => acadrust::DxfVersion::AC1032,
             _ => return Err(super::unsupported(version)),
+        })
+    }
+
+    /// The ASCII DXF with its `$ACADVER` set to `kept` when that is newer than the version it
+    /// declares, or `None` to read it as it is (binary, no `$ACADVER`, or non-ASCII text without a
+    /// `$DWGCODEPAGE` to decode it by). From AutoCAD 2007 (AC1021) a DXF is UTF-8, so other bytes
+    /// are first decoded with the code page the DXF declares; `\U+XXXX` escapes read the same in
+    /// every version, and CADCraft's R2000 DXF is ASCII with such escapes.
+    pub(super) fn declare_version(dxf: &[u8], kept: acadrust::DxfVersion) -> Option<Vec<u8>> {
+        if dxf.starts_with(b"AutoCAD Binary DXF") {
+            return None;
+        }
+        let (_, declared) = header_value(dxf, b"$ACADVER")?;
+        let declared = acadrust::DxfVersion::from_version_string(std::str::from_utf8(declared).ok()?);
+        if declared >= kept {
+            return None;
+        }
+        let text: std::borrow::Cow<'_, [u8]> = if dxf.is_ascii() || kept < acadrust::DxfVersion::AC1021 {
+            std::borrow::Cow::Borrowed(dxf)
+        } else {
+            // As acadrust decodes an older DXF: by its code page, Windows-1252 for one it doesn't
+            // know; a code page that names UTF-8 needs no decoding.
+            let (_, code_page) = header_value(dxf, b"$DWGCODEPAGE")?;
+            match acadrust::io::dxf::code_page::encoding_from_code_page(std::str::from_utf8(code_page).ok()?) {
+                Some(encoding) => {
+                    let (text, errors) = encoding.decode_without_bom_handling(dxf);
+                    if errors {
+                        return None;
+                    }
+                    std::borrow::Cow::Owned(text.into_owned().into_bytes())
+                }
+                None => std::borrow::Cow::Borrowed(std::str::from_utf8(dxf).ok()?.as_bytes()),
+            }
         };
-        convert(dxf, Some(v))
+        let (at, value) = header_value(&text, b"$ACADVER")?;
+        let code = kept.to_string();
+        let mut out = Vec::with_capacity(text.len().saturating_add(code.len()));
+        out.extend_from_slice(text.get(..at)?);
+        out.extend_from_slice(code.as_bytes());
+        out.extend_from_slice(text.get(at.checked_add(value.len())?..)?);
+        Some(out)
+    }
+
+    /// The byte offset and the trimmed value of header variable `name` in an ASCII DXF: the value
+    /// of the group that follows the `9` group naming it. The file is read as (group code,
+    /// value) line pairs, in one pass with no buffering, up to the first `0`/`ENDSEC`, the end
+    /// of the HEADER section: a large input without one costs time, not memory (a line index of
+    /// a 32 MiB file used 0.8 GB). Lines may end in `\r\n`.
+    pub(super) fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
+        let mut offset = 0usize;
+        let mut lines = dxf.split(|b| *b == b'\n').map(|line| {
+            let at = offset.saturating_add(line.len() - line.trim_ascii_start().len());
+            offset = offset.saturating_add(line.len()).saturating_add(1);
+            (at, line.trim_ascii())
+        });
+        while let (Some((_, code)), Some((_, value))) = (lines.next(), lines.next()) {
+            if code == b"0" && value == b"ENDSEC" {
+                return None;
+            }
+            if code == b"9" && value == name {
+                let (_, code) = lines.next()?;
+                let (at, value) = lines.next()?;
+                return (code != b"0" && code != b"9").then_some((at, value));
+            }
+        }
+        None
     }
 
     /// The current dimension and text styles' names from their handles: a DWG stores the
@@ -711,6 +1017,150 @@ mod native {
         }
     }
 
+    /// The DXF names of an ASCII DXF's CLASS records, in CLASSES order: a proxy's class number
+    /// (group 91) is 500 plus its class's place here (DXF Reference, ACAD_PROXY_OBJECT). Empty for
+    /// one without a CLASSES section. `None` for a binary DXF, whose classes this doesn't read:
+    /// CADCraft's own bridge DXF is always ASCII, and only a binary DXF given to the public
+    /// conversion functions comes here.
+    pub(super) fn dxf_class_names(dxf: &[u8]) -> Option<Vec<String>> {
+        let pairs = super::proxy_transport::text_pairs(dxf)?;
+        let mut names = Vec::new();
+        let (mut section, mut in_classes, mut in_class) = (false, false, false);
+        for pair in pairs {
+            let (code, value) = pair?;
+            match (code, value.as_str()) {
+                (0, "ENDSEC") if in_classes => break,
+                (0, "SECTION") => section = true,
+                (2, name) if section => {
+                    in_classes = name == "CLASSES";
+                    section = false;
+                }
+                (0, kind) if in_classes => {
+                    in_class = kind == "CLASS";
+                    // Even an unnamed record keeps its place in the source class table.
+                    if in_class {
+                        names.push(String::new());
+                    }
+                }
+                (1, value) if in_class => {
+                    if let Some(last) = names.last_mut() {
+                        *last = value.to_string();
+                    }
+                    in_class = false;
+                }
+                _ => section = false,
+            }
+        }
+        Some(names)
+    }
+
+    /// Proxy objects' and entities' class numbers as the DWG numbers its classes. A DXF proxy
+    /// names its class by its place in the DXF's CLASSES (`classes`, from 500), but acadrust's
+    /// reader puts its own default classes first and numbers the DXF's after them, so the DXF
+    /// number named another class in the DWG: a 2018 drawing's piping proxies became
+    /// LARGE_RADIAL_DIMENSION and SECTIONOBJECT, and the ODA File Converter refused the file. A
+    /// proxy whose number names no class of the DXF is left out: kept as it is, its number would
+    /// name some other class of the DWG, for the same reason.
+    ///
+    /// Before 2013 (AC1027) acadrust writes only the classes it knows a pre-2013 DWG needs, and a
+    /// proxy's class is not one of them: the proxy would name a missing class (the ODA refuses
+    /// the file: "No ClassId") or, by its old number, some other class. Such a DWG leaves the
+    /// proxies out instead, as it does other programs' data it can't write (`not_saved` reports
+    /// the entities). So does a DXF whose classes are unknown (`classes` is `None`, a binary
+    /// DXF): its proxies' numbers can't be mapped, and kept as they are they would name the
+    /// wrong classes and the ODA would refuse the file. Returns the proxies left out, by DXF type, for
+    /// what the DWG writer left out ([`super::Unwritten`]).
+    fn proxy_classes(doc: &mut acadrust::CadDocument, classes: Option<&[String]>) -> super::Unwritten {
+        let classes = match classes {
+            Some(c) if doc.version >= acadrust::DxfVersion::AC1027 => c,
+            _ => {
+                let entities: Vec<acadrust::Handle> = doc
+                    .entities()
+                    .filter_map(|e| match e {
+                        acadrust::entities::EntityType::Extended(x) if matches!(x.data, acadrust::entities::ExtendedEntityData::Proxy(_)) => {
+                            Some(x.common.handle)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let objects: Vec<acadrust::Handle> =
+                    doc.objects.iter().filter_map(|(h, o)| matches!(o, acadrust::objects::ObjectType::ProxyObject(_)).then_some(*h)).collect();
+                for h in &entities {
+                    doc.remove_entity(*h);
+                }
+                for h in &objects {
+                    doc.objects.remove(h);
+                }
+                return left_out(objects.len(), entities.len());
+            }
+        };
+        // Name matching cannot choose between different source classes with the same name.
+        // Count those proxies as unwritten rather than silently changing their class identity.
+        let mut unique = std::collections::HashMap::new();
+        for name in classes {
+            unique.entry(name.to_uppercase()).and_modify(|value| *value = false).or_insert(true);
+        }
+        let number = |id: i32| -> Option<i32> {
+            let name = classes.get(usize::try_from(id.checked_sub(500)?).ok()?)?;
+            if unique.get(&name.to_uppercase()) != Some(&true) {
+                return None;
+            }
+            doc.classes.get_by_name(name).map(|c| i32::from(c.class_number))
+        };
+        let objects: Vec<(acadrust::Handle, Option<i32>)> = doc
+            .objects
+            .iter()
+            .filter_map(|(h, o)| match o {
+                acadrust::objects::ObjectType::ProxyObject(p) => Some((*h, number(p.class_id))),
+                _ => None,
+            })
+            .collect();
+        let entities: Vec<(acadrust::Handle, Option<i32>)> = doc
+            .entities()
+            .filter_map(|e| match e {
+                acadrust::entities::EntityType::Extended(x) => match &x.data {
+                    acadrust::entities::ExtendedEntityData::Proxy(p) => Some((x.common.handle, number(p.class_id))),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let unmapped = |list: &[(acadrust::Handle, Option<i32>)]| list.iter().filter(|(_, n)| n.is_none()).map(|(h, _)| *h).collect::<Vec<_>>();
+        let (gone_objects, gone_entities) = (unmapped(&objects), unmapped(&entities));
+        for h in &gone_objects {
+            doc.objects.remove(h);
+        }
+        for h in &gone_entities {
+            doc.remove_entity(*h);
+        }
+        let objects = objects.into_iter().filter_map(|(h, n)| Some((h, n?)));
+        let entities = entities.into_iter().filter_map(|(h, n)| Some((h, n?)));
+        for (h, n) in objects {
+            if let Some(acadrust::objects::ObjectType::ProxyObject(p)) = doc.objects.get_mut(&h) {
+                p.class_id = n;
+            }
+        }
+        let entities: std::collections::HashMap<acadrust::Handle, i32> = entities.into_iter().collect();
+        for e in doc.entities_mut() {
+            if let acadrust::entities::EntityType::Extended(x) = e {
+                let Some(n) = entities.get(&x.common.handle).copied() else { continue };
+                if let acadrust::entities::ExtendedEntityData::Proxy(p) = &mut x.data {
+                    p.class_id = n;
+                }
+            }
+        }
+        left_out(gone_objects.len(), gone_entities.len())
+    }
+
+    /// Proxy objects and entities left out of the DWG, by their DXF types.
+    fn left_out(objects: usize, entities: usize) -> super::Unwritten {
+        [("ACAD_PROXY_OBJECT", objects), ("ACAD_PROXY_ENTITY", entities)]
+            .into_iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(t, n)| (t.to_string(), n))
+            .collect()
+    }
+
     /// The current layer (`$CLAYER`) by its name, the same way as [`current_dimstyle`]: a DWG
     /// stores the handle of the layer, and the one read with the DXF needn't be the layer's in
     /// the document, so the drawing reopened with layer "0" current (#2252).
@@ -722,7 +1172,8 @@ mod native {
         }
     }
 
-    fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<(Vec<u8>, super::Unwritten), String> {
+    /// `kept`: the version the DXF's carried-over groups were read from ([`dxf_to_dwg_kept_as`]).
+    fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>, kept: Option<acadrust::DxfVersion>) -> Result<(Vec<u8>, super::Unwritten), String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
         // interrupted once it starts (CWE-789). This bounds the large-input variant; the decoder
@@ -734,7 +1185,20 @@ mod native {
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
-        let data = dxf.to_vec();
+        // Decoding a code page to UTF-8 can grow the text, so the limit applies again.
+        let data = match kept.and_then(|k| declare_version(dxf, k)) {
+            Some(d) if d.len() > Limits::DEFAULT.max_dxf_bytes => {
+                return Err(format!(
+                    "DXF: the input is {} as UTF-8, larger than the {} CADCraft converts to DWG",
+                    mb(d.len() as u64),
+                    mb(Limits::DEFAULT.max_dxf_bytes as u64)
+                ));
+            }
+            Some(d) => d,
+            None => dxf.to_vec(),
+        };
+        let (classes, source) = guarded(AssertUnwindSafe(|| (dxf_class_names(&data), super::proxy_transport::source_classes(&data))))
+            .map_err(|_| "the DXF proxy class conversion failed".to_string())?;
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
@@ -749,10 +1213,25 @@ mod native {
         // The fix-ups run on the third-party reader's document, so a panic in one is an error, not a crash.
         let unwritten = guarded(AssertUnwindSafe(|| {
             super::fail_in_test("convert");
+            // From 2013 the DWG takes the source classes as they are, duplicates and metadata
+            // included; otherwise (before 2013, a binary DXF, classes that can't be written back)
+            // proxies are matched to classes by name or left out.
+            let restored = match source {
+                Some(source) if doc.version >= acadrust::DxfVersion::AC1027 => super::proxy_transport::restore_classes(&mut doc, source),
+                _ => None,
+            };
+            let proxies = match restored {
+                Some((objects, entities)) => left_out(objects, entities),
+                None => proxy_classes(&mut doc, classes.as_deref()),
+            };
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
             dimension_flags(&mut doc);
-            let unwritten = drop_unwritable(&mut doc);
+            let mut unwritten = drop_unwritable(&mut doc);
+            for (kind, n) in proxies {
+                let total = unwritten.entry(kind).or_insert(0);
+                *total = total.saturating_add(n);
+            }
             current_dimstyle(&mut doc);
             add_variable_dictionary(&mut doc);
             current_text_style(&mut doc);
@@ -917,10 +1396,132 @@ mod native {
             assert_eq!(guarded(|| 3), Ok(3));
         }
     }
+
+    #[cfg(test)]
+    mod application_object_tests {
+        use super::*;
+        use acadrust::CadDocument;
+        use acadrust::classes::DxfClass;
+        use acadrust::objects::{ObjectType, ProxyObjectReference, ProxyPayload, ProxyReferenceKind, RegisteredClassObject};
+        use acadrust::types::{DxfVersion, Handle};
+
+        /// An object of another application's class that acadrust keeps only as its record (a
+        /// vertical product's dimension data, say) is carried as that class's proxy object, with its
+        /// data bits, references, owner and extension dictionary, through DXF and back to DWG, twice.
+        #[test]
+        fn undecoded_application_object_is_kept_as_its_proxy() {
+            for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+                let mut source = CadDocument::new();
+                source.version = version;
+                source.classes.add_or_update(DxfClass::new("TESTCONTAINER", "xyzDbTestContainer"));
+                let handle = Handle::from(0x2Bu64);
+                let target = Handle::from(0x2Cu64);
+                let payload = ProxyPayload::from_bits(&[0x5A, 0x3C, 0xC0], 18);
+                // A null pointer between two references: it keeps its place, the one after it is not lost.
+                let references = vec![
+                    ProxyObjectReference { handle: target, kind: ProxyReferenceKind::HardPointer },
+                    ProxyObjectReference { handle: Handle::from(0u64), kind: ProxyReferenceKind::SoftPointer },
+                    ProxyObjectReference { handle: Handle::from(0x0Cu64), kind: ProxyReferenceKind::HardPointer },
+                ];
+                source.objects.insert(
+                    handle,
+                    ObjectType::RegisteredClass(RegisteredClassObject {
+                        handle,
+                        owner: Handle::from(0x0Cu64),
+                        dxf_name: "TESTCONTAINER".into(),
+                        cpp_class_name: "xyzDbTestContainer".into(),
+                        payload: payload.clone(),
+                        object_ids: references.clone(),
+                        ..Default::default()
+                    }),
+                );
+                let mut dwg = acadrust::DwgWriter::write_to_vec(&source).unwrap();
+                // acadrust has no model of it: read back, it is only its record.
+                let decoded = acadrust::DwgReader::from_stream(Cursor::new(dwg.clone())).read().unwrap();
+                assert!(matches!(decoded.objects.get(&handle), Some(ObjectType::Unknown { .. })), "{:?}", decoded.objects.get(&handle));
+                for generation in 0..2 {
+                    let (dxf, notes) = dwg_to_dxf_noted(&dwg, Limits::DEFAULT).unwrap();
+                    assert!(notes.is_empty(), "{version:?} {generation}: {notes:?}");
+                    // The DXF has the object, by its handle, as a proxy record.
+                    let text = String::from_utf8_lossy(&dxf);
+                    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+                    let record = lines.windows(4).any(|w| w == ["0", "ACAD_PROXY_OBJECT", "5", "2B"]);
+                    assert!(record, "{version:?} {generation}: no proxy record for the object");
+                    dwg = dxf_to_dwg_as(&dxf, "AC1032").unwrap();
+                    let doc = acadrust::DwgReader::from_stream(Cursor::new(dwg.clone())).read().unwrap();
+                    let Some(ObjectType::ProxyObject(proxy)) = doc.objects.get(&handle) else { panic!("{version:?} {generation}: proxy object") };
+                    assert_eq!(proxy.payload.bit_count, payload.bit_count);
+                    assert_eq!(proxy.payload.data(), payload.data());
+                    assert_eq!(proxy.object_ids, references);
+                    let class = doc.classes.iter().find(|c| i32::from(c.class_number) == proxy.class_id).unwrap();
+                    assert_eq!(class.dxf_name, "TESTCONTAINER");
+                    assert!(!class.is_an_entity);
+                }
+            }
+        }
+
+        /// The database's own classes are not turned into another application's proxies; what is
+        /// left without a DXF form is said, not dropped silently.
+        #[test]
+        fn database_objects_without_a_form_are_reported() {
+            let mut doc = CadDocument::new();
+            doc.classes.add_or_update(DxfClass::new("BLOCKPROPERTIESTABLE", "AcDbBlockPropertiesTable"));
+            let handle = Handle::from(0x40u64);
+            doc.objects.insert(
+                handle,
+                ObjectType::Unknown {
+                    type_name: "BLOCKPROPERTIESTABLE".into(),
+                    handle,
+                    owner: Handle::from(0x0Cu64),
+                    raw_dxf_codes: None,
+                    raw_dwg_data: Some(vec![0; 8]),
+                    raw_dwg_handle_bits: 0,
+                    raw_dwg_version: Some(DxfVersion::AC1032),
+                },
+            );
+            let notes = application_objects(&mut doc);
+            assert!(matches!(doc.objects.get(&handle), Some(ObjectType::Unknown { .. })));
+            assert_eq!(
+                notes,
+                [
+                    "DWG: 1 objects of types CADCraft doesn't keep were left out (BLOCKPROPERTIESTABLE × 1); saving over the original file would lose them"
+                ]
+            );
+        }
+
+        /// A record that doesn't split stays as it was and is named, never guessed at.
+        #[test]
+        fn invalid_object_records_are_rejected() {
+            for handle_bits in [-1, 1000] {
+                let raw = acadrust::entities::RawRecord { data: vec![0; 8], handle_bits, version: DxfVersion::AC1032 };
+                assert!(object_record(&raw, 42).is_err());
+            }
+            let mut doc = CadDocument::new();
+            doc.classes.add_or_update(DxfClass::new("TESTCONTAINER", "xyzDbTestContainer"));
+            let handle = Handle::from(0x41u64);
+            doc.objects.insert(
+                handle,
+                ObjectType::Unknown {
+                    type_name: "TESTCONTAINER".into(),
+                    handle,
+                    owner: Handle::from(0x0Cu64),
+                    raw_dxf_codes: None,
+                    raw_dwg_data: Some(vec![0xFF; 4]),
+                    raw_dwg_handle_bits: 1000,
+                    raw_dwg_version: Some(DxfVersion::AC1032),
+                },
+            );
+            let notes = application_objects(&mut doc);
+            assert!(matches!(doc.objects.get(&handle), Some(ObjectType::Unknown { .. })));
+            assert!(notes.iter().any(|n| n.contains("(TESTCONTAINER × 1)")), "{notes:?}");
+        }
+    }
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_noted};
+pub use native::{
+    dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_kept_as, dxf_to_dwg_kept_noted, dxf_to_dwg_noted,
+};
 
 /// What saving as DWG left out: how many records of each DXF type (upper case) the DWG writer
 /// can't write.
@@ -975,6 +1576,13 @@ pub fn encode_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
 pub fn encode_noted(dxf: &[u8], version: &str) -> Result<(Vec<u8>, Unwritten), String> {
     dxf_to_dwg_noted(dxf, version)
 }
+#[cfg(no_dwg_bridge)]
+pub fn encode_kept_noted(dxf: &[u8], version: &str, kept: Option<&str>) -> Result<(Vec<u8>, Unwritten), String> {
+    match kept {
+        Some(kept) => dxf_to_dwg_kept_noted(dxf, version, kept),
+        None => dxf_to_dwg_noted(dxf, version),
+    }
+}
 
 #[cfg(no_dwg_bridge)]
 pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -998,6 +1606,14 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 }
 #[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg_noted(_dxf: &[u8], _version: &str) -> Result<(Vec<u8>, Unwritten), String> {
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
+}
+#[cfg(no_dwg_bridge)]
+pub fn dxf_to_dwg_kept_as(_dxf: &[u8], _version: &str, _kept: &str) -> Result<Vec<u8>, String> {
+    Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
+}
+#[cfg(no_dwg_bridge)]
+pub fn dxf_to_dwg_kept_noted(_dxf: &[u8], _version: &str, _kept: &str) -> Result<(Vec<u8>, Unwritten), String> {
     Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
 }
 
@@ -1285,13 +1901,109 @@ mod tests {
         assert_eq!(notes, ["DWG: 3 DGN line style components that no line style definition uses were left out"]);
     }
 
+    /// An R2000 DXF header (`\r\n` lines, as CADCraft writes them) with `extra` after `$ACADVER`.
+    #[cfg(not(no_dwg_bridge))]
+    fn r2000(extra: &[u8]) -> Vec<u8> {
+        let mut dxf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1015\r\n  9\r\n$DWGCODEPAGE\r\n  3\r\nANSI_1252\r\n".to_vec();
+        dxf.extend_from_slice(b"  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nTEXT\r\n  1\r\n");
+        dxf.extend_from_slice(extra);
+        dxf.extend_from_slice(b"\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n");
+        dxf
+    }
+
+    /// The kept version replaces only the `$ACADVER` value; everything else stays byte for byte.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn declare_version_changes_only_acadver() {
+        let dxf = r2000(b"A\\U+00E7\\U+00E3o");
+        let out = native::declare_version(&dxf, acadrust::DxfVersion::AC1032).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), String::from_utf8(dxf).unwrap().replacen("AC1015", "AC1032", 1));
+    }
+
+    /// A kept version not newer than the declared one, a binary DXF and a DXF without `$ACADVER`
+    /// are read as they are.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn declare_version_leaves_what_it_need_not_change() {
+        let dxf = r2000(b"x");
+        assert_eq!(native::declare_version(&dxf, acadrust::DxfVersion::AC1015), None);
+        assert_eq!(native::declare_version(&dxf, acadrust::DxfVersion::AC1009), None);
+        assert_eq!(native::declare_version(b"AutoCAD Binary DXF\r\n\x1a\0", acadrust::DxfVersion::AC1032), None);
+        let no_version = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
+        assert_eq!(native::declare_version(no_version, acadrust::DxfVersion::AC1032), None);
+        // A `$ACADVER` outside the HEADER section is not the file's version.
+        let late = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  0\r\nENDSEC\r\n  9\r\n$ACADVER\r\n  1\r\nAC1015\r\n";
+        assert_eq!(native::declare_version(late, acadrust::DxfVersion::AC1032), None);
+    }
+
+    /// The header is read as group code and value pairs up to the first `0`/`ENDSEC`: a `$ACADVER`
+    /// name whose value would come after it, or a file that never ends its HEADER, is no version
+    /// to replace, and `\r\n` lines keep the value's offset right.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn declare_version_reads_the_header_in_pairs_up_to_endsec() {
+        let cut = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  0\r\nENDSEC\r\n  1\r\nAC1015\r\n";
+        assert_eq!(native::declare_version(cut, acadrust::DxfVersion::AC1032), None);
+        let endless = vec![b'\n'; 1 << 20];
+        assert_eq!(native::declare_version(&endless, acadrust::DxfVersion::AC1032), None);
+        let crlf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\n  AC1015\r\n  0\r\nENDSEC\r\n";
+        let out = native::declare_version(crlf, acadrust::DxfVersion::AC1032).unwrap();
+        assert_eq!(out, b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\n  AC1032\r\n  0\r\nENDSEC\r\n");
+    }
+
+    /// Declared as 2007 or later, a DXF is UTF-8: code page text is decoded first. Declared as an
+    /// older version, the code page bytes stay as they are.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn declare_version_decodes_a_code_page_for_utf8_versions() {
+        let dxf = r2000(b"A\xe7\xe3o");
+        let utf8 = native::declare_version(&dxf, acadrust::DxfVersion::AC1032).unwrap();
+        let text = String::from_utf8(utf8).unwrap();
+        assert!(text.contains("\r\nAção\r\n") && text.contains("$ACADVER\r\n  1\r\nAC1032\r\n"), "{text}");
+        let legacy = native::declare_version(&dxf, acadrust::DxfVersion::AC1018).unwrap();
+        assert!(legacy.windows(4).any(|w| w == b"A\xe7\xe3o"), "the code page bytes stay");
+        assert!(legacy.windows(6).any(|w| w == b"AC1018"));
+        // A code page it doesn't know is read as Windows-1252, as acadrust reads an older DXF.
+        let at = dxf.windows(9).position(|w| w == b"ANSI_1252").unwrap();
+        let unknown = [&dxf[..at], b"NO_SUCH_CP".as_slice(), &dxf[at + 9..]].concat();
+        let text = String::from_utf8(native::declare_version(&unknown, acadrust::DxfVersion::AC1032).unwrap()).unwrap();
+        assert!(text.contains("\r\nAção\r\n"), "{text}");
+        // Without a `$DWGCODEPAGE` there is nothing to decode it by: it is read as it is.
+        let none = [&dxf[..at - 21], &dxf[at + 11..]].concat();
+        assert!(!none.windows(12).any(|w| w == b"$DWGCODEPAGE"), "{}", String::from_utf8_lossy(&none));
+        assert_eq!(native::declare_version(&none, acadrust::DxfVersion::AC1032), None);
+    }
+
+    /// An unknown kept version converts as [`dxf_to_dwg_as`] does.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn unknown_kept_version_converts_as_before() {
+        let dxf = r2000(b"x");
+        assert_eq!(dxf_to_dwg_kept_as(&dxf, "AC1032", "AC9999"), dxf_to_dwg_as(&dxf, "AC1032"));
+        assert!(dxf_to_dwg_kept_as(&dxf, "AC0000", "AC1032").is_err(), "an unwritable version is still an error");
+    }
+
+    /// The CLASS names in CLASSES order; nothing for a binary DXF or one without CLASSES.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn dxf_class_names_in_classes_order() {
+        let dxf = b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nCLASSES\r\n  0\r\nCLASS\r\n  1\r\nWIDGETA\r\n  2\r\nAcDbWidgetA\r\n  3\r\nApp\r\n  0\r\nCLASS\r\n  1\r\nWIDGETB\r\n  2\r\nAcDbWidgetB\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nTEXT\r\n  1\r\nNOT_A_CLASS\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
+        assert_eq!(native::dxf_class_names(dxf).unwrap(), ["WIDGETA", "WIDGETB"]);
+        // A CLASS record without a name keeps its place, so the classes after it keep theirs
+        // (#2837 review).
+        let unnamed = b"  0\r\nSECTION\r\n  2\r\nCLASSES\r\n  0\r\nCLASS\r\n  2\r\nAcDbNoName\r\n  0\r\nCLASS\r\n  1\r\nWIDGETB\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
+        assert_eq!(native::dxf_class_names(unnamed).unwrap(), ["", "WIDGETB"]);
+        assert_eq!(native::dxf_class_names(b"  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n  0\nEOF\n"), Some(Vec::new()));
+        assert_eq!(native::dxf_class_names(b"AutoCAD Binary DXF\r\n\x1a\0"), None);
+    }
+
     /// AutoCAD's DWG scale action (BLOCKSCALEACTION) ends with a byte after its three
     /// connections that DXF doesn't carry. acadrust 0.6.4 neither read nor wrote it, so AutoCAD
     /// read past the object and refused every DWG CADCraft wrote with a dynamic block that scales
     /// ("Error Decrypting Data"); 0.6.5 added it and 0.6.6, which this uses, still keeps it (0.6.6 also
     /// fixes multi-layout DWGs, #1463). The byte reaches the DWG, and a scale action
     /// from DXF is written whole, with the byte AutoCAD writes (0).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn scale_actions_keep_the_byte_autocad_reads_after_their_connections() {
         use acadrust::objects::*;

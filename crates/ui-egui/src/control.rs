@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use cadcraft_engine::Input;
@@ -86,6 +86,25 @@ impl PendingReply {
         }
         // Started: a reply that arrived just now still counts.
         self.rx.try_recv().unwrap_or_else(|_| json!({"ok": false, "error": "timeout", "state": "may-have-run"}))
+    }
+
+    /// The reply if the app has answered, without waiting: a transport that cannot block (the web
+    /// shell) polls this once a frame. A request the app dropped without answering reports that.
+    pub fn try_reply(&self) -> Option<ControlResponse> {
+        match self.rx.try_recv() {
+            Ok(reply) => Some(reply),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(json!({"ok": false, "error": "the app dropped the request"})),
+        }
+    }
+}
+
+impl Drop for PendingReply {
+    /// A reply nobody waits for any more cancels a request the app has not started, as a timed-out
+    /// [`PendingReply::wait`] does: the client was told it failed, so the app must not run it late.
+    /// A request the app already started, or answered, is unaffected.
+    fn drop(&mut self) {
+        let _ = self.state.compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire);
     }
 }
 
@@ -461,7 +480,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 }
             }
             match serde_json::from_value::<crate::UiState>(cur) {
-                Ok(u) => {
+                Ok(mut u) => {
+                    // Shortcuts are checked as the preferences check them.
+                    u.shortcuts = crate::keys::from_prefs(&json!(u.shortcuts));
                     if let Err(error) = crate::docking::validate(&u.docking) {
                         return err(error);
                     }
@@ -762,6 +783,10 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
     let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else {
         return json!({"ok": false, "error": "bad image", "request": token});
     };
+    // No file system to write to (the web build): the PNG comes back inline, as `ui.render`'s does.
+    if cfg!(target_arch = "wasm32") {
+        return inline_screenshot(&img, token);
+    }
     let saved = match path {
         Some(path) => img.save(path).map(|()| path.to_string()).map_err(std::io::Error::other),
         None => save_pathless_screenshot(&img, token).map(|path| path.to_string_lossy().into_owned()),
@@ -772,9 +797,59 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
     }
 }
 
+/// A screenshot as an inline PNG reply (`pngBase64`, `width`, `height`, `bytes`, like `ui.render`), for a
+/// build that has no file system to write it to: the web build, where `std::env::temp_dir` panics.
+fn inline_screenshot(img: &image::RgbaImage, token: u64) -> Value {
+    let (w, h) = img.dimensions();
+    let mut png = Vec::new();
+    if let Err(e) = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png) {
+        return json!({"ok": false, "error": e.to_string(), "request": token});
+    }
+    json!({"ok": true, "request": token, "result": {"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "bytes": png.len()}})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inline_screenshot_carries_the_png_and_its_size() {
+        let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255]));
+        let reply = inline_screenshot(&img, 7);
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["request"], 7);
+        assert_eq!((reply["result"]["width"].as_u64(), reply["result"]["height"].as_u64()), (Some(3), Some(2)));
+        let b64 = reply["result"]["pngBase64"].as_str().unwrap_or_default();
+        assert!(b64.starts_with("iVBORw0KGgo"), "a PNG signature in base64: {b64:.20}");
+        assert!(reply["result"]["bytes"].as_u64().is_some_and(|n| n > 30), "the PNG byte count is reported");
+    }
+
+    #[test]
+    fn dropping_a_pending_reply_cancels_a_request_the_app_has_not_started() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(pending);
+        assert!(!request.begin(), "the app must skip a request nobody waits for");
+    }
+
+    #[test]
+    fn dropping_a_pending_reply_leaves_a_started_request_alone() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert!(request.begin());
+        drop(pending);
+        assert_eq!(request.state.load(Ordering::Acquire), STARTED, "a started request is not cancelled");
+    }
+
+    #[test]
+    fn try_reply_polls_without_blocking() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert_eq!(pending.try_reply(), None, "no answer yet");
+        assert!(request.begin());
+        request.reply.send(json!({"ok": true, "result": 1})).unwrap_or_default();
+        assert_eq!(pending.try_reply(), Some(json!({"ok": true, "result": 1})));
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(request);
+        assert_eq!(pending.try_reply().and_then(|r| r["ok"].as_bool()), Some(false), "the app went away");
+    }
 
     #[test]
     fn render_view_fit_finds_offscreen_drawing() {

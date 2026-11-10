@@ -17,10 +17,17 @@ impl Session {
     /// Append a loaded drawing, fit the view to its model extents (aspect-corrected, minimum height 1e-6) when non-empty, end a running command, make it active, bump the epoch and return its index.
     pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
         let mut st = DocState::new(d, title, path);
+        // The view the file was saved at is the one every other reader opens on. Fitting the
+        // extents instead showed a drawing whose extents are dominated by far-off geometry at a
+        // view hundreds of times its content, with the drawing sub-pixel and no way to zoom in
+        // (#1602). The extents remain the fallback for a drawing that stores no view.
+        let saved = crate::view::saved_view(&st.doc);
         let ext = st.doc.extents(&Space::Model);
         // The current tile (the first), or the lone untiled view, keeps its saved twist.
         let twist = cadcraft_geom::norm_angle(st.doc.vports.iter().find(|c| c.is_active()).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist));
-        if ext.is_empty() {
+        if let Some(v) = saved {
+            st.set_view_quiet(View { twist, ..v });
+        } else if ext.is_empty() {
             st.set_view_quiet(View { twist, ..st.view() });
         } else {
             let (center, w, h) = View::twisted_box(ext, twist);

@@ -33,6 +33,9 @@ pub struct CharFmt {
     pub font: Option<String>,
     /// Absolute character height set inline (`\H`); `None`: the text's.
     pub height: Option<f64>,
+    /// The inline height was set relative to the text's own (`\H2x;`): this multiplier, written
+    /// back as it was so the part keeps scaling with the text's height.
+    pub height_rel: Option<f64>,
     /// Colour set inline (`\C`, `\c`); `None`: the entity's (ByLayer/ByBlock).
     pub color: Option<MTextColor>,
 }
@@ -99,26 +102,60 @@ fn arg_end(chars: &[char], from: usize) -> usize {
 impl Formatted {
     /// Parse MTEXT contents. Never fails: what isn't understood is kept as atoms or dropped.
     pub fn from_contents(contents: &str) -> Formatted {
+        Self::from_contents_with_height(contents, None)
+    }
+
+    /// [`Self::from_contents`] for a text `height` high: a relative height code (`\H2x;`) with no
+    /// inline height before it scales that one instead of being dropped.
+    pub fn from_contents_with_height(contents: &str, height: Option<f64>) -> Formatted {
+        Self::parse(contents, height).0
+    }
+
+    /// Whether the editor holds all of `contents`: past [`MAX_CHARS`] characters, [`MAX_PARAS`]
+    /// paragraphs or [`MAX_ATOMS`] kept codes the rest would be dropped, and saving would lose it.
+    pub fn fits(contents: &str) -> bool {
+        Self::parse(contents, None).1
+    }
+
+    /// Whether `edited`, what the editor gives back for `original` (a text `height` high), is the
+    /// text as it was: the same, or what opening it and pressing OK without an edit gives (a
+    /// non-canonical `{\fArial|b1;first}` comes back written another way).
+    pub fn leaves_unchanged(original: &str, height: Option<f64>, edited: &str) -> bool {
+        edited == original || edited == Self::from_contents_with_height(original, height).to_contents()
+    }
+
+    /// The parse, and whether it took in all of `contents`.
+    fn parse(contents: &str, height: Option<f64>) -> (Formatted, bool) {
         let mut f = Formatted::default();
         let chars: Vec<char> = contents.chars().collect();
         let mut stack: Vec<CharFmt> = Vec::new();
         let mut cur = CharFmt::default();
         let mut props = ParaProps::default();
         f.paras = vec![props.clone()];
+        // Cleared when a paragraph, a kept code or a nesting level doesn't fit.
+        let mut whole = true;
+        // Groups opened past the 64 levels kept: their closing braces pop nothing.
+        let mut unkept = 0usize;
         let mut i = 0;
         while let Some(&c) = chars.get(i) {
-            if f.fmt.len() >= MAX_CHARS {
-                break;
+            // Braces after the last character the editor holds add no text.
+            if f.fmt.len() >= MAX_CHARS && !matches!(c, '{' | '}' | '\r') {
+                return (f, false);
             }
             match c {
                 '{' => {
                     if stack.len() < 64 {
                         stack.push(cur.clone());
+                    } else {
+                        unkept = unkept.saturating_add(1);
+                        whole = false;
                     }
                     i += 1;
                 }
                 '}' => {
-                    if let Some(p) = stack.pop() {
+                    if unkept > 0 {
+                        unkept -= 1;
+                    } else if let Some(p) = stack.pop() {
                         cur = p;
                     }
                     i += 1;
@@ -128,6 +165,8 @@ impl Formatted {
                     if f.paras.len() < MAX_PARAS {
                         f.push_char('\n', &cur);
                         f.paras.push(props.clone());
+                    } else {
+                        whole = false;
                     }
                     i += 1;
                 }
@@ -136,14 +175,11 @@ impl Formatted {
                     i += 2;
                     match code {
                         None => {}
-                        // At the paragraph cap the break is dropped (it must not fall to the verbatim arm).
-                        Some('P') => {
-                            let room = f.paras.len() < MAX_PARAS;
-                            if room {
-                                f.push_char('\n', &cur);
-                                f.paras.push(props.clone());
-                            }
+                        Some('P') if f.paras.len() < MAX_PARAS => {
+                            f.push_char('\n', &cur);
+                            f.paras.push(props.clone());
                         }
+                        Some('P') => whole = false,
                         Some(c @ ('\\' | '{' | '}')) => f.push_char(c, &cur),
                         Some('L') => cur.underline = true,
                         Some('l') => cur.underline = false,
@@ -155,7 +191,7 @@ impl Formatted {
                             i = end + 1;
                             match k {
                                 'f' | 'F' => apply_font(&mut cur, &a),
-                                'H' => cur.height = parse_height(&a, cur.height),
+                                'H' => apply_height(&mut cur, &a, height),
                                 'C' => {
                                     cur.color = a.trim().parse::<u16>().ok().and_then(|v| (v > 0 && v < 256).then_some(MTextColor::Aci(v)));
                                 }
@@ -181,6 +217,7 @@ impl Formatted {
                                 code.extend(chars.get(i..=end.min(chars.len().saturating_sub(1))).unwrap_or_default().iter());
                                 i = end + 1;
                             }
+                            whole &= f.atoms.len() < MAX_ATOMS;
                             f.push_atom(code, &cur);
                         }
                     }
@@ -191,7 +228,7 @@ impl Formatted {
                 }
             }
         }
-        f
+        (f, whole)
     }
 
     fn push_char(&mut self, c: char, fmt: &CharFmt) {
@@ -449,7 +486,9 @@ impl Formatted {
             let fam: String = fam.chars().filter(|c| !matches!(c, ';' | '|' | '{' | '}' | '\\')).collect();
             s.push_str(&format!("\\f{fam}|b{}|i{};", u8::from(f.bold), u8::from(f.italic)));
         }
-        if let Some(h) = f.height {
+        if let Some(m) = f.height_rel {
+            s.push_str(&format!("\\H{}x;", trim(m)));
+        } else if let Some(h) = f.height {
             s.push_str(&format!("\\H{};", trim(h)));
         }
         match f.color {
@@ -466,12 +505,32 @@ fn trim(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-fn parse_height(a: &str, cur: Option<f64>) -> Option<f64> {
+/// A `\H` code on `cur`, for a text `base` high. A relative height over the text's own (no
+/// inline height before it, or a relative one) stays relative; over an inline absolute height it
+/// becomes absolute.
+fn apply_height(cur: &mut CharFmt, a: &str, base: Option<f64>) {
+    let valid = |h: f64| (h.is_finite() && h > 0.0 && h < 1e6).then_some(h);
     let a = a.trim();
-    match a.strip_suffix(['x', 'X']) {
-        // A relative height needs the current one; without it the code is dropped.
-        Some(r) => r.trim().parse::<f64>().ok().zip(cur).map(|(m, h)| h * m).filter(|h| h.is_finite() && *h > 0.0 && *h < 1e6),
-        None => a.parse::<f64>().ok().filter(|h| h.is_finite() && *h > 0.0 && *h < 1e6).or(cur),
+    let Some(r) = a.strip_suffix(['x', 'X']) else {
+        if let Some(h) = a.parse::<f64>().ok().and_then(valid) {
+            cur.height = Some(h);
+            cur.height_rel = None;
+        }
+        return;
+    };
+    let Some(m) = r.trim().parse::<f64>().ok().and_then(valid) else { return };
+    match (cur.height, cur.height_rel) {
+        (_, Some(r0)) => {
+            if let Some(m) = valid(r0 * m) {
+                cur.height_rel = Some(m);
+                cur.height = base.and_then(|b| valid(b * m));
+            }
+        }
+        (None, None) => {
+            cur.height_rel = Some(m);
+            cur.height = base.and_then(|b| valid(b * m));
+        }
+        (Some(h), None) => cur.height = valid(h * m).or(cur.height),
     }
 }
 
@@ -496,6 +555,22 @@ fn apply_font(cur: &mut CharFmt, a: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relative_height_is_written_back_relative() {
+        let f = Formatted::from_contents_with_height("{\\H2x;big} small {\\H3;abs}", Some(5.0));
+        assert_eq!(f.fmt_at(0).height, Some(10.0), "shown at twice the text's height");
+        let out = f.to_contents();
+        assert!(out.contains("\\H2x;big"), "{out}");
+        assert!(out.contains("\\H3;abs"), "an absolute height stays absolute: {out}");
+        // Opened again for a taller text, the part scales with it.
+        assert_eq!(Formatted::from_contents_with_height(&out, Some(8.0)).fmt_at(0).height, Some(16.0));
+        // Relative over relative multiplies; over an absolute one it is absolute.
+        let n = Formatted::from_contents_with_height("{\\H2x;a{\\H1.5x;b}}{\\H4;c{\\H2x;d}}", Some(1.0)).to_contents();
+        assert!(n.contains("\\H3x;b") && n.contains("\\H8;d"), "{n}");
+        // With no height known it is still kept.
+        assert!(Formatted::from_contents("{\\H2x;x}").to_contents().contains("\\H2x;x"));
+    }
 
     #[test]
     fn round_trips_formats_and_atoms() {
@@ -566,5 +641,27 @@ mod tests {
         let _ = f.paragraph_of(usize::MAX);
         let _ = f.fmt_at(usize::MAX);
         let _ = Formatted::from_contents(&"{".repeat(100_000));
+    }
+
+    /// A text with more paragraphs or kept codes than the editor holds doesn't fit, so TEXTEDIT
+    /// leaves it to the command line instead of dropping the rest on save.
+    #[test]
+    fn too_many_paragraphs_or_codes_do_not_fit() {
+        assert!(Formatted::fits("one\\Ptwo\\A1;three"));
+        assert!(!Formatted::fits(&"a\\P".repeat(MAX_PARAS)));
+        assert!(!Formatted::fits(&"a\n".repeat(MAX_PARAS)));
+        assert!(!Formatted::fits(&"\\A1;".repeat(MAX_ATOMS + 1)));
+        assert!(Formatted::fits(&"\\A1;".repeat(MAX_ATOMS)));
+        // A full formatted run's closing brace adds no text: it still fits.
+        assert!(Formatted::fits(&format!("{{\\L{}}}", "x".repeat(MAX_CHARS))));
+        assert!(!Formatted::fits(&format!("{{\\L{}}}y", "x".repeat(MAX_CHARS))));
+        // OK without an edit leaves a text alone, also one the editor writes another way.
+        let odd = "{\\fArial|b1;first}";
+        assert!(Formatted::leaves_unchanged(odd, Some(2.5), &Formatted::from_contents_with_height(odd, Some(2.5)).to_contents()));
+        assert!(Formatted::leaves_unchanged(odd, Some(2.5), odd));
+        assert!(!Formatted::leaves_unchanged(odd, Some(2.5), "second"));
+        // Nesting past the 64 levels the editor keeps doesn't fit.
+        assert!(Formatted::fits(&format!("{}a{}", "{".repeat(64), "}".repeat(64))));
+        assert!(!Formatted::fits(&format!("{}a{}", "{".repeat(65), "}".repeat(65))));
     }
 }
