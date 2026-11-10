@@ -20,7 +20,7 @@ pub(crate) mod groups;
 pub(crate) mod hatch;
 mod image;
 mod inquiry;
-mod layer;
+pub(crate) mod layer;
 mod layout;
 mod lisp;
 mod merge;

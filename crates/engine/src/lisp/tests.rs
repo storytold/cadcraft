@@ -1048,3 +1048,49 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+#[test]
+fn entmake_makes_a_layer() {
+    let mut s = session();
+    let made = ok(
+        &mut s,
+        "(entmake '((0 . \"LAYER\") (100 . \"AcDbSymbolTableRecord\") (100 . \"AcDbLayerTableRecord\") (2 . \"ZTEST\") (70 . 0) (62 . 3) (6 . \"Continuous\")))",
+    );
+    assert!(made.contains("ZTEST"), "entmake returns the list: {made}");
+    assert_eq!(ok(&mut s, "(cdr (assoc 62 (tblsearch \"LAYER\" \"ZTEST\")))"), "3");
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"LAYER\" \"ztest\")))"), "0");
+    let layer = s.doc().unwrap().layer("ZTEST").unwrap().clone();
+    assert!(layer.on && !layer.frozen && !layer.locked);
+    // Flags: 1 frozen, 4 locked, 2 frozen in new viewports; a negative colour is a layer that is off.
+    ok(&mut s, "(entmake '((0 . \"LAYER\") (2 . \"ZFLAGS\") (70 . 7) (62 . -5) (290 . 0)))");
+    let l = s.doc().unwrap().layer("ZFLAGS").unwrap().clone();
+    assert!(l.frozen && l.locked && l.vp_freeze_new && !l.on && !l.plot, "{l:?}");
+    assert_eq!(l.color, cadcraft_color::Color::Index(5));
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"LAYER\" \"ZFLAGS\")))"), "5");
+    // True colour and lineweight.
+    ok(&mut s, "(entmake '((0 . \"LAYER\") (2 . \"ZTRUE\") (70 . 0) (62 . 1) (420 . 16711680) (370 . 50)))");
+    let l = s.doc().unwrap().layer("ZTRUE").unwrap().clone();
+    assert_eq!(l.color, cadcraft_color::Color::True(cadcraft_color::Rgb::from_u32(16711680)));
+    assert_eq!(l.lineweight, cadcraft_doc::Lineweight::Mm100(50));
+    // The new layer takes entities.
+    assert!(ok(&mut s, "(entmake '((0 . \"LINE\") (8 . \"ZTEST\") (10 0.0 0.0 0.0) (11 1.0 1.0 0.0)))").contains("LINE"));
+    // Refused, with nil and no layer: a name already in use (any case), no name, a bad name, a
+    // linetype the drawing doesn't have, ByLayer / ByBlock colours, a colour out of range.
+    let before = s.doc().unwrap().layers.len();
+    for bad in [
+        "(entmake '((0 . \"LAYER\") (2 . \"ztest\") (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"0\") (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"A<B\") (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"\") (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZLT\") (70 . 0) (6 . \"NoSuchLinetype\")))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZLT\") (70 . 0) (6 . \"ByLayer\")))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZC0\") (70 . 0) (62 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZC1\") (70 . 0) (62 . 256)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZC2\") (70 . 0) (62 . 300)))",
+        "(entmake '((0 . \"LAYER\") (2 . 5) (70 . 0)))",
+    ] {
+        assert_eq!(ok(&mut s, bad), "nil", "{bad}");
+    }
+    assert_eq!(s.doc().unwrap().layers.len(), before);
+}
