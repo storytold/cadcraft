@@ -163,6 +163,17 @@ impl Collab {
     }
 }
 
+/// A connection with no socket, for tests: the app queues what it would send into the returned
+/// receiver, and the test can feed updates back through the returned sender.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl Collab {
+    fn detached(role: Role) -> (Self, Receiver<Request>, Sender<Update>) {
+        let (requests, request_rx) = channel();
+        let (update_tx, updates) = channel();
+        (Collab { requests, updates, role }, request_rx, update_tx)
+    }
+}
+
 /// A connection to a shared session in the browser.
 ///
 /// The browser cannot block and has no worker threads: the socket's callbacks queue what arrives,
@@ -787,7 +798,8 @@ pub fn is_structural(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CabinetCommit, is_structural};
+    use super::{CabinetCommit, Collab, Request, Role, is_structural};
+    use serde_json::json;
 
     /// The copy of a refused commit is named after the drawing, not over its file: an extension
     /// stays and `(copy)` goes before it.
@@ -810,6 +822,41 @@ mod tests {
         for command in ["line", "move", "copy", "layer.set", "text.edit", "hatch"] {
             assert!(!is_structural(command), "`{command}` is an ordinary edit");
         }
+    }
+
+    /// Which drawing the window shows is not part of the drawing: a shared session switches
+    /// locally instead of queueing `document.switch` as a room operation (CodeRabbit on #2938).
+    /// An edit still travels as an operation, so the test can see the difference.
+    #[test]
+    fn a_shared_session_switches_drawings_without_an_operation() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).expect("a second drawing");
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        app.run("document.switch", json!({ "index": 0 })).expect("the switch runs in this window");
+        assert_eq!(app.session.active, 0, "the tab really changed");
+        assert!(requests.try_recv().is_err(), "a drawing switch is not a room operation");
+
+        app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).expect("an edit is queued");
+        match requests.try_recv().expect("the edit reached the room") {
+            Request::Op(op) => assert_eq!(op.command, "line"),
+            _ => panic!("an edit travels as an operation"),
+        }
+    }
+
+    /// A viewer switches drawings too: the read-only rule covers edits, not which tab is shown.
+    #[test]
+    fn a_viewer_switches_drawings_locally() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).expect("a second drawing");
+        let (collab, requests, _updates) = Collab::detached(Role::Viewer);
+        app.attach_collab(collab);
+
+        app.run("document.switch", json!({ "index": 0 })).expect("the switch runs in this window");
+        assert_eq!(app.session.active, 0, "the tab really changed");
+        assert!(requests.try_recv().is_err(), "a drawing switch is not a room operation");
+        assert!(app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).is_err(), "a viewer still cannot edit");
     }
 
     /// `cadcraft:committed` from a hosting page lands in the panel as the cabinet's file version,

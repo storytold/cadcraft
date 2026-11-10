@@ -617,10 +617,21 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        // Which drawing this window shows is not part of the drawing: a shared session runs the
+        // switch here instead of queueing it as a room operation, which the server has no command
+        // for and would refuse a viewer.
+        if is_local_only(id) {
+            return self.execute_here(id, &params);
+        }
         if let Some(r) = self.collab_command(id, &params) {
             return r;
         }
-        let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        self.execute_here(id, &params)
+    }
+
+    /// Run an engine command in this session, echoing its message or error as [`Self::run`] does.
+    fn execute_here(&mut self, id: &str, params: &Value) -> Result<Value, String> {
+        let r = self.session.execute(id, params).map_err(|e| e.to_string());
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -1183,6 +1194,13 @@ impl CadApp {
         }
         self.control_rx = Some(rx);
     }
+}
+
+/// Whether `id` changes only this window, never the drawing: a shared session runs it here
+/// instead of queueing it as a room operation. `document.switch` is the active tab, which the
+/// room does not own; an edit still goes to `collab_command`.
+fn is_local_only(id: &str) -> bool {
+    id == "document.switch"
 }
 
 /// Ask for a painted frame while no frame is being painted. Native eframe honours the viewport
