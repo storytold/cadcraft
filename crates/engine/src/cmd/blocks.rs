@@ -53,6 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{tag, prompt?, default?, at, height?, invisible?}")
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
+        attedit::ddatte_spec(),
         attedit::dash_attedit_spec(),
         wblock::wblock_spec(),
         wblock::dash_wblock_spec(),

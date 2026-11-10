@@ -1,4 +1,4 @@
-//! ATTEDIT / EATTEDIT: one block reference's attribute values, asked for one after another.
+//! ATTEDIT / EATTEDIT / DDATTE: one block reference's attribute values, asked for one after another.
 //! -ATTEDIT: the attributes picked by block name, tag and value specifications, edited one at a
 //! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
 
@@ -21,6 +21,15 @@ pub(super) fn attedit_spec() -> CommandSpec {
         .alias(&["ate", "eattedit"])
         .params("{handle, values: {TAG: value} (tags in any case)} → {changed, unknownTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
+}
+
+/// DDATTE: AutoCAD shows a dialog with one block reference's attribute values. There is none here
+/// yet, so typed it asks for the values as ATTEDIT does; run by a routine (`command`) the pick
+/// counts as the dialog closed with OK and every value kept (#2992). The JSON form is ATTEDIT's.
+pub(super) fn ddatte_spec() -> CommandSpec {
+    CommandSpec::new("ddatte", "Edit Attributes", run)
+        .params("{handle, values: {TAG: value} (tags in any case)} → {changed, unknownTags?}; typed: ATTEDIT's prompts, or from LISP `command` only the pick")
+        .interactive(|_| Ok(Box::new(DdatteM::default())))
 }
 
 pub(super) fn dash_attedit_spec() -> CommandSpec {
@@ -276,6 +285,23 @@ impl Interactive for AtteditM {
             edit(s, (h, *k), |_| Some(v.clone()))?;
         }
         Ok(Step::Done)
+    }
+}
+
+/// DDATTE: ATTEDIT's prompts, ended by the pick when a routine runs it (no dialog to fill in).
+#[derive(Default)]
+struct DdatteM(AtteditM);
+
+impl Interactive for DdatteM {
+    fn name(&self) -> &'static str {
+        "DDATTE"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        self.0.prompt(s)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let step = self.0.input(s, i)?;
+        Ok(if s.lisp_running() && self.0.block.is_some() { Step::Done } else { step })
     }
 }
 

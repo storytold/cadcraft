@@ -61,6 +61,24 @@ fn attedit_asks_for_a_block_then_each_value() {
 }
 
 #[test]
+fn ddatte_is_a_command_and_finishes_in_a_routine_with_the_values_kept() {
+    // #2992: DDATTE edits one block reference's attribute values. Typed, it asks for them as
+    // ATTEDIT does; from a routine there is no dialog to show, so the pick closes it with OK.
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    s.cmdline("(command \"_.ddatte\" \"_l\")").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!((value(&s, h, "T"), value(&s, h, "U")), ("one".into(), "u".into()));
+    assert_eq!(s.doc().unwrap().model.iter().count(), 1, "nothing else was started or drawn");
+
+    s.cmdline("ddatte").unwrap();
+    assert!(s.prompt_text().contains("Select block reference"), "{}", s.prompt_text());
+    type_lines(&mut s, &["105,0", "x", "y"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!((value(&s, h, "T"), value(&s, h, "U")), ("x".into(), "y".into()));
+}
+
+#[test]
 fn dash_attedit_global_replaces_a_string_in_matching_attributes() {
     let mut s = with_block();
     let a = handle(&insert(&mut s, 100.0, json!({"T": "A-1", "U": "A-9"})));
