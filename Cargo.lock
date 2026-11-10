@@ -705,6 +705,7 @@ dependencies = [
  "tungstenite",
  "wasm-bindgen",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -1340,7 +1341,7 @@ dependencies = [
 [[package]]
 name = "craft-web-api"
 version = "0.1.0"
-source = "git+https://github.com/copoka/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
+source = "git+https://github.com/storytold/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -1351,7 +1352,7 @@ dependencies = [
 [[package]]
 name = "craft-web-host"
 version = "0.1.0"
-source = "git+https://github.com/copoka/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
+source = "git+https://github.com/storytold/craft-libs?rev=7666e2b100d8cf12998f9b57d3b036964cc3189c#7666e2b100d8cf12998f9b57d3b036964cc3189c"
 dependencies = [
  "wasm-bindgen",
  "web-sys",

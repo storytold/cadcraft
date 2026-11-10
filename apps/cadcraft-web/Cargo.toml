@@ -21,8 +21,8 @@ cadcraft-io = { workspace = true }
 cadcraft-fonts = { workspace = true }
 # The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
 # The page command API (storytold/craft-libs#413): window.cadcraft over the control channel.
-craft-web-api = { git = "https://github.com/copoka/craft-libs", rev = "7666e2b100d8cf12998f9b57d3b036964cc3189c", version = "0.1.0" }
-craft-web-host = { git = "https://github.com/copoka/craft-libs", rev = "7666e2b100d8cf12998f9b57d3b036964cc3189c", version = "0.1.0" }
+craft-web-api = { git = "https://github.com/storytold/craft-libs", rev = "7666e2b100d8cf12998f9b57d3b036964cc3189c", version = "0.1.0" }
+craft-web-host = { git = "https://github.com/storytold/craft-libs", rev = "7666e2b100d8cf12998f9b57d3b036964cc3189c", version = "0.1.0" }
 cadcraft-collab = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
