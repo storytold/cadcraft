@@ -127,3 +127,15 @@ fn attribute_tags_match_in_any_case_and_unknown_tags_are_reported() {
     let r = s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "four"}})).unwrap();
     assert_eq!(r, json!({"changed": 1}));
 }
+
+#[test]
+fn ddatte_takes_routine_values_after_a_hand_pick() {
+    // After a pick made by hand, values a routine gives go through ATTEDIT's prompts; only a pick
+    // made by the routine ends DDATTE.
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    type_lines(&mut s, &["ddatte", "105,0"]);
+    s.execute("lisp", &json!({"code": "(command \"x\" \"y\")"})).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!((value(&s, h, "T"), value(&s, h, "U")), ("x".into(), "y".into()));
+}
