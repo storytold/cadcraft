@@ -993,7 +993,7 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .layers
             .iter()
             .map(|l| {
-                let flags = i32::from(l.frozen) | (i32::from(l.locked) << 2);
+                let flags = i32::from(l.frozen) | (i32::from(l.vp_freeze_new) << 1) | (i32::from(l.locked) << 2);
                 let color = color_index(l.color);
                 Value::list(vec![
                     pair(0, Value::str("LAYER")),

@@ -1066,7 +1066,7 @@ fn entmake_makes_a_layer() {
     let l = s.doc().unwrap().layer("ZFLAGS").unwrap().clone();
     assert!(l.frozen && l.locked && l.vp_freeze_new && !l.on && !l.plot, "{l:?}");
     assert_eq!(l.color, cadcraft_color::Color::Index(5));
-    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"LAYER\" \"ZFLAGS\")))"), "5");
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"LAYER\" \"ZFLAGS\")))"), "7");
     // True colour and lineweight.
     ok(&mut s, "(entmake '((0 . \"LAYER\") (2 . \"ZTRUE\") (70 . 0) (62 . 1) (420 . 16711680) (370 . 50)))");
     let l = s.doc().unwrap().layer("ZTRUE").unwrap().clone();
