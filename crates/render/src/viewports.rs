@@ -1,5 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::display::append;
 use super::display::{DImage, DPrim, DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
@@ -125,6 +123,9 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     let parallel = !b.plotting && b.styles.is_none() && d.model.len() >= 2 * PARALLEL_CHUNK;
     #[cfg(target_arch = "wasm32")]
     let parallel = false;
+    // Whether the contents were built on all cores; otherwise one thread builds them below.
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+    let mut built = false;
     if parallel {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -151,11 +152,18 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                     part.list
                 })
                 .collect();
-            for part in parts {
-                append(&mut sub.list, part);
+            // Also as `build_parallel`: a budget that ran out ran out wherever the threads were,
+            // so the contents are built again on one thread, which leaves out the same objects at
+            // every build (#2773).
+            if parts.iter().any(|p| p.truncated) {
+                budget.store(b.list.expanded, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                super::pipeline::join(&mut sub.list, parts);
+                built = true;
             }
         }
-    } else {
+    }
+    if !built {
         let c = ctx();
         for me in d.model.iter().filter(|me| seen(me)) {
             entity(&mut sub, &c, me);

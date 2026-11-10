@@ -108,10 +108,17 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
         #[cfg(not(target_arch = "wasm32"))]
-        if !paper && !plotting && b.styles.is_none() && store.len() >= 2 * PARALLEL_CHUNK {
-            build_parallel(&mut b, d, store);
+        if !paper
+            && !plotting
+            && b.styles.is_none()
+            && store.len() >= 2 * PARALLEL_CHUNK
+            && let Some(parts) = build_parallel(b.opts, d, store)
+        {
+            join(&mut b.list, parts);
             return b.list;
         }
+        // Otherwise (and when the parallel build ran out of block budget) one thread builds the
+        // space in drawing order.
         let mut viewports = 0usize;
         for e in store.iter() {
             if paper && let EntityKind::Viewport(vp) = &e.kind {
@@ -139,33 +146,52 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
 pub(crate) const PARALLEL_CHUNK: usize = 256;
 
 /// Build model space for the screen on all cores: the entities are split into chunks built
-/// side by side, then joined in drawing order, so the list is the same as a one-thread build.
-/// The canvas rebuilds the whole list at every 2x zoom step (in the background since zooming
-/// stopped blocking the UI) and after every edit; one core made both slow on real drawings. Plots, layouts and plot styles keep the one-thread
-/// path (they run once, and their pens and per-primitive layers are built along the way).
+/// side by side, then joined in drawing order ([`join`]), so the list is the same as a one-thread
+/// build. The canvas rebuilds the whole list at every 2x zoom step (in the background since
+/// zooming stopped blocking the UI) and after every edit; one core made both slow on real
+/// drawings. Plots, layouts and plot styles keep the one-thread path (they run once, and their
+/// pens and per-primitive layers are built along the way).
+///
+/// The chunks share one block-expansion budget ([`crate::MAX_BLOCK_EXPANSION`]). When it runs
+/// out, it runs out in whichever chunks the threads happened to reach first, so each rebuild
+/// would leave out different blocks and zooming would make blocks come and go (#2773). That case
+/// returns `None`, and the caller builds again on one thread, which spends the budget in drawing
+/// order and so leaves out the same objects, the last ones, every time. Only a drawing past the
+/// budget pays for the second build.
 #[cfg(not(target_arch = "wasm32"))]
-fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStore) {
+fn build_parallel(opts: &Options, d: &Drawing, store: &cadcraft_doc::EntityStore) -> Option<Vec<DisplayList>> {
     use rayon::prelude::*;
     let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
-    let (opts, plotting) = (b.opts, b.plotting);
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting: false,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
             part.list
         })
         .collect();
-    // One allocation per array for the joined list.
-    b.list.prims.reserve(parts.iter().map(|p| p.prims.len()).sum());
-    b.list.verts.reserve(parts.iter().map(|p| p.verts.len()).sum());
-    b.list.tris.reserve(parts.iter().map(|p| p.tris.len()).sum());
+    (!parts.iter().any(|p| p.truncated)).then_some(parts)
+}
+
+/// Append `parts`, built side by side, to `list` in their order, with one allocation per array.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn join(list: &mut DisplayList, parts: Vec<DisplayList>) {
+    list.prims.reserve(parts.iter().map(|p| p.prims.len()).sum());
+    list.verts.reserve(parts.iter().map(|p| p.verts.len()).sum());
+    list.tris.reserve(parts.iter().map(|p| p.tris.len()).sum());
     for part in parts {
-        append(&mut b.list, part);
+        append(list, part);
     }
 }
 
