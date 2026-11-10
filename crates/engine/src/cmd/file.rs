@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIASES, alias_name, command_id};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -69,6 +69,19 @@ pub fn entity_codec() -> Option<&'static EntityCodec> {
 
 /// COMPARE (drawing comparison).
 pub mod compare;
+
+/// Decode a raster image file (PNG, JPEG, BMP, TIFF) to pixels: installed by the app with the
+/// image reader, a lower layer.
+pub type ImageHook = fn(&[u8]) -> std::result::Result<cadcraft_doc::Raster, String>;
+
+static IMAGE: OnceLock<ImageHook> = OnceLock::new();
+
+pub fn set_image_decoder(h: ImageHook) {
+    let _ = IMAGE.set(h);
+}
+pub fn image_decoder() -> Option<ImageHook> {
+    IMAGE.get().copied()
+}
 
 /// Hand finished file bytes to the user where there is no file system (the browser: a download).
 /// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
@@ -311,6 +324,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -320,6 +334,12 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
+    // The SHX fonts its text styles name are looked for beside the drawing too.
+    if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+        // A bare file name is in the current folder.
+        let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
+        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+    }
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
@@ -345,10 +365,12 @@ pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option
 fn opened(s: &Session, i: usize, entities: bool) -> Value {
     let d = s.docs.get(i).map(|st| &st.doc);
     let warnings = d.map(|d| d.read_notes.clone()).unwrap_or_default();
+    // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
+    let saved_view = d.is_some_and(|d| crate::view::saved_view(d).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings })
+        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings, "saved_view": saved_view })
     } else {
-        json!({ "index": i, "warnings": warnings })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view })
     }
 }
 
@@ -363,6 +385,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            super::image::after_open(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -373,6 +396,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Drawing.dxf");
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
+    super::image::after_open(s, i);
     Ok(opened(s, i, false))
 }
 
@@ -755,7 +779,10 @@ const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
 
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`].
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`], nor
+/// another program's proxy entity whose class the file names: the DWG writes it with that class.
+/// Before 2013, or when its group 91 names no class of the file, the DWG leaves the proxy out and
+/// it is counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
@@ -772,7 +799,18 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
             if DWG_WRITES.contains(&u.dxf_type.as_str()) {
                 continue;
             }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.proxy_class(&u.tags).is_some() {
+                continue;
+            }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    // Another program's proxy objects (in the OBJECTS section) follow the same rule as its proxy
+    // entities: the DWG writer leaves them out before 2013, or when their class can't be named.
+    for o in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_PROXY_OBJECT")) {
+        if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
+            let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }
