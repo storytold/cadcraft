@@ -1048,3 +1048,26 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+#[test]
+fn ssget_filters_by_layout_name() {
+    use cadcraft_doc::{Common, EntityKind, Space};
+    let mut s = session();
+    ok(&mut s, "(command \"_.LINE\" '(0 0) '(10 0) \"\") (command \"_.LINE\" '(0 1) '(10 1) \"\")");
+    {
+        let d = s.doc_mut().unwrap();
+        let e = d.model.iter().next().unwrap();
+        let kind: EntityKind = e.kind.clone();
+        d.add(&Space::Paper("Layout1".into()), Common::default(), kind).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((0 . \"LINE\"))))"), "3");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((0 . \"LINE\") (410 . \"Model\"))))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((410 . \"Model\"))))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((0 . \"LINE\") (410 . \"Layout1\"))))"), "1");
+    // Layout names match like other string groups: any case, wildcards.
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((410 . \"layout*\"))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" '((0 . \"LINE\") (-4 . \"<NOT\") (410 . \"Model\") (-4 . \"NOT>\"))))"), "1");
+    assert_eq!(ok(&mut s, "(ssget \"X\" '((410 . \"Layout2\")))"), "nil");
+    // The group agrees with what entget lists.
+    assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (ssname (ssget \"X\" '((410 . \"Layout1\"))) 0))))"), "\"Layout1\"");
+}

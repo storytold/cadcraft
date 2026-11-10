@@ -340,6 +340,14 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
     d.space_of(h)
 }
 
+/// The layout an entity is in as group 410 gives it: "Model", or a paper space layout's name.
+fn layout_name(d: &cadcraft_doc::Drawing, h: Handle) -> String {
+    match space_of(d, h) {
+        Some(Space::Paper(name)) => name,
+        _ => "Model".into(),
+    }
+}
+
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
@@ -347,10 +355,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
-    let layout = match space_of(d, h) {
-        Some(Space::Paper(name)) => name,
-        _ => "Model".into(),
-    };
+    let layout = layout_name(d, h);
     let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
     let mut placed_layout = false;
     for v in groups_to_list(&tags) {
@@ -777,9 +782,15 @@ fn matches_filter(d: &cadcraft_doc::Drawing, e: &Entity, f: &Filter) -> bool {
             convert_angles(&kind, &mut tags, f64::to_radians);
             let mut l = vec![Value::cons(Value::Int(0), Value::str(&kind))];
             l.extend(groups_to_list(&tags));
+            // The layout name (410), as entget lists it: "Model" or the layout tab's name.
+            l.push(Value::cons(Value::Int(410), Value::str(&layout_name(d, e.handle))));
             l
         }
-        None => vec![Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())), Value::cons(Value::Int(8), Value::str(&e.common.layer))],
+        None => vec![
+            Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())),
+            Value::cons(Value::Int(8), Value::str(&e.common.layer)),
+            Value::cons(Value::Int(410), Value::str(&layout_name(d, e.handle))),
+        ],
     };
     let groups = groups();
     eval_filter(&groups, f)
