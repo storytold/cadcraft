@@ -205,8 +205,17 @@ pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let name = string(&a[0])?;
     Ok(Flow::Value(match crate::sysvars::get(ctx.s, &name) {
         Some(serde_json::Value::Number(n)) if in_radians(&name) => Value::Real(n.as_f64().unwrap_or(0.0).to_radians()),
+        Some(serde_json::Value::Object(o)) if o.contains_key("x") => point_list(&o, &name),
         v => v.map(|v| from_json(&v)).unwrap_or_default(),
     }))
+}
+
+/// Header point variables are stored as `{x, y, z}`; AutoLISP gives a point list. LIMMIN, LIMMAX,
+/// SNAPBASE and HPORIGIN are 2D points, so they lose z; the rest (INSBASE, UCSORG, ...) keep all three.
+fn point_list(o: &serde_json::Map<String, serde_json::Value>, name: &str) -> Value {
+    let coord = |k: &str| Value::Real(o.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0));
+    let planar = ["LIMMIN", "LIMMAX", "SNAPBASE", "HPORIGIN"].iter().any(|v| v.eq_ignore_ascii_case(name.trim()));
+    if planar { Value::list(vec![coord("x"), coord("y")]) } else { Value::list(vec![coord("x"), coord("y"), coord("z")]) }
 }
 
 /// Set a system variable after bounded JSON conversion, reporting invalid or oversized values as LISP errors.
