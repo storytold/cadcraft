@@ -12,6 +12,17 @@ use crate::CadApp;
 /// Bumped each time PREVIEW is started, so the window renders the drawing as it is now.
 static PREVIEW_GEN: AtomicU32 = AtomicU32::new(0);
 
+/// Whether a typed or menu-invoked `id` is handled here. DXFIN and DXFOUT ask with a file dialog
+/// only while FILEDIA is 1 and there is one; otherwise they ask for the file name at the command
+/// line, as AutoCAD does with FILEDIA 0 (the engine's prompt).
+pub fn wants_dialog(app: &CadApp, id: &str) -> bool {
+    match id {
+        "dxfin" => app.session.settings.filedia && app.services.pick_open.is_some(),
+        "dxfout" => app.session.settings.filedia && app.services.pick_save.is_some(),
+        _ => true,
+    }
+}
+
 /// Handle a typed or menu-invoked file exchange command (`id` may be an alias).
 pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
     let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
@@ -23,12 +34,25 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
             app.ui.dialog = Some("preview".into());
             Ok(Value::Null)
         }
-        "import" | "imp" => {
+        "import" | "imp" | "dxfin" => {
             let Some(pick) = app.services.pick_open.as_ref() else { return no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#) };
             match pick() {
-                Some(path) => app.run("import", json!({ "path": path })),
+                Some(path) => app.run(if id == "dxfin" { "dxfin" } else { "import" }, json!({ "path": path })),
                 None => Ok(Value::Null),
             }
+        }
+        "dxfout" => {
+            let Some(pick) = app.services.pick_save.as_ref() else { return no_picker(app, "DXFOUT", r#"dxfout {"path": "plan.dxf"}"#) };
+            let Some(path) = pick(&format!("{stem}.dxf")) else { return Ok(Value::Null) };
+            // DXFOUT adds .dxf to a name without it. A dialog that doesn't add it (GTK) asked
+            // about replacing the name as typed, not that file: never replace it unasked.
+            let is_dxf = std::path::Path::new(&path).extension().is_some_and(|e| e.eq_ignore_ascii_case("dxf"));
+            if !is_dxf && std::path::Path::new(&format!("{path}.dxf")).exists() {
+                let msg = format!("DXFOUT: {path}.dxf already exists; choose it in the dialog to replace it");
+                app.session.echo(msg.clone());
+                return Err(msg);
+            }
+            app.run("dxfout", json!({ "path": path }))
         }
         "publish" => {
             let Some(pick) = app.services.pick_save.as_ref() else { return no_picker(app, "PUBLISH", "publish {}") };
@@ -206,5 +230,50 @@ mod tests {
 
         let e = app.run("share", json!({})).unwrap_err();
         assert!(e.contains("not available yet"), "{e}");
+    }
+
+    /// DXFIN and DXFOUT ask with a file dialog like IMPORT and EXPORT (DXFOUT for a .dxf), and at
+    /// the command line instead while FILEDIA is 0, as in AutoCAD (#2455).
+    #[test]
+    fn dxfin_and_dxfout_ask_with_a_dialog_unless_filedia_is_0() {
+        let (mut app, asked) = app();
+        app.cmdline("DXFIN");
+        app.cmdline("dxfout");
+        assert_eq!(*asked.borrow(), ["open", "Drawing1.dxf"]);
+        assert!(app.session.running.is_none(), "a cancelled dialog starts nothing");
+
+        app.session.settings.filedia = false;
+        app.cmdline("DXFOUT");
+        assert_eq!(asked.borrow().len(), 2, "no dialog with FILEDIA 0");
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter file name".to_string()));
+        app.session.cancel();
+        app.cmdline("DXFIN");
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter name of file to import".to_string()));
+        app.session.cancel();
+
+        // JSON calls never ask either way (this test has no file formats, so they fail instead).
+        app.session.settings.filedia = true;
+        let _ = app.run("dxfout", json!({}));
+        let _ = app.run("dxfin", json!({}));
+        assert_eq!(asked.borrow().len(), 2);
+    }
+
+    /// A name typed without .dxf in a dialog that doesn't add it (GTK) is written with .dxf; an
+    /// existing file of that name, which the dialog never asked about, is not replaced.
+    #[test]
+    fn dxfout_never_replaces_a_dxf_the_dialog_did_not_ask_about() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-dxfout-dialog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let typed = dir.join("plan").to_string_lossy().to_string();
+        let services = Services { pick_save: Some(Box::new(move |_: &str| Some(typed.clone()))), ..Services::default() };
+        let mut app = CadApp::new(Session::new(), services);
+        let e = super::route(&mut app, "dxfout").unwrap_err();
+        assert!(!e.contains("already exists"), "nothing to replace: DXFOUT runs ({e})");
+
+        std::fs::write(dir.join("plan.dxf"), "keep").unwrap();
+        let e = super::route(&mut app, "dxfout").unwrap_err();
+        assert!(e.contains("plan.dxf already exists"), "{e}");
+        assert_eq!(std::fs::read_to_string(dir.join("plan.dxf")).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
