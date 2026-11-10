@@ -300,8 +300,10 @@ impl Interactive for DdatteM {
         self.0.prompt(s)
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // Only the pick ends it: values typed after a pick made by hand are applied as ATTEDIT's.
+        let picking = self.0.block.is_none();
         let step = self.0.input(s, i)?;
-        Ok(if s.lisp_running() && self.0.block.is_some() { Step::Done } else { step })
+        Ok(if s.lisp_running() && picking && self.0.block.is_some() { Step::Done } else { step })
     }
 }
 
