@@ -647,6 +647,7 @@ fn update_canvas_cursor(
     hover: Option<Pos2>,
 ) -> (Option<Vec2>, Option<crate::dyninput::Frame>) {
     let raw_world = hover.filter(|_| inside).map(|p| xf.to_world(p));
+    app.session.pointer = raw_world;
     let dyn_frame = crate::cmdline::dyn_frame(app);
     if let Some(w) = raw_world {
         let mut eff = effective_point(app, w, xf, ui.ctx());

@@ -39,6 +39,20 @@ struct Hit {
     at: Vec2,
     seg: Segment,
     handle: Handle,
+    /// The segment is the object's own (a line, an arc, a polyline's segment), not a piece of a
+    /// flattened ellipse or spline: only these give readings. The others still stop the axis.
+    exact: bool,
+}
+
+/// Whether `kind`'s segments ([`super::super::curves::Chain::of`]) are its own: its length and
+/// radius can be read from them.
+fn exact(kind: &EntityKind) -> bool {
+    matches!(kind, EntityKind::Line(_) | EntityKind::Arc(_) | EntityKind::Circle(_) | EntityKind::LwPolyline(_) | EntityKind::Polyline3d(_))
+}
+
+/// Whether `kind` has segments the axes can meet ([`super::super::curves::Chain::of`]).
+fn traced(kind: &EntityKind) -> bool {
+    exact(kind) || matches!(kind, EntityKind::Ellipse(_) | EntityKind::Spline(_))
 }
 
 /// One measurement Quick shows.
@@ -78,17 +92,24 @@ pub(crate) fn readout(s: &Session, c: Vec2) -> Readout {
         return out;
     }
     let (hw, hh) = half_view(s);
-    let reach = (hw + hh).max(s.pixel_size());
+    // Long enough to cross the whole view from any point in it.
+    let reach = (2.0 * (hw + hh)).max(s.pixel_size());
     if !reach.is_finite() {
         return out;
     }
     let dirs = [Vec2::new(1.0, 0.0), Vec2::new(-1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(0.0, -1.0)];
     let rays: Vec<Segment> = dirs.iter().map(|&u| Segment::Line(Line::new(c, c + u * reach))).collect();
     let min_t = s.pixel_size() * 0.5;
+    let bands = axis_bands(c, reach, min_t);
     let mut best: [Option<(f64, Hit)>; 4] = [None; 4];
-    for e in near_axes(s, c, reach, min_t) {
+    for e in near_axes(s, c, &bands) {
         let Some(chain) = super::super::curves::Chain::of(&e.kind) else { continue };
+        let exact = exact(&e.kind);
         for seg in chain.segs.iter().take(MAX_SEGMENTS) {
+            // A segment off both axes can't meet them.
+            if !bands.iter().any(|b| b.intersects(&seg_bounds(seg))) {
+                continue;
+            }
             for (k, (ray, u)) in rays.iter().zip(dirs).enumerate() {
                 for p in intersect_segments(ray, seg) {
                     let t = (p - c).dot(u);
@@ -97,7 +118,7 @@ pub(crate) fn readout(s: &Session, c: Vec2) -> Readout {
                         && closer
                         && let Some(slot) = best.get_mut(k)
                     {
-                        *slot = Some((t, Hit { at: p, seg: *seg, handle: e.handle }));
+                        *slot = Some((t, Hit { at: p, seg: *seg, handle: e.handle, exact }));
                     }
                 }
             }
@@ -107,32 +128,43 @@ pub(crate) fn readout(s: &Session, c: Vec2) -> Readout {
     let end = |k: usize, u: Vec2| hit(k).map_or(c + u * reach, |h| h.at);
     out.axes.push((end(1, dirs[1]), end(0, dirs[0])));
     out.axes.push((end(3, dirs[3]), end(2, dirs[2])));
-    // Each object met: its length or radius, once.
+    // Only the objects' own segments are read: a flattened ellipse or spline stops the axis but
+    // its pieces have no length or radius of the object's.
+    let measured = |k: usize| hit(k).filter(|h| h.exact);
+    // Each object met: its length or radius, once (an arc or circle met by several axes too).
     for k in 0..4 {
-        let Some(h) = hit(k) else { continue };
+        let Some(h) = measured(k) else { continue };
         let reading = match h.seg {
             Segment::Line(l) => Reading::Length { handle: h.handle, a: l.a, b: l.b, length: l.len() },
             Segment::Arc { arc, .. } => Reading::Radius { handle: h.handle, at: h.at, center: arc.center, radius: arc.radius },
         };
-        if !out.readings.contains(&reading) {
+        let known = out.readings.iter().any(|r| match (r, &reading) {
+            (Reading::Radius { handle, center, radius, .. }, Reading::Radius { handle: h2, center: c2, radius: r2, .. }) => {
+                handle == h2 && center == c2 && radius == r2
+            }
+            _ => *r == reading,
+        });
+        if !known {
             out.readings.push(reading);
         }
     }
     // Parallel lines met on one axis: the distance between them.
     for (k1, k2) in [(1, 0), (3, 2)] {
-        if let (Some(a), Some(b)) = (hit(k1), hit(k2))
+        if let (Some(a), Some(b)) = (measured(k1), measured(k2))
             && let (Segment::Line(la), Segment::Line(lb)) = (a.seg, b.seg)
             && let Some(distance) = parallel_distance(la, lb)
         {
             out.readings.push(Reading::Gap { a: a.at, b: b.at, distance });
         }
     }
-    // Joined lines met by the two axes: the angle at the end they share.
+    // Joined lines met by the two axes: the angle at the end they share. Both axes meeting the
+    // same segment (a slanted line across the corner the cursor is in) is no angle.
     let tol = s.pixel_size() * 1e-3;
     for kh in [0, 1] {
         for kv in [2, 3] {
-            if let (Some(a), Some(b)) = (hit(kh), hit(kv))
+            if let (Some(a), Some(b)) = (measured(kh), measured(kv))
                 && let (Segment::Line(la), Segment::Line(lb)) = (a.seg, b.seg)
+                && la != lb
                 && let Some((vertex, pa, pb)) = joined(la, lb, tol)
             {
                 let degrees = super::vertex_angle(vertex, pa, pb);
@@ -146,38 +178,78 @@ pub(crate) fn readout(s: &Session, c: Vec2) -> Readout {
     out
 }
 
-/// The visible objects of the current space that may meet the cursor's axes: those whose bounds
-/// touch a band `pad` wide along either axis, `reach` long each way from `c` (at most
-/// [`MAX_OBJECTS`]). A large space is looked up in its spatial index, a small one scanned.
-fn near_axes(s: &Session, c: Vec2, reach: f64, pad: f64) -> Vec<std::sync::Arc<Entity>> {
-    let Ok(d) = s.doc() else { return Vec::new() };
-    let space = s.space();
-    let bands = [
+/// The two bands the cursor's axes sweep: `reach` long each way from `c`, `pad` wide.
+fn axis_bands(c: Vec2, reach: f64, pad: f64) -> [Bounds2; 2] {
+    [
         Bounds2::new(c - Vec2::new(reach, 0.0), c + Vec2::new(reach, 0.0)).expand(pad),
         Bounds2::new(c - Vec2::new(0.0, reach), c + Vec2::new(0.0, reach)).expand(pad),
-    ];
+    ]
+}
+
+/// The bounds of a segment (an arc's whole circle: enough to tell it is off the axes).
+fn seg_bounds(seg: &Segment) -> Bounds2 {
+    match seg {
+        Segment::Line(l) => Bounds2::new(l.a, l.b),
+        Segment::Arc { arc, .. } => Bounds2::new(arc.center, arc.center).expand(arc.radius),
+    }
+}
+
+/// Most candidates sorted by distance for one cursor position: in a view with more objects on
+/// the axes than this, the first found are the ones sorted.
+const MAX_CANDIDATES: usize = 200_000;
+
+/// The visible objects of the current space with segments the axes can meet, whose bounds touch
+/// `bands`: the [`MAX_OBJECTS`] nearest to `c`, so a crowded view keeps the lines next to the
+/// cursor. A large space is looked up in its spatial index, a small one scanned.
+fn near_axes(s: &Session, c: Vec2, bands: &[Bounds2; 2]) -> Vec<std::sync::Arc<Entity>> {
+    let Ok(d) = s.doc() else { return Vec::new() };
+    let space = s.space();
     let touches = |b: &Bounds2| bands.iter().any(|band| band.intersects(b));
-    let mut out = Vec::new();
+    let wanted = |e: &Entity| traced(&e.kind) && d.is_visible(e);
+    let mut found: Vec<(f64, std::sync::Arc<Entity>)> = Vec::new();
     match crate::spatial::index(d, &space) {
         Some(ix) => {
-            let mut found: Vec<u32> = bands.iter().flat_map(|b| ix.query(b, false).unwrap_or_default()).collect();
-            found.sort_unstable();
-            found.dedup();
-            out.extend(found.into_iter().filter_map(|i| ix.entity(i)).filter(|e| d.is_visible(e)).take(MAX_OBJECTS).cloned());
-        }
-        None => {
-            let Some(store) = d.space(&space) else { return out };
-            for e in store.iter() {
-                if out.len() >= MAX_OBJECTS {
+            let mut ids: Vec<u32> = bands.iter().flat_map(|b| ix.query(b, false).unwrap_or_default()).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            for i in ids {
+                if found.len() >= MAX_CANDIDATES {
                     break;
                 }
-                if d.is_visible(e) && touches(&cadcraft_doc::entity_bounds(d, e, 0)) {
-                    out.push(e.clone());
+                if let Some(e) = ix.entity(i).filter(|e| wanted(e)) {
+                    found.push((box_distance(&ix.bounds(i), c), e.clone()));
+                }
+            }
+        }
+        None => {
+            let Some(store) = d.space(&space) else { return Vec::new() };
+            for e in store.iter() {
+                if found.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                if !wanted(e) {
+                    continue;
+                }
+                let b = cadcraft_doc::entity_bounds(d, e, 0);
+                if touches(&b) {
+                    found.push((box_distance(&b, c), e.clone()));
                 }
             }
         }
     }
-    out
+    if found.len() > MAX_OBJECTS {
+        found.select_nth_unstable_by(MAX_OBJECTS, |a, b| a.0.total_cmp(&b.0));
+        found.truncate(MAX_OBJECTS);
+    }
+    found.into_iter().map(|(_, e)| e).collect()
+}
+
+/// How far `c` is from the box `b` (0 inside it).
+fn box_distance(b: &Bounds2, c: Vec2) -> f64 {
+    let dx = (b.min.x - c.x).max(c.x - b.max.x).max(0.0);
+    let dy = (b.min.y - c.y).max(c.y - b.max.y).max(0.0);
+    let d = dx.hypot(dy);
+    if d.is_nan() { f64::INFINITY } else { d }
 }
 
 /// The distance between two parallel lines; `None` when they are not parallel.
@@ -225,6 +297,10 @@ impl QuickArea {
         {
             outer.vertices = vs;
         }
+        let tol = s.pixel_size().max(1e-9) * 1e-3;
+        let mut outer: Vec<HatchLoop> = loops.iter().filter(|l| l.outer).cloned().collect();
+        outer.extend(islands(loops.into_iter().filter(|l| !l.outer).collect(), tol));
+        let loops = outer;
         let poly = |l: &HatchLoop| Polyline { vertices: l.vertices.clone(), closed: true };
         let (mut area, mut perimeter) = (0.0, 0.0);
         for l in &loops {
@@ -239,6 +315,68 @@ impl QuickArea {
         let inside = |l: &HatchLoop| cadcraft_geom::point_in_polygon(&Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(1e-6), p);
         self.loops.iter().all(|l| if l.outer { inside(l) } else { !inside(l) })
     }
+}
+
+/// The islands an area leaves out, from those HATCH finds (every closed object inside the outer
+/// loop, at any depth): an island inside another one is in the hole already, and islands that
+/// overlap leave out their union, once. Flattened within `tol`.
+fn islands(found: Vec<HatchLoop>, tol: f64) -> Vec<HatchLoop> {
+    let flat: Vec<Vec<Vec2>> = found.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(tol)).collect();
+    let size: Vec<f64> = flat.iter().map(|p| cadcraft_geom::shoelace(p).abs()).collect();
+    let inside = |i: usize, j: usize| -> bool {
+        let (Some(pi), Some(pj)) = (flat.get(i), flat.get(j)) else { return false };
+        size.get(j) > size.get(i) && cadcraft_geom::region::interior_point(pi).is_some_and(|q| cadcraft_geom::point_in_polygon(pj, q))
+    };
+    // The outermost islands: those in no other one.
+    let top: Vec<usize> = (0..found.len()).filter(|&i| !(0..found.len()).any(|j| j != i && inside(i, j))).collect();
+    // Islands that overlap (an edge of one crosses the other) are one hole: group them.
+    let overlap = |i: usize, j: usize| -> bool {
+        let (Some(pi), Some(pj)) = (flat.get(i), flat.get(j)) else { return false };
+        let (bi, bj) = (Bounds2::from_points(pi.iter().copied()), Bounds2::from_points(pj.iter().copied()));
+        bi.intersects(&bj)
+            && (pi.iter().any(|q| cadcraft_geom::point_in_polygon(pj, *q)) || pj.iter().any(|q| cadcraft_geom::point_in_polygon(pi, *q)))
+    };
+    let mut group: Vec<usize> = (0..top.len()).collect();
+    let root = |group: &Vec<usize>, mut g: usize| {
+        while let Some(&p) = group.get(g).filter(|&&p| p != g) {
+            g = p;
+        }
+        g
+    };
+    for a in 0..top.len() {
+        for b in a + 1..top.len() {
+            if let (Some(&i), Some(&j)) = (top.get(a), top.get(b))
+                && overlap(i, j)
+            {
+                let (ra, rb) = (root(&group, a), root(&group, b));
+                if let Some(slot) = group.get_mut(rb) {
+                    *slot = ra;
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for a in 0..top.len() {
+        if root(&group, a) != a {
+            continue;
+        }
+        let members: Vec<usize> = (0..top.len()).filter(|&b| root(&group, b) == a).filter_map(|b| top.get(b).copied()).collect();
+        match members.as_slice() {
+            [i] => out.extend(found.get(*i).cloned()),
+            many => {
+                let polys: Vec<Vec<Vec2>> =
+                    many.iter().filter_map(|&i| flat.get(i).map(|p| p.iter().copied().chain(p.first().copied()).collect())).collect();
+                match cadcraft_geom::region::outline(&polys, tol, 0.0) {
+                    Some(union) => {
+                        out.push(HatchLoop { vertices: union.into_iter().map(PolyVertex::new).collect(), outer: false, sources: Vec::new() })
+                    }
+                    // Not one outline after all: each left out on its own.
+                    None => out.extend(many.iter().filter_map(|&i| found.get(i).cloned())),
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The areas shown after a click at `p` in an area: that area alone, or with `shift` the areas
@@ -347,11 +485,11 @@ impl Interactive for QuickM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(p) => {
-                // A snap may have moved the click onto an edge: the cursor, beside it, is still
-                // inside.
+                // A snap may have moved the click onto an edge: the mouse, beside it, is still
+                // inside the area clicked.
                 let shift = s.shift_down;
-                let snapped = s.cursor != p && s.cursor.dist(p) <= super::super::curves::pick_aperture(s) * 2.0;
-                if !click(&mut self.areas, s, p, shift) && !(snapped && click(&mut self.areas, s, s.cursor, shift)) {
+                let at = unsnapped(s, p);
+                if !click(&mut self.areas, s, at, shift) && !(at != p && click(&mut self.areas, s, p, shift)) {
                     s.echo("No closed area there.");
                     return Ok(Step::Continue);
                 }
@@ -370,8 +508,15 @@ impl Interactive for QuickM {
     }
     /// The axes, the readings and the measured areas, in their own colours.
     fn preview_objects(&self, s: &Session, cursor: Vec2) -> Vec<Entity> {
-        marks(s, &readout(s, cursor), &self.areas)
+        marks(s, &readout(s, unsnapped(s, cursor)), &self.areas)
     }
+}
+
+/// The point under the mouse when `p` is it moved by a snap (within a few pick boxes of it),
+/// else `p` (a typed point, or no mouse).
+fn unsnapped(s: &Session, p: Vec2) -> Vec2 {
+    let near = super::super::curves::pick_aperture(s) * 4.0;
+    s.pointer.filter(|q| q.is_finite() && q.dist(p) <= near).unwrap_or(p)
 }
 
 /// Entities that draw `r` and shade `areas`, sized for the current view.
