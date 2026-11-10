@@ -381,6 +381,51 @@ struct CanvasPaint<'a> {
     raw_world: Option<Vec2>,
 }
 
+/// Other participants' cursors in the space being shown.
+///
+/// Presence is ephemeral (ADR-0006): a dot, a ring and a name, redrawn every frame from the last
+/// message; a cursor in another space or outside the view is not drawn.
+fn paint_presence(app: &crate::CadApp, painter: &egui::Painter, xf: &Xf, rect: Rect) {
+    let Ok(state) = app.session.state() else { return };
+    for (actor, presence) in &app.remote_presence {
+        if presence.space != state.space {
+            continue;
+        }
+        let Some(cursor) = presence.cursor else { continue };
+        let at = xf.to_screen(Vec2::new(cursor[0], cursor[1]));
+        if !rect.contains(at) {
+            continue;
+        }
+        let color = presence_color(actor);
+        painter.circle_filled(at, 4.0, color);
+        painter.circle_stroke(at, 7.0, Stroke::new(1.5, color));
+        painter.text(at + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, actor, egui::FontId::proportional(12.0), color);
+    }
+}
+
+/// A stable, readable colour per participant: the same name always gets the same hue.
+fn presence_color(actor: &str) -> Color32 {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in actor.bytes() {
+        hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+    }
+    let hue = (hash % 360) as f32 / 60.0;
+    let (saturation, value) = (0.72_f32, 0.95_f32);
+    let c = value * saturation;
+    let x = c * (1.0 - ((hue % 2.0) - 1.0).abs());
+    let m = value - c;
+    let (r, g, b) = match hue as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let channel = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(channel(r), channel(g), channel(b))
+}
+
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
     let app = &mut *frame.app;
     let painter = frame.painter;
@@ -1072,6 +1117,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         preview_look,
         selection_look,
     );
+    paint_presence(app, painter, &xf_paper, rect);
     app.canvas.draw_ms = crate::now_ms() - t0;
     compare::paint(app, ui.ctx(), painter, &xf_paper, rect);
     blockedit::paint(app, ui.ctx(), painter, &xf_paper, rect);
