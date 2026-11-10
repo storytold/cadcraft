@@ -583,6 +583,7 @@ fn mleader_window_selection_excludes_insertion_point() {
             col_spacing: 0.0,
             row_spacing: 0.0,
             attribs: Vec::new(),
+            clip: None,
         }),
     };
     let ml_h = s.add_entity(EntityKind::MLeader(ml)).unwrap();
