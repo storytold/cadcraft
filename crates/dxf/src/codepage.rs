@@ -125,6 +125,8 @@ pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
             }
             out.extend_from_slice(&bytes);
         }
+        // U+FFFD marks unassigned bytes in the tables; it must be escaped, not written as one.
+        Decoder::Table(_) | Decoder::Dos864 if c == '\u{FFFD}' => return false,
         Decoder::Table(t) => {
             let Some(i) = t.iter().position(|&x| x == c).and_then(|i| u8::try_from(i).ok()) else { return false };
             out.push(0x80 | i);
@@ -423,6 +425,16 @@ mod tests {
         assert_eq!(d(b"x", "ANSI_1361"), None);
         assert_eq!(d(b"x", "EBCDIC"), None);
         assert_eq!(d(b"x", ""), None);
+    }
+
+    #[test]
+    fn replacement_char_is_never_encoded_as_an_unassigned_byte() {
+        for cp in ["DOS857", "DOS864", "DOS437"] {
+            let d = encoder(cp).unwrap();
+            let mut out = Vec::new();
+            assert!(!encode_char('\u{FFFD}', d, &mut out), "{cp}");
+            assert!(out.is_empty(), "{cp}");
+        }
     }
 
     #[test]
