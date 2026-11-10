@@ -1068,3 +1068,22 @@ fn ssget_type_filter_finds_entities_kept_as_unsupported() {
     assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"ole2*\"))))"), "1");
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (ssname (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))) 0))))"), "\"OLE2FRAME\"");
 }
+
+#[test]
+fn entget_lists_type_and_layout_once_for_entities_kept_as_unsupported() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![tag(0, "LINE"), tag(100, "AcDbEntity"), tag(410, "Layout1"), tag(100, "AcDbOle2Frame"), tag(70, "2")],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    let count = |code: i32| format!("(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) {code}) (setq n (1+ n)))) n)");
+    assert_eq!(ok(&mut s, &count(0)), "1");
+    assert_eq!(ok(&mut s, &count(410)), "1");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"OLE2FRAME\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (entlast))))"), "\"Model\"");
+}

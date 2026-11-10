@@ -343,6 +343,8 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
 /// The DXF groups of an entity. One CADCraft keeps as raw groups (a type it doesn't model, such
 /// as an OLE2FRAME) isn't written by the codec, so its own groups give the list: its type,
 /// layer and the groups it was read with (xdata, handles and reactors left out).
+/// An entity's type and DXF groups, as `entget` lists them; for an entity kept as raw groups, its
+/// own groups with the layer (8) after the AcDbEntity marker.
 fn entity_groups(d: &cadcraft_doc::Drawing, e: &Entity) -> Result<(String, Vec<Tag>), LispError> {
     let cadcraft_doc::EntityKind::Unknown(u) = &e.kind else { return Ok((codec()?.groups)(d, e)) };
     use cadcraft_dxf::{Kind, Value as Dxf, kind_of};
@@ -351,7 +353,8 @@ fn entity_groups(d: &cadcraft_doc::Drawing, e: &Entity) -> Result<(String, Vec<T
     let mut in_group = false;
     for r in u.tags.iter().take_while(|r| r.code < 1000) {
         match r.code {
-            5 | 8 | 67 | 330 => continue,
+            // entget adds the type (0) and layout (410) itself.
+            0 | 5 | 8 | 67 | 330 | 410 => continue,
             102 => {
                 in_group = r.value.trim().starts_with('{');
                 continue;
