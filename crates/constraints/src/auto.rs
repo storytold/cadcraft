@@ -274,7 +274,7 @@ pub fn infer_placed(d: &Drawing, placed: &[Handle], others: &[Handle], o: &Infer
     'per: for (r1, a1, b1) in g.lines.iter().filter(|(r, _, _)| allow_per && placed.contains(&r.handle)) {
         for (r2, a2, b2) in g.lines.iter().filter(|(r, _, _)| r.handle != r1.handle) {
             // Full: nothing more can be added, so the pairs left need no geometry or duplicate search.
-            if out.len() >= MAX_CANDIDATES {
+            if out.len() + extra.len() + on.len() >= MAX_CANDIDATES {
                 break 'per;
             }
             let (l1, l2) = (Line::new(*a1, *b1), Line::new(*a2, *b2));
