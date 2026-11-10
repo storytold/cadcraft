@@ -125,6 +125,8 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// `pipeline::bounds_context` of the drawing, worked out once for a windowed screen build.
+    bounds_context: Option<u64>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -340,6 +342,7 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            bounds_context: self.bounds_context,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent.
@@ -385,9 +388,10 @@ mod props;
 mod text_entity;
 mod viewports;
 
+pub use blocks::{BlockIndex, block_index};
 pub use dim_draw::{dim_text, dimension_in};
 pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
-pub use pipeline::{Options, build, build_entities, build_plot};
+pub use pipeline::{KnownBounds, Options, build, build_entities, build_plot, known_bounds, known_bounds_of};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
