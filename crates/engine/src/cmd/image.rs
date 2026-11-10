@@ -21,6 +21,10 @@ const MAX_IMAGE_FILES: usize = 1000;
 const MAX_IMAGE_BYTES: u64 = 256 << 20;
 /// Longest base64 text taken for `data`: what a file of [`MAX_IMAGE_BYTES`] encodes to.
 const MAX_IMAGE_BASE64: u64 = MAX_IMAGE_BYTES.div_ceil(3) * 4;
+/// Longest `data` text with the line breaks and spaces base64 may carry (MIME breaks every 76
+/// characters, under 3% more): the characters past [`MAX_IMAGE_BASE64`] are counted only up to
+/// here, which also bounds what decoding sets aside.
+const MAX_IMAGE_TEXT: u64 = MAX_IMAGE_BASE64 + MAX_IMAGE_BASE64 / 16;
 /// Most decoded pixel bytes kept per drawing; images past it stay unloaded.
 const MAX_LOADED_BYTES: u64 = 2 << 30;
 /// Most image files decoded at the same time when a drawing opens.
@@ -71,17 +75,20 @@ fn paths(d: &Drawing) -> Vec<String> {
     paths
 }
 
+/// Whether `path` is a full path here, or on Windows where a drawing may have been written (a
+/// drive, `C:\maps\a.png`, or a share, `\\server\maps`), which other systems read as relative.
+fn full_path(path: &str) -> bool {
+    let b = path.trim().as_bytes();
+    std::path::Path::new(path.trim()).is_absolute() || b.starts_with(b"\\\\") || matches!(b, [d, b':', b'\\' | b'/', ..] if d.is_ascii_alphabetic())
+}
+
 /// The contents of the image file saved as `path` in a drawing at `host`.
 fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let file = super::blocks::xref::find_file(path, host).ok_or_else(|| {
             // An unsaved drawing has no folder for a relative path to be relative to.
-            if host.is_none() && std::path::Path::new(path).is_relative() {
-                "file not found (save the drawing first, or give a full path)"
-            } else {
-                "file not found"
-            }
+            if host.is_none() && !full_path(path) { "file not found (save the drawing first, or give a full path)" } else { "file not found" }
         })?;
         let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
         if len > MAX_IMAGE_BYTES {
@@ -312,8 +319,11 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
     let bytes = match p.get("data") {
         Some(data) => {
             let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
-            // Refused before decoding, which would hold all of it in memory.
-            if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_IMAGE_BASE64 {
+            // Refused before decoding, which would hold all of it in memory. Line breaks and
+            // spaces, which decoding skips, don't count.
+            let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+            let digits = || u64::try_from(text.bytes().filter(|b| !matches!(b, b'\n' | b'\r' | b' ')).count()).unwrap_or(u64::MAX);
+            if len > MAX_IMAGE_TEXT || (len > MAX_IMAGE_BASE64 && digits() > MAX_IMAGE_BASE64) {
                 return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
             }
             let bytes = base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?;

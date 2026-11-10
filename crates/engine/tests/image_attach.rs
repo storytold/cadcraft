@@ -148,9 +148,15 @@ fn oversized_data_is_refused_before_decoding() {
     hooks();
     const LIMIT: u64 = 256 << 20;
     let mut s = Session::new();
-    let too_long = "A".repeat(usize::try_from(LIMIT.div_ceil(3) * 4 + 1).unwrap());
+    // Not base64 at all: only the check before decoding tells it is too long ("not valid base64"
+    // otherwise), and nothing is decoded.
+    let too_long = "!".repeat(usize::try_from(LIMIT.div_ceil(3) * 4 + 1).unwrap());
     let e = s.execute("imageattach", &json!({ "path": "a.png", "data": too_long })).unwrap_err().to_string();
     assert!(e.contains("`data` is larger than 256 MB"), "{e}");
+    // Line breaks don't count: base64 wrapped as MIME writes it is taken.
+    let wrapped: String = base64_encode(&png()).as_bytes().chunks(76).map(|c| format!("{}\r\n", String::from_utf8_lossy(c))).collect();
+    s.execute("imageattach", &json!({ "path": "wrapped.png", "data": wrapped })).unwrap();
+    s.execute("undo", &json!({})).unwrap();
 
     // The longest text allowed, holding one byte more than the limit, is refused once decoded.
     let groups = usize::try_from(LIMIT / 3).unwrap();
@@ -173,6 +179,11 @@ fn a_relative_path_in_an_unsaved_drawing_says_what_to_do() {
     let full = dir.join("missing.png");
     let e = s.execute("imageattach", &json!({ "path": full.to_string_lossy() })).unwrap_err().to_string();
     assert!(e.contains("file not found") && !e.contains("save the drawing"), "{e}");
+    // A full Windows path, read as relative elsewhere, is a full path all the same.
+    for windows in [r"C:\nowhere\a.png", "D:/nowhere/a.png", r"\\server\maps\a.png"] {
+        let e = s.execute("imageattach", &json!({ "path": windows })).unwrap_err().to_string();
+        assert!(e.contains("file not found") && !e.contains("save the drawing"), "{windows}: {e}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
