@@ -1472,3 +1472,30 @@ menu	View	ხედი
 	Text to find	მოსაძებნი ტექსტი
 	Whole words	მთლიანი სიტყვები
 	Nothing found	ვერაფერი მოიძებნა
+	Add a drawing file as a block library	ნახაზის ფაილის დამატება ბლოკების ბიბლიოთეკად
+	Add a folder of drawings or a drawing file to use its blocks.	დაამატეთ ნახაზების საქაღალდე ან ნახაზის ფაილი მისი ბლოკების გამოსაყენებლად.
+	Block Libraries	ბლოკების ბიბლიოთეკები
+	Block Library	ბლოკების ბიბლიოთეკა
+	Blocks Palette	ბლოკების პალიტრა
+	Click a block, then pick its insertion point.	დაწკაპეთ ბლოკზე, შემდეგ მიუთითეთ მისი ჩასმის წერტილი.
+	Current Drawing	მიმდინარე ნახაზი
+	Details	დეტალები
+	Extra Large Icons	ძალიან დიდი ხატულები
+	Folder or file	საქაღალდე ან ფაილი
+	Import Library Block	ბიბლიოთეკის ბლოკის იმპორტი
+	Insert and Explode	ჩასმა და დაშლა
+	Large Icons	დიდი ხატულები
+	Libraries	ბიბლიოთეკები
+	Medium Icons	საშუალო ხატულები
+	No block matches the filter.	ფილტრს არც ერთი ბლოკი არ შეესაბამება.
+	This block is already in the drawing, so its definition is used.	ეს ბლოკი ნახაზში უკვე არის, ამიტომ გამოიყენება მისი განსაზღვრება.
+	Open Library...	ბიბლიოთეკის გახსნა...
+	Read the library again	ბიბლიოთეკის თავიდან წაკითხვა
+	Reading the library...	ბიბლიოთეკა იკითხება...
+	Refresh	განახლება
+	Remove from the list	სიიდან მოცილება
+	Repeat Placement	განთავსების გამეორება
+	Small Icons	პატარა ხატულები
+	This drawing has no blocks.	ამ ნახაზში ბლოკები არ არის.
+	This library has no drawings or blocks.	ამ ბიბლიოთეკაში ნახაზები ან ბლოკები არ არის.
+	Only the first {n} are shown.	ნაჩვენებია მხოლოდ პირველი {n}.
