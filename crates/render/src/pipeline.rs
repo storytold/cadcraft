@@ -89,6 +89,7 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         block_lw: Lineweight::Default,
         block_ltype: "Continuous".into(),
         depth: 0,
+        construction: false,
         top,
         frozen,
         vp_colors,

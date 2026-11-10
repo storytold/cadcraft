@@ -51,7 +51,7 @@ pub const DRAFTING: &[(&str, &[Tool], &[Tool])] = &[
             (Icon::BlockEdit, "bedit", "Block Editor"),
             (Icon::AttDef, "attdef", "Define Attributes"),
         ],
-        &[],
+        &[(Icon::XLine, "bconstruction", "Construction Geometry")],
     ),
     (
         "Modify",

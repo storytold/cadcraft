@@ -28,6 +28,7 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         block_lw: lw,
         block_ltype: lt,
         depth: ctx.depth + 1,
+        construction: ctx.construction || ctx.d.is_editor_construction(e),
         top: ctx.top,
         frozen: ctx.frozen,
         vp_colors: ctx.vp_colors,
@@ -158,6 +159,9 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
                 }
             };
             if shown {
+                // Attributes follow the construction reference's presentation as its other
+                // displayed contents do; their stored properties stay unchanged.
+                let ink = if ctx.construction || ctx.d.is_editor_construction(e) { rgb } else { ink };
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {

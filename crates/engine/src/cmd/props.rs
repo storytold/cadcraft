@@ -264,6 +264,11 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("properties.set", "nothing selected"));
     }
     let (hs, left_out) = LeftOut::split(s, hs)?;
+    if ["color", "layer", "linetype"].iter().any(|name| p.get(name).is_some())
+        && hs.iter().any(|h| s.doc().is_ok_and(|d| d.entity(*h).is_some_and(|e| d.is_editor_construction(e))))
+    {
+        return Err(bad("properties.set", "revert construction geometry before changing its color, layer or linetype"));
+    }
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
