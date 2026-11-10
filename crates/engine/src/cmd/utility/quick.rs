@@ -329,12 +329,16 @@ fn islands(found: Vec<HatchLoop>, tol: f64) -> Vec<HatchLoop> {
     };
     // The outermost islands: those in no other one.
     let top: Vec<usize> = (0..found.len()).filter(|&i| !(0..found.len()).any(|j| j != i && inside(i, j))).collect();
-    // Islands that overlap (an edge of one crosses the other) are one hole: group them.
+    // Islands that overlap are one hole: group them. They overlap when a corner of one is in the
+    // other, or when their edges cross without either (two strips crossed like a plus sign);
+    // islands that only touch are grouped too, which leaves the same outline.
     let overlap = |i: usize, j: usize| -> bool {
         let (Some(pi), Some(pj)) = (flat.get(i), flat.get(j)) else { return false };
         let (bi, bj) = (Bounds2::from_points(pi.iter().copied()), Bounds2::from_points(pj.iter().copied()));
         bi.intersects(&bj)
-            && (pi.iter().any(|q| cadcraft_geom::point_in_polygon(pj, *q)) || pj.iter().any(|q| cadcraft_geom::point_in_polygon(pi, *q)))
+            && (pi.iter().any(|q| cadcraft_geom::point_in_polygon(pj, *q))
+                || pj.iter().any(|q| cadcraft_geom::point_in_polygon(pi, *q))
+                || edges_cross(pi, pj))
     };
     let mut group: Vec<usize> = (0..top.len()).collect();
     let root = |group: &Vec<usize>, mut g: usize| {
@@ -377,6 +381,23 @@ fn islands(found: Vec<HatchLoop>, tol: f64) -> Vec<HatchLoop> {
         }
     }
     out
+}
+
+/// Whether an edge of the closed polygon `a` meets one of `b`'s (touching counts). Only the edges
+/// whose bounds meet are compared.
+fn edges_cross(a: &[Vec2], b: &[Vec2]) -> bool {
+    let edges = |p: &[Vec2]| -> Vec<(Vec2, Vec2)> { p.iter().zip(p.iter().cycle().skip(1)).map(|(x, y)| (*x, *y)).collect() };
+    let (ea, eb) = (edges(a), edges(b));
+    let side = |o: Vec2, p: Vec2, q: Vec2| (p - o).cross(q - o);
+    let meet = |(p1, p2): (Vec2, Vec2), (q1, q2): (Vec2, Vec2)| -> bool {
+        if !Bounds2::new(p1, p2).intersects(&Bounds2::new(q1, q2)) {
+            return false;
+        }
+        let (d1, d2) = (side(q1, q2, p1), side(q1, q2, p2));
+        let (d3, d4) = (side(p1, p2, q1), side(p1, p2, q2));
+        (d1 * d2 <= 0.0) && (d3 * d4 <= 0.0)
+    };
+    ea.iter().any(|&e| eb.iter().any(|&f| meet(e, f)))
 }
 
 /// The areas shown after a click at `p` in an area: that area alone, or with `shift` the areas

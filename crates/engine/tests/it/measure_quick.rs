@@ -88,6 +88,17 @@ fn nested_islands_count_once_and_overlapping_ones_by_their_union() {
     assert!((area - (50.0 - union)).abs() < 1e-2, "{area} vs {}", 50.0 - union);
 }
 
+/// Review on #2776: two islands crossed like a plus sign, with no corner of either in the other,
+/// still leave out their union once.
+#[test]
+fn islands_crossed_like_a_plus_leave_out_their_union() {
+    let mut s = drawing((1200.0, 800.0), &["rectang 0,0 20,20", "rectang 8,2 12,18", "rectang 2,8 18,12", "zoom e"]);
+    let r = s.execute("measuregeom", &json!({ "mode": "quick", "areas": [[1, 1]] })).unwrap();
+    // 400 less the plus: two 4 x 16 strips sharing a 4 x 4 square.
+    assert!(close(&r["area"], 400.0 - 112.0), "{r}");
+    assert!(close(&r["perimeter"], 80.0 + 64.0), "{r}");
+}
+
 /// Review on #2776: a circle met by several axes gives its radius once.
 #[test]
 fn a_circle_round_the_cursor_gives_its_radius_once() {
