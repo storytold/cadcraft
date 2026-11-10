@@ -50,7 +50,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 }
 
 /// Load the xrefs of drawing `i`, just opened (OPEN): the opened state counts as saved, and the
-/// view frames the drawing with them.
+/// view frames the drawing with them, unless the drawing opened on the view it was saved at.
 pub(crate) fn after_open(s: &mut Session, i: usize) {
     let px = s.viewport_px;
     let Some(st) = s.docs.get_mut(i) else { return };
@@ -61,7 +61,7 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     let out = load::load_all(Arc::make_mut(&mut st.doc), path.as_deref());
     st.saved = st.doc.clone();
     let ext = st.doc.extents(&cadcraft_doc::Space::Model);
-    if !ext.is_empty() {
+    if !ext.is_empty() && crate::view::saved_view(&st.doc).is_none() {
         // Fit in the frame of the saved twist, which open_drawing has restored.
         let twist = st.view().twist;
         let (center, w, h) = crate::View::twisted_box(ext, twist);
