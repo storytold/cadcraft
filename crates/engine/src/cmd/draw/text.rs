@@ -126,7 +126,7 @@ impl Interactive for TextM {
             (None, _, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
             (Some(a), None, _) => Prompt::new("Specify height", Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a),
             (Some(a), Some(_), None) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
-            _ => Prompt::new("Enter text", Accept::TEXT),
+            _ => Prompt::new("Enter text", Accept::TEXT).literal(),
         }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
