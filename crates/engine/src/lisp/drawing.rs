@@ -404,6 +404,10 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             placed_layout = true;
         }
     }
+    // Raw groups (an entity CADCraft keeps unsupported) may have no AcDbEntity marker.
+    if !placed_layout {
+        items.push(Value::cons(Value::Int(410), Value::str(&layout)));
+    }
     Ok(Flow::Value(Value::list(items)))
 }
 

@@ -1067,6 +1067,8 @@ fn ssget_type_filter_finds_entities_kept_as_unsupported() {
     assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))))"), "1");
     assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"ole2*\"))))"), "1");
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (ssname (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))) 0))))"), "\"OLE2FRAME\"");
+    // Its groups have no AcDbEntity marker; the layout (410) is still listed.
+    assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (entlast))))"), "\"Model\"");
 }
 
 #[test]
