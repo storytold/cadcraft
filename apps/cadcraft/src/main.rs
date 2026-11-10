@@ -23,13 +23,15 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "macos")]
+mod sheet;
 mod spacemouse;
 mod system_animations;
 mod workspace;
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::switch::Switch;
-use cadcraft_ui_egui::{CadApp, Services, i18n};
+use cadcraft_ui_egui::{CadApp, Pick, Services, i18n};
 
 struct App {
     cad: CadApp,
@@ -159,70 +161,42 @@ pub fn install_io() {
 
 fn services() -> Services {
     Services {
-        pick_open: Some(Box::new(|| open_dialog().pick_file().map(|p| p.to_string_lossy().to_string()))),
-        pick_save: Some(Box::new(|name: &str| save_dialog(name).save_file().map(|p| p.to_string_lossy().to_string()))),
-        start_pick: start_pick(),
+        pick_open: Some(Box::new(|| file_dialog(&Pick::Open).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| file_dialog(&Pick::Save(name.into())).save_file().map(|p| p.to_string_lossy().to_string()))),
+        // macOS shows the dialogs as sheets (`sheet::start_pick`), set once the window exists.
+        start_pick: None,
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
-        pick_lisp: Some(Box::new(|dir: &str| lisp_dialog(dir).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_lisp: Some(Box::new(|dir: &str| file_dialog(&Pick::Lisp(dir.into())).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
-        pick_pgp: Some(Box::new(|dir: Option<&str>| pgp_dialog(dir.unwrap_or_default()).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 
-fn open_dialog() -> rfd::FileDialog {
-    rfd::FileDialog::new()
-        .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
-        .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
-        .add_filter(i18n::t("All files"), &["*"])
+/// The file types `pick` offers: (label, extensions). Shared by the blocking dialogs and the
+/// macOS sheets.
+fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
+    match pick {
+        Pick::Open => vec![
+            (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
+            (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
+            (i18n::t("All files"), vec!["*"]),
+        ],
+        Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
+        Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
+        Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+    }
 }
 
-fn lisp_dialog(dir: &str) -> rfd::FileDialog {
-    let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
-    if dir.is_empty() { dialog } else { dialog.set_directory(dir) }
-}
-
-fn pgp_dialog(dir: &str) -> rfd::FileDialog {
-    let dialog = rfd::FileDialog::new().add_filter(i18n::t("Alias files (PGP)"), &["pgp"]);
-    if dir.is_empty() { dialog } else { dialog.set_directory(dir) }
-}
-
-fn save_dialog(name: &str) -> rfd::FileDialog {
-    filters_for_save(name).iter().fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
-}
-
-/// On macOS the Open and Save panels must not run inside the window's event handler: resizing a
-/// panel run modally there sends the window's events back into that handler, and winit aborts
-/// the app (#1527). The dialog is started from a thread instead; rfd runs the panel on the main
-/// thread from the run loop, outside the handler, and the app acts on the answer when it arrives.
-#[cfg(target_os = "macos")]
-fn start_pick() -> Option<cadcraft_ui_egui::StartPick> {
-    use cadcraft_ui_egui::Pick;
-    Some(Box::new(|pick: Pick, done: Box<dyn FnOnce(Option<String>) + Send>| {
-        // Built here: the interface language's labels are read on this thread.
-        let dialog = match &pick {
-            Pick::Open => open_dialog(),
-            Pick::Save(name) => save_dialog(name),
-            Pick::Lisp(dir) => lisp_dialog(dir),
-            Pick::Pgp(dir) => pgp_dialog(dir),
-        };
-        let spawned = std::thread::Builder::new().name("file-dialog".into()).spawn(move || {
-            let path = match pick {
-                Pick::Open | Pick::Lisp(_) | Pick::Pgp(_) => dialog.pick_file(),
-                Pick::Save(_) => dialog.save_file(),
-            };
-            done(path.map(|p| p.to_string_lossy().to_string()));
-        });
-        if let Err(e) = spawned {
-            log::warn!("file dialog: {e}");
-        }
-    }))
-}
-
-/// Elsewhere the dialogs run where they are asked for: Windows runs the window's events without
-/// re-entering the handler.
-#[cfg(not(target_os = "macos"))]
-fn start_pick() -> Option<cadcraft_ui_egui::StartPick> {
-    None
+/// The blocking dialog for `pick` (Windows, Linux, FreeBSD).
+fn file_dialog(pick: &Pick) -> rfd::FileDialog {
+    let dialog = filters(pick).iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
+    match pick {
+        Pick::Save(name) => dialog.set_file_name(name),
+        Pick::Lisp(dir) | Pick::Pgp(dir) if !dir.is_empty() => dialog.set_directory(dir),
+        _ => dialog,
+    }
 }
 
 /// File types for the Save dialog, the suggested name's type first: Windows adds the first
@@ -394,6 +368,12 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the
+            // app when the dialog is resized (#1527).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
