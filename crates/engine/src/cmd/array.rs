@@ -159,6 +159,7 @@ pub(crate) fn make_assoc(s: &mut Session, objs: &[Handle], base: Vec2, mut p: Ar
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }))
 }
 
@@ -247,9 +248,16 @@ fn max_count(s: &Session, others: u64, objs: usize) -> u64 {
 }
 
 fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) -> Result<usize> {
+    // Every copy is checked before the first is made: a refusal part way would leave the copies
+    // already added in the drawing (a failed command is not rolled back).
+    let mats: Vec<Mat3> = mats.collect();
+    // A matrix every frame accepts needs no look at the objects; otherwise they are looked at once.
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && super::modify::holds_ole_frame(s, hs, true)? {
+        return Err(super::modify::ole_refusal());
+    }
     let mut n = 0;
-    for m in mats {
-        n += transform_entities(s, hs, &m, true)?.len();
+    for m in &mats {
+        n += transform_entities(s, hs, m, true)?.len();
     }
     Ok(n)
 }
@@ -374,10 +382,14 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
     let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
     let row_spacing = f64_or(p, "rowSpacing", 1.0);
+    let fill = f64_or(p, "angle", 360.0);
+    if !(fill.abs() >= 1e-9 && fill.abs() <= 360.0 + 1e-9) {
+        return Err(other("Requires a fill angle between -360 and 360 degrees (not 0)."));
+    }
     let kind = ArrayKind::Polar(PolarArray {
         center: c - base,
         items: count32(n),
-        fill: f64_or(p, "angle", 360.0),
+        fill: fill.clamp(-360.0, 360.0),
         rotate: bool_or(p, "rotate", true),
         rows: count32(rows),
         row_spacing,

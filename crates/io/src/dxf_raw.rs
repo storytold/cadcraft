@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject};
+use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
 use cadcraft_dxf::{Section, Tag};
 
@@ -417,10 +417,11 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         }
     }
     if proxies {
+        f.complete_class_table = classes.iter().filter(|(k, _, _)| k == "CLASS").count() <= MAX_OBJECTS;
         f.class_order = class_order;
     }
     for (kind, _, t) in &classes {
-        if kind == "CLASS" && val(t, 1).is_some_and(|n| types.contains(&up(&n))) && f.classes.len() < MAX_OBJECTS {
+        if kind == "CLASS" && (f.complete_class_table || val(t, 1).is_some_and(|n| types.contains(&up(&n)))) && f.classes.len() < MAX_OBJECTS {
             f.classes.push(t.iter().map(raw).collect());
         }
     }
@@ -452,8 +453,19 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         f.data_store = ds.tags.iter().take(MAX_DATA_STORE_GROUPS).map(raw).collect();
     }
     if !f.is_empty() {
+        f.version = file_version(secs);
         d.foreign = Arc::new(f);
     }
+}
+
+/// The `$ACADVER` the file's own HEADER section declares, if it does. Not the drawing's: a new
+/// drawing starts as AC1032, and a file without the variable would leave that default there.
+fn file_version(secs: &[Section]) -> Option<String> {
+    let header = secs.iter().find(|s| s.name.eq_ignore_ascii_case("HEADER"))?;
+    let at = header.tags.iter().position(|t| t.code == 9 && t.str().trim().eq_ignore_ascii_case("$ACADVER"))?;
+    let value = header.tags.get(at + 1).filter(|t| t.code != 9)?.str();
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn entity_types(drawing: &Drawing) -> HashMap<String, bool> {
@@ -502,76 +514,118 @@ fn retained_objects(
     let modelled_entry = |tags: &[Tag], handle: &str| {
         entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && MODELLED_XDICT_KEYS.contains(&up(key).as_str()))
     };
-    let mut retained = HashMap::new();
-    for index in 0..objects.len() {
-        let mut path = Vec::new();
-        let mut current = index;
-        let keep = loop {
-            if let Some(&known) = retained.get(&current) {
-                break known;
-            }
-            if path.contains(&current) || path.len() >= MAX_DEPTH {
-                break false;
-            }
-            path.push(current);
-            let Some((_, _, tags)) = objects.get(current) else { break false };
-            let header = head(tags);
-            let (Some(handle), Some(owner)) = (header.handle, header.owner) else { break false };
-            if by_handle.get(&handle) != Some(&current) {
-                break false;
-            }
-            if root == Some(owner.as_str()) {
-                break root_key(&handle).is_some_and(|key| !modelled_key(key));
-            }
-            if let Some(&parent) = by_handle.get(&owner) {
-                if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
+    // is_xdict reads the whole record; a dictionary that owns many objects (ACAD_GROUP with
+    // hundreds of thousands of groups) would be read once per child (#862).
+    let mut xdict_memo: HashMap<usize, bool> = HashMap::new();
+    let mut is_xdict = |index: usize| *xdict_memo.entry(index).or_insert_with(|| is_xdict(index));
+    let hard = hard_owners(objects.iter().filter_map(|(_, _, t)| Some((head(t).handle?, held(t)))));
+    // One pass with `kept` the objects an earlier pass kept: a null-owner object goes with the
+    // first of its hard owners that is kept.
+    let mut pass = |kept: &HashMap<usize, bool>| {
+        // Previously live objects already have a proved path to a retained owner. Seed that
+        // proof before traversal, so mutual hard owners cannot hide it from their children.
+        let mut retained: HashMap<usize, bool> = kept.iter().filter(|(_, live)| **live).map(|(&i, &live)| (i, live)).collect();
+        let kept = |h: &str| by_handle.get(h).and_then(|i| kept.get(i)) == Some(&true);
+        for index in 0..objects.len() {
+            let mut path = Vec::new();
+            let mut current = index;
+            let keep = loop {
+                if let Some(&known) = retained.get(&current) {
+                    break known;
+                }
+                if path.contains(&current) || path.len() >= MAX_DEPTH {
                     break false;
                 }
-                current = parent;
-                continue;
+                path.push(current);
+                let Some((_, _, tags)) = objects.get(current) else { break false };
+                let header = head(tags);
+                let Some(handle) = header.handle else { break false };
+                let Some(owner) = owner_of(header.owner, &handle, &hard, kept) else { break false };
+                if by_handle.get(&handle) != Some(&current) {
+                    break false;
+                }
+                if root == Some(owner.as_str()) {
+                    break root_key(&handle).is_some_and(|key| !modelled_key(key));
+                }
+                if let Some(&parent) = by_handle.get(&owner) {
+                    if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
+                        break false;
+                    }
+                    current = parent;
+                    continue;
+                }
+                if is_xdict(current) {
+                    break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
+                }
+                break entities.get(&owner) == Some(&true);
+            };
+            for visited in path {
+                retained.insert(visited, keep);
             }
-            if is_xdict(current) {
-                break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
+        }
+        retained
+    };
+    settle(&hard, |kept| pass(kept))
+}
+
+/// Run `pass` until what it keeps settles. The first pass sees nothing kept, so a null-owner
+/// object goes with its first hard owner; while one of its other hard owners is kept and that
+/// one is not, the next pass moves it there. A file where no object has two hard owners takes
+/// one pass; otherwise it stops when a pass changes nothing, after at most [`MAX_DEPTH`] more.
+fn settle<K: Eq + std::hash::Hash>(
+    hard: &HashMap<String, Vec<String>>,
+    mut pass: impl FnMut(&HashMap<K, bool>) -> HashMap<K, bool>,
+) -> HashMap<K, bool> {
+    let mut kept = pass(&HashMap::new());
+    if hard.values().all(|owners| owners.len() < 2) {
+        return kept;
+    }
+    for _ in 0..MAX_DEPTH {
+        let next = pass(&kept);
+        if next == kept {
+            break;
+        }
+        kept = next;
+    }
+    kept
+}
+
+/// The handles an object names by a hard owner reference (group 360).
+fn held(tags: &[Tag]) -> impl Iterator<Item = String> + '_ {
+    tags.iter().take_while(|g| g.code < 1000).filter(|g| g.code == 360).map(|g| g.str())
+}
+
+/// The objects that own each object by a hard owner reference (group 360), in file order:
+/// `child handle → owner handles`.
+fn hard_owners<S: AsRef<str>>(objects: impl Iterator<Item = (String, impl Iterator<Item = S>)>) -> HashMap<String, Vec<String>> {
+    // Membership is hashed, while the vector keeps file order. A long list of distinct
+    // holders for one child must not scan all earlier holders once per reference.
+    let mut out: HashMap<String, (Vec<String>, HashSet<String>)> = HashMap::new();
+    for (h, children) in objects {
+        for c in children {
+            let (owners, seen) = out.entry(norm(c.as_ref())).or_default();
+            if seen.insert(h.clone()) {
+                owners.push(h.clone());
             }
-            break entities.get(&owner) == Some(&true);
-        };
-        for visited in path {
-            retained.insert(visited, keep);
         }
     }
-    retained
+    out.into_iter().map(|(child, (owners, _))| (child, owners)).collect()
+}
+
+/// An object's owner: its group 330, or for one whose owner is null (another application's
+/// proxy that another proxy holds) the object that hard-owns it ([`hard_owners`]): the first
+/// one that is `kept`, or else the first one.
+fn owner_of(owner: Option<String>, handle: &str, hard: &HashMap<String, Vec<String>>, kept: impl Fn(&str) -> bool) -> Option<String> {
+    owner.filter(|o| o != "0").or_else(|| {
+        let owners = hard.get(handle)?;
+        owners.iter().find(|o| kept(o)).or_else(|| owners.first()).cloned()
+    })
 }
 
 /// Proxy records (DXF Reference, ACAD_PROXY_OBJECT and ACAD_PROXY_ENTITY): another application's
 /// objects and entities, whose class is named by number in group 91.
 fn is_proxy(kind: &str) -> bool {
     matches!(up(kind).as_str(), "ACAD_PROXY_OBJECT" | "ACAD_PROXY_ENTITY")
-}
-
-/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
-/// (an application's can hold a 91 of its own) and before any xdata.
-fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
-    let mut in_group = false;
-    for (i, (code, value)) in groups.into_iter().enumerate() {
-        match code {
-            1000.. => return None,
-            102 => in_group = value.as_ref().trim().starts_with('{'),
-            91 if !in_group => return Some(i),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A proxy's class number (see [`class_group`]).
-fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
-    let i = class_group(groups.clone())?;
-    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
-}
-
-/// The place in CLASSES a class number names (500 is the first class).
-fn class_index(number: Option<i64>) -> Option<usize> {
-    usize::try_from(number?.checked_sub(500)?).ok()
 }
 
 /// Set a proxy's class number (see [`class_group`]).
@@ -599,17 +653,13 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
     let first = ds.iter().position(|t| t.code == 0).unwrap_or(ds.len());
     out.extend(ds.iter().take(first).map(tag));
     let mut records = 0usize;
-    let mut i = first;
-    while i < ds.len() {
-        let end = ds.iter().skip(i + 1).position(|t| t.code == 0).map_or(ds.len(), |k| i + 1 + k);
-        let rec = ds.get(i..end).unwrap_or(&[]);
+    for rec in cadcraft_doc::foreign::data_store_records(ds) {
         let is_record = rec.first().is_some_and(|t| t.value.trim().eq_ignore_ascii_case("ACDSRECORD"));
-        let owner = rec.iter().find(|t| t.code == 320).map(|t| norm(&t.value));
+        let owner = cadcraft_doc::foreign::data_store_owner(rec).map(|t| norm(&t.value));
         if !is_record || owner.as_ref().is_some_and(|h| written.contains(h)) {
             records += usize::from(is_record);
             out.extend(rec.iter().map(tag));
         }
-        i = end;
     }
     if records == 0 {
         return;
@@ -656,6 +706,8 @@ pub(crate) fn unknown_entity(u: &Unknown, e: &Entity, owner: &str, paper: bool) 
             }
             _ if in_group => continue,
             5 | 67 => continue,
+            // After a subclass marker, 330 can be proxy data even without a source owner.
+            100 => owner_seen = true,
             330 if !owner_seen => {
                 owner_seen = true;
                 continue;
@@ -846,7 +898,7 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>) {
+pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
@@ -873,9 +925,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     for (i, n) in recs.iter().filter(|r| r.kind == "CLASS").filter_map(|r| val(body(r), 1)).map(|n| up(&n)).chain(appended).enumerate() {
         numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
     }
-    let renumber = |old: Option<i64>| class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied());
+    let renumber = |old| proxy_class_number(f, &numbers, old);
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let mut planned = plan_unknown(d, &recs, tags, &roles);
+    let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
     for list in planned.values_mut() {
         list.retain_mut(|(_, t)| {
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
@@ -916,43 +968,56 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     let objs: HashMap<String, &ForeignObject> = f.objects.iter().map(|o| (o.handle.hex(), o)).collect();
     let dict_entries: HashMap<String, &str> = f.dictionary.iter().map(|(k, h)| (h.hex(), k.as_str())).collect();
     let nod = f.targets.iter().filter(|(_, k)| k.0 == "NOD" && k.1.is_empty()).map(|(h, _)| h.hex()).collect::<HashSet<_>>();
-    let owners: HashMap<String, String> = f
+    let hard = hard_owners(
+        f.objects.iter().map(|o| (o.handle.hex(), o.tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 360).map(|t| t.value.trim()))),
+    );
+    // Each kept object's own owner (group 330), read one record at a time.
+    let own: HashMap<String, Option<String>> = f
         .objects
         .iter()
-        .filter_map(|o| Some((o.handle.hex(), head(&o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect::<Vec<_>>()).owner?)))
+        .map(|o| {
+            let t: Vec<Tag> = o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect();
+            (o.handle.hex(), head(&t).owner)
+        })
         .collect();
-    let mut alive_memo: HashMap<String, bool> = HashMap::new();
-    for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
-        alive_memo.insert(o.handle.hex(), false);
-    }
-    for o in &f.objects {
-        let mut path: Vec<String> = Vec::new();
-        let mut cur = o.handle.hex();
-        let verdict = loop {
-            if let Some(&v) = alive_memo.get(&cur) {
-                break v;
-            }
-            if path.contains(&cur) || path.len() >= MAX_DEPTH {
-                break false;
-            }
-            path.push(cur.clone());
-            let Some(owner) = owners.get(&cur).cloned() else { break false };
-            if objs.contains_key(&owner) {
-                cur = owner;
-                continue;
-            }
-            if nod.contains(&owner) {
-                break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
-            }
-            if attached.contains(&cur) {
-                break true;
-            }
-            break unknown.contains(&owner) && written.contains(&owner);
-        };
-        for p in path {
-            alive_memo.insert(p, verdict);
+    let alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
+        // Keep established live paths available to descendants during this pass as well.
+        let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
+        let kept = |h: &str| kept.get(h) == Some(&true);
+        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
+        {
+            alive_memo.insert(o.handle.hex(), false);
         }
-    }
+        for o in &f.objects {
+            let mut path: Vec<String> = Vec::new();
+            let mut cur = o.handle.hex();
+            let verdict = loop {
+                if let Some(&v) = alive_memo.get(&cur) {
+                    break v;
+                }
+                if path.contains(&cur) || path.len() >= MAX_DEPTH {
+                    break false;
+                }
+                path.push(cur.clone());
+                let Some(owner) = owner_of(own.get(&cur).cloned().flatten(), &cur, &hard, kept) else { break false };
+                if objs.contains_key(&owner) {
+                    cur = owner;
+                    continue;
+                }
+                if nod.contains(&owner) {
+                    break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
+                }
+                if attached.contains(&cur) {
+                    break true;
+                }
+                break unknown.contains(&owner) && written.contains(&owner);
+            };
+            for p in path {
+                alive_memo.insert(p, verdict);
+            }
+        }
+        alive_memo
+    });
     // New handles for the written kept objects, above every written handle and the seed.
     let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
     let mut alive: HashMap<String, String> = HashMap::new();
@@ -969,11 +1034,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         if r.kind == "BLOCK" {
             block = up(&val(b, 2).unwrap_or_default());
         }
-        if r.kind == "ENDSEC" && r.sec == "CLASSES" {
-            for c in f.classes.iter().filter(|c| c.iter().find(|t| t.code == 1).is_some_and(|n| !class_names.contains(&up(&n.value)))) {
-                out.push(Tag::s(0, "CLASS"));
-                out.extend(c.iter().map(tag));
-            }
+        if source_class_record(f, r, &recs, tags, &class_names, &mut out) {
+            continue;
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
             for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
@@ -1016,10 +1078,61 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     *tags = out;
 }
 
+/// Complete source tables keep positional identities even when names repeat.
+fn proxy_class_number(f: &Foreign, numbers: &HashMap<String, i64>, old: Option<i64>) -> Option<i64> {
+    if f.complete_class_table {
+        class_index(old).filter(|&i| i < f.classes.len()).and(old)
+    } else {
+        class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied())
+    }
+}
+
+/// Source classes precede decoder-owned classes so proxy positions stay stable.
+fn source_class_record(f: &Foreign, record: &Rec, recs: &[Rec], tags: &[Tag], class_names: &HashSet<String>, out: &mut Vec<Tag>) -> bool {
+    if record.sec != "CLASSES" {
+        return false;
+    }
+    if !f.complete_class_table {
+        if record.kind == "ENDSEC" {
+            for class in f.classes.iter().filter(|c| c.iter().find(|t| t.code == 1).is_some_and(|n| !class_names.contains(&up(&n.value)))) {
+                out.push(Tag::s(0, "CLASS"));
+                out.extend(class.iter().map(tag));
+            }
+        }
+        return false;
+    }
+    if record.kind == "CLASS" {
+        return true;
+    }
+    if record.kind != "ENDSEC" {
+        return false;
+    }
+    for class in &f.classes {
+        out.push(Tag::s(0, "CLASS"));
+        out.extend(class.iter().map(tag));
+    }
+    let source_names: HashSet<_> = f.classes.iter().filter_map(|c| c.iter().find(|t| t.code == 1)).map(|t| up(&t.value)).collect();
+    for class in recs.iter().filter(|r| r.sec == "CLASSES" && r.kind == "CLASS") {
+        let body = tags.get(class.start + 1..class.end).unwrap_or_default();
+        if val(body, 1).is_some_and(|n| !source_names.contains(&up(&n))) {
+            out.push(Tag::s(0, "CLASS"));
+            out.extend_from_slice(body);
+        }
+    }
+    false
+}
+
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of
 /// its space or block (else at the end of it), as `(section, record)` lists by the index of the
 /// record they precede. Owners come from the written block records.
-fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<ForeignKey, String>) -> HashMap<usize, Vec<(String, Vec<Tag>)>> {
+fn plan_unknown(
+    d: &Drawing,
+    recs: &[Rec],
+    tags: &[Tag],
+    roles: &HashMap<ForeignKey, String>,
+    modern: bool,
+) -> HashMap<usize, Vec<(String, Vec<Tag>)>> {
+    let stored = d.foreign.data_store_entities();
     let mut out: HashMap<usize, Vec<(String, Vec<Tag>)>> = HashMap::new();
     let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
     let mut at: HashMap<String, usize> = HashMap::new();
@@ -1057,6 +1170,9 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
         for e in store.iter() {
             match &e.kind {
                 EntityKind::Unknown(u) => {
+                    if modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored) {
+                        continue;
+                    }
                     let t = unknown_entity(u, e, &owner, paper);
                     if !t.is_empty() {
                         pending.push((sec.to_string(), t));
@@ -1264,4 +1380,29 @@ fn seed(tags: &[Tag]) -> u64 {
 /// The largest handle of a record (groups 5 and 105).
 fn max_handle(tags: &[Tag]) -> u64 {
     tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).max().unwrap_or(0)
+}
+
+#[cfg(test)]
+mod hard_owner_tests {
+    use super::hard_owners;
+
+    #[test]
+    fn holders_are_unique_in_first_seen_order() {
+        let objects =
+            [("10".to_string(), ["00a", "A"].into_iter()), ("20".to_string(), ["A", "00A"].into_iter()), ("10".to_string(), ["A", "A"].into_iter())];
+        let owners = hard_owners(objects.into_iter());
+        assert_eq!(owners.get("A").unwrap(), &["10", "20"]);
+        assert_eq!(owners.len(), 1);
+    }
+
+    #[test]
+    fn many_distinct_holders_keep_file_order() {
+        let count = 10_000;
+        let owners = hard_owners((0..count).map(|i| (format!("{i:X}"), ["FFFF", "FFFF"].into_iter())));
+        let holders = owners.get("FFFF").unwrap();
+        assert_eq!(holders.len(), count);
+        for (i, holder) in holders.iter().enumerate() {
+            assert_eq!(holder, &format!("{i:X}"));
+        }
+    }
 }

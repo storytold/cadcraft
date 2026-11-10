@@ -22,8 +22,11 @@ pub enum DxfError {
     Eof,
     /// More group codes than [`MAX_TAGS`]: `tags` is the count found (or the count read when the
     /// limit was reached), `limit` the maximum.
-    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads")]
+    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)")]
     TooLarge { tags: usize, limit: usize },
+    /// The memory for `tags` group codes couldn't be had: an error, not the process ending.
+    #[error("not enough memory to read this drawing's {tags} DXF group codes")]
+    OutOfMemory { tags: usize },
 }
 
 pub type Result<T> = std::result::Result<T, DxfError>;
@@ -61,7 +64,9 @@ impl Value {
         match self {
             Value::Int(i) => *i,
             Value::Real(r) if r.is_finite() => *r as i64,
-            Value::Str(s) => s.trim().parse::<i64>().unwrap_or_else(|_| s.trim().parse::<f64>().map(|f| f as i64).unwrap_or(0)),
+            Value::Str(s) => {
+                s.trim().parse::<i64>().unwrap_or_else(|_| s.trim().parse::<f64>().ok().filter(|f| f.is_finite()).map_or(0, |f| f as i64))
+            }
             Value::Bool(b) => i64::from(*b),
             _ => 0,
         }
@@ -153,18 +158,45 @@ fn typed(code: i32, text: &str) -> Value {
     match kind_of(code) {
         Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map(Value::Real).unwrap_or(Value::Real(0.0)),
         Kind::Int16 | Kind::Int32 | Kind::Int64 => {
-            t.parse::<i64>().map(Value::Int).unwrap_or_else(|_| Value::Int(t.parse::<f64>().map(|f| f as i64).unwrap_or(0)))
+            // A float spelling ("1e3", "12.0") is accepted when finite, clamped to what the
+            // group's width holds, signed or unsigned (files write 16-bit flags up to 65535, as
+            // the integer spelling reads them); NaN, inf and text become 0.
+            let (lo, hi) = match kind_of(code) {
+                Kind::Int16 => (i64::from(i16::MIN), i64::from(u16::MAX)),
+                Kind::Int32 => (i64::from(i32::MIN), i64::from(u32::MAX)),
+                _ => (i64::MIN, i64::MAX),
+            };
+            t.parse::<i64>()
+                .map(Value::Int)
+                .unwrap_or_else(|_| Value::Int(t.parse::<f64>().ok().filter(|f| f.is_finite()).map_or(0, |f| (f as i64).clamp(lo, hi))))
         }
         Kind::Bool => Value::Bool(t.parse::<i64>().unwrap_or(0) != 0),
-        Kind::Hex => Value::Hex(t.to_string()),
+        Kind::Hex => Value::Hex(normalize_hex(t)),
         Kind::Str => Value::Str(text.trim_end_matches(['\r', '\n']).to_string()),
     }
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
-/// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
-/// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
-pub const MAX_TAGS: usize = 50_000_000;
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
+/// Most group codes read from one file by default. A `Tag` takes 40 bytes plus its text, so this
+/// bounds the tag list to about 4 GB plus text. 50 million rejected large DWGs that converted fine
+/// (a 172 MB drawing has 56 million, issue #1948). The file-size limits bound memory too: 512 MB
+/// for a DXF opened directly, 1 GB for a DWG's DXF rendition. Set `CADCRAFT_MAX_DXF_TAGS` to
+/// raise or lower it.
+pub const MAX_TAGS: usize = 100_000_000;
+
+/// Environment variable overriding [`MAX_TAGS`] (a positive integer).
+pub const MAX_TAGS_ENV: &str = "CADCRAFT_MAX_DXF_TAGS";
+
+/// The group-code limit in effect: [`MAX_TAGS_ENV`] when set to a positive integer, else
+/// [`MAX_TAGS`].
+pub fn max_tags() -> usize {
+    max_tags_from(std::env::var(MAX_TAGS_ENV).ok().as_deref())
+}
+
+fn max_tags_from(v: Option<&str>) -> usize {
+    v.and_then(|s| s.trim().replace('_', "").parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(MAX_TAGS)
+}
 
 mod codepage;
 pub use codepage::decode_code_page;
@@ -172,7 +204,7 @@ mod dos_tables;
 
 /// Parse a DXF file (ASCII or binary).
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
-    parse_with_limit(bytes, MAX_TAGS)
+    parse_with_limit(bytes, max_tags())
 }
 
 /// [`parse`] with an explicit group-code limit. For ASCII DXF the limit is checked up front from
@@ -182,8 +214,10 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
         return parse_binary_with_limit(body, max_tags);
     }
-    // Count nonblank group-code/value pairs, stopping at EOF just as the parser does.
-    let mut lines = bytes.split(|&b| b == b'\n');
+    let bytes = bytes.strip_prefix(UTF8_BOM).unwrap_or(bytes);
+    // Count nonblank group-code/value pairs (LF, CRLF and a lone CR each end a line), stopping at
+    // EOF just as the parser does. Blank lines do not count toward the limit.
+    let mut lines = byte_lines(bytes);
     let mut tags = 0;
     while let Some(code) = lines.next() {
         let code = code.trim_ascii();
@@ -199,7 +233,7 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if tags > max_tags {
         return Err(DxfError::TooLarge { tags, limit: max_tags });
     }
-    parse_ascii_with_limit(&codepage::decode_ascii_file(bytes), max_tags)
+    parse_ascii_counted(&codepage::decode_ascii_file(bytes), max_tags, tags)
 }
 
 /// The four hex digits of a `\U+XXXX` escape starting at `chars[i]`, if there is one.
@@ -216,7 +250,7 @@ fn escape_at(chars: &[char], i: usize) -> Option<u32> {
 
 /// The character of a `\M+nXXXX` escape starting at `chars[i]`, if there is one: `n` names a
 /// double-byte code page and `XXXX` is the character's two bytes in hex.
-fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
+pub fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
     if chars.get(i) != Some(&'\\') || chars.get(i + 1) != Some(&'M') || chars.get(i + 2) != Some(&'+') {
         return None;
     }
@@ -302,14 +336,52 @@ fn unescape_found(s: &str) -> String {
     out
 }
 
-pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
-    parse_ascii_with_limit(text, MAX_TAGS)
+/// The lines of an ASCII DXF text: LF, CRLF and a lone CR (old Mac files) all end a line, like
+/// [`str::lines`] otherwise (no empty line after a final terminator).
+fn ascii_lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest.find(['\r', '\n']).unwrap_or(rest.len());
+        let line = rest.get(..end).unwrap_or_default();
+        let after = rest.get(end..).unwrap_or_default();
+        rest = after.strip_prefix("\r\n").or_else(|| after.strip_prefix(['\r', '\n'])).unwrap_or(after);
+        Some(line)
+    })
 }
 
+/// Byte-level twin of [`ascii_lines`] for the up-front limit check, so the count matches the parser.
+fn byte_lines(mut rest: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest.iter().position(|&b| b == b'\r' || b == b'\n').unwrap_or(rest.len());
+        let line = &rest[..end];
+        let after = &rest[end..];
+        rest = match after {
+            [b'\r', b'\n', tail @ ..] | [b'\r' | b'\n', tail @ ..] => tail,
+            _ => after,
+        };
+        Some(line)
+    })
+}
+
+pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
+    parse_ascii_counted(text, max_tags(), 0)
+}
+
+/// [`parse_ascii`] of a file known to hold `expected` group codes. Their list is reserved first,
+/// with an allocation that can fail: where the system refuses that much memory, opening the file
+/// is an error instead of the end of the app. Growing the list instead could also briefly take
+/// half as much again.
 #[allow(clippy::while_let_loop)]
-fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
+fn parse_ascii_counted(text: &str, max_tags: usize, expected: usize) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
-    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines().enumerate();
+    tags.try_reserve_exact(expected.min(max_tags)).map_err(|_| DxfError::OutOfMemory { tags: expected })?;
+    let mut lines = ascii_lines(text.strip_prefix('\u{feff}').unwrap_or(text)).enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
         let ct = code_line.trim();
@@ -327,7 +399,7 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
-        if code == 0 && tags.last().is_some_and(|t| t.str() == "EOF") {
+        if code == 0 && tags.last().is_some_and(|t| t.str().trim_end() == "EOF") {
             break;
         }
     }
@@ -385,18 +457,29 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
 /// Binary DXF (R13+: 2-byte group codes).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
-    parse_binary_with_limit(b, MAX_TAGS)
+    parse_binary_with_limit(b, max_tags())
 }
 
 fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
-    let mut c = Cur { b, p: 0 };
     let mut text = codepage::BinaryText::default();
+    let tags = parse_binary_pass(b, max_tags, &mut text)?;
+    if !text.needs_code_page_pass() {
+        return Ok(tags);
+    }
+    // The first pass's tags go before the second pass runs: both held at once would double
+    // the peak near the tag limit.
+    drop(tags);
+    parse_binary_pass(b, max_tags, &mut codepage::BinaryText::code_page_pass())
+}
+
+fn parse_binary_pass(b: &[u8], max_tags: usize, text: &mut codepage::BinaryText) -> Result<Vec<Tag>> {
+    let mut c = Cur { b, p: 0 };
     let mut tags = Vec::new();
     while c.p < b.len() {
         let code = i32::from(c.i16()?);
         let v = match kind_of(code) {
             Kind::Str => Value::Str(unescape_unicode(&text.string(code, c.cstr()?))),
-            Kind::Real => Value::Real(c.f64()?),
+            Kind::Real => Value::Real(Some(c.f64()?).filter(|v| v.is_finite()).unwrap_or(0.0)),
             Kind::Int16 => Value::Int(i64::from(c.i16()?)),
             Kind::Int32 => Value::Int(i64::from(c.i32()?)),
             Kind::Int64 => Value::Int(c.i64()?),
@@ -412,7 +495,7 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
                 Value::Hex(s)
             }
         };
-        let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
+        let eof = code == 0 && matches!(&v, Value::Str(s) if s.trim_end() == "EOF");
         tags.push(Tag { code, value: v });
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
@@ -488,7 +571,22 @@ fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
             Value::Real(r) => out.extend_from_slice(format_real(*r).as_bytes()),
             Value::Int(i) => out.extend_from_slice(i.to_string().as_bytes()),
             Value::Bool(b) => out.extend_from_slice(i64::from(*b).to_string().as_bytes()),
-            Value::Hex(h) => out.extend_from_slice(h.as_bytes()),
+            Value::Hex(h) => {
+                // The DXF Reference limits a binary chunk line to 254 hex digits (127 bytes);
+                // longer data continues in further groups of the same code. Only hex digits are
+                // written, so a hostile value can't inject tags.
+                let digits = normalize_hex(h);
+                let mut chunks: Vec<&str> = digits.as_bytes().chunks(254).map(|c| std::str::from_utf8(c).unwrap_or_default()).collect();
+                if chunks.is_empty() {
+                    chunks.push("");
+                }
+                for (n, chunk) in chunks.into_iter().enumerate() {
+                    if n > 0 {
+                        let _ = write!(out, "\r\n{:>3}\r\n", t.code);
+                    }
+                    out.extend_from_slice(chunk.as_bytes());
+                }
+            }
         }
         out.extend_from_slice(b"\r\n");
     }
@@ -536,13 +634,11 @@ fn binary(tags: &[Tag], strings: Strings) -> Vec<u8> {
             }
             Kind::Int16 => {
                 out.extend_from_slice(&code_bytes);
-                let v = t.value.as_i64().clamp(i64::from(i16::MIN), i64::from(i16::MAX));
-                out.extend_from_slice(&i16::try_from(v).unwrap_or_default().to_le_bytes());
+                out.extend_from_slice(&wrap_i16(t.value.as_i64()));
             }
             Kind::Int32 => {
                 out.extend_from_slice(&code_bytes);
-                let v = t.value.as_i64().clamp(i64::from(i32::MIN), i64::from(i32::MAX));
-                out.extend_from_slice(&i32::try_from(v).unwrap_or_default().to_le_bytes());
+                out.extend_from_slice(&wrap_i32(t.value.as_i64()));
             }
             Kind::Int64 => {
                 out.extend_from_slice(&code_bytes);
@@ -570,10 +666,36 @@ fn binary(tags: &[Tag], strings: Strings) -> Vec<u8> {
     out
 }
 
-/// The bytes of hex text, two digits each; anything that isn't a pair of hex digits is skipped.
+/// Hex text cleaned up: only the hex digits are kept, and an odd trailing digit is padded with
+/// `0` (so the bytes before it are never shifted). Used by the reader and both writers.
+fn normalize_hex(s: &str) -> String {
+    let mut out: String = s.chars().filter(char::is_ascii_hexdigit).collect();
+    if out.len() % 2 == 1 {
+        out.push('0');
+    }
+    out
+}
+
+/// The bytes of hex text, two digits each (see [`normalize_hex`]).
 fn hex_bytes(s: &str) -> Vec<u8> {
-    let digits: Vec<u8> = s.bytes().filter_map(|b| char::from(b).to_digit(16).and_then(|d| u8::try_from(d).ok())).collect();
+    let digits: Vec<u8> = normalize_hex(s).bytes().filter_map(|b| char::from(b).to_digit(16).and_then(|d| u8::try_from(d).ok())).collect();
     digits.as_chunks::<2>().0.iter().map(|[hi, lo]| (hi << 4) | lo).collect()
+}
+
+/// A 16- or 32-bit integer for binary DXF: values that fit the unsigned width wrap into the
+/// signed one (65535 is -1, as writers that store unsigned flags expect); anything else clamps.
+fn wrap_i16(v: i64) -> [u8; 2] {
+    match u16::try_from(v) {
+        Ok(u) => u.to_le_bytes(),
+        Err(_) => i16::try_from(v.clamp(i64::from(i16::MIN), i64::from(i16::MAX))).unwrap_or_default().to_le_bytes(),
+    }
+}
+
+fn wrap_i32(v: i64) -> [u8; 4] {
+    match u32::try_from(v) {
+        Ok(u) => u.to_le_bytes(),
+        Err(_) => i32::try_from(v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))).unwrap_or_default().to_le_bytes(),
+    }
 }
 
 /// Whether `bytes` are a binary DXF file (they start with the binary sentinel).
@@ -640,12 +762,12 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tags.len() {
-        let is_sec = tags.get(i).is_some_and(|t| t.code == 0 && t.str() == "SECTION");
+        let is_sec = tags.get(i).is_some_and(|t| t.code == 0 && t.str().trim_end() == "SECTION");
         if is_sec {
-            let name = tags.get(i + 1).filter(|t| t.code == 2).map(Tag::str).unwrap_or_default();
+            let name = tags.get(i + 1).filter(|t| t.code == 2).map(|t| t.str().trim_end().to_string()).unwrap_or_default();
             let start = i + 2;
             let mut j = start;
-            while j < tags.len() && !(tags.get(j).is_some_and(|t| t.code == 0 && t.str() == "ENDSEC")) {
+            while j < tags.len() && !(tags.get(j).is_some_and(|t| t.code == 0 && t.str().trim_end() == "ENDSEC")) {
                 j += 1;
             }
             out.push(Section { name, tags: tags.get(start..j).unwrap_or(&[]).to_vec() });
@@ -805,5 +927,29 @@ mod tests {
         b.extend_from_slice(&0i16.to_le_bytes());
         b.extend_from_slice(b"EOF\0");
         assert_eq!(parse(&b).unwrap()[0].str(), "图号");
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn tag_limit_defaults_and_env_override() {
+        assert_eq!(max_tags_from(None), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("0")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("abc")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some(" 400_000_000 ")), 400_000_000);
+        // Issue #1948: the default must admit a DXF rendition well above 50 million group codes.
+        const { assert!(MAX_TAGS >= 100_000_000) };
+    }
+
+    #[test]
+    fn the_tag_list_is_reserved_once_and_a_refusal_is_an_error() {
+        let tags = parse_ascii_counted("0\nSECTION\n0\nENDSEC\n0\nEOF\n", MAX_TAGS, 3).unwrap();
+        assert_eq!((tags.len(), tags.capacity()), (3, 3));
+        let e = parse_ascii_counted("0\nEOF\n", usize::MAX, usize::MAX).unwrap_err();
+        assert!(matches!(e, DxfError::OutOfMemory { .. }), "{e}");
     }
 }

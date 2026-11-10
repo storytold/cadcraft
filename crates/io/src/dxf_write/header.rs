@@ -19,6 +19,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CMLJUST", 70),
     ("CMLSCALE", 40),
     ("TEXTSTYLE", 7),
+    ("CTABLESTYLE", 7),
     ("CLAYER", 8),
     ("CELTYPE", 6),
     ("CECOLOR", 62),
@@ -45,6 +46,10 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("INSUNITS", 70),
     ("MEASUREMENT", 70),
     ("PSLTSCALE", 70),
+    // The model view the drawing is saved at, as DXF keeps it in HEADER (the `*ACTIVE` VPORT
+    // record below repeats it). Written so a drawing opened on its saved view saves it back.
+    ("VIEWCTR", -2),
+    ("VIEWSIZE", 40),
 ];
 
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after

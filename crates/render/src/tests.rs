@@ -137,6 +137,7 @@ fn vp(center: Vec2, w: f64, h: f64, view_center: Vec2, view_height: f64, id: u32
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     }
 }
 
@@ -370,6 +371,7 @@ fn lin_dim() -> cadcraft_doc::Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -632,6 +634,7 @@ fn hatch_in_a_squashed_block_keeps_lines_that_show() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // One pixel = 1 unit: 0.125 spacing × 100 along x is far more than a pixel.
@@ -676,6 +679,7 @@ fn insert_of(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -1121,6 +1125,20 @@ fn raster_hatch_pattern_matches_one_by_one() {
     for o in [RasterOptions::default(), RasterOptions { background: Rgb(255, 255, 255), ..Default::default() }] {
         assert!(render(&l, &view, &o).unwrap().data() == render_one_by_one(&l, &view, &o).data());
     }
+}
+
+/// An OLE2FRAME draws its frame, the rectangle from its two corner points (#2422), and nothing
+/// when a corner is missing.
+#[test]
+fn ole_frame_draws_its_outline() {
+    let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
+    let l = build(&d, &Space::Model, &Options { tolerance: 0.01, ..Default::default() });
+    assert_eq!(l.prims.len(), 1, "only the frame with both corners is drawn");
+    assert_eq!(l.prims[0].len, 5, "a closed rectangle: five points");
 }
 
 /// `Options::linetypes` off draws a dashed line, a dashed wide polyline and a linetype on a layer
