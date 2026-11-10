@@ -24,6 +24,7 @@ impl Session {
         let Some(spec) = find_command(&id) else {
             // A command defined in LISP: (defun c:NAME …).
             if !transparent && let Some(f) = self.lisp_command(&lower) {
+                self.commands_started = self.commands_started.wrapping_add(1);
                 if self.running.is_some() {
                     self.cancel();
                 }
@@ -57,8 +58,11 @@ impl Session {
             self.echo(format!("Command: {}", spec.id.to_ascii_uppercase()));
             return self.input(Input::Keyword("Undo".into()));
         }
-        if !nested && self.running.is_some() {
-            self.cancel();
+        if !nested {
+            self.commands_started = self.commands_started.wrapping_add(1);
+            if self.running.is_some() {
+                self.cancel();
+            }
         }
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
@@ -318,7 +322,14 @@ impl Session {
                 Ok(())
             }
             Ok(Step::Done) => {
+                let seed = run.before.handseed;
                 self.finish(run, false);
+                let added = self.doc().is_ok_and(|d| d.handseed != seed);
+                // A transparent command ending inside another (`'ZOOM` in an INSERT) is not that
+                // command ending: it shares its number.
+                if self.suspended.is_none() {
+                    self.last_finished = Some((self.commands_started, added));
+                }
                 self.resume_suspended();
                 Ok(())
             }

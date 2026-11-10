@@ -66,6 +66,7 @@ mod inquiry_keywords;
 mod inquiry_variables;
 mod inquiry_z;
 mod insert_attribute_prompts;
+mod insert_enter;
 mod insert_prompts;
 mod isometric;
 mod join_close;
