@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use cadcraft_doc::{Drawing, EntityKind, Image, Raster};
-use cadcraft_geom::Vec2;
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::file::base64_decode;
@@ -26,6 +26,8 @@ const MAX_LOADED_BYTES: u64 = 2 << 30;
 const MAX_LOADERS: usize = 4;
 /// Longest image path taken from a caller.
 const MAX_PATH: usize = 4096;
+/// Largest PDF accepted before base64 decoding or a browser-to-Rust copy.
+pub const MAX_PDF_BYTES: usize = 64 << 20;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -241,6 +243,69 @@ fn def_name(d: &Drawing, path: &str, wanted: &str) -> String {
 
 const ID: &str = "imageattach";
 
+/// Rasterize a browser-supplied PDF page into the same IMAGE entities and cache as IMAGEATTACH.
+pub(super) fn attach_pdf_bytes(s: &mut Session, p: &Value) -> Result<Value> {
+    const PDF: &str = "pdfattach";
+    // Bound the input before decoding base64 and the output before allocating the raster.
+    let data = p.get("data").and_then(Value::as_str).ok_or_else(|| bad(PDF, "`data` must be base64 PDF contents"))?;
+    if data.len() > MAX_PDF_BYTES.div_ceil(3) * 4 {
+        return Err(bad(PDF, "PDF exceeds the 64 MiB input limit"));
+    }
+    let page = match p.get("page") {
+        None => 1,
+        Some(v) => v.as_u64().filter(|v| *v > 0).ok_or_else(|| bad(PDF, "`page` must be a positive whole number"))?,
+    };
+    let page = u32::try_from(page).map_err(|_| bad(PDF, "`page` is too large"))?;
+    let mut xyz = [0.0; 3];
+    if let Some(value) = p.get("insertion") {
+        let coords = value.as_array().filter(|v| v.len() == 3).ok_or_else(|| bad(PDF, "`insertion` must be [x,y,z]"))?;
+        for (out, value) in xyz.iter_mut().zip(coords) {
+            *out = value.as_f64().filter(|v| v.is_finite()).ok_or_else(|| bad(PDF, "`insertion` must contain finite numbers"))?;
+        }
+    }
+    let extent = |key: &str, default: f64| -> Result<f64> {
+        let value = match p.get(key) {
+            None => default,
+            Some(v) => v.as_f64().ok_or_else(|| bad(PDF, format!("`{key}` must be a number")))?,
+        };
+        if value.is_finite() && value > 0.0 { Ok(value) } else { Err(bad(PDF, format!("`{key}` must be finite and greater than zero"))) }
+    };
+    let width = extent("width", 1.0)?;
+    let name = str_param(p, "name").unwrap_or("document.pdf");
+    if name.len() > MAX_PATH {
+        return Err(bad(PDF, "`name` is too long"));
+    }
+    let bytes =
+        base64_decode(data).filter(|v| v.len() <= MAX_PDF_BYTES).ok_or_else(|| bad(PDF, "`data` is not a valid PDF within the input limit"))?;
+    let hooks = super::underlay::pdf().ok_or_else(|| bad(PDF, "PDF underlays are not available in this build"))?;
+    let (_, pw, ph, _) = (hooks.page)(&bytes, page).map_err(|e| bad(PDF, e))?;
+    if !(pw.is_finite() && ph.is_finite() && pw > 0.0 && ph > 0.0) {
+        return Err(bad(PDF, "PDF page has no usable size"));
+    }
+    let height = extent("height", width * (ph / pw))?;
+    if !(xyz[0] + width).is_finite() || !(xyz[1] + height).is_finite() {
+        return Err(bad(PDF, "the page rectangle is too large"));
+    }
+    // Reuse the file underlay reader and renderer. 144 dpi, capped at a 4096-pixel edge
+    // (at most 64 MiB RGBA), keeps a browser attachment's allocation bounded.
+    let side = (pw.max(ph) / 25.4 * 144.0).clamp(1.0, 4096.0).ceil() as u32;
+    let (w, h, rgba) = (hooks.render)(&bytes, page, side).map_err(|e| bad(PDF, e))?;
+    let raster = Raster::new(w, h, rgba).ok_or_else(|| bad(PDF, "PDF page has no pixels"))?;
+    let u = width / f64::from(raster.width());
+    let v = height / f64::from(raster.height());
+    if !(u.is_normal() && v.is_normal()) {
+        return Err(bad(PDF, "the page would be too small or too large to draw"));
+    }
+    let d = s.doc()?;
+    // Reattaching the same filename or another page must not replace an existing image's pixels.
+    let path = (1..=MAX_IMAGE_FILES)
+        .map(|n| format!("pdf-underlay:{name}:{page}:{n}"))
+        .find(|path| d.rasters.get(path).is_none() && !images(d).any(|i| i.path == *path))
+        .ok_or_else(|| bad(PDF, "too many PDF pages attached with this name"))?;
+    let name = def_name(d, &path, &stem(name));
+    attach_raster(s, path, name, Arc::new(raster), Vec3::new(xyz[0], xyz[1], xyz[2]), Vec3::new(u, 0.0, 0.0), Vec3::new(0.0, v, 0.0))
+}
+
 pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad(ID, "`path` is required"))?.to_string();
     if path.len() > MAX_PATH {
@@ -258,18 +323,17 @@ pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let wanted = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| stem(&path));
     let name = def_name(s.doc()?, &path, &wanted);
-    let image = Image {
-        insert: place.at.to3(0.0),
-        u: u.to3(0.0),
-        v: v.to3(0.0),
-        size: Vec2::new(w, h),
-        path: path.clone(),
-        name: name.clone(),
-        ..Image::default()
-    };
-    s.doc_mut()?.rasters.insert(&path, raster);
+    attach_raster(s, path, name, raster, place.at.to3(0.0), u.to3(0.0), v.to3(0.0))
+}
+
+fn attach_raster(s: &mut Session, path: String, name: String, raster: Arc<Raster>, insert: Vec3, u: Vec3, v: Vec3) -> Result<Value> {
+    let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
+    let image = Image { insert, u, v, size: Vec2::new(w, h), path: path.clone(), name: name.clone(), ..Image::default() };
     let handle = s.add_entity(EntityKind::Image(image))?;
-    Ok(json!({ "name": name, "handle": handle.hex(), "path": path, "pixels": [w, h], "size": [place.width, pixel * h] }))
+    s.doc_mut()?.rasters.insert(&path, raster);
+    Ok(
+        json!({ "name": name, "handle": handle.hex(), "path": path, "pixels": [w, h], "size": [u.x.hypot(u.y).hypot(u.z) * w, v.x.hypot(v.y).hypot(v.z) * h] }),
+    )
 }
 
 /// Where and how large IMAGEATTACH puts the image.

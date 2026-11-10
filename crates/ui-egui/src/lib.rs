@@ -38,6 +38,8 @@ pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
+/// The PDF Underlay dialog.
+mod pdfattach_dlg;
 pub mod spacemouse;
 pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
@@ -236,6 +238,8 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// Choose a PDF file (PDFATTACH).
+    pub pick_pdf: Option<Box<dyn Fn() -> Option<String>>>,
 }
 
 pub struct CadApp {

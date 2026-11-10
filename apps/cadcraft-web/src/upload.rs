@@ -18,7 +18,7 @@ use web_sys::js_sys;
 /// The hidden file input (one at a time; a cancelled pick leaves it until the next one).
 const INPUT_ID: &str = "cadcraft_open_input";
 /// What the picker offers: the formats OPEN reads, and the SHX fonts drawings name.
-const ACCEPT: &str = ".dxf,.dwg,.shx";
+const ACCEPT: &str = ".dxf,.dwg,.shx,.pdf";
 
 /// Most files taken from one pick.
 const MAX_PICKED: u32 = 64;
@@ -26,8 +26,25 @@ const MAX_PICKED: u32 = 64;
 /// memory (each file is copied once more into the app).
 const MAX_READING_BYTES: u64 = 512 << 20;
 
-/// A file read in the browser (name, contents), or why it couldn't be read.
-type Upload = Result<(String, Vec<u8>), String>;
+/// Apply the PDF byte limit before reading or copying files from any browser source.
+pub fn size_error(name: &str, len: u64) -> Option<String> {
+    if name.to_ascii_lowercase().ends_with(".pdf") && len > cadcraft_engine::cmd::MAX_PDF_BYTES as u64 {
+        Some(format!("{name}: PDF exceeds the 64 MiB input limit"))
+    } else {
+        CadApp::open_size_error(name, len)
+    }
+}
+
+/// Placement supplied by the host; picked PDF files use the command's defaults.
+pub struct PdfPlacement {
+    pub page: u32,
+    pub insertion: [f64; 3],
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A file read in the browser (name, contents, optional PDF placement), or a read error.
+type Upload = Result<(String, Vec<u8>, Option<PdfPlacement>), String>;
 
 /// Files read in the background, waiting for the app's next frame.
 #[derive(Clone)]
@@ -107,7 +124,7 @@ impl Inbox {
         // `File.size` is a whole number of bytes; anything else counts as too large.
         let size = file.size();
         let len = if size.is_finite() && size >= 0.0 { size as u64 } else { u64::MAX };
-        if let Some(e) = CadApp::open_size_error(&name, len) {
+        if let Some(e) = size_error(&name, len) {
             return self.push(Err(e));
         }
         let reading = self.reading.get();
@@ -118,7 +135,7 @@ impl Inbox {
         let inbox = self.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let r = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-                Ok(buf) => Ok((name, js_sys::Uint8Array::new(&buf).to_vec())),
+                Ok(buf) => Ok((name, js_sys::Uint8Array::new(&buf).to_vec(), None)),
                 Err(e) => Err(format!("Open: could not read {name}: {}", js_error(e))),
             };
             inbox.reading.set(inbox.reading.get().saturating_sub(len));
@@ -129,10 +146,15 @@ impl Inbox {
     /// A file read elsewhere (sent by the page embedding CADCraft): opened on the next frame like
     /// a picked file, or refused when too large to open.
     pub fn receive(&self, name: String, bytes: Vec<u8>) {
-        match CadApp::open_size_error(&name, bytes.len() as u64) {
+        match size_error(&name, bytes.len() as u64) {
             Some(e) => self.push(Err(e)),
-            None => self.push(Ok((name, bytes))),
+            None => self.push(Ok((name, bytes, None))),
         }
+    }
+
+    /// Keep attachments in arrival order with opened drawings; apply them on the next frame.
+    pub fn attach_pdf(&self, name: String, bytes: Vec<u8>, placement: PdfPlacement) {
+        self.push(Ok((name, bytes, Some(placement))));
     }
 
     /// A file from elsewhere refused before it was read (`error` says why).
@@ -150,9 +172,10 @@ impl Inbox {
     /// Open what arrived since the last frame (or report why it couldn't be read). Fonts are
     /// registered first, so drawings opened with them draw with them.
     pub fn drain(&self, app: &mut CadApp) {
-        let (fonts, files): (Vec<Upload>, Vec<Upload>) = self.files.take().into_iter().partition(|u| u.as_ref().is_ok_and(|(n, _)| is_shx(n)));
+        let (fonts, files): (Vec<Upload>, Vec<Upload>) =
+            self.files.take().into_iter().partition(|u| u.as_ref().is_ok_and(|(n, _, pdf)| pdf.is_none() && is_shx(n)));
         let mut registered = false;
-        for (name, bytes) in fonts.into_iter().flatten() {
+        for (name, bytes, _) in fonts.into_iter().flatten() {
             match cadcraft_fonts::shx::register(&name, &bytes) {
                 Ok(()) => registered = true,
                 Err(e) => app.open_failed(format!("{name}: {e}")),
@@ -163,7 +186,21 @@ impl Inbox {
         }
         for upload in files {
             match upload {
-                Ok((name, bytes)) => app.open_bytes(&name, &bytes),
+                Ok((name, bytes, placement)) if placement.is_some() || name.to_ascii_lowercase().ends_with(".pdf") => {
+                    if bytes.len() > cadcraft_engine::cmd::MAX_PDF_BYTES {
+                        app.open_failed(format!("{name}: PDF exceeds the 64 MiB input limit"));
+                        continue;
+                    }
+                    let mut params = serde_json::json!({ "name": name, "data": cadcraft_engine::cmd::file::base64_encode(&bytes) });
+                    if let Some(p) = placement {
+                        params["page"] = p.page.into();
+                        params["insertion"] = serde_json::json!(p.insertion);
+                        params["width"] = p.width.into();
+                        params["height"] = p.height.into();
+                    }
+                    let _ = app.run("pdfattach", params);
+                }
+                Ok((name, bytes, _)) => app.open_bytes(&name, &bytes),
                 Err(e) => app.open_failed(e),
             }
         }

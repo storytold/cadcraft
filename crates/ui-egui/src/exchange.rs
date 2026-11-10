@@ -1,5 +1,5 @@
-//! EXPORT, IMPORT, PUBLISH and PREVIEW from a menu, the tool bar or the command line: the first
-//! three ask for a file, PREVIEW shows the plot in a window. Calls with parameters (scripts, the
+//! EXPORT, IMPORT, PDFATTACH, PUBLISH and PREVIEW from a menu, the tool bar or the command line:
+//! the first four ask for a file, PREVIEW shows the plot in a window. Calls with parameters (scripts, the
 //! control channel, MCP) never get here and never open a dialog: they run the engine commands.
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -27,6 +27,17 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
             let Some(pick) = app.services.pick_open.as_ref() else { return no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#) };
             match pick() {
                 Some(path) => app.run("import", json!({ "path": path })),
+                None => Ok(Value::Null),
+            }
+        }
+        "pdfattach" => {
+            let Some(pick) = app.services.pick_pdf.as_ref() else { return no_picker(app, "PDFATTACH", r#"pdfattach {"path": "plan.pdf"}"#) };
+            // The file chosen, the PDF Underlay dialog shows its pages and the placement.
+            match pick() {
+                Some(path) => {
+                    app.ui.dialog = Some(format!("pdfattach:{path}"));
+                    Ok(Value::Null)
+                }
                 None => Ok(Value::Null),
             }
         }
@@ -166,7 +177,7 @@ mod tests {
     /// An app whose file dialogs record what they were asked and cancel.
     fn app() -> (CadApp, Rc<RefCell<Vec<String>>>) {
         let asked = Rc::new(RefCell::new(Vec::new()));
-        let (a, b) = (asked.clone(), asked.clone());
+        let (a, b, c) = (asked.clone(), asked.clone(), asked.clone());
         let services = Services {
             pick_open: Some(Box::new(move || {
                 a.borrow_mut().push("open".into());
@@ -174,6 +185,10 @@ mod tests {
             })),
             pick_save: Some(Box::new(move |name: &str| {
                 b.borrow_mut().push(name.to_string());
+                None
+            })),
+            pick_pdf: Some(Box::new(move || {
+                c.borrow_mut().push("pdf".into());
                 None
             })),
             ..Services::default()
@@ -187,7 +202,8 @@ mod tests {
         app.start("export");
         app.cmdline("PUBLISH");
         app.start("imp");
-        assert_eq!(*asked.borrow(), ["Drawing1.svg", "Drawing1.pdf", "open"]);
+        app.cmdline("PDFATTACH");
+        assert_eq!(*asked.borrow(), ["Drawing1.svg", "Drawing1.pdf", "open", "pdf"]);
         assert!(app.ui.dialog.is_none());
         app.cmdline("pre");
         assert_eq!(app.ui.dialog.as_deref(), Some("preview"));
@@ -199,9 +215,10 @@ mod tests {
         let _ = app.run("export", json!({ "format": "svg" }));
         let _ = app.run("import", json!({}));
         let _ = app.run("publish", json!({ "layouts": [] }));
+        let _ = app.run("pdfattach", json!({}));
         let r = app.run("preview", json!({ "width": 64 })).unwrap();
         assert!(r["data"].is_string());
-        assert_eq!(asked.borrow().len(), 3, "JSON calls never open a file dialog");
+        assert_eq!(asked.borrow().len(), 4, "JSON calls never open a file dialog");
         assert!(app.ui.dialog.is_none(), "nor the preview window");
 
         let e = app.run("share", json!({})).unwrap_err();
