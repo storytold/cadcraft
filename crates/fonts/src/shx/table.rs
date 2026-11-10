@@ -164,6 +164,11 @@ pub fn search_path() -> String {
     table().search_path.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>().join(";")
 }
 
+/// The support search path as folders, in order.
+pub fn search_dirs() -> Vec<PathBuf> {
+    table().search_path.clone()
+}
+
 /// Set the font map: one `font;replacement` per line (or separated by `|`), as a font mapping
 /// file lists them. Lines that aren't a pair are ignored; empty clears it.
 pub fn set_font_map(text: &str) {
