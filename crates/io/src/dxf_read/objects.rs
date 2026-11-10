@@ -193,6 +193,16 @@ impl Objects {
         }
         self.apply_table_styles(d);
         self.apply_table_style_fixes(d, rx);
+        // Extension values other crates keep on the drawing: each registered key's XRECORD is
+        // rebuilt through its loader. A loader that panics loses its value, not the drawing.
+        for key in cadcraft_doc::ext::registered_keys() {
+            let Some(text) = self.xrecord_text(&crate::dxf_ext::ext_entry_name(key)) else { continue };
+            let Some(loader) = cadcraft_doc::ext::loader_for(key) else { continue };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+            if let Ok(Some(v)) = std::panic::catch_unwind(|| loader(value)) {
+                d.ext.set_arc(key, v);
+            }
+        }
         // Parametric constraints and parameters.
         if let Some((c, p)) = self.xrecord_text(crate::dxf_ext::CONSTRAINTS_KEY).and_then(|t| crate::dxf_ext::parse_constraints(&t)) {
             d.constraints = c;

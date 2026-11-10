@@ -43,6 +43,12 @@ pub fn tool_definitions(has_ui: bool) -> Value {
         tools.push(json!({"name": "ui_inspect", "description": "UI state: panels, canvas rect, view, cursor and snap, performance.", "inputSchema": {"type": "object", "properties": {}}}));
         tools.push(json!({"name": "ui_click", "description": "Click in the drawing area at world coordinates (or screen with space:\"screen\"). Right button = Enter.", "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "space": {"type": "string"}, "button": {"type": "string"}}, "required": ["x", "y"]}}));
     }
+    // Tools add-ons registered (`cadcraft_engine::register_tools`); a built-in name wins.
+    for t in cadcraft_engine::extra_tools() {
+        if !tools.iter().any(|d| d["name"] == t.name) {
+            tools.push(json!({"name": t.name, "description": t.description, "inputSchema": t.input_schema}));
+        }
+    }
     json!({ "tools": tools })
 }
 
@@ -148,7 +154,17 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value,
                 Err(e) => err_text(&e),
             });
         }
-        other => return Err(format!("unknown tool `{other}`")),
+        // A tool an add-on registered: its command, with the tool's fixed params on top.
+        other => match cadcraft_engine::extra_tools().into_iter().find(|t| t.name == other) {
+            Some(t) => {
+                let mut params = a;
+                if let (Value::Object(p), Value::Object(f)) = (&mut params, &t.fixed) {
+                    p.extend(f.clone());
+                }
+                b.call("engine.execute", json!({"command": t.command, "params": params}))
+            }
+            None => return Err(format!("unknown tool `{other}`")),
+        },
     };
     Ok(match r {
         Ok(v) => text(&v),

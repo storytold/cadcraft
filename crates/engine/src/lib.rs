@@ -49,7 +49,10 @@ pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
-pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
+pub use cmd::{
+    CommandInfo, CommandSpec, ToolSpec, command_specs, extra_tools, find_command, mcp_instructions, register_mcp_instructions, register_specs,
+    register_tools,
+};
 pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
 
 mod doc_state;
@@ -66,6 +69,31 @@ pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
+
+/// A pass an add-on runs after every command (see [`register_after_command`]): `before` is the
+/// drawing the command started from, `ok` whether it succeeded and is undoable.
+pub type AfterCommand = fn(&mut Session, Option<&Arc<Drawing>>, bool);
+
+fn after_command_registry() -> &'static std::sync::RwLock<Vec<AfterCommand>> {
+    static R: std::sync::OnceLock<std::sync::RwLock<Vec<AfterCommand>>> = std::sync::OnceLock::new();
+    R.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Registers a pass that runs after every command, in registration order, after the built-in
+/// passes (groups, constraints, associativity), so its edits land in the command's own undo
+/// step. An add-on keeps what it derives from the drawing up to date this way (results it
+/// recalculates when an entity it depends on changes).
+pub fn register_after_command(pass: AfterCommand) {
+    if let Ok(mut r) = after_command_registry().write()
+        && !r.iter().any(|p| std::ptr::fn_addr_eq(*p, pass))
+    {
+        r.push(pass);
+    }
+}
+
+pub(crate) fn after_command_passes() -> Vec<AfterCommand> {
+    after_command_registry().read().map(|r| r.clone()).unwrap_or_default()
+}
 
 /// `<version> (<commit>)`, what `--version` prints after the program name in the app and the CLI.
 /// The commit comes from `CADCRAFT_BUILD_SHA` at build time, `dev` without it.

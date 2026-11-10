@@ -39,6 +39,21 @@ pub(crate) const MLEADER_STYLE_KEY: &str = "CADCRAFT_MLEADERSTYLE";
 pub(crate) const MAX_PLOT_STYLE_TABLES: usize = 1000;
 pub(crate) const MAX_PLOT_STYLE_NAMES: usize = 100_000;
 
+/// Prefix of the named-object-dictionary keys that hold [`cadcraft_doc::Extensions`] values
+/// (one XRECORD per key, JSON chunks like the CADCraft payloads above).
+pub(crate) const EXT_KEY_PREFIX: &str = "CADCRAFT_EXT_";
+
+/// The named-object-dictionary key of an extension value: the prefix, then the key in upper
+/// case with dots as underscores (`acme.survey` is `CADCRAFT_EXT_ACME_SURVEY`).
+pub(crate) fn ext_entry_name(key: &str) -> String {
+    format!("{EXT_KEY_PREFIX}{}", key.to_ascii_uppercase().replace('.', "_"))
+}
+
+/// The XRECORD chunks of every persisted extension value: (dictionary key, chunks).
+pub(crate) fn ext_chunks(d: &cadcraft_doc::Drawing) -> Vec<(String, Vec<String>)> {
+    d.ext.to_json().into_iter().filter_map(|(k, v)| serde_json::to_string(&v).ok().map(|j| (ext_entry_name(k), json_chunks(&j)))).collect()
+}
+
 /// Caps for hostile input.
 pub(crate) const MAX_XDATA_ITEMS: usize = 4096;
 pub(crate) const MAX_PAYLOAD: usize = 64 << 20;

@@ -66,6 +66,7 @@ pub type Run = fn(&mut Session, &Value) -> Result<Value>;
 pub type Enabled = fn(&Session) -> std::result::Result<(), String>;
 pub type Factory = fn(&Session) -> Result<Box<dyn Interactive>>;
 
+#[derive(Clone)]
 pub struct CommandSpec {
     pub id: &'static str,
     pub label: &'static str,
@@ -172,9 +173,117 @@ pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
     if s.selection().is_empty() { Err("nothing selected".into()) } else { Ok(()) }
 }
 
+// ---------- extension registries ----------
+//
+// Another crate (an add-on built into an app) contributes commands, MCP tools and MCP
+// instructions here at startup, before or after the catalog was first read. Its commands then go
+// through the same paths as built-in ones: the command line, `engine.execute`, the control
+// channel, scripts, the CLI and MCP.
+
+/// Add commands to the catalog. An id the catalog already has (built in, or registered before)
+/// is refused and returned, so an add-on can never replace a built-in command. The catalog is
+/// rebuilt the next time it is read, so registering after commands have already run works too;
+/// the previous snapshot stays valid for anyone still holding it.
+pub fn register_specs(specs: Vec<CommandSpec>) -> Vec<&'static str> {
+    let mut refused = Vec::new();
+    let taken: Vec<&'static str> = command_specs().iter().map(|c| c.id).collect();
+    if let Ok(mut e) = extra_specs().lock() {
+        for spec in specs {
+            if taken.contains(&spec.id) || e.iter().any(|c| c.id == spec.id) {
+                refused.push(spec.id);
+            } else {
+                e.push(spec);
+            }
+        }
+    }
+    CATALOG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    refused
+}
+
+/// An MCP tool an add-on offers next to the built-in ones: calling it runs `command` with the
+/// tool's arguments as JSON params, `fixed` merged on top (e.g. `{"mode": "begin"}`). Lets an
+/// add-on give agents task-shaped tools without the MCP crate knowing about it.
+#[derive(Clone, Debug)]
+pub struct ToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// JSON Schema of the arguments (the subset the MCP server checks: type, required, properties).
+    pub input_schema: Value,
+    pub command: &'static str,
+    pub fixed: Value,
+}
+
+/// Add MCP tools (see [`ToolSpec`]); a name already registered is replaced. Built-in tool names
+/// always win over registered ones.
+pub fn register_tools(tools: Vec<ToolSpec>) {
+    if let Ok(mut t) = extra_tools_store().lock() {
+        for tool in tools {
+            t.retain(|x| x.name != tool.name);
+            t.push(tool);
+        }
+    }
+}
+
+/// The MCP tools add-ons registered, in registration order.
+pub fn extra_tools() -> Vec<ToolSpec> {
+    extra_tools_store().lock().map(|t| t.clone()).unwrap_or_default()
+}
+
+/// Add a paragraph to the instructions the MCP server gives an agent when it connects (how to
+/// use an add-on's commands). Registering the same text twice keeps one copy.
+pub fn register_mcp_instructions(text: &'static str) {
+    if let Ok(mut t) = mcp_instructions_store().lock()
+        && !t.contains(&text)
+    {
+        t.push(text);
+    }
+}
+
+/// The paragraphs add-ons registered with [`register_mcp_instructions`], in order.
+pub fn mcp_instructions() -> Vec<&'static str> {
+    mcp_instructions_store().lock().map(|t| t.clone()).unwrap_or_default()
+}
+
+fn mcp_instructions_store() -> &'static std::sync::Mutex<Vec<&'static str>> {
+    static TEXT: std::sync::OnceLock<std::sync::Mutex<Vec<&'static str>>> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn extra_tools_store() -> &'static std::sync::Mutex<Vec<ToolSpec>> {
+    static TOOLS: std::sync::OnceLock<std::sync::Mutex<Vec<ToolSpec>>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn extra_specs() -> &'static std::sync::Mutex<Vec<CommandSpec>> {
+    static EXTRA: std::sync::OnceLock<std::sync::Mutex<Vec<CommandSpec>>> = std::sync::OnceLock::new();
+    EXTRA.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+static CATALOG_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn catalog_cache() -> &'static std::sync::Mutex<Option<(u64, &'static [CommandSpec])>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(u64, &'static [CommandSpec])>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 pub fn command_specs() -> &'static [CommandSpec] {
-    static SPECS: std::sync::OnceLock<Vec<CommandSpec>> = std::sync::OnceLock::new();
-    SPECS.get_or_init(|| {
+    let generation = CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+    let Ok(mut cache) = catalog_cache().lock() else { return &[] };
+    if let Some((g, specs)) = *cache
+        && g == generation
+    {
+        return specs;
+    }
+    // Rebuilt once per registration (registrations happen at startup): the snapshot is kept for
+    // the life of the process, as the catalog always was, and an older one stays valid for
+    // callers that still hold it.
+    let specs: &'static [CommandSpec] = Box::leak(build_catalog().into_boxed_slice());
+    *cache = Some((generation, specs));
+    specs
+}
+
+fn build_catalog() -> Vec<CommandSpec> {
+    {
         let mut v = Vec::new();
         v.extend(file::specs());
         v.extend(file::alias_specs());
@@ -212,8 +321,11 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(txt2mtxt::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
+        if let Ok(e) = extra_specs().lock() {
+            v.extend(e.iter().filter(|spec| !v.iter().any(|c| c.id == spec.id)).cloned().collect::<Vec<_>>());
+        }
         v
-    })
+    }
 }
 
 pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
