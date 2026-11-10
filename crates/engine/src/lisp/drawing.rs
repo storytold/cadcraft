@@ -454,7 +454,12 @@ fn make_layer(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
         layer.plot = t.i64() != 0;
     }
     if let Some(t) = group(370) {
+        // A layer's lineweight is Default (-3) or a standard weight, never ByLayer / ByBlock.
         let Ok(w) = i16::try_from(t.i64()) else { return Value::Nil };
+        let standard = u16::try_from(w).is_ok_and(|v| cadcraft_doc::Lineweight::STANDARD.contains(&v));
+        if w != -3 && !standard {
+            return Value::Nil;
+        }
         layer.lineweight = cadcraft_doc::Lineweight::from_dxf(w);
     }
     let Ok(d) = ctx.s.doc_mut() else { return Value::Nil };

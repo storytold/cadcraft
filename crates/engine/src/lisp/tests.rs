@@ -1075,7 +1075,8 @@ fn entmake_makes_a_layer() {
     // The new layer takes entities.
     assert!(ok(&mut s, "(entmake '((0 . \"LINE\") (8 . \"ZTEST\") (10 0.0 0.0 0.0) (11 1.0 1.0 0.0)))").contains("LINE"));
     // Refused, with nil and no layer: a name already in use (any case), no name, a bad name, a
-    // linetype the drawing doesn't have, ByLayer / ByBlock colours, a colour out of range.
+    // linetype the drawing doesn't have, ByLayer / ByBlock colours, a colour out of range, a
+    // lineweight that isn't a standard one or Default.
     let before = s.doc().unwrap().layers.len();
     for bad in [
         "(entmake '((0 . \"LAYER\") (2 . \"ztest\") (70 . 0)))",
@@ -1089,6 +1090,8 @@ fn entmake_makes_a_layer() {
         "(entmake '((0 . \"LAYER\") (2 . \"ZC1\") (70 . 0) (62 . 256)))",
         "(entmake '((0 . \"LAYER\") (2 . \"ZC2\") (70 . 0) (62 . 300)))",
         "(entmake '((0 . \"LAYER\") (2 . 5) (70 . 0)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZLW\") (70 . 0) (370 . 1)))",
+        "(entmake '((0 . \"LAYER\") (2 . \"ZLW\") (70 . 0) (370 . -1)))",
     ] {
         assert_eq!(ok(&mut s, bad), "nil", "{bad}");
     }
