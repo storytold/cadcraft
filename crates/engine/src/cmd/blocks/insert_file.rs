@@ -29,9 +29,10 @@ pub(super) struct FileRef {
 }
 
 impl FileRef {
-    /// Whether to ask before redefining: a plain path whose block already exists.
+    /// Whether to ask before redefining: a plain path whose block already exists. EXPERT 2 or
+    /// more answers Yes without asking.
     pub fn ask_redefine(&self, s: &Session) -> bool {
-        !self.explicit && s.doc().is_ok_and(|d| d.block(&self.name).is_some())
+        !self.explicit && s.doc().is_ok_and(|d| d.block(&self.name).is_some() && d.header.i64("EXPERT", 0) < 2)
     }
 
     /// Read the file and (re)define its block. Returns the block's name.
