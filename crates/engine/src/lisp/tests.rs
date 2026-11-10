@@ -1048,3 +1048,23 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+#[test]
+fn ssget_type_filter_finds_entities_kept_as_unsupported() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    ok(&mut s, "(command \"_.LINE\" '(0 0) '(1 1) \"\")");
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![tag(70, "2"), tag(10, "1.0"), tag(20, "5.0"), tag(30, "0.0"), tag(11, "4.0"), tag(21, "2.0"), tag(31, "0.0")],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\"))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"LINE\"))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"ole2*\"))))"), "1");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (ssname (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))) 0))))"), "\"OLE2FRAME\"");
+}
