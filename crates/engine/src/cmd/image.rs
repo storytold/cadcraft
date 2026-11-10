@@ -77,6 +77,7 @@ fn paths(d: &Drawing) -> Vec<String> {
 
 /// Whether `path` is a full path here, or on Windows where a drawing may have been written (a
 /// drive, `C:\maps\a.png`, or a share, `\\server\maps`), which other systems read as relative.
+#[cfg(not(target_arch = "wasm32"))]
 fn full_path(path: &str) -> bool {
     let b = path.trim().as_bytes();
     std::path::Path::new(path.trim()).is_absolute() || b.starts_with(b"\\\\") || matches!(b, [d, b':', b'\\' | b'/', ..] if d.is_ascii_alphabetic())
