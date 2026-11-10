@@ -264,9 +264,11 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                     return Err(bad(cmd, format!("`{name}` has no style `{rm}`")));
                 }
             }
+            let mut changed: Option<String> = None;
             if let Some(v) = p.get("style") {
                 let sname = v.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
                 let sname = sname.ok_or_else(|| bad(cmd, "`style.name` is required"))?;
+                changed = Some(sname.to_string());
                 let idx = match t.styles.iter().position(|x| x.name.eq_ignore_ascii_case(sname)) {
                     Some(i) => i,
                     None if t.kind == PlotStyleKind::Named => {
@@ -283,8 +285,22 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             let t = t.sanitized();
-            let out = serde_json::to_value(&t).unwrap_or(Value::Null);
+            // Just what changed, not the whole table (a colour-dependent one has 255 styles): the
+            // table summary as `new` and `load` reply, the edited style, the removed style's name.
+            let edited = changed.and_then(|n| t.styles.iter().find(|x| x.name.eq_ignore_ascii_case(&n)).and_then(|x| serde_json::to_value(x).ok()));
+            let removed = str_param(p, "removeStyle").map(str::trim);
+            let name = t.name.clone();
             store(s.doc_mut()?, t);
+            let d = s.doc()?;
+            let mut out = table_summary(d, &find_table(cmd, d, &name)?);
+            if let Some(o) = out.as_object_mut() {
+                if let Some(e) = edited {
+                    o.insert("style".into(), e);
+                }
+                if let Some(r) = removed {
+                    o.insert("removedStyle".into(), json!(r));
+                }
+            }
             Ok(out)
         }
         "delete" => {

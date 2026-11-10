@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
         CommandSpec::new("loops", "Implied Loops", loops::run).params(loops::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
-            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
+            .params("{contains?: text (any case; `query` is the same filter), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
             .noundo(),
         CommandSpec::new("countlist", "Count List", count::run_countlist)
             .params("{space?: all (default)|current|model|<layout>, nested?: bool} → per-block counts, as COUNT")
@@ -664,7 +664,12 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
             v.as_u64().map(|n| usize::try_from(n).unwrap_or(usize::MAX)).ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number, 0 or more")))
         })
     };
-    let contains = text("contains")?;
+    // `query` is what agents tend to call the filter; without this alias it was silently ignored
+    // and every text came back (#3011).
+    let contains = match text("contains")? {
+        Some(c) => Some(c),
+        None => text("query")?,
+    };
     let layer = text("layer")?;
     let window = given("window")
         .map(|w| {

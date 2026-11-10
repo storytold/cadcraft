@@ -62,7 +62,10 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
             &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5", "color": "#00ff00", "screening": 40, "lineweight": 0.35, "linetype": "HIDDEN", "end": "round"}}),
         )
         .unwrap();
-    let pen = r["styles"].as_array().unwrap().iter().find(|v| v["name"] == "Pen 5").unwrap().clone();
+    // `set` replies with the table summary and the edited style, not the whole table.
+    assert_eq!(r["styles"], 2);
+    let pen = r["style"].clone();
+    assert_eq!(pen["name"], "Pen 5");
     assert_eq!(
         (pen["color"].as_str(), pen["screening"].as_u64(), pen["lineweight"].as_u64(), pen["end"].as_str()),
         (Some("#00ff00"), Some(40), Some(35), Some("round"))
@@ -130,4 +133,25 @@ fn plot_style_save_is_atomic_and_keeps_permissions() {
     assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #3011: `set` on a colour-dependent table (255 styles) replies with what changed, not the table.
+#[test]
+fn stylesmanager_set_replies_with_the_change_not_the_whole_table() {
+    let mut s = Session::new();
+    let set = json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_13", "lineweight": 0.3}});
+    let r = s.execute("stylesmanager", &set).unwrap();
+    assert_eq!((r["name"].as_str(), r["styles"].as_u64()), (Some("monochrome.ctb"), Some(255)), "{r}");
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some("Color_13"), Some(30)), "{r}");
+    assert!(r.to_string().len() < 1000, "the reply is short, not the 255-style table: {} bytes", r.to_string().len());
+    // The edit is in the drawing.
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "monochrome.ctb"})).unwrap();
+    let c13 = got["styles"].as_array().unwrap().iter().find(|v| v["name"] == "Color_13").unwrap();
+    assert_eq!(c13["lineweight"], 30);
+    // Removing a style of a named table names what went.
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5"}})).unwrap();
+    let r = s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "removeStyle": "Pen 5"})).unwrap();
+    assert_eq!((r["removedStyle"].as_str(), r["styles"].as_u64()), (Some("Pen 5"), Some(1)), "{r}");
+    assert!(r.get("style").is_none(), "{r}");
 }
