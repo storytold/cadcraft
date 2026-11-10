@@ -340,7 +340,7 @@
 	Exclude from new selection set	ახალი მონიშნულიდან გამორიცხვა
 	Explode	დაშლა
 	Explode Attributes to Text	ატრიბუტების ტექსტად დაშლა
-	Export	ექსპორტი
+	Export	ექსპორტირება
 	Export Table	ცხრილის ექსპორტი
 	Export to PDF...	PDF-ად ექსპორტი...
 	Express Tools	Express Tools
@@ -707,8 +707,8 @@
 	Previous Change	წინა ცვლილება
 	Previous Layer	წინა შრე
 	Primitives	პრიმიტივები
-	Print	დაბეჭდვა
-	Print...	დაბეჭდვა...
+	Print	ბეჭდვა
+	Print...	ბეჭდვა...
 	Properties	თვისებები
 	Properties Inspector	თვისებების ინსპექტორი
 	Properties:	თვისებები:
@@ -1242,7 +1242,7 @@
 	Animation effects	ანიმაციის ეფექტები
 	Interface scale	ინტერფეისის მასშტაბი
 	Import...	იმპორტი...
-	Export...	ექსპორტი...
+	Export...	ექსპორტირება...
 	Batch Publish...	პაკეტური გამოქვეყნება...
 	Scale List...	მასშტაბების სია...
 	Annotative Object Scale	ანოტაციური ობიექტის მასშტაბი
