@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, list_arg, string};
-use super::{LispError, OsStr, Value, check_string_len, read, to_text};
+use super::{LispError, OsStr, Value, charge_bytes, check_string_len, read, to_text};
 
 // ---------------- strings ----------------
 
@@ -114,7 +114,13 @@ pub(super) fn read_fn(a: &[Value]) -> R {
     arity(a, 0, 1)?;
     match a.first() {
         None | Some(Value::Nil) => Ok(Value::Nil),
-        Some(v) => read::read_one(&string(v)?),
+        Some(v) => {
+            // The strings in the list it makes are new, each as long as its text at most: the
+            // text is charged, though a list result isn't inspected by `charge_result`.
+            let text = string(v)?;
+            charge_bytes(text.len())?;
+            read::read_one(&text)
+        }
     }
 }
 
