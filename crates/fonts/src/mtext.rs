@@ -158,8 +158,8 @@ pub struct MTextLayout {
     pub truncated: bool,
 }
 
-/// The points all the segments of one layout may keep together: the allowance one shaped line has
-/// (`MAX_SHAPED_POINTS`), so a short repeated detailed glyph over many segments cannot multiply it.
+/// The points all the segments of one layout may keep together, each counted for both copies the
+/// layout holds: the allowance one shaped line has (`MAX_SHAPED_POINTS`), so a short repeated detailed glyph over many segments cannot multiply it.
 pub(crate) struct Allowance(usize);
 
 impl Allowance {
@@ -174,7 +174,8 @@ impl Allowance {
 
     /// Charge the points of `sh`; false (and nothing left) when it does not fit.
     pub(crate) fn charge(&mut self, sh: &Shaped) -> bool {
-        let n = sh.strokes.iter().map(Vec::len).sum::<usize>() + sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>();
+        // Kept twice: in the piece and again in the layout's flat `strokes`.
+        let n = 2 * (sh.strokes.iter().map(Vec::len).sum::<usize>() + sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>());
         match self.0.checked_sub(n) {
             Some(rest) => {
                 self.0 = rest;
@@ -941,7 +942,7 @@ mod tests {
     /// The points of all the segments of one layout are charged against one allowance.
     #[test]
     fn a_layout_shares_one_point_allowance() {
-        let big = Shaped { strokes: vec![vec![Vec2::ZERO; crate::ttf::MAX_SHAPED_POINTS / 2 + 1]], ..Default::default() };
+        let big = Shaped { strokes: vec![vec![Vec2::ZERO; crate::ttf::MAX_SHAPED_POINTS / 4 + 1]], ..Default::default() };
         let mut a = Allowance::new();
         assert!(a.left() && a.charge(&big), "the first segment fits");
         assert!(!a.charge(&big), "the second does not, though each alone would");
