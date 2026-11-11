@@ -58,11 +58,18 @@ struct Graph {
     src: Vec<(usize, usize)>,
     /// The input polyline of every edge (lower vertex index first).
     edge_src: HashMap<(usize, usize), usize>,
+    /// Neighbour angles still to be measured by face tracing: a hub with thousands of spokes is
+    /// scanned once per face through it, so the scans are bounded in all ([`MAX_TRACE_WORK`]).
+    trace_work: std::cell::Cell<u64>,
 }
 
-/// Records the crossing of segments `i` and `j`, if any, as split parameters on both.
-fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize) {
-    let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { return };
+/// Neighbour-angle measurements one graph allows its face traces in all (a few seconds' work); a
+/// star of more than about 14,000 spokes needs more and finds no region.
+const MAX_TRACE_WORK: u64 = 200_000_000;
+
+/// Records the crossing of segments `i` and `j`, if any, as split parameters on both; whether there was one.
+fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize) -> bool {
+    let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { return false };
     let li = Line::new(si.0, si.1);
     let lj = Line::new(sj.0, sj.1);
     if let Some(x) = line_line(&li, &lj) {
@@ -72,7 +79,9 @@ fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize
         if let Some(v) = splits.get_mut(j) {
             v.push(lj.param_of(x).clamp(0.0, 1.0));
         }
+        return true;
     }
+    false
 }
 
 /// Upper bound on candidate-pair *visits*. Every visit counts, including repeats of a pair that shares several grid
@@ -82,6 +91,9 @@ fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize
 const MAX_PAIR_VISITS: u64 = 60_000_000;
 /// Upper bound on distinct segment pairs tested for a crossing.
 const MAX_PAIRS_TESTED: usize = 20_000_000;
+/// Upper bound on crossings kept (two split parameters each, 16 bytes): one region operation holds
+/// at most about 128 MB of them, far more than any real hatch has.
+const MAX_CROSSINGS: usize = 8_000_000;
 
 /// Split parameters of every segment (always `0` and `1`, plus every crossing), found with a uniform grid.
 fn pair_splits(segs: &[(Vec2, Vec2)], bb: &Bounds2) -> Option<Vec<Vec<f64>>> {
@@ -132,6 +144,7 @@ fn pair_splits_limited(segs: &[(Vec2, Vec2)], bb: &Bounds2, max_visits: u64, max
     }
     let mut splits: Vec<Vec<f64>> = vec![vec![0.0, 1.0]; n];
     let mut tested: usize = 0;
+    let mut crossings: usize = 0;
     let mut visits: u64 = 0;
     for (c, list) in grid.iter().enumerate() {
         let (gx, gy) = (c / cells, c % cells);
@@ -147,9 +160,9 @@ fn pair_splits_limited(segs: &[(Vec2, Vec2)], bb: &Bounds2, max_visits: u64, max
                 if i == j || gx != ix.max(jx) || gy != iy.max(jy) {
                     continue;
                 }
-                split_pair(segs, &mut splits, i, j);
+                crossings += usize::from(split_pair(segs, &mut splits, i, j));
                 tested += 1;
-                if tested > max_pairs {
+                if tested > max_pairs || crossings > MAX_CROSSINGS {
                     return None;
                 }
             }
@@ -161,9 +174,9 @@ fn pair_splits_limited(segs: &[(Vec2, Vec2)], bb: &Bounds2, max_visits: u64, max
             if i == j || (j < i && is_long.get(j).copied().unwrap_or(false)) {
                 continue;
             }
-            split_pair(segs, &mut splits, i, j);
+            crossings += usize::from(split_pair(segs, &mut splits, i, j));
             tested += 1;
-            if tested > max_pairs {
+            if tested > max_pairs || crossings > MAX_CROSSINGS {
                 return None;
             }
         }
@@ -200,7 +213,13 @@ fn build_with(polys: &[Vec<Vec2>], tol: f64, find_splits: impl Fn(&[(Vec2, Vec2)
     let bb = Bounds2::from_points(segs.iter().flat_map(|(a, b)| [*a, *b]));
     let n = segs.len();
     let splits = find_splits(&segs, &bb)?;
-    let mut g = Graph { pts: Vec::new(), adj: Vec::new(), src: Vec::with_capacity(n), edge_src: HashMap::new() };
+    let mut g = Graph {
+        pts: Vec::new(),
+        adj: Vec::new(),
+        src: Vec::with_capacity(n),
+        edge_src: HashMap::new(),
+        trace_work: std::cell::Cell::new(MAX_TRACE_WORK),
+    };
     let mut index: HashMap<(i64, i64), usize> = HashMap::new();
     let mut vid = |p: Vec2, g: &mut Graph| -> usize {
         let k = key(p, bb.min, tol);
@@ -304,7 +323,9 @@ fn trace(g: &Graph, u0: usize, v0: usize, max_steps: usize) -> Option<Vec<usize>
         let pv = *g.pts.get(v)?;
         let back = (*g.pts.get(u)? - pv).angle();
         let mut best: Option<(f64, usize)> = None;
-        for &w in g.adj.get(v)? {
+        let ns = g.adj.get(v)?;
+        g.trace_work.set(g.trace_work.get().checked_sub(ns.len() as u64)?);
+        for &w in ns {
             if w == u && g.adj.get(v).is_some_and(|l| l.len() > 1) {
                 continue;
             }
@@ -409,7 +430,7 @@ fn prune(g: &Graph) -> Graph {
             }
         }
     }
-    Graph { pts: g.pts.clone(), adj, src: Vec::new(), edge_src: HashMap::new() }
+    Graph { pts: g.pts.clone(), adj, src: Vec::new(), edge_src: HashMap::new(), trace_work: std::cell::Cell::new(MAX_TRACE_WORK) }
 }
 
 /// The outline of the outside of a group of curves on cycles, traced counter-clockwise from its
@@ -804,6 +825,30 @@ mod tests {
         let old = pair_splits_oracle(segs, &bb, max_visits, max_pairs);
         let new = pair_splits_limited(segs, &bb, max_visits, max_pairs);
         assert_eq!(old.as_deref().map(sorted_bits), new.as_deref().map(sorted_bits), "n={} visits<={max_visits} pairs<={max_pairs}", segs.len());
+    }
+
+    #[test]
+    fn crossings_kept_are_capped() {
+        // 2,900 horizontal x 2,900 vertical lines cross 8.41 million times.
+        let n = 2_900;
+        let mut segs: Vec<(Vec2, Vec2)> = (0..n).map(|i| (Vec2::new(0.0, i as f64 + 0.5), Vec2::new(n as f64, i as f64 + 0.5))).collect();
+        segs.extend((0..n).map(|i| (Vec2::new(i as f64 + 0.5, 0.0), Vec2::new(i as f64 + 0.5, n as f64))));
+        let bb = bounds_of(&segs);
+        assert!(pair_splits_limited(&segs, &bb, u64::MAX, usize::MAX).is_none());
+    }
+
+    #[test]
+    fn face_tracing_through_a_hub_is_budgeted() {
+        // 200 spokes from one hub to a ring: each face passes the hub and scans all its neighbours.
+        let k = 200;
+        let ring: Vec<Vec2> = (0..=k).map(|i| Vec2::new(10.0, 0.0).rotate(i as f64 * crate::TAU / k as f64)).collect();
+        let mut polys = vec![ring.clone()];
+        polys.extend(ring.iter().take(k).map(|q| vec![Vec2::ZERO, *q]));
+        let p = Vec2::new(5.0, 0.01);
+        let g = build(&polys, 1e-9).unwrap();
+        assert!(outer_face(&g, p).is_some());
+        g.trace_work.set(10);
+        assert!(outer_face(&g, p).is_none());
     }
 
     #[test]
