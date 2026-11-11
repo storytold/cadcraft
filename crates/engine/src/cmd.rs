@@ -181,7 +181,9 @@ pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
 // channel, scripts, the CLI and MCP.
 
 /// Add commands to the catalog. An id the catalog already has (built in, or registered before)
-/// is refused and returned, so an add-on can never replace a built-in command. The catalog is
+/// is refused and returned, so an add-on can never replace a built-in command. So is an id with
+/// upper-case letters: [`find_command`] looks ids up in lower case, so it could never be found
+/// (and `LINE` would run the built-in `line`). The catalog is
 /// rebuilt the next time it is read, so registering after commands have already run works too;
 /// the previous snapshot stays valid for anyone still holding it.
 pub fn register_specs(specs: Vec<CommandSpec>) -> Vec<&'static str> {
@@ -190,7 +192,8 @@ pub fn register_specs(specs: Vec<CommandSpec>) -> Vec<&'static str> {
     let mut added = false;
     let mut e = extra_specs().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     for spec in specs {
-        if taken.contains(&spec.id) || e.iter().any(|c| c.id == spec.id) {
+        let unreachable = spec.id.bytes().any(|b| b.is_ascii_uppercase());
+        if unreachable || taken.contains(&spec.id) || e.iter().any(|c| c.id == spec.id) {
             refused.push(spec.id);
         } else {
             e.push(spec);

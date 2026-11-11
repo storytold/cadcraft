@@ -84,8 +84,13 @@ fn add_on_commands_and_after_command_passes() {
     // An add-on never replaces a built-in command or one registered before, and a call that adds
     // nothing keeps the catalog as it is (no rebuild).
     let catalog = cadcraft_engine::command_specs().as_ptr();
-    let refused = register_specs(vec![CommandSpec::new("line", "Not LINE", add_line), CommandSpec::new("test.addline", "Again", add_line)]);
-    assert_eq!(refused, vec!["line", "test.addline"]);
+    let refused = register_specs(vec![
+        CommandSpec::new("line", "Not LINE", add_line),
+        CommandSpec::new("test.addline", "Again", add_line),
+        CommandSpec::new("LINE", "Not LINE either", add_line),
+        CommandSpec::new("test.Upper", "Never found", add_line),
+    ]);
+    assert_eq!(refused, vec!["line", "test.addline", "LINE", "test.Upper"]);
     assert_eq!(find_command("line").map(|c| c.label), Some("Line"));
     assert_eq!(cadcraft_engine::command_specs().len(), before + 1);
     assert_eq!(cadcraft_engine::command_specs().as_ptr(), catalog);
