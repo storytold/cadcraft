@@ -538,3 +538,19 @@ fn a_spent_work_allowance_refuses_a_constraint_and_leaves_the_drawing() {
     let (_, stopped) = autoconstrain_report(&mut d, &[l], &InferOptions::default());
     assert!(!stopped, "a small command never spends its allowance");
 }
+
+#[test]
+fn skipped_conflict_probes_do_not_spend_the_allowance() {
+    let mut d = Drawing::default();
+    let b = line(&mut d, (0.0, 0.0), (3.0, 4.0));
+    ok(&mut d, con(ConstraintKind::Fix, &[w(b)]));
+    let candidate = || con(ConstraintKind::Vertical, &[w(b)]);
+    // The whole cost of the conflicting candidate: its solve and its probes.
+    let mut rich = 1e12;
+    assert!(matches!(add_within(&mut d.clone(), candidate(), &SolveOptions::default(), &mut rich), Err(SolveError::Conflict { .. })));
+    let total = 1e12 - rich;
+    // Enough for the solve but not the probes: they are skipped, and what is left stays positive.
+    let mut work = total * 0.6;
+    assert!(matches!(add_within(&mut d, candidate(), &SolveOptions::default(), &mut work), Err(SolveError::Conflict { .. })));
+    assert!(work > 0.0 && work < total * 0.6, "{work} of {total}");
+}

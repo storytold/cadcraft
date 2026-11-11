@@ -808,8 +808,14 @@ pub(crate) fn add_within(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions
         // Each probe is another solve (up to one per constraint): they are charged too, and skipped
         // when the allowance cannot pay for them.
         let probes = if comp.built.len() <= MAX_CONFLICT_PROBES { comp.built.len() as f64 } else { 0.0 };
-        *work -= probes * comp.eval_work(&comp.free(None), None);
-        let mut ids = comp.conflicts_probing(&o.x, *work >= 0.0);
+        let cost = probes * comp.eval_work(&comp.free(None), None);
+        // Paid for before it is spent: when the allowance cannot cover the probes they are skipped and
+        // it is left as it was for the candidates still to try.
+        let affordable = cost <= *work;
+        if affordable {
+            *work -= cost;
+        }
+        let mut ids = comp.conflicts_probing(&o.x, affordable);
         ids.retain(|i| *i != id);
         ids.insert(0, id);
         return Err(SolveError::Conflict { ids });
