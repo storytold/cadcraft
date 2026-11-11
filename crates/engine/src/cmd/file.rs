@@ -8,7 +8,7 @@ mod template;
 use std::sync::OnceLock;
 
 use cadcraft_doc::{Drawing, Format};
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, ok, str_param};
@@ -53,9 +53,9 @@ pub fn io() -> Option<&'static IoHooks> {
 /// (installed by the app with the DXF reader and writer, a lower layer).
 pub struct EntityCodec {
     /// The entity's type name and the groups of its record, without its `0` group.
-    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
+    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<craft_dxf::Tag>),
     /// An entity from a type name and groups.
-    pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
+    pub entity: fn(&str, &[craft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();
@@ -340,7 +340,7 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
         cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
     }
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -503,7 +503,7 @@ pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
     // DWG: a version tag like `AC1032` (R12 is `AC1009`).
     let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
-    if dwg || cadcraft_dxf::is_binary(bytes) {
+    if dwg || craft_dxf::is_binary(bytes) {
         return true;
     }
     // ASCII DXF: optional comments (999), then group 0 SECTION.
@@ -533,7 +533,7 @@ pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
         // Too short for any DWG's header: cut off, not unknown.
         return if head.len() < 256 { Some(false) } else { dwg_complete(head, len) };
     }
-    if cadcraft_dxf::is_binary(head) {
+    if craft_dxf::is_binary(head) {
         return Some(tail.ends_with(b"EOF\0"));
     }
     let text = String::from_utf8_lossy(tail);

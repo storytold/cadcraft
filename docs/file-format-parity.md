@@ -14,7 +14,7 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 ## How this was measured
 
-- CADCraft: read from `crates/dxf`, `crates/io` (`dxf_read.rs`, `dxf_write.rs`, `pdf.rs`,
+- CADCraft: read from `craft-dxf` (craft-libs), `crates/io` (`dxf_read.rs`, `dxf_write.rs`, `pdf.rs`,
   `svg.rs`, `tests.rs`) and `crates/dwg` on 2026-10-10. Nothing was run (the measurement pass
   did no builds).
 - AutoCAD: the formats in its Open/Save As/Import/Export/Attach/Plot dialogs, from Autodesk's
