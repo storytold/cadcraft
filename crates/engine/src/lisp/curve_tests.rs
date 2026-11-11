@@ -330,7 +330,8 @@ fn files_and_folders() {
     assert_eq!(ok(&mut s, &format!("(vl-directory-files \"{d}\" \"*.lsp\" 1)")), "(\"c.lsp\")");
     assert_eq!(ok(&mut s, &format!("(vl-directory-files \"{d}\" nil 1)")), "(\"a.txt\" \"c.lsp\")");
     assert_eq!(ok(&mut s, &format!("(vl-directory-files \"{d}\" nil -1)")), "(\".\" \"..\")");
-    assert_eq!(ok(&mut s, &format!("(length (vl-file-systime \"{a}\"))")), "8");
+    // Seven elements on Windows, eight (with milliseconds) elsewhere.
+    assert_eq!(ok(&mut s, &format!("(length (vl-file-systime \"{a}\"))")), if cfg!(windows) { "7" } else { "8" });
     is_t(&mut s, &format!("(>= (car (vl-file-systime \"{a}\")) 2024)"));
     // read-char gives one character at a time.
     assert_eq!(ok(&mut s, &format!("(setq f (open \"{a}\" \"r\")) (list (read-char f) (read-char f) (progn (close f) 1))")), "(104 101 1)");

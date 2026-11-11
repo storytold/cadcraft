@@ -170,20 +170,39 @@ pub(super) fn vl_mkdir(a: &[Value]) -> R {
     Ok(Value::bool(fs::mkdir(&string(&a[0])?)))
 }
 
-/// `(vl-file-systime file)`: when it was last changed, as
-/// `(year month weekday day hours minutes seconds milliseconds)` (weekday 0 is Sunday), in UTC.
+/// `(vl-file-systime file)`: when it was last changed, in the computer's local time, as
+/// `(year month weekday day hours minutes seconds)` on Windows and
+/// `(year month weekday day hours minutes seconds milliseconds)` elsewhere (weekday 0 is Sunday).
 pub(super) fn vl_file_systime(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let Some(ms) = fs::modified(&string(&a[0])?) else { return Ok(Value::Nil) };
-    let Some(parts) = systime(ms) else { return Ok(Value::Nil) };
-    Ok(Value::list(parts.into_iter().map(|v| Value::Int(v as i32)).collect::<Vec<_>>()))
+    let Some(parts) = systime(ms, local_offset_secs(ms)) else { return Ok(Value::Nil) };
+    let n = if cfg!(windows) { 7 } else { 8 };
+    Ok(Value::list(parts.into_iter().take(n).map(|v| Value::Int(v as i32)).collect::<Vec<_>>()))
 }
 
-/// Milliseconds since 1970 as (year month weekday day hours minutes seconds ms), UTC; `None`
-/// outside the calendar's range.
-fn systime(ms: i64) -> Option<[i64; 8]> {
+/// The computer's offset from UTC at the instant `ms` (milliseconds since 1970), in seconds east
+/// of UTC; 0 where there is no time zone to ask (the web) or the instant is out of range.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_offset_secs(ms: i64) -> i32 {
+    use chrono::{Local, Offset, TimeZone};
+    chrono::DateTime::from_timestamp_millis(ms).map_or(0, |t| Local.offset_from_utc_datetime(&t.naive_utc()).fix().local_minus_utc())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn local_offset_secs(_ms: i64) -> i32 {
+    0
+}
+
+/// Milliseconds since 1970 as (year month weekday day hours minutes seconds ms) at `offset_secs`
+/// east of UTC; `None` outside the calendar's range or for an offset of a day or more.
+fn systime(ms: i64, offset_secs: i32) -> Option<[i64; 8]> {
     use chrono::{Datelike, Timelike};
-    let t = chrono::DateTime::from_timestamp_millis(ms)?;
+    let zone = chrono::FixedOffset::east_opt(offset_secs)?;
+    // Checked addition: the shifted instant may fall off the end of the calendar.
+    let t = chrono::DateTime::from_timestamp_millis(ms)?
+        .naive_utc()
+        .checked_add_signed(chrono::TimeDelta::try_seconds(i64::from(zone.local_minus_utc()))?)?;
     Some([
         i64::from(t.year()),
         i64::from(t.month()),
@@ -192,7 +211,7 @@ fn systime(ms: i64) -> Option<[i64; 8]> {
         i64::from(t.hour()),
         i64::from(t.minute()),
         i64::from(t.second()),
-        i64::from(t.timestamp_subsec_millis()),
+        i64::from(t.nanosecond() / 1_000_000),
     ])
 }
 
@@ -513,12 +532,44 @@ mod tests {
     fn systime_turns_milliseconds_into_a_utc_date() {
         // 2026-10-16 09:05:07.250 UTC, a Friday.
         let ms = 1_792_141_507_250;
-        assert_eq!(systime(ms), Some([2026, 10, 5, 16, 9, 5, 7, 250]));
-        assert_eq!(systime(0), Some([1970, 1, 4, 1, 0, 0, 0, 0]));
+        assert_eq!(systime(ms, 0), Some([2026, 10, 5, 16, 9, 5, 7, 250]));
+        assert_eq!(systime(0, 0), Some([1970, 1, 4, 1, 0, 0, 0, 0]));
         // Before 1970 and on a leap day.
-        assert_eq!(systime(-86_400_000), Some([1969, 12, 3, 31, 0, 0, 0, 0]));
-        assert_eq!(systime(951_782_400_000), Some([2000, 2, 2, 29, 0, 0, 0, 0]));
-        assert_eq!(systime(i64::MAX), None);
+        assert_eq!(systime(-86_400_000, 0), Some([1969, 12, 3, 31, 0, 0, 0, 0]));
+        assert_eq!(systime(951_782_400_000, 0), Some([2000, 2, 2, 29, 0, 0, 0, 0]));
+        assert_eq!(systime(i64::MAX, 0), None);
+    }
+
+    #[test]
+    fn systime_applies_the_local_offset() {
+        // 2026-10-16 23:30:00 UTC, a Friday: two hours east is 01:30 on Saturday the 17th.
+        let late = 1_792_193_400_000;
+        assert_eq!(systime(late, 2 * 3600), Some([2026, 10, 6, 17, 1, 30, 0, 0]));
+        // 2026-10-16 02:00:00 UTC: five hours west is 21:00 on Thursday the 15th.
+        let early = 1_792_116_000_000;
+        assert_eq!(systime(early, -5 * 3600), Some([2026, 10, 4, 15, 21, 0, 0, 0]));
+        // A half-hour zone keeps its minutes.
+        assert_eq!(systime(early, 5 * 3600 + 1800), Some([2026, 10, 5, 16, 7, 30, 0, 0]));
+    }
+
+    #[test]
+    fn systime_utc_offset_zero_matches_old_result() {
+        // The same instants as the UTC-only version gave.
+        assert_eq!(systime(1_792_141_507_250, 0), Some([2026, 10, 5, 16, 9, 5, 7, 250]));
+        assert_eq!(systime(0, 0), Some([1970, 1, 4, 1, 0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn systime_refuses_hostile_input() {
+        for offset in [-25 * 3600, 25 * 3600, i32::MIN, i32::MAX, 86_400, -86_400] {
+            assert_eq!(systime(0, offset), None, "offset {offset}");
+        }
+        for ms in [i64::MAX, i64::MIN] {
+            assert_eq!(systime(ms, 25 * 3600), None);
+            assert_eq!(systime(ms, -25 * 3600), None);
+            assert_eq!(systime(ms, 3600), None);
+            assert_eq!(systime(ms, 0), None);
+        }
     }
 
     /// A file appended to itself, or to another name for it, is refused and left as it was; a
