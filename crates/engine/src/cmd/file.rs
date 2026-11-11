@@ -635,12 +635,28 @@ fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
     if let Some((old_mode, old_gid)) = old {
         mode &= old_mode;
         if old_gid != src_gid {
-            mode &= !0o070;
-            let source_group_as_other = (src_mode & 0o070) >> 3;
-            mode &= !0o007 | source_group_as_other;
+            mode = without_group(src_mode, mode);
         }
     }
     mode
+}
+
+/// `mode` for a backup that is not in the drawing's group: no group bits, and `other` capped by the
+/// drawing's group bits (`src_mode`).
+#[cfg(unix)]
+fn without_group(src_mode: u32, mode: u32) -> u32 {
+    (mode & !0o070) & (!0o007 | ((src_mode & 0o070) >> 3))
+}
+
+/// A first backup is created in the process's (or folder's) group, not the drawing's: move it to the
+/// drawing's group before any data is written, else drop its group bits ([`without_group`]).
+#[cfg(unix)]
+fn adopt_source_group(out: &std::fs::File, src: &std::fs::Metadata) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    if out.metadata()?.gid() == src.gid() || fchown(out, None, Some(src.gid())).is_ok() {
+        return Ok(());
+    }
+    out.set_permissions(std::fs::Permissions::from_mode(without_group(src.mode(), src.mode() & 0o777)))
 }
 
 /// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
@@ -668,14 +684,21 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     let source_metadata = src.metadata()?;
     #[cfg(unix)]
+    let first_backup = std::cell::Cell::new(false);
+    #[cfg(unix)]
     let permissions = || {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let old = std::fs::symlink_metadata(&bak).ok().filter(|m| m.is_file());
+        first_backup.set(old.is_none());
         Ok(Some(std::fs::Permissions::from_mode(backup_mode(source_metadata.mode(), source_metadata.gid(), old.map(|m| (m.mode(), m.gid()))))))
     };
     #[cfg(not(unix))]
     let permissions = || Ok(None);
     crate::atomic_write::write_atomic_with_permissions(&bak, permissions, |out| {
+        #[cfg(unix)]
+        if first_backup.get() {
+            adopt_source_group(out, &source_metadata)?;
+        }
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
     })
@@ -1057,6 +1080,39 @@ mod tests {
         assert_eq!(backup_mode(0o640, 10, Some((0o664, 20))), 0o600);
         assert_eq!(backup_mode(0o644, 10, Some((0o644, 20))), 0o604);
         assert_eq!(backup_mode(0o600, 10, Some((0o664, 10))), 0o600);
+    }
+
+    /// With no `.bak` yet, the first backup takes the drawing's group (when the user is in another
+    /// group, as `id -G` says), never the group the new file would be created in.
+    #[cfg(unix)]
+    #[test]
+    fn first_backup_takes_the_drawings_group() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = TempDir::new("first-bak-grp");
+        let src = dir.join("a.dxf");
+        std::fs::write(&src, "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n").unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&src).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&src, None, Some(gid)).unwrap();
+        }
+        super::backup(&src).unwrap();
+        let (s, b) = (std::fs::metadata(&src).unwrap(), std::fs::metadata(super::backup_path(&src)).unwrap());
+        assert_eq!((b.gid(), b.mode() & 0o777), (s.gid(), 0o640));
+    }
+
+    /// The fail-safe when the group cannot be adopted: no group bits, `other` capped by the group's.
+    #[cfg(unix)]
+    #[test]
+    fn without_group_drops_group_bits_and_caps_other() {
+        assert_eq!(super::without_group(0o640, 0o640), 0o600);
+        assert_eq!(super::without_group(0o604, 0o604), 0o600);
+        assert_eq!(super::without_group(0o644, 0o644), 0o604);
     }
 
     fn active_title(s: &Session) -> String {
