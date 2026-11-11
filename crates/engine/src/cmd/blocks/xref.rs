@@ -210,8 +210,13 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
         let d = s.doc()?;
         let mut names = Vec::new();
         let mut selected = std::collections::HashSet::new();
+        // Symbol names are case-insensitive: two xrefs that differ only by case can't be loaded together.
+        let mut folded = std::collections::HashMap::new();
         for literal in &lits {
             if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
+                if let Some(first) = folded.insert(block.name.to_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
+                }
                 if selected.insert(block.name.clone()) {
                     names.push(block.name.clone());
                 }
@@ -222,6 +227,9 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
             if let Some(block) = matches.next() {
                 if matches.next().is_some() {
                     return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
+                }
+                if let Some(first) = folded.insert(block.name.to_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
                 }
                 if selected.insert(block.name.clone()) {
                     names.push(block.name.clone());

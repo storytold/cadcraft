@@ -44,13 +44,12 @@ pub(super) fn default_path(s: &Session, layout: &str) -> String {
     let stem = candidate.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
     let extension = candidate.extension().and_then(|e| e.to_str()).unwrap_or("dwt");
     let parent = candidate.parent().unwrap_or_else(|| std::path::Path::new(""));
-    for suffix in 2u64.. {
-        let alternative = parent.join(format!("{stem}-{suffix}.{extension}"));
-        if !alternative.exists() {
-            return alternative.to_string_lossy().into_owned();
-        }
-    }
-    unreachable!("the default layout template filename suffix space is exhausted")
+    // The suffix range never ends in practice; the fallback only keeps the code panic-free.
+    let alternative = (2u64..)
+        .map(|suffix| parent.join(format!("{stem}-{suffix}.{extension}")))
+        .find(|alternative| !alternative.exists())
+        .unwrap_or(candidate.clone());
+    alternative.to_string_lossy().into_owned()
 }
 
 /// `path` with `.dwt` added when it has no extension; an error for any other file type.

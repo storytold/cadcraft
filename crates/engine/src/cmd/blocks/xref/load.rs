@@ -313,7 +313,9 @@ pub(crate) fn load(d: &mut Drawing, name: &str, host: Option<&str>, chosen: bool
 /// [`load`] the xrefs `names` within one set of limits.
 pub(crate) fn load_each(d: &mut Drawing, names: &[String], host: Option<&str>, chosen: bool) -> Vec<Outcome> {
     let mut cx = Ctx::new(host);
-    names.iter().flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
+    // Names are case-insensitive, so a name that differs only by case from an earlier one is the same xref.
+    let mut seen = std::collections::HashSet::new();
+    names.iter().filter(|n| seen.insert(n.to_lowercase())).flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
 }
 
 impl Ctx {

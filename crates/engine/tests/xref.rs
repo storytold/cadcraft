@@ -195,6 +195,16 @@ fn reload_unload_path_and_detach() {
     assert!(s.execute("-xref", &json!({ "option": "reload", "names": "*", "exact": true })).is_err());
     s.execute("-xref", &json!({ "option": "reload", "names": "SITE", "exact": true })).unwrap();
 
+    // Two xrefs that differ only by case: an exact selection of both is refused before anything loads,
+    // and reload-all loads one of them once.
+    let mut twin = Block::new("SITE");
+    twin.xref_path = Some("site.dxf".into());
+    s.doc_mut().unwrap().blocks.insert("SITE".into(), Arc::new(twin));
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": ["site", "SITE"], "exact": true })).is_err());
+    let r = s.execute("-xref", &json!({ "option": "reload" })).unwrap();
+    assert_eq!(r["xrefs"].as_array().map(Vec::len), Some(1));
+    s.doc_mut().unwrap().blocks.remove("SITE");
+
     s.execute("-xref", &json!({ "option": "unload", "names": "site" })).unwrap();
     assert_eq!((status(&s, "site"), objects(&s, "site")), (Some(XrefStatus::Unloaded), 0));
     assert!(s.doc().unwrap().block("site|Tree").is_none());
