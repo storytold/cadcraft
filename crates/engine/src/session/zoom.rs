@@ -23,8 +23,10 @@ impl Session {
         let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
         let st = self.state_mut()?;
         let aspect = st.zoom_aspect(w / h.max(1.0));
-        let height = ext.height().max(ext.width() / aspect.max(1e-6)).max(1e-6) * 1.05;
-        st.set_zoom_frame(View { center: ext.center(), height });
+        let twist = st.zoom_frame().twist;
+        let (center, bw, bh) = View::twisted_box(ext, twist);
+        let height = bh.max(bw / aspect.max(1e-6)).max(1e-6) * 1.05;
+        st.set_zoom_frame(View { center, height, twist });
         Ok(())
     }
 
@@ -38,7 +40,7 @@ impl Session {
         let h = (v.height / factor).clamp(1e-9, 1e12);
         let k = h / v.height;
         let c = about + (v.center - about) * k;
-        st.set_view_quiet(View { center: c, height: h });
+        st.set_view_quiet(View { center: c, height: h, twist: v.twist });
         Ok(())
     }
 }
