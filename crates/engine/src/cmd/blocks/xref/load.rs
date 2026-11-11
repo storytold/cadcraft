@@ -315,7 +315,7 @@ pub(crate) fn load_each(d: &mut Drawing, names: &[String], host: Option<&str>, c
     let mut cx = Ctx::new(host);
     // Names are case-insensitive, so a name that differs only by case from an earlier one is the same xref.
     let mut seen = std::collections::HashSet::new();
-    names.iter().filter(|n| seen.insert(n.to_lowercase())).flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
+    names.iter().filter(|n| seen.insert(n.to_ascii_lowercase())).flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
 }
 
 impl Ctx {

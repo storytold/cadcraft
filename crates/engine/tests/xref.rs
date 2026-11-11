@@ -203,6 +203,11 @@ fn reload_unload_path_and_detach() {
     assert!(s.execute("-xref", &json!({ "option": "reload", "names": ["site", "SITE"], "exact": true })).is_err());
     let r = s.execute("-xref", &json!({ "option": "reload" })).unwrap();
     assert_eq!(r["xrefs"].as_array().map(Vec::len), Some(1));
+    // Detaching one of them, or giving both a new path, is refused before anything changes.
+    assert!(s.execute("-xref", &json!({ "option": "detach", "names": "site", "exact": true })).is_err());
+    assert!(s.doc().unwrap().block("site").is_some());
+    assert!(s.execute("-xref", &json!({ "option": "path", "names": "*", "path": "other.dxf" })).is_err());
+    assert_eq!(s.doc().unwrap().block("site").and_then(|b| b.xref_path.clone()).as_deref(), Some("site.dxf"));
     s.doc_mut().unwrap().blocks.remove("SITE");
 
     s.execute("-xref", &json!({ "option": "unload", "names": "site" })).unwrap();

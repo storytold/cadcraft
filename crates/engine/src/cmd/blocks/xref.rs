@@ -214,7 +214,7 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
         let mut folded = std::collections::HashMap::new();
         for literal in &lits {
             if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
-                if let Some(first) = folded.insert(block.name.to_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
                     return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
                 }
                 if selected.insert(block.name.clone()) {
@@ -222,13 +222,13 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
                 }
                 continue;
             }
-            let normalized = literal.to_lowercase();
-            let mut matches = xrefs(d).filter(|block| block.name.to_lowercase() == normalized);
+            let normalized = literal.to_ascii_lowercase();
+            let mut matches = xrefs(d).filter(|block| block.name.to_ascii_lowercase() == normalized);
             if let Some(block) = matches.next() {
                 if matches.next().is_some() {
                     return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
                 }
-                if let Some(first) = folded.insert(block.name.to_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
                     return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
                 }
                 if selected.insert(block.name.clone()) {
@@ -263,6 +263,19 @@ fn run_xref(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// An error when two of `names` (or, with `all`, one of them and any other attached xref) differ only
+/// by case: symbol names are case-insensitive, so such xrefs cannot be handled together, and the
+/// command must refuse before it changes anything.
+fn refuse_case_clash(d: &Drawing, cmd: &str, names: &[String], all: bool) -> Result<()> {
+    let others: Vec<&str> = if all { xrefs(d).map(|b| b.name.as_str()).collect() } else { names.iter().map(String::as_str).collect() };
+    for n in names {
+        if let Some(o) = others.iter().find(|o| *o != n && o.eq_ignore_ascii_case(n)) {
+            return Err(bad(cmd, format!("xref names \"{n}\" and \"{o}\" differ only by case")));
+        }
+    }
+    Ok(())
+}
+
 fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
     let option = str_param(p, "option").unwrap_or("?").trim().to_ascii_lowercase();
     let host = host(s);
@@ -292,6 +305,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "detach" | "d" => {
             let names = named(s, "-xref", p)?;
+            refuse_case_clash(s.doc()?, "-xref", &names, true)?;
             let mut erased = 0;
             for n in &names {
                 erased += load::detach(s.doc_mut()?, n);
@@ -316,6 +330,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         "path" | "p" => {
             let path = str_param(p, "path").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("-xref", "`path` is required"))?.to_string();
             let names = named(s, "-xref", p)?;
+            refuse_case_clash(s.doc()?, "-xref", &names, false)?;
             let d = s.doc_mut()?;
             for n in &names {
                 if let Some(b) = d.blocks.get_mut(n) {
