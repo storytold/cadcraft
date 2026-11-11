@@ -18,12 +18,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Regenerates contributors/contributors.json for the release commit; every build bundles it.
+  credits:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: storytold/craft-common-actions/.github/workflows/refresh-contributors.yml@main
   git-sources:
     name: Git dependencies come from storytold
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Git dependencies come from storytold
         run: |
@@ -58,7 +68,7 @@ jobs:
           PY
 
   release:
-    needs: git-sources
+    needs: [git-sources, credits]
     permissions:
       # The reusable release workflow tags and uploads the draft release.
       contents: write
@@ -70,6 +80,7 @@ jobs:
       app-title: CADCraft
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
+      contributors-artifact: ${{ needs.credits.outputs.artifact-name }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
