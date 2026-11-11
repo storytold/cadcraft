@@ -41,6 +41,7 @@ fn insert_block(s: &mut Session, name: &str, at: Vec2) -> String {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
         .unwrap()
