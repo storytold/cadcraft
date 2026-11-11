@@ -220,7 +220,10 @@ fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
         7..=9 => h,
         _ => 0.0,
     };
-    Some((insert, t.rotation, [dx, dx + w, top - h, top]))
+    // A top-level MTEXT that matches the layout orientation is drawn and measured upright, as the
+    // renderer and the extents do; a multileader keeps the stored rotation of its text.
+    let rotation = if matches!(e.kind, EntityKind::MText(_)) && e.common.matches_layout_orientation() { 0.0 } else { t.rotation };
+    Some((insert, rotation, [dx, dx + w, top - h, top]))
 }
 
 /// The box around a blank MTEXT's turned frame (a top-level MTEXT or a multileader's MTEXT
@@ -263,12 +266,13 @@ fn blank_snap_points(e: &Entity) -> Vec<Vec2> {
 }
 
 /// Whether `e` is within reach of a snap probe only through its blank MTEXT frame: the drawn
-/// geometry (expanded by `aperture`) misses `probe` and none of the insertion points INS offers
-/// (text or block content) is inside it. Such an entity is for picking and selection, not a snap
-/// candidate.
-pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, aperture: f64) -> bool {
+/// geometry (expanded by `aperture`) misses `probe`, and no insertion point INS would offer (text
+/// or block content) is a candidate: one counts only when `ins` is on and it is within `aperture`
+/// of `cursor`, the distance snap accepts a candidate by (a corner of the square probe is not).
+/// Such an entity is for picking and selection, not a snap candidate.
+pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, cursor: Vec2, aperture: f64, ins: bool) -> bool {
     let points = blank_snap_points(e);
-    !points.is_empty() && !points.iter().any(|p| probe.contains(*p)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
+    !points.is_empty() && !(ins && points.iter().any(|p| p.dist(cursor) <= aperture)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
 }
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
@@ -818,6 +822,20 @@ mod tests {
         let h = d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
         assert_eq!(at(&d, 2.0, -1.0), Some(h));
         assert_eq!(at(&d, 5.0, -1.0), None);
+    }
+
+    /// A top-level MTEXT that matches the layout orientation is drawn upright, ignoring its stored
+    /// rotation, so its frame is the unturned one (the renderer and the extents do the same).
+    #[test]
+    fn rotated_blank_mtext_matching_layout_orientation_is_picked_in_its_unrotated_frame() {
+        let mut d = Drawing::new_metric();
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let common = Common { xdata: vec![tag(1001, "AcadAnnoPO"), tag(1070, "1")], ..Common::default() };
+        let h = d.add(&Space::Model, common, mtext_at(" ", 1, std::f64::consts::FRAC_PI_2)).unwrap();
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.05);
+        // Unrotated frame x 0..10, y -2.5..0; the rotated one would be x 0..2.5, y 0..10.
+        assert_eq!(at(5.0, -1.0), Some(h), "inside the unrotated frame");
+        assert_eq!(at(1.0, 5.0), None, "inside only the rotated frame");
     }
 
     /// A turned blank MTEXT is hit in its turned box, not in the axis-aligned box around it (whose

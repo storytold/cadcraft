@@ -425,7 +425,7 @@ fn gather_in(
         }
         // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
         // limit nor the intersection slots unless its insertion point or drawn geometry is in reach.
-        if !inf && crate::select::blank_frame_only(d, e, &probe, aperture) {
+        if !inf && crate::select::blank_frame_only(d, e, &probe, cursor, aperture, osmode & mode::INS != 0) {
             continue;
         }
         count += 1;
@@ -1129,6 +1129,48 @@ mod tests {
             let h = osnap(&d, &Space::Model, Vec2::new(0.1, -0.1), 0.5, mode::INS, None, false).unwrap();
             assert_eq!(h.point, Vec2::new(0.0, 0.0), "line first: {line_first}");
         }
+    }
+
+    /// 2001 blank MTEXT frames covering `cursor` (insertion points at `ins_at`), drawn before a
+    /// LINE whose end is at `cursor`: the END snap found with `osmode`.
+    fn crowded_blank_frames_end_snap(ins_at: Vec2, cursor: Vec2, aperture: f64, osmode: u32) -> Option<Vec2> {
+        let mut d = Drawing::new_metric();
+        for _ in 0..2001 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(ins_at.x, ins_at.y, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(cursor.x, cursor.y, 0.0), b: Vec3::new(30.0, cursor.y, 0.0) }))
+            .unwrap();
+        osnap(&d, &Space::Model, cursor, aperture, osmode, None, false).map(|h| h.point)
+    }
+
+    /// An insertion point in a corner of the square probe is farther than the aperture from the
+    /// cursor, so snap would never accept it: its frame must not crowd out an END snap.
+    #[test]
+    fn blank_insertion_points_in_the_probe_corner_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        let ap = 0.5;
+        let corner = Vec2::new(cursor.x - 0.9 * ap, cursor.y + 0.9 * ap);
+        assert!(corner.dist(cursor) > ap, "outside the circle, inside the square probe");
+        assert_eq!(crowded_blank_frames_end_snap(corner, cursor, ap, mode::END | mode::INS), Some(cursor));
+    }
+
+    /// With INS off a blank MTEXT's insertion point is no snap candidate, even right at the cursor.
+    #[test]
+    fn blank_insertion_points_with_ins_off_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        assert_eq!(crowded_blank_frames_end_snap(cursor, cursor, 0.5, mode::END), Some(cursor));
     }
 
     /// A blank annotative multileader (text 6 right of its landing, 4 x 2, at 1:2) among 2100 blank
