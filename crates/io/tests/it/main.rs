@@ -50,6 +50,8 @@ mod mtext_line_spacing;
 mod multiline_attributes;
 #[cfg(not(target_arch = "wasm32"))]
 mod ole2frame_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
@@ -80,4 +82,5 @@ mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod view_target;
 mod viewport_clip_roundtrip;
+mod xclip_roundtrip;
 mod xref_roundtrip;

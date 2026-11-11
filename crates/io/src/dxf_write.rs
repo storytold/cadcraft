@@ -137,11 +137,17 @@ pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version, name: &std::path::Path) -> S
     cadcraft_dxf::write_ascii(&tags)
 }
 
-/// Subclass markers the DWG bridge knows by another spelling (it matches them exactly):
-/// AutoCAD writes a dynamic block lookup parameter's as `AcDbBlockLookUpParameter`, the bridge
-/// reads `AcDbBlockLookupParameter`; otherwise the parameter loses its name and its lookup
-/// action in the DWG, and AutoCAD's lookups stop working.
+/// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.
+/// Ordinary DXF output retains source spellings.
 fn bridge_markers(tags: &mut [Tag]) {
+    for tag in tags.iter_mut().filter(|tag| tag.code == 0) {
+        for name in ["ACAD_PROXY_ENTITY", "ACAD_PROXY_OBJECT"] {
+            if tag.str().trim().eq_ignore_ascii_case(name) {
+                *tag = Tag::s(0, name);
+                break;
+            }
+        }
+    }
     for t in tags.iter_mut().filter(|t| t.code == 100) {
         if t.str().trim().eq_ignore_ascii_case("AcDbBlockLookupParameter") {
             *t = Tag::s(100, "AcDbBlockLookupParameter");
