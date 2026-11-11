@@ -469,9 +469,9 @@ impl crate::CadApp {
                             // `cadcraft:committed`; the desktop writes it beside its drawing.
                             let stored = self.host_commit.as_ref().map(|commit| commit(Some(&bytes)));
                             match stored {
-                                Some(Ok(())) => self.session.echo(format!(
-                                    "shared session: asked the host to store version {version}; the cabinet answers with its version"
-                                )),
+                                Some(Ok(())) => self
+                                    .session
+                                    .echo(format!("shared session: asked the host to store version {version}; the cabinet answers with its version")),
                                 Some(Err(message)) => self.session.echo(format!("shared session: the host refused version {version}: {message}")),
                                 None => {
                                     let path = self.session.state().ok().and_then(|state| state.path.clone());
@@ -969,7 +969,10 @@ mod tests {
             room.add(
                 &cadcraft_doc::Space::Model,
                 cadcraft_doc::Common::default(),
-                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_doc::geom::Vec3::new(x, 0.0, 0.0), b: cadcraft_doc::geom::Vec3::new(x, 5.0, 0.0) }),
+                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line {
+                    a: cadcraft_doc::geom::Vec3::new(x, 0.0, 0.0),
+                    b: cadcraft_doc::geom::Vec3::new(x, 5.0, 0.0),
+                }),
             )
             .expect("a line");
         }

@@ -168,8 +168,7 @@ mod tests {
 
         let mut room = Drawing::new_metric();
         for x in [0.0, 30.0, 60.0] {
-            room.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 10.0, 0.0) }))
-                .unwrap();
+            room.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 10.0, 0.0) })).unwrap();
         }
         s.adopt_shared_drawing(room).unwrap();
 
