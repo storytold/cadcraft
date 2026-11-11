@@ -12,7 +12,7 @@ use super::{Builder, Ctx, Ink, fill, ink, max_scale};
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::library::{PatternLine, pattern_for};
 use cadcraft_doc::{Drawing, Entity, Gradient, Hatch};
-use cadcraft_geom::{Bounds2, Polyline, Vec2, point_in_polygon};
+use cadcraft_geom::{Bounds2, PolyVertex, Polyline, Vec2, point_in_polygon};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Draw a hatch entity: `rgb` is its resolved colour, `tol` the chord tolerance.
@@ -130,8 +130,15 @@ const MAX_DEDUP_COMPARISONS: u64 = 50_000_000;
 pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
     // One point budget for all the loops: many short arcs across loops must not add up unbounded.
     let mut budget = cadcraft_geom::MAX_TESSELLATED_POINTS;
-    let mut loops: Vec<Vec<Vec2>> =
-        h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate_within(tol, &mut budget)).collect();
+    // Source loops that are the same boundary up to start vertex and winding are tessellated once, so a
+    // duplicate cannot be sampled coarser than its twin by the shared budget and then escape `dedup_polygons`.
+    let mut seen = std::collections::HashSet::new();
+    let mut loops: Vec<Vec<Vec2>> = h
+        .loops
+        .iter()
+        .filter(|l| seen.insert(canonical_key(&l.vertices)))
+        .map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate_within(tol, &mut budget))
+        .collect();
     dedup_polygons(&mut loops);
     let max_depth = match h.style {
         1 => 1,
@@ -147,6 +154,50 @@ pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
         loops.iter().enumerate().filter(|(j, o)| *j != i && point_in_polygon(o, p)).count()
     };
     loops.iter().enumerate().filter(|(i, l)| depth(*i, l) <= max_depth).map(|(_, l)| l.clone()).collect()
+}
+
+/// Start index of the least rotation of `s` (two-pointer scan, O(n)).
+fn least_rotation(s: &[[u64; 3]]) -> usize {
+    let n = s.len();
+    let (mut i, mut j, mut k) = (0, 1, 0);
+    while i < n && j < n && k < n {
+        let (a, b) = (s.get((i + k) % n), s.get((j + k) % n));
+        if a == b {
+            k += 1;
+            continue;
+        }
+        if a > b {
+            i += k + 1;
+        } else {
+            j += k + 1;
+        }
+        if i == j {
+            j += 1;
+        }
+        k = 0;
+    }
+    i.min(j)
+}
+
+/// A key equal for loops that are the same boundary starting at another vertex or wound the other way
+/// (reversing moves each bulge to the other end of its edge and negates it). Exact bits only; the
+/// tolerance-based `dedup_polygons` still catches near matches.
+fn canonical_key(v: &[PolyVertex]) -> Vec<[u64; 3]> {
+    let bits = |x: f64| (x + 0.0).to_bits(); // -0.0 and 0.0 match
+    let n = v.len();
+    let fwd: Vec<[u64; 3]> = v.iter().map(|q| [bits(q.p.x), bits(q.p.y), bits(q.bulge)]).collect();
+    let rev: Vec<[u64; 3]> = (0..n)
+        .map(|j| {
+            let i = n - 1 - j;
+            let edge = v.get((i + n - 1) % n).map_or(0.0, |q| -q.bulge);
+            v.get(i).map_or([0; 3], |q| [bits(q.p.x), bits(q.p.y), bits(edge)])
+        })
+        .collect();
+    let rotated = |s: &[[u64; 3]]| {
+        let k = least_rotation(s);
+        s.iter().cycle().skip(k).take(s.len()).copied().collect::<Vec<_>>()
+    };
+    rotated(&fwd).min(rotated(&rev))
 }
 
 /// A point of a loop to test its nesting with: the middle of its first non-degenerate edge
