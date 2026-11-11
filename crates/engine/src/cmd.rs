@@ -328,9 +328,8 @@ fn build_catalog() -> Vec<CommandSpec> {
         v.extend(txt2mtxt::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
-        if let Ok(e) = extra_specs().lock() {
-            v.extend(e.iter().filter(|spec| !v.iter().any(|c| c.id == spec.id)).cloned().collect::<Vec<_>>());
-        }
+        let extra: Vec<CommandSpec> = extra_specs().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        v.extend(extra.into_iter().filter(|spec| !v.iter().any(|c| c.id == spec.id)).collect::<Vec<_>>());
         v
     }
 }
