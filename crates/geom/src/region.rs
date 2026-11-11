@@ -324,7 +324,11 @@ fn trace(g: &Graph, u0: usize, v0: usize, max_steps: usize) -> Option<Vec<usize>
         let back = (*g.pts.get(u)? - pv).angle();
         let mut best: Option<(f64, usize)> = None;
         let ns = g.adj.get(v)?;
-        g.trace_work.set(g.trace_work.get().checked_sub(ns.len() as u64)?);
+        let Some(left) = g.trace_work.get().checked_sub(ns.len() as u64) else {
+            g.trace_work.set(0);
+            return None;
+        };
+        g.trace_work.set(left);
         for &w in ns {
             if w == u && g.adj.get(v).is_some_and(|l| l.len() > 1) {
                 continue;
@@ -376,7 +380,12 @@ fn outer_face(g: &Graph, p: Vec2) -> Option<Vec<usize>> {
     for (_, a, b) in hits.into_iter().take(64) {
         let (pa, pb) = (*g.pts.get(a)?, *g.pts.get(b)?);
         let (u, v) = if (pb - pa).cross(p - pa) > 0.0 { (a, b) } else { (b, a) };
-        if let Some(ids) = trace(g, u, v, max_steps)
+        let traced = trace(g, u, v, max_steps);
+        // A spent budget ends the search: a cheaper, more distant face must not stand in for the nearer one.
+        if traced.is_none() && g.trace_work.get() == 0 {
+            return None;
+        }
+        if let Some(ids) = traced
             && ids.len() >= 3
             && let Some(lp) = points(g, &ids)
             && shoelace(&lp) > 0.0

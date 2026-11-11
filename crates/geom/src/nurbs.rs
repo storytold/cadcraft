@@ -529,13 +529,18 @@ impl Spline {
     /// sample.
     fn panel_length(&self, a: f64, b: f64, derivative: fn(&Spline, f64) -> Vec2) -> f64 {
         let speed = |t: f64| derivative(self, t).len();
-        adaptive_gauss(a, b, gauss(a, b, speed), &speed, self.length_floor(), MAX_GAUSS_DEPTH)
+        adaptive_gauss(a, b, gauss(a, b, speed), &speed, self.length_floor(a, b), MAX_GAUSS_DEPTH)
     }
 
-    /// The absolute length error below which a panel counts as converged: rounding of the control
-    /// coordinates (1e-15 of the largest one).
-    fn length_floor(&self) -> f64 {
-        1e-15 * self.control.iter().map(|c| c.x.abs().max(c.y.abs())).fold(0.0, f64::max)
+    /// The absolute length error below which the panel [a, b] counts as converged: rounding of the
+    /// coordinates of the control points that shape it (1e-15 of the largest), so a distant control
+    /// point does not relax the tolerance. Costs one span's control points, not the whole spline.
+    fn length_floor(&self, a: f64, b: f64) -> f64 {
+        let Some(n) = self.control.len().checked_sub(1) else { return 0.0 };
+        let span = find_span(n, self.degree, (a + b) / 2.0, &self.knots);
+        let first = span.saturating_sub(self.degree);
+        let local = self.control.get(first..=span.min(n)).unwrap_or_default();
+        1e-15 * local.iter().map(|c| c.x.abs().max(c.y.abs())).fold(0.0, f64::max)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
@@ -681,6 +686,16 @@ mod tests {
         assert!(l < 1e-15 && calls.get() < 100, "{l} {}", calls.get());
         let c = Spline::from_control(vec![Vec2::new(1e6, 1e6); 5], 3);
         assert!(c.length() < 1e-6);
+    }
+
+    /// A distant control point does not relax the tolerance of a span it does not shape.
+    #[test]
+    fn the_error_floor_is_local_to_the_span() {
+        let mut s =
+            Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.2, 0.0), Vec2::new(1e13, 0.0), Vec2::new(1e13, 0.0)], 2);
+        s.knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0];
+        let got = s.length_between(0.0, 1.0);
+        assert!((got - 41.0 / 45.0).abs() < 1e-9, "{got}");
     }
 
     fn cubic() -> Spline {
