@@ -161,7 +161,7 @@ run) an environment variable, steer this:
 |---|---|---|
 | `FONTALT` | `CADCRAFT_FONTALT` | Font used instead of a text style font that can't be found (an SHX file, a missing TTF), by file or family name, e.g. `Noto Sans CJK TC`. Empty (default) = our stroke font. |
 | `FONTFALLBACK` | `CADCRAFT_FONTFALLBACK` | Fonts tried first for characters a text's font lacks, comma-separated, e.g. `Noto Sans CJK TC, msjh.ttc`. |
-| `SUPPORTPATH` | `CADCRAFT_SHXPATH` | Support file search path: folders separated by `;`, searched for SHX fonts after the folders of the open drawings. `ACADPREFIX` reads it (read-only). Empty (default) = none. |
+| `SUPPORTPATH` | `CADCRAFT_SHXPATH` | Support file search path: folders separated by `;` (in `CADCRAFT_SHXPATH`, the system's path separator: `;` on Windows, `:` elsewhere), searched for SHX fonts after the folders of the open drawings. `ACADPREFIX` reads it (read-only). Empty (default) = none. |
 
 `.` clears either one; `SUPPORTPATH` is cleared by an empty value.
 
