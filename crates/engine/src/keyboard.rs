@@ -81,9 +81,10 @@ pub fn latin_keys(word: &str) -> Option<String> {
 }
 
 /// `word` with its case, accents and final sigma folded away, when it is Greek-layout typing: every
-/// spelling of one Greek word gives the same string.
+/// spelling of one Greek word gives the same string. It is the word's keys, with the final sigma
+/// read as the letter sigma instead of the W key.
 pub fn greek_fold(word: &str) -> Option<String> {
-    latin_keys(&word.to_uppercase())
+    latin_keys(&word.replace('ς', "σ"))
 }
 
 /// Whether `a` and `b` are one Greek word, whatever their case, accents or final sigma.
@@ -114,6 +115,16 @@ mod tests {
         for (a, b) in [("ΣΟΛΙΔ", "ΣΟΛΙ"), ("ΣΟΛΙΔ", "solid"), ("solid", "SOLID")] {
             assert!(!same_greek_word(a, b), "{a} {b}");
         }
+    }
+
+    /// A character the layout does not type is never taken for the Greek letter Unicode upper-cases
+    /// it to: the micro sign is not μ, the long s and the sharp s are not σ, an alpha with an iota
+    /// subscript is not αι, the theta symbol is not θ.
+    #[test]
+    fn a_character_the_layout_does_not_type_is_no_spelling_of_a_greek_letter() {
+        let pairs = [("\u{b5}", "μ"), ("Λ\u{17f}", "ΛΣ"), ("Λ\u{df}", "ΛΣΣ"), ("\u{1fb3}", "αι"), ("\u{3d1}", "θ")];
+        let same: Vec<_> = pairs.iter().filter(|(a, b)| same_greek_word(a, b) || same_greek_word(b, a)).collect();
+        assert!(same.is_empty(), "{same:?}");
     }
 
     /// Greek-layout typing reads as its Latin keys: plain, accented and decomposed letters, the Q
