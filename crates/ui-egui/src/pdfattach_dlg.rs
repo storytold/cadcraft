@@ -259,13 +259,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, chosen: &str, open: &mut bo
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         cancel = true;
     }
-    if browse
-        && let Some(pick) = app.services.pick_pdf.as_ref()
-        && let Some(path) = pick()
-    {
-        // The dialog now shows that file (its state is kept under the new file's name).
-        app.ui.dialog = Some(format!("pdfattach:{path}"));
-        st = State::new(path, ctx);
+    if browse {
+        // The dialog shows the file chosen from the next frame on: its state is kept under its file's
+        // name, and a new name starts a new state. The answer may come in a later frame (macOS).
+        let _ = app.pick_then(crate::Pick::Pdf, |app, path| {
+            app.ui.dialog = Some(format!("pdfattach:{path}"));
+            Ok(serde_json::Value::Null)
+        });
     }
     if ok {
         let preset = AttachPreset {
