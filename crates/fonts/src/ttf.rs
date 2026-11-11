@@ -107,7 +107,11 @@ impl Face {
         let Some(f) = self.font() else { return Vec::new() };
         [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FULL_NAME]
             .into_iter()
-            .flat_map(|id| f.localized_strings(id).map(|s| norm(&s.to_string())).collect::<Vec<_>>())
+            // A name table can hold many records that point at one big string: at most
+            // MAX_NAME_RECORDS per name id, each decoded only up to MAX_NAME_CHARS characters.
+            .flat_map(|id| {
+                f.localized_strings(id).take(MAX_NAME_RECORDS).map(|s| norm(&s.chars().take(MAX_NAME_CHARS).collect::<String>())).collect::<Vec<_>>()
+            })
             .collect()
     }
 }
@@ -122,6 +126,10 @@ pub fn faces(bytes: &Arc<Vec<u8>>) -> Vec<Face> {
 }
 
 const MAX_FACES_PER_FILE: u32 = 32;
+/// Name records read per name id of a face, and characters read of each: real fonts have a few
+/// dozen short ones.
+const MAX_NAME_RECORDS: usize = 64;
+const MAX_NAME_CHARS: usize = 256;
 /// Bounds of the missing-glyph search: files loaded, bytes loaded, faces checked per character.
 const MAX_FALLBACK_FILES: usize = 24;
 const MAX_FALLBACK_BYTES: usize = 160 << 20;

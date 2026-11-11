@@ -24,7 +24,7 @@ pub use template::{qnew_template, set_qnew_template};
 /// endless device must be rejected before it exhausts memory (CWE-400), so native opens read
 /// through [`crate::capped_read`] rather than buffering to EOF.
 #[cfg(not(target_arch = "wasm32"))]
-const MAX_DRAWING_BYTES: usize = 512 << 20;
+pub(crate) const MAX_DRAWING_BYTES: usize = 512 << 20;
 /// Largest `.scr` script accepted from a local path.
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_SCRIPT_BYTES: usize = 64 << 20;
