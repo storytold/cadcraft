@@ -7,16 +7,32 @@ use super::{
 // NCOPY
 // =====================================================================================
 
-/// The leaf objects of a block reference in world coordinates (nested references expanded).
-fn nested_leaves(d: &cadcraft_doc::Drawing, ins: &cadcraft_doc::Insert, m: &Mat3, depth: usize, out: &mut Vec<(Common, EntityKind)>) {
+/// Block entities one NCOPY may visit in all, leaves or not: references to shared, empty or
+/// repeated sub-blocks multiply the visits (not the leaves) with each level of nesting.
+const MAX_VISITS: usize = 1_000_000;
+
+/// The leaf objects of a block reference in world coordinates (nested references expanded). An
+/// error when the nesting needs more than [`MAX_VISITS`] visits.
+fn nested_leaves(
+    d: &cadcraft_doc::Drawing,
+    ins: &cadcraft_doc::Insert,
+    m: &Mat3,
+    depth: usize,
+    visits: &mut usize,
+    out: &mut Vec<(Common, EntityKind)>,
+) -> Result<()> {
     if depth >= MAX_BLOCK_DEPTH || out.len() >= MAX_GEN {
-        return;
+        return Ok(());
     }
-    let Some(b) = d.block(&ins.block) else { return };
+    let Some(b) = d.block(&ins.block) else { return Ok(()) };
     let mm = m.then_before(ins.transform(b.base.xy()));
     for e in b.entities.iter() {
+        *visits += 1;
+        if *visits > MAX_VISITS {
+            return Err(other("The block reference nests too many objects to copy."));
+        }
         match &e.kind {
-            EntityKind::Insert(inner) => nested_leaves(d, inner, &mm, depth + 1, out),
+            EntityKind::Insert(inner) => nested_leaves(d, inner, &mm, depth + 1, visits, out)?,
             EntityKind::AttDef(_) => {}
             k => {
                 let mut k = k.clone();
@@ -25,13 +41,14 @@ fn nested_leaves(d: &cadcraft_doc::Drawing, ins: &cadcraft_doc::Insert, m: &Mat3
             }
         }
     }
+    Ok(())
 }
 
 fn leaves_of(s: &Session, h: Handle) -> Result<Vec<(Common, EntityKind)>> {
     let e = curves::entity(s, h)?;
     let EntityKind::Insert(ins) = &e.kind else { return Err(other("Select a block reference.")) };
     let mut out = Vec::new();
-    nested_leaves(s.doc()?, ins, &Mat3::IDENTITY, 0, &mut out);
+    nested_leaves(s.doc()?, ins, &Mat3::IDENTITY, 0, &mut 0, &mut out)?;
     Ok(out)
 }
 

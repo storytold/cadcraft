@@ -697,7 +697,7 @@ impl Session {
 }
 
 pub(crate) use drawing::from_json as drawing_from_json;
-pub(crate) use drawing::load_source;
+pub(crate) use drawing::{load_source, support_file};
 
 impl Session {
     /// A file APPLOAD loaded, by its name (with or without `.lsp`, any case).

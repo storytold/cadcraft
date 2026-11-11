@@ -1139,9 +1139,36 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
 }
 
+/// The file `name` names in the support folder, when it is there: what an autoload registration
+/// loads, so a same-named file in the working folder cannot take its place. `None` for an absolute
+/// path, no support folder or no such file there (the general search then applies, as before).
+pub fn support_file(s: &Session, name: &str) -> Option<String> {
+    if std::path::Path::new(name).is_absolute() {
+        return None;
+    }
+    let dir = s.lisp_support_dir()?;
+    let candidates =
+        if std::path::Path::new(name).extension().is_none() { vec![format!("{name}.lsp"), name.to_string()] } else { vec![name.to_string()] };
+    candidates.iter().map(|c| dir.join(c)).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[test]
+    fn autoload_prefers_the_support_folder_file() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-lisp-support-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lazy.lsp"), "").unwrap();
+        let mut s = Session::new();
+        assert_eq!(support_file(&s, "lazy"), None);
+        s.set_lisp_support_dir(Some(dir.clone()));
+        assert_eq!(support_file(&s, "lazy"), Some(dir.join("lazy.lsp").to_string_lossy().into_owned()));
+        assert_eq!(support_file(&s, "other"), None);
+        assert_eq!(support_file(&s, dir.join("lazy.lsp").to_str().unwrap()), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// One 64 KB string occurring many times is charged by its length each time.
     #[test]
