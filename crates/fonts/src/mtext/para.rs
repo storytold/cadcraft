@@ -677,6 +677,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = super::Allowance::new();
     for (l, (c, base_y)) in lines.iter().zip(placed) {
         let pp = paras.props(l.para);
         let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(c) } else { c };
@@ -696,7 +697,15 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         };
         for it in &l.items {
             let fm = fmt(it.fmt);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
             let mut sh = seg_shape(&it.seg, fm, it.x);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(col_x + shift + per_gap * it.gap as f64, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {
