@@ -163,6 +163,41 @@ The server prints its session and address at start and nothing per operation.
 Application logs use `sub`, `opId`, version and error codes; they never include
 drawing content, tokens or user paths.
 
+## The browser build (`apps/cadcraft-web`)
+
+The web build is the same `CadApp` behind eframe's web runner; its host bridge is
+`craft-web-host` (storytold/craft-libs). A page hosts it with `?host=parent` (an
+iframe) or `data-host="page"` on the canvas and speaks the messages of
+`INTEGRATION.md` §6 with the `cadcraft:` prefix.
+
+- **The document** arrives as `cadcraft:open { name, bytes }` with the session
+  (`INTEGRATION.md` §5.1). It opens in the window — it is not a room operation,
+  and the room refuses `open` — and the room's snapshot replaces it when the join
+  completes, so a second participant sees the edits made before it arrived. Once
+  the room's drawing has joined, a late `open` is refused instead of forking the
+  shared drawing; the cabinet reloads the editor to switch files.
+- **Commands** run locally only when the UI handles them (view, settings,
+  `document.switch`); everything else goes through `collab_command` as an
+  operation of the room. A viewer's operation is refused before it is sent and by
+  the room.
+- **Presence** carries the cursor, the selection, the space and the layer at the
+  server's 10 Hz pace, and the participant list reaches the cabinet as
+  `session-state` and `presence`. A shared session keeps painting at 10 Hz while
+  it is settled and at 16 ms while it is not: the snapshot joins in bounded
+  slices per frame and the reconnect timers run from socket callbacks.
+- **Save** asks the room to publish the file (`commit{expectedVersion}`); the room
+  writes it through the cabinet's callback (M87) and answers with the cabinet's
+  file version, which the app shows and records. A room without that callback
+  answers with the bytes, and the page's cabinet stores them (`cadcraft:commit`,
+  `cadcraft:committed`).
+- **Reconnect** is the transport's: the socket redials with backoff and the last
+  version, the room answers with the journal tail or a snapshot, and the cabinet
+  renews the ticket by sending a fresh `session`.
+- **The flag.** The build opens no session of its own: it joins one only when the
+  hosting page sends `cadcraft:session`. With no host, or a host that sends none
+  (the cabinet's `CRAFT_COLLAB_ENABLED` is off), the build stays single-user:
+  Open reads the browser's file picker, Save downloads, nothing dials a socket.
+
 ## What is still missing for a first production deployment
 
 - The desktop app joins a session with `--collab-url`, `--collab-doc` and
@@ -170,9 +205,11 @@ drawing content, tokens or user paths.
   list), sends every command that is not a UI/view command through
   `collab_command`, draws the other participants' cursors and names in the space
   being shown, and maps undo to the server's per-user step; the interactive
-  command line is refused in a shared session, and the web build's flag is not
-  wired yet.
+  command line is refused in a shared session. Unlike the web build, the desktop
+  window keeps the file it opened when the room's snapshot arrives, so two
+  desktops opened from different files can diverge.
 - WSS termination tested against the cabinet's ingress, and the cabinet's ACL
   and secret provisioning exercised end to end.
-- The web build's session messages (`cadcraft:session`, presence, commit) through
-  `craft-web-host` in `storytold/craft-libs`.
+- Access is revoked at the next reconnect: the room checks the token when a
+  socket opens and has no revoke message, so closing a participant's access
+  takes effect when its socket is redialled.

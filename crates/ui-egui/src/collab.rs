@@ -111,6 +111,20 @@ pub enum Update {
     Lost(String),
 }
 
+/// A 64-bit id for one window's operation ids.
+///
+/// The room answers a repeated `op_id` with the first answer and never applies it twice
+/// (ADR 0003), and its window is keyed by the id alone: two participants — or the same one after
+/// a reload — must not both send `local-0`. The id mixes the clock (milliseconds on the web), a
+/// process-wide counter (two windows of one process always differ) and the process id.
+pub(crate) fn run_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nth = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+    nanos.rotate_left(17) ^ nth.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(std::process::id()).rotate_left(48)
+}
+
 /// A connection to a shared session.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Collab {
@@ -571,13 +585,13 @@ impl crate::CadApp {
             return Some(Err("this shared session is read-only".into()));
         }
         if matches!(id, "u" | "undo") {
-            let op_id = format!("local-undo-{}", self.collab_seq);
+            let op_id = format!("{:016x}-undo-{}", self.collab_run, self.collab_seq);
             self.collab_seq = self.collab_seq.saturating_add(1);
             collab.send(Request::Undo(op_id));
             return Some(Ok(serde_json::json!({ "queued": true })));
         }
         if id == "redo" || id == "mr" {
-            let op_id = format!("local-redo-{}", self.collab_seq);
+            let op_id = format!("{:016x}-redo-{}", self.collab_run, self.collab_seq);
             self.collab_seq = self.collab_seq.saturating_add(1);
             collab.send(Request::Redo(op_id));
             return Some(Ok(serde_json::json!({ "queued": true })));
@@ -599,7 +613,7 @@ impl crate::CadApp {
         let clay = self.session.doc().ok().map(|drawing| drawing.header.str("CLAYER", "0"));
         let kind = if is_structural(id) { cadcraft_collab::OpKind::Structural } else { cadcraft_collab::OpKind::Command };
         let op = Op {
-            op_id: format!("local-{}", self.collab_seq),
+            op_id: format!("{:016x}-{}", self.collab_run, self.collab_seq),
             actor: String::new(),
             base_version: self.collab_version,
             kind,
@@ -634,7 +648,7 @@ impl crate::CadApp {
                     return Some(message);
                 }
             };
-            let op_id = format!("local-{}", self.collab_seq);
+            let op_id = format!("{:016x}-{}", self.collab_run, self.collab_seq);
             cadcraft_collab::cmdline::op_for(text, &state.doc, &state.space, &op_id, self.collab_version)
         };
         match op {
@@ -983,6 +997,17 @@ mod tests {
         assert_eq!(app.session.state().expect("a drawing").doc.entity_count(), 3, "the room's three lines");
         assert_eq!(app.collab_version, 12, "operations build on the room's version");
         assert!(app.collab_joined);
+    }
+
+    /// Operation ids are the room's repeat key (ADR 0003): two windows must not both send
+    /// `local-0`, or the room answers the second with the first one's change set and the edit is
+    /// never applied.
+    #[test]
+    fn two_windows_do_not_share_operation_ids() {
+        let one = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let two = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        assert_ne!(one.collab_run, two.collab_run, "each window has its own run id");
+        assert_ne!(super::run_id(), super::run_id(), "a later window in the same process differs too");
     }
 
     /// `cadcraft:committed` from a hosting page lands in the panel as the cabinet's file version,

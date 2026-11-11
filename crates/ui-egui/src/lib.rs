@@ -320,6 +320,10 @@ pub struct CadApp {
     /// Whether the shared session's participant list is open.
     pub show_participants: bool,
     collab_seq: u64,
+    /// Makes this window's operation ids unique in the room. The room answers a repeated `op_id`
+    /// with the first answer (ADR 0003), so two participants — or the same one after a reload —
+    /// must not both send `local-0`; the counter alone is not an id.
+    collab_run: u64,
     last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -425,6 +429,7 @@ impl CadApp {
             host_committed: None,
             show_participants: false,
             collab_seq: 0,
+            collab_run: collab::run_id(),
             last_presence: None,
             capture_geometry: None,
             capture_epoch: 0,
