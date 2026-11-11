@@ -161,3 +161,22 @@ fn stylesmanager_set_replies_with_the_change_not_the_whole_table() {
     let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
     assert_eq!(got["styles"].as_array().map(Vec::len), Some(1), "{got}");
 }
+
+/// A style name over 255 characters is stored cut to 255: the reply names the stored style, and
+/// setting the same long name again edits that style instead of adding one.
+#[test]
+fn stylesmanager_set_with_a_long_style_name_replies_with_the_stored_style() {
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    let long = "P".repeat(300);
+    let stored = "P".repeat(255);
+    let set = |lw: f64| json!({"action": "set", "name": "office.stb", "style": {"name": long, "lineweight": lw}});
+    let r = s.execute("stylesmanager", &set(0.3)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(30)), "{r}");
+    let r = s.execute("stylesmanager", &set(0.5)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(50)), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    let styles = got["styles"].as_array().unwrap();
+    assert_eq!(styles.len(), 2, "Normal and the one long-named style: {got}");
+    assert_eq!(styles[1]["lineweight"], 50, "{got}");
+}

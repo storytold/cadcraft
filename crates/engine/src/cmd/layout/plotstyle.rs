@@ -268,6 +268,9 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = p.get("style") {
                 let sname = v.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
                 let sname = sname.ok_or_else(|| bad(cmd, "`style.name` is required"))?;
+                // The name as it is stored (at most 255 characters, as `sanitized` cuts it), so a
+                // long name finds the style it was stored as and the reply finds the edited style.
+                let sname: &str = &sname.chars().take(255).collect::<String>();
                 changed = Some(sname.to_string());
                 let idx = match t.styles.iter().position(|x| x.name.eq_ignore_ascii_case(sname)) {
                     Some(i) => i,
@@ -275,7 +278,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                         if t.styles.len() >= cadcraft_doc::MAX_NAMED_STYLES {
                             return Err(bad(cmd, "the table has too many styles"));
                         }
-                        t.styles.push(PlotStyle::object(&sname.chars().take(255).collect::<String>()));
+                        t.styles.push(PlotStyle::object(sname));
                         t.styles.len() - 1
                     }
                     None => return Err(bad(cmd, format!("`{name}` has no style `{sname}` (colour-dependent styles are Color_1 to Color_255)"))),
