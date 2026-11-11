@@ -137,7 +137,7 @@ pub fn kind_of(code: i32) -> Kind {
 fn typed(code: i32, text: &str) -> Value {
     let t = text.trim();
     match kind_of(code) {
-        Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map(Value::Real).unwrap_or(Value::Real(0.0)),
+        Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map_or(Value::Real(0.0), Value::Real),
         Kind::Int16 | Kind::Int32 | Kind::Int64 => {
             // A float spelling ("1e3", "12.0") is accepted when finite, clamped to what the
             // group's width holds, signed or unsigned (files write 16-bit flags up to 65535, as
@@ -148,8 +148,7 @@ fn typed(code: i32, text: &str) -> Value {
                 _ => (i64::MIN, i64::MAX),
             };
             t.parse::<i64>()
-                .map(Value::Int)
-                .unwrap_or_else(|_| Value::Int(t.parse::<f64>().ok().filter(|f| f.is_finite()).map_or(0, |f| (f as i64).clamp(lo, hi))))
+                .map_or_else(|_| Value::Int(t.parse::<f64>().ok().filter(|f| f.is_finite()).map_or(0, |f| (f as i64).clamp(lo, hi))), Value::Int)
         }
         Kind::Bool => Value::Bool(t.parse::<i64>().unwrap_or(0) != 0),
         Kind::Hex => Value::Hex(normalize_hex(t)),
