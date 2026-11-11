@@ -539,8 +539,12 @@ impl Spline {
         let Some(n) = self.control.len().checked_sub(1) else { return 0.0 };
         let span = find_span(n, self.degree, (a + b) / 2.0, &self.knots);
         let first = span.saturating_sub(self.degree);
-        let local = self.control.get(first..=span.min(n)).unwrap_or_default();
-        1e-15 * local.iter().map(|c| c.x.abs().max(c.y.abs())).fold(0.0, f64::max)
+        let last = span.min(n);
+        let local = self.control.get(first..=last).unwrap_or_default();
+        // A control point's pull on the curve is its coordinate times its share of the weight, so a
+        // far point of tiny weight does not loosen the floor.
+        let heaviest = (first..=last).map(|i| self.weight(i)).fold(f64::MIN_POSITIVE, f64::max);
+        1e-15 * local.iter().enumerate().map(|(k, c)| c.x.abs().max(c.y.abs()) * (self.weight(first + k) / heaviest).min(1.0)).fold(0.0, f64::max)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
@@ -686,6 +690,15 @@ mod tests {
         assert!(l < 1e-15 && calls.get() < 100, "{l} {}", calls.get());
         let c = Spline::from_control(vec![Vec2::new(1e6, 1e6); 5], 3);
         assert!(c.length() < 1e-6);
+    }
+
+    #[test]
+    fn a_low_weight_control_point_does_not_relax_the_floor() {
+        let mut s = Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1e13, 0.0), Vec2::new(0.0, 0.0)], 2);
+        s.knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        s.weights = vec![1.0, 1e-13, 0.25];
+        let floor = s.length_floor(0.0, 1.0);
+        assert!(floor <= 1.5e-15, "{floor}");
     }
 
     /// A distant control point does not relax the tolerance of a span it does not shape.
