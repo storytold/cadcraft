@@ -183,3 +183,24 @@ fn a_block_named_like_the_keys_of_select_is_that_block_at_blockreplace() {
         assert!(asked.contains("replacement block for Σ"), "{typed}: {asked}");
     }
 }
+
+/// Λ is the L key. At COUNT's "Select object to count or [List/Spaces]" the Latin L is the selection
+/// word Last, not the List option: the Greek key is read the same way, and so is the whole word.
+#[test]
+fn a_greek_selection_word_wins_over_a_keyword_on_the_same_key() {
+    let answer = |typed: &str| {
+        let mut s = Session::new();
+        s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap();
+        s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap();
+        s.start("COUNT").unwrap();
+        let from = s.log.len();
+        s.cmdline(typed).unwrap();
+        s.log[from..].join("\n")
+    };
+    let last = answer("L");
+    assert!(last.contains("like the selected one"), "L counts the objects like the last one: {last}");
+    assert_ne!(last, answer("List"));
+    for typed in ["Λ", "λ", "ΛΑΣΤ"] {
+        assert_eq!(answer(typed), last, "{typed}");
+    }
+}
