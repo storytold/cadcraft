@@ -53,6 +53,18 @@ fn escape_brings_the_dialog_back_unchanged() {
 }
 
 #[test]
+fn escape_closes_the_dialog_as_cancel_does() {
+    let (mut app, _) = app_with_rect();
+    open_create(&mut app, false);
+    let ctx = egui::Context::default();
+    let mut open = true;
+    let esc = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+    let mut out = ctx.run_ui(egui::RawInput { events: vec![esc], ..Default::default() }, |ui| dialog(&mut app, ui.ctx(), &mut open));
+    out.textures_delta.clear();
+    assert!(!open && app.hatch_dlg.is_none());
+}
+
+#[test]
 fn switching_drawings_drops_the_dialog() {
     let (mut app, _) = app_with_rect();
     open_create(&mut app, false);
