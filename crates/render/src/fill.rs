@@ -39,13 +39,22 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
     // Slabs created by cutting at crossings, over the whole region; past this the remaining
     // crossings are left unsplit rather than letting a hostile input run away.
     let mut cuts_left = MAX_CROSSING_CUTS;
+    // Loop visits all the partitioning may make: an input that peels one loop off a big group at a
+    // time would rescan the rest each time, so past this a group is cut as it stands (as before partitioning existed).
+    let mut split_work = 64 * items.len() + 4_000_000;
     let mut stack = vec![items];
     while let Some(mut group) = stack.pop() {
         if group.is_empty() {
             continue;
         }
-        let parts = split_groups(&mut group, true);
-        let parts = if parts.len() > 1 { parts } else { split_groups(&mut group, false) };
+        let parts = match split_work.checked_sub(2 * group.len()) {
+            Some(rest) => {
+                split_work = rest;
+                let parts = split_groups(&mut group, true);
+                if parts.len() > 1 { parts } else { split_groups(&mut group, false) }
+            }
+            None => Vec::new(),
+        };
         if parts.len() > 1 {
             // Lowest-first when popped.
             stack.extend(parts.into_iter().rev());
@@ -239,6 +248,23 @@ mod tests {
         assert!((area(&t) - 4.0 * n as f64).abs() < 1e-6);
         // Two triangles per square: no slab was cut at another square's height.
         assert_eq!(t.len(), 6 * n);
+    }
+
+    /// Rectangles that peel off one at a time along alternating axes (each split isolates a single loop
+    /// from a large group) still triangulate correctly, with the partition work bounded.
+    #[test]
+    fn alternating_peeling_is_bounded_and_correct() {
+        let m = 1_000;
+        let (mf, mut loops) = (m as f64, Vec::new());
+        let rect = |x0: f64, x1: f64, y0: f64, y1: f64| vec![Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)];
+        for i in 0..m {
+            let i = i as f64;
+            loops.push(rect(2.0 * i, 2.0 * i + 1.0, 2.0 * i, 2.0 * mf));
+            loops.push(rect(2.0 * i + 2.0, 2.0 * mf + 1.0, 2.0 * i, 2.0 * i + 1.0));
+        }
+        let expected: f64 = (0..m).map(|i| (2.0 * mf - 2.0 * i as f64) + (2.0 * mf - 2.0 * i as f64 - 1.0)).sum();
+        let t = triangulate_evenodd(&loops);
+        assert!((area(&t) - expected).abs() < 1e-6 * expected, "{} vs {expected}", area(&t));
     }
 
     #[test]

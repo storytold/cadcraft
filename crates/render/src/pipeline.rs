@@ -222,6 +222,9 @@ pub(crate) fn with_point_view(d: &Drawing, space: &Space, opts: &Options) -> Opt
     o
 }
 
+/// Loose entity lists shorter than this look layers up by scanning them rather than building an index.
+const SMALL_LIST: usize = 64;
+
 /// Build the display list for a set of loose entities (previews, rubber bands).
 pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options) -> DisplayList {
     let ents: Vec<&Entity> = ents.into_iter().collect();
@@ -233,7 +236,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let layers = LayerIndex::new(d);
+    let layers = if ents.len() < SMALL_LIST { LayerIndex::linear() } else { LayerIndex::new(d) };
     let mut b = Builder {
         list: DisplayList::default(),
         opts,

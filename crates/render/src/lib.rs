@@ -81,7 +81,7 @@ fn max_scale(m: &Mat3) -> f64 {
 /// A drawing's layers by lower-cased name (the first of a duplicated name wins, as the table's own
 /// search does), built once per display list: a lookup per object over the layer vector multiplies
 /// the object count by the layer count.
-struct LayerIndex(std::collections::HashMap<String, usize>);
+struct LayerIndex(Option<std::collections::HashMap<String, usize>>);
 
 impl LayerIndex {
     fn new(d: &Drawing) -> Self {
@@ -89,7 +89,13 @@ impl LayerIndex {
         for (i, l) in d.layers.iter().enumerate() {
             m.entry(l.name.to_ascii_lowercase()).or_insert(i);
         }
-        LayerIndex(m)
+        LayerIndex(Some(m))
+    }
+
+    /// No index: lookups scan the layer vector, as `Drawing::layer` does. For a few objects (a
+    /// rubber band redrawn at every pointer move), where building an index would cost more.
+    fn linear() -> Self {
+        LayerIndex(None)
     }
 }
 
@@ -121,7 +127,8 @@ struct Ctx<'a> {
 impl Ctx<'_> {
     /// The layer called `name` (any case), as [`Drawing::layer`] finds it.
     fn layer(&self, name: &str) -> Option<&cadcraft_doc::Layer> {
-        let i = if name.bytes().any(|b| b.is_ascii_uppercase()) { self.layers.0.get(&name.to_ascii_lowercase()) } else { self.layers.0.get(name) };
+        let Some(map) = &self.layers.0 else { return self.d.layer(name) };
+        let i = if name.bytes().any(|b| b.is_ascii_uppercase()) { map.get(&name.to_ascii_lowercase()) } else { map.get(name) };
         i.and_then(|i| self.d.layers.get(*i))
     }
 

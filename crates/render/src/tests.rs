@@ -1227,9 +1227,10 @@ fn the_layer_index_agrees_with_the_layer_table() {
     let mut dup = cadcraft_doc::Layer::new("WALLS");
     dup.color = Color::Index(2);
     d.layers.extend([first, dup, cadcraft_doc::Layer::new("Doors")]);
-    let index = LayerIndex::new(&d);
-    let top = crate::pipeline::top_ctx(&d, &index, cadcraft_geom::Mat3::IDENTITY, cadcraft_doc::Handle(1), &[], &[]);
-    for name in ["Walls", "walls", "WALLS", "doors", "0", "Missing"] {
-        assert_eq!(top.layer(name).map(|l| (&l.name, l.color)), d.layer(name).map(|l| (&l.name, l.color)), "{name}");
+    for index in [LayerIndex::new(&d), LayerIndex::linear()] {
+        let top = crate::pipeline::top_ctx(&d, &index, cadcraft_geom::Mat3::IDENTITY, cadcraft_doc::Handle(1), &[], &[]);
+        for name in ["Walls", "walls", "WALLS", "doors", "0", "Missing"] {
+            assert_eq!(top.layer(name).map(|l| (&l.name, l.color)), d.layer(name).map(|l| (&l.name, l.color)), "{name}");
+        }
     }
 }
