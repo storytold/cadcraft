@@ -516,3 +516,23 @@ fn next_name_skips_names_in_use() {
     });
     assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d2");
 }
+
+#[test]
+fn a_fix_over_a_huge_component_is_refused_before_its_dense_factorisation() {
+    assert!(!super::qr_too_large(1_000, 1_000));
+    assert!(super::qr_too_large(3_000, 3_000));
+    assert!(super::qr_too_large(usize::MAX, 2));
+}
+
+#[test]
+fn a_spent_work_allowance_refuses_a_constraint_and_leaves_the_drawing() {
+    let mut d = Drawing::default();
+    let l = line(&mut d, (0.0, 0.0), (10.0, 0.01));
+    let before = d.clone();
+    let c = con(ConstraintKind::Horizontal, &[w(l)]);
+    assert!(matches!(add_within(&mut d, c.clone(), &SolveOptions::default(), &mut 0.0), Err(SolveError::TooLarge)));
+    assert_eq!(d, before);
+    let mut plenty = 1e9;
+    assert!(add_within(&mut d, c, &SolveOptions::default(), &mut plenty).is_ok());
+    assert!(plenty < 1e9, "the solve was charged");
+}

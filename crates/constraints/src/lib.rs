@@ -53,6 +53,14 @@ const MAX_ITER: usize = 200;
 /// Largest residual-evaluation work (including spline rebuilds) one numerical Jacobian may take,
 /// shared by solving, redundancy checks and DOF analysis.
 pub(crate) const MAX_EVAL_WORK: f64 = 2e9;
+/// Most multiply-adds (rows x columns squared) of the dense rank factorisations one Fix makes:
+/// about a thousand parameters locked at once is 1e9; 2e10 is a few seconds.
+const MAX_QR_WORK: f64 = 2e10;
+
+/// Whether a dense rank factorisation of a `rows` x `cols` matrix passes [`MAX_QR_WORK`].
+fn qr_too_large(rows: usize, cols: usize) -> bool {
+    (rows as f64) * (cols as f64) * (cols as f64) > MAX_QR_WORK
+}
 /// Residual evaluations a solver iteration makes besides its Jacobian (damped trial steps).
 const TRIAL_EVALS: f64 = 14.0;
 
@@ -741,7 +749,14 @@ pub fn purge_invalid(d: &mut Drawing) -> Vec<u32> {
 /// Add a constraint: assigns its id (and name/expression for dimensional constraints when
 /// empty), refuses redundant or conflicting constraints, solves and writes the geometry back.
 /// On error the drawing is unchanged.
-pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u32, SolveError> {
+pub fn add(d: &mut Drawing, c: Constraint, opts: &SolveOptions) -> Result<u32, SolveError> {
+    let mut unlimited = f64::INFINITY;
+    add_within(d, c, opts, &mut unlimited)
+}
+
+/// [`add`] charging the solve's residual-evaluation work to `work`: `TooLarge` (nothing changed)
+/// once it would take more than is left.
+pub(crate) fn add_within(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions, work: &mut f64) -> Result<u32, SolveError> {
     if d.constraints.len() >= MAX_CONSTRAINTS {
         return Err(SolveError::Other("too many constraints".into()));
     }
@@ -777,6 +792,10 @@ pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u3
     let Some(comp) = comps.into_iter().find(|k| k.built.iter().any(|b| b.id == id)) else {
         return Err(SolveError::Invalid { id, msg: "could not be interpreted".into() });
     };
+    *work -= comp.eval_work(&comp.free(None), None);
+    if *work < 0.0 {
+        return Err(SolveError::TooLarge);
+    }
     let o = comp.run(None)?;
     if !o.converged {
         // The new constraint first, then the existing ones it fights with.
@@ -819,6 +838,10 @@ pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u3
         let locked: Vec<usize> = before.iter().enumerate().filter(|(_, j)| !after.contains(j)).map(|(k, _)| k).collect();
         let rows_old = comp.rows(Some(pos));
         let nf = before.len();
+        // The synthetic lock rows enlarge the matrix after the solver's own limits were checked.
+        if qr_too_large(rows_old + locked.len(), nf) {
+            return Err(SolveError::TooLarge);
+        }
         let f = |x: &[f64], out: &mut Vec<f64>| comp.eval(x, out, Some(pos));
         let mut jac = lm::jacobian(&f, &o.x, &before, rows_old);
         let r_old = lm::rank_qr(&jac, rows_old, nf);

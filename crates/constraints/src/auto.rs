@@ -8,6 +8,9 @@ use cadcraft_geom::{Line, Vec2};
 pub const MAX_OBJECTS: usize = 200;
 /// Most candidates returned.
 pub const MAX_CANDIDATES: usize = 2000;
+/// Residual-evaluation work all the solves of one AUTOCONSTRAIN may make together (four
+/// full-size solves; a few thousand small ones).
+const MAX_AUTO_WORK: f64 = 4.0 * crate::MAX_EVAL_WORK;
 
 /// Inference options.
 #[derive(Clone, Debug)]
@@ -310,9 +313,14 @@ fn on_arc(d: &Drawing, h: Handle, c: Vec2, p: Vec2) -> bool {
 /// candidates are skipped.
 pub fn autoconstrain(d: &mut Drawing, handles: &[Handle], o: &InferOptions) -> Vec<u32> {
     let mut added = Vec::new();
+    // One allowance of solver work for all the candidates: each is a full solve of its component.
+    let mut work = MAX_AUTO_WORK;
     for c in infer(d, handles, o) {
-        if let Ok(id) = crate::add(d, c, &crate::SolveOptions::default()) {
-            added.push(id);
+        match crate::add_within(d, c, &crate::SolveOptions::default(), &mut work) {
+            Ok(id) => added.push(id),
+            // The allowance is spent: what was added stays, the remaining candidates are not tried.
+            Err(crate::SolveError::TooLarge) if work < 0.0 => break,
+            Err(_) => {}
         }
     }
     added
