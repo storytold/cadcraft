@@ -624,7 +624,13 @@ impl CadApp {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
             let json_form = text.trim_start().get(first.len()..).is_some_and(|rest| rest.trim_start().starts_with('{'));
-            if !first.is_empty() && !json_form && menus::run_ui_command(self, &first.to_ascii_lowercase(), &Value::Null).is_some() {
+            // A name typed with the Greek keyboard layout active (ΨΛΟΣΕ for CLOSE) is the Latin name's
+            // keys, unless it is a command of its own, as it is when the engine starts it: the
+            // interface's own commands answer to it too (CLOSE asks about unsaved changes).
+            let name = cadcraft_engine::keyboard::latin_keys(first)
+                .filter(|_| !self.session.greek_word_is_a_command(first))
+                .unwrap_or_else(|| first.to_ascii_lowercase());
+            if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }
         }
