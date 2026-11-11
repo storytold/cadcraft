@@ -942,7 +942,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             && let Some(end) = ui.input(|i| i.pointer.interact_pos())
         {
             let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input_with_shift(Input::Point(end), mods.shift) } else { app.session.idle_click(end, mods.shift) };
+            let done = if app.session.prompting() {
+                app.session.input_with_shift(Input::Point(end), mods.shift)
+            } else {
+                app.session.idle_click(end, mods.shift)
+            };
             if let Err(e) = done {
                 app.session.echo(e.to_string());
             }

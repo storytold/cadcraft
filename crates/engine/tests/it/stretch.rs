@@ -1,9 +1,9 @@
 //! STRETCH: repeated crossing selections until Enter, the `C`/`W` selection keywords, and the
 //! Displacement option (typed, or Enter at the base point prompt).
 
-use cadcraft_engine::{Input, Session};
 use cadcraft_engine::doc::EntityKind;
 use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::{Input, Session};
 
 /// Every line as ((ax, ay), (bx, by)), sorted by the first x.
 fn lines(s: &Session) -> Vec<((f64, f64), (f64, f64))> {
