@@ -128,7 +128,10 @@ const MAX_DEDUP_COMPARISONS: u64 = 50_000_000;
 /// within islands alternate), 1 outer keeps the outermost loops and their first islands, 2
 /// ignore keeps only the outermost loops. Nesting depth = how many other loops enclose a loop.
 pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
-    let mut loops: Vec<Vec<Vec2>> = h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(tol)).collect();
+    // One point budget for all the loops: many short arcs across loops must not add up unbounded.
+    let mut budget = cadcraft_geom::MAX_TESSELLATED_POINTS;
+    let mut loops: Vec<Vec<Vec2>> =
+        h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate_within(tol, &mut budget)).collect();
     dedup_polygons(&mut loops);
     let max_depth = match h.style {
         1 => 1,
