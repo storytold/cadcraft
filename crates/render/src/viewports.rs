@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::display::append;
-use super::display::{DImage, DPrim, DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
+use super::display::{DImage, DPrim, DisplayList, Kind, ListUnderlay, NO_LAYER, PageClip, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
@@ -208,9 +208,13 @@ pub(crate) enum Clip<'a> {
 
 /// Append `src` to `dst`, clipped to `clip`.
 pub(crate) fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
-    for p in &src.prims {
+    let page_clip = page_clip(src, clip);
+    let mut pages = src.underlays.iter().peekable();
+    for (i, p) in src.prims.iter().enumerate() {
+        push_pages(dst, &mut pages, i, &page_clip);
         clip_prim(dst, src, p, clip);
     }
+    push_pages(dst, &mut pages, usize::MAX, &page_clip);
 }
 
 /// Append `src` to `dst` clipped to `clip`, keeping each primitive's plot style pen and, for a
@@ -218,7 +222,10 @@ pub(crate) fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Cl
 pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
     let texts: std::collections::HashMap<usize, &PlotText> =
         src.texts.iter().filter(|t| t.prim != PlotText::NONE && t.prim != PlotText::CLIPPED).map(|t| (t.prim as usize, t)).collect();
+    let page_clip = page_clip(src, clip);
+    let mut pages = src.underlays.iter().peekable();
     for (i, p) in src.prims.iter().enumerate() {
+        push_pages(dst, &mut pages, i, &page_clip);
         let first = dst.prims.len();
         clip_prim(dst, src, p, clip);
         // Each piece keeps its source's layer (block contents not on layer 0 keep theirs).
@@ -242,6 +249,28 @@ pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip
         {
             dst.texts.push(PlotText { prim, ..(**t).clone() });
         }
+    }
+    push_pages(dst, &mut pages, usize::MAX, &page_clip);
+}
+
+/// The clip of `src`'s PDF underlay pages under `clip`: they keep their place among the clipped
+/// primitives and are clipped alike. A page, like an image, can only be cut to the inside of an
+/// outline, so under an inverted XCLIP it is drawn whole.
+fn page_clip(src: &DisplayList, clip: &Clip) -> PageClip {
+    if src.underlays.is_empty() {
+        return PageClip::None;
+    }
+    match clip {
+        Clip::Rect(r) => PageClip::Rect(*r),
+        Clip::Poly(c) => PageClip::Poly(std::sync::Arc::new((*c).clone())),
+        Clip::Outside(_) => PageClip::None,
+    }
+}
+
+/// Append to `dst` the underlay pages of `pages` that come before primitive `i` of their list.
+fn push_pages(dst: &mut DisplayList, pages: &mut std::iter::Peekable<std::slice::Iter<ListUnderlay>>, i: usize, clip: &PageClip) {
+    while let Some(u) = pages.next_if(|u| u.at as usize <= i) {
+        dst.underlays.push(ListUnderlay { at: dst.prims.len() as u32, clip: clip.clone(), ..u.clone() });
     }
 }
 

@@ -132,6 +132,14 @@ mod web {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // PDF underlays read their pages.
+        cadcraft_engine::cmd::underlay::set_pdf(cadcraft_engine::cmd::underlay::PdfHooks {
+            page: cadcraft_io::pdf_read::page_info,
+            render: cadcraft_io::pdf_read::render_page,
+            region: cadcraft_io::pdf_read::render_page_region,
+            layers: cadcraft_io::pdf_layers::layer_list,
+            with_layers: cadcraft_io::pdf_layers::apply_layers,
+        });
         // `?host=parent`: a same-origin page framing CADCraft (such as a Nextcloud app) opens
         // drawings in it and stores what it saves. Otherwise `data-host="page"` on the canvas
         // opts in a page that runs CADCraft in its own document (no iframe) and talks over DOM
