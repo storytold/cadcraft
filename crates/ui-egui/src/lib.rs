@@ -38,6 +38,8 @@ pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
+/// The PDF Underlay dialog.
+mod pdfattach_dlg;
 pub mod spacemouse;
 pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
@@ -228,7 +230,7 @@ pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Where set, the file dialogs are shown with this instead of calling `pick_open` /
-    /// `pick_save` / `pick_lisp` (which must still be set, to say which dialogs there are), and
+    /// `pick_save` / `pick_lisp` / `pick_pdf` (which must still be set, to say which dialogs there are), and
     /// the answer is acted on in a later frame ([`CadApp::pick_then`]). macOS needs it: a panel run modally
     /// inside the window's event handler gets the window events of its own resizing sent back
     /// into that handler, and winit aborts the app (#1527).
@@ -242,16 +244,20 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// Choose a PDF file (PDFATTACH).
+    pub pick_pdf: Option<Box<dyn Fn() -> Option<String>>>,
 }
 
 /// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
-/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one), or
+/// PDFATTACH's PDF picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pick {
     Open,
     Save(String),
     Lisp(String),
     Pgp(String),
+    Pdf,
 }
 
 /// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
@@ -466,6 +472,7 @@ impl CadApp {
             Pick::Save(_) => self.services.pick_save.is_some(),
             Pick::Lisp(_) => self.services.pick_lisp.is_some(),
             Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+            Pick::Pdf => self.services.pick_pdf.is_some(),
         };
         if !available {
             return None;
@@ -498,6 +505,7 @@ impl CadApp {
             Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
             Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
             Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+            Pick::Pdf => self.services.pick_pdf.as_ref().and_then(|f| f()),
         };
         Some(match path {
             Some(path) => then(self, path),

@@ -1,5 +1,5 @@
-//! EXPORT, IMPORT, PUBLISH and PREVIEW from a menu, the tool bar or the command line: the first
-//! three ask for a file, PREVIEW shows the plot in a window. Calls with parameters (scripts, the
+//! EXPORT, IMPORT, PDFATTACH, PUBLISH and PREVIEW from a menu, the tool bar or the command line:
+//! the first four ask for a file, PREVIEW shows the plot in a window. Calls with parameters (scripts, the
 //! control channel, MCP) never get here and never open a dialog: they run the engine commands.
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -26,6 +26,13 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => app
             .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
+        // The file chosen, the PDF Underlay dialog shows its pages and the placement.
+        "pdfattach" => app
+            .pick_then(Pick::Pdf, |app, path| {
+                app.ui.dialog = Some(format!("pdfattach:{path}"));
+                Ok(Value::Null)
+            })
+            .unwrap_or_else(|| no_picker(app, "PDFATTACH", r#"pdfattach {"path": "plan.pdf"}"#)),
         "publish" => app
             .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
@@ -154,7 +161,7 @@ mod tests {
     /// An app whose file dialogs record what they were asked and cancel.
     fn app() -> (CadApp, Rc<RefCell<Vec<String>>>) {
         let asked = Rc::new(RefCell::new(Vec::new()));
-        let (a, b) = (asked.clone(), asked.clone());
+        let (a, b, c) = (asked.clone(), asked.clone(), asked.clone());
         let services = Services {
             pick_open: Some(Box::new(move || {
                 a.borrow_mut().push("open".into());
@@ -162,6 +169,10 @@ mod tests {
             })),
             pick_save: Some(Box::new(move |name: &str| {
                 b.borrow_mut().push(name.to_string());
+                None
+            })),
+            pick_pdf: Some(Box::new(move || {
+                c.borrow_mut().push("pdf".into());
                 None
             })),
             ..Services::default()
@@ -175,7 +186,8 @@ mod tests {
         app.start("export");
         app.cmdline("PUBLISH");
         app.start("imp");
-        assert_eq!(*asked.borrow(), ["Drawing1.svg", "Drawing1.pdf", "open"]);
+        app.cmdline("PDFATTACH");
+        assert_eq!(*asked.borrow(), ["Drawing1.svg", "Drawing1.pdf", "open", "pdf"]);
         assert!(app.ui.dialog.is_none());
         app.cmdline("pre");
         assert_eq!(app.ui.dialog.as_deref(), Some("preview"));
@@ -187,9 +199,10 @@ mod tests {
         let _ = app.run("export", json!({ "format": "svg" }));
         let _ = app.run("import", json!({}));
         let _ = app.run("publish", json!({ "layouts": [] }));
+        let _ = app.run("pdfattach", json!({}));
         let r = app.run("preview", json!({ "width": 64 })).unwrap();
         assert!(r["data"].is_string());
-        assert_eq!(asked.borrow().len(), 3, "JSON calls never open a file dialog");
+        assert_eq!(asked.borrow().len(), 4, "JSON calls never open a file dialog");
         assert!(app.ui.dialog.is_none(), "nor the preview window");
 
         let e = app.run("share", json!({})).unwrap_err();
@@ -208,6 +221,7 @@ mod tests {
             pick_open: Some(Box::new(|| None)),
             pick_save: Some(Box::new(|_: &str| None)),
             pick_lisp: Some(Box::new(|_: &str| None)),
+            pick_pdf: Some(Box::new(|| None)),
             start_pick: Some(Box::new(move |pick, done| {
                 log.borrow_mut().push(pick);
                 *slot.borrow_mut() = Some(done);
@@ -255,6 +269,20 @@ mod tests {
         app.finish_pick(&ctx);
         assert!(app.pending_pick.is_none());
         assert!(app.status.is_some(), "IMPORT ran with the picked file and reported its error");
+    }
+
+    /// PDFATTACH's PDF picker is shown without waiting too (macOS, #1527): the PDF Underlay
+    /// dialog opens on the file once the answer arrives.
+    #[test]
+    fn pdfattach_waits_for_its_pdf_dialog() {
+        let (mut app, asked, answer) = deferred_app();
+        let ctx = egui::Context::default();
+        app.cmdline("PDFATTACH");
+        assert_eq!(*asked.borrow(), [Pick::Pdf]);
+        assert!(app.pending_pick.is_some() && app.ui.dialog.is_none(), "nothing opens before the answer");
+        answer.borrow_mut().take().unwrap()(Some("plan.pdf".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(app.ui.dialog.as_deref(), Some("pdfattach:plan.pdf"));
     }
 
     /// A dialog's answer acts on the drawing that asked for it, even when another drawing was

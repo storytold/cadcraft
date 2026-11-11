@@ -37,7 +37,18 @@ fn fan(outline: &[Vec2]) -> DisplayList {
 fn callback(list: &DisplayList, layer: usize, key: u64, stencil: Stencil) -> CanvasCallback {
     let slot: MeshSlot = Arc::default();
     *slot.lock().unwrap() = Some(gpu::build_mesh(list, Vec2::ZERO, cadcraft_color::Rgb(255, 255, 255), false));
-    CanvasCallback { key, slot, offset: [-32.0, -32.0], scale: 1.0, center: [32.0, 32.0], layer, xform: gpu::IDENTITY_XFORM, dash: 0.0, stencil }
+    CanvasCallback {
+        key,
+        slot,
+        offset: [-32.0, -32.0],
+        scale: 1.0,
+        center: [32.0, 32.0],
+        layer,
+        xform: gpu::IDENTITY_XFORM,
+        groups: gpu::ALL_GROUPS,
+        dash: 0.0,
+        stencil,
+    }
 }
 
 /// Render the callbacks in order into a white target with a cleared stencil buffer; returns

@@ -595,8 +595,13 @@
 	Quit CADCraft	退出 CADCraft
 	Radius	半径
 	Raster Image	光栅图像
+	PDF Underlay	PDF 参考底图
+	PDF Underlay...	PDF 参考底图...
+	Adjust	调整
+	Adjust PDF Underlay	调整 PDF 参考底图
 	Raster Image Reference...	光栅图像参照...
 	Raster Images	光栅图像
+	Clip PDF Underlay	剪裁 PDF 参考底图
 	Ray	射线
 	Read-only	只读
 	Real name	真实姓名

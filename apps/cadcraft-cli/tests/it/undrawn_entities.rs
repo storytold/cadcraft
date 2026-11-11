@@ -26,7 +26,8 @@ impl Drop for Scratch {
     }
 }
 
-/// A line, two foreign REGIONs and a PDF underlay: the last three are kept as unknown entities.
+/// A line, two foreign REGIONs, kept as unknown entities, and a PDF underlay without its PDF,
+/// whose page an image can't draw.
 const PROXIES: &str = "0\nSECTION\n2\nENTITIES\n\
 0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n5\n\
 0\nREGION\n8\n0\n70\n1\n1\nabc\n\
@@ -44,7 +45,8 @@ fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
 
     let out = cli(&["info", input]);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["counts"]["Proxy"], 3, "{v}");
+    assert_eq!(v["counts"]["Proxy"], 2, "{v}");
+    assert_eq!(v["counts"]["PDF Underlay"], 1, "{v}");
 
     for ext in ["svg", "png", "pdf"] {
         let image = dir.join(format!("out.{ext}"));

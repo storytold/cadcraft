@@ -159,19 +159,28 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 }
 
 /// The warning for the model-space entities of `path` an image can't show, by type (those kept
-/// as unknown objects, `Proxy` in `info`), or `None` when there are none.
+/// as unknown objects, `Proxy` in `info`, and PDF underlays whose PDF wasn't found: only their
+/// frame is drawn), or `None` when there are none.
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     let mut ole = 0usize;
     for e in d.model.iter() {
         // An OLE2FRAME's frame outline is drawn, so it isn't an undrawn entity; its content is
-        // not, which gets a note of its own.
-        if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
-            if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
-                ole = ole.saturating_add(1);
-                continue;
+        // not, which gets a note of its own. An underlay whose PDF wasn't found on opening has
+        // no page size, and no page to draw.
+        let undrawn = match &e.kind {
+            cadcraft_engine::doc::EntityKind::Unknown(u) => {
+                if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
+                    ole = ole.saturating_add(1);
+                    continue;
+                }
+                Some(u.dxf_type.as_str())
             }
-            let n = types.entry(u.dxf_type.as_str()).or_insert(0);
+            cadcraft_engine::doc::EntityKind::PdfUnderlay(u) if u.size.x <= 0.0 => Some("PDFUNDERLAY"),
+            _ => None,
+        };
+        if let Some(t) = undrawn {
+            let n = types.entry(t).or_insert(0);
             *n = n.saturating_add(1);
         }
     }

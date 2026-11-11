@@ -76,6 +76,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     // XCLIP boundaries: 0 hidden, 1 shown and plotted, 2 shown but not plotted.
     ("XCLIPFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
+    // PDF underlays' frame: 0 none, 1 shown and plotted, 2 shown but not plotted.
+    ("PDFFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.

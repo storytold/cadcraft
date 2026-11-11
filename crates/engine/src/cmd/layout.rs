@@ -845,6 +845,10 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             Some(t) => o.insert("plotTransparency".into(), json!(t)),
             None => o.remove("plotTransparency"),
         };
+        // PDF underlays' relative paths are found from the drawing's folder.
+        if let Some(path) = s.state().ok().and_then(|st| st.path.clone()) {
+            o.insert("document".into(), json!(path));
+        }
     }
     // A PNG or SVG holds one render: several sheets would report `pages: N` but write only one.
     if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
