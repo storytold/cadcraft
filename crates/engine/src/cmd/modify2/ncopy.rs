@@ -44,11 +44,11 @@ fn nested_leaves(
     Ok(())
 }
 
-fn leaves_of(s: &Session, h: Handle) -> Result<Vec<(Common, EntityKind)>> {
+fn leaves_of(s: &Session, h: Handle, visits: &mut usize) -> Result<Vec<(Common, EntityKind)>> {
     let e = curves::entity(s, h)?;
     let EntityKind::Insert(ins) = &e.kind else { return Err(other("Select a block reference.")) };
     let mut out = Vec::new();
-    nested_leaves(s.doc()?, ins, &Mat3::IDENTITY, 0, &mut 0, &mut out)?;
+    nested_leaves(s.doc()?, ins, &Mat3::IDENTITY, 0, visits, &mut out)?;
     Ok(out)
 }
 
@@ -70,7 +70,7 @@ fn place_copies(s: &mut Session, items: &[(Common, EntityKind)], delta: Vec2) ->
 
 pub(super) fn run_ncopy(s: &mut Session, p: &Value) -> Result<Value> {
     let h = targets(s, p)?.first().copied().ok_or_else(|| bad("ncopy", "`handle` (block reference) is required"))?;
-    let leaves = leaves_of(s, h)?;
+    let leaves = leaves_of(s, h, &mut 0)?;
     let items: Vec<(Common, EntityKind)> = match point_param(p, "pick") {
         Some(q) => nearest_leaf(leaves, q).into_iter().collect(),
         None => leaves,
@@ -91,6 +91,8 @@ pub(super) fn run_ncopy(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) struct NcopyM {
     items: Vec<(Common, EntityKind)>,
     selecting_done: bool,
+    /// Block entities visited by every selection so far: one allowance for the whole command.
+    visits: usize,
     base: Option<Vec2>,
 }
 
@@ -114,7 +116,7 @@ impl Interactive for NcopyM {
             return match i {
                 Input::Point(p) => {
                     let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
-                    let leaf = nearest_leaf(leaves_of(s, h)?, p).ok_or_else(|| other("Nothing nested there."))?;
+                    let leaf = nearest_leaf(leaves_of(s, h, &mut self.visits)?, p).ok_or_else(|| other("Nothing nested there."))?;
                     s.echo(format!("Nested object: {}", leaf.1.type_name()));
                     if self.items.len() < MAX_GEN {
                         self.items.push(leaf);

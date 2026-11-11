@@ -183,6 +183,7 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     let selected = selected_tags(&ents, d, o);
     let mut out = Vec::new();
     let mut used = 0usize;
+    let mut const_sizes: HashMap<String, usize> = HashMap::new();
     let mut consts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for e in &ents {
         let EntityKind::Insert(ins) = &e.kind else { continue };
@@ -191,13 +192,30 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
             continue;
         }
         let block = d.block(&ins.block).map(|b| b.name.clone()).unwrap_or_else(|| ins.block.clone());
+        // Charged from the lengths, before any text is copied.
+        let selected_bytes: usize =
+            ins.attribs.iter().filter(|a| selected.contains(&a.tag.to_ascii_uppercase())).map(|a| a.text.value.len() + a.tag.len()).sum();
+        // The constants every row also copies (an upper bound: an attribute of the reference overrides one).
+        let const_bytes = *const_sizes.entry(block.clone()).or_insert_with(|| {
+            d.block(&ins.block).map_or(0, |b| {
+                b.entities
+                    .iter()
+                    .filter_map(|e| match &e.kind {
+                        EntityKind::AttDef(a) if a.constant && selected.iter().any(|t| t == &a.tag.to_ascii_uppercase()) => {
+                            Some(a.tag.len() + a.text.value.len())
+                        }
+                        _ => None,
+                    })
+                    .sum()
+            })
+        });
+        charge(&mut used, selected_bytes.saturating_add(const_bytes), MAX_VALUE_BYTES)?;
         let values = values(
             ins,
             // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
             consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &selected)).unwrap_or_default()),
             &selected,
         );
-        charge(&mut used, values.iter().map(|(t, v)| t.len() + v.len()).sum(), MAX_VALUE_BYTES)?;
         out.push(Found {
             handle: e.handle.hex(),
             layer: e.common.layer.clone(),

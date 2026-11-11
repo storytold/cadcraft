@@ -502,6 +502,20 @@ fn frame_books(d: &Drawing, frame_height: f64, unit: f64) -> (Vec<Vec<Frame>>, u
 /// drawing).
 const MAX_BOOK_WORK: u64 = 500_000_000;
 
+/// Objects one page draws: the model's objects, and the contents of each block reference (once per
+/// array cell; nested blocks count as their own entries).
+fn model_visits(d: &Drawing) -> usize {
+    d.model
+        .iter()
+        .map(|e| match &e.kind {
+            EntityKind::Insert(i) => {
+                d.block(&i.block).map_or(1, |b| 1 + b.entities.len().saturating_mul((i.rows as usize).saturating_mul(i.cols as usize)))
+            }
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
 /// Whether `frames` pages of a model with `entities` objects stay within [`MAX_BOOK_WORK`].
 fn book_work_fits(frames: usize, entities: usize) -> bool {
     (frames as u64).saturating_mul(entities as u64) <= MAX_BOOK_WORK
@@ -518,7 +532,7 @@ fn run_pdfbook(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("pdfbook", format!("no closed polylines {frame_height} mm high (sheet frames) in model space")));
     }
     let sheets: usize = books.iter().map(Vec::len).sum();
-    if !book_work_fits(sheets, s.doc()?.model.len()) {
+    if !book_work_fits(sheets, model_visits(s.doc()?)) {
         return Err(bad(
             "pdfbook",
             format!("{sheets} sheets of a model this large are too much work for one command; plot part of the drawing at a time"),

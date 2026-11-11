@@ -796,5 +796,6 @@ fn ncopy_charges_every_nested_visit() {
     }
     d.blocks.insert("B15".into(), std::sync::Arc::new(Block::new("B15")));
     let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(Insert { block: "B0".into(), ..Insert::default() })).unwrap();
-    assert!(s.execute("ncopy", &json!({ "handle": h.hex() })).is_err());
+    let err = s.execute("ncopy", &json!({ "handle": h.hex() })).unwrap_err().to_string();
+    assert!(err.contains("nests too many objects"), "{err}");
 }

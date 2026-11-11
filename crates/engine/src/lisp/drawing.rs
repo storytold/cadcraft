@@ -1128,7 +1128,9 @@ pub fn trans(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 /// What `(load name)` reads: a file loaded through APPLOAD (the web), or one on disk, with
 /// `.lsp` added when the name has no extension.
 pub fn load_source(s: &Session, name: &str) -> Option<String> {
-    if let Some(t) = s.lisp_file(name) {
+    // An absolute path names a file, not an APPLOAD entry that happens to share its base name.
+    let absolute = std::path::Path::new(name).is_absolute();
+    if !absolute && let Some(t) = s.lisp_file(name) {
         return Some(t);
     }
     let candidates =
@@ -1136,7 +1138,7 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     // As given (a path, or relative to the working folder), then in the support folder.
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
+    candidates.iter().chain(&support).find_map(super::builtins::read_text_file).or_else(|| if absolute { s.lisp_file(name) } else { None })
 }
 
 /// The file `name` names in the support folder, when it is there: what an autoload registration
