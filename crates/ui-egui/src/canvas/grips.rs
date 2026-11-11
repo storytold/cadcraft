@@ -3,6 +3,10 @@ use super::{CadApp, Handle, Input, Pos2, Rect, Xf, vec2};
 /// A click on grip `g` (idle): Shift+click makes it hot or cold again; a plain click starts
 /// editing it, with the other hot grips when it is one of them.
 pub(super) fn click_grip(app: &mut CadApp, g: (Handle, usize), shift: bool) {
+    // A hot grip whose object was hidden since (a layer turned off, HIDEOBJECTS) is no longer
+    // painted, so it must not be stretched along with the visible ones.
+    let Ok(st) = app.session.state() else { return };
+    app.canvas.hot_grips.retain(|(h, _)| st.doc.entity(*h).is_some_and(|e| st.doc.is_visible(e)));
     let hot = &mut app.canvas.hot_grips;
     if shift {
         match hot.iter().position(|x| *x == g) {

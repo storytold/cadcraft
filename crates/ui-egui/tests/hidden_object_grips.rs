@@ -6,6 +6,7 @@ use cadcraft_engine::{Session, View};
 use cadcraft_ui_egui::{CadApp, Services, theme::Tokens};
 use serde_json::json;
 
+/// An app with two lines, the second hidden by HIDEOBJECTS, and an empty selection.
 fn drawing_with_hidden_object() -> (CadApp, Handle, Handle) {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.ui.start_tab = false;
@@ -23,6 +24,7 @@ fn drawing_with_hidden_object() -> (CadApp, Handle, Handle) {
     (app, regular, hidden)
 }
 
+/// The grip rectangles (filled with `color`) inside `canvas` among the painted shapes.
 fn count_grips(shape: &egui::Shape, canvas: egui::Rect, color: egui::Color32) -> usize {
     match shape {
         egui::Shape::Rect(rect) => usize::from(rect.fill == color && canvas.contains(rect.rect.center())),
@@ -31,6 +33,7 @@ fn count_grips(shape: &egui::Shape, canvas: egui::Rect, color: egui::Color32) ->
     }
 }
 
+/// Runs one frame of the app and counts the grip rectangles painted on its canvas.
 fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
     app.logic(ctx);
     let input = egui::RawInput {
@@ -45,6 +48,7 @@ fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
     output.shapes.iter().map(|shape| count_grips(&shape.shape, canvas, color)).sum()
 }
 
+/// A selected ordinary line paints its grips; the same selection of a hidden line paints none.
 #[test]
 fn a_hidden_selection_paints_no_grips_while_an_ordinary_selection_does() {
     let (mut app, regular, hidden) = drawing_with_hidden_object();
