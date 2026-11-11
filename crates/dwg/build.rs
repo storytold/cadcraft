@@ -1,5 +1,5 @@
-//! Sets `no_dwg_bridge` on the target built without acadrust (see Cargo.toml): the DWG functions
-//! there return an error that says to use DXF.
+//! Sets `no_dwg_bridge` on the target built without acadrust, FreeBSD aarch64 (see Cargo.toml):
+//! the DWG functions there return an error that says to use DXF.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

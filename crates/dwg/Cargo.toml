@@ -15,7 +15,9 @@ log = { workspace = true }
 # acadrust 0.6.6 passes a `*const c_char` (u8 there) to its own `*const i8` sysctlbyname.
 # 0.6.7 and 0.6.8 fix that but read some damaged DWGs as empty with no note (tests.rs, #800).
 # wasm32 builds it: acadrust uses `web-time` for its clocks and runs its parallel stages
-# sequentially there, and it memory-maps files only on native targets.
+# sequentially there, and it memory-maps files only on native targets. The web build reads and
+# writes DWG in the page (no worker process there), and a panic in the reader aborts the page
+# instead of becoming an error.
 [target.'cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))'.dependencies]
 # MPL-2.0: used as an unmodified dependency only (see plan/adr/0001 and NOTICE).
 acadrust = "0.6.6"
