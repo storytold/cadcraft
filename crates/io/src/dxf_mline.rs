@@ -372,7 +372,15 @@ fn fill(store: &mut EntityStore, by_name: &HashMap<String, MLineStyle>) {
                 && st.elements.len() == m.def.elements.len()
             {
                 // The description is the style table's; copying it into every multiline would multiply a long one.
-                m.def = MLineStyle { description: String::new(), ..st.clone() };
+                m.def = MLineStyle {
+                    name: st.name.clone(),
+                    description: String::new(),
+                    elements: st.elements.clone(),
+                    start_caps: st.start_caps,
+                    end_caps: st.end_caps,
+                    joints: st.joints,
+                    fill: st.fill,
+                };
             }
         });
     }
