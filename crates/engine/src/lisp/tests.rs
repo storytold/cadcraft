@@ -307,6 +307,16 @@ fn printing() {
     assert_eq!(ok(&mut s, "(rtos 12.5 2 2)"), "\"12.50\"");
 }
 
+/// Output with many lines moves to the history in one pass, not one buffer shift per line.
+#[test]
+fn printing_many_lines_is_linear() {
+    let mut s = session();
+    let started = std::time::Instant::now();
+    ok(&mut s, "(setq x \"a\\r\\n\") (repeat 17 (setq x (strcat x x))) (princ x) (princ)");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    assert_eq!(s.log.last().map(String::as_str), Some("a"));
+}
+
 #[test]
 fn command_draws_and_one_routine_is_one_undo_step() {
     let mut s = session();
