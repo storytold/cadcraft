@@ -489,6 +489,22 @@ fn tables_and_variables() {
 }
 
 #[test]
+fn tblsearch_block_reports_xref_flags_and_path() {
+    let mut s = session();
+    let d = s.doc_mut().unwrap();
+    d.blocks.insert("plain".to_string(), std::sync::Arc::new(cadcraft_doc::Block::new("plain")));
+    let mut b = cadcraft_doc::Block::new("xr");
+    b.xref_path = Some("c:/x/src.dxf".into());
+    b.xref_overlay = true;
+    b.xref_status = cadcraft_doc::XrefStatus::Loaded;
+    d.blocks.insert("xr".to_string(), std::sync::Arc::new(b));
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"BLOCK\" \"xr\")))"), "44");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (tblsearch \"BLOCK\" \"xr\")))"), "\"c:/x/src.dxf\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (tblsearch \"BLOCK\" \"plain\")))"), "0");
+    assert_eq!(ok(&mut s, "(assoc 1 (tblsearch \"BLOCK\" \"plain\"))"), "nil");
+}
+
+#[test]
 fn getvar_drawing_and_session_variables() {
     let mut s = session();
     assert_eq!(ok(&mut s, "(list (getvar \"DWGPREFIX\") (getvar \"DWGTITLED\"))"), "(\"\" 0)");
