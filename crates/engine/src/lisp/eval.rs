@@ -201,15 +201,30 @@ impl Machine {
         let mut n = 0u64;
         let outcome = self.run_counted(ctx, budget, &mut n);
         // The last step's work too, so nothing is left for the next run.
-        self.used = n.saturating_add(super::value::take_work());
+        self.used = n.saturating_add(Machine::take_step_work(ctx));
         outcome
+    }
+
+    /// The work the last step did besides itself: the lists it walked, which count against a
+    /// callback's allowance too, and the callbacks it ran, which were counted there as they ran.
+    fn take_step_work(ctx: &mut Ctx<'_>) -> u64 {
+        let walked = super::value::take_work();
+        let callbacks = std::mem::take(&mut ctx.s.lisp.callback_work);
+        if ctx.depth > 0 {
+            ctx.s.lisp.callback_used = ctx.s.lisp.callback_used.saturating_add(walked);
+        }
+        walked.saturating_add(callbacks)
     }
 
     fn run_counted(&mut self, ctx: &mut Ctx<'_>, budget: u64, n: &mut u64) -> Outcome {
         loop {
-            *n = n.saturating_add(1).saturating_add(super::value::take_work());
+            *n = n.saturating_add(1).saturating_add(Machine::take_step_work(ctx));
             if *n > budget {
                 return Outcome::Wait(Need::Yield);
+            }
+            // Charge a callback's step as it runs, so callbacks it calls see what it already spent.
+            if ctx.depth > 0 {
+                ctx.s.lisp.callback_used = ctx.s.lisp.callback_used.saturating_add(1);
             }
             let r = match std::mem::replace(&mut self.state, State::Ret(Value::Nil)) {
                 State::Eval(expr) => self.eval(ctx, expr),
@@ -660,35 +675,54 @@ impl Ctx<'_> {
         // Work the caller queued before this call (its list walks, earlier callbacks of the same
         // step) is not this callback's: set it aside and hand it back with this callback's.
         let pending = super::value::take_work();
+        let pending_callbacks = std::mem::take(&mut self.s.lisp.callback_work);
+        let start = self.s.lisp.callback_used;
+        // This callback may run until `callback_used` reaches `ceiling`: `cap` steps from now, or
+        // sooner where a caller's allowance ends, so callbacks nested in callbacks share one
+        // allowance instead of each taking a fresh one (an exponential tree otherwise).
+        let outer = self.s.lisp.callback_ceiling;
+        let ceiling = start.saturating_add(cap).min(outer.unwrap_or(u64::MAX));
+        self.s.lisp.callback_ceiling = Some(ceiling);
+        let mut spent: u64 = 0;
+        let r = self.drive_callback(f, args, ceiling, &mut spent);
+        self.s.lisp.callback_ceiling = outer;
+        super::value::charge_work(pending);
+        // Its steps, nested callbacks' included, are work done inside the caller's one step: they
+        // count against the caller's slice and every enclosing callback's. They are in
+        // `callback_used` already, so they reach the caller apart from its list walks.
+        self.s.lisp.callback_work = pending_callbacks.saturating_add(spent);
+        r
+    }
+
+    /// Run callback `f` in slices until it finishes or `callback_used` reaches `ceiling`, adding
+    /// the work each slice did to `spent`.
+    fn drive_callback(&mut self, f: &Value, args: Vec<Value>, ceiling: u64, spent: &mut u64) -> Result<Value, LispError> {
+        let cap = self.s.lisp.limits.callback_steps;
         let mut m = Machine::calling(f.clone(), args);
         let mut sub = Ctx { s: &mut *self.s, env: &mut *self.env, depth: self.depth + 1 };
         // Drive the callback in bounded slices instead of granting it `u64::MAX` fuel. A `Yield`
-        // (the step budget ran out) is retried until a hard cap, so a constant-memory infinite
+        // (the step budget ran out) is retried until the ceiling, so a constant-memory infinite
         // loop inside a comparator or predicate terminates with an error rather than hanging the
-        // thread and bypassing the blocking execution cap (CWE-400).
-        let mut spent: u64 = 0;
-        let result = loop {
-            let remaining = cap.saturating_sub(spent);
+        // thread and bypassing the blocking execution cap (CWE-400). The steps of callbacks this
+        // one calls are counted in `callback_used` too.
+        loop {
+            let remaining = ceiling.saturating_sub(sub.s.lisp.callback_used);
             if remaining == 0 {
-                break Err(LispError::new(format!("callback stopped after {cap} steps")));
+                return Err(LispError::new(format!("callback stopped after {cap} steps")));
             }
             let slice = remaining.min(SYNC_SLICE);
             let outcome = m.run(&mut sub, slice);
-            spent = spent.saturating_add(m.used);
+            *spent = spent.saturating_add(m.used);
             match outcome {
-                Outcome::Done(v) => break Ok(v),
-                Outcome::Error(e) => break Err(e),
-                Outcome::Wait(Need::Yield) => {
-                    if spent >= cap {
-                        break Err(LispError::new(format!("callback stopped after {cap} steps")));
-                    }
+                // The steps were charged as they ran; finishing past the shared allowance is a failure too.
+                Outcome::Done(_) if sub.s.lisp.callback_used > ceiling => {
+                    return Err(LispError::new(format!("callback stopped after {cap} steps")));
                 }
-                Outcome::Wait(_) => break Err(LispError::new("this function can't ask for input here")),
+                Outcome::Done(v) => return Ok(v),
+                Outcome::Error(e) => return Err(e),
+                Outcome::Wait(Need::Yield) => {}
+                Outcome::Wait(_) => return Err(LispError::new("this function can't ask for input here")),
             }
-        };
-        // Its steps, nested callbacks' included, are work done inside the caller's one step: they
-        // count against every enclosing callback's cap and slice.
-        super::value::charge_work(pending.saturating_add(spent));
-        result
+        }
     }
 }
