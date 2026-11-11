@@ -86,8 +86,8 @@ reached", malformed source is a reader error, and every built-in checks its argu
 - **Output and files:** `princ prin1 print prompt terpri alert open close read-line write-line
   read-char write-char findfile`
 - **Files and folders:** `vl-file-copy` (never over an existing file; appends with its third
-  argument) `vl-file-delete vl-file-rename vl-file-size vl-file-systime` (UTC)
-  `vl-file-directory-p vl-directory-files` (sorted) `vl-mkdir`. On the web, where there is no
+  argument) `vl-file-delete vl-file-rename vl-file-size vl-file-systime` (local time: 7 elements on Windows,
+  8 with milliseconds elsewhere) `vl-file-directory-p vl-directory-files` (sorted) `vl-mkdir`. On the web, where there is no
   file system, they answer nil.
 - **Environment:** `getenv setenv`. What `setenv` sets lasts while CADCraft runs; `getenv` falls
   back to the operating system's variables.

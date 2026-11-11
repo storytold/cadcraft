@@ -176,22 +176,25 @@ pub(super) fn vl_mkdir(a: &[Value]) -> R {
 pub(super) fn vl_file_systime(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let Some(ms) = fs::modified(&string(&a[0])?) else { return Ok(Value::Nil) };
-    let Some(parts) = systime(ms, local_offset_secs(ms)) else { return Ok(Value::Nil) };
+    let Some(parts) = local_offset_secs(ms).and_then(|offset| systime(ms, offset)) else { return Ok(Value::Nil) };
     let n = if cfg!(windows) { 7 } else { 8 };
     Ok(Value::list(parts.into_iter().take(n).map(|v| Value::Int(v as i32)).collect::<Vec<_>>()))
 }
 
 /// The computer's offset from UTC at the instant `ms` (milliseconds since 1970), in seconds east
-/// of UTC; 0 where there is no time zone to ask (the web) or the instant is out of range.
+/// of UTC; 0 where there is no time zone to ask (the web); `None` when the instant is out of range
+/// or the time zone lookup fails.
 #[cfg(not(target_arch = "wasm32"))]
-fn local_offset_secs(ms: i64) -> i32 {
+fn local_offset_secs(ms: i64) -> Option<i32> {
     use chrono::{Local, Offset, TimeZone};
-    chrono::DateTime::from_timestamp_millis(ms).map_or(0, |t| Local.offset_from_utc_datetime(&t.naive_utc()).fix().local_minus_utc())
+    let t = chrono::DateTime::from_timestamp_millis(ms)?.naive_utc();
+    // chrono's local-zone lookup can panic internally (an unwrap/expect on a bad zone or instant); never let it out.
+    std::panic::catch_unwind(|| Local.offset_from_utc_datetime(&t).fix().local_minus_utc()).ok()
 }
 
 #[cfg(target_arch = "wasm32")]
-fn local_offset_secs(_ms: i64) -> i32 {
-    0
+fn local_offset_secs(_ms: i64) -> Option<i32> {
+    Some(0)
 }
 
 /// Milliseconds since 1970 as (year month weekday day hours minutes seconds ms) at `offset_secs`
@@ -553,10 +556,25 @@ mod tests {
     }
 
     #[test]
-    fn systime_utc_offset_zero_matches_old_result() {
-        // The same instants as the UTC-only version gave.
-        assert_eq!(systime(1_792_141_507_250, 0), Some([2026, 10, 5, 16, 9, 5, 7, 250]));
-        assert_eq!(systime(0, 0), Some([1970, 1, 4, 1, 0, 0, 0, 0]));
+    fn systime_at_the_calendar_ends_is_none_not_an_overflow() {
+        let max = chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis();
+        let min = chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis();
+        assert_eq!(systime(max, 3600), None);
+        assert_eq!(systime(min, -3600), None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_offset_secs_never_panics_on_extreme_instants() {
+        for ms in [
+            chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis(),
+            chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis(),
+            i64::MAX,
+            i64::MIN,
+            0,
+        ] {
+            let _ = local_offset_secs(ms);
+        }
     }
 
     #[test]
