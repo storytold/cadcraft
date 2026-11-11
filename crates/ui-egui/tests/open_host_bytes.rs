@@ -23,13 +23,13 @@ fn install_io() {
 fn a_host_document_opens_in_the_window() {
     install_io();
     let mut app = CadApp::new(cadcraft_engine::Session::empty(), Services::default());
-    assert!(app.ui.start_tab, "an embedded app starts on the start tab");
+    assert!(app.session.docs.is_empty(), "an embedded app starts on the start tab");
 
     app.open_host_bytes("acceptance.dxf", b"0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n");
 
     let state = app.session.state().expect("the host's drawing opened");
     assert_eq!(state.title, "acceptance.dxf");
-    assert!(!app.ui.start_tab, "the window shows the drawing, not the start tab");
+    assert!(!app.session.docs.is_empty(), "the window shows the drawing, not the start tab");
 }
 
 /// A document that is not a drawing is reported, not opened, and leaves the window where it was.
@@ -41,5 +41,5 @@ fn a_host_document_that_is_not_a_drawing_is_reported() {
     app.open_host_bytes("junk.dxf", b"junk");
 
     assert!(app.session.state().is_err(), "no drawing was opened");
-    assert!(app.ui.start_tab);
+    assert!(app.session.docs.is_empty(), "the window stays on the start tab");
 }
