@@ -27,6 +27,47 @@ fn app(answer: Option<String>) -> (CadApp, Rc<Cell<u32>>) {
     (CadApp::new(Session::new(), services), picks)
 }
 
+/// Where the host shows its dialogs without waiting (macOS sheets, #1527), IMAGEATTACH asks for
+/// the image picker and starts once the answer arrives, in a later frame; a cancelled sheet
+/// starts nothing.
+#[test]
+fn a_deferred_image_picker_starts_the_command_when_it_answers() {
+    type Done = Box<dyn FnOnce(Option<String>) + Send>;
+    set_image_decoder(|_| Raster::new(4, 2, vec![255; 32]).ok_or_else(|| "bad test raster".to_string()));
+    let dir = std::env::temp_dir().join(format!("cadcraft-imageattach-sheet-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("photo.png");
+    std::fs::write(&file, b"pixels").unwrap();
+    let asked: Rc<std::cell::RefCell<Vec<cadcraft_ui_egui::Pick>>> = Rc::default();
+    let answer: Rc<std::cell::RefCell<Option<Done>>> = Rc::default();
+    let (log, slot) = (asked.clone(), answer.clone());
+    let services = Services {
+        pick_image: Some(Box::new(|| None)),
+        start_pick: Some(Box::new(move |pick, done| {
+            log.borrow_mut().push(pick);
+            *slot.borrow_mut() = Some(done);
+        })),
+        ..Services::default()
+    };
+    let mut app = CadApp::new(Session::new(), services);
+    let ctx = egui::Context::default();
+
+    menus::activate(&mut app, "imageattach");
+    assert_eq!(asked.borrow().as_slice(), [cadcraft_ui_egui::Pick::Image]);
+    assert!(app.session.running.is_none(), "nothing starts before the answer");
+    (answer.borrow_mut().take().unwrap())(None);
+    app.logic(&ctx);
+    assert!(app.session.running.is_none(), "a cancelled sheet starts nothing");
+
+    menus::activate(&mut app, "imageattach");
+    (answer.borrow_mut().take().unwrap())(Some(file.to_string_lossy().into_owned()));
+    app.logic(&ctx);
+    let prompt = app.session.prompt_text();
+    assert!(prompt.contains("Specify insertion point"), "{prompt}");
+    app.session.cancel();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn images(app: &CadApp) -> usize {
     app.session.doc().map_or(0, |d| d.model.iter().filter(|e| matches!(e.kind, EntityKind::Image(_))).count())
 }
