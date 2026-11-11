@@ -738,3 +738,14 @@ fn displayed_fields_keep_wrap_bounds_and_layout_orientation() {
         assert_eq!(entity_bounds(&d, &e, 0), entity_bounds(&d, &Entity::new(Handle(1), plain), 0));
     }
 }
+
+/// Several spellings of one DIM field apply once, the last in the map's order, and none is rejected.
+#[test]
+fn dim_style_spellings_of_one_field_apply_once() {
+    let mut st = DimStyle::default();
+    let m = serde_json::json!({ "textHeight": 2.5, "TEXTHEIGHT": 3.5, "DIMTXT": 4.5 });
+    let m = m.as_object().unwrap();
+    let want = m.values().next_back().and_then(serde_json::Value::as_f64).unwrap();
+    assert!(st.apply_fields(m).is_empty());
+    assert_eq!(st.text_height, want);
+}
