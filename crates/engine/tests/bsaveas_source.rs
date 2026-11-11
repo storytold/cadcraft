@@ -3,6 +3,8 @@
 use cadcraft_engine::Session;
 use serde_json::json;
 
+/// Add a third line to a block and BSAVE it, BSAVEAS a copy, then edit and save the copy: the
+/// source block keeps the definition of its own last save.
 #[test]
 fn save_as_preserves_the_last_saved_source_definition() {
     let mut s = Session::new();
