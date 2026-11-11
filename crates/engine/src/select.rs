@@ -161,38 +161,43 @@ pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>
 
 /// Whether an MTEXT's contents draw nothing (empty, or only spaces and `\~`): it has no glyph
 /// strokes, and the document's bounds for it are empty so it stays out of the drawing extents.
+/// Called for every MTEXT when the spatial index is built, so it does not allocate.
 fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
-    t.contents.replace(r"\~", " ").chars().all(char::is_whitespace)
+    t.contents.split(r"\~").all(|s| s.chars().all(char::is_whitespace))
 }
 
-/// The frame a blank MTEXT is picked in (#2810): its insertion point, rotation and the box before
-/// turning (`x0, x1, y0, y1` about the insertion point): its width (the text height when it has
-/// none) by its text height, placed by its attachment point, at the size it draws at the current
-/// annotation scale. `None` for any other entity, a blank MTEXT without a usable size or position,
-/// or an annotative one the current annotation scale hides.
+/// The frame a blank MTEXT is picked in (#2810), for a top-level MTEXT and for a multileader's
+/// MTEXT content: its insertion point, rotation and the box before turning (`x0, x1, y0, y1`
+/// about the insertion point): its width (the text height when it has none) by its text height,
+/// placed by its attachment point, at the size it draws at the current annotation scale (the
+/// shared `anno_scaled`, which also moves a multileader's text about its landing). `None` for any
+/// other entity, a multileader without text content, a blank MTEXT without a usable size or
+/// position, or an annotative one the current annotation scale hides.
 fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
-    let (t, landing) = match &e.kind {
-        EntityKind::MText(t) => (t, None),
-        EntityKind::MLeader(m) => (m.text.as_ref()?, Some(m.landing.xy())),
-        _ => return None,
-    };
-    if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
-        return None;
-    }
-    // Match the drawn annotation size and the multileader text offset from its landing.
     let f = match d.anno_draw(e) {
         cadcraft_doc::AnnoDraw::Plain => 1.0,
         cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
         cadcraft_doc::AnnoDraw::Scaled(_) => 1.0,
         cadcraft_doc::AnnoDraw::Hidden => return None,
     };
-    let w = f * if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
-    let h = f * t.height;
-    let insert = t.insert.xy();
-    let insert = match landing {
-        Some(landing) if f != 1.0 => landing + (insert - landing) * f,
-        _ => insert,
+    let scaled;
+    let e = if f != 1.0 {
+        scaled = cadcraft_doc::anno_scaled(e, f);
+        &scaled
+    } else {
+        e
     };
+    let t = match &e.kind {
+        EntityKind::MText(t) => t,
+        EntityKind::MLeader(m) => m.text.as_ref()?,
+        _ => return None,
+    };
+    if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
+        return None;
+    }
+    let w = if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
+    let h = t.height;
+    let insert = t.insert.xy();
     if !w.is_finite() || !h.is_finite() || !insert.is_finite() {
         return None;
     }
@@ -209,15 +214,17 @@ fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
     Some((insert, t.rotation, [dx, dx + w, top - h, top]))
 }
 
-/// The box around a blank MTEXT's turned frame, for the spatial index and windows (a crossing
-/// window may catch a little extra near a corner, as it does for other text).
+/// The box around a blank MTEXT's turned frame (a top-level MTEXT or a multileader's MTEXT
+/// content), for the spatial index and windows (a crossing window may catch a little extra near a
+/// corner, as it does for other text).
 fn blank_mtext_box(d: &Drawing, e: &Entity) -> Option<Bounds2> {
     let (o, rot, [x0, x1, y0, y1]) = blank_mtext_frame(d, e)?;
     let corners = [Vec2::new(x0, y1), Vec2::new(x1, y1), Vec2::new(x1, y0), Vec2::new(x0, y0)];
     Some(Bounds2::from_points(corners.map(|c| o + c.rotate(rot))))
 }
 
-/// Whether `p` is on a blank MTEXT: inside its box turned with the text, not the larger box around it.
+/// Whether `p` is on a blank MTEXT or a multileader's blank MTEXT content: inside its box turned
+/// with the text, not the larger box around it.
 fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
     let Some((o, rot, [x0, x1, y0, y1])) = blank_mtext_frame(d, e) else { return false };
     let q = (p - o).rotate(-rot);
@@ -228,6 +235,21 @@ fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
 /// Use the same bounds for a scan and for the spatial index.
 pub(crate) fn pick_bounds(d: &Drawing, e: &Entity, drawn: Bounds2) -> Bounds2 {
     blank_mtext_box(d, e).map_or(drawn, |frame| drawn.union(&frame))
+}
+
+/// Whether `e` is within reach of a snap probe only through its blank MTEXT frame: the drawn
+/// geometry (expanded by `aperture`) misses `probe` and no blank text insertion point is inside
+/// it. Such an entity is for picking and selection, not a snap candidate.
+pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, aperture: f64) -> bool {
+    if blank_mtext_box(d, e).is_none() {
+        return false;
+    }
+    let insert = match &e.kind {
+        EntityKind::MText(t) => Some(t.insert.xy()),
+        EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.insert.xy()),
+        _ => None,
+    };
+    !insert.is_some_and(|p| probe.contains(p)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
 }
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
@@ -359,6 +381,10 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
     });
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
     if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+        return true;
+    }
+    // Likewise inside a blank MTEXT's frame (a multileader's too), where picking also selects it.
+    if blank_mtext_box(d, e).is_some_and(|frame| frame.contains_box(bx)) {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
@@ -603,6 +629,9 @@ mod tests {
     /// inside its width x height box picks it, and a click outside does not (#2810).
     #[test]
     fn a_blank_mtext_is_picked_inside_its_box() {
+        let blank = |c: &str| matches!(mtext_at(c, 1, 0.0), EntityKind::MText(t) if is_blank_mtext(&t));
+        assert!(!blank(r"a\~"));
+        assert!(blank(r"\~ \~"));
         for contents in ["", "   ", r"\~ "] {
             let mut d = Drawing::new_metric();
             let h = d.add(&Space::Model, Common::default(), mtext_at(contents, 1, 0.0)).unwrap();
@@ -653,8 +682,80 @@ mod tests {
     #[test]
     fn a_pick_away_from_normal_mleader_text_and_lines_misses() {
         let mut s = crate::Session::new();
-        s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 10]], "text": "Visible" })).unwrap();
+        let result = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 10]], "text": "Visible" })).unwrap();
+        let h = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
         assert_eq!(pick(s.doc().unwrap(), &Space::Model, Vec2::new(2.0, 8.0), 0.05), None);
+        // Give the text a wide box: a click inside it, right of the glyphs and off the leader, is
+        // still a miss, since only blank text is picked by its frame.
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                m.text.as_mut().unwrap().width = 5.0;
+            })
+            .unwrap();
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let t = m.text.as_ref().unwrap();
+        let p = t.insert.xy() + Vec2::new(t.width * 0.8, 0.0);
+        assert_eq!(pick(d, &Space::Model, p, 0.02), None, "right of the glyphs, inside the frame");
+        assert_eq!(pick(d, &Space::Model, t.insert.xy() + Vec2::new(0.3, 0.0), 0.02), Some(h), "on the glyphs");
+    }
+
+    /// A multileader whose text is blank, with the text 6 units right of the landing, 4 wide and
+    /// 2 high, attached top-left.
+    fn blank_mleader(s: &mut crate::Session) -> Handle {
+        let result = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+        let h = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                let landing = m.landing;
+                let t = m.text.as_mut().unwrap();
+                t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                t.width = 4.0;
+                t.height = 2.0;
+                t.attach = 1;
+                t.rotation = 0.0;
+            })
+            .unwrap();
+        h
+    }
+
+    /// A crossing window wholly inside a blank multileader text's box selects it, as a click does.
+    #[test]
+    fn a_crossing_window_inside_a_blank_mleader_text_box_selects_it() {
+        let mut s = crate::Session::new();
+        let h = blank_mleader(&mut s);
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let o = m.text.as_ref().unwrap().insert.xy();
+        let inside = Bounds2::new(o + Vec2::new(1.0, -1.5), o + Vec2::new(2.0, -0.5));
+        assert_eq!(select_window(d, &Space::Model, inside, true), vec![h]);
+        let outside = Bounds2::new(o + Vec2::new(5.0, -1.5), o + Vec2::new(6.0, -0.5));
+        assert!(select_window(d, &Space::Model, outside, true).is_empty());
+    }
+
+    /// An annotative multileader's blank text is picked where it draws at the current annotation
+    /// scale: its size and its offset from the landing both scale.
+    #[test]
+    fn an_annotative_blank_mleader_text_is_picked_at_its_drawn_offset_and_size() {
+        let mut s = crate::Session::new();
+        let h = blank_mleader(&mut s);
+        let d = s.doc_mut().unwrap();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        d.modify_entity(h, |e| e.common.anno_scales = vec![half]).unwrap();
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let l = m.landing.xy();
+        // At 1:2 the box is 8 x 4 from the landing + (12, 0) (top-left): x 12..20, y -4..0.
+        let at = |x: f64, y: f64| pick(d, &Space::Model, l + Vec2::new(x, y), 0.02);
+        assert_eq!(at(16.0, -1.0), Some(h), "inside the scaled box, outside the unscaled one");
+        assert_eq!(at(19.5, -3.5), Some(h), "far corner of the scaled box");
+        assert_eq!(at(8.0, -1.0), None, "inside the unscaled box, outside the scaled one");
+        assert_eq!(at(22.0, -1.0), None, "right of the scaled box");
     }
 
     /// The box follows the attachment point and the rotation, and a width of 0 falls back to the

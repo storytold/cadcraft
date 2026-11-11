@@ -423,6 +423,11 @@ fn gather_in(
         if !inf && !crate::select::bounds_of(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
+        // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
+        // limit nor the intersection slots unless its insertion point or drawn geometry is in reach.
+        if !inf && crate::select::blank_frame_only(d, e, &probe, aperture) {
+            continue;
+        }
         count += 1;
         if count > 2000 {
             break;
@@ -1086,6 +1091,43 @@ mod tests {
         assert_eq!(h.point, Vec2::new(10.0, 0.0));
         let m = osnap(&d, &Space::Model, Vec2::new(5.1, 0.1), 0.5, mode::MID, None, false).unwrap();
         assert_eq!(m.point, Vec2::new(5.0, 0.0));
+    }
+
+    /// Blank MTEXT frames over the cursor are for picking: thousands of them, with their insertion
+    /// points out of reach, must not crowd a real endpoint out of the snap candidates (#2810).
+    #[test]
+    fn blank_mtext_frames_do_not_crowd_out_snap_candidates() {
+        for line_first in [true, false] {
+            let mut d = Drawing::new_metric();
+            let line = EntityKind::Line(Line { a: Vec3::new(5.2, -1.0, 0.0), b: Vec3::new(30.0, -1.0, 0.0) });
+            if line_first {
+                d.add(&Space::Model, Common::default(), line.clone()).unwrap();
+            }
+            for _ in 0..2100 {
+                let t = cadcraft_doc::MText {
+                    insert: Vec3::new(0.0, 0.0, 0.0),
+                    height: 2.5,
+                    width: 10.0,
+                    attach: 1,
+                    rotation: 0.0,
+                    style: "Standard".into(),
+                    contents: "  ".into(),
+                    line_spacing: 1.0,
+                    line_spacing_exact: false,
+                    columns: None,
+                };
+                d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+            }
+            if !line_first {
+                d.add(&Space::Model, Common::default(), line).unwrap();
+            }
+            // The cursor is inside every box (x 0..10, y -2.5..0), 0.2 from the line's end.
+            let h = osnap(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.5, mode::END, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(5.2, -1.0), "line first: {line_first}");
+            // A blank MTEXT whose insertion point is in the aperture keeps its INS snap.
+            let h = osnap(&d, &Space::Model, Vec2::new(0.1, -0.1), 0.5, mode::INS, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(0.0, 0.0), "line first: {line_first}");
+        }
     }
 
     #[test]
