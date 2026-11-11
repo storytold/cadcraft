@@ -1138,7 +1138,7 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     // As given (a path, or relative to the working folder), then in the support folder.
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(super::builtins::read_text_file).or_else(|| if absolute { s.lisp_file(name) } else { None })
+    candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
 }
 
 /// The file `name` names in the support folder, when it is there: what an autoload registration
@@ -1151,7 +1151,7 @@ pub fn support_file(s: &Session, name: &str) -> Option<String> {
     let dir = s.lisp_support_dir()?;
     let candidates =
         if std::path::Path::new(name).extension().is_none() { vec![format!("{name}.lsp"), name.to_string()] } else { vec![name.to_string()] };
-    candidates.iter().map(|c| dir.join(c)).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
+    candidates.iter().map(|c| dir.join(c)).find(|p| p.is_file()).map(|p| std::path::absolute(&p).unwrap_or(p).to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

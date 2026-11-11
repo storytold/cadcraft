@@ -183,7 +183,7 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     let selected = selected_tags(&ents, d, o);
     let mut out = Vec::new();
     let mut used = 0usize;
-    let mut const_sizes: HashMap<String, usize> = HashMap::new();
+    let mut const_sizes: HashMap<String, Vec<(String, usize)>> = HashMap::new();
     let mut consts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for e in &ents {
         let EntityKind::Insert(ins) = &e.kind else { continue };
@@ -195,20 +195,30 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
         // Charged from the lengths, before any text is copied.
         let selected_bytes: usize =
             ins.attribs.iter().filter(|a| selected.contains(&a.tag.to_ascii_uppercase())).map(|a| a.text.value.len() + a.tag.len()).sum();
-        // The constants every row also copies (an upper bound: an attribute of the reference overrides one).
-        let const_bytes = *const_sizes.entry(block.clone()).or_insert_with(|| {
-            d.block(&ins.block).map_or(0, |b| {
+        // The constants this row copies (those its own attributes do not override), from the lengths.
+        let first_of_block = !const_sizes.contains_key(&block);
+        let consts_sizes = const_sizes.entry(block.clone()).or_insert_with(|| {
+            d.block(&ins.block).map_or_else(Vec::new, |b| {
                 b.entities
                     .iter()
                     .filter_map(|e| match &e.kind {
                         EntityKind::AttDef(a) if a.constant && selected.iter().any(|t| t == &a.tag.to_ascii_uppercase()) => {
-                            Some(a.tag.len() + a.text.value.len())
+                            Some((a.tag.to_ascii_uppercase(), a.tag.len() + a.text.value.len()))
                         }
                         _ => None,
                     })
-                    .sum()
+                    .collect()
             })
         });
+        if first_of_block {
+            // The per-block cache of constants is one more copy of them, made once.
+            charge(&mut used, consts_sizes.iter().map(|(_, n)| *n).fold(0, usize::saturating_add), MAX_VALUE_BYTES)?;
+        }
+        let const_bytes: usize = consts_sizes
+            .iter()
+            .filter(|(tag, _)| !ins.attribs.iter().any(|a| a.tag.eq_ignore_ascii_case(tag)))
+            .map(|(_, n)| *n)
+            .fold(0, usize::saturating_add);
         charge(&mut used, selected_bytes.saturating_add(const_bytes), MAX_VALUE_BYTES)?;
         let values = values(
             ins,

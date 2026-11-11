@@ -503,7 +503,7 @@ fn frame_books(d: &Drawing, frame_height: f64, unit: f64) -> (Vec<Vec<Frame>>, u
 const MAX_BOOK_WORK: u64 = 500_000_000;
 
 /// Objects one page draws: the model's objects, and the contents of each block reference (once per
-/// array cell; nested blocks count as their own entries).
+/// array cell, and the reference's own attributes; nested blocks count as their own entries).
 fn model_visits(d: &Drawing) -> usize {
     d.model
         .iter()
