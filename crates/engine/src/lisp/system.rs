@@ -173,22 +173,35 @@ pub(super) fn vl_mkdir(a: &[Value]) -> R {
 /// `(vl-file-systime file)`: when it was last changed, in the computer's local time, as
 /// `(year month weekday day hours minutes seconds)` on Windows and
 /// `(year month weekday day hours minutes seconds milliseconds)` elsewhere (weekday 0 is Sunday).
+/// When the zone lookup fails the time is given in UTC, so an existing file never reads as missing.
 pub(super) fn vl_file_systime(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let Some(ms) = fs::modified(&string(&a[0])?) else { return Ok(Value::Nil) };
-    let Some(parts) = local_offset_secs(ms).and_then(|offset| systime(ms, offset)) else { return Ok(Value::Nil) };
+    let Some(parts) = systime(ms, local_offset_secs(ms).unwrap_or(0)) else { return Ok(Value::Nil) };
     let n = if cfg!(windows) { 7 } else { 8 };
     Ok(Value::list(parts.into_iter().take(n).map(|v| Value::Int(v as i32)).collect::<Vec<_>>()))
 }
 
+/// `ms` clamped to years 1601..=9999, the range every platform's zone lookup handles.
+#[cfg(not(target_arch = "wasm32"))]
+fn zone_lookup_ms(ms: i64) -> i64 {
+    use chrono::NaiveDate;
+    let ends = |y, mo, d, h, mi, s| NaiveDate::from_ymd_opt(y, mo, d).and_then(|d| d.and_hms_opt(h, mi, s)).map(|t| t.and_utc().timestamp_millis());
+    match (ends(1601, 1, 1, 0, 0, 0), ends(9999, 12, 31, 23, 59, 59)) {
+        (Some(lo), Some(hi)) => ms.clamp(lo, hi),
+        _ => ms,
+    }
+}
+
 /// The computer's offset from UTC at the instant `ms` (milliseconds since 1970), in seconds east
-/// of UTC; 0 where there is no time zone to ask (the web); `None` when the instant is out of range
-/// or the time zone lookup fails.
+/// of UTC; 0 where there is no time zone to ask (the web); `None` when the zone lookup fails (the
+/// caller then uses UTC). The instant is clamped to years 1601..=9999 first.
 #[cfg(not(target_arch = "wasm32"))]
 fn local_offset_secs(ms: i64) -> Option<i32> {
     use chrono::{Local, Offset, TimeZone};
-    let t = chrono::DateTime::from_timestamp_millis(ms)?.naive_utc();
-    // chrono's local-zone lookup can panic internally (an unwrap/expect on a bad zone or instant); never let it out.
+    let t = chrono::DateTime::from_timestamp_millis(zone_lookup_ms(ms))?.naive_utc();
+    // The clamp avoids chrono's known panics in the local-zone lookup; catch_unwind only guards the
+    // unknown ones (the crash-report hook still fires if it ever triggers).
     std::panic::catch_unwind(|| Local.offset_from_utc_datetime(&t).fix().local_minus_utc()).ok()
 }
 
@@ -565,7 +578,27 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn local_offset_secs_never_panics_on_extreme_instants() {
+    fn zone_lookup_ms_keeps_instants_in_range() {
+        // 1601-01-01T00:00:00Z and 9999-12-31T23:59:59Z in milliseconds since 1970.
+        let (lo, hi) = (-11_644_473_600_000, 253_402_300_799_000);
+        for ms in [
+            i64::MAX,
+            i64::MIN,
+            chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis(),
+            chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis(),
+        ] {
+            let c = zone_lookup_ms(ms);
+            assert!((lo..=hi).contains(&c), "{ms} -> {c}");
+        }
+        assert_eq!(zone_lookup_ms(i64::MAX), hi);
+        assert_eq!(zone_lookup_ms(i64::MIN), lo);
+        // 2020-01-01T00:00:00Z is left alone.
+        assert_eq!(zone_lookup_ms(1_577_836_800_000), 1_577_836_800_000);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_offset_secs_is_a_real_offset_on_extreme_instants() {
         for ms in [
             chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis(),
             chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis(),
@@ -573,8 +606,24 @@ mod tests {
             i64::MIN,
             0,
         ] {
-            let _ = local_offset_secs(ms);
+            let offset = local_offset_secs(ms);
+            assert!(offset.is_some_and(|o| o.abs() < 86_400), "{ms}: {offset:?}");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn vl_file_systime_lists_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-systime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let got = vl_file_systime(&[Value::str(&file.to_string_lossy())]).unwrap();
+        let n = if cfg!(windows) { 7 } else { 8 };
+        assert_eq!(got.to_vec().len(), n);
+        assert!(matches!(got.to_vec().first(), Some(Value::Int(y)) if *y >= 2020));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
