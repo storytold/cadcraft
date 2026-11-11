@@ -114,8 +114,11 @@ fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
 }
 
 impl BlockEdit {
-    /// The editor's objects in block coordinates, ready to be the block's: unchanged objects are
-    /// the block's own, the others are moved back from the editor's origin to the base point.
+    /// The editor's objects in block coordinates, ready to be the block's. An object whose own
+    /// data (`kind`: its geometry and content) the editor left as it was keeps the block's,
+    /// number for number, with the editor's general properties: a change of color, layer or
+    /// extended data (BCONSTRUCTION) moves nothing, so it must not send the coordinates through
+    /// `x - base + base`. The others are moved back from the editor's origin to the base point.
     fn block_objects(&self, editor: &Drawing) -> EntityStore {
         if self.base == Vec2::ZERO {
             return editor.model.clone();
@@ -123,23 +126,17 @@ impl BlockEdit {
         let (to_editor, back) = (Mat3::translate(-self.base), Mat3::translate(self.base));
         let mut out = EntityStore::new();
         for e in editor.model.iter() {
-            let unchanged = self.original.get(e.handle).filter(|o| {
-                let mut shown = (***o).clone();
-                shown.kind.transform(&to_editor);
-                // The editor shows construction geometry visible; its saved definition is invisible.
-                if shown.common.is_construction() {
-                    shown.common.visible = true;
-                }
-                shown == **e
+            let unmoved = self.original.get(e.handle).filter(|o| {
+                let mut shown = o.kind.clone();
+                shown.transform(&to_editor);
+                shown == e.kind
             });
-            match unchanged {
-                Some(o) => out.push((**o).clone()),
-                None => {
-                    let mut e = (**e).clone();
-                    e.kind.transform(&back);
-                    out.push(e);
-                }
+            let mut e = (**e).clone();
+            match unmoved {
+                Some(o) => e.kind = o.kind.clone(),
+                None => e.kind.transform(&back),
             }
+            out.push(e);
         }
         out
     }

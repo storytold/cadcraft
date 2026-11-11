@@ -6,7 +6,9 @@
 
 use cadcraft_engine::Session;
 use cadcraft_engine::blockedit::CURRENT_DRAWING;
-use cadcraft_engine::doc::{Drawing, Handle, RawTag};
+use cadcraft_engine::doc::color::Color;
+use cadcraft_engine::doc::{Drawing, EntityKind, Handle, RawTag};
+use cadcraft_engine::geom::Vec2;
 use serde_json::json;
 
 /// The extended data that marks an object as construction geometry.
@@ -93,6 +95,58 @@ fn an_unedited_construction_object_keeps_its_exact_coordinates_with_a_base_point
     s.execute("bedit", &json!({ "name": "B" })).unwrap();
     s.execute("bsave", &json!({})).unwrap();
     assert_eq!(s.state().unwrap().drawing().block("B").unwrap().as_ref(), &saved, "nothing changed, so every number and flag is the saved one");
+}
+
+/// The geometry of each object of block `block`, in the block's order.
+fn geometry(d: &Drawing, block: &str) -> Vec<EntityKind> {
+    d.block(block).unwrap().entities.iter().map(|e| e.kind.clone()).collect()
+}
+
+/// A drawing whose block "B" (base point (0.7, 0.1)) holds two lines. The second one starts at
+/// x = 0.1, and `0.1 - 0.7 + 0.7` is not `0.1`: sent to the editor's origin and back, that line
+/// comes out with a different number.
+fn fractional_block() -> Session {
+    let mut s = Session::new();
+    s.execute("line", &json!({ "points": [[0.2, 0.4], [0.9, 0.6]] })).unwrap();
+    s.execute("line", &json!({ "points": [[0.1, 0.7], [0.3, 0.9]] })).unwrap();
+    let all: Vec<String> = s.doc().unwrap().model.handles().iter().map(|h| h.hex()).collect();
+    s.execute("block", &json!({ "name": "B", "base": [0.7, 0.1], "handles": all })).unwrap();
+    s
+}
+
+/// Converting an object moves nothing: the block keeps its exact coordinates with a base point.
+#[test]
+fn converting_an_object_keeps_its_exact_coordinates_with_a_base_point() {
+    let mut s = fractional_block();
+    let before = geometry(s.doc().unwrap(), "B");
+    s.execute("bedit", &json!({ "name": "B" })).unwrap();
+    let guide = s.doc().unwrap().model.handles()[1];
+    s.execute("bconstruction", &json!({ "mode": "convert", "handles": [guide.hex()] })).unwrap();
+    s.execute("bsave", &json!({})).unwrap();
+    s.execute("bclose", &json!({})).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(flags(d, "B"), vec![(false, true), (true, false)], "the second line is saved as construction geometry");
+    assert_eq!(geometry(d, "B"), before, "Convert moves nothing, so every coordinate is the one the block had");
+}
+
+/// A property changed in the editor is saved with the block's exact coordinates, and an object
+/// moved in the editor is still saved where it was moved to.
+#[test]
+fn a_property_change_keeps_exact_coordinates_and_a_move_is_still_saved() {
+    let mut s = fractional_block();
+    let before = geometry(s.doc().unwrap(), "B");
+    s.execute("bedit", &json!({ "name": "B" })).unwrap();
+    let handles = s.doc().unwrap().model.handles();
+    s.execute("move", &json!({ "handles": [handles[0].hex()], "delta": [1, 0] })).unwrap();
+    s.execute("properties.set", &json!({ "handles": [handles[1].hex()], "color": 1 })).unwrap();
+    s.execute("bsave", &json!({})).unwrap();
+    s.execute("bclose", &json!({})).unwrap();
+    let d = s.doc().unwrap();
+    let after = geometry(d, "B");
+    assert_eq!(d.block("B").unwrap().entities.iter().nth(1).unwrap().common.color, Color::Index(1), "the new color is saved");
+    assert_eq!(after[1], before[1], "a change of color moves nothing, so every coordinate is the one the block had");
+    let (EntityKind::Line(moved), EntityKind::Line(was)) = (&after[0], &before[0]) else { panic!("not lines: {after:?}") };
+    assert!(moved.a.xy().near(was.a.xy() + Vec2::new(1.0, 0.0), 1e-12) && moved.b.xy().near(was.b.xy() + Vec2::new(1.0, 0.0), 1e-12), "{moved:?}");
 }
 
 /// Bsaveas saves the copy invisible too.
