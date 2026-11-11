@@ -77,10 +77,16 @@ fn rows(app: &CadApp, ui: &egui::Ui) -> Vec<Row> {
     let xrefs: Vec<_> = d.blocks.values().filter(|b| b.xref_path.is_some() && !b.name.contains('|')).collect();
     let mut counts = vec![0usize; xrefs.len()];
     if !xrefs.is_empty() {
+        // Xref name (ASCII-upper-cased) → its row, the first of names that differ only in case, so
+        // each INSERT is one lookup instead of a scan of the xref list.
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (k, b) in xrefs.iter().enumerate() {
+            index.entry(b.name.to_ascii_uppercase()).or_insert(k);
+        }
         let mut count = |store: &cadcraft_engine::doc::EntityStore| {
             for e in store.iter() {
                 if let cadcraft_engine::doc::EntityKind::Insert(i) = &e.kind
-                    && let Some(k) = xrefs.iter().position(|b| b.name.eq_ignore_ascii_case(&i.block))
+                    && let Some(&k) = index.get(&i.block.to_ascii_uppercase())
                     && let Some(c) = counts.get_mut(k)
                 {
                     *c += 1;
