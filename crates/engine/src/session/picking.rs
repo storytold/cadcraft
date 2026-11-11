@@ -120,7 +120,7 @@ impl Session {
         }
         if self.running.is_some() {
             let hs = cmd::groups::expand(self, vec![h]);
-            return self.input(Input::Pick(hs));
+            return self.input_with_shift(Input::Pick(hs), shift);
         }
         self.idle_pick(h, shift);
         Ok(())

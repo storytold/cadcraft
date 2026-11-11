@@ -904,8 +904,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
             let result = match app.canvas.snap {
-                Some(hit) => app.session.input_snapped(hit),
-                None => app.session.input(Input::Point(p)),
+                Some(hit) => app.session.input_snapped_with_shift(hit, mods.shift),
+                None => app.session.input_with_shift(Input::Point(p), mods.shift),
             };
             if let Err(e) = result {
                 app.session.echo(e.to_string());
@@ -942,7 +942,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             && let Some(end) = ui.input(|i| i.pointer.interact_pos())
         {
             let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
+            let done = if app.session.prompting() { app.session.input_with_shift(Input::Point(end), mods.shift) } else { app.session.idle_click(end, mods.shift) };
             if let Err(e) = done {
                 app.session.echo(e.to_string());
             }
