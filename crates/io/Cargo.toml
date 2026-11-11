@@ -23,6 +23,11 @@ miniz_oxide = "0.9"
 craft-pdf = { workspace = true, features = ["write"] }
 quick-xml = { workspace = true }
 image = { workspace = true }
+hayro = { workspace = true }
+# Geometry types of the PDF reader's API (the version hayro uses).
+kurbo = "0.13"
+# Which paths stored in a drawing (PDF underlays) may be opened.
+craft-docpath = { workspace = true }
 
 [dev-dependencies]
 tiny-skia = { workspace = true }

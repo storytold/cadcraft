@@ -157,6 +157,14 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // PDF underlays read their pages.
+    cadcraft_engine::cmd::underlay::set_pdf(cadcraft_engine::cmd::underlay::PdfHooks {
+        page: cadcraft_io::pdf_read::page_info,
+        render: cadcraft_io::pdf_read::render_page,
+        region: cadcraft_io::pdf_read::render_page_region,
+        layers: cadcraft_io::pdf_layers::layer_list,
+        with_layers: cadcraft_io::pdf_layers::apply_layers,
+    });
 }
 
 fn services() -> Services {
@@ -171,6 +179,7 @@ fn services() -> Services {
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        pick_pdf: Some(Box::new(|| file_dialog(&Pick::Pdf).pick_file().map(|p| p.to_string_lossy().to_string()))),
     }
 }
 
@@ -186,6 +195,7 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
         Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
         Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+        Pick::Pdf => vec![(i18n::t("PDF files"), vec!["pdf"]), (i18n::t("All files"), vec!["*"])],
     }
 }
 
