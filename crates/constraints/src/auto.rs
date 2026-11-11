@@ -312,6 +312,12 @@ fn on_arc(d: &Drawing, h: Handle, c: Vec2, p: Vec2) -> bool {
 /// Infer and apply constraints over `handles`; returns the ids added. Redundant or conflicting
 /// candidates are skipped.
 pub fn autoconstrain(d: &mut Drawing, handles: &[Handle], o: &InferOptions) -> Vec<u32> {
+    autoconstrain_report(d, handles, o).0
+}
+
+/// [`autoconstrain`], and whether it stopped early because the solver-work allowance of the command
+/// was spent (the remaining candidates were not tried).
+pub fn autoconstrain_report(d: &mut Drawing, handles: &[Handle], o: &InferOptions) -> (Vec<u32>, bool) {
     let mut added = Vec::new();
     // One allowance of solver work for all the candidates: each is a full solve of its component.
     let mut work = MAX_AUTO_WORK;
@@ -319,9 +325,9 @@ pub fn autoconstrain(d: &mut Drawing, handles: &[Handle], o: &InferOptions) -> V
         match crate::add_within(d, c, &crate::SolveOptions::default(), &mut work) {
             Ok(id) => added.push(id),
             // The allowance is spent: what was added stays, the remaining candidates are not tried.
-            Err(crate::SolveError::TooLarge) if work < 0.0 => break,
+            Err(crate::SolveError::TooLarge) if work < 0.0 => return (added, true),
             Err(_) => {}
         }
     }
-    added
+    (added, false)
 }

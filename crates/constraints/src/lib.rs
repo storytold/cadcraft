@@ -36,7 +36,7 @@ use cadcraft_doc::{Constraint, ConstraintKind, Drawing, GeomRef, Handle};
 use cadcraft_geom::Vec2;
 use serde::Serialize;
 
-pub use auto::{INFER_TYPES, InferOptions, autoconstrain, infer, infer_placed};
+pub use auto::{INFER_TYPES, InferOptions, autoconstrain, autoconstrain_report, infer, infer_placed};
 pub use dof::{DofReport, DofStatus, ObjectDof, dof};
 pub use expr::{Env, ExprError};
 pub use model::{ref_points, rigid_points, supported};
@@ -343,8 +343,14 @@ impl Comp {
     }
     /// Constraint ids in conflict (each one whose removal makes the rest solvable).
     fn conflicts(&self, x_failed: &[f64]) -> Vec<u32> {
+        self.conflicts_probing(x_failed, true)
+    }
+
+    /// [`Comp::conflicts`]; `probe` false skips the re-solves that look for the constraints whose
+    /// removal lets the rest converge.
+    fn conflicts_probing(&self, x_failed: &[f64], probe: bool) -> Vec<u32> {
         let mut ids = Vec::new();
-        if self.built.len() <= MAX_CONFLICT_PROBES {
+        if probe && self.built.len() <= MAX_CONFLICT_PROBES {
             for i in 0..self.built.len() {
                 if let Ok(o) = self.run(Some(i))
                     && o.converged
@@ -799,7 +805,11 @@ pub(crate) fn add_within(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions
     let o = comp.run(None)?;
     if !o.converged {
         // The new constraint first, then the existing ones it fights with.
-        let mut ids = comp.conflicts(&o.x);
+        // Each probe is another solve (up to one per constraint): they are charged too, and skipped
+        // when the allowance cannot pay for them.
+        let probes = if comp.built.len() <= MAX_CONFLICT_PROBES { comp.built.len() as f64 } else { 0.0 };
+        *work -= probes * comp.eval_work(&comp.free(None), None);
+        let mut ids = comp.conflicts_probing(&o.x, *work >= 0.0);
         ids.retain(|i| *i != id);
         ids.insert(0, id);
         return Err(SolveError::Conflict { ids });

@@ -535,4 +535,6 @@ fn a_spent_work_allowance_refuses_a_constraint_and_leaves_the_drawing() {
     let mut plenty = 1e9;
     assert!(add_within(&mut d, c, &SolveOptions::default(), &mut plenty).is_ok());
     assert!(plenty < 1e9, "the solve was charged");
+    let (_, stopped) = autoconstrain_report(&mut d, &[l], &InferOptions::default());
+    assert!(!stopped, "a small command never spends its allowance");
 }
