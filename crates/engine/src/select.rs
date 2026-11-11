@@ -243,41 +243,31 @@ fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
 /// Drawn bounds extended by a blank MTEXT frame, including a multileader's text content.
 /// Use the same bounds for a scan and for the spatial index.
 pub(crate) fn pick_bounds(d: &Drawing, e: &Entity, drawn: Bounds2) -> Bounds2 {
-    let Some(frame) = blank_mtext_box(d, e) else { return drawn };
-    // The snap points are in the bounds too, so a probe on one finds the entity in the index.
-    blank_snap_points(d, e).into_iter().fold(drawn.union(&frame), |b, p| b.union(&Bounds2::from_points([p])))
+    match blank_mtext_box(d, e) {
+        Some(frame) => drawn.union(&frame),
+        None => drawn,
+    }
 }
 
-/// The insertion points a blank MTEXT (or a multileader with blank text) can be snapped at, or
-/// empty for any other entity: the drawn (scaled) text insertion point, the stored (unscaled)
-/// ones snap offers, and a multileader's block content's, unscaled and scaled.
-fn blank_snap_points(d: &Drawing, e: &Entity) -> Vec<Vec2> {
-    let Some((drawn_insert, _, _)) = blank_mtext_frame(d, e) else { return Vec::new() };
-    let mut points = vec![drawn_insert];
+/// The insertion points snap's INS mode offers for a blank MTEXT or multileader (the stored
+/// points); empty for any other entity.
+fn blank_snap_points(e: &Entity) -> Vec<Vec2> {
+    // select.rs blank_snap_points must offer the same points as snap.rs's INS arms.
     match &e.kind {
-        EntityKind::MText(t) => points.push(t.insert.xy()),
-        EntityKind::MLeader(m) => {
-            points.extend(m.text.as_ref().map(|t| t.insert.xy()));
-            points.extend(m.block.as_ref().map(|b| b.insert.xy()));
-            if let cadcraft_doc::AnnoDraw::Scaled(f) = d.anno_draw(e)
-                && f.is_finite()
-                && f > 0.0
-                && f != 1.0
-                && let EntityKind::MLeader(sm) = &cadcraft_doc::anno_scaled(e, f).kind
-            {
-                points.extend(sm.block.as_ref().map(|b| b.insert.xy()));
-            }
+        EntityKind::MText(t) if is_blank_mtext(t) => vec![t.insert.xy()],
+        EntityKind::MLeader(m) if m.text.as_ref().is_some_and(is_blank_mtext) => {
+            m.text.iter().map(|t| t.insert.xy()).chain(m.block.iter().map(|b| b.insert.xy())).collect()
         }
-        _ => {}
+        _ => Vec::new(),
     }
-    points
 }
 
 /// Whether `e` is within reach of a snap probe only through its blank MTEXT frame: the drawn
-/// geometry (expanded by `aperture`) misses `probe` and no blank text insertion point (scaled or
-/// stored) is inside it. Such an entity is for picking and selection, not a snap candidate.
+/// geometry (expanded by `aperture`) misses `probe` and none of the insertion points INS offers
+/// (text or block content) is inside it. Such an entity is for picking and selection, not a snap
+/// candidate.
 pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, aperture: f64) -> bool {
-    let points = blank_snap_points(d, e);
+    let points = blank_snap_points(e);
     !points.is_empty() && !points.iter().any(|p| probe.contains(*p)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
 }
 
@@ -1105,5 +1095,39 @@ mod hatch_pattern_pick_tests {
         // Ignore style fills over the island.
         let d = solid_hatch(loops(), 2);
         assert!(pick(&d, &Space::Model, Vec2::new(5.0, 5.0), 0.05).is_some());
+    }
+
+    /// A window around everything a blank multileader draws (its geometry and its text frame)
+    /// selects it, at either annotation scale: the stored insertion points snap offers do not
+    /// widen the box a window has to contain (#2810).
+    #[test]
+    fn window_around_a_blank_multileader_still_selects_it() {
+        use cadcraft_geom::Vec3;
+        for scale in ["1:2", "2:1"] {
+            let mut s = crate::Session::new();
+            let r = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+            let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+            let d = s.doc_mut().unwrap();
+            d.header.set_str("CANNOSCALE", scale);
+            let sc = d.anno_scale(scale).cloned().unwrap();
+            d.modify_entity(h, |e| {
+                e.common.anno_scales = vec![sc];
+                let EntityKind::MLeader(m) = &mut e.kind else { return };
+                let landing = m.landing;
+                if let Some(t) = m.text.as_mut() {
+                    t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                    t.width = 4.0;
+                    t.height = 2.0;
+                    t.attach = 1;
+                    t.rotation = 0.0;
+                }
+            })
+            .unwrap();
+            let d = &*d;
+            let e = d.entity(h).unwrap();
+            let frame = blank_mtext_box(d, e).expect("a blank multileader has a frame");
+            let bx = entity_bounds(d, e, 0).union(&frame).expand(0.01);
+            assert!(select_window(d, &Space::Model, bx, false).contains(&h), "scale {scale}");
+        }
     }
 }

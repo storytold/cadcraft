@@ -443,6 +443,7 @@ fn gather_in(
                 }
                 EntityKind::AttDef(a) => cands.push((mode::INS, a.text.justify_point())),
                 // A multileader: its text's insertion point, or its block content's.
+                // select.rs blank_snap_points must offer the same points.
                 EntityKind::MLeader(m) => {
                     cands.extend(m.text.iter().map(|t| (mode::INS, t.insert.xy())));
                     cands.extend(m.block.iter().map(|b| (mode::INS, b.insert.xy())));
@@ -1139,6 +1140,14 @@ mod tests {
         let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
         let landing = {
             let d = s.doc_mut().unwrap();
+            if block_at.is_some() {
+                // A block whose geometry (a line 60 long) covers its base point, at the stored insertion
+                // and, drawn at 1:2 about the landing, at the scaled one too.
+                let mut blk = cadcraft_doc::Block::new("BLK");
+                let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(60.0, 0.0, 0.0) });
+                blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line));
+                d.blocks.insert("BLK".into(), std::sync::Arc::new(blk));
+            }
             d.header.set_str("CANNOSCALE", "1:2");
             let half = d.anno_scale("1:2").cloned().unwrap();
             d.modify_entity(h, |e| {
@@ -1152,7 +1161,12 @@ mod tests {
                 t.attach = 1;
                 t.rotation = 0.0;
                 if let Some(x) = block_at {
-                    m.block = Some(cadcraft_doc::Insert { insert: landing + Vec3::new(x, 0.0, 0.0), ..Default::default() });
+                    m.block = Some(cadcraft_doc::Insert {
+                        block: "BLK".into(),
+                        insert: landing + Vec3::new(x, 0.0, 0.0),
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        ..Default::default()
+                    });
                 }
             })
             .unwrap();
