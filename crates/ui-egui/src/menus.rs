@@ -383,6 +383,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
     // never open a picker.
     let no_path = should_pick_file_path(id, params);
+    // A typed alias of a file command (SAVE for QSAVE, or a user alias) asks for the file as the
+    // command's own name does.
+    let file_id = if no_path && !id.starts_with("ui.") { cadcraft_engine::cmd::resolve_alias(id) } else { String::new() };
+    let id = if matches!(file_id.as_str(), "open" | "saveas" | "qsave") { file_id.as_str() } else { id };
     if let Some(result) = run_recent_file_command(app, id) {
         return Some(result);
     }
