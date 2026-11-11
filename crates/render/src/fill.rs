@@ -1,40 +1,100 @@
 //! Polygon filling: even-odd regions to triangles (slab decomposition), wide polylines.
 
 use cadcraft_doc::LwPolyline;
-use cadcraft_geom::{Polyline, Vec2};
+use cadcraft_geom::{Bounds2, Polyline, Vec2};
 
 /// Triangulate an even-odd region bounded by closed loops (holes allowed) by cutting it into
 /// horizontal slabs at every vertex y and emitting trapezoids. Two edges that cross inside a slab
 /// (a bowtie, two loops crossing each other) swap order there, so such a slab is cut again at the
 /// crossing and each part is paired on its own. Robust for any input; output size is
-/// O(slabs × crossings), capped for hostile inputs.
+/// O(slabs × crossings), capped for hostile inputs. Groups of loops whose bounding boxes are
+/// separated (by a vertical or a horizontal gap, recursively) cannot affect each other's even-odd
+/// parity, so each group is cut on its own: disjoint outlines do not multiply each other's slabs.
 pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
-    let mut edges: Vec<(Vec2, Vec2)> = Vec::new();
-    for l in loops {
+    // (original index, bounds, edges) per loop.
+    let mut items: Vec<(usize, Bounds2, Vec<(Vec2, Vec2)>)> = Vec::new();
+    let mut total = 0usize;
+    for (k, l) in loops.iter().enumerate() {
         let n = l.len();
         if n < 3 {
             continue;
         }
+        let mut edges = Vec::new();
         for i in 0..n {
             let (Some(&a), Some(&b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
             if (a.y - b.y).abs() > 1e-15 && a.is_finite() && b.is_finite() {
                 edges.push(if a.y < b.y { (a, b) } else { (b, a) });
             }
         }
+        total += edges.len();
+        if total > 200_000 {
+            return Vec::new();
+        }
+        if !edges.is_empty() {
+            let bounds = Bounds2::from_points(edges.iter().flat_map(|(a, b)| [*a, *b]));
+            items.push((k, bounds, edges));
+        }
     }
-    if edges.is_empty() || edges.len() > 200_000 {
-        return Vec::new();
+    let mut out = Vec::new();
+    // Slabs created by cutting at crossings, over the whole region; past this the remaining
+    // crossings are left unsplit rather than letting a hostile input run away.
+    let mut cuts_left = MAX_CROSSING_CUTS;
+    let mut stack = vec![items];
+    while let Some(mut group) = stack.pop() {
+        if group.is_empty() {
+            continue;
+        }
+        let parts = split_groups(&mut group, true);
+        let parts = if parts.len() > 1 { parts } else { split_groups(&mut group, false) };
+        if parts.len() > 1 {
+            // Lowest-first when popped.
+            stack.extend(parts.into_iter().rev());
+            continue;
+        }
+        group.sort_by_key(|g| g.0);
+        let edges: Vec<(Vec2, Vec2)> = group.into_iter().flat_map(|g| g.2).collect();
+        if slabs(edges, &mut out, &mut cuts_left) {
+            break;
+        }
     }
+    out
+}
+
+type Item = (usize, Bounds2, Vec<(Vec2, Vec2)>);
+
+/// `group` cut into the chains of loops whose extents along x (or y) overlap, in order along it;
+/// one chain when nothing separates them (then `group` is left as it was, but for its order).
+fn split_groups(group: &mut Vec<Item>, along_x: bool) -> Vec<Vec<Item>> {
+    let span = |b: &Bounds2| if along_x { (b.min.x, b.max.x) } else { (b.min.y, b.max.y) };
+    group.sort_by(|a, b| span(&a.1).0.total_cmp(&span(&b.1).0));
+    let mut parts: Vec<Vec<Item>> = Vec::new();
+    let mut reach = f64::NEG_INFINITY;
+    for item in std::mem::take(group) {
+        match parts.last_mut() {
+            Some(part) if span(&item.1).0 <= reach => {
+                reach = reach.max(span(&item.1).1);
+                part.push(item);
+            }
+            _ => {
+                reach = span(&item.1).1;
+                parts.push(vec![item]);
+            }
+        }
+    }
+    if parts.len() == 1 {
+        *group = parts.pop().unwrap_or_default();
+    }
+    parts
+}
+
+/// The slab decomposition of `edges` appended to `out`; true once `out` passes its cap.
+fn slabs(mut edges: Vec<(Vec2, Vec2)>, out: &mut Vec<Vec2>, cuts_left: &mut usize) -> bool {
     let mut ys: Vec<f64> = edges.iter().flat_map(|(a, b)| [a.y, b.y]).collect();
     ys.sort_by(f64::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
     edges.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
-    let mut out = Vec::new();
     let mut active: Vec<(Vec2, Vec2)> = Vec::new();
     let mut next = 0usize;
-    // Slabs created by cutting at crossings, over the whole region; past this the remaining
-    // crossings are left unsplit rather than letting a hostile input run away.
-    let mut cuts_left = MAX_CROSSING_CUTS;
     let mut pending: Vec<(f64, f64)> = Vec::new();
     for w in ys.windows(2) {
         let (Some(&y0), Some(&y1)) = (w.first(), w.get(1)) else { continue };
@@ -54,7 +114,7 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
             let ymid = (ya + yb) / 2.0;
             let mut xs: Vec<(f64, f64, f64)> = active.iter().map(|e| (x_at(e, ymid), x_at(e, ya), x_at(e, yb))).collect();
             xs.sort_by(|a, b| a.0.total_cmp(&b.0));
-            if cuts_left > 0 {
+            if *cuts_left > 0 {
                 let mut cuts: Vec<f64> = Vec::new();
                 for pair in xs.windows(2) {
                     let (Some(l), Some(r)) = (pair.first(), pair.get(1)) else { continue };
@@ -65,8 +125,8 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
                 if !cuts.is_empty() {
                     cuts.sort_by(f64::total_cmp);
                     cuts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
-                    cuts.truncate(cuts_left);
-                    cuts_left -= cuts.len();
+                    cuts.truncate(*cuts_left);
+                    *cuts_left -= cuts.len();
                     // Push the parts top-down so the lowest is processed first.
                     let mut top = yb;
                     for &c in cuts.iter().rev() {
@@ -84,11 +144,11 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
                 }
             }
             if out.len() > 6_000_000 {
-                return out;
+                return true;
             }
         }
     }
-    out
+    false
 }
 
 /// How many extra slab boundaries crossings may add over one region.
@@ -162,6 +222,23 @@ mod tests {
         let hole = vec![Vec2::new(4.0, 4.0), Vec2::new(6.0, 4.0), Vec2::new(6.0, 6.0), Vec2::new(4.0, 6.0)];
         let t = triangulate_evenodd(&[outer, hole]);
         assert!((area(&t) - 96.0).abs() < 1e-9);
+    }
+
+    /// A thousand disjoint squares side by side (every slab of one would otherwise be cut at the
+    /// vertex heights of all the others) triangulate in linear output.
+    #[test]
+    fn disjoint_outlines_do_not_multiply_each_others_slabs() {
+        let n = 1_000;
+        let loops: Vec<Vec<Vec2>> = (0..n)
+            .map(|i| {
+                let (x, jitter) = (i as f64 * 3.0, i as f64 * 0.001);
+                vec![Vec2::new(x, jitter), Vec2::new(x + 2.0, jitter), Vec2::new(x + 2.0, 2.0 + jitter), Vec2::new(x, 2.0 + jitter)]
+            })
+            .collect();
+        let t = triangulate_evenodd(&loops);
+        assert!((area(&t) - 4.0 * n as f64).abs() < 1e-6);
+        // Two triangles per square: no slab was cut at another square's height.
+        assert_eq!(t.len(), 6 * n);
     }
 
     #[test]

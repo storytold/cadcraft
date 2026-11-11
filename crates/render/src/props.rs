@@ -14,7 +14,7 @@ pub(crate) fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool
     let d = ctx.d;
     // Layer "0" inside a block takes the insert's layer.
     let layer_name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
-    let layer = d.layer(layer_name);
+    let layer = ctx.layer(layer_name);
     let visible =
         c.visible && layer.is_none_or(|l| l.visible() && (!plotting || l.plot)) && !ctx.frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name));
     let layer_color = ctx.layer_color(layer_name).unwrap_or(Color::Index(7));

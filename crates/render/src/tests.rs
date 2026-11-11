@@ -1217,3 +1217,19 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     });
     assert_eq!(loops_of(&h).len(), 2);
 }
+
+/// The per-list layer index finds what `Drawing::layer` finds: any case, the first of a duplicate.
+#[test]
+fn the_layer_index_agrees_with_the_layer_table() {
+    let mut d = Drawing::new_imperial();
+    let mut first = cadcraft_doc::Layer::new("Walls");
+    first.color = Color::Index(1);
+    let mut dup = cadcraft_doc::Layer::new("WALLS");
+    dup.color = Color::Index(2);
+    d.layers.extend([first, dup, cadcraft_doc::Layer::new("Doors")]);
+    let index = LayerIndex::new(&d);
+    let top = crate::pipeline::top_ctx(&d, &index, cadcraft_geom::Mat3::IDENTITY, cadcraft_doc::Handle(1), &[], &[]);
+    for name in ["Walls", "walls", "WALLS", "doors", "0", "Missing"] {
+        assert_eq!(top.layer(name).map(|l| (&l.name, l.color)), d.layer(name).map(|l| (&l.name, l.color)), "{name}");
+    }
+}

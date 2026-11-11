@@ -256,7 +256,15 @@ pub struct PolyClip {
     band_h: f64,
     /// The region as triangles (for clipping fills), with each triangle's bounds.
     tris: Vec<([Vec2; 3], Bounds2)>,
+    /// Indices into `tris` of the triangles whose y range meets each band (at most
+    /// [`TRI_BAND_SPAN`] bands of it), so a fill triangle meets only the clip triangles near it.
+    tri_bands: Vec<Vec<u32>>,
+    /// Indices of the triangles spanning more bands than that: tested against every fill triangle.
+    tall_tris: Vec<u32>,
 }
+
+/// Most bands one clip triangle is registered in; a taller one goes to [`PolyClip::tall_tris`].
+const TRI_BAND_SPAN: usize = 8;
 
 impl PolyClip {
     /// A clip region for `poly` (see [`clean_polygon`]); `None` for a degenerate outline.
@@ -266,7 +274,15 @@ impl PolyClip {
         let band_h = bounds.height() / BANDS as f64;
         let mut bands: Vec<Vec<u32>> = vec![Vec::new(); BANDS];
         let n = poly.len();
-        let mut clip = PolyClip { poly: Vec::new(), bounds, bands: Vec::new(), band_h, tris: Vec::new() };
+        let mut clip = PolyClip {
+            poly: Vec::new(),
+            bounds,
+            bands: Vec::new(),
+            band_h,
+            tris: Vec::new(),
+            tri_bands: vec![Vec::new(); BANDS],
+            tall_tris: Vec::new(),
+        };
         for i in 0..n {
             let (Some(a), Some(b)) = (poly.get(i), poly.get((i + 1) % n)) else { continue };
             let (lo, hi) = (clip.band(a.y.min(b.y)), clip.band(a.y.max(b.y)));
@@ -282,6 +298,17 @@ impl PolyClip {
             .map(|t| (*t, Bounds2::from_points(t.iter().copied())))
             .filter(|(_, b)| b.width() > 0.0 && b.height() > 0.0)
             .collect();
+        for k in 0..clip.tris.len() {
+            let Some((_, tb)) = clip.tris.get(k) else { continue };
+            let (lo, hi) = (clip.band(tb.min.y), clip.band(tb.max.y));
+            if hi - lo >= TRI_BAND_SPAN {
+                clip.tall_tris.push(k as u32);
+            } else {
+                for band in clip.tri_bands.iter_mut().take(hi + 1).skip(lo) {
+                    band.push(k as u32);
+                }
+            }
+        }
         clip.poly = poly;
         clip.bands = bands;
         Some(clip)
@@ -404,7 +431,15 @@ impl PolyClip {
                 out.extend_from_slice(t);
                 continue;
             }
-            for (c, cb) in &self.tris {
+            // The clip triangles near `t`, in clip order (the same output as a scan of all of them).
+            let (lo, hi) = (self.band(tb.min.y), self.band(tb.max.y));
+            let mut near: Vec<u32> = self.tall_tris.clone();
+            for band in self.tri_bands.iter().take(hi + 1).skip(lo) {
+                near.extend_from_slice(band);
+            }
+            near.sort_unstable();
+            near.dedup();
+            for (c, cb) in near.iter().filter_map(|&k| self.tris.get(k as usize)) {
                 if !cb.intersects(&tb) {
                     continue;
                 }
@@ -588,6 +623,39 @@ mod tests {
         let area: f64 = t.as_chunks::<3>().0.iter().map(|t| cadcraft_geom::shoelace(t).abs()).sum();
         assert!((area - 75.0).abs() < 1e-6, "{area}");
         assert!(t.iter().all(|p| !(p.x > 5.0 + 1e-9 && p.y > 5.0 + 1e-9)));
+    }
+
+    /// A fill clipped through the band index equals the same fill against a plain scan of every clip
+    /// triangle (the unindexed result), for a boundary with tall and short triangles.
+    #[test]
+    fn indexed_triangle_clipping_equals_a_full_scan() {
+        // A comb: tall teeth over a base, so its triangles span many bands.
+        let mut poly = vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0)];
+        for i in (0..20).rev() {
+            let x = i as f64 * 2.0;
+            poly.extend([
+                Vec2::new(x + 2.0, 20.0),
+                Vec2::new(x + 1.0, 20.0),
+                Vec2::new(x + 1.0, 2.0),
+                Vec2::new(x + 0.5, 2.0),
+                Vec2::new(x + 0.5, 20.0),
+                Vec2::new(x, 20.0),
+            ]);
+        }
+        let c = PolyClip::new(&poly).unwrap();
+        assert!(!c.tall_tris.is_empty());
+        let fill: Vec<Vec2> = (0..30)
+            .flat_map(|i| {
+                let (x, y) = (i as f64 * 1.3, (i % 7) as f64 * 2.5);
+                [Vec2::new(x, y), Vec2::new(x + 6.0, y), Vec2::new(x + 2.0, y + 9.0)]
+            })
+            .collect();
+        let got = c.clip_triangles(&fill);
+        let mut scan = c.clone();
+        scan.tri_bands = vec![(0..scan.tris.len() as u32).collect(); BANDS];
+        scan.tall_tris.clear();
+        assert_eq!(got, scan.clip_triangles(&fill));
+        assert!(!got.is_empty());
     }
 
     #[test]

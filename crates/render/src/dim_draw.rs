@@ -42,7 +42,7 @@ pub(crate) fn dimension(
     let dim_rgb = ink(style.dim_line_color, layer_color, own);
     let ext_rgb = ink(style.ext_line_color, layer_color, own);
     let txt_rgb = ink(style.text_color, layer_color, own);
-    let layer = d.layer(layer_name);
+    let layer = ctx.layer(layer_name);
     let weight = |v: i16| -> f32 {
         if !b.opts.lineweights {
             return 0.0;
