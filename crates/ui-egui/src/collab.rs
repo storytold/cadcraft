@@ -122,7 +122,25 @@ pub(crate) fn run_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let nth = NEXT.fetch_add(1, Ordering::Relaxed);
     let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
-    nanos.rotate_left(17) ^ nth.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(std::process::id()).rotate_left(48)
+    nanos.rotate_left(17) ^ nth.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ instance_noise().rotate_left(40)
+}
+
+/// What separates two pages of one process from each other. Native has an OS seed and a process
+/// id; a browser page is one wasm instance per tab, where `Math.random` is the only source that
+/// differs between two tabs opened in the same millisecond (std's time on the web has
+/// millisecond resolution and the counter starts at zero in each). `std::process::id` is not
+/// available on wasm: calling it aborts the page.
+#[cfg(target_arch = "wasm32")]
+fn instance_noise() -> u64 {
+    (js_sys::Math::random() * f64::from(u32::MAX)) as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn instance_noise() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::hash::RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.finish()
 }
 
 /// A connection to a shared session.

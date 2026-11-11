@@ -179,7 +179,11 @@ iframe) or `data-host="page"` on the canvas and speaks the messages of
 - **Commands** run locally only when the UI handles them (view, settings,
   `document.switch`); everything else goes through `collab_command` as an
   operation of the room. A viewer's operation is refused before it is sent and by
-  the room.
+  the room. An operation id carries a prefix unique to the window: the room
+  answers a repeated `op_id` with the first answer (ADR 0003) and keys that window
+  by the id alone, so two windows — or one after a reload — must not both send
+  `local-0`, or the second edit is answered with the first one's change set and
+  never applied.
 - **Presence** carries the cursor, the selection, the space and the layer at the
   server's 10 Hz pace, and the participant list reaches the cabinet as
   `session-state` and `presence`. A shared session keeps painting at 10 Hz while

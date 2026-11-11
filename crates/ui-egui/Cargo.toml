@@ -34,6 +34,10 @@ web-time = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Two browser tabs opened in the same millisecond need distinct operation ids (`collab::run_id`).
+js-sys = "0.3"
+
 [dev-dependencies]
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
