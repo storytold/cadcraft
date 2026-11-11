@@ -611,16 +611,19 @@ fn tracked(f: &Fmt, t: &str) -> bool {
     (f.tracking - 1.0).abs() > 1e-9 && !crate::bidi::has_rtl(t)
 }
 
-/// `t` cut where tracking spreads it: each piece is a character with the combining marks and
-/// invisible format characters after it, so a mark stays on its letter.
+/// `t` cut where tracking spreads it: each piece is a grapheme cluster (UAX #29), what a reader
+/// sees as one character, so a mark stays on its letter, Thai sara am on its consonant and a
+/// joined emoji whole. An invisible format character (a bidi mark, a zero-width space) is a
+/// cluster of its own there; it stays with the one before it, so it adds no step.
 fn track_clusters(t: &str) -> Vec<&str> {
     let mut out: Vec<&str> = Vec::new();
     let mut start = 0;
-    for (at, c) in t.char_indices().skip(1) {
-        if !crate::bidi::is_mark(c) && !crate::bidi::is_format_control(c) {
-            out.push(&t[start..at]);
-            start = at;
+    for at in icu_segmenter::GraphemeClusterSegmenter::new().segment_str(t) {
+        if at == 0 || at >= t.len() || t[at..].chars().next().is_some_and(crate::bidi::is_format_control) {
+            continue;
         }
+        out.push(&t[start..at]);
+        start = at;
     }
     if start < t.len() {
         out.push(&t[start..]);
@@ -656,9 +659,18 @@ fn text_width_in(f: &Fmt, t: &str) -> f64 {
     }
 }
 
-/// The width of a space between words in format `f`, tracked like any character.
-fn space_width_in(f: &Fmt) -> f64 {
-    crate::space_width(&f.font, f.height, f.wf) * f.tracking
+/// Whether `seg` is right-to-left text, which tracking leaves as it is (see [`tracked`]).
+fn seg_rtl(seg: &Seg) -> bool {
+    matches!(seg, Seg::Text(t) if crate::bidi::has_rtl(t))
+}
+
+/// The width of a space between words in format `f`, tracked like any character, except next to
+/// right-to-left text: that keeps its normal spacing, so the space between its words does too.
+/// `before` is the segment before the space on the line, `after` the word after it. Both layouts
+/// decide here, so they wrap alike.
+fn space_width_in(f: &Fmt, before: Option<&Seg>, after: &[(Seg, usize)]) -> f64 {
+    let width = crate::space_width(&f.font, f.height, f.wf);
+    if before.is_some_and(seg_rtl) || after.first().is_some_and(|(seg, _)| seg_rtl(seg)) { width } else { width * f.tracking }
 }
 
 /// What tracking adds after the last character of `seg` when something follows it on the line (a
@@ -872,7 +884,8 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 };
                 for segments in pieces {
                     let word_width = word_width(segments);
-                    let space_width = pending_space.map(|format| space_width_in(fmt(format))).unwrap_or(0.0);
+                    let before = line.items.iter().rev().find_map(|item| item.seg.as_ref());
+                    let space_width = pending_space.map(|format| space_width_in(fmt(format), before, segments)).unwrap_or(0.0);
                     if width > 0.0 && !line.items.is_empty() && line.width + line.trail + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                     } else if !line.items.is_empty() || pending_space.is_some() {
@@ -1096,6 +1109,41 @@ mod tests {
         assert!(!tracked(&base, hebrew));
         assert!((text_width_in(&base, hebrew) - text_width(&base.font, hebrew, 1.0, 1.0)).abs() < 1e-12);
         assert!(tracked(&base, "HH"));
+    }
+
+    /// Tracking spreads what a reader sees as characters: grapheme clusters, so a joined emoji,
+    /// a flag, Thai sara am on its consonant and a Devanagari vowel sign on its letter are each
+    /// shaped and moved as one. An invisible format character stays with the one before it.
+    #[test]
+    fn tracking_keeps_each_grapheme_cluster_whole() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        assert_eq!(track_clusters(&format!("{family}x")), [family, "x"]);
+        assert_eq!(track_clusters("\u{1F1EE}\u{1F1F3}a"), ["\u{1F1EE}\u{1F1F3}", "a"]);
+        assert_eq!(track_clusters("\u{E01}\u{E48}\u{E33}\u{E02}"), ["\u{E01}\u{E48}\u{E33}", "\u{E02}"]);
+        assert_eq!(track_clusters("\u{915}\u{93E}\u{916}"), ["\u{915}\u{93E}", "\u{916}"]);
+        assert_eq!(track_clusters("a\u{200B}b\u{200E}"), ["a\u{200B}", "b\u{200E}"]);
+    }
+
+    /// Right-to-left words keep their normal spacing under tracking, and so do the spaces next to
+    /// them; a left-to-right word on the same line is still spread. In both layouts.
+    #[test]
+    fn tracking_leaves_the_spaces_beside_right_to_left_words() {
+        let width = |s: &str| {
+            let b = lay(s, 0.0).bounds;
+            b.max.x - b.min.x
+        };
+        let hebrew = "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD}";
+        let hhh = crate::text_width(&TextFont::Stroke, "HHH", 1.0, 1.0);
+        for para in ["", "\\pxi0;"] {
+            for t in [2.0, 0.8] {
+                let (normal, tracked) = (width(&format!("{para}{hebrew}")), width(&format!("{para}\\T{t};{hebrew}")));
+                assert!((tracked - normal).abs() < 1e-9, "{para}\\T{t}: {tracked} vs {normal}");
+                // HHH's steps are spread, the last one into the space too; the space is not.
+                let mixed = format!("HHH {hebrew}");
+                let (normal, tracked) = (width(&format!("{para}{mixed}")), width(&format!("{para}\\T{t};{mixed}")));
+                assert!((tracked - normal - (t - 1.0) * hhh).abs() < 1e-6, "{para}\\T{t} mixed: {tracked} vs {normal}");
+            }
+        }
     }
 
     #[test]
