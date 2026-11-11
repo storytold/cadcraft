@@ -111,14 +111,15 @@ impl Bridge {
         });
     }
 
-    /// `cadcraft:commit`: ask the cabinet to store the session. The cabinet assembles the file
-    /// itself, so no bytes travel and the browser writes nothing.
+    /// `cadcraft:commit`: ask the cabinet to store a file the room built without publishing it
+    /// itself. The ordinary path is the room publishing server-to-server (M87), so this is used
+    /// only when the room answers with bytes.
     pub fn commit_fn(&self) -> HostCommitFn {
         let host = self.host.clone();
         let session = self.session_id.clone();
-        Box::new(move || {
+        Box::new(move |bytes| {
             let id = session.borrow().clone().ok_or("the page that embeds CADCraft opened no session")?;
-            host.post_commit(&id, None)
+            host.post_commit(&id, bytes)
         })
     }
 
@@ -149,8 +150,8 @@ fn host_people(participants: &[SessionParticipant]) -> Vec<Participant> {
         .collect()
 }
 
-/// The `cadcraft:open` payload, `{ name, bytes }` where `bytes` holds a drawing: it opens like a
-/// file picked with File › Open or dropped on the window. The crate has cleaned the name (and cut
+/// The `cadcraft:open` payload, `{ name, bytes }` where `bytes` holds a drawing: it opens the
+/// session's document in the window (INTEGRATION.md §5.1). The crate has cleaned the name (and cut
 /// it to 255 characters); a blank one comes as `document` and becomes `Drawing.dxf`. An oversized
 /// drawing is refused before it is copied.
 fn receive_open(name: &str, data: &FileData, inbox: &crate::upload::Inbox) {
@@ -164,5 +165,5 @@ fn receive_open(name: &str, data: &FileData, inbox: &crate::upload::Inbox) {
         inbox.refuse(e);
         return;
     }
-    inbox.receive(name, array.to_vec());
+    inbox.receive_host(name, array.to_vec());
 }

@@ -8,9 +8,39 @@
 
 use cadcraft_collab::{Change, OpContext};
 
-use super::{Arc, EngineError, Result, Session, Value};
+use super::{Arc, Drawing, EngineError, Result, Session, Space, Value};
 
 impl Session {
+    /// Show the drawing the room replaces the replica with (the first join, or a snapshot after a
+    /// reconnect): the room is authoritative (ADR 0001), so the window shows the room's drawing
+    /// rather than the file it opened from.
+    ///
+    /// The drawing keeps its name and path — the window still edits the cabinet's file — but not
+    /// its undo history: the join is not a local step, and a shared session keeps its steps on the
+    /// server (ADR 0010). The drawing counts as saved, because a room drawing is what a commit
+    /// writes; local changes after the join make it dirty again.
+    pub fn adopt_shared_drawing(&mut self, drawing: Drawing) -> Result<()> {
+        let st = self.state_mut()?;
+        if st.block_edit.is_some() {
+            return Err(EngineError::Other("a shared drawing cannot be adopted while the Block Editor is open".into()));
+        }
+        // A layout the room does not have would leave the window on a space that is not there.
+        if let Space::Paper(name) = &st.space
+            && !drawing.layouts.iter().any(|layout| &layout.name == name)
+        {
+            st.space = Space::Model;
+        }
+        let doc = Arc::new(drawing);
+        st.doc = doc.clone();
+        st.saved = doc;
+        st.undo.clear();
+        st.redo.clear();
+        st.selection.clear();
+        st.previous_selection.clear();
+        st.revision = st.revision.saturating_add(1);
+        Ok(())
+    }
+
     /// Apply a change set from the authoritative server to the active drawing.
     ///
     /// No undo step is recorded: a remote change is not the local session's to undo. The revision
@@ -82,7 +112,7 @@ impl Session {
 mod tests {
     use super::*;
     use cadcraft_collab::diff;
-    use cadcraft_doc::{Common, EntityKind, Layout, Point, Space};
+    use cadcraft_doc::{Common, EntityKind, Layout, Line, Point, Space};
     use cadcraft_geom::Vec3;
     use serde_json::json;
 
@@ -123,6 +153,42 @@ mod tests {
 
         assert_eq!(s.doc().unwrap().entity_count(), 0);
         assert!(s.selection().is_empty());
+    }
+
+    /// A join shows the room's drawing, not the file the window opened: the room is
+    /// authoritative (ADR 0001). The drawing keeps its name, loses this window's undo history
+    /// (ADR 0010) and counts as saved until the next local edit.
+    #[test]
+    fn a_joined_session_adopts_the_room_drawing() {
+        let mut s = Session::new();
+        line(&mut s);
+        s.state_mut().unwrap().title = "acceptance.dxf".into();
+        s.state_mut().unwrap().path = Some("/srv/acceptance.dxf".into());
+        assert!(s.state().unwrap().is_dirty(), "the local line is an unsaved change");
+
+        let mut room = Drawing::new_metric();
+        for x in [0.0, 30.0, 60.0] {
+            room.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 10.0, 0.0) }))
+                .unwrap();
+        }
+        s.adopt_shared_drawing(room).unwrap();
+
+        let st = s.state().unwrap();
+        assert_eq!(st.doc.entity_count(), 3, "the room's three lines, not the local one");
+        assert_eq!(st.title, "acceptance.dxf", "the window still edits the cabinet's file");
+        assert_eq!(st.path.as_deref(), Some("/srv/acceptance.dxf"));
+        assert!(!st.is_dirty(), "a room drawing is what a commit writes");
+        assert!(st.undo.is_empty() && st.redo.is_empty(), "the room owns the steps");
+    }
+
+    /// A join from a paper space the room does not have leaves the window in model space instead
+    /// of on a layout that is gone.
+    #[test]
+    fn a_join_leaves_a_missing_layout_for_model_space() {
+        let mut s = Session::new();
+        s.state_mut().unwrap().space = Space::Paper("Sheet1".into());
+        s.adopt_shared_drawing(Drawing::new_metric()).unwrap();
+        assert_eq!(s.state().unwrap().space, Space::Model);
     }
 
     #[test]

@@ -455,6 +455,9 @@ impl WebSession {
         let Some(joining) = self.join.take() else { return };
         let shown = joining.join.version();
         let Some(drawing) = joining.join.drawing() else { return };
+        // The room's drawing is what the window shows from now on (ADR 0001); the file the host
+        // sent only opened the session.
+        self.events.push_back(Event::Joined { drawing: Box::new(drawing.clone()), version: shown });
         let mut driver = Driver::new(Client::new(drawing, shown), joining.role, joining.session_id, joining.participants);
         for op in std::mem::take(&mut self.waiting_ops) {
             driver.client_mut().submit(op);

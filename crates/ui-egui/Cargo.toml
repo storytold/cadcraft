@@ -37,6 +37,8 @@ craft-update = { workspace = true }
 [dev-dependencies]
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
+# A host's document in a test is a drawing written and read as a file (collab.rs).
+cadcraft-io = { workspace = true }
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in
 # production too; the tests exercise the same installed chain as the app.
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

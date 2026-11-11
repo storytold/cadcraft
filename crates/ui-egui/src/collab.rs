@@ -16,12 +16,13 @@ use cadcraft_collab_client::Event;
 #[cfg(not(target_arch = "wasm32"))]
 use cadcraft_collab_client::Session as Remote;
 
-/// Ask the host page's cabinet to store the shared session (`cadcraft:commit`).
+/// Ask the host page's cabinet to store a commit the room built without publishing it itself
+/// (`cadcraft:commit`, with the file the room answered).
 ///
-/// The page that hosts the web build owns the cabinet, so a save asks it to commit the session
-/// instead of the room assembling a file the browser would download. The desktop leaves the hook
-/// unset and the room's own commit (server-to-server, M87) handles the file.
-pub type HostCommitFn = Box<dyn Fn() -> Result<(), String>>;
+/// The page that hosts the web build owns the cabinet. The ordinary path is the room publishing
+/// the file server-to-server (M87) and the app only reporting the version; this hook is the
+/// fallback for a room without the cabinet's callback, and the desktop leaves it unset.
+pub type HostCommitFn = Box<dyn Fn(Option<&[u8]>) -> Result<(), String>>;
 
 /// The sync state the cabinet's indicator shows (`session-state.status`): the contract's words are
 /// `synced`, `pending`, `offline` and `error`.
@@ -92,6 +93,9 @@ pub struct CommitState {
 pub enum Update {
     /// The change set an operation produced.
     Applied(Applied),
+    /// The room's drawing replaced the replica (the first join, or a snapshot after a reconnect):
+    /// the window shows it, not the file it opened from (ADR 0001).
+    Joined { drawing: Box<cadcraft_doc::Drawing>, version: u64 },
     /// An operation was refused.
     Rejected(Reject),
     /// Another participant's view.
@@ -248,6 +252,7 @@ impl Collab {
             for event in session.poll() {
                 match event {
                     Event::Applied(applied) => updates.push(Update::Applied(applied)),
+                    Event::Joined { drawing, version } => updates.push(Update::Joined { drawing, version }),
                     Event::Rejected(rejected) => updates.push(Update::Rejected(rejected)),
                     Event::Presence(presence) => updates.push(Update::Presence(presence)),
                     Event::Committed { version, not_saved, bytes, cabinet } => {
@@ -327,6 +332,9 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
             Ok(Event::Applied(applied)) => {
                 let _ = updates.send(Update::Applied(applied));
             }
+            Ok(Event::Joined { drawing, version }) => {
+                let _ = updates.send(Update::Joined { drawing, version });
+            }
             Ok(Event::Rejected(rejected)) => {
                 let _ = updates.send(Update::Rejected(rejected));
             }
@@ -369,6 +377,9 @@ impl crate::CadApp {
     /// Attach a shared session that arrived after the app was built (the browser's
     /// `cadcraft:session`, which the host sends after the first frame).
     pub fn attach_collab(&mut self, collab: Collab) {
+        // A session joins on its own frames: its drawing has not arrived yet, and the window may
+        // still open the host's document until it does.
+        self.collab_joined = false;
         self.collab = Some(collab);
     }
 
@@ -423,6 +434,15 @@ impl crate::CadApp {
         }
         for update in updates {
             match update {
+                Update::Joined { drawing, version } => {
+                    self.collab_version = version;
+                    self.collab_joined = true;
+                    if let Err(error) = self.session.adopt_shared_drawing(*drawing) {
+                        self.session.echo(format!("shared session: {error}"));
+                    } else {
+                        self.session.echo(format!("shared session: the room's drawing, version {version}"));
+                    }
+                }
                 Update::Applied(applied) => {
                     self.collab_version = applied.version;
                     if let Err(error) = self.session.apply_remote(&applied.changes) {
@@ -444,12 +464,24 @@ impl crate::CadApp {
                             cabinet.version, cabinet.etag
                         )),
                         None => {
-                            let path = self.session.state().ok().and_then(|state| state.path.clone());
-                            let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
-                            let temporary = format!("{path}.tmp");
-                            match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
-                                Ok(()) => self.session.echo(format!("shared session: wrote {path} (version {version})")),
-                                Err(error) => self.session.echo(format!("shared session: could not write {path}: {error}")),
+                            // A room without the cabinet's callback answers with the file: the
+                            // hosting page stores it (`cadcraft:commit`) and confirms with
+                            // `cadcraft:committed`; the desktop writes it beside its drawing.
+                            let stored = self.host_commit.as_ref().map(|commit| commit(Some(&bytes)));
+                            match stored {
+                                Some(Ok(())) => self.session.echo(format!(
+                                    "shared session: asked the host to store version {version}; the cabinet answers with its version"
+                                )),
+                                Some(Err(message)) => self.session.echo(format!("shared session: the host refused version {version}: {message}")),
+                                None => {
+                                    let path = self.session.state().ok().and_then(|state| state.path.clone());
+                                    let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
+                                    let temporary = format!("{path}.tmp");
+                                    match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
+                                        Ok(()) => self.session.echo(format!("shared session: wrote {path} (version {version})")),
+                                        Err(error) => self.session.echo(format!("shared session: could not write {path}: {error}")),
+                                    }
+                                }
                             }
                         }
                     }
@@ -492,6 +524,41 @@ impl crate::CadApp {
                 collab.send(Request::Presence(presence));
             }
         }
+        // A shared session needs frames even when nobody touches the window: the replica's snapshot
+        // arrives in bounded slices (one part or one batch per frame), presence is paced by frames
+        // (ADR-0006) and a closed socket schedules its reconnect from a callback. Without this an
+        // idle tab stalls the join at `pending` and never reconnects. A settled session ticks at
+        // the presence pace; one that is still arriving repaints at once.
+        if let Some(collab) = &self.collab {
+            if collab.status() == SyncStatus::Synced {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            } else {
+                // A bounded wait, not a repaint storm: an offline session must not spin the page.
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
+        }
+    }
+
+    /// Open the drawing the hosting page sent with the session (`cadcraft:open`, INTEGRATION.md
+    /// §5.1): the cabinet's bytes are how the file reaches the browser, so the open runs here even
+    /// though the window is in a shared session.
+    ///
+    /// The room is authoritative once its drawing has joined: a document that arrives after the
+    /// join would fork the drawing this window shows and is refused, because the cabinet reloads
+    /// the page to open another file.
+    pub fn open_host_bytes(&mut self, name: &str, bytes: &[u8]) {
+        if self.collab_joined {
+            self.open_failed(format!(
+                "Open: {name} was not opened: this window shows the shared session's drawing; the cabinet reloads the editor to open another file"
+            ));
+            return;
+        }
+        if let Some(e) = Self::open_size_error(name, bytes.len() as u64) {
+            return self.open_failed(e);
+        }
+        let data = cadcraft_engine::cmd::file::base64_encode(bytes);
+        let r = self.execute_here("open", &serde_json::json!({ "data": data, "name": name }));
+        self.opened(r);
     }
 
     /// Send a command to the shared session instead of running it locally.
@@ -516,20 +583,11 @@ impl crate::CadApp {
             return Some(Ok(serde_json::json!({ "queued": true })));
         }
         if matches!(id, "save" | "qsave" | "saveas") {
-            // A hosted web build leaves the file to the page's cabinet (`cadcraft:commit`): the
-            // cabinet already holds the session and answers `cadcraft:committed` with its version.
-            let host = self.host_commit.as_ref().map(|commit| commit());
-            if let Some(result) = host {
-                return Some(match result {
-                    Ok(()) => {
-                        self.session.echo("shared session: asked the host to store the session");
-                        Ok(serde_json::json!({ "queued": true, "host": true }))
-                    }
-                    Err(message) => Err(message),
-                });
-            }
-            let version = self.collab_version;
-            collab.send(Request::Commit(version));
+            // The room builds the file and publishes it to the cabinet (M87): it is the only
+            // participant that can write the authoritative drawing, and the cabinet answers with
+            // its file version. Only a room that cannot publish it itself hands the bytes back,
+            // and then the page's cabinet stores them (`cadcraft:commit`).
+            collab.send(Request::Commit(self.collab_version));
             return Some(Ok(serde_json::json!({ "queued": true })));
         }
         let (space, selection) = match self.session.state() {
@@ -798,7 +856,7 @@ pub fn is_structural(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CabinetCommit, Collab, Request, Role, is_structural};
+    use super::{CabinetCommit, Collab, Request, Role, Update, is_structural};
     use serde_json::json;
 
     /// The copy of a refused commit is named after the drawing, not over its file: an extension
@@ -857,6 +915,71 @@ mod tests {
         assert_eq!(app.session.active, 0, "the tab really changed");
         assert!(requests.try_recv().is_err(), "a drawing switch is not a room operation");
         assert!(app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).is_err(), "a viewer still cannot edit");
+    }
+
+    /// The host's document is the session's document (INTEGRATION.md §5.1): opening it runs in
+    /// the window, never as a room operation the room refuses. A save asks the room, which
+    /// publishes the file.
+    #[test]
+    fn a_host_document_and_a_save_are_not_ordinary_room_operations() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Owner);
+        app.attach_collab(collab);
+
+        // Junk cannot open, but it must be refused by the local open rather than queued as an
+        // operation named `open` (the room refuses those).
+        app.open_host_bytes("acceptance.dxf", b"not a drawing");
+        assert!(requests.try_recv().is_err(), "opening the session's document is not a room operation");
+
+        app.collab_version = 3;
+        app.run("save", json!({})).expect("save is queued");
+        match requests.try_recv().expect("the room writes the file") {
+            Request::Commit(version) => assert_eq!(version, 3, "the version this window shows"),
+            _ => panic!("a save asks the room to commit"),
+        }
+    }
+
+    /// Once the room's drawing joined, a late host document is refused instead of forking the
+    /// drawing the window shows: the cabinet reloads the editor to open another file.
+    #[test]
+    fn a_host_document_after_the_join_does_not_fork_the_room_drawing() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+        app.collab_joined = true;
+        let before = app.session.docs.len();
+
+        app.open_host_bytes("other.dxf", b"0\nEOF\n");
+
+        assert_eq!(app.session.docs.len(), before, "no second drawing was opened");
+        assert!(requests.try_recv().is_err(), "nothing was queued either");
+    }
+
+    /// The room's drawing replaces the window's document on a join: a second participant sees the
+    /// edits made before it arrived, and its operations build on the room's version.
+    #[test]
+    fn a_join_shows_the_room_drawing_at_the_rooms_version() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, _requests, updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+        assert_eq!(app.session.state().expect("a drawing").doc.entity_count(), 0);
+
+        let mut room = cadcraft_doc::Drawing::new_metric();
+        for x in [0.0, 10.0, 20.0] {
+            room.add(
+                &cadcraft_doc::Space::Model,
+                cadcraft_doc::Common::default(),
+                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_doc::geom::Vec3::new(x, 0.0, 0.0), b: cadcraft_doc::geom::Vec3::new(x, 5.0, 0.0) }),
+            )
+            .expect("a line");
+        }
+        updates.send(Update::Joined { drawing: Box::new(room), version: 12 }).expect("an update");
+
+        app.collab_tick(&egui::Context::default());
+
+        assert_eq!(app.session.state().expect("a drawing").doc.entity_count(), 3, "the room's three lines");
+        assert_eq!(app.collab_version, 12, "operations build on the room's version");
+        assert!(app.collab_joined);
     }
 
     /// `cadcraft:committed` from a hosting page lands in the panel as the cabinet's file version,

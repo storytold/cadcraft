@@ -48,6 +48,10 @@ pub enum Status {
 pub enum Event {
     /// An operation was applied; the replica already shows it.
     Applied(Applied),
+    /// The replica was replaced by the room's drawing: the first join, or a snapshot after a
+    /// reconnect. The window must show it (the room is authoritative, ADR 0001), not the file it
+    /// opened from.
+    Joined { drawing: Box<Drawing>, version: u64 },
     /// An operation was refused.
     Rejected(Reject),
     /// Another participant's view.
@@ -202,9 +206,10 @@ impl Driver {
                 let parts = std::mem::take(&mut self.parts);
                 let bytes = Snapshot::decode(&parts).map_err(SessionError::Snapshot)?;
                 let drawing = cadcraft_io::read(&bytes, "snapshot.dxf").map_err(|e| SessionError::Snapshot(e.to_string()))?;
-                let version = parts.first().map(|part| part.version).unwrap_or(self.version());
+                let version = parts.first().map_or_else(|| self.version(), |part| part.version);
+                let event = Event::Joined { drawing: Box::new(drawing.clone()), version };
                 self.client.resync(drawing, version);
-                Event::Ignored
+                event
             }
             ServerMessage::Welcome { session_id, role, participants, .. } => {
                 self.session_id = session_id;
