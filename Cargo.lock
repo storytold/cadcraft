@@ -776,6 +776,7 @@ dependencies = [
  "cadcraft-render",
  "clap",
  "getrandom 0.4.3",
+ "libc",
  "log",
  "serde_json",
  "tiny-skia",
