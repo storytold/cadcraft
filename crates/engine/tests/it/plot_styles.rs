@@ -62,8 +62,8 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
             &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5", "color": "#00ff00", "screening": 40, "lineweight": 0.35, "linetype": "HIDDEN", "end": "round"}}),
         )
         .unwrap();
-    // `set` replies with the table summary and the edited style, not the whole table.
-    assert_eq!(r["styles"], 2);
+    // `set` replies with the table's name and the edited style, not the table.
+    assert_eq!(r["name"], "office.stb");
     let pen = r["style"].clone();
     assert_eq!(pen["name"], "Pen 5");
     assert_eq!(
@@ -141,8 +141,11 @@ fn stylesmanager_set_replies_with_the_change_not_the_whole_table() {
     let mut s = Session::new();
     let set = json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_13", "lineweight": 0.3}});
     let r = s.execute("stylesmanager", &set).unwrap();
-    assert_eq!((r["name"].as_str(), r["styles"].as_u64()), (Some("monochrome.ctb"), Some(255)), "{r}");
+    assert_eq!(r["name"], "monochrome.ctb", "{r}");
     assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some("Color_13"), Some(30)), "{r}");
+    // Only the change: no table summary, no other style.
+    let keys: Vec<&str> = r.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["name", "style"], "{r}");
     assert!(r.to_string().len() < 1000, "the reply is short, not the 255-style table: {} bytes", r.to_string().len());
     // The edit is in the drawing.
     let got = s.execute("stylesmanager", &json!({"action": "get", "name": "monochrome.ctb"})).unwrap();
@@ -151,7 +154,10 @@ fn stylesmanager_set_replies_with_the_change_not_the_whole_table() {
     // Removing a style of a named table names what went.
     s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
     s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5"}})).unwrap();
-    let r = s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "removeStyle": "Pen 5"})).unwrap();
-    assert_eq!((r["removedStyle"].as_str(), r["styles"].as_u64()), (Some("Pen 5"), Some(1)), "{r}");
-    assert!(r.get("style").is_none(), "{r}");
+    let r =
+        s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "removeStyle": "Pen 5", "description": "Office pens"})).unwrap();
+    assert_eq!((r["removedStyle"].as_str(), r["description"].as_str()), (Some("Pen 5"), Some("Office pens")), "{r}");
+    assert!(r.get("style").is_none() && r.get("styles").is_none(), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    assert_eq!(got["styles"].as_array().map(Vec::len), Some(1), "{got}");
 }

@@ -285,22 +285,22 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             let t = t.sanitized();
-            // Just what changed, not the whole table (a colour-dependent one has 255 styles): the
-            // table summary as `new` and `load` reply, the edited style, the removed style's name.
-            let edited = changed.and_then(|n| t.styles.iter().find(|x| x.name.eq_ignore_ascii_case(&n)).and_then(|x| serde_json::to_value(x).ok()));
-            let removed = str_param(p, "removeStyle").map(str::trim);
-            let name = t.name.clone();
-            store(s.doc_mut()?, t);
-            let d = s.doc()?;
-            let mut out = table_summary(d, &find_table(cmd, d, &name)?);
+            // Only what changed, not the table (a colour-dependent one has 255 styles): the table's
+            // name, the description if given, the edited style and the removed style's name.
+            let mut out = json!({ "name": t.name });
             if let Some(o) = out.as_object_mut() {
-                if let Some(e) = edited {
+                if str_param(p, "description").is_some() {
+                    o.insert("description".into(), json!(t.description));
+                }
+                let edited = changed.and_then(|n| t.styles.iter().find(|x| x.name.eq_ignore_ascii_case(&n)));
+                if let Some(e) = edited.and_then(|x| serde_json::to_value(x).ok()) {
                     o.insert("style".into(), e);
                 }
-                if let Some(r) = removed {
-                    o.insert("removedStyle".into(), json!(r));
+                if let Some(r) = str_param(p, "removeStyle") {
+                    o.insert("removedStyle".into(), json!(r.trim()));
                 }
             }
+            store(s.doc_mut()?, t);
             Ok(out)
         }
         "delete" => {
