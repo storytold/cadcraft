@@ -771,6 +771,8 @@ mod tests {
         frame(app, ctx, vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }]);
     }
 
+    /// A Greek-layout prefix completes like its Latin keys; a prefix in another script is matched
+    /// as it is.
     #[test]
     fn autocomplete_reads_a_greek_layout_prefix_as_its_latin_keys() {
         // ΛΙΝ is the keys L-I-N on the Greek layout: it completes like the Latin prefix does.
@@ -782,6 +784,8 @@ mod tests {
         assert!(suggestions("ЖЖЖ", &|_| false).is_empty());
     }
 
+    /// A Greek word the user made an alias is offered as that alias's command, which is what Enter
+    /// runs.
     #[test]
     fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
         // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
@@ -795,6 +799,8 @@ mod tests {
         assert_eq!(first.as_deref(), Some("QSAVE"));
     }
 
+    /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
+    /// its keys.
     #[test]
     fn autocomplete_leaves_a_greek_word_the_drawings_lisp_defines_as_typed() {
         // ΛΙΝΕ is the keys of LINE, but the drawing defines a command of that Greek name: Enter runs that

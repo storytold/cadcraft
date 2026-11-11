@@ -48,9 +48,9 @@ fn is_greek_letter(c: char) -> bool {
 
 /// `word` read as the Latin keys of a Greek-layout keyboard, lower case: `Some` only when the word
 /// has a Greek letter and every character is a Greek letter the layout types, the semicolon on
-/// the Q key, or ASCII (kept as it is). A combining tonos or dialytika, the accent of decomposed
-/// text, is ignored like the accent of a precomposed letter, but only straight after the Greek
-/// letter it accents and once each: anywhere else the word is not Greek-layout typing.
+/// the Q key, or ASCII (itself, in lower case). A combining tonos or dialytika, the accent of
+/// decomposed text, is ignored like the accent of a precomposed letter, but only straight after
+/// the Greek letter it accents and once each: anywhere else the word is not Greek-layout typing.
 pub fn latin_keys(word: &str) -> Option<String> {
     let mut greek = false;
     // What the previous Greek letter already carries (tonos, dialytika); `None` when the previous
@@ -103,6 +103,8 @@ pub fn same_greek_word_as(word: &str) -> Option<impl Fn(&str) -> bool> {
 mod tests {
     use super::{latin_keys, same_greek_word};
 
+    /// One Greek word compares equal in any case, accent or final sigma; another word, or a Latin
+    /// one, does not.
     #[test]
     fn one_greek_word_is_the_same_in_any_case_accent_or_final_sigma() {
         for (a, b) in [("ΣΟΛΙΔ", "σολιδ"), ("ΣΟΛΙΔ", "σολίδ"), ("ΛΑΣ", "λας"), ("ΛΑΣ", "λασ"), ("ΛΙ\u{301}ΝΕ", "λινε")]
@@ -114,6 +116,8 @@ mod tests {
         }
     }
 
+    /// Greek-layout typing reads as its Latin keys: plain, accented and decomposed letters, the Q
+    /// and W keys, ASCII prefixes.
     #[test]
     fn greek_layout_commands_read_as_their_latin_keys() {
         assert_eq!(latin_keys("ΛΙΝΕ").as_deref(), Some("line"));
@@ -137,6 +141,7 @@ mod tests {
         assert_eq!(latin_keys("_ΛΙΝΕ").as_deref(), Some("_line"));
     }
 
+    /// A word with no Greek letter, or with a character the layout does not type, is not read.
     #[test]
     fn words_that_are_not_greek_layout_typing_are_left_alone() {
         assert_eq!(latin_keys("line"), None, "no Greek letter");
@@ -147,6 +152,7 @@ mod tests {
         assert_eq!(latin_keys("\u{387}"), None, "the ano teleia is punctuation, not a letter");
     }
 
+    /// A combining tonos or dialytika counts only straight after a Greek letter, and once each.
     #[test]
     fn a_combining_mark_must_follow_the_greek_letter_it_accents() {
         assert_eq!(latin_keys("\u{301}ΛΙΝΕ"), None, "no letter before the mark");
@@ -157,6 +163,7 @@ mod tests {
         assert_eq!(latin_keys("Λ\u{308}\u{308}ΙΝΕ"), None, "a second dialytika on one letter");
     }
 
+    /// A 100 000-letter word and odd code points are read or refused; nothing panics.
     #[test]
     fn hostile_text_never_panics() {
         let long = "Ω".repeat(100_000);

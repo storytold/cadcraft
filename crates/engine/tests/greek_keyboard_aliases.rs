@@ -8,8 +8,10 @@ use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
 use serde_json::json;
 
+/// The alias store is process-wide: each test holds this while it changes the aliases.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
+/// A Greek word the user made an alias runs the alias's command, not the command its keys type.
 #[test]
 fn a_greek_alias_starts_its_command_not_the_latin_keys_command() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -30,6 +32,7 @@ fn a_greek_alias_starts_its_command_not_the_latin_keys_command() {
     assert_eq!((circles, lines), (1, 0), "the alias drew the circle, LINE was not started");
 }
 
+/// The alias is found when it is typed in lower case or with an accent too.
 #[test]
 fn a_greek_alias_starts_its_command_in_any_case_or_accent() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());

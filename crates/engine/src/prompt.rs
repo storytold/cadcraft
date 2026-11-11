@@ -225,8 +225,8 @@ impl Prompt {
         }
         let tl = t.to_ascii_lowercase();
         // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys, unless
-        // the prompt offers that spelling itself (a Greek keyword in a LISP program's list): its word,
-        // shortcut or prefix as typed (ΘΝ for ΘΝΔΟ, not UN for Undo) is read before the Latin keys.
+        // the prompt offers that spelling itself (a Greek keyword in a LISP program's list): its word
+        // or a prefix of it as typed (ΘΝ for ΘΝΔΟ, not UN for Undo) is read before the Latin keys.
         if let Some(latin) = crate::keyboard::latin_keys(t) {
             // Greek letters have case, accents and a final sigma, which the ASCII-only folding above does not see.
             let typed = crate::keyboard::greek_fold(t).unwrap_or_else(|| latin.clone());
@@ -421,6 +421,9 @@ mod tests {
         assert_eq!(parse_point("1,2,3,4", last), None);
     }
 
+    /// A keyword the prompt offers in Greek is matched as spelled (any case, accent or final sigma,
+    /// or a prefix) before the Latin reading of the same keys; without one, the keys answer the
+    /// Latin keyword.
     #[test]
     fn a_greek_keyword_is_matched_as_spelled_before_its_latin_reading() {
         // ΘΝΔΟ is the keys U-N-D-O, so it answers Undo, unless the prompt offers the Greek word itself

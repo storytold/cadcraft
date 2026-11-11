@@ -216,8 +216,9 @@ impl Session {
         };
         // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is looked up as its
         // Latin keys. Only the lookup is: text that is no selection word (a block name at BEDIT's prompt,
-        // which also takes a selection) reaches the command as typed. So does the name of an existing
-        // block at a prompt that takes a name, in any case: a block called Μ is that block there, not Multiple.
+        // which also takes a selection) reaches the command as typed. The name of an existing block at
+        // a prompt that takes a name reaches it as stored, in whatever case it was typed: a block
+        // called Μ is that block there, not Multiple.
         let block = match &input {
             Input::Text(t) if prompt.accept.text => self.greek_block_name(t.trim()),
             _ => None,
