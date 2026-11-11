@@ -98,7 +98,7 @@ pub fn allowed(s: &KeyboardShortcut) -> bool {
     let k = s.logical_key;
     let never =
         [Key::Space, Key::Enter, Key::Tab, Key::Escape, Key::Delete, Key::Backspace, Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft, Key::ArrowRight];
-    if never.contains(&k) {
+    if never.contains(&k) || is_modifier(k) {
         return false;
     }
     let m = s.modifiers;
@@ -322,11 +322,23 @@ fn label_of(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// Ctrl, Shift, Alt or Super (either side): held with a key, never a shortcut's key.
+/// Ctrl, Shift, Alt or Super (either side), held with a key, or Caps Lock, Num Lock, Scroll Lock
+/// or Fn, which change what keys do: never a shortcut's key.
 fn is_modifier(k: Key) -> bool {
     matches!(
         k,
-        Key::ShiftLeft | Key::ShiftRight | Key::ControlLeft | Key::ControlRight | Key::AltLeft | Key::AltRight | Key::SuperLeft | Key::SuperRight
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+            | Key::CapsLock
+            | Key::NumLock
+            | Key::ScrollLock
+            | Key::Fn
     )
 }
 
@@ -342,7 +354,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut filter: String = ctx.data(|m| m.get_temp(filter_id)).unwrap_or_default();
     let mut note: Option<(String, bool)> = ctx.data(|m| m.get_temp(note_id));
     // A key pressed while recording becomes that command's shortcut; Esc stops recording. Ctrl,
-    // Shift, Alt and Super come as keys of their own when pressed: they wait for the key they go with.
+    // Shift, Alt, Super and the lock keys come as keys of their own when pressed: they wait for the
+    // key they go with.
     if let Some(id) = recording.clone() {
         let pressed = ctx.input(|inp| {
             inp.events.iter().find_map(|e| match e {
@@ -518,6 +531,9 @@ mod tests {
             "ArrowUp",
             "Delete",
         ] {
+            assert!(!allowed(&key(s)), "{s}");
+        }
+        for s in ["Cmd+ControlLeft", "Cmd+CapsLock", "Alt+NumLock", "Cmd+Fn"] {
             assert!(!allowed(&key(s)), "{s}");
         }
         for s in ["Cmd+L", "Alt+L", "F4", "PageDown", "Cmd+Shift+Q", "Ctrl+K"] {
@@ -704,8 +720,8 @@ mod tests {
         assert!(!recording(&ctx));
     }
 
-    /// Ctrl+Shift+L recorded: Ctrl and Shift come as keys of their own before L, and the shortcut
-    /// is Ctrl+Shift+L, not the Ctrl key alone ("Cmd+ControlLeft").
+    /// Ctrl+Shift+L recorded: Ctrl, Shift and Caps Lock come as keys of their own before L, and the
+    /// shortcut is Ctrl+Shift+L, not the Ctrl key alone ("Cmd+ControlLeft") nor "Cmd+CapsLock".
     #[test]
     fn a_modifier_pressed_first_waits_for_its_key() {
         let ctx = egui::Context::default();
@@ -724,6 +740,7 @@ mod tests {
         };
         frame(vec![key(Key::ControlLeft, ctrl)]);
         frame(vec![key(Key::ShiftLeft, ctrl_shift)]);
+        frame(vec![key(Key::CapsLock, ctrl_shift)]);
         assert!(recording(&ctx), "still waiting for the key");
         frame(vec![key(Key::L, ctrl_shift)]);
         assert_eq!(app.ui.shortcuts.get("circle").map(String::as_str), Some("Cmd+Shift+L"));
