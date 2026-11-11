@@ -233,3 +233,17 @@ fn options_on_objects_that_are_gone_record_nothing() {
     assert!(lines(&s).is_empty());
     assert_eq!(undo_len(&s), undo, "no empty undo step");
 }
+
+#[test]
+fn json_form_copies_stay_within_maxarray() {
+    let mut s = Session::new();
+    let l = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    // 5,000 Copy options of 30 objects would be 150,000 copies, over the default MAXARRAY of 100,000.
+    let others: Vec<String> = (0..29).map(|i| line(&mut s, [0.0, f64::from(i + 1)], [10.0, f64::from(i + 1)])).collect();
+    let mut hs = vec![l];
+    hs.extend(others);
+    let ops: Vec<Value> = (0..5_000).map(|i| json!({"copy": [0, i]})).collect();
+    let e = s.execute("mocoro", &json!({"handles": hs, "base": [0, 0], "ops": ops})).unwrap_err();
+    assert!(e.to_string().contains("MAXARRAY"), "{e}");
+    assert_eq!(lines(&s).len(), 30, "nothing was copied");
+}

@@ -23,10 +23,12 @@ use serde_json::{Value, json};
 
 use super::super::curves::{KW, is_locked};
 use super::super::machines::{SelOutcome, SelectPhase, number};
-use super::super::targets;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 const PROPERTIES: [&str; 7] = ["Color", "LAyer", "LType", "ltScale", "LWeight", "Thickness", "TRansparency"];
+
+/// CHANGE's Properties: CHPROP's list with Elev.
+const CHANGE_PROPERTIES: [&str; 8] = ["Color", "Elev", "LAyer", "LType", "ltScale", "LWeight", "Thickness", "TRansparency"];
 
 /// What CHPROP asks for.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,6 +42,7 @@ enum Ask {
     Lineweight,
     Thickness,
     Transparency,
+    Elevation,
 }
 
 pub(super) struct ChpropM {
@@ -47,11 +50,35 @@ pub(super) struct ChpropM {
     handles: Vec<Handle>,
     /// `None` while objects are selected.
     ask: Option<Ask>,
+    /// CHANGE's Properties: Elev is on the list.
+    change: bool,
+    /// The elevation typed at Elev, set when the command ends.
+    elevation: Option<f64>,
 }
 
 impl ChpropM {
     pub(super) fn new() -> Self {
-        ChpropM { select: SelectPhase::default(), handles: Vec::new(), ask: None }
+        ChpropM { select: SelectPhase::default(), handles: Vec::new(), ask: None, change: false, elevation: None }
+    }
+
+    /// CHANGE's Properties option on `handles`.
+    pub(super) fn change_properties(handles: Vec<Handle>) -> Self {
+        ChpropM { select: SelectPhase::default(), handles, ask: Some(Ask::Property), change: true, elevation: None }
+    }
+
+    fn keywords(&self) -> &'static [&'static str] {
+        if self.change { &CHANGE_PROPERTIES } else { &PROPERTIES }
+    }
+
+    /// The selection's common elevation, or "varies" (as a line between two heights does alone).
+    fn common_elevation(&self, s: &Session) -> String {
+        let Ok(d) = s.doc() else { return String::new() };
+        let zs: Vec<Option<f64>> = self.handles.iter().filter_map(|h| d.entity(*h)).filter_map(|e| super::change::elevation_of(&e.kind)).collect();
+        match zs.first() {
+            None => format!("{:.4}", 0.0),
+            Some(Some(z)) if zs.iter().all(|o| *o == Some(*z)) => format!("{z:.4}"),
+            Some(_) => "varies".into(),
+        }
     }
 
     /// The selection's common value of a property, or "varies".
@@ -62,13 +89,18 @@ impl ChpropM {
         if vals.all(|v| v == first) { first } else { "varies".into() }
     }
 
-    /// Apply `props` to the selection through `properties.set`.
+    /// Apply `props` to the selection through `properties.set`, saying what it left out: objects
+    /// this command moved onto a locked layer, say.
     fn apply(&self, s: &mut Session, props: Value) -> Result<()> {
         let mut p = json!({ "handles": self.handles.iter().map(|h| h.hex()).collect::<Vec<_>>() });
         if let (Some(p), Value::Object(props)) = (p.as_object_mut(), props) {
             p.extend(props);
         }
-        super::run_set(s, &p).map(|_| ())
+        let r = super::run_set(s, &p)?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m.to_string());
+        }
+        Ok(())
     }
 
     /// Take an answer to `ask`; `false` when it was refused (the prompt comes again).
@@ -151,6 +183,13 @@ impl ChpropM {
                     return Ok(false);
                 }
             }
+            Ask::Elevation => match number(word).filter(|v| v.is_finite()) {
+                Some(z) => self.elevation = Some(z),
+                None => {
+                    s.echo("Requires a number.");
+                    return Ok(false);
+                }
+            },
             Ask::Property => {}
         }
         Ok(true)
@@ -158,7 +197,7 @@ impl ChpropM {
 }
 
 /// The objects among `hs` on locked layers.
-fn locked(s: &Session, hs: &[Handle]) -> HashSet<Handle> {
+pub(super) fn locked(s: &Session, hs: &[Handle]) -> HashSet<Handle> {
     hs.iter().copied().filter(|h| is_locked(s, *h)).collect()
 }
 
@@ -170,31 +209,36 @@ fn say_locked(s: &mut Session, n: usize) {
     }
 }
 
-/// CHPROP's JSON form: `properties.set` on the objects that are not on locked layers, which the
-/// command leaves out too; "locked" says how many were.
-pub(super) fn run_chprop(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
-    let locked = locked(s, &hs);
-    if locked.is_empty() {
-        return super::run_set(s, p).map(|r| with_locked(r, 0));
+/// Start selecting objects, leaving those on locked layers out of the pickfirst selection (and
+/// saying how many); `done` when some of it is left.
+pub(super) fn begin_unlocked(s: &mut Session) -> SelectPhase {
+    let mut select = SelectPhase::begin(s);
+    if select.done {
+        let locked = locked(s, &select.picked);
+        if !locked.is_empty() {
+            select.picked.retain(|h| !locked.contains(h));
+            say_locked(s, locked.len());
+            s.set_selection(select.picked.clone());
+            // Nothing left of the pickfirst selection: ask for objects instead.
+            select.done = !select.picked.is_empty();
+        }
     }
-    let free: Vec<Handle> = hs.into_iter().filter(|h| !locked.contains(h)).collect();
-    let r = if free.is_empty() {
-        json!({ "changed": 0 })
-    } else {
-        let mut q = p.as_object().cloned().unwrap_or_default();
-        q.insert("handles".into(), json!(free.iter().map(|h| h.hex()).collect::<Vec<_>>()));
-        super::run_set(s, &Value::Object(q))?
-    };
-    Ok(with_locked(r, locked.len()))
+    select
 }
 
-/// `r` with how many objects were left out on locked layers.
-fn with_locked(mut r: Value, n: usize) -> Value {
-    if let Some(o) = r.as_object_mut() {
-        o.insert("locked".into(), json!(n));
-    }
-    r
+/// Feed `i` to `select`, leaving picked objects on locked layers out and saying how many after
+/// what was found.
+pub(super) fn feed_unlocked(select: &mut SelectPhase, s: &mut Session, i: Input) -> Result<SelOutcome> {
+    let (i, n) = match i {
+        Input::Pick(hs) if !select.removing => {
+            let locked = locked(s, &hs);
+            (Input::Pick(hs.into_iter().filter(|h| !locked.contains(h)).collect()), locked.len())
+        }
+        i => (i, 0),
+    };
+    let outcome = select.feed(s, &i)?;
+    say_locked(s, n);
+    Ok(outcome)
 }
 
 /// A colour typed at CHPROP: 1–255, a name, BYLAYER or BYBLOCK (not 0 or 256, which COLOR takes).
@@ -242,17 +286,7 @@ impl Interactive for ChpropM {
         "CHPROP"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        self.select = SelectPhase::begin(s);
-        if self.select.done {
-            let locked = locked(s, &self.select.picked);
-            if !locked.is_empty() {
-                self.select.picked.retain(|h| !locked.contains(h));
-                say_locked(s, locked.len());
-                s.set_selection(self.select.picked.clone());
-                // Nothing left of the pickfirst selection: ask for objects instead.
-                self.select.done = !self.select.picked.is_empty();
-            }
-        }
+        self.select = begin_unlocked(s);
         if self.select.done {
             self.handles = self.select.picked.clone();
             self.ask = Some(Ask::Property);
@@ -262,7 +296,7 @@ impl Interactive for ChpropM {
     fn prompt(&self, s: &Session) -> Prompt {
         let Some(ask) = self.ask else { return self.select.prompt() };
         match ask {
-            Ask::Property => Prompt::new("Enter property to change", Accept::TEXT).kw(&PROPERTIES),
+            Ask::Property => Prompt::new("Enter property to change", Accept::TEXT).kw(self.keywords()),
             Ask::Color => {
                 Prompt::new("New color", Accept::TEXT).kw(&["Truecolor"]).default(self.current(s, |e| e.common.color.name().to_ascii_uppercase()))
             }
@@ -275,21 +309,13 @@ impl Interactive for ChpropM {
             Ask::Lineweight => Prompt::new("Enter new lineweight", Accept::TEXT).default(self.current(s, |e| lineweight_name(e.common.lineweight))),
             Ask::Thickness => Prompt::new("Specify new thickness", Accept::NUMBER).default(self.current(s, |e| format!("{:.4}", e.common.thickness))),
             Ask::Transparency => Prompt::new("Enter transparency value", KW).default(self.current(s, |e| e.common.transparency.name())),
+            Ask::Elevation => Prompt::new("Specify new elevation", Accept::NUMBER).default(self.common_elevation(s)),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let Some(ask) = self.ask else {
             // Objects on locked layers are left out, and said after what was found.
-            let (i, n) = match i {
-                Input::Pick(hs) if !self.select.removing => {
-                    let locked = locked(s, &hs);
-                    (Input::Pick(hs.into_iter().filter(|h| !locked.contains(h)).collect()), locked.len())
-                }
-                i => (i, 0),
-            };
-            let outcome = self.select.feed(s, &i)?;
-            say_locked(s, n);
-            return Ok(match outcome {
+            return Ok(match feed_unlocked(&mut self.select, s, i)? {
                 SelOutcome::More => Step::Continue,
                 SelOutcome::Done(hs) => {
                     self.handles = hs;
@@ -304,6 +330,10 @@ impl Interactive for ChpropM {
         };
         match (ask, i) {
             (Ask::Property, Input::Enter) => {
+                // CHANGE sets the elevation as it ends.
+                if let Some(z) = self.elevation {
+                    super::change::elevate_and_say(s, &self.handles, z)?;
+                }
                 s.set_selection(Vec::new());
                 return Ok(Step::Done);
             }
@@ -315,12 +345,13 @@ impl Interactive for ChpropM {
                     "ltScale" => Ask::LtScale,
                     "LWeight" => Ask::Lineweight,
                     "Thickness" => Ask::Thickness,
+                    "Elev" => Ask::Elevation,
                     _ => Ask::Transparency,
                 });
             }
             (Ask::Property, Input::Text(t)) => {
                 let t = t.trim().trim_start_matches('_').to_ascii_lowercase();
-                let n = PROPERTIES.iter().filter(|k| k.to_ascii_lowercase().starts_with(&t)).count();
+                let n = self.keywords().iter().filter(|k| k.to_ascii_lowercase().starts_with(&t)).count();
                 s.echo(if n > 1 { "Ambiguous response, please clarify..." } else { "Invalid option keyword." });
             }
             (Ask::Color, Input::Keyword(k)) if k == "Truecolor" => self.ask = Some(Ask::TrueColor),

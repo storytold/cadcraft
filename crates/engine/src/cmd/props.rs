@@ -1,14 +1,16 @@
 //! Properties: per-object property edits, current properties, CHPROP, MATCHPROP, linetypes, units,
 //! RENAME.
 
+mod change;
 mod chprop;
+mod dash_units;
 mod matchprop;
 mod rename;
 
 pub use matchprop::MatchProps;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Lineweight, Transparency};
+use cadcraft_doc::{EntityKind, Handle, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
@@ -19,10 +21,14 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
-        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
-            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
+        CommandSpec::new("chprop", "Change Properties", run_set)
+            .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
+        CommandSpec::new("change", "Change", change::run_change)
+            .alias(&["-ch"])
+            .params("{handles?, point?: [x, y], elevation?} → {changed, ignored, differingZ, detachedHatches, locked}: the point moves the nearer end of each line to it (level or plumb with the other end under ORTHOMODE) and, when it is the one object, passes a circle through it or places a text, attribute definition or block reference at it (`ignored` otherwise); `elevation` sets the z of objects whose points share one (`differingZ` otherwise); objects on locked layers are left out (the command line asks Specify change point or [Properties], then about each circle, text, attribute definition and block reference in turn)")
+            .interactive(|_| Ok(Box::new(change::ChangeM::new()))),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -38,6 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("lweight", "Lineweight...", run_lweight).menu(&["Format", "Lineweight..."]).alias(&["lw", "lineweight"]).params("{lineweight: mm | ByLayer}"),
         CommandSpec::new("ltscale", "Linetype Scale", run_ltscale).alias(&["lts"]).params("{scale}").interactive(|_| Ok(Box::new(LtscaleM))),
         CommandSpec::new("units", "Units...", run_units).menu(&["Format", "Units..."]).alias(&["un"]).params("{lunits?: 1..5, luprec?: 0..8, aunits?: 0..4, auprec?: 0..8, insunits?}"),
+        CommandSpec::new("-units", "Units", run_units).alias(&["-un"]).params("(as UNITS)").interactive(|_| Ok(Box::new(dash_units::DashUnits::default()))),
         CommandSpec::new("thickness", "Thickness", run_thickness)
             .menu(&["Format", "Thickness"])
             .params("{thickness} (THICKNESS: the 3D thickness given to new lines, arcs, circles, points and polylines; may be negative) → {thickness}")
@@ -189,11 +196,74 @@ fn set_xy(p: &mut Vec3, v: &Value) {
     }
 }
 
+/// The objects `properties.set` leaves alone, as CHPROP, MATCHPROP and MOVE do: those on locked
+/// layers and, while a reference is edited in place, those outside the working set.
+#[derive(Default)]
+struct LeftOut {
+    locked: usize,
+    outside: usize,
+}
+
+impl LeftOut {
+    /// `hs` without the objects that can't be edited, each object once, and how many those were. A
+    /// handle that names no object is an error, before anything changes.
+    fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
+        let d = s.doc()?;
+        // The working set, once: `RefEdit::is_working` searches a list.
+        let working: Option<std::collections::HashSet<Handle>> = d.refedit.as_ref().map(|r| r.items.iter().map(|i| i.copy).collect());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = LeftOut::default();
+        let mut free = Vec::new();
+        for h in hs {
+            let Some(e) = d.entity(h) else {
+                return Err(cadcraft_doc::DocError::NoEntity(h).into());
+            };
+            if !seen.insert(h) {
+                continue;
+            }
+            if working.as_ref().is_some_and(|w| !w.contains(&h)) {
+                out.outside += 1;
+            } else if d.layer(&e.common.layer).is_some_and(|l| l.locked) {
+                out.locked += 1;
+            } else {
+                free.push(h);
+            }
+        }
+        Ok((free, out))
+    }
+
+    /// `{changed, locked}`, and a message saying how many were left out when any were.
+    fn result(&self, changed: usize) -> Value {
+        let mut notes = Vec::new();
+        match self.locked {
+            0 => {}
+            1 => notes.push("1 object was on a locked layer.".to_string()),
+            n => notes.push(format!("{n} objects were on a locked layer.")),
+        }
+        match self.outside {
+            0 => {}
+            1 => notes.push("1 object was not in the working set.".to_string()),
+            n => notes.push(format!("{n} objects were not in the working set.")),
+        }
+        if changed == 0 && !notes.is_empty() {
+            notes.push("Nothing was changed.".to_string());
+        }
+        let mut r = json!({ "changed": changed, "locked": self.locked + self.outside });
+        if !notes.is_empty()
+            && let Some(o) = r.as_object_mut()
+        {
+            o.insert("message".into(), json!(notes.join(" ")));
+        }
+        r
+    }
+}
+
 fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     if hs.is_empty() {
         return Err(bad("properties.set", "nothing selected"));
     }
+    let (hs, left_out) = LeftOut::split(s, hs)?;
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
@@ -204,7 +274,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|v| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("properties.set", "thickness must be a finite number")))
         .transpose()?;
     let lw = p.get("lineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
-    let d = s.doc_mut()?;
+    let d = s.doc()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
         .map(|n| {
@@ -215,13 +285,18 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })
         .transpose()?;
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
-    }
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    if hs.is_empty() {
+        // Every object was left out: the drawing stays as it was, with no undo step.
+        return Ok(left_out.result(0));
+    }
+    let d = s.doc_mut()?;
+    if let Some(l) = str_param(p, "layer") {
+        d.ensure_layer(l);
+    }
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
@@ -230,7 +305,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
         })?;
     }
-    Ok(json!({ "changed": hs.len() }))
+    Ok(left_out.result(hs.len()))
 }
 
 fn apply_kind_properties(
@@ -325,6 +400,17 @@ fn apply_kind_properties(
             }
             if let Some(x) = num("rotation") {
                 t.rotation = x.to_radians();
+            }
+        }
+        // A multileader's text: its contents (#1081) and height.
+        EntityKind::MLeader(m) => {
+            if let Some(t) = &mut m.text {
+                if let Some(v) = str_param(params, "text") {
+                    t.contents = v.replace('\n', "\\P");
+                }
+                if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                    t.height = x;
+                }
             }
         }
         EntityKind::LwPolyline(pl) => {
@@ -758,10 +844,13 @@ fn run_style_current(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Text style names used by entities (in model, paper spaces and blocks) and dimension styles.
+/// Text style names used by entities (in model, paper spaces and blocks), dimension,
+/// multileader and table styles (their cell styles), and the text of complex linetypes.
 pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let mut out: Vec<String> = d.dim_styles.iter().map(|s| s.text_style.clone()).collect();
     out.extend(d.mleader_styles.iter().map(|s| s.text_style.clone()));
+    out.extend(d.table_styles.iter().flat_map(|s| s.cell_styles.iter().map(|c| c.text_style.clone())));
+    out.extend(d.linetypes.iter().flat_map(|lt| lt.pattern.iter().filter_map(|el| el.style.clone())));
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
@@ -1181,6 +1270,11 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
             run_dimstyle_rename(s, &json!({ "from": from, "to": to }))?;
         }
         "linetype" | "ltype" => {
+            // Stored trimmed, as -RENAME types it: lookups compare names untrimmed.
+            let to = to.trim().to_string();
+            if !rename::valid_name(&to) {
+                return Err(bad("rename", format!("`{to}` is not a valid linetype name")));
+            }
             let d = s.doc_mut()?;
             if ["ByBlock", "ByLayer", "Continuous"].iter().any(|n| from.eq_ignore_ascii_case(n)) {
                 return Err(bad("rename", format!("the {from} linetype cannot be renamed")));
@@ -1244,6 +1338,19 @@ mod tests {
         assert_eq!(col(&s), Color::ByLayer);
         s.execute("properties.set", &json!({ "handles": [h], "color": 0 })).unwrap();
         assert_eq!(col(&s), Color::ByBlock);
+    }
+
+    #[test]
+    fn rename_linetype_rejects_invalid_names() {
+        let mut s = Session::new();
+        s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+        for to in ["", "  ", "A;B", "A|B", "*X"] {
+            let r = s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": to }));
+            assert!(r.is_err(), "renamed DASHED to {to:?}: {r:?}");
+            assert!(s.doc().unwrap().linetype("DASHED").is_some());
+        }
+        s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": " DASH2 " })).unwrap();
+        assert!(s.doc().unwrap().linetype("DASH2").is_some());
     }
 
     #[test]
