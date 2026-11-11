@@ -613,13 +613,13 @@ fn tracked(f: &Fmt, t: &str) -> bool {
 
 /// `t` cut where tracking spreads it: each piece is a grapheme cluster (UAX #29), what a reader
 /// sees as one character, so a mark stays on its letter, Thai sara am on its consonant and a
-/// joined emoji whole. An invisible format character (a bidi mark, a zero-width space) is a
+/// joined emoji whole. An invisible format character (a bidi mark, a zero-width space) may be a
 /// cluster of its own there; it stays with the one before it, so it adds no step.
 fn track_clusters(t: &str) -> Vec<&str> {
     let mut out: Vec<&str> = Vec::new();
     let mut start = 0;
     for at in icu_segmenter::GraphemeClusterSegmenter::new().segment_str(t) {
-        if at == 0 || at >= t.len() || t[at..].chars().next().is_some_and(crate::bidi::is_format_control) {
+        if at == 0 || t.get(at..).and_then(|rest| rest.chars().next()).is_none_or(crate::bidi::is_format_control) {
             continue;
         }
         out.push(&t[start..at]);
@@ -1134,6 +1134,7 @@ mod tests {
         };
         let hebrew = "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD}";
         let hhh = crate::text_width(&TextFont::Stroke, "HHH", 1.0, 1.0);
+        let h = crate::text_width(&TextFont::Stroke, "H", 1.0, 1.0);
         for para in ["", "\\pxi0;"] {
             for t in [2.0, 0.8] {
                 let (normal, tracked) = (width(&format!("{para}{hebrew}")), width(&format!("{para}\\T{t};{hebrew}")));
@@ -1142,6 +1143,11 @@ mod tests {
                 let mixed = format!("HHH {hebrew}");
                 let (normal, tracked) = (width(&format!("{para}{mixed}")), width(&format!("{para}\\T{t};{mixed}")));
                 assert!((tracked - normal - (t - 1.0) * hhh).abs() < 1e-6, "{para}\\T{t} mixed: {tracked} vs {normal}");
+                // The space after a Hebrew word isn't spread either; HHH ends the line, so its last
+                // H keeps its own width.
+                let mixed = format!("{hebrew} HHH");
+                let (normal, tracked) = (width(&format!("{para}{mixed}")), width(&format!("{para}\\T{t};{mixed}")));
+                assert!((tracked - normal - (t - 1.0) * (hhh - h)).abs() < 1e-6, "{para}\\T{t} after Hebrew: {tracked} vs {normal}");
             }
         }
     }
