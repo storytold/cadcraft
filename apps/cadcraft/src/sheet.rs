@@ -41,7 +41,7 @@ pub fn start_pick(window: Arc<winit::window::Window>, ui: egui::Context) -> Star
                 let picked = dialog.pick_file();
                 Box::pin(async move { picked.await.map(path) })
             }
-            Pick::Open => {
+            Pick::Open | Pick::Pdf => {
                 let picked = dialog.pick_file();
                 Box::pin(async move { picked.await.map(path) })
             }
