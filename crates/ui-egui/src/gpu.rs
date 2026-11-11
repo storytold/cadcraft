@@ -7,10 +7,12 @@
 //! follows the view (see [`choose_origin`]).
 //!
 //! Batches: filled triangles (TriangleList), 1-px hairlines (LineList), and instanced screen-space
-//! quads for wide lineweights and point markers. Fills are drawn first, then lines on top. A
-//! wipeout starts a new draw-order group (see [`MeshData::breaks`]): its background-coloured mask
-//! is drawn after everything before it and under everything after it. The shader only uses
-//! vertex buffers and one uniform buffer, so it runs on WebGPU and WebGL2.
+//! quads for wide lineweights and point markers. Within a draw-order group fills are drawn first,
+//! then lines on top. A wipeout starts a new group (see [`MeshData::breaks`]): its
+//! background-coloured mask is drawn after everything before it and under everything after it. So
+//! does a fill that overlaps lines or points drawn before it in its group, so a fill brought to
+//! front covers them (up to [`MAX_FILL_BREAKS`] per list). The shader only uses vertex buffers and
+//! one uniform buffer, so it runs on WebGPU and WebGL2.
 //!
 //! Infinite lines (xline/ray) and all overlays stay egui shapes (see `canvas.rs`), and the
 //! canvas falls back to the CPU path when no wgpu render state was handed to the app.
@@ -35,6 +37,10 @@ const INSTANCE_SIZE: usize = 28;
 const CHUNK: usize = 4_194_300;
 /// Point markers are 1.5 × 1.5 points (as on the CPU path).
 const POINT_SIZE: f32 = 1.5;
+/// Most draw-order groups started per list because a fill overlaps lines drawn before it (see
+/// [`build_mesh`]). Past it, later fills go under their group's lines as before, so a drawing of
+/// many such fills never costs more than about three times this many draw calls.
+const MAX_FILL_BREAKS: usize = 2048;
 
 /// How the native window presents frames (`NativeOptions::wgpu_options.surface`).
 ///
@@ -103,8 +109,9 @@ pub struct MeshData {
     pub lines: Vec<u8>,
     pub tris: Vec<u8>,
     pub quads: Vec<u8>,
-    /// Draw-order breaks, one before each wipeout mask: the fill vertices, line vertices and
-    /// quad instances drawn before it. Each group is drawn fills, lines, quads in turn.
+    /// Draw-order breaks, one before each wipeout mask and before each fill that overlaps lines
+    /// or points earlier in its group: the fill vertices, line vertices and quad instances drawn
+    /// before it. Each group is drawn fills, lines, quads in turn.
     pub breaks: Vec<[usize; 3]>,
     /// The vertex buffers already created from this data (see [`MeshData::upload_now`]); the
     /// paint callback then only swaps them in.
@@ -179,6 +186,61 @@ fn premultiplied(c: Rgb, a: u8) -> [u8; 4] {
     [k(c.0), k(c.1), k(c.2), a]
 }
 
+/// Which cells of a 128 × 128 grid over a display list's bounds the lines and points of the
+/// current draw-order group touch (by bounding box), so a later fill can tell whether it overlaps
+/// any of them. One bit per cell: marking or testing a box costs one OR or AND per row it spans.
+struct StrokeGrid {
+    min: Vec2,
+    /// Cells per world unit along x and y (0 when the bounds have no width or height).
+    scale: Vec2,
+    rows: [u128; 128],
+    empty: bool,
+}
+
+impl StrokeGrid {
+    fn new(area: &Bounds2) -> StrokeGrid {
+        let s = |len: f64| if len.is_finite() && len > 0.0 { 128.0 / len } else { 0.0 };
+        let min = if area.is_empty() { Vec2::ZERO } else { area.min };
+        StrokeGrid { min, scale: Vec2::new(s(area.width()), s(area.height())), rows: [0; 128], empty: true }
+    }
+
+    /// The column bits and row range `b` covers, clamped to the grid (a side that isn't finite
+    /// reaches the grid's edge), or `None` for an empty box.
+    fn span(&self, b: &Bounds2) -> Option<(u128, std::ops::RangeInclusive<usize>)> {
+        if b.is_empty() {
+            return None;
+        }
+        let c = |v: f64, min: f64, scale: f64, edge: usize| {
+            let i = ((v - min) * scale).floor();
+            if i.is_finite() { i.clamp(0.0, 127.0) as usize } else { edge }
+        };
+        let (x0, x1) = (c(b.min.x, self.min.x, self.scale.x, 0), c(b.max.x, self.min.x, self.scale.x, 127));
+        let (y0, y1) = (c(b.min.y, self.min.y, self.scale.y, 0), c(b.max.y, self.min.y, self.scale.y, 127));
+        let (x0, x1) = (x0.min(x1), x0.max(x1));
+        Some(((u128::MAX >> (127 - (x1 - x0))) << x0, y0.min(y1)..=y0.max(y1)))
+    }
+
+    fn add(&mut self, b: &Bounds2) {
+        if let Some((bits, rows)) = self.span(b) {
+            for r in self.rows.get_mut(rows).into_iter().flatten() {
+                *r |= bits;
+            }
+            self.empty = false;
+        }
+    }
+
+    fn hits(&self, b: &Bounds2) -> bool {
+        !self.empty && self.span(b).is_some_and(|(bits, rows)| self.rows.get(rows).is_some_and(|rs| rs.iter().any(|r| r & bits != 0)))
+    }
+
+    fn clear(&mut self) {
+        if !self.empty {
+            self.rows = [0; 128];
+            self.empty = true;
+        }
+    }
+}
+
 /// Convert a display list into vertex data relative to `origin`, colours resolved against `bg`.
 pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) -> MeshData {
     let mut m = MeshData {
@@ -188,9 +250,29 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
         breaks: Vec::new(),
         uploaded: None,
     };
+    // The lines and points of the current group, so a fill over ones drawn before it starts a new
+    // group and covers them (draw order). Only kept when the list has fills, and only for
+    // MAX_FILL_BREAKS breaks.
+    let mut strokes = list.prims.iter().any(|p| p.kind == Kind::Tris).then(|| StrokeGrid::new(&list.bounds));
+    let mut fill_breaks = 0usize;
     for prim in &list.prims {
         let col = premultiplied(prim.display_rgb(bg), prim.alpha());
         let pts = list.points(prim);
+        if let Some(s) = strokes.as_mut() {
+            match prim.kind {
+                Kind::Polyline | Kind::Point => s.add(&Bounds2::from_points(pts.iter().copied())),
+                Kind::Tris if s.hits(&Bounds2::from_points(pts.iter().copied())) => {
+                    m.breaks.push([m.tri_vertices(), m.line_vertices(), m.quad_instances()]);
+                    s.clear();
+                    fill_breaks += 1;
+                    if fill_breaks >= MAX_FILL_BREAKS {
+                        strokes = None;
+                    }
+                }
+                Kind::Mask => s.clear(),
+                Kind::Tris | Kind::Infinite { .. } | Kind::Image { .. } => {}
+            }
+        }
         match prim.kind {
             Kind::Polyline => match wide_width(prim.lw, lwdisplay) {
                 Some(w) => {
@@ -983,6 +1065,63 @@ mod tests {
         assert_eq!(m.tri_vertices(), 3);
         assert_eq!(&m.tris[8..12], &[10, 20, 30, 255], "the mask takes the background colour");
         assert_eq!(m.quad_instances(), 1);
+    }
+
+    #[test]
+    fn fills_over_earlier_lines_keep_draw_order() {
+        // A line (0,0)-(10,0), a filled triangle over its middle, a line far away and a point
+        // marker on the first line.
+        let mut l = DisplayList {
+            verts: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(50.0, 50.0), Vec2::new(60.0, 50.0), Vec2::new(5.0, 0.0)],
+            tris: vec![Vec2::new(4.0, -1.0), Vec2::new(6.0, -1.0), Vec2::new(6.0, 1.0)],
+            ..Default::default()
+        };
+        let p = |kind, start, len| DPrim { handle: Handle(1), color: Rgb(255, 255, 255), aci7: false, lw: 0.0, transparency: 0, kind, start, len };
+        for v in l.verts.clone() {
+            l.bounds.add(v);
+        }
+        let bg = Rgb(0, 0, 0);
+        // The fill starts a group after the first line, so it is drawn over it.
+        l.prims = vec![p(Kind::Polyline, 0, 2), p(Kind::Tris, 0, 3), p(Kind::Polyline, 2, 2)];
+        let m = build_mesh(&l, Vec2::ZERO, bg, false);
+        assert_eq!(m.breaks, vec![[0, 2, 0]]);
+        assert_eq!((m.tri_vertices(), m.line_vertices()), (3, 4));
+        // So does one over a point marker.
+        l.prims = vec![p(Kind::Point, 4, 1), p(Kind::Tris, 0, 3)];
+        assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks, vec![[0, 0, 1]]);
+        // Fill first, then the line: nothing to reorder, one group.
+        l.prims = vec![p(Kind::Tris, 0, 3), p(Kind::Polyline, 0, 2)];
+        assert!(build_mesh(&l, Vec2::ZERO, bg, false).breaks.is_empty());
+        // A line elsewhere doesn't split the group.
+        l.prims = vec![p(Kind::Polyline, 2, 2), p(Kind::Tris, 0, 3)];
+        assert!(build_mesh(&l, Vec2::ZERO, bg, false).breaks.is_empty());
+        // A wipeout's group starts empty: a fill after it over a line before it needs no break.
+        l.prims = vec![p(Kind::Polyline, 0, 2), p(Kind::Mask, 0, 3), p(Kind::Tris, 0, 3)];
+        assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks, vec![[0, 2, 0]]);
+        // Many fills over lines: the breaks stop at the budget.
+        l.prims = (0..MAX_FILL_BREAKS + 50).flat_map(|_| [p(Kind::Polyline, 0, 2), p(Kind::Tris, 0, 3)]).collect();
+        assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks.len(), MAX_FILL_BREAKS);
+    }
+
+    #[test]
+    fn stroke_grid_tests_boxes_by_cell() {
+        let mut g = StrokeGrid::new(&Bounds2::new(Vec2::ZERO, Vec2::new(128.0, 128.0)));
+        let b = |x0, y0, x1, y1| Bounds2::new(Vec2::new(x0, y0), Vec2::new(x1, y1));
+        assert!(!g.hits(&b(0.0, 0.0, 128.0, 128.0)));
+        g.add(&b(10.2, 20.2, 12.5, 20.7));
+        assert!(g.hits(&b(12.1, 20.1, 40.0, 40.0)), "shares cell (12, 20)");
+        assert!(!g.hits(&b(13.0, 20.0, 40.0, 40.0)) && !g.hits(&b(0.0, 21.0, 128.0, 128.0)));
+        // Outside the bounds clamps to the edge cells; an infinite side reaches the grid's edge.
+        g.add(&b(-50.0, 500.0, -40.0, 600.0));
+        assert!(g.hits(&b(0.5, 127.5, 0.6, 127.6)));
+        assert!(g.hits(&b(f64::NEG_INFINITY, 20.5, 1e300, 20.5)) && !g.hits(&b(f64::NEG_INFINITY, 64.0, 1e300, 64.0)));
+        assert!(g.hits(&b(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)));
+        g.clear();
+        assert!(!g.hits(&b(0.0, 0.0, 128.0, 128.0)));
+        // A list with no area still works: every box is in the one cell.
+        let mut g = StrokeGrid::new(&Bounds2::EMPTY);
+        g.add(&b(1.0, 1.0, 2.0, 2.0));
+        assert!(g.hits(&b(100.0, 100.0, 101.0, 101.0)));
     }
 
     #[test]
