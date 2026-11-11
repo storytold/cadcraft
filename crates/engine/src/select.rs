@@ -220,8 +220,8 @@ fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
         7..=9 => h,
         _ => 0.0,
     };
-    // A top-level MTEXT that matches the layout orientation is drawn and measured upright, as the
-    // renderer and the extents do; a multileader keeps the stored rotation of its text.
+    // A top-level MTEXT that matches the layout orientation is drawn upright (the renderer draws
+    // non-blank text that way), so its blank frame is too; a multileader keeps its text's stored rotation.
     let rotation = if matches!(e.kind, EntityKind::MText(_)) && e.common.matches_layout_orientation() { 0.0 } else { t.rotation };
     Some((insert, rotation, [dx, dx + w, top - h, top]))
 }

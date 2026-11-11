@@ -424,7 +424,8 @@ fn gather_in(
             continue;
         }
         // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
-        // limit nor the intersection slots unless its insertion point or drawn geometry is in reach.
+        // limit nor the intersection slots unless its drawn geometry is in reach, or INS is on and an
+        // insertion point is within the aperture.
         if !inf && crate::select::blank_frame_only(d, e, &probe, cursor, aperture, osmode & mode::INS != 0) {
             continue;
         }
