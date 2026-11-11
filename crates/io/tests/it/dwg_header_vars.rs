@@ -115,6 +115,8 @@ fn user_vars() -> Drawing {
     d
 }
 
+/// Asserts that `r`, a drawing read back from `name` format, has the USERI and USERR values of
+/// [`user_vars`].
 fn check_user_vars(name: &str, r: &Drawing) {
     let d = user_vars();
     for i in 1..=5 {
@@ -134,6 +136,7 @@ fn user_variables_round_trip_through_dxf() {
     check_user_vars("DXF", &r);
 }
 
+/// The DWG half of [`user_variables_round_trip_through_dxf`]: write DWG, read it back.
 #[test]
 fn user_variables_round_trip_through_dwg() {
     let dwg = cadcraft_io::write(&user_vars(), "x.dwg").unwrap();
