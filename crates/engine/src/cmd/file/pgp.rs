@@ -1,11 +1,16 @@
 //! The user's command alias file (the publicly documented `.pgp` format: `ALIAS, *COMMAND` lines,
 //! `;` comments): ALIASEDIT and REINIT.
 //!
-//! A loaded file adds aliases or overrides the built-in ones for the rest of the session, for
-//! every drawing; command names themselves always win. Lines that define external commands
+//! A loaded file replaces the user aliases, which add to or override the built-in ones for every
+//! drawing; command names themselves always win. Lines that define external commands
 //! (programs the file would have the application start) are never run: they are skipped with a
 //! note. CADCraft ships no alias file; the aliases built into the command catalog stay the
 //! defaults.
+//!
+//! The aliases are user settings, never part of a drawing: [`alias_profile`] gives them (and the
+//! file REINIT reads) to the host's user profile, and [`restore_aliases`] brings them back on the
+//! next start. The desktop and web hosts keep that profile; the headless CLI has no profile, so
+//! aliases set in a script last for that session only.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -20,10 +25,21 @@ use super::{CommandSpec, Result, Session, bad, bool_or, find_command};
 pub const MAX_ALIASES: usize = 10_000;
 /// Longest alias name.
 const MAX_ALIAS_CHARS: usize = 64;
+/// Longest command id (the catalog's longest is `texttofront.dimensions`; a test keeps it true).
+const MAX_COMMAND_ID_CHARS: usize = 32;
 /// Longest line read.
 const MAX_LINE_CHARS: usize = 4096;
 /// Most warnings reported.
 const MAX_WARNINGS: usize = 100;
+/// Longest alias file path kept in the user profile.
+const MAX_ALIAS_FILE_CHARS: usize = 1024;
+
+/// The largest alias section [`alias_profile`] can produce: [`MAX_ALIASES`] entries, each a
+/// [`MAX_ALIAS_CHARS`]-character name (up to four UTF-8 bytes per character, and JSON adds its
+/// quotes) mapped to a command id, plus the alias file path and the section's keys. A host that
+/// keeps the section in its user profile allows at least this much, so a full set always comes
+/// back after a restart.
+pub const MAX_ALIAS_PROFILE_BYTES: usize = MAX_ALIASES * (MAX_ALIAS_CHARS * 4 + MAX_COMMAND_ID_CHARS + 6) + MAX_ALIAS_FILE_CHARS * 4 + 64;
 
 #[derive(Default)]
 struct Aliases {
@@ -205,4 +221,26 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("reinit", "Reinitialize", run_reinit).params("{file? | text?} (default: the alias file loaded last)").enabled(always).noundo(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_COMMAND_ID_CHARS;
+
+    /// [`super::MAX_ALIAS_PROFILE_BYTES`] bounds a saved alias's command id by the longest id in
+    /// the catalog: keep that true as commands are added.
+    #[test]
+    fn every_command_id_fits_the_saved_alias_bound() {
+        for spec in crate::cmd::command_specs() {
+            assert!(spec.id.chars().count() <= MAX_COMMAND_ID_CHARS, "`{}` exceeds the alias profile bound", spec.id);
+        }
+    }
+
+    /// An alias file path the profile couldn't restore isn't saved in it.
+    #[test]
+    fn only_paths_the_profile_restores_are_saved() {
+        assert!(super::keepable_path("C:\\support\\mine.pgp"));
+        assert!(!super::keepable_path(&"x".repeat(super::MAX_ALIAS_FILE_CHARS + 1)));
+        assert!(!super::keepable_path("mine\n.pgp"));
+    }
 }
