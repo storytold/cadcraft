@@ -1130,6 +1130,64 @@ mod tests {
         }
     }
 
+    /// A blank annotative multileader (text 6 right of its landing, 4 x 2, at 1:2) among 2100 blank
+    /// MTEXT frames over the cursor. `block_at` also gives it a block content at that offset from
+    /// the landing. Returns the INS snap at `landing + probe` (aperture 0.5).
+    fn crowded_blank_mleader_ins(block_at: Option<f64>, probe: Vec2) -> Option<Vec2> {
+        let mut s = crate::Session::new();
+        let r = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let landing = {
+            let d = s.doc_mut().unwrap();
+            d.header.set_str("CANNOSCALE", "1:2");
+            let half = d.anno_scale("1:2").cloned().unwrap();
+            d.modify_entity(h, |e| {
+                e.common.anno_scales = vec![half];
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                let landing = m.landing;
+                let t = m.text.as_mut().unwrap();
+                t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                t.width = 4.0;
+                t.height = 2.0;
+                t.attach = 1;
+                t.rotation = 0.0;
+                if let Some(x) = block_at {
+                    m.block = Some(cadcraft_doc::Insert { insert: landing + Vec3::new(x, 0.0, 0.0), ..Default::default() });
+                }
+            })
+            .unwrap();
+            let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+            m.landing.xy()
+        };
+        let cursor = landing + probe;
+        // Blank frames (10 x 2.5, top-left at the insert) cover the cursor; their inserts do not.
+        let d = s.doc_mut().unwrap();
+        for _ in 0..2100 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(cursor.x - 5.0, cursor.y + 1.0, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        osnap(d, &Space::Model, cursor, 0.5, mode::INS, None, false).map(|h| h.point - landing)
+    }
+
+    /// An annotative blank multileader keeps its INS snap (the stored, unscaled insertion point)
+    /// among thousands of blank frames, and so does its block content.
+    #[test]
+    fn annotative_blank_mleader_keeps_its_ins_snaps_among_blank_frames() {
+        assert_eq!(crowded_blank_mleader_ins(None, Vec2::new(6.1, -0.1)), Some(Vec2::new(6.0, 0.0)), "text");
+        assert_eq!(crowded_blank_mleader_ins(Some(30.0), Vec2::new(30.1, -0.1)), Some(Vec2::new(30.0, 0.0)), "block");
+    }
+
     #[test]
     fn intersection() {
         let d = drawing();

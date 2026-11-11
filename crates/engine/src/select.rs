@@ -174,6 +174,15 @@ fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
 /// other entity, a multileader without text content, a blank MTEXT without a usable size or
 /// position, or an annotative one the current annotation scale hides.
 fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
+    // Kind and blankness first: scaling clones the entity, so only blank text pays for it.
+    let text = match &e.kind {
+        EntityKind::MText(t) => t,
+        EntityKind::MLeader(m) => m.text.as_ref()?,
+        _ => return None,
+    };
+    if !is_blank_mtext(text) {
+        return None;
+    }
     let f = match d.anno_draw(e) {
         cadcraft_doc::AnnoDraw::Plain => 1.0,
         cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
@@ -192,7 +201,7 @@ fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
         EntityKind::MLeader(m) => m.text.as_ref()?,
         _ => return None,
     };
-    if !is_blank_mtext(t) || !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
+    if !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
         return None;
     }
     let w = if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
@@ -234,22 +243,42 @@ fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
 /// Drawn bounds extended by a blank MTEXT frame, including a multileader's text content.
 /// Use the same bounds for a scan and for the spatial index.
 pub(crate) fn pick_bounds(d: &Drawing, e: &Entity, drawn: Bounds2) -> Bounds2 {
-    blank_mtext_box(d, e).map_or(drawn, |frame| drawn.union(&frame))
+    let Some(frame) = blank_mtext_box(d, e) else { return drawn };
+    // The snap points are in the bounds too, so a probe on one finds the entity in the index.
+    blank_snap_points(d, e).into_iter().fold(drawn.union(&frame), |b, p| b.union(&Bounds2::from_points([p])))
+}
+
+/// The insertion points a blank MTEXT (or a multileader with blank text) can be snapped at, or
+/// empty for any other entity: the drawn (scaled) text insertion point, the stored (unscaled)
+/// ones snap offers, and a multileader's block content's, unscaled and scaled.
+fn blank_snap_points(d: &Drawing, e: &Entity) -> Vec<Vec2> {
+    let Some((drawn_insert, _, _)) = blank_mtext_frame(d, e) else { return Vec::new() };
+    let mut points = vec![drawn_insert];
+    match &e.kind {
+        EntityKind::MText(t) => points.push(t.insert.xy()),
+        EntityKind::MLeader(m) => {
+            points.extend(m.text.as_ref().map(|t| t.insert.xy()));
+            points.extend(m.block.as_ref().map(|b| b.insert.xy()));
+            if let cadcraft_doc::AnnoDraw::Scaled(f) = d.anno_draw(e)
+                && f.is_finite()
+                && f > 0.0
+                && f != 1.0
+                && let EntityKind::MLeader(sm) = &cadcraft_doc::anno_scaled(e, f).kind
+            {
+                points.extend(sm.block.as_ref().map(|b| b.insert.xy()));
+            }
+        }
+        _ => {}
+    }
+    points
 }
 
 /// Whether `e` is within reach of a snap probe only through its blank MTEXT frame: the drawn
-/// geometry (expanded by `aperture`) misses `probe` and no blank text insertion point is inside
-/// it. Such an entity is for picking and selection, not a snap candidate.
+/// geometry (expanded by `aperture`) misses `probe` and no blank text insertion point (scaled or
+/// stored) is inside it. Such an entity is for picking and selection, not a snap candidate.
 pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, aperture: f64) -> bool {
-    if blank_mtext_box(d, e).is_none() {
-        return false;
-    }
-    let insert = match &e.kind {
-        EntityKind::MText(t) => Some(t.insert.xy()),
-        EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.insert.xy()),
-        _ => None,
-    };
-    !insert.is_some_and(|p| probe.contains(p)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
+    let points = blank_snap_points(d, e);
+    !points.is_empty() && !points.iter().any(|p| probe.contains(*p)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
 }
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
@@ -700,6 +729,24 @@ mod tests {
         let p = t.insert.xy() + Vec2::new(t.width * 0.8, 0.0);
         assert_eq!(pick(d, &Space::Model, p, 0.02), None, "right of the glyphs, inside the frame");
         assert_eq!(pick(d, &Space::Model, t.insert.xy() + Vec2::new(0.3, 0.0), 0.02), Some(h), "on the glyphs");
+    }
+
+    /// Only blank MTEXT has a frame: an annotative non-blank MTEXT and an annotative LINE have none
+    /// (and the kind and blankness are decided before any annotation scaling).
+    #[test]
+    fn only_blank_mtext_has_a_frame_even_when_annotative() {
+        let mut d = Drawing::new_metric();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        let common = || Common { anno_scales: vec![half.clone()], ..Common::default() };
+        let text = d.add(&Space::Model, common(), mtext_at("Visible", 1, 0.0)).unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(5.0, 0.0, 0.0) });
+        let line = d.add(&Space::Model, common(), line).unwrap();
+        let blank = d.add(&Space::Model, common(), mtext_at(" ", 1, 0.0)).unwrap();
+        for (h, framed) in [(text, false), (line, false), (blank, true)] {
+            let e = d.entity(h).unwrap();
+            assert_eq!(blank_mtext_frame(&d, e).is_some(), framed);
+        }
     }
 
     /// A multileader whose text is blank, with the text 6 units right of the landing, 4 wide and
