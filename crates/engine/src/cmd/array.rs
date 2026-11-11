@@ -178,14 +178,34 @@ fn create(s: &mut Session, objs: &[Handle], base: Vec2, p: ArrayParams, assoc: b
     Ok(json!({ "created": n }))
 }
 
+/// The most objects EXPLODE of one associative array makes from its source objects (ten times the
+/// default MAXARRAY).
+const MAX_EXPLODED_OBJECTS: usize = 1_000_000;
+
 /// EXPLODE of an associative array: every item becomes the objects of its block (the source
 /// objects, or a replacement block's reference), in world coordinates. `None` for other objects.
+///
+/// An array that would explode into more than [`MAX_EXPLODED_OBJECTS`] objects (items times the
+/// objects of the source block, which a file sets freely) is not expanded here: `None`, so EXPLODE
+/// takes the array block's own items.
 pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
     let EntityKind::Insert(ins) = &e.kind else { return None };
     let p = d.array_params(e)?;
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
-    let mut out = Vec::new();
+    // Count first: a hostile array must be refused before any entity is cloned.
+    let total = blk
+        .entities
+        .iter()
+        .map(|it| match &it.kind {
+            EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&p.source) => d.block(&i.block).map_or(1, |b| b.entities.len()),
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add);
+    if total > MAX_EXPLODED_OBJECTS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(total);
     for item in blk.entities.iter() {
         let item = placed(e, item, &m);
         let source = match &item.kind {
@@ -193,7 +213,9 @@ pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
             _ => None,
         };
         match source {
-            Some((im, b)) => out.extend(b.entities.iter().map(|se| placed(&item, se, &im))),
+            Some((im, b)) => {
+                out.extend(b.entities.iter().map(|se| placed(&item, se, &im)));
+            }
             None => out.push(item),
         }
     }

@@ -188,8 +188,9 @@ fn item_at(d: &Drawing, h: Handle, at: Vec2, tol: f64) -> Option<(u32, u32, u32)
     let mut best: Option<((u32, u32, u32), f64)> = None;
     // Each block's own extents, measured once.
     let mut extents: HashMap<String, (Vec2, Bounds2)> = HashMap::new();
+    let block_for = p.block_lookup();
     for it in p.items()? {
-        let name = p.block_for(it.i, it.j, it.level);
+        let name = block_for(it.i, it.j, it.level);
         let (base, local) = match extents.get(name) {
             Some(x) => *x,
             None => {
