@@ -280,7 +280,8 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
             }
         }
     });
-    handle_scroll_zoom(app, ui, nav, inside);
+    // The wheel over a menu the canvas paints (a long options menu) scrolls the menu, not the view.
+    handle_scroll_zoom(app, ui, nav, inside && !on_menu);
     handle_button_navigation(app, nav, inside);
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
