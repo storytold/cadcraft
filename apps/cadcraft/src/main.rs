@@ -217,10 +217,37 @@ fn saved_window(app_ron: &str) -> bool {
     ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
 }
 
-/// The window state from the last session is saved and will be restored (#2595).
+/// The window state from the last session is saved and will be restored (#2595). A saved size
+/// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
+/// unusable) is dropped first, so the window opens at its default size.
 fn restores_window() -> bool {
-    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+    let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
+    if let Some(fixed) = without_tiny_window(&ron) {
+        if std::fs::write(&path, &fixed).is_ok() {
+            ron = fixed;
+        }
+    }
+    saved_window(&ron)
 }
+
+/// `app_ron` without its window entry when that entry's inner size is below `MIN_INNER_SIZE`;
+/// `None` when there is nothing to drop (no entry, a usable size, or an unreadable file).
+fn without_tiny_window(app_ron: &str) -> Option<String> {
+    let mut kv = ron::from_str::<std::collections::BTreeMap<String, String>>(app_ron).ok()?;
+    let w = kv.get(WINDOW_KEY)?;
+    let size = &w[w.find("inner_size_points:")?..];
+    let num = |k: &str| size[size.find(k)? + k.len()..].split([',', ')']).next()?.trim().parse::<f32>().ok();
+    let (x, y) = (num("x:")?, num("y:")?);
+    if x >= MIN_INNER_SIZE[0] && y >= MIN_INNER_SIZE[1] {
+        return None;
+    }
+    kv.remove(WINDOW_KEY);
+    ron::ser::to_string_pretty(&kv, ron::ser::PrettyConfig::default()).ok()
+}
+
+/// The smallest main window, in points.
+const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred.
@@ -229,7 +256,7 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
             .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
+            .with_min_inner_size(MIN_INNER_SIZE)
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
@@ -452,7 +479,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{filters_for_save, follow_desktop, saved_window, window_options, without_tiny_window};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -494,6 +521,17 @@ mod tests {
         assert!(!saved_window(""));
         assert!(!saved_window("{\"window\": "), "truncated");
         assert!(!saved_window("not ron at all"));
+    }
+
+    /// A saved 64×64 window (below the minimum) is dropped; a usable one is kept.
+    #[test]
+    fn a_tiny_saved_window_is_dropped() {
+        let tiny = r#"{"window": "(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.25,inner_size_points:(x:64.0,y:64.0)),fullscreen:false,maximized:true)", "cadcraft.prefs": "{}"}"#;
+        let fixed = without_tiny_window(tiny).expect("dropped");
+        assert!(!saved_window(&fixed) && fixed.contains("cadcraft.prefs"));
+        let ok = tiny.replace("x:64.0,y:64.0)),", "x:1600.0,y:1000.0)),");
+        assert_eq!(without_tiny_window(&ok), None);
+        assert_eq!(without_tiny_window("not ron"), None);
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;
