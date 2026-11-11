@@ -64,6 +64,49 @@ pub(crate) fn greek_alias(word: &str) -> Option<String> {
     store().map.keys().find(|alias| crate::keyboard::same_greek_word(alias, word)).cloned()
 }
 
+/// The user aliases and the file REINIT reads, as the host's user profile keeps them:
+/// `{"aliases": {alias: command}, "file": path or null}`. Not drawing data.
+pub fn alias_profile() -> Value {
+    let st = store();
+    // A path [`restore_aliases`] would refuse is left out, so it can't grow the profile either.
+    json!({ "aliases": st.map, "file": st.file.as_deref().filter(|f| keepable_path(f)) })
+}
+
+/// Whether the profile keeps an alias file path: short enough, and no control characters.
+fn keepable_path(f: &str) -> bool {
+    f.chars().count() <= MAX_ALIAS_FILE_CHARS && !f.chars().any(char::is_control)
+}
+
+/// Restore aliases saved by [`alias_profile`], replacing the user aliases and the file.
+///
+/// The saved set is untrusted (a hand-edited or older profile): entries that are not aliases of
+/// real commands are skipped, command names are never aliased, at most [`MAX_ALIASES`] are kept,
+/// and a malformed section changes nothing.
+pub fn restore_aliases(saved: &Value) {
+    let Some(obj) = saved.as_object() else { return };
+    let file = match obj.get("file") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(f)) if keepable_path(f) => Some(f.clone()),
+        Some(Value::String(_)) => None,
+        // A file entry that is not a path makes the section malformed: keep the aliases as they are.
+        Some(_) => return,
+    };
+    let Some(map) = obj.get("aliases").and_then(Value::as_object) else { return };
+    let mut aliases = BTreeMap::new();
+    // Entries that are skipped don't use up the cap.
+    for (alias, target) in map {
+        if aliases.len() >= MAX_ALIASES {
+            break;
+        }
+        let Ok(name) = alias_name(alias) else { continue };
+        let Some(id) = target.as_str().and_then(command_id) else { continue };
+        aliases.insert(name, id);
+    }
+    let mut st = store();
+    st.map = aliases;
+    st.file = file;
+}
+
 /// The command id `target` names (`*LINE`, `_.line`, `-LAYER`…), if there is such a command.
 pub fn command_id(target: &str) -> Option<String> {
     let t = target.trim().trim_start_matches('*').trim().trim_start_matches(['_', '.']).to_ascii_lowercase();
