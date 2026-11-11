@@ -207,7 +207,9 @@ fn reload_unload_path_and_detach() {
     assert!(s.execute("-xref", &json!({ "option": "detach", "names": "site", "exact": true })).is_err());
     assert!(s.doc().unwrap().block("site").is_some());
     assert!(s.execute("-xref", &json!({ "option": "path", "names": "*", "path": "other.dxf" })).is_err());
-    assert_eq!(s.doc().unwrap().block("site").and_then(|b| b.xref_path.clone()).as_deref(), Some("site.dxf"));
+    for k in ["site", "SITE"] {
+        assert_eq!(s.doc().unwrap().blocks.get(k).and_then(|b| b.xref_path.clone()).as_deref(), Some("site.dxf"), "{k}");
+    }
     s.doc_mut().unwrap().blocks.remove("SITE");
 
     s.execute("-xref", &json!({ "option": "unload", "names": "site" })).unwrap();
