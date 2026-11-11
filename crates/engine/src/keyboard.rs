@@ -88,7 +88,15 @@ pub fn greek_fold(word: &str) -> Option<String> {
 
 /// Whether `a` and `b` are one Greek word, whatever their case, accents or final sigma.
 pub fn same_greek_word(a: &str, b: &str) -> bool {
-    greek_fold(a).is_some_and(|fold| greek_fold(b).as_ref() == Some(&fold))
+    same_greek_word_as(b).is_some_and(|same| same(a))
+}
+
+/// A test for "is the Greek word `word`, whatever the case, accents or final sigma", or `None`
+/// when `word` is not Greek-layout typing. `word` is folded here, once: looking a typed word up
+/// among many names costs its length once, not once for every name.
+pub fn same_greek_word_as(word: &str) -> Option<impl Fn(&str) -> bool> {
+    let fold = greek_fold(word)?;
+    Some(move |name: &str| greek_fold(name).as_deref() == Some(fold.as_str()))
 }
 
 #[cfg(test)]

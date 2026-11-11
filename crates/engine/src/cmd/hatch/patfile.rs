@@ -31,7 +31,8 @@ pub(crate) fn user_pattern(name: &str) -> Option<UserPattern> {
 /// The name of the user pattern that is the Greek word `name` in another case or accent
 /// ([`user_pattern`] folds ASCII only).
 pub(crate) fn user_pattern_name(name: &str) -> Option<String> {
-    store().iter().find(|p| crate::keyboard::same_greek_word(&p.name, name)).map(|p| p.name.clone())
+    let same = crate::keyboard::same_greek_word_as(name)?;
+    store().iter().find(|p| same(&p.name)).map(|p| p.name.clone())
 }
 
 /// The line families a new hatch of pattern `name` carries: a user pattern's, else none (the

@@ -61,7 +61,8 @@ pub(crate) fn user_alias(name: &str) -> Option<String> {
 
 /// The user alias that is the Greek word `word` in another case or accent.
 pub(crate) fn greek_alias(word: &str) -> Option<String> {
-    store().map.keys().find(|alias| crate::keyboard::same_greek_word(alias, word)).cloned()
+    let same = crate::keyboard::same_greek_word_as(word)?;
+    store().map.keys().find(|alias| same(alias)).cloned()
 }
 
 /// The user aliases and the file REINIT reads, as the host's user profile keeps them:

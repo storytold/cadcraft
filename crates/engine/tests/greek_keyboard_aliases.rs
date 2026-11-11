@@ -44,3 +44,21 @@ fn a_greek_alias_starts_its_command_in_any_case_or_accent() {
     let lines = doc.model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count();
     assert_eq!((circles, lines), (2, 0), "the alias drew both circles, LINE was not started");
 }
+
+/// 5 000 Greek aliases and a pasted word of a million letters that is none of them: looking it up
+/// costs the word's length once, not once for every alias.
+#[test]
+fn a_long_greek_word_is_folded_once_however_many_greek_aliases_there_are() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = Session::new();
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    let set: serde_json::Map<String, serde_json::Value> = (0..5_000).map(|i| (format!("ΞΞ{i}"), json!("line"))).collect();
+    s.execute("aliasedit", &json!({ "set": set })).unwrap();
+    let word = "Ω".repeat(1_000_000);
+    let t = std::time::Instant::now();
+    let started = s.start(&word);
+    let took = t.elapsed();
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert!(started.is_err(), "no command has those keys");
+    assert!(took.as_secs() < 5, "{took:?}");
+}

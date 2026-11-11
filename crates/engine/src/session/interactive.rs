@@ -22,8 +22,8 @@ impl Session {
     /// c:ΛΙΝΕ): those lookups fold ASCII only.
     fn greek_command_name(&self, name: &str) -> Option<String> {
         let bare = name.trim_start_matches(['_', '.', '-']);
-        crate::keyboard::greek_fold(bare)?;
-        let lisp = || self.lisp_commands().into_iter().find(|c| crate::keyboard::same_greek_word(c, bare) && self.lisp_command(c).is_some());
+        let same = crate::keyboard::same_greek_word_as(bare)?;
+        let lisp = || self.lisp_commands().into_iter().find(|c| same(c) && self.lisp_command(c).is_some());
         cmd::file::greek_alias(bare).or_else(lisp)
     }
 
@@ -36,9 +36,9 @@ impl Session {
     /// The existing block that is the Greek word `word`: as spelled, else in another case or accent
     /// (μ for Μ).
     pub(super) fn greek_block_name(&self, word: &str) -> Option<String> {
-        crate::keyboard::greek_fold(word)?;
+        let same = crate::keyboard::same_greek_word_as(word)?;
         let blocks = &self.doc().ok()?.blocks;
-        blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| crate::keyboard::same_greek_word(k, word))).cloned()
+        blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
     /// Start a command by name or alias as if typed at the command line.
