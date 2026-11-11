@@ -189,3 +189,29 @@ fn a_reversed_closed_spline_is_written_as_autocad_reverses_it() {
         moved.control
     );
 }
+
+#[test]
+fn a_closed_fit_list_ending_with_its_first_point_survives_a_save() {
+    let (a, b, c, d) = (Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(5.0, 3.0), Vec2::new(1.0, 4.0));
+    // A kink where it closes given at the end (as a file can give it), the first point listed
+    // again at the end, three points ending so, the kink at the start as a fit stores it, and three
+    // points. The closing point is written after each but the three ending with the first, which
+    // the reader keeps as they are.
+    for (fit, written) in [
+        (vec![a, b, c, a, a], vec![0.0, 4.0, 5.0, 0.0, 0.0, 0.0]),
+        (vec![a, b, c, d, a], vec![0.0, 4.0, 5.0, 1.0, 0.0, 0.0]),
+        (vec![a, b, a], vec![0.0, 4.0, 0.0]),
+        (vec![a, a, b, c], vec![0.0, 0.0, 4.0, 5.0, 0.0]),
+        (vec![a, b, c], vec![0.0, 4.0, 5.0, 0.0]),
+    ] {
+        let mut sp = Spline::fit_with(&[a, a, b, c], true, FitOptions::default());
+        sp.fit = fit.clone();
+        let mut dr = Drawing::new_metric();
+        dr.add(&Space::Model, Common::default(), EntityKind::Spline(sp)).unwrap();
+        let bytes = cadcraft_io::write(&dr, "a.dxf").unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert_eq!(values(spline_tags(&text), "11"), written, "{fit:?}");
+        // Read back with the same points, so a refit keeps the kink where it closes.
+        assert_eq!(read_spline(&bytes).fit, fit);
+    }
+}

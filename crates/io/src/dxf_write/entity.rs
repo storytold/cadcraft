@@ -212,8 +212,11 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             // the end and its tangent where it closes at both ends: without the point AutoCAD
             // opens it, and without the tangents its ends are free. A closed spline without a
             // stored tangent (periodic knots, a fit tolerance, a kink where it closes) gives the
-            // curve's own.
-            let closing = s.closed && s.fit.len() > 2 && !s.fit.first().zip(s.fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12));
+            // curve's own. The reader drops one closing point, so it goes after a list that ends
+            // with the first point already (a kink where it closes) too; only three points ending
+            // so, which the reader keeps as they are, go without it.
+            let ends_at_first = s.fit.first().zip(s.fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12));
+            let closing = s.closed && s.fit.len() > 2 && !(s.fit.len() == 3 && ends_at_first);
             w.i(70, flags);
             w.i(71, s.degree as i64);
             w.i(72, s.knots.len() as i64);
