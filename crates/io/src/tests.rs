@@ -396,6 +396,16 @@ fn many_distinct_symbol_names_read_quickly() {
     assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
 }
 
+/// Elements with many duplicate attributes are read in bounded time.
+#[test]
+fn svg_duplicate_attributes_are_not_rescanned() {
+    let dup = " x=\"1\"".repeat(20_000);
+    let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\">{}</svg>", format!("<rect{dup} width=\"1\" height=\"1\"/>").repeat(20));
+    let started = std::time::Instant::now();
+    let _ = read(svg.as_bytes(), "dup.svg");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
