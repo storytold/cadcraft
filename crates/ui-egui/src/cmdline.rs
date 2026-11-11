@@ -785,7 +785,9 @@ mod tests {
     #[test]
     fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
         // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
-        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE.
+        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE. The alias store is
+        // process-wide and the alias dialog's tests clear it, so this test takes its turn with them.
+        let _alone = crate::aliasdlg::lock_alias_store();
         let mut session = Session::empty();
         session.execute("aliasedit", &serde_json::json!({ "set": { "Ξ": "qsave" } })).unwrap();
         let first = suggestions("Ξ", &|_| false).into_iter().next().map(|s| s.id);
