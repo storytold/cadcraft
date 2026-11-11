@@ -174,8 +174,8 @@
 	Diameter	Diamètre
 	Dim style	Style de cote
 	Dimension	Cotation
-	Dimension Space	Espacement des cotes
-	Dimension Style Override	Substitution de style de cote
+	Dimension Space	Espacer les cotes
+	Dimension Style Override	Remplacement de style de cote
 	Dimension Style...	Style de cote...
 	Dimension Text Edit	Modifier le texte de cote
 	Dimension style	Style de cote
@@ -482,8 +482,8 @@
 	Object Snap	Accrochage aux objets
 	Object Snap (F3)	Accrochage aux objets (F3)
 	Object Snap On (F3)	Activer l'accrochage aux objets (F3)
-	Object Snap Tracking	Repérage par accrochage aux objets
-	Object Snap Tracking (F11)	Repérage par accrochage aux objets (F11)
+	Object Snap Tracking	Repérage d'accrochage aux objets
+	Object Snap Tracking (F11)	Repérage d'accrochage aux objets (F11)
 	Object type:	Type d'objet :
 	Off	Désactivé
 	Offset	Décalage
