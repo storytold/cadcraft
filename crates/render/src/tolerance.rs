@@ -6,6 +6,7 @@ use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, Entity, GdtLayout, GdtPrim, Tolerance};
 use cadcraft_geom::{Arc as GArc, Circle as GCircle, Segment, Vec2};
 
+use crate::draw::construction_style;
 use crate::{Builder, Ctx, Ink, ink};
 
 /// The frame laid out with the font of its dimension style's text style.
@@ -39,8 +40,9 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, t: &Tolerance, lw: f3
         Color::ByBlock => ctx.block_color,
         c => c,
     };
-    let frame_rgb: Ink = ink(st.dim_line_color, layer_color, own);
-    let text_rgb: Ink = ink(st.text_color, layer_color, own);
+    // Construction geometry in the Block Editor is gray whatever DIMCLRD and DIMCLRT are.
+    let (frame_rgb, _): (Ink, _) = construction_style(ctx, e, (ink(st.dim_line_color, layer_color, own), None));
+    let (text_rgb, _): (Ink, _) = construction_style(ctx, e, (ink(st.text_color, layer_color, own), None));
     let g = tolerance_in(d, t);
     for p in &g.frame {
         b.polyline(ctx, frame_rgb, lw, &gdt_points(p, tol));
