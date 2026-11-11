@@ -590,7 +590,10 @@ fn hidden(e: &BytesStart) -> bool {
 }
 
 fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
-    for a in e.attributes().flatten() {
+    // Stop at the first malformed attribute: skipping errors resumed the parser's duplicate check,
+    // which rescans the attributes before it each time, so many duplicates were quadratic.
+    for a in e.attributes() {
+        let Ok(a) = a else { return None };
         if a.key.into_inner().as_bytes() == name {
             return a.normalized_value(XmlVersion::Explicit1_0).ok().map(|v| v.into_owned());
         }
