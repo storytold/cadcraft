@@ -1204,18 +1204,22 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         return;
     }
     let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut classes = 0;
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();
         if kind != "CLASS" {
             *counts.entry(kind.to_ascii_uppercase()).or_default() += 1;
+        } else {
+            classes += 1;
         }
     }
 
     // One pass into a new list: inserting each missing count in place shifted every later tag,
     // quadratic in the number of CLASS records.
-    // Tags move by value (no clone), so peak memory stays one list plus one record.
+    // Tags move by value (no clone); the old and new buffers coexist while it runs. At most one
+    // group 91 is added per CLASS record, so that is all the room the new list needs beyond the old one.
     let old = std::mem::take(tags);
-    tags.reserve(old.len());
+    tags.reserve(old.len() + classes);
     let mut it = old.into_iter();
     let mut pending = it.next();
     while let Some(t) = pending.take() {
