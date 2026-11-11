@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIASES, alias_name, command_id};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -24,7 +24,7 @@ pub use template::{qnew_template, set_qnew_template};
 /// endless device must be rejected before it exhausts memory (CWE-400), so native opens read
 /// through [`crate::capped_read`] rather than buffering to EOF.
 #[cfg(not(target_arch = "wasm32"))]
-const MAX_DRAWING_BYTES: usize = 512 << 20;
+pub(crate) const MAX_DRAWING_BYTES: usize = 512 << 20;
 /// Largest `.scr` script accepted from a local path.
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_SCRIPT_BYTES: usize = 64 << 20;

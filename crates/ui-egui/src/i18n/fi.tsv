@@ -1501,3 +1501,36 @@ menu	View	Näytä
 	Save Anyway	Tallenna silti
 	Save cancelled: {path} was not changed.	Tallennus peruttiin: tiedostoa {path} ei muutettu.
 	{count} more types	{count} muuta tyyppiä
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Antamasi pikanäppäin ohittaa CADCraftin oman. Muutokset tulevat voimaan heti ja säilyvät seuraavaan kertaan.
+	Aliases are saved in your CADCraft profile and survive restarts.	Aliakset tallennetaan CADCraft-profiiliisi ja säilyvät uudelleenkäynnistyksen yli.
+	Back to CADCraft's shortcut	Palauta CADCraftin pikanäppäin
+	Command Mode	Komentotila
+	Default Mode	Oletustila
+	ENTER	Enter-näppäin
+	Edit Mode	Muokkaustila
+	Import and replace	Tuo ja korvaa
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Tuonti: tässä ei ole tiedostovalintaikkunaa; suorita ALIASEDIT ja anna tiedoston sisältö sen text-parametrissa.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Tiedoston tuonti korvaa {n} aliastasi sekä vielä käyttämättömät muutokset.
+	Import…	Tuo…
+	Keep my aliases	Säilytä omat aliakset
+	Keyboard Shortcuts	Pikanäppäimet
+	Keyboard Shortcuts...	Pikanäppäimet...
+	Longer click duration:	Pitkän napsautuksen kesto:
+	Needs Ctrl, Alt or a function key	Vaatii Ctrl-, Alt- tai toimintonäppäimen
+	No objects selected and no command running:	Ei valittuja kohteita eikä käynnissä olevaa komentoa:
+	Objects selected and no command running:	Kohteita valittu eikä komentoa käynnissä:
+	Press the keys	Paina näppäimiä
+	Repeat last command	Toista edellinen komento
+	Replaces the shortcut of {commands}	Korvaa komennon {commands} pikanäppäimen
+	Right-Click Customization	Hiiren oikean painikkeen mukautus
+	Right-Click Customization...	Hiiren oikean painikkeen mukautus...
+	Run ALIASEDIT with the file's contents using its text parameter.	Suorita ALIASEDIT ja anna tiedoston sisältö sen text-parametrissa.
+	Shortcut Menu	Pikavalikko
+	Shortcut Menu: always enabled	Pikavalikko: aina käytössä
+	Shortcut Menu: enabled when command options are present	Pikavalikko: käytössä, kun komennolla on valintoja
+	Turn on time-sensitive right-click	Ota käyttöön aikaherkkä oikea napsautus
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Kun tämä on pois päältä, hiiren oikea napsautus komennon aikana tekee sen, mitä Hiiren oikean painikkeen mukautus määrää komentotilalle.
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Komennon aikana nopea napsautus on Enter ja pidempi napsautus avaa pikavalikon.
+	While a command runs:	Komennon ollessa käynnissä:
+	milliseconds	millisekuntia
+	{n} more warnings; see the command line.	{n} varoitusta lisää; katso komentoriviltä.
