@@ -8,6 +8,7 @@ use cadcraft_engine::geom::Vec2;
 use cadcraft_engine::snap::{mode, osnap};
 use serde_json::json;
 
+/// A drawing with one reference to the block "Guided", which holds a regular line and a construction line. Returns the reference and the two lines.
 fn reference() -> (Session, Handle, Handle, Handle) {
     let mut s = Session::new();
     let regular = s.execute("line", &json!({ "points": [[0, 0], [100, 100]] })).unwrap()["handles"][0].clone();
@@ -23,6 +24,7 @@ fn reference() -> (Session, Handle, Handle, Handle) {
     (s, reference, regular, guide)
 }
 
+/// Invisible guides inside reference bounds are not snap targets.
 #[test]
 fn invisible_guides_inside_reference_bounds_are_not_snap_targets() {
     for nested in [false, true] {
@@ -39,6 +41,7 @@ fn invisible_guides_inside_reference_bounds_are_not_snap_targets() {
     }
 }
 
+/// Exploding a reference does not materialize its construction guides.
 #[test]
 fn exploding_a_reference_does_not_materialize_its_construction_guides() {
     let (mut s, reference, _, _) = reference();
@@ -50,6 +53,7 @@ fn exploding_a_reference_does_not_materialize_its_construction_guides() {
     assert_eq!(s.doc().unwrap().block("Guided").unwrap().entities.len(), 2, "the definition keeps its guide");
 }
 
+/// Construction style cannot be changed by property commands.
 #[test]
 fn construction_style_cannot_be_changed_by_property_commands() {
     let (mut s, _, regular, guide) = reference();
@@ -70,6 +74,7 @@ fn construction_style_cannot_be_changed_by_property_commands() {
     assert_eq!(before.undo.len(), s.state().unwrap().undo.len());
 }
 
+/// The existing explicit dxf codec preserves construction metadata.
 #[test]
 fn the_existing_explicit_dxf_codec_preserves_construction_metadata() {
     let (s, _, _, guide) = reference();

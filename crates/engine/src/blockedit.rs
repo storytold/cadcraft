@@ -114,14 +114,6 @@ fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
 }
 
 impl BlockEdit {
-    /// What the editor's view hides: the construction geometry while BCONSTRUCTION Hide All is on.
-    pub(crate) fn view_hidden(editor: &Drawing) -> std::collections::BTreeSet<cadcraft_doc::Handle> {
-        if !editor.block_construction_hidden {
-            return std::collections::BTreeSet::new();
-        }
-        editor.model.iter().filter(|e| e.common.is_construction()).map(|e| e.handle).collect()
-    }
-
     /// The editor's objects in block coordinates, ready to be the block's: unchanged objects are
     /// the block's own, the others are moved back from the editor's origin to the base point.
     fn block_objects(&self, editor: &Drawing) -> EntityStore {

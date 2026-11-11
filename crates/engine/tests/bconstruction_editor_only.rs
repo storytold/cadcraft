@@ -8,6 +8,7 @@ use cadcraft_engine::blockedit::CURRENT_DRAWING;
 use cadcraft_engine::doc::{Handle, RawTag};
 use serde_json::json;
 
+/// The extended data that marks an object as construction geometry.
 fn mark() -> Vec<RawTag> {
     vec![RawTag { code: 1001, value: "ACAD_BCONSTRUCTION".into() }, RawTag { code: 1070, value: "1".into() }]
 }
@@ -26,12 +27,14 @@ fn drawing_with_a_marked_line() -> (Session, Handle, Handle) {
     (s, plain, marked)
 }
 
+/// A new drawing is not a block editor.
 #[test]
 fn a_new_drawing_is_not_a_block_editor() {
     let s = Session::new();
     assert!(!s.doc().unwrap().block_editor);
 }
 
+/// Outside the editor a marked object takes color layer and linetype changes.
 #[test]
 fn outside_the_editor_a_marked_object_takes_color_layer_and_linetype_changes() {
     let (mut s, plain, marked) = drawing_with_a_marked_line();
@@ -60,6 +63,7 @@ fn editor_on_a_block() -> (Session, Handle, Handle) {
     (s, handles[0], handles[1])
 }
 
+/// Inside the editor the mark still locks color layer and linetype.
 #[test]
 fn inside_the_editor_the_mark_still_locks_color_layer_and_linetype() {
     let (mut s, regular, guide) = editor_on_a_block();
@@ -74,6 +78,7 @@ fn inside_the_editor_the_mark_still_locks_color_layer_and_linetype() {
     assert!(s.execute("laycur", &json!({ "handles": [guide.hex()] })).is_err());
 }
 
+/// The editor flag follows the editor and never reaches the drawing.
 #[test]
 fn the_editor_flag_follows_the_editor_and_never_reaches_the_drawing() {
     let (mut s, _, guide) = editor_on_a_block();
@@ -89,6 +94,7 @@ fn the_editor_flag_follows_the_editor_and_never_reaches_the_drawing() {
     assert!(!s.doc().unwrap().block_editor, "closed: an ordinary drawing again");
 }
 
+/// The current drawing editor hands back an ordinary drawing.
 #[test]
 fn the_current_drawing_editor_hands_back_an_ordinary_drawing() {
     let (mut s, _, marked) = drawing_with_a_marked_line();
@@ -105,4 +111,24 @@ fn the_current_drawing_editor_hands_back_an_ordinary_drawing() {
     assert!(!d.is_editor_construction(d.entity(marked).unwrap()), "outside the editor the mark has no effect");
     assert_eq!(d.entity(marked).unwrap().common.xdata, mark(), "and it is kept for the next editor session and the file");
     s.execute("properties.set", &json!({ "handles": [marked.hex()], "color": 1 })).unwrap();
+}
+
+/// Inside the editor an ignored layer or linetype does not block other properties.
+#[test]
+fn inside_the_editor_an_ignored_layer_or_linetype_does_not_block_other_properties() {
+    let (mut s, _, guide) = editor_on_a_block();
+    s.doc_mut().unwrap().modify_entity(guide, |e| e.common.xdata = mark()).unwrap();
+    let layer = s.doc().unwrap().entity(guide).unwrap().common.layer.clone();
+    // A null layer or linetype is ignored by the writer, so thickness still applies to the marked object.
+    s.execute("properties.set", &json!({ "handles": [guide.hex()], "layer": null, "linetype": null, "thickness": 2 })).unwrap();
+    let e = s.doc().unwrap().entity(guide).unwrap();
+    assert_eq!(e.common.thickness, 2.0);
+    assert_eq!(e.common.layer, layer, "a null layer changes nothing");
+    assert_eq!(e.common.xdata, mark());
+    // Values the writer would apply, and any colour, are still refused.
+    for params in [json!({ "layer": "Other" }), json!({ "linetype": "ByBlock" }), json!({ "color": 1 }), json!({ "color": null })] {
+        let mut params = params;
+        params["handles"] = json!([guide.hex()]);
+        assert!(s.execute("properties.set", &params).is_err(), "accepted {params}");
+    }
 }

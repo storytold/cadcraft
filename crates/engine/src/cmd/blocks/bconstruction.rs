@@ -1,21 +1,24 @@
 //! BCONSTRUCTION marks block geometry and controls its editor-only display.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 use cadcraft_doc::{EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::bedit;
-use crate::blockedit::BlockEdit;
 use crate::cmd::curves::KW;
 use crate::cmd::machines::{SelOutcome, SelectPhase};
 use crate::cmd::{CommandSpec, bad, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+/// The command id.
 const COMMAND: &str = "bconstruction";
+/// The most objects one call accepts, which bounds the work of a single undo step.
 const MAX_TARGETS: usize = 65_536;
+/// The operation keywords of the first prompt.
 const OPTIONS: &[&str] = &["Convert", "Revert", "Show all", "Hide all"];
 
+/// The BCONSTRUCTION command, enabled only while the Block Editor is open.
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new(COMMAND, "Construction Geometry", run)
@@ -26,6 +29,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// One BCONSTRUCTION operation.
 #[derive(Clone, Copy)]
 enum Mode {
     Convert,
@@ -35,6 +39,7 @@ enum Mode {
 }
 
 impl Mode {
+    /// The operation `word` names: its full name (case, spaces, dashes and underscores ignored) or its first letter.
     fn parse(word: &str) -> Option<Self> {
         if word.len() > 32 {
             return None;
@@ -48,6 +53,7 @@ impl Mode {
         }
     }
 
+    /// The operation name used in the command result and in the params.
     fn name(self) -> &'static str {
         match self {
             Self::Convert => "convert",
@@ -58,6 +64,7 @@ impl Mode {
     }
 }
 
+/// How many objects of the edited block are construction geometry.
 fn construction_count(s: &Session) -> Result<usize> {
     Ok(s.doc()?.model.iter().filter(|e| e.common.is_construction()).count())
 }
@@ -91,6 +98,7 @@ fn selected(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     Ok(unique)
 }
 
+/// Marks (`on`) or unmarks the selected objects as construction geometry and returns how many changed. All or nothing: the whole selection is checked first, and Revert also moves the objects to the current layer.
 fn convert(s: &mut Session, p: &Value, on: bool) -> Result<usize> {
     let handles = selected(s, p)?;
     let d = s.doc()?;
@@ -115,28 +123,16 @@ fn convert(s: &mut Session, p: &Value, on: bool) -> Result<usize> {
     Ok(changed.len())
 }
 
-/// Object isolation belongs to the user. Only the previous construction hide cache is replaced.
-fn independent_hidden(s: &Session) -> Result<BTreeSet<Handle>> {
-    let d = s.doc()?;
-    Ok(d.hidden_objects
-        .iter()
-        .copied()
-        .filter(|h| !(d.block_construction_hidden && d.model.get(*h).is_some_and(|e| e.common.is_construction())))
-        .collect())
-}
-
-/// Refresh only when the composed view differs, preserving true no-ops and unrelated hiding.
-fn refresh(s: &mut Session, independent: BTreeSet<Handle>) -> Result<()> {
+/// Hiding construction geometry is only the drawing's `block_construction_hidden` flag, which
+/// display, selection, snapping and the extents already read through `Drawing::is_visible`.
+/// Object isolation (HIDEOBJECTS) is the user's and stays untouched, so Show all can never
+/// reveal an object the user hid. What the view no longer shows leaves the selection; a true
+/// no-op changes nothing.
+fn refresh(s: &mut Session) -> Result<()> {
     let st = s.state()?;
     if st.block_edit.is_none() {
         return Ok(());
     }
-    let mut hidden = BlockEdit::view_hidden(&st.doc);
-    hidden.extend(independent);
-    if hidden != st.doc.hidden_objects {
-        s.doc_mut()?.hidden_objects = hidden;
-    }
-    let st = s.state()?;
     let selection: Vec<_> = st.selection.iter().copied().filter(|h| st.doc.entity(*h).is_some_and(|e| st.doc.is_visible(e))).collect();
     if selection != st.selection {
         s.set_selection(selection);
@@ -144,11 +140,11 @@ fn refresh(s: &mut Session, independent: BTreeSet<Handle>) -> Result<()> {
     Ok(())
 }
 
+/// Runs one operation from its params: Convert and Revert edit the selected objects, Show and Hide switch the editor view.
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
     // The interactive body can be called after the editor was closed by another command.
     bedit::editing(s).map_err(EngineError::Other)?;
     let mode = str_param(p, "mode").and_then(Mode::parse).ok_or_else(|| bad(COMMAND, "mode must be convert, revert, show or hide"))?;
-    let independent = independent_hidden(s)?;
     let changed = match mode {
         Mode::Convert => Some(convert(s, p, true)?),
         Mode::Revert => Some(convert(s, p, false)?),
@@ -160,7 +156,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
             None
         }
     };
-    refresh(s, independent)?;
+    refresh(s)?;
     let count = construction_count(s)?;
     s.echo(match mode {
         Mode::Convert => format!("{} object(s) marked as construction.", changed.unwrap_or(0)),
@@ -174,11 +170,13 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Runs `mode` on the objects the interactive selection picked.
 fn selected_run(s: &mut Session, mode: Mode, handles: &[Handle]) -> Result<Step> {
     run(s, &json!({ "mode": mode.name(), "handles": handles.iter().map(|h| h.hex()).collect::<Vec<_>>() }))?;
     Ok(Step::Done)
 }
 
+/// The interactive command: the operation keyword first, then the objects to convert or revert.
 #[derive(Default)]
 struct Construction {
     mode: Option<Mode>,
@@ -186,10 +184,12 @@ struct Construction {
 }
 
 impl Interactive for Construction {
+    /// The command name shown on the prompt.
     fn name(&self) -> &'static str {
         "BCONSTRUCTION"
     }
 
+    /// The operation keywords first, then the selection prompt.
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.mode {
             None => Prompt::new("Choose construction operation", KW).kw(OPTIONS).default("Convert"),
@@ -197,6 +197,7 @@ impl Interactive for Construction {
         }
     }
 
+    /// Takes the operation, then the selection. Show all and Hide all need no objects and finish at once.
     fn input(&mut self, s: &mut Session, input: Input) -> Result<Step> {
         if input == Input::Cancel {
             return Ok(Step::Cancel);

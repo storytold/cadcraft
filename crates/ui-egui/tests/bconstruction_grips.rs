@@ -6,6 +6,7 @@ use cadcraft_engine::{Session, View};
 use cadcraft_ui_egui::{CadApp, Services, theme::Tokens};
 use serde_json::json;
 
+/// A Block Editor with a regular line and a construction line, the construction geometry hidden and nothing selected.
 fn editor_with_hidden_guide() -> (CadApp, Handle, Handle) {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.ui.start_tab = false;
@@ -24,6 +25,7 @@ fn editor_with_hidden_guide() -> (CadApp, Handle, Handle) {
     (app, regular, guide)
 }
 
+/// How many grip squares of `color` inside `canvas` `shape` holds.
 fn count_grips(shape: &egui::Shape, canvas: egui::Rect, color: egui::Color32) -> usize {
     match shape {
         egui::Shape::Rect(rect) => usize::from(rect.fill == color && canvas.contains(rect.rect.center())),
@@ -32,6 +34,7 @@ fn count_grips(shape: &egui::Shape, canvas: egui::Rect, color: egui::Color32) ->
     }
 }
 
+/// Runs one frame and counts the grip squares painted on the canvas.
 fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
     app.logic(ctx);
     let input = egui::RawInput {
@@ -46,6 +49,7 @@ fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
     output.shapes.iter().map(|shape| count_grips(&shape.shape, canvas, color)).sum()
 }
 
+/// A hidden construction selection paints no grips while an ordinary selection does.
 #[test]
 fn a_hidden_construction_selection_paints_no_grips_while_an_ordinary_selection_does() {
     let (mut app, regular, guide) = editor_with_hidden_guide();

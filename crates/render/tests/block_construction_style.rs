@@ -4,6 +4,7 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Line, Linetype, RawTag, 
 use cadcraft_geom::Vec3;
 use cadcraft_render::{Kind, Options, build};
 
+/// Construction dashes keep gaps when the drawing redefines dashed as solid.
 #[test]
 fn construction_dashes_keep_gaps_when_the_drawing_redefines_dashed_as_solid() {
     let mut d = Drawing::new_metric();

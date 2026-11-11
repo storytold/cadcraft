@@ -10,6 +10,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 
+/// Every way to start BCONSTRUCTION from the UI.
 #[derive(Clone, Copy, Debug)]
 enum Entry {
     Typed,
@@ -19,8 +20,10 @@ enum Entry {
     Context,
 }
 
+/// All the entry routes.
 const ENTRIES: &[Entry] = &[Entry::Typed, Entry::Start, Entry::Menu, Entry::NativeMenu, Entry::Context];
 
+/// A drawing with the block "Door" of two lines, in the Block Editor when `editing`. Returns the app and the two lines, nothing selected.
 fn fixture(editing: bool) -> (CadApp, Handle, Handle) {
     let mut app = CadApp::new(Session::new(), Services::default());
     let regular = app.run("line", json!({ "points": [[0, 0], [100, 0]] })).unwrap()["handles"][0].clone();
@@ -37,6 +40,7 @@ fn fixture(editing: bool) -> (CadApp, Handle, Handle) {
     (app, regular, construction)
 }
 
+/// Whether `h` is marked as construction geometry.
 fn marked(app: &CadApp, h: Handle) -> bool {
     let tags = &app.session.doc().unwrap().entity(h).unwrap().common.xdata;
     let Some(start) = tags.iter().position(|tag| tag.code == 1001 && tag.value.eq_ignore_ascii_case("ACAD_BCONSTRUCTION")) else { return false };
@@ -46,6 +50,7 @@ fn marked(app: &CadApp, h: Handle) -> bool {
         .any(|tag| tag.code == 1070 && tag.value.trim().parse::<u16>().is_ok_and(|value| value & 1 != 0))
 }
 
+/// Asserts that nothing observable changed between the two states.
 fn unchanged(before: &DocState, after: &DocState) {
     assert_eq!(before.uid, after.uid);
     assert_eq!(before.revision, after.revision);
@@ -63,6 +68,7 @@ fn unchanged(before: &DocState, after: &DocState) {
     }
 }
 
+/// Starts BCONSTRUCTION through `entry`.
 fn invoke(app: &mut CadApp, entry: Entry) {
     match entry {
         Entry::Typed => {
@@ -75,6 +81,7 @@ fn invoke(app: &mut CadApp, entry: Entry) {
     }
 }
 
+/// Answers the operation prompt with `option` and checks that the command finished without a dialog.
 fn choose(app: &mut CadApp, option: &str) {
     assert_eq!(app.session.running.as_ref().map(|running| running.id.as_str()), Some("bconstruction"));
     assert!(app.cmdline_or(option, None).is_none(), "{option} was refused: {:?}", app.session.log);
@@ -82,6 +89,7 @@ fn choose(app: &mut CadApp, option: &str) {
     assert!(app.ui.dialog.is_none(), "BCONSTRUCTION must use the existing command prompt");
 }
 
+/// Ui entry routes refuse outside the editor before any change.
 #[test]
 fn ui_entry_routes_refuse_outside_the_editor_before_any_change() {
     assert!(cadcraft_engine::find_command("bconstruction").is_some(), "BCONSTRUCTION must be registered");
@@ -102,6 +110,7 @@ fn ui_entry_routes_refuse_outside_the_editor_before_any_change() {
     unchanged(&before, app.session.state().unwrap());
 }
 
+/// The enabled state of the menu item `id`, searching the sub-menus too.
 fn entry_enabled(entries: &[menus::Entry], id: &str) -> Option<bool> {
     entries.iter().find_map(|entry| match entry {
         menus::Entry::Item { id: command, enabled, .. } if command == id => Some(*enabled),
@@ -110,6 +119,7 @@ fn entry_enabled(entries: &[menus::Entry], id: &str) -> Option<bool> {
     })
 }
 
+/// The menu uses the engine editor enabled state.
 #[test]
 fn the_menu_uses_the_engine_editor_enabled_state() {
     for editing in [false, true] {
@@ -119,6 +129,7 @@ fn the_menu_uses_the_engine_editor_enabled_state() {
     }
 }
 
+/// Typed start and menu dispatches convert and revert the same selected object.
 #[test]
 fn typed_start_and_menu_dispatches_convert_and_revert_the_same_selected_object() {
     for entry in ENTRIES {
@@ -139,6 +150,7 @@ fn typed_start_and_menu_dispatches_convert_and_revert_the_same_selected_object()
     }
 }
 
+/// Explicit ui json calls convert and revert without a dialog.
 #[test]
 fn explicit_ui_json_calls_convert_and_revert_without_a_dialog() {
     let (mut app, _, construction) = fixture(true);
@@ -150,6 +162,7 @@ fn explicit_ui_json_calls_convert_and_revert_without_a_dialog() {
     }
 }
 
+/// A UI test harness around `app`, with the GPU renderer when `render`.
 fn harness(app: CadApp, render: bool) -> Harness<'static, CadApp> {
     let builder = Harness::builder().with_size(egui::vec2(1600.0, 1000.0));
     let builder = if render { builder.wgpu() } else { builder };
@@ -164,6 +177,7 @@ fn harness(app: CadApp, render: bool) -> Harness<'static, CadApp> {
     h
 }
 
+/// Clicks the Construction Geometry button of Tool Sets and answers its prompt with `option`.
 fn tool_option(h: &mut Harness<'static, CadApp>, option: &str) {
     let button = h.query_by_role_and_label(Role::Button, "Construction Geometry").expect("Construction Geometry Tool Sets button is missing");
     assert!(!button.accesskit_node().is_disabled());
@@ -173,6 +187,7 @@ fn tool_option(h: &mut Harness<'static, CadApp>, option: &str) {
     h.run_steps(5);
 }
 
+/// Saves a screenshot of the harness as `bconstruction-<name>.png` in `directory`, when there is one.
 fn capture(h: &mut Harness<'static, CadApp>, directory: Option<&std::path::Path>, name: &str) {
     if let Some(directory) = directory {
         std::fs::create_dir_all(directory).unwrap();
@@ -180,6 +195,7 @@ fn capture(h: &mut Harness<'static, CadApp>, directory: Option<&std::path::Path>
     }
 }
 
+/// The tool sets button refuses outside the editor without a dialog or drawing change.
 #[test]
 fn the_tool_sets_button_refuses_outside_the_editor_without_a_dialog_or_drawing_change() {
     let (mut app, _, _) = fixture(false);
@@ -197,6 +213,7 @@ fn the_tool_sets_button_refuses_outside_the_editor_without_a_dialog_or_drawing_c
     unchanged(&before, h.state().session.state().unwrap());
 }
 
+/// Tool sets convert show hide and save construction without drawing it in references.
 #[test]
 fn tool_sets_convert_show_hide_and_save_construction_without_drawing_it_in_references() {
     let directory = std::env::var_os("CADCRAFT_BCONSTRUCTION_SHOTS").map(std::path::PathBuf::from);
@@ -223,7 +240,9 @@ fn tool_sets_convert_show_hide_and_save_construction_without_drawing_it_in_refer
     h.state_mut().session.set_selection(vec![construction]);
     tool_option(&mut h, "Hide all");
     assert!(!h.state().canvas.list.as_ref().unwrap().prims.iter().any(|prim| prim.handle == construction));
-    assert!(h.state().session.doc().unwrap().hidden_objects.contains(&construction));
+    let editor = h.state().session.doc().unwrap();
+    assert!(!editor.is_visible(editor.entity(construction).unwrap()), "Hide all hides the construction geometry");
+    assert!(editor.hidden_objects.is_empty(), "and leaves object isolation alone");
     assert!(!h.state().session.selection().contains(&construction), "hidden construction must lose its selection grips");
     let state = h.state().session.state().unwrap();
     assert_eq!(cadcraft_engine::select::pick(&state.doc, &state.edit_space(), cadcraft_engine::geom::Vec2::new(50.0, 30.0), 1.0), None);

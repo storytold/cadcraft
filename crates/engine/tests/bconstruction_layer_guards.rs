@@ -6,6 +6,7 @@ use cadcraft_engine::doc::{Handle, RawTag};
 use cadcraft_engine::{DocState, Session};
 use serde_json::json;
 
+/// A Block Editor with a regular line and a construction line, another layer current and both lines selected.
 fn fixture() -> (Session, Handle, Handle) {
     let mut s = Session::new();
     let mut handles = Vec::new();
@@ -28,6 +29,7 @@ fn fixture() -> (Session, Handle, Handle) {
     (s, regular, guide)
 }
 
+/// Asserts that nothing observable changed between the two states: drawings, history, selection and editor flags.
 fn unchanged(before: &DocState, after: &DocState) {
     assert!(Arc::ptr_eq(&before.doc, &after.doc));
     assert!(Arc::ptr_eq(&before.saved, &after.saved));
@@ -45,14 +47,17 @@ fn unchanged(before: &DocState, after: &DocState) {
     }
 }
 
+/// The layer of `h`.
 fn layer(s: &Session, h: Handle) -> &str {
     &s.doc().unwrap().entity(h).unwrap().common.layer
 }
 
+/// Removes the extended data of `h`, so it is ordinary geometry again.
 fn unmark(s: &mut Session, h: Handle) {
     s.doc_mut().unwrap().modify_entity(h, |e| e.common.xdata.clear()).unwrap();
 }
 
+/// Laycur refuses mixed construction targets before changing any object.
 #[test]
 fn laycur_refuses_mixed_construction_targets_before_changing_any_object() {
     let (mut s, regular, guide) = fixture();
@@ -69,6 +74,7 @@ fn laycur_refuses_mixed_construction_targets_before_changing_any_object() {
     assert_eq!(layer(&s, guide), "Other");
 }
 
+/// Laymch refuses mixed construction targets before creating the destination layer.
 #[test]
 fn laymch_refuses_mixed_construction_targets_before_creating_the_destination_layer() {
     let (mut s, regular, guide) = fixture();

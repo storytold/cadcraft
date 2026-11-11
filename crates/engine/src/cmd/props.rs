@@ -264,7 +264,9 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("properties.set", "nothing selected"));
     }
     let (hs, left_out) = LeftOut::split(s, hs)?;
-    if ["color", "layer", "linetype"].iter().any(|name| p.get(name).is_some())
+    // A null or non-text layer or linetype is one the writer below ignores, so it changes nothing
+    // and must not block the other properties; a colour is refused whatever its value.
+    if (p.get("color").is_some() || str_param(p, "layer").is_some() || str_param(p, "linetype").is_some())
         && hs.iter().any(|h| s.doc().is_ok_and(|d| d.entity(*h).is_some_and(|e| d.is_editor_construction(e))))
     {
         return Err(bad("properties.set", "revert construction geometry before changing its color, layer or linetype"));

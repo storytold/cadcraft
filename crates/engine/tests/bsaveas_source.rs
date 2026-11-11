@@ -3,6 +3,7 @@
 use cadcraft_engine::Session;
 use serde_json::json;
 
+/// Save as preserves the last saved source definition.
 #[test]
 fn save_as_preserves_the_last_saved_source_definition() {
     let mut s = Session::new();

@@ -45,6 +45,7 @@ fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
     output.shapes.iter().map(|shape| count_grips(&shape.shape, canvas, color)).sum()
 }
 
+/// A hidden selection paints no grips while an ordinary selection does.
 #[test]
 fn a_hidden_selection_paints_no_grips_while_an_ordinary_selection_does() {
     let (mut app, regular, hidden) = drawing_with_hidden_object();

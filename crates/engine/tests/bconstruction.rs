@@ -6,6 +6,7 @@ use cadcraft_engine::doc::{Handle, RawTag};
 use cadcraft_engine::{DocState, Input, Session};
 use serde_json::{Value, json};
 
+/// Whether `h` carries the BCONSTRUCTION extended data.
 fn marked(s: &Session, h: Handle) -> bool {
     s.doc().unwrap().model.get(h).unwrap().common.xdata.iter().any(|t| t.code == 1001 && t.value.eq_ignore_ascii_case("ACAD_BCONSTRUCTION"))
 }
@@ -26,10 +27,12 @@ fn editor() -> (Session, Vec<Handle>) {
     (s, handles)
 }
 
+/// Runs BCONSTRUCTION in `mode` on `handles` and returns its result.
 fn run(s: &mut Session, mode: &str, handles: &[Handle]) -> Value {
     s.execute("bconstruction", &json!({ "mode": mode, "handles": handles.iter().map(|h| h.hex()).collect::<Vec<_>>() })).unwrap()
 }
 
+/// Asserts that nothing observable changed between the two states: drawings, history, selection and editor flags.
 fn unchanged(before: &DocState, after: &DocState) {
     assert!(Arc::ptr_eq(&before.doc, &after.doc), "editor drawing retained");
     assert!(Arc::ptr_eq(&before.saved, &after.saved), "saved drawing retained");
@@ -47,6 +50,7 @@ fn unchanged(before: &DocState, after: &DocState) {
     }
 }
 
+/// Convert revert and undo preserve identity geometry properties and other xdata.
 #[test]
 fn convert_revert_and_undo_preserve_identity_geometry_properties_and_other_xdata() {
     let (mut s, hs) = editor();
@@ -89,6 +93,7 @@ fn convert_revert_and_undo_preserve_identity_geometry_properties_and_other_xdata
     assert_eq!(s.doc().unwrap().model.get(hs[0]).unwrap().as_ref(), &reverted);
 }
 
+/// Repeated conversion and revert are noops and keep redo history.
 #[test]
 fn repeated_conversion_and_revert_are_noops_and_keep_redo_history() {
     let (mut s, hs) = editor();
@@ -103,6 +108,7 @@ fn repeated_conversion_and_revert_are_noops_and_keep_redo_history() {
     unchanged(&before, s.state().unwrap());
 }
 
+/// Malformed or foreign targets fail atomically without history changes.
 #[test]
 fn malformed_or_foreign_targets_fail_atomically_without_history_changes() {
     let (mut s, hs) = editor();
@@ -130,6 +136,7 @@ fn malformed_or_foreign_targets_fail_atomically_without_history_changes() {
     assert_eq!(s.state().unwrap().undo.len(), before.undo.len() + 1);
 }
 
+/// Outside the editor every mode is refused by the shared enabled check.
 #[test]
 fn outside_the_editor_every_mode_is_refused_by_the_shared_enabled_check() {
     let mut s = Session::new();
@@ -147,6 +154,7 @@ fn outside_the_editor_every_mode_is_refused_by_the_shared_enabled_check() {
     }
 }
 
+/// Typed convert revert and cancel use the existing selection prompt.
 #[test]
 fn typed_convert_revert_and_cancel_use_the_existing_selection_prompt() {
     let (mut s, hs) = editor();
@@ -176,6 +184,7 @@ fn typed_convert_revert_and_cancel_use_the_existing_selection_prompt() {
     assert!(!marked(&s, hs[0]));
 }
 
+/// Nonzero base save copy close and reopen keep construction metadata.
 #[test]
 fn nonzero_base_save_copy_close_and_reopen_keep_construction_metadata() {
     let (mut s, hs) = editor();
@@ -198,10 +207,13 @@ fn nonzero_base_save_copy_close_and_reopen_keep_construction_metadata() {
     assert!(marked(&s, hs[0]), "discarded Revert leaves saved definition intact");
 }
 
+/// Whether the editor shows nothing of `h`: Hide All hides construction geometry through the editor's view flag.
 fn hidden(s: &Session, h: Handle) -> bool {
-    s.doc().unwrap().hidden_objects.contains(&h)
+    let d = s.doc().unwrap();
+    !d.is_visible(d.model.get(h).unwrap())
 }
 
+/// Hide show and history restore the same view mode.
 #[test]
 fn hide_show_and_history_restore_the_same_view_mode() {
     let (mut s, hs) = editor();
@@ -228,8 +240,9 @@ fn hide_show_and_history_restore_the_same_view_mode() {
     unchanged(&before, s.state().unwrap());
 }
 
+/// Current drawing save keeps construction but does not publish the editor view mode.
 #[test]
-fn current_drawing_save_keeps_construction_but_does_not_publish_the_editor_hide_cache() {
+fn current_drawing_save_keeps_construction_but_does_not_publish_the_editor_view_mode() {
     let mut s = Session::new();
     let out = s.execute("line", &json!({ "points": [[1, 2], [6, 2]] })).unwrap();
     let h = Handle::parse_hex(out["handles"][0].as_str().unwrap()).unwrap();
@@ -240,10 +253,14 @@ fn current_drawing_save_keeps_construction_but_does_not_publish_the_editor_hide_
     assert!(hidden(&s, h));
     s.execute("bsave", &json!({})).unwrap();
     assert!(marked(&s, h) && hidden(&s, h), "the editor keeps its view mode after saving");
-    assert!(!s.state().unwrap().drawing().hidden_objects.contains(&h), "the saved drawing has no temporary construction hide cache");
+    assert!(!s.state().unwrap().drawing().block_construction_hidden, "the saved drawing has no editor view mode");
+    assert!(s.state().unwrap().drawing().hidden_objects.is_empty(), "and no hidden objects of the editor");
     s.execute("bclose", &json!({})).unwrap();
     assert!(s.state().unwrap().block_editor().is_none());
-    assert!(marked(&s, h) && !hidden(&s, h));
+    // The drawing the editor handed back stores the object invisible (DXF group 60), as BSAVE writes it,
+    // and carries no trace of the editor's view mode.
+    assert!(marked(&s, h) && !s.doc().unwrap().model.get(h).unwrap().common.visible);
+    assert!(!s.doc().unwrap().block_construction_hidden && s.doc().unwrap().hidden_objects.is_empty());
     assert_eq!(s.doc().unwrap().model.get(h).unwrap().kind, geometry);
     s.execute("bedit", &json!({ "name": "<Current Drawing>" })).unwrap();
     assert!(marked(&s, h) && !hidden(&s, h), "a fresh editor starts with construction shown");

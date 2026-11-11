@@ -9,6 +9,7 @@ use cadcraft_engine::blockedit::CURRENT_DRAWING;
 use cadcraft_engine::doc::{Drawing, Handle, RawTag};
 use serde_json::json;
 
+/// The extended data that marks an object as construction geometry.
 fn mark() -> Vec<RawTag> {
     vec![RawTag { code: 1001, value: "ACAD_BCONSTRUCTION".into() }, RawTag { code: 1070, value: "1".into() }]
 }
@@ -33,6 +34,7 @@ fn editor_on_door(base: [i32; 2]) -> (Session, Handle) {
     (s, handles[1])
 }
 
+/// Bsave keeps construction visible in the editor and saves it invisible.
 #[test]
 fn bsave_keeps_construction_visible_in_the_editor_and_saves_it_invisible() {
     let (mut s, guide) = editor_on_door([0, 0]);
@@ -50,6 +52,7 @@ fn bsave_keeps_construction_visible_in_the_editor_and_saves_it_invisible() {
     assert_eq!(flags(&recovery, "Door"), vec![(false, true), (true, false)]);
 }
 
+/// Reopening the editor shows the saved invisible geometry again.
 #[test]
 fn reopening_the_editor_shows_the_saved_invisible_geometry_again() {
     let (mut s, guide) = editor_on_door([0, 0]);
@@ -66,6 +69,7 @@ fn reopening_the_editor_shows_the_saved_invisible_geometry_again() {
     assert_eq!(flags(s.doc().unwrap(), "Door"), saved, "closing without saving leaves it as it was");
 }
 
+/// An unedited construction object keeps its exact coordinates with a base point.
 #[test]
 fn an_unedited_construction_object_keeps_its_exact_coordinates_with_a_base_point() {
     let mut s = Session::new();
@@ -91,6 +95,7 @@ fn an_unedited_construction_object_keeps_its_exact_coordinates_with_a_base_point
     assert_eq!(s.state().unwrap().drawing().block("B").unwrap().as_ref(), &saved, "nothing changed, so every number and flag is the saved one");
 }
 
+/// Bsaveas saves the copy invisible too.
 #[test]
 fn bsaveas_saves_the_copy_invisible_too() {
     let (mut s, guide) = editor_on_door([0, 0]);
@@ -99,6 +104,7 @@ fn bsaveas_saves_the_copy_invisible_too() {
     assert_eq!(flags(s.state().unwrap().drawing(), "Copy"), vec![(false, true), (true, false)]);
 }
 
+/// The current drawing editor saves construction objects invisible.
 #[test]
 fn the_current_drawing_editor_saves_construction_objects_invisible() {
     let mut s = Session::new();

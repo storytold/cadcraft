@@ -10,14 +10,17 @@ use cadcraft_doc::{
 use cadcraft_geom::Vec3;
 use cadcraft_render::{Kind, Options, build, build_plot};
 
+/// An extended data tag.
 fn tag(code: i32, value: &str) -> RawTag {
     RawTag { code, value: value.into() }
 }
 
+/// The extended data that marks an object as construction geometry.
 fn marker() -> Vec<RawTag> {
     vec![tag(1001, "ACAD_BCONSTRUCTION"), tag(1070, "1")]
 }
 
+/// A red 100 unit line from (`at`, `at`) carrying `xdata`.
 fn line(handle: u64, at: f64, xdata: Vec<RawTag>) -> Entity {
     let mut e = Entity::new(Handle(handle), EntityKind::Line(Line { a: Vec3::new(at, at, 0.0), b: Vec3::new(at + 100.0, at, 0.0) }));
     e.common.color = Color::Index(1);
@@ -25,6 +28,7 @@ fn line(handle: u64, at: f64, xdata: Vec<RawTag>) -> Entity {
     e
 }
 
+/// A reference to `block`, placed, scaled and rotated so that a missed transform shows.
 fn insert(handle: u64, block: &str) -> Entity {
     Entity::new(
         Handle(handle),
@@ -43,6 +47,7 @@ fn insert(handle: u64, block: &str) -> Entity {
     )
 }
 
+/// A drawing whose model holds a reference to the block "B" (through "Outer" when `nested`). "B" holds a plain line and a far one carrying `xdata`.
 fn reference(xdata: Vec<RawTag>, nested: bool) -> Drawing {
     let mut d = Drawing::new_metric();
     let mut b = Block::new("B");
@@ -58,12 +63,14 @@ fn reference(xdata: Vec<RawTag>, nested: bool) -> Drawing {
     d
 }
 
+/// A copy of `d` whose block "B" no longer holds its second line.
 fn without_guide(d: &Drawing) -> Drawing {
     let mut plain = d.clone();
     Arc::make_mut(plain.blocks.get_mut("B").unwrap()).entities.remove(Handle(2)).unwrap();
     plain
 }
 
+/// Construction is gray and dashed when drawn as editable model geometry.
 #[test]
 fn construction_is_gray_and_dashed_when_drawn_as_editable_model_geometry() {
     let mut plain = Drawing::new_metric();
@@ -80,6 +87,7 @@ fn construction_is_gray_and_dashed_when_drawn_as_editable_model_geometry() {
     assert_eq!(editor.model.get(Handle(1)).unwrap().common.xdata, marker(), "rendering preserves the authoring marker");
 }
 
+/// An editable construction insert draws its children with construction style.
 #[test]
 fn an_editable_construction_insert_draws_its_children_with_construction_style() {
     let plain = reference(Vec::new(), false);
@@ -95,6 +103,7 @@ fn an_editable_construction_insert_draws_its_children_with_construction_style() 
     assert_eq!(editor.blocks.get("B").unwrap().entities, plain.blocks.get("B").unwrap().entities, "styling does not alter child data");
 }
 
+/// Outside the block editor a marked object is drawn like any other.
 #[test]
 fn outside_the_block_editor_a_marked_object_is_drawn_like_any_other() {
     // AutoCAD shows the gray dashed style only inside the Block Editor: a drawing that carries the
@@ -112,6 +121,7 @@ fn outside_the_block_editor_a_marked_object_is_drawn_like_any_other() {
     assert_eq!(marked.model.get(Handle(1)).unwrap().common.xdata, marker(), "the mark stays in the data");
 }
 
+/// Outside the block editor a marked reference draws its children normally.
 #[test]
 fn outside_the_block_editor_a_marked_reference_draws_its_children_normally() {
     let plain = reference(Vec::new(), false);
@@ -120,6 +130,7 @@ fn outside_the_block_editor_a_marked_reference_draws_its_children_normally() {
     assert_eq!(build(&marked, &Space::Model, &Options::default()).prims, build(&plain, &Space::Model, &Options::default()).prims);
 }
 
+/// A marked object inside a reference is still omitted outside the block editor.
 #[test]
 fn a_marked_object_inside_a_reference_is_still_omitted_outside_the_block_editor() {
     // The mark means "not shown in references" wherever the drawing is: only the editor's own
@@ -129,6 +140,7 @@ fn a_marked_object_inside_a_reference_is_still_omitted_outside_the_block_editor(
     assert_eq!(build(&d, &Space::Model, &Options::default()).prims, build(&without_guide(&d), &Space::Model, &Options::default()).prims);
 }
 
+/// Direct and nested references omit construction without changing the definition.
 #[test]
 fn direct_and_nested_references_omit_construction_without_changing_the_definition() {
     for nested in [false, true] {
@@ -142,6 +154,7 @@ fn direct_and_nested_references_omit_construction_without_changing_the_definitio
     }
 }
 
+/// A construction insert suppresses its whole nested subtree.
 #[test]
 fn a_construction_insert_suppresses_its_whole_nested_subtree() {
     let mut d = reference(Vec::new(), true);
@@ -150,6 +163,7 @@ fn a_construction_insert_suppresses_its_whole_nested_subtree() {
     assert!(build_plot(&d, &Space::Model, &Options::default()).prims.is_empty());
 }
 
+/// Construction does not enlarge reference bounds or extents.
 #[test]
 fn construction_does_not_enlarge_reference_bounds_or_extents() {
     for nested in [false, true] {
@@ -167,6 +181,7 @@ fn construction_does_not_enlarge_reference_bounds_or_extents() {
     }
 }
 
+/// A reference with only construction has no rendered or measured geometry.
 #[test]
 fn a_reference_with_only_construction_has_no_rendered_or_measured_geometry() {
     let mut d = reference(marker(), true);
@@ -177,6 +192,7 @@ fn a_reference_with_only_construction_has_no_rendered_or_measured_geometry() {
     assert!(extent_bounds(&d, e).is_empty());
 }
 
+/// Plotted references omit construction at every depth.
 #[test]
 fn plotted_references_omit_construction_at_every_depth() {
     for nested in [false, true] {
@@ -188,6 +204,7 @@ fn plotted_references_omit_construction_at_every_depth() {
     }
 }
 
+/// Absent zero malformed and other application payloads remain ordinary geometry.
 #[test]
 fn absent_zero_malformed_and_other_application_payloads_remain_ordinary_geometry() {
     for xdata in [
@@ -205,6 +222,7 @@ fn absent_zero_malformed_and_other_application_payloads_remain_ordinary_geometry
     }
 }
 
+/// The construction marker is application scoped and case insensitive.
 #[test]
 fn the_construction_marker_is_application_scoped_and_case_insensitive() {
     let mut xdata = vec![tag(1001, "Other"), tag(1070, "0"), tag(1001, " acad_bconstruction "), tag(1070, " 1 ")];

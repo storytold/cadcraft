@@ -131,6 +131,7 @@ pub struct RawTag {
     pub value: String,
 }
 
+/// The extended data application name AutoCAD's BCONSTRUCTION marks construction geometry with.
 const CONSTRUCTION_APP: &str = "ACAD_BCONSTRUCTION";
 
 impl Common {
