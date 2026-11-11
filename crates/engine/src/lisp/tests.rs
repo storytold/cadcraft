@@ -300,6 +300,21 @@ fn nested_callbacks_share_one_step_allowance() {
     assert_eq!(ok(&mut s, "(f 1)"), "T");
 }
 
+/// An outer callback's own steps count against the allowance before the callbacks it calls run.
+#[test]
+fn an_outer_callbacks_steps_are_charged_before_a_nested_one() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    ok(&mut s, "(setq inner-steps 0)");
+    // The outer callback spends ~600 steps, then a nested one tries to spend ~600 more.
+    let r = eval(
+        &mut s,
+        "(vl-remove-if '(lambda (x) (repeat 150 (setq a 1)) (vl-remove-if '(lambda (y) (repeat 150 (setq inner-steps (1+ inner-steps)))) '(1)) nil) '(1))",
+    );
+    assert_eq!(r, Err("callback stopped after 1000 steps".into()));
+    assert!(ok(&mut s, "inner-steps").parse::<i64>().unwrap() < 150);
+}
+
 /// System-variable conversion rejects a shared list whose owned JSON expansion would exceed its budget.
 #[test]
 fn setvar_rejects_an_oversized_shared_structure() {

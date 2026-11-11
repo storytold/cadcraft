@@ -175,19 +175,17 @@ pub struct Machine {
     stack: Vec<Frame>,
     state: State,
     need: Option<Need>,
-    /// Steps the last [`Machine::run`] took.
-    last_steps: u64,
 }
 
 impl Machine {
     /// A machine evaluating `forms` in turn.
     pub fn forms(forms: Vec<Value>) -> Machine {
-        Machine { stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }], state: State::Ret(Value::Nil), need: None, last_steps: 0 }
+        Machine { stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }], state: State::Ret(Value::Nil), need: None }
     }
 
     /// A machine calling `f` with `args`.
     pub fn calling(f: Value, args: Vec<Value>) -> Machine {
-        Machine { stack: Vec::new(), state: State::Call(f, args), need: None, last_steps: 0 }
+        Machine { stack: Vec::new(), state: State::Call(f, args), need: None }
     }
 
     /// Give the value a [`Need`] waited for, and carry on.
@@ -198,16 +196,14 @@ impl Machine {
     /// Run until done, waiting, or `budget` steps.
     pub fn run(&mut self, ctx: &mut Ctx<'_>, budget: u64) -> Outcome {
         let mut n = 0u64;
-        let outcome = self.run_counted(ctx, budget, &mut n);
-        self.last_steps = n.min(budget);
-        outcome
-    }
-
-    fn run_counted(&mut self, ctx: &mut Ctx<'_>, budget: u64, n: &mut u64) -> Outcome {
         loop {
-            *n += 1;
-            if *n > budget {
+            n += 1;
+            if n > budget {
                 return Outcome::Wait(Need::Yield);
+            }
+            // Charge a callback's step as it runs, so callbacks it calls see what it already spent.
+            if ctx.depth > 0 {
+                ctx.s.lisp.callback_used = ctx.s.lisp.callback_used.saturating_add(1);
             }
             let r = match std::mem::replace(&mut self.state, State::Ret(Value::Nil)) {
                 State::Eval(expr) => self.eval(ctx, expr),
@@ -684,8 +680,11 @@ impl Ctx<'_> {
             }
             let slice = remaining.min(SYNC_SLICE);
             let outcome = m.run(&mut sub, slice);
-            sub.s.lisp.callback_used = sub.s.lisp.callback_used.saturating_add(m.last_steps);
             match outcome {
+                // The steps were charged as they ran; finishing past the shared allowance is a failure too.
+                Outcome::Done(_) if sub.s.lisp.callback_used > ceiling => {
+                    return Err(LispError::new(format!("callback stopped after {cap} steps")));
+                }
                 Outcome::Done(v) => return Ok(v),
                 Outcome::Error(e) => return Err(e),
                 Outcome::Wait(Need::Yield) => {}
