@@ -4,7 +4,7 @@
 mod cases;
 mod collections;
 mod compare;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 mod dwg;
 mod dxf;
 mod handle_limits;

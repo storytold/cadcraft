@@ -286,6 +286,35 @@ fn reaching_a_callback_slice_boundary_does_not_grant_another_slice() {
     assert!(counts[1] >= counts[0] && counts[1] - counts[0] <= 1, "{counts:?}");
 }
 
+/// Callbacks that call callbacks share one allowance: a branching routine can't multiply it.
+#[test]
+fn nested_callbacks_share_one_step_allowance() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000_000;
+    // 4^14 leaf calls if every callback took a fresh allowance; the whole tree gets one.
+    let started = std::time::Instant::now();
+    let e = eval(&mut s, "(defun f (n) (if (> n 0) (vl-every '(lambda (x) (f (1- n)) t) '(1 2 3 4)) t)) (f 14)").unwrap_err();
+    assert!(e.contains("callback stopped after 1000000 steps"), "{e}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    // The next run starts afresh.
+    assert_eq!(ok(&mut s, "(f 1)"), "T");
+}
+
+/// An outer callback's own steps count against the allowance before the callbacks it calls run.
+#[test]
+fn an_outer_callbacks_steps_are_charged_before_a_nested_one() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    ok(&mut s, "(setq inner-steps 0)");
+    // The outer callback spends ~600 steps, then a nested one tries to spend ~600 more.
+    let r = eval(
+        &mut s,
+        "(vl-remove-if '(lambda (x) (repeat 150 (setq a 1)) (vl-remove-if '(lambda (y) (repeat 150 (setq inner-steps (1+ inner-steps)))) '(1)) nil) '(1))",
+    );
+    assert_eq!(r, Err("callback stopped after 1000 steps".into()));
+    assert!(ok(&mut s, "inner-steps").parse::<i64>().unwrap() < 150);
+}
+
 /// System-variable conversion rejects a shared list whose owned JSON expansion would exceed its budget.
 #[test]
 fn setvar_rejects_an_oversized_shared_structure() {
@@ -305,6 +334,16 @@ fn printing() {
     assert_eq!(out, ["Hello world", "\"q\"", "", "3 "]);
     assert_eq!(ok(&mut s, "(vl-prin1-to-string '(1 \"a\"))"), "\"(1 \\\"a\\\")\"");
     assert_eq!(ok(&mut s, "(rtos 12.5 2 2)"), "\"12.50\"");
+}
+
+/// Output with many lines moves to the history in one pass, not one buffer shift per line.
+#[test]
+fn printing_many_lines_is_linear() {
+    let mut s = session();
+    let started = std::time::Instant::now();
+    ok(&mut s, "(setq x \"a\\r\\n\") (repeat 17 (setq x (strcat x x))) (princ x) (princ)");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    assert_eq!(s.log.last().map(String::as_str), Some("a"));
 }
 
 #[test]
@@ -977,6 +1016,9 @@ fn strings_are_capped() {
     assert!(e.contains("too much text"), "{e}");
     let e = eval(&mut s, "(repeat 200000 (princ \"0123456789\"))").unwrap_err();
     assert!(e.contains("too much text"), "{e}");
+    // READ makes new strings inside the list it returns: they count, though the result is a list.
+    let e = eval(&mut s, "(setq a \"(\\\"0123456789\\\")\") (repeat 100000 (setq b (read a)))").unwrap_err();
+    assert!(e.contains("too much text"), "{e}");
     // The budget is per run: the next one starts afresh.
     assert_eq!(ok(&mut s, "(strcat \"a\" \"b\")"), "\"ab\"");
 }
@@ -1038,4 +1080,13 @@ fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
         _ => None,
     });
     assert_eq!(r, Some(4.0));
+}
+
+#[test]
+fn atof_out_of_range_exponent_reads_whole_token() {
+    let mut s = Session::new();
+    // Overflow must not fall back to a shorter prefix such as "1e40".
+    assert_eq!(ok(&mut s, "(> (atof \"1e400\") 1e300)"), "T");
+    assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
+    assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }

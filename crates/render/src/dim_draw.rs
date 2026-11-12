@@ -1,13 +1,13 @@
 use super::display::Kind;
 use super::draw::stroke_with;
 use super::props::default_lineweight;
-use super::text_entity::{layout_mtext_entity, place_text_entity, text_style};
+use super::text_entity::{layout_mtext_entity, place_text_entity, style_font, text_style};
 use super::{Builder, Color, Ctx, DimGeometry, DimText, Drawing, Entity, EntityKind, LineRole, Lineweight, Vec2, dim, ink};
 
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
     let ts = text_style(d, &st.text_style);
-    DimText { font: cadcraft_fonts::TextFont::resolve(&ts.font), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
+    DimText { font: style_font(&ts), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.

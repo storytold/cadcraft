@@ -54,7 +54,11 @@ fn record_handle(d: &Drawing, name: &str) -> Option<Handle> {
 
 /// The object entry `key` of dictionary `dict` refers to.
 fn entry(d: &Drawing, dict: Handle, key: &str) -> Option<Handle> {
-    let o = d.foreign.objects.iter().find(|o| o.handle == dict)?;
+    dictionary_entry(d.foreign.objects.iter().find(|o| o.handle == dict)?, key)
+}
+
+/// The object entry `key` (any case) of dictionary object `o` names.
+fn dictionary_entry(o: &ForeignObject, key: &str) -> Option<Handle> {
     let mut tags = o.tags.iter();
     while let Some(t) = tags.next() {
         if t.code == 3 && t.value.eq_ignore_ascii_case(key) {
@@ -66,7 +70,11 @@ fn entry(d: &Drawing, dict: Handle, key: &str) -> Option<Handle> {
 
 /// Every entry of dictionary `dict`: (key, object).
 fn entries(d: &Drawing, dict: Handle) -> Vec<(String, Handle)> {
-    let Some(o) = d.foreign.objects.iter().find(|o| o.handle == dict) else { return Vec::new() };
+    d.foreign.objects.iter().find(|o| o.handle == dict).map(dictionary_entries).unwrap_or_default()
+}
+
+/// Every entry of dictionary object `o`: (key, object).
+fn dictionary_entries(o: &ForeignObject) -> Vec<(String, Handle)> {
     let mut out = Vec::new();
     let mut key: Option<&str> = None;
     for t in &o.tags {
@@ -403,7 +411,31 @@ fn move_entity(e: &mut Entity, vertices: Option<&[i32]>, v: Vec2) {
     }
 }
 
-/// Whether point `p` lies inside a stretch frame (two corners, or a polygon).
+/// Most points of a stretch frame whose objects' points are tested against it one by one. A frame
+/// is two corners or a short polygon; testing every point of every object against every edge of a
+/// longer one would grow with their product, so the action's own vertex lists are used instead.
+const MAX_FRAME_POINTS: usize = 1000;
+
+/// The indices of `points` inside stretch frame `frame`, or `None` when none is: an object the
+/// action selects that lies outside its frame moves whole.
+fn inside(frame: &[Vec2], points: impl Iterator<Item = Vec2>) -> Option<Vec<i32>> {
+    let idx: Vec<i32> = points.enumerate().filter(|(_, p)| in_frame(frame, *p)).filter_map(|(i, _)| i32::try_from(i).ok()).collect();
+    (!idx.is_empty()).then_some(idx)
+}
+
+/// The distance from `p` to the segment `a`-`b`, however short (`Line::dist` takes one shorter than
+/// `EPS` for its first point). It is measured from `a`, so a short segment far from the origin keeps
+/// the digits rounding there would drop.
+fn segment_dist(a: Vec2, b: Vec2, p: Vec2) -> f64 {
+    let d = b - a;
+    let w = p - a;
+    let l2 = d.len2();
+    let t = if l2 > 0.0 { (w.dot(d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (w - d * t).len()
+}
+
+/// Whether point `p` lies inside a stretch frame (two corners, or a polygon). A point on its edge is
+/// inside, for a polygon as for two corners: within a billionth of the edge's length of it.
 fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
     match frame {
         [a, b] => p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y),
@@ -412,6 +444,9 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
             let mut j = f.len() - 1;
             for i in 0..f.len() {
                 let (Some(pi), Some(pj)) = (f.get(i), f.get(j)) else { break };
+                if segment_dist(*pj, *pi, p) <= 1e-9 * pi.dist(*pj) {
+                    return true;
+                }
                 if (pi.y > p.y) != (pj.y > p.y) && p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x {
                     inside = !inside;
                 }
@@ -464,7 +499,10 @@ fn apply(
                 _ => 0.0,
             })
         };
-        let mult = if mult == 0.0 { 1.0 } else { mult };
+        // A zero multiplier would move nothing. AutoCAD 2024 moves such an action by the
+        // parameter's change and leaves its angle offset out (measured on a stretch action written
+        // with multiplier 0, angle offset 1 and group 280 = 1).
+        let (mult, angle) = if mult == 0.0 { (1.0, 0.0) } else { (mult, angle) };
         let v = Vec2::new(comp(0), comp(1)).rotate(angle) * mult;
         if !(v.x.is_finite() && v.y.is_finite()) || (v.x == 0.0 && v.y == 0.0) {
             continue;
@@ -473,6 +511,8 @@ fn apply(
         // this action's selection, so a selection that repeats a handle does not re-scan the
         // vertex list and re-clone its index vector per occurrence (CWE-400).
         let vtx_by_handle: HashMap<Handle, &Vec<i32>> = vertices.iter().rev().map(|(vh, i)| (*vh, i)).collect();
+        // Whether the frame (two corners or a polygon) is tested point by point.
+        let framed = (2..=MAX_FRAME_POINTS).contains(&frame.len());
         let mut handled: HashSet<Handle> = HashSet::new();
         for h in &a.selection {
             if !handled.insert(*h) {
@@ -502,7 +542,18 @@ fn apply(
                 continue;
             }
             let Some(c) = copy_of(h) else { continue };
-            let idx = vtx_by_handle.get(h).map(|i| (*i).clone());
+            // The points of a line or polyline that move are those inside the frame where the
+            // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
+            // doesn't go by the vertex lists the action stores, which a block from another program
+            // can get wrong. A polyline's vertices are in its own plane: in the block's when its
+            // extrusion is exactly along z (a mirrored one is read flipped into it). Any tilt, however
+            // small, moves them by as much as the elevation times the tilt, so a tilted one keeps the
+            // stored list.
+            let idx = match def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
+                Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
+                Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => inside(frame, pl.vertices.iter().map(|v| v.p)),
+                _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
+            };
             moves.entry(c).or_default().push((idx, v));
         }
     }
@@ -623,6 +674,10 @@ fn apply(
 /// Associative hatches of block `b` whose loop is one closed polyline of the block take its
 /// outline again (it may have been stretched).
 fn refill_hatches(b: &mut Block) {
+    // Each loop gets its own copy of the outline, so many small loops on one big outline multiply it;
+    // past this many vertices in all, the remaining loops keep the outline they have.
+    const MAX_REFILLED_VERTICES: usize = 4_000_000;
+    let mut budget = MAX_REFILLED_VERTICES;
     let outlines: HashMap<Handle, Vec<cadcraft_geom::PolyVertex>> = b
         .entities
         .iter()
@@ -638,7 +693,9 @@ fn refill_hatches(b: &mut Block) {
                 for l in &mut hh.loops {
                     if let [s] = l.sources.as_slice()
                         && let Some(vs) = outlines.get(s)
+                        && let Some(left) = budget.checked_sub(vs.len())
                     {
+                        budget = left;
                         l.vertices.clone_from(vs);
                     }
                 }
@@ -649,19 +706,33 @@ fn refill_hatches(b: &mut Block) {
 
 /// The value records of the references to the dynamic block whose record is `def_record` (from
 /// any one of them, by graph id): AutoCAD's layout of each record, class ids included.
+///
+/// Each record is copied once at most: a key naming a record an earlier key already took is
+/// skipped. Records are copied per key (and copied again per key when a new reference's data is
+/// made), so a file listing one large record under many keys would otherwise multiply its size by
+/// the key count (CWE-400); AutoCAD gives every key its own record.
 fn templates(d: &Drawing, def_record: Handle) -> HashMap<String, Vec<RawTag>> {
     let objects: HashMap<Handle, &ForeignObject> = d.foreign.objects.iter().map(|o| (o.handle, o)).collect();
+    // Dictionary entries looked up through the index, not by scanning every object per
+    // dictionary (which is quadratic in the object count).
+    let entry = |dict: Handle, key: &str| objects.get(&dict).and_then(|o| dictionary_entry(o, key));
     let mut out: HashMap<String, Vec<RawTag>> = HashMap::new();
+    let mut taken: HashSet<Handle> = HashSet::new();
     for rep in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("DICTIONARY")) {
         // A representation dictionary whose data names this dynamic block.
-        let Some(rd) = entry(d, rep.handle, "AcDbRepData").and_then(|h| objects.get(&h)) else { continue };
+        let Some(rd) = dictionary_entry(rep, "AcDbRepData").and_then(|h| objects.get(&h)) else { continue };
         if !rd.tags.iter().any(|t| t.code == 340 && Handle::parse_hex(&t.value) == Some(def_record)) {
             continue;
         }
-        let Some(values) = entry(d, rep.handle, "AppDataCache").and_then(|c| entry(d, c, "ACAD_ENHANCEDBLOCKDATA")) else { continue };
-        for (k, h) in entries(d, values) {
+        let Some(values) = dictionary_entry(rep, "AppDataCache").and_then(|c| entry(c, "ACAD_ENHANCEDBLOCKDATA")) else { continue };
+        let Some(values) = objects.get(&values) else { continue };
+        for (k, h) in dictionary_entries(values) {
+            if out.contains_key(&k) || taken.contains(&h) {
+                continue;
+            }
             if let Some(x) = objects.get(&h).filter(|x| x.kind.eq_ignore_ascii_case("XRECORD")) {
-                out.entry(k).or_insert_with(|| x.tags.clone());
+                taken.insert(h);
+                out.insert(k, x.tags.clone());
             }
         }
     }
@@ -1000,5 +1071,24 @@ mod tests {
         anon.entities.push(tagged(6, None));
         assert_eq!(by_tag(&d, &def), vec![(10, Handle(1)), (20, Handle(2))]);
         assert_eq!(by_tag(&d, &anon), vec![(20, Handle(5)), (1_000_001, Handle(6))]);
+    }
+
+    #[test]
+    fn a_value_record_listed_under_many_keys_is_copied_once() {
+        // One large XRECORD named by many keys of a reference's value dictionary: the templates
+        // keep one copy, not one per key.
+        let mut d = Drawing::new_imperial();
+        let (def_record, rep, rd, cache, values, record) = (Handle(0x10), Handle(0x20), Handle(0x21), Handle(0x22), Handle(0x23), Handle(0x24));
+        let keys: Vec<String> = (0..1000).map(|i| i.to_string()).collect();
+        let entries: Vec<(&str, Handle)> = keys.iter().map(|k| (k.as_str(), record)).collect();
+        let f = std::sync::Arc::make_mut(&mut d.foreign);
+        f.objects.push(dictionary(rep, Handle(1), &[("AcDbRepData", rd), ("AppDataCache", cache)]));
+        f.objects.push(ForeignObject { handle: rd, kind: "ACDB_BLOCKREPRESENTATION_DATA".into(), tags: vec![tag(340, def_record.hex())] });
+        f.objects.push(dictionary(cache, rep, &[("ACAD_ENHANCEDBLOCKDATA", values)]));
+        f.objects.push(dictionary(values, cache, &entries));
+        f.objects.push(ForeignObject { handle: record, kind: "XRECORD".into(), tags: (0..1000).map(|_| tag(1, "x")).collect() });
+        let t = templates(&d, def_record);
+        assert_eq!(t.len(), 1, "one record, one template");
+        assert_eq!(t.get("0").map(Vec::len), Some(1000));
     }
 }
