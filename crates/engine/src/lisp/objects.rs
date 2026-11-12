@@ -17,7 +17,7 @@ use std::sync::{Arc, Weak};
 
 use cadcraft_doc::foreign::ForeignKey;
 use cadcraft_doc::{Drawing, Handle};
-use cadcraft_dxf::Tag;
+use craft_dxf::Tag;
 
 use super::LispError;
 use super::drawing::{arity, ename, groups_to_list, string};

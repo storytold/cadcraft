@@ -43,13 +43,16 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
     rerun_if_changed(&manifest)?;
     // Resolve the checkout root once so every manifest file can be confined inside it.
     let root = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
-    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+    // The manifest itself is confined too (a symlink in the checkout can't point it elsewhere), must
+    // be a regular file, and is read through a limit so `/dev/zero` can't fill memory.
+    let text = read_manifest(&resolve_font(&root, "fonts/manifest.txt")?)?;
     let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
     let mut out = String::new();
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+    for (n, line) in text.lines().enumerate().map(|(n, l)| (n + 1, l.trim())).filter(|(_, l)| !l.is_empty() && !l.starts_with('#')) {
         let f: Vec<&str> = line.split(" | ").map(str::trim).collect();
+        // The line's text is not repeated: it comes from the checkout and goes to the build output.
         let [family, style, file, scripts, ..] = f.as_slice() else {
-            return Err(format!("malformed manifest line: {line}"));
+            return Err(format!("malformed manifest line {n}"));
         };
         if BARRED_FAMILIES.iter().any(|barred| family.starts_with(barred)) {
             println!("cargo::warning=craft-fonts: not embedding {family} {style} (AGENTS.md: no Adobe fonts)");
@@ -71,6 +74,28 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// The most a manifest may hold; the real one is a few KiB.
+const MAX_MANIFEST_BYTES: u64 = 1 << 20;
+
+/// Read the regular file `path` as text, at most [`MAX_MANIFEST_BYTES`].
+fn read_manifest(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read as _;
+    // stat never blocks, but opening a FIFO with no writer does, so refuse non-regular files first.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    let mut text = String::new();
+    file.take(MAX_MANIFEST_BYTES + 1).read_to_string(&mut text).map_err(|e| format!("{}: {e}", path.display()))?;
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(format!("{}: larger than {MAX_MANIFEST_BYTES} bytes", path.display()));
+    }
+    Ok(text)
 }
 
 /// Resolve a manifest `file` field to a real path *confined to the checkout* `root` (CWE-22).

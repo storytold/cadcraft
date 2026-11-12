@@ -127,6 +127,12 @@ pub struct LispState {
     acad_loaded: bool,
     /// Memory caps (lowered by tests).
     pub(crate) limits: Limits,
+    /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
+    /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
+    pub(crate) callback_used: u64,
+    /// The `callback_used` value the callback running now (and so every one it calls) must not
+    /// pass: the lowest of its own and its callers' allowances.
+    pub(crate) callback_ceiling: Option<u64>,
 }
 
 /// What U and REDO inside the running routine take back: the commands it ran, each as the drawing

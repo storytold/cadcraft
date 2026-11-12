@@ -932,7 +932,7 @@ pub fn fallback_for(c: char) -> Option<Face> {
 #[derive(Default)]
 pub(crate) struct GlyphOutline {
     pub(crate) contours: Arc<[Vec<Vec2>]>,
-    points: usize,
+    pub(crate) points: usize,
     pub(crate) advance: f64,
     pub(crate) cap: f64,
     /// The font maps the character (false: the missing-glyph shape).
