@@ -144,10 +144,10 @@ impl BlockEdit {
         }
         let host = &self.host.doc;
         let mut d = editor.clone();
-        // When the block is saved under another name, the edited block keeps the drawing's
-        // description and block `name` gets the description changed in the editor.
+        // When saving a copy, the source keeps its last saved definition. The editor's own
+        // table entry can still be the one from before BSAVE; the copy gets the edited data.
         if !name.eq_ignore_ascii_case(&self.name) {
-            keep_description(&mut d, host, &self.name);
+            restore_saved_definition(&mut d, host, &self.name);
         }
         d.model = host.model.clone();
         d.layouts = host.layouts.clone();
@@ -176,16 +176,13 @@ impl BlockEdit {
     }
 }
 
-/// Give block `name` of `d` the description `host` has for it, or, when `host` has no such block,
-/// drop the empty definition a description gives a block the editor started and never saved.
-fn keep_description(d: &mut Drawing, host: &Drawing, name: &str) {
+/// Keep the source block's saved objects and metadata when the edited objects are saved as a copy.
+/// Without a saved source, drop the empty definition an editor description may have created.
+fn restore_saved_definition(d: &mut Drawing, host: &Drawing, name: &str) {
     match host.block(name) {
         Some(h) => {
-            if let Some((_, b)) = d.blocks.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(name))
-                && b.description != h.description
-            {
-                Arc::make_mut(b).description = h.description.clone();
-            }
+            let key = d.blocks.keys().find(|key| key.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| h.name.clone());
+            d.blocks.insert(key, h.clone());
         }
         None => d.blocks.retain(|k, b| !(k.eq_ignore_ascii_case(name) && b.entities.is_empty())),
     }
@@ -268,11 +265,12 @@ impl DocState {
     }
 
     /// Start editing in the Block Editor `be` (the drawing is already the editor's): a fresh
-    /// undo history, nothing selected, model space.
+    /// undo history, nothing selected, nothing for OOPS, model space.
     fn enter_block_editor(&mut self, be: BlockEdit) {
         self.undo.clear();
         self.redo.clear();
         self.undo_ctl = Default::default();
+        self.erased = Default::default();
         self.selection.clear();
         self.previous_selection.clear();
         self.space = cadcraft_doc::Space::Model;
@@ -301,7 +299,7 @@ impl DocState {
             let was = be.name.clone();
             let reconcile = |doc: &mut Arc<Drawing>| {
                 let editor = Arc::make_mut(doc);
-                keep_description(editor, &d, &was);
+                restore_saved_definition(editor, &d, &was);
                 editor.blocks.retain(|k, _| !k.eq_ignore_ascii_case(&name));
                 editor.blocks.insert(name.clone(), b.clone());
             };
@@ -338,6 +336,7 @@ impl DocState {
         self.undo = host.undo;
         self.redo = host.redo;
         self.undo_ctl = host.undo_ctl;
+        self.erased = host.erased;
         // The drawing comes back with nothing selected; Previous is what was selected before.
         self.selection.clear();
         self.previous_selection = if host.selection.is_empty() { host.previous_selection } else { host.selection };

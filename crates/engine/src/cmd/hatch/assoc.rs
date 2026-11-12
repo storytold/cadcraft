@@ -121,7 +121,7 @@ pub(super) fn same_shape(a: &[PolyVertex], b: &[PolyVertex]) -> bool {
     ba.min.dist(bb.min) <= eps && ba.max.dist(bb.max) <= eps && (shoelace(&pa).abs() - shoelace(&pb).abs()).abs() <= eps * (1.0 + size)
 }
 
-pub(super) fn detach(h: &mut Hatch) {
+pub(crate) fn detach(h: &mut Hatch) {
     h.associative = false;
     h.loops.iter_mut().for_each(|l| l.sources.clear());
 }

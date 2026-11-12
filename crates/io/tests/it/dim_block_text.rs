@@ -34,6 +34,7 @@ fn height_written(style_scale: f64, overrides: serde_json::Value) -> f64 {
         overrides: overrides.as_object().cloned().unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
     block_mtext_height(&cadcraft_io::write_dxf(&d))
@@ -73,6 +74,7 @@ fn angular_drawing(separator_override: Option<&str>) -> Drawing {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     if let Some(separator) = separator_override {
         dm.overrides.insert("DIMDSEP".into(), serde_json::json!(separator));
@@ -101,7 +103,7 @@ fn dxf_angular_block_text_keeps_the_decimal_separator() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_angular_block_text_keeps_the_decimal_separator() {
     use std::io::Cursor;

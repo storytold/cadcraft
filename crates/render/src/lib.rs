@@ -133,7 +133,7 @@ struct Builder<'a> {
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -184,6 +184,45 @@ impl Builder<'_> {
             kind: Kind::Polyline,
             start,
             len: pts.len() as u32,
+        });
+    }
+    /// The pixels of image `i` over its rectangle, cut to its clip boundary.
+    fn image(&mut self, ctx: &Ctx, color: Ink, i: &cadcraft_doc::Image, raster: &std::sync::Arc<cadcraft_doc::Raster>) {
+        // Where the entity puts its picture: the top-left corner, and one of its pixels to the
+        // right and down.
+        let top_left = ctx.xf.apply(i.insert.xy() + i.v.xy() * i.size.y);
+        let right = ctx.xf.apply_vec(i.u.xy());
+        let down = ctx.xf.apply_vec(i.v.xy() * -1.0);
+        let clip = image_clip(i, |q| top_left + right * q.x + down * q.y);
+        // The file found can have another pixel count than the entity records: its pixels are
+        // stretched over the same rectangle.
+        let img = DImage {
+            raster: raster.clone(),
+            origin: top_left,
+            right: right * (i.size.x / f64::from(raster.width())),
+            down: down * (i.size.y / f64::from(raster.height())),
+            clips: clip.into_iter().collect(),
+            fade: i.fade.min(100),
+        };
+        let corners = img.corners();
+        if !corners.iter().all(|q| q.x.is_finite() && q.y.is_finite()) {
+            return;
+        }
+        let (Ok(index), Ok(start)) = (u32::try_from(self.list.images.len()), u32::try_from(self.list.verts.len())) else { return };
+        for q in corners {
+            self.list.bounds.add(q);
+            self.list.verts.push(q);
+        }
+        self.list.images.push(img);
+        self.list.prims.push(DPrim {
+            handle: ctx.top,
+            color: color.rgb,
+            aci7: color.aci7,
+            lw: 0.0,
+            transparency: self.transparency,
+            kind: Kind::Image { index },
+            start,
+            len: 4,
         });
     }
     fn tris(&mut self, ctx: &Ctx, color: Ink, tris: &[Vec2]) {
@@ -288,13 +327,49 @@ impl Builder<'_> {
             len: 2,
         });
     }
+    /// An empty builder drawing like this one (for contents cut afterwards, an XCLIP), with the
+    /// block-expansion count carried over.
+    fn part(&self) -> Builder<'a> {
+        let mut list = DisplayList::default();
+        list.expanded = self.list.expanded;
+        Builder {
+            list,
+            opts: self.opts,
+            plotting: self.plotting,
+            styles: self.styles,
+            named: self.named,
+            shared_budget: self.shared_budget,
+            transparency: self.transparency,
+        }
+    }
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        match self.shared_budget {
+        let ok = match self.shared_budget {
             Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
             None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+        };
+        if !ok {
+            self.list.truncated = true;
         }
+        ok
+    }
+}
+
+/// The clip boundary of image `i` as a closed outline, or `None` when the whole image shows.
+/// `place` gives the position of a point of the entity's pixel grid (x right, y down from the
+/// top-left corner of the image).
+fn image_clip(i: &cadcraft_doc::Image, place: impl Fn(Vec2) -> Vec2) -> Option<Vec<Vec2>> {
+    if !i.clipping {
+        return None;
+    }
+    // Boundaries count from pixel centres: the top-left corner of the image is (-0.5, -0.5).
+    let at = |q: Vec2| place(Vec2::new(q.x + 0.5, q.y + 0.5));
+    match i.clip.as_slice() {
+        // Two opposite corners of a rectangle.
+        [a, b] => Some(vec![at(*a), at(Vec2::new(b.x, a.y)), at(*b), at(Vec2::new(a.x, b.y))]),
+        polygon if polygon.len() >= 3 => Some(polygon.iter().map(|q| at(*q)).collect()),
+        _ => None,
     }
 }
 
@@ -311,12 +386,13 @@ mod text_entity;
 mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
-pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
+pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
-pub use viewports::{viewport_clip, viewport_content};
+pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
+use viewports::{Clip, append_clipped_keep};
+pub use viewports::{clip_list, viewport_clip, viewport_content};
 
 #[cfg(test)]
 mod tests;
