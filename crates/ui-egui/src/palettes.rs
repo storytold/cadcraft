@@ -630,19 +630,28 @@ fn read_only(ui: &mut egui::Ui, text: &str) {
     value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
 }
 
+/// The All and My halves of the Properties header's segmented control, which ends at `right`:
+/// 35 px each, wider where a label needs it (a Tamil "All" does), so labels never overlap.
+fn segment_halves(right: f32, top: f32, all_width: f32, my_width: f32) -> (Rect, Rect) {
+    let fit = |text: f32| (text + 12.0).max(35.0);
+    let my = Rect::from_min_size(pos2(right - fit(my_width), top), vec2(fit(my_width), 18.0));
+    let all = Rect::from_min_size(pos2(my.left() - fit(all_width), top), vec2(fit(all_width), 18.0));
+    (all, my)
+}
+
 /// The Properties header: All/My, the selection-type filter and the PICKADD / Select Objects /
 /// Quick Select buttons.
 fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let hr = section_header(ui, "Properties");
     // All | My segmented control ("My" property sets don't exist yet).
-    let seg = Rect::from_min_size(pos2(hr.right() - 120.0, hr.top() + 4.0), vec2(70.0, 18.0));
-    ui.painter().rect_filled(seg, 3.0, t.chrome_dark);
-    let half = Rect::from_min_size(seg.min, vec2(35.0, 18.0));
-    let my = half.translate(vec2(35.0, 0.0));
+    let (all_label, my_label) = (crate::tl!("All"), crate::tl!("My"));
+    let width = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), crate::theme::small(), t.text).size().x;
+    let (half, my) = segment_halves(hr.right() - 50.0, hr.top() + 4.0, width(all_label), width(my_label));
+    ui.painter().rect_filled(half.union(my), 3.0, t.chrome_dark);
     ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
-    ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, crate::tl!("All"), crate::theme::small(), t.text);
-    ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, crate::tl!("My"), crate::theme::small(), t.text_faint);
+    ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, all_label, crate::theme::small(), t.text);
+    ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, my_label, crate::theme::small(), t.text_faint);
     ui.interact(my, ui.scope_id().with("prop_my"), Sense::hover()).on_hover_text(crate::tl!("My properties: not available yet"));
     let sel = app.session.selection();
     let pickadd = app.session.settings.pickadd;
@@ -1506,6 +1515,18 @@ mod tests {
     use cadcraft_engine::Session;
     use egui::{Color32, Shape};
     use egui_kittest::kittest::Queryable;
+
+    /// English keeps the 35 px halves where they were (right − 120 to right − 50); a longer label
+    /// widens its own half, leftwards, so All and My never overlap.
+    #[test]
+    fn all_my_halves_fit_their_labels() {
+        let (all, my) = segment_halves(200.0, 10.0, 14.0, 13.0);
+        assert_eq!(all, Rect::from_min_size(pos2(130.0, 10.0), vec2(35.0, 18.0)));
+        assert_eq!(my, Rect::from_min_size(pos2(165.0, 10.0), vec2(35.0, 18.0)));
+        let (all, my) = segment_halves(200.0, 10.0, 58.0, 30.0);
+        assert!(all.width() >= 58.0 + 12.0 && my.width() >= 30.0 + 12.0, "{all:?} {my:?}");
+        assert!(all.right() <= my.left() && my.right() == 200.0, "{all:?} {my:?}");
+    }
 
     #[test]
     fn shown_part_takes_off_only_the_number_tag() {

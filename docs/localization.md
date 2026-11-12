@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), **ქართული** (Georgian), or **Tiếng Việt** (Vietnamese).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), **ქართული** (Georgian), **Tiếng Việt** (Vietnamese), or **தமிழ்** (Tamil).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,7 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`. Unsupported languages fall back to English.
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`, `ta-IN`, `ta-LK` and `ta_IN.UTF-8` → `ta`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
 
@@ -22,7 +22,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka`, and `vi`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka`, `vi`, and `ta`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -143,6 +143,32 @@ Georgian (`Geor`) face, which loads in every interface language when a build emb
 then shows **ქართული**. A build without that face keeps the saved `ka` choice but shows the interface
 in English, names the language **Georgian** in the picker, and the language command reports that a
 Georgian font is needed.
+
+## Tamil (`ta`) interface
+
+Tamil has **1,507 rows**: 1,505 ordinary labels and two count templates with one and other forms
+(**1 கமிட்**, **5 கமிட்கள்**). Menu headings take their ordinary translation, so there are no `menu`
+rows, and no marked UI literal falls back to English. 1,289 rows come from the Tamil CADCraft and
+shared catalogs in [storytold/craft-i18n](https://github.com/storytold/craft-i18n) (`locales/ta/`),
+reviewed there for language and terminology by native speakers; the other 218 (newer strings: the
+Hatch and Gradient dialog, dynamic blocks, selection and grip options, command aliases, plot
+settings, drawing units and save warnings) are AI-assisted and not yet reviewed by a native
+speaker. Commands use the
+imperative (**சேமி**, **திற**); prompts read "… குறிப்பிடவும்" for Specify, "… உள்ளிடவும்" for
+Enter and "… தேர்ந்தெடுக்கவும்" for Select. The vocabulary is ordinary Tamil drafting language:
+அடுக்கு (layer), தொகுதி (block), பரிமாணம் (dimension), கோட்டு நிரப்பு (hatch), தளவமைப்பு
+(layout), காட்சிப்புலம் (viewport), பிடிப்புள்ளி (grip), வெளிப்புறக் குறிப்பீடு (xref). Command
+IDs, keywords the engine accepts and product and format names (DXF, PDF, AutoLISP) keep their
+spelling. No other product's localization was consulted.
+
+egui's bundled faces have no Tamil letters. The Tamil interface loads an installed Tamil font whose
+first face has every Tamil letter the catalog uses (Nirmala UI or Latha on Windows, Tamil Sangam MN
+or Tamil MN on macOS, Noto Sans Tamil, Lohit Tamil or Samyak Tamil on Linux), or the craft-fonts
+Noto Sans Tamil (`Taml`) face when a build embeds it; the web build keeps that face among its
+embedded ones. egui shapes the text with HarfRust, so vowel signs take their places around the
+consonant. Only the Tamil interface loads a Tamil font, so the picker shows **தமிழ்** there and
+**Tamil** in every other language. Without a Tamil font the saved `ta` choice is kept, the
+interface stays in English, and the language command reports that a Tamil font is needed.
 
 ## Adding translations
 
