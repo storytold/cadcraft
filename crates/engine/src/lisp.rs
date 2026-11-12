@@ -43,7 +43,7 @@ impl LispError {
 }
 
 /// A drawing's non-graphic records as a save writes them: handle, type, groups.
-pub type ObjectRecords = Vec<(Handle, String, Vec<cadcraft_dxf::Tag>)>;
+pub type ObjectRecords = Vec<(Handle, String, Vec<craft_dxf::Tag>)>;
 
 /// One drawing's LISP environment.
 pub struct Env {
@@ -134,6 +134,12 @@ pub struct LispState {
     acad_loaded: bool,
     /// Memory caps (lowered by tests).
     pub(crate) limits: Limits,
+    /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
+    /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
+    pub(crate) callback_used: u64,
+    /// The `callback_used` value the callback running now (and so every one it calls) must not
+    /// pass: the lowest of its own and its callers' allowances.
+    pub(crate) callback_ceiling: Option<u64>,
 }
 
 /// What U and REDO inside the running routine take back: the commands it ran, each as the drawing
@@ -426,9 +432,12 @@ impl Session {
 
     /// Move printed text to the command history: complete lines, and with `all` the rest too.
     fn lisp_flush(&mut self, env: &mut Env, all: bool) {
-        while let Some(i) = env.out.find('\n') {
-            let line: String = env.out.drain(..=i).collect();
-            let line = line.trim_end_matches(['\n', '\r']).to_string();
+        // One pass over the buffer, dropping the printed lines once at the end: draining each line
+        // from the front shifted the rest every time, quadratic in newline-dense output.
+        let mut done = 0;
+        while let Some(i) = env.out.get(done..).and_then(|rest| rest.find('\n')) {
+            let line = env.out.get(done..done + i).unwrap_or_default().trim_end_matches('\r').to_string();
+            done += i + 1;
             // `(princ "\nText")` after a prompt or a command's echo ends that line instead of
             // leaving an empty one; after LISP's own line it does print an empty line.
             if line.is_empty() && env.printed_at != Some(self.log.len()) {
@@ -438,6 +447,7 @@ impl Session {
             self.echo(line);
             env.printed_at = Some(self.log.len());
         }
+        env.out.drain(..done);
         if all && !env.out.is_empty() {
             let line = std::mem::take(&mut env.out);
             self.echo(line);

@@ -23,10 +23,10 @@ fn groups(d: &cadcraft_engine::doc::Drawing, e: &Entity) -> (String, Vec<(i32, V
         .into_iter()
         .map(|t| {
             let v = match t.value {
-                cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => json!(s),
-                cadcraft_dxf::Value::Real(r) => json!(r),
-                cadcraft_dxf::Value::Int(i) => json!(i),
-                cadcraft_dxf::Value::Bool(b) => json!(i32::from(b)),
+                craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => json!(s),
+                craft_dxf::Value::Real(r) => json!(r),
+                craft_dxf::Value::Int(i) => json!(i),
+                craft_dxf::Value::Bool(b) => json!(i32::from(b)),
             };
             (t.code, v)
         })
