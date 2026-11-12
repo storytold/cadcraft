@@ -221,6 +221,18 @@ fn segment_offset() {
     assert!(s.offset(6.0).is_none());
 }
 
+/// A polyline of many fine arcs samples at most the point budget, then draws chords.
+#[test]
+fn polyline_tessellation_is_bounded() {
+    let vertices: Vec<PolyVertex> = (0..3000).map(|i| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(f64::from(i) * 1e6, 0.0)) }).collect();
+    let pl = Polyline { vertices, closed: false };
+    let pts = pl.tessellate(1e-9);
+    assert!(pts.len() <= MAX_TESSELLATED_POINTS + 2 * 3000 + 4096, "{}", pts.len());
+    assert!(pts.len() > 3000);
+    let mut budget = 10;
+    assert!(pl.tessellate_within(1e-9, &mut budget).len() <= 4096 + 2 * 3000);
+}
+
 #[test]
 fn arc_segments_bounded() {
     assert_eq!(arc_segments(0.0, 1.0, 0.1), 1);
