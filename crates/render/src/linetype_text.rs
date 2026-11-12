@@ -32,11 +32,17 @@ const MAX_TEXTS: usize = 10_000;
 /// repeated many times).
 const MAX_POINTS: usize = 2_000_000;
 
+/// Upper bound on the points of all the texts of one run: each placement keeps its own copy of the
+/// label's outline, so a long label times [`MAX_TEXTS`] would otherwise be too much to hold.
+const MAX_TEXT_POINTS: usize = 4_000_000;
+
 /// One text or shape element of the pattern, shaped once at the origin.
 struct Element {
     /// Distance from the start of a pattern repeat to the anchor (where the element ends).
     at: f64,
     local: Shaped,
+    /// Points in `local`, each placement's cost against [`MAX_TEXT_POINTS`].
+    points: usize,
     rotation: f64,
     absolute: bool,
     offset: Vec2,
@@ -62,6 +68,7 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
         return out;
     }
     let mut walk = Walk { pts, i: 0, start: 0.0 };
+    let mut points_left = MAX_TEXT_POINTS;
     // From the period before the run's start (a centred or anchored pattern starts before it).
     let mut base = start - total * stretch;
     let mut points = 0usize;
@@ -75,6 +82,8 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
             if s > len + 1e-9 || out.len() >= MAX_TEXTS || points > MAX_POINTS {
                 break 'repeats;
             }
+            let Some(left) = points_left.checked_sub(el.points) else { break 'repeats };
+            points_left = left;
             let Some((p, dir)) = walk.at(s) else { break 'repeats };
             let origin = p + dir * el.offset.x + dir.perp() * el.offset.y;
             let rot = if el.absolute { el.rotation } else { dir.angle() + el.rotation };
@@ -119,6 +128,7 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
         {
             out.push(Element {
                 at,
+                points: point_count(&local),
                 local,
                 rotation: finite(el.rotation),
                 absolute: el.absolute,
@@ -143,8 +153,16 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
             ..TextParams::new(Vec2::ZERO, height)
         };
         let (local, _) = cadcraft_fonts::place(&font, text, &params);
+        // Points plus one per stroke and glyph slot, and one for the label itself, so a label of empty
+        // glyphs still has a cost proportional to its size.
+        let points = local.strokes.iter().map(Vec::len).sum::<usize>()
+            + local.glyphs.iter().flatten().map(Vec::len).sum::<usize>()
+            + local.strokes.len()
+            + local.glyphs.len()
+            + 1;
         out.push(Element {
             at,
+            points,
             local,
             rotation: finite(el.rotation),
             absolute: el.absolute,
@@ -223,6 +241,20 @@ mod tests {
         assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0, Layout::Open).is_empty());
         let plain = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0, Layout::Open).is_empty());
+    }
+
+    /// A long label repeated along a long run stops at the point allowance, well before MAX_TEXTS.
+    #[test]
+    fn placed_labels_stop_at_the_point_allowance() {
+        let d = Drawing::new_imperial();
+        let mut lt = gas();
+        lt.pattern[1].text = Some("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM".into());
+        // 0.95 per repeat over 9,000: about 9,500 repeats, under the 50,000 the run is drawn for.
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(9_000.0, 0.0)], &lt, 1.0, 0.0, Layout::Open);
+        let points: usize =
+            t.iter().map(|s| s.strokes.iter().map(Vec::len).sum::<usize>() + s.glyphs.iter().flatten().map(Vec::len).sum::<usize>()).sum();
+        assert!(!t.is_empty() && t.len() < MAX_TEXTS, "{}", t.len());
+        assert!(points <= MAX_TEXT_POINTS, "{points}");
     }
 
     /// A shape file written for this test: shape 130 a 2 x 2 box with its pen ending at x = 2.

@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use cadcraft_color::Color;
 use cadcraft_doc::*;
-use cadcraft_dxf::{Tag, parse_ascii, records, sections, write_ascii};
 use cadcraft_geom::Vec3;
 use cadcraft_io::{read_dxf, write_dxf};
+use craft_dxf::{Tag, parse_ascii, records, sections, write_ascii};
 
 fn roundtrip(d: &Drawing) -> Drawing {
     read_dxf(write_dxf(d).as_bytes()).expect("reopen")
@@ -52,6 +52,7 @@ fn host() -> Drawing {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).expect("add");
     }
