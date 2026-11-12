@@ -60,9 +60,10 @@ configuration works across the suite) keep the agent to the folders you give it:
   a folder that doesn't exist is refused, as is a link that leads nowhere. The result is compared
   with the root by whole folder names, exactly: `/work2/x` is not inside `/work`, and on Windows
   a folder's own case comes from the file system, so a case-sensitive folder's `Root` is not
-  `root`. On Windows a UNC path (`\\server\share`, `\\?\UNC\...`, including `\\host@SSL\...`), a
-  device path (`\\.\...`) or a verbatim path that isn't a disk is refused before it is opened,
-  unless a root is already on that same server and share. Device names (`CON`, `NUL`, `COM1`,
+  `root`. On Windows a UNC path (`\\server\share`, `\\?\UNC\...`, including `\\host@SSL\...`) is
+  refused before it is opened unless a root is on that same server and share. A device path
+  (`\\.\...`) is refused unless a root uses the same device, and a verbatim path that isn't a
+  disk is refused unless a root uses the same prefix. Device names (`CON`, `NUL`, `COM1`,
   `LPT¹`…) are refused too.
 - A path you write must also stand under the write root: a link outside it pointing in is refused,
   because a drawing's `.bak` goes beside the link and a delete removes the link.

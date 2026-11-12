@@ -188,7 +188,9 @@ fn resolve(path: &Path, roots: &AutomationRoots) -> Result<PathBuf, String> {
     let mut at = absolute.as_path();
     loop {
         // A link to a network path is judged from the target text. Canonicalizing it would follow
-        // the link and contact that host.
+        // the link and contact that host. Only Windows has those prefixes, so other targets skip
+        // the walk.
+        #[cfg(windows)]
         if let Some(why) = link_leads_to_refused_prefix(at, roots) {
             return Err(format!("automation path rejected: {why}: {shown}"));
         }
@@ -251,12 +253,15 @@ fn refused_prefix(path: &Path, roots: &AutomationRoots) -> Option<&'static str> 
 /// Folders are inspected from the root downward with [`std::fs::symlink_metadata`], which does not
 /// follow a link, and the target is read with [`std::fs::read_link`]. A link to a network path is
 /// therefore refused before [`std::fs::canonicalize`] would open that host, including when the
-/// link is only an ancestor of the name. At most [`MAX_LINK_HOPS`] links are followed.
+/// link is only an ancestor of the name. At most [`MAX_LINK_HOPS`] links are followed; one more,
+/// or a link whose target cannot be read, is refused instead of being opened.
+#[cfg(windows)]
 fn link_leads_to_refused_prefix(path: &Path, roots: &AutomationRoots) -> Option<&'static str> {
     follow_links(path, roots, MAX_LINK_HOPS)
 }
 
 /// [`link_leads_to_refused_prefix`], with `hops_left` links still allowed.
+#[cfg(windows)]
 fn follow_links(path: &Path, roots: &AutomationRoots, hops_left: usize) -> Option<&'static str> {
     if let Some(why) = refused_prefix(path, roots) {
         return Some(why);
@@ -277,9 +282,9 @@ fn follow_links(path: &Path, roots: &AutomationRoots, hops_left: usize) -> Optio
             continue;
         }
         if hops_left == 0 {
-            return None;
+            return Some("too many links");
         }
-        let Ok(target) = std::fs::read_link(prefix) else { return None };
+        let Ok(target) = std::fs::read_link(prefix) else { return Some("a link that leads nowhere") };
         let joined = if target.is_absolute() {
             target
         } else {
@@ -302,6 +307,7 @@ fn follow_links(path: &Path, roots: &AutomationRoots, hops_left: usize) -> Optio
 }
 
 /// How many links [`link_leads_to_refused_prefix`] follows before it stops.
+#[cfg(windows)]
 const MAX_LINK_HOPS: usize = 40;
 
 /// A Windows prefix that is not a local disk.
@@ -675,7 +681,7 @@ mod tests {
         let same = windows_prefix(Path::new(r"\\fileserver\projects\a.dwg")).unwrap();
         let other_share = windows_prefix(Path::new(r"\\fileserver\secret\a.dwg")).unwrap();
         let other_host = windows_prefix(Path::new(r"\\203.0.113.5\Projects\a.dwg")).unwrap();
-        let kelvin = windows_prefix(Path::new(&format!("\\\\wor\u{212a}\\Projects\\a.dwg"))).unwrap();
+        let kelvin = windows_prefix(Path::new("\\\\wor\u{212a}\\Projects\\a.dwg")).unwrap();
         assert!(prefixes_match(&root, &same), "the same server and share, in either spelling");
         assert!(!prefixes_match(&root, &other_share));
         assert!(!prefixes_match(&root, &other_host));
@@ -692,10 +698,10 @@ mod tests {
         let root = base.join("work");
         std::fs::create_dir(&root).unwrap();
         let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
-        let sibling = base.join(format!("wor\u{212a}")).join("x.dwg");
+        let sibling = base.join("wor\u{212a}").join("x.dwg");
         let e = roots.check(s(sibling), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
-        assert!(!base.join(format!("wor\u{212a}")).exists(), "the check must not create the folder");
+        assert!(!base.join("wor\u{212a}").exists(), "the check must not create the folder");
         assert_eq!(roots.check(s(root.join("new.dxf")), Access::Write), Ok(()));
     }
 
@@ -704,16 +710,13 @@ mod tests {
     #[test]
     fn a_junction_out_of_the_write_root_is_refused() {
         let (base, roots) = folders("junction");
-        let link = base.join("out/away");
-        let made = std::process::Command::new("cmd")
-            .arg("/c")
-            .arg(format!("mklink /J \"{}\" \"{}\"", link.display(), base.join("outside").display()))
-            .status();
+        let link = base.join("out").join("away");
+        let made = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&link).arg(base.join("outside")).status();
         if !made.is_ok_and(|s| s.success()) {
             eprintln!("skipped: junctions can't be made here");
             return;
         }
-        let e = roots.check(s(base.join("out/away/new.png")), Access::Write).unwrap_err();
+        let e = roots.check(s(link.join("new.png")), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
         assert!(!base.join("outside/new.png").exists());
     }
