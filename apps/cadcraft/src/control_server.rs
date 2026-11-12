@@ -266,7 +266,10 @@ fn parse_line(bytes: &[u8]) -> Line<'_> {
     };
     let id = match obj.remove("id") {
         None => Value::Null,
-        Some(r) if r.get().len() <= MAX_ID_BYTES => serde_json::from_str(r.get()).unwrap_or(Value::Null),
+        Some(r) if r.get().len() <= MAX_ID_BYTES => match serde_json::from_str(r.get()) {
+            Ok(v) => v,
+            Err(e) => return Line::Reject(format!("bad `id` ({e}); closing the connection")),
+        },
         Some(_) => return Line::Reject(format!("`id` is longer than {MAX_ID_BYTES} bytes; closing the connection")),
     };
     Line::Request { id, method, params: obj.remove("params"), token: string(obj.remove("token")) }
@@ -401,6 +404,7 @@ mod tests {
         assert!(matches!(parse_line(br#"{"id":[1],"method":5}"#), Line::Reject(e) if e.contains("missing string `method`")));
         let long_id = format!(r#"{{"id":"{}","method":"m"}}"#, "x".repeat(MAX_ID_BYTES));
         assert!(matches!(parse_line(long_id.as_bytes()), Line::Reject(e) if e.contains("`id` is longer")));
+        assert!(matches!(parse_line(br#"{"id":"\ud800","method":"m"}"#), Line::Reject(e) if e.contains("bad `id`")));
         assert!(matches!(parse_line(br#"{"id":1}"#), Line::Reject(e) if e.contains("missing string `method`")));
     }
 
