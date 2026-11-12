@@ -66,6 +66,8 @@ fn mb(n: u64) -> String {
 pub mod worker;
 #[cfg(not(no_dwg_bridge))]
 pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_kept_noted, encode_noted, serve_if_asked, use_own_worker, use_worker};
+#[cfg(not(no_dwg_bridge))]
+mod proxy_transport;
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
@@ -107,6 +109,13 @@ mod native {
         }
         let mut notes = read_notes(&outcome.stats);
         let mut doc = outcome.document;
+        notes.extend(
+            guarded(AssertUnwindSafe(|| application_objects(&mut doc))).map_err(|_| "the DWG application object conversion failed".to_string())?,
+        );
+        // After application_objects, so the proxy objects it makes are numbered as the DXF's.
+        notes.extend(
+            guarded(AssertUnwindSafe(|| super::proxy_transport::prepare(&mut doc))).map_err(|_| "the DWG proxy conversion failed".to_string())?,
+        );
         let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
@@ -388,6 +397,214 @@ mod native {
     /// Runs `f`, turning a panic into an error (the reader and writer are guarded the same way).
     fn guarded<R>(f: impl FnOnce() -> R + std::panic::UnwindSafe) -> Result<R, ()> {
         std::panic::catch_unwind(f).map_err(|_| ())
+    }
+
+    /// The version a proxy record of a DWG of `version` names its format by (Open Design
+    /// Specification for .dwg, proxy objects): 19 for R13, 21 for R14, 23 for 2000, 25 for 2004,
+    /// 27 for 2007, 29 for 2010, 31 for 2013 and 33 for 2018; `None` for any other version.
+    pub(super) fn proxy_dwg_version(version: acadrust::DxfVersion) -> Option<i32> {
+        Some(match version.version_code() {
+            1012 => 19,
+            1014 => 21,
+            1015 => 23,
+            1018 => 25,
+            1021 => 27,
+            1024 => 29,
+            1027 => 31,
+            1032 => 33,
+            _ => return None,
+        })
+    }
+
+    /// Objects of another application's class that acadrust keeps only as their DWG record
+    /// (`ObjectType::Unknown`, which has no DXF form): its DXF writer left them out, and the
+    /// references to them went with them (a dimension's extension dictionary entry naming its
+    /// application data, say), with no note. Each is carried as a proxy object of its class instead
+    /// (DXF Reference, ACAD_PROXY_OBJECT), so the DXF keeps it and a DWG written from that DXF has it
+    /// again: its common object data (owner, reactors, extension dictionary) and the streams after
+    /// it (data bits, R2007+ strings, object references), as the Open Design Specification for .dwg
+    /// splits an object record. Objects of the drawing database's own classes are not turned into
+    /// another application's proxies. What is still without a DXF form is named in the notes, so a
+    /// save over the original is not mistaken for a complete one.
+    fn application_objects(doc: &mut acadrust::CadDocument) -> Vec<String> {
+        use acadrust::objects::{ObjectType, ProxyObject};
+        let classes: Vec<acadrust::classes::DxfClass> = doc.classes.iter().cloned().collect();
+        let source = doc.dwg_source_version.unwrap_or(doc.version);
+        if let Some(dwg_version) = proxy_dwg_version(source) {
+            let maintenance = i32::from(doc.maintenance_version);
+            for object in doc.objects.values_mut() {
+                let ObjectType::Unknown { handle, raw_dwg_data: Some(data), raw_dwg_handle_bits, raw_dwg_version: Some(version), type_name, .. } =
+                    &*object
+                else {
+                    continue;
+                };
+                if !application_class(&classes, type_name) {
+                    continue;
+                }
+                let raw = acadrust::entities::RawRecord { data: data.clone(), handle_bits: *raw_dwg_handle_bits, version: *version };
+                let handle = *handle;
+                // A record that doesn't split stays as it was, and is named below.
+                let Ok(Ok(record)) = std::panic::catch_unwind(AssertUnwindSafe(|| object_record(&raw, handle.value()))) else { continue };
+                let Some(class) = classes.iter().find(|c| c.class_number == record.kind && !c.is_an_entity) else { continue };
+                *object = ObjectType::ProxyObject(ProxyObject {
+                    handle,
+                    owner: record.owner,
+                    reactors: record.reactors,
+                    xdictionary_handle: record.xdictionary,
+                    proxy_id: 499,
+                    class_id: i32::from(class.class_number),
+                    dwg_version,
+                    maintenance_version: maintenance,
+                    version: (maintenance << 16) | dwg_version,
+                    payload: record.payload,
+                    text_payload: record.text_payload,
+                    object_ids: record.object_ids,
+                    ..Default::default()
+                });
+            }
+        }
+        let mut left: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for object in doc.objects.values() {
+            if let ObjectType::Unknown { type_name, raw_dxf_codes: None, .. } = object {
+                let n = left.entry(type_name.as_str()).or_insert(0);
+                *n = n.saturating_add(1);
+            }
+        }
+        if left.is_empty() {
+            return Vec::new();
+        }
+        let total = left.values().fold(0usize, |a, n| a.saturating_add(*n));
+        let mut list: Vec<String> = left.iter().take(NOTE_TYPES).map(|(t, n)| format!("{t:.60} × {n}")).collect();
+        if left.len() > NOTE_TYPES {
+            list.push(format!("{} more types", left.len() - NOTE_TYPES));
+        }
+        vec![format!(
+            "DWG: {total} objects of types CADCraft doesn't keep were left out ({}); saving over the original file would lose them",
+            list.join(", ")
+        )]
+    }
+
+    /// Whether `name` is an object class of another application, which only that application
+    /// rebuilds: not one of the drawing database's own classes (`AcDb…`/`ACDB…`/`ACAD_…`), whose
+    /// leftovers the database regenerates itself.
+    fn application_class(classes: &[acadrust::classes::DxfClass], name: &str) -> bool {
+        classes.iter().any(|c| {
+            !c.is_an_entity
+                && c.dxf_name.eq_ignore_ascii_case(name)
+                && !c.cpp_class_name.starts_with("AcDb")
+                && !["ACDB", "ACAD_", "ACAD"].iter().any(|p| c.dxf_name.to_ascii_uppercase().starts_with(p))
+        })
+    }
+
+    /// An application object acadrust kept only as its record: the parts a proxy object carries.
+    struct ObjectRecord {
+        kind: i16,
+        owner: acadrust::types::Handle,
+        reactors: Vec<acadrust::types::Handle>,
+        xdictionary: Option<acadrust::types::Handle>,
+        payload: acadrust::objects::ProxyPayload,
+        text_payload: acadrust::objects::ProxyPayload,
+        object_ids: Vec<acadrust::objects::ProxyObjectReference>,
+    }
+
+    /// Split an object record into its common object data and the uninterpreted streams after it
+    /// (data bits, R2007+ strings and object references), as an application object's proxy holds
+    /// them (Open Design Specification for .dwg, common object data and proxy objects). The record
+    /// is hostile: sizes are checked against it, and acadrust's checked stream reader does the rest.
+    fn object_record(raw: &acadrust::entities::RawRecord, handle: u64) -> Result<ObjectRecord, String> {
+        use acadrust::io::dwg::{
+            DwgVersion, dwg_reference_type::DwgReferenceType, dwg_stream_readers::object_reader::DwgObjectReader,
+            dwg_stream_writers::bit_writer::DwgBitWriter,
+        };
+        use acadrust::objects::{ProxyObjectReference, ProxyPayload, ProxyReferenceKind};
+        use acadrust::types::{DxfVersion, Handle};
+        if raw.data.len() > 32 << 20 {
+            return Err("object record exceeds the transport limit".into());
+        }
+        let handle_bits = usize::try_from(raw.handle_bits).map_err(|_| "object has a negative handle stream size")?;
+        let total_bits = raw.data.len().checked_mul(8).ok_or("object record is too large")?;
+        if handle_bits > total_bits {
+            return Err("object handle stream exceeds its record".into());
+        }
+        let version = DwgVersion::from_dxf_version(raw.version).map_err(|e| e.to_string())?;
+        let mut frame = DwgBitWriter::new(version, raw.version);
+        frame.write_modular_short(raw.data.len());
+        if raw.version >= DxfVersion::AC1024 {
+            frame.write_modular_char(handle_bits);
+        }
+        frame.write_bytes(&raw.data);
+        let reader = DwgObjectReader::new(frame.into_bytes(), raw.version, std::collections::HashMap::new()).map_err(|e| e.to_string())?;
+        let (kind, mut streams) = reader.read_record_at(0).map_err(|e| e.to_string())?;
+        if kind < 500 {
+            return Err("object has no application class".into());
+        }
+        let common = reader.read_common_non_entity_data(&mut streams, kind);
+        streams.check_error().map_err(|e| e.to_string())?;
+        if common.common.handle != handle {
+            return Err("object record names another handle".into());
+        }
+        let read_bits = |count: usize, bit: &mut dyn FnMut() -> bool| -> Result<ProxyPayload, String> {
+            if count > total_bits {
+                return Err("object stream exceeds its record".into());
+            }
+            let n = u32::try_from(count).map_err(|_| "object stream is too large")?;
+            let mut bytes = vec![0u8; count.div_ceil(8)];
+            for index in 0..count {
+                if bit()
+                    && let Some(b) = bytes.get_mut(index / 8)
+                {
+                    *b |= 0x80 >> (index % 8);
+                }
+            }
+            Ok(ProxyPayload::from_bits(&bytes, n))
+        };
+        let main = usize::try_from(streams.main_remaining_bits()).map_err(|_| "object body has an invalid size")?;
+        let payload = read_bits(main, &mut || streams.read_bit())?;
+        let text_payload = if raw.version >= DxfVersion::AC1021 {
+            let bits = usize::try_from(streams.text_remaining_bits()).map_err(|_| "object has a negative string stream size")?;
+            read_bits(bits, &mut || streams.read_text_bit())?
+        } else {
+            ProxyPayload::default()
+        };
+        // Every reference to the end of the handle stream, null ones too: an object keeps a null pointer in its
+        // field's place, and the references after it are the next fields' (as acadrust reads a proxy's own). R2010+
+        // records give the stream's exact length; the bits of its last byte past it are padding.
+        let mut object_ids = Vec::new();
+        let mut left = if raw.version >= DxfVersion::AC1024 {
+            streams.get_handle_bits().max(0).min(streams.handle_remaining_bits())
+        } else {
+            streams.handle_remaining_bits()
+        };
+        while left >= 8 {
+            if object_ids.len() >= 100_000 {
+                return Err("object has too many references".into());
+            }
+            let before = streams.handle_remaining_bits();
+            let (target, reference) = streams.read_handle_reference(handle);
+            let used = before.saturating_sub(streams.handle_remaining_bits());
+            if used <= 0 || used > left {
+                break;
+            }
+            left -= used;
+            let kind = match reference {
+                DwgReferenceType::SoftOwnership => ProxyReferenceKind::SoftOwnership,
+                DwgReferenceType::HardOwnership => ProxyReferenceKind::HardOwnership,
+                DwgReferenceType::SoftPointer => ProxyReferenceKind::SoftPointer,
+                DwgReferenceType::HardPointer => ProxyReferenceKind::HardPointer,
+                DwgReferenceType::Undefined => ProxyReferenceKind::Undefined,
+            };
+            object_ids.push(ProxyObjectReference { handle: Handle::from(target), kind });
+        }
+        streams.check_error().map_err(|e| e.to_string())?;
+        Ok(ObjectRecord {
+            kind,
+            owner: Handle::from(common.owner_handle),
+            reactors: common.reactors.into_iter().map(Handle::from).collect(),
+            xdictionary: common.xdictionary_handle.map(Handle::from),
+            payload,
+            text_payload,
+            object_ids,
+        })
     }
 
     /// [`table_merges`] visiting at most `budget` cells in all; a range that would pass it is
@@ -789,7 +1006,7 @@ mod native {
     /// value) line pairs, in one pass with no buffering, up to the first `0`/`ENDSEC`, the end
     /// of the HEADER section: a large input without one costs time, not memory (a line index of
     /// a 32 MiB file used 0.8 GB). Lines may end in `\r\n`.
-    fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
+    pub(super) fn header_value<'a>(dxf: &'a [u8], name: &[u8]) -> Option<(usize, &'a [u8])> {
         let mut offset = 0usize;
         let mut lines = dxf.split(|b| *b == b'\n').map(|line| {
             let at = offset.saturating_add(line.len() - line.trim_ascii_start().len());
@@ -849,32 +1066,32 @@ mod native {
     /// CADCraft's own bridge DXF is always ASCII, and only a binary DXF given to the public
     /// conversion functions comes here.
     pub(super) fn dxf_class_names(dxf: &[u8]) -> Option<Vec<String>> {
+        let pairs = super::proxy_transport::text_pairs(dxf)?;
         let mut names = Vec::new();
-        if dxf.starts_with(b"AutoCAD Binary DXF") {
-            return None;
-        }
-        let mut lines = dxf.split(|b| *b == b'\n').map(|l| l.trim_ascii());
-        let (mut in_classes, mut in_class) = (false, false);
-        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-            match (code, value) {
-                (b"0", b"ENDSEC") if in_classes => break,
-                (b"2", b"CLASSES") => in_classes = true,
-                (b"0", v) if in_classes => {
-                    in_class = v == b"CLASS";
-                    // Every record keeps its place, named or not: a proxy numbers its class by
-                    // place, so a record without a name must not move the ones after it. An empty
-                    // name matches no class, and such a proxy is left out.
+        let (mut section, mut in_classes, mut in_class) = (false, false, false);
+        for pair in pairs {
+            let (code, value) = pair?;
+            match (code, value.as_str()) {
+                (0, "ENDSEC") if in_classes => break,
+                (0, "SECTION") => section = true,
+                (2, name) if section => {
+                    in_classes = name == "CLASSES";
+                    section = false;
+                }
+                (0, kind) if in_classes => {
+                    in_class = kind == "CLASS";
+                    // Even an unnamed record keeps its place in the source class table.
                     if in_class {
                         names.push(String::new());
                     }
                 }
-                (b"1", v) if in_class => {
+                (1, value) if in_class => {
                     if let Some(last) = names.last_mut() {
-                        *last = String::from_utf8_lossy(v).into_owned();
+                        *last = value.to_string();
                     }
                     in_class = false;
                 }
-                _ => {}
+                _ => section = false,
             }
         }
         Some(names)
@@ -920,8 +1137,17 @@ mod native {
                 return left_out(objects.len(), entities.len());
             }
         };
+        // Name matching cannot choose between different source classes with the same name.
+        // Count those proxies as unwritten rather than silently changing their class identity.
+        let mut unique = std::collections::HashMap::new();
+        for name in classes {
+            unique.entry(name.to_uppercase()).and_modify(|value| *value = false).or_insert(true);
+        }
         let number = |id: i32| -> Option<i32> {
             let name = classes.get(usize::try_from(id.checked_sub(500)?).ok()?)?;
+            if unique.get(&name.to_uppercase()) != Some(&true) {
+                return None;
+            }
             doc.classes.get_by_name(name).map(|c| i32::from(c.class_number))
         };
         let objects: Vec<(acadrust::Handle, Option<i32>)> = doc
@@ -1014,7 +1240,8 @@ mod native {
             Some(d) => d,
             None => dxf.to_vec(),
         };
-        let classes = dxf_class_names(&data);
+        let (classes, source) = guarded(AssertUnwindSafe(|| (dxf_class_names(&data), super::proxy_transport::source_classes(&data))))
+            .map_err(|_| "the DXF proxy class conversion failed".to_string())?;
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
@@ -1029,7 +1256,17 @@ mod native {
         // The fix-ups run on the third-party reader's document, so a panic in one is an error, not a crash.
         let unwritten = guarded(AssertUnwindSafe(|| {
             super::fail_in_test("convert");
-            let proxies = proxy_classes(&mut doc, classes.as_deref());
+            // From 2013 the DWG takes the source classes as they are, duplicates and metadata
+            // included; otherwise (before 2013, a binary DXF, classes that can't be written back)
+            // proxies are matched to classes by name or left out.
+            let restored = match source {
+                Some(source) if doc.version >= acadrust::DxfVersion::AC1027 => super::proxy_transport::restore_classes(&mut doc, source),
+                _ => None,
+            };
+            let proxies = match restored {
+                Some((objects, entities)) => left_out(objects, entities),
+                None => proxy_classes(&mut doc, classes.as_deref()),
+            };
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
             dimension_flags(&mut doc);
@@ -1200,6 +1437,126 @@ mod native {
             let r = guarded(AssertUnwindSafe(|| -> usize { panic!("boom") }));
             assert!(r.is_err());
             assert_eq!(guarded(|| 3), Ok(3));
+        }
+    }
+
+    #[cfg(test)]
+    mod application_object_tests {
+        use super::*;
+        use acadrust::CadDocument;
+        use acadrust::classes::DxfClass;
+        use acadrust::objects::{ObjectType, ProxyObjectReference, ProxyPayload, ProxyReferenceKind, RegisteredClassObject};
+        use acadrust::types::{DxfVersion, Handle};
+
+        /// An object of another application's class that acadrust keeps only as its record (a
+        /// vertical product's dimension data, say) is carried as that class's proxy object, with its
+        /// data bits, references, owner and extension dictionary, through DXF and back to DWG, twice.
+        #[test]
+        fn undecoded_application_object_is_kept_as_its_proxy() {
+            for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+                let mut source = CadDocument::new();
+                source.version = version;
+                source.classes.add_or_update(DxfClass::new("TESTCONTAINER", "xyzDbTestContainer"));
+                let handle = Handle::from(0x2Bu64);
+                let target = Handle::from(0x2Cu64);
+                let payload = ProxyPayload::from_bits(&[0x5A, 0x3C, 0xC0], 18);
+                // A null pointer between two references: it keeps its place, the one after it is not lost.
+                let references = vec![
+                    ProxyObjectReference { handle: target, kind: ProxyReferenceKind::HardPointer },
+                    ProxyObjectReference { handle: Handle::from(0u64), kind: ProxyReferenceKind::SoftPointer },
+                    ProxyObjectReference { handle: Handle::from(0x0Cu64), kind: ProxyReferenceKind::HardPointer },
+                ];
+                source.objects.insert(
+                    handle,
+                    ObjectType::RegisteredClass(RegisteredClassObject {
+                        handle,
+                        owner: Handle::from(0x0Cu64),
+                        dxf_name: "TESTCONTAINER".into(),
+                        cpp_class_name: "xyzDbTestContainer".into(),
+                        payload: payload.clone(),
+                        object_ids: references.clone(),
+                        ..Default::default()
+                    }),
+                );
+                let mut dwg = acadrust::DwgWriter::write_to_vec(&source).unwrap();
+                // acadrust has no model of it: read back, it is only its record.
+                let decoded = acadrust::DwgReader::from_stream(Cursor::new(dwg.clone())).read().unwrap();
+                assert!(matches!(decoded.objects.get(&handle), Some(ObjectType::Unknown { .. })), "{:?}", decoded.objects.get(&handle));
+                for generation in 0..2 {
+                    let (dxf, notes) = dwg_to_dxf_noted(&dwg, Limits::DEFAULT).unwrap();
+                    assert!(notes.is_empty(), "{version:?} {generation}: {notes:?}");
+                    // The DXF has the object, by its handle, as a proxy record.
+                    let text = String::from_utf8_lossy(&dxf);
+                    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+                    let record = lines.windows(4).any(|w| w == ["0", "ACAD_PROXY_OBJECT", "5", "2B"]);
+                    assert!(record, "{version:?} {generation}: no proxy record for the object");
+                    dwg = dxf_to_dwg_as(&dxf, "AC1032").unwrap();
+                    let doc = acadrust::DwgReader::from_stream(Cursor::new(dwg.clone())).read().unwrap();
+                    let Some(ObjectType::ProxyObject(proxy)) = doc.objects.get(&handle) else { panic!("{version:?} {generation}: proxy object") };
+                    assert_eq!(proxy.payload.bit_count, payload.bit_count);
+                    assert_eq!(proxy.payload.data(), payload.data());
+                    assert_eq!(proxy.object_ids, references);
+                    let class = doc.classes.iter().find(|c| i32::from(c.class_number) == proxy.class_id).unwrap();
+                    assert_eq!(class.dxf_name, "TESTCONTAINER");
+                    assert!(!class.is_an_entity);
+                }
+            }
+        }
+
+        /// The database's own classes are not turned into another application's proxies; what is
+        /// left without a DXF form is said, not dropped silently.
+        #[test]
+        fn database_objects_without_a_form_are_reported() {
+            let mut doc = CadDocument::new();
+            doc.classes.add_or_update(DxfClass::new("BLOCKPROPERTIESTABLE", "AcDbBlockPropertiesTable"));
+            let handle = Handle::from(0x40u64);
+            doc.objects.insert(
+                handle,
+                ObjectType::Unknown {
+                    type_name: "BLOCKPROPERTIESTABLE".into(),
+                    handle,
+                    owner: Handle::from(0x0Cu64),
+                    raw_dxf_codes: None,
+                    raw_dwg_data: Some(vec![0; 8]),
+                    raw_dwg_handle_bits: 0,
+                    raw_dwg_version: Some(DxfVersion::AC1032),
+                },
+            );
+            let notes = application_objects(&mut doc);
+            assert!(matches!(doc.objects.get(&handle), Some(ObjectType::Unknown { .. })));
+            assert_eq!(
+                notes,
+                [
+                    "DWG: 1 objects of types CADCraft doesn't keep were left out (BLOCKPROPERTIESTABLE × 1); saving over the original file would lose them"
+                ]
+            );
+        }
+
+        /// A record that doesn't split stays as it was and is named, never guessed at.
+        #[test]
+        fn invalid_object_records_are_rejected() {
+            for handle_bits in [-1, 1000] {
+                let raw = acadrust::entities::RawRecord { data: vec![0; 8], handle_bits, version: DxfVersion::AC1032 };
+                assert!(object_record(&raw, 42).is_err());
+            }
+            let mut doc = CadDocument::new();
+            doc.classes.add_or_update(DxfClass::new("TESTCONTAINER", "xyzDbTestContainer"));
+            let handle = Handle::from(0x41u64);
+            doc.objects.insert(
+                handle,
+                ObjectType::Unknown {
+                    type_name: "TESTCONTAINER".into(),
+                    handle,
+                    owner: Handle::from(0x0Cu64),
+                    raw_dxf_codes: None,
+                    raw_dwg_data: Some(vec![0xFF; 4]),
+                    raw_dwg_handle_bits: 1000,
+                    raw_dwg_version: Some(DxfVersion::AC1032),
+                },
+            );
+            let notes = application_objects(&mut doc);
+            assert!(matches!(doc.objects.get(&handle), Some(ObjectType::Unknown { .. })));
+            assert!(notes.iter().any(|n| n.contains("(TESTCONTAINER × 1)")), "{notes:?}");
         }
     }
 }
@@ -1716,7 +2073,7 @@ mod tests {
     /// ("Error Decrypting Data"); 0.6.5 added it and 0.6.6, which this uses, still keeps it (0.6.6 also
     /// fixes multi-layout DWGs, #1463). The byte reaches the DWG, and a scale action
     /// from DXF is written whole, with the byte AutoCAD writes (0).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(no_dwg_bridge))]
     #[test]
     fn scale_actions_keep_the_byte_autocad_reads_after_their_connections() {
         use acadrust::objects::*;
