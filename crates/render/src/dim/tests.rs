@@ -199,6 +199,21 @@ fn negative_dimgap_draws_a_frame_around_the_text() {
 }
 
 #[test]
+fn the_dimgap_frame_holds_every_line_of_a_multi_line_text() {
+    let mut d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
+    let one = frame_of(&dimension_geometry(&d, &st_with(|s| s.text_gap = -0.09), 1.0));
+    d.text = "<>\\PTYP".into();
+    let g = dimension_geometry(&d, &st_with(|s| s.text_gap = -0.09), 1.0);
+    let frame = bbox(&frame_of(&g));
+    let l = cadcraft_fonts::layout_mtext_with(&g.mtext, &MTextParams { attach: 5, ..MTextParams::new(Vec2::ZERO, 0.18) });
+    assert!(l.bounds.height() > 0.18 * 1.5, "two lines: {:?}", l.bounds);
+    assert!((frame.height() - (l.bounds.height() + 0.18)).abs() < 1e-9, "{frame:?}");
+    assert!(frame.height() > bbox(&one).height(), "{frame:?}");
+    let text = bbox(&g.text);
+    assert!(frame.min.x < text.min.x && text.max.x < frame.max.x && frame.min.y < text.min.y && text.max.y < frame.max.y, "{frame:?} {text:?}");
+}
+
+#[test]
 fn the_dimgap_frame_is_drawn_over_a_text_background() {
     let d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
     let g = dimension_geometry(
