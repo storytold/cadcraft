@@ -115,11 +115,11 @@ fn move_carries_z_to_text_and_insert_attributes() {
     });
     let ins = {
         let d = s.doc_mut().unwrap();
-        let attrib = |tag: &str, z: f64| Attrib {
+        let attrib = |tag: &str, z: f64, align: bool| Attrib {
             tag: tag.into(),
             text: Text {
                 insert: Vec3::new(0.0, 0.0, z),
-                align_pt: None,
+                align_pt: align.then_some(Vec3::new(0.0, 0.0, z)),
                 height: 1.0,
                 value: "P-1".into(),
                 rotation: 0.0,
@@ -137,7 +137,7 @@ fn move_carries_z_to_text_and_insert_attributes() {
             modes: Default::default(),
         };
         let mut blk = Block::new("TITLE");
-        blk.entities.push(Entity::new(Handle(0x900), EntityKind::AttDef(attrib("PART", 0.0))));
+        blk.entities.push(Entity::new(Handle(0x900), EntityKind::AttDef(attrib("PART", 0.0, false))));
         d.blocks.insert("TITLE".into(), std::sync::Arc::new(blk));
         let e = Entity::new(
             Handle(0x901),
@@ -146,7 +146,7 @@ fn move_carries_z_to_text_and_insert_attributes() {
                 insert: Vec3::new(0.0, 0.0, 1.0),
                 scale: Vec3::new(1.0, 1.0, 1.0),
                 rotation: 0.0,
-                attribs: vec![attrib("PART", 1.0)],
+                attribs: vec![attrib("PART", 1.0, true)],
                 cols: 1,
                 rows: 1,
                 col_spacing: 0.0,
@@ -166,6 +166,7 @@ fn move_carries_z_to_text_and_insert_attributes() {
         EntityKind::Insert(i) => {
             assert_eq!(i.insert.z, 4.0, "the insert moves");
             assert_eq!(i.attribs[0].text.insert.z, 4.0, "its attribute moves with it, not left behind");
+            assert_eq!(i.attribs[0].text.align_pt.unwrap().z, 4.0, "its alignment point keeps the Z delta too");
         }
         k => panic!("not an insert: {k:?}"),
     }
