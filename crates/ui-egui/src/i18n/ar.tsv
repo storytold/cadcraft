@@ -1332,7 +1332,7 @@ menu	View	عرض
 	Save Layout as Template	حفظ التخطيط كقالب
 	Save Reference Edits	حفظ تعديلات المرجع
 	Save alias	حفظ الاختصار
-	Save changes to block "{name}"?	حفظ التغييرات على الكتلة "{name}"؟
+	Save changes to block "{name}"?	هل تريد حفظ التغييرات على الكتلة "{name}"؟
 	Select boundaries to remove	حدد الحدود المراد إزالتها
 	Select using two clicks only	التحديد بنقرتين فقط
 	Selection Area Effect	تأثير منطقة التحديد
@@ -1390,11 +1390,11 @@ menu	View	عرض
 	Center the plot	توسيط الطباعة
 	Centimeters	سنتيمترات
 	Change	تغيير
-	Clear Recent Files	مسح الملفات الأخيرة
+	Clear Recent Files	مسح قائمة الملفات الأخيرة
 	Custom	مخصص
 	DView	عرض ديناميكي
-	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	تحتفظ بها DXF 2010 وما قبله. استخدم «حفظ باسم» لإبقائها في الرسم.
-	DXF keeps them. Use Save As to keep them in the drawing.	تحتفظ بها DXF. استخدم «حفظ باسم» لإبقائها في الرسم.
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	يحتفظ بها تنسيق DXF 2010 وما قبله. استخدم «حفظ باسم» لإبقائها في الرسم.
+	DXF keeps them. Use Save As to keep them in the drawing.	يحتفظ بها تنسيق DXF. استخدم «حفظ باسم» لإبقائها في الرسم.
 	Decameters	ديكامترات
 	Decimal	عشري
 	Decimal Degrees	درجات عشرية
@@ -1421,17 +1421,17 @@ menu	View	عرض
 	Landscape	أفقي
 	Layouts	التخطيطات
 	Light Years	سنوات ضوئية
-	Limits	الحدود
+	Limits	حدود الرسم
 	Meters	أمتار
 	Microinches	ميكروبوصات
 	Microns	ميكرونات
 	Miles	أميال
 	Millimeters	مليمترات
-	Mils	ميلات (جزء من ألف بوصة)
+	Mils	مِل (جزء من ألف من البوصة)
 	Multiple Insert	إدراج متعدد
 	N	ش
 	Nanometers	نانومترات
-	Open Recent	فتح الأخيرة
+	Open Recent	فتح من الملفات الأخيرة
 	Opposite corner	الزاوية المقابلة
 	Orientation	الاتجاه
 	Paper size	حجم الورقة
@@ -1448,20 +1448,20 @@ menu	View	عرض
 	Raster Images	الصور النقطية
 	S	ج
 	Sample output	مثال على المُخرَج
-	Save Anyway	الحفظ على أي حال
+	Save Anyway	حفظ على أي حال
 	Save cancelled: {path} was not changed.	أُلغي الحفظ: لم يتغير {path}.
-	Save changes to {name}?	حفظ التغييرات في {name}؟
+	Save changes to {name}?	هل تريد حفظ التغييرات في {name}؟
 	Saving {name} will remove content	حفظ {name} سيُزيل بعض المحتوى
 	Scientific	علمي
 	Surveyor's Units	وحدات المساحين
-	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	يبدو الملف الحالي غير مكتمل، لذا يبقى {name} كما هو وسيُستبدل الملف الحالي.
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	يبدو الملف الحالي غير سليم، لذا يبقى {name} كما هو وسيُستبدل الملف الحالي.
 	The current file is kept as {name} until the next save.	يُحتفظ بالملف الحالي باسم {name} حتى الحفظ التالي.
 	This drawing	هذا الرسم
 	This format can't keep these objects yet: {objects}.	لا يستطيع هذا التنسيق الاحتفاظ بهذه الكائنات بعد: {objects}.
-	US Survey Feet	أقدام المساحة الأمريكية
-	US Survey Inch	بوصة المساحة الأمريكية
-	US Survey Mile	ميل المساحة الأمريكي
-	US Survey Yard	ياردة المساحة الأمريكية
+	US Survey Feet	أقدام مسحية أمريكية
+	US Survey Inch	بوصة مسحية أمريكية
+	US Survey Mile	ميل مسحي أمريكي
+	US Survey Yard	ياردة مسحية أمريكية
 	Unitless	بلا وحدات
 	Units	الوحدات
 	Units to scale inserted content	وحدات تحجيم المحتوى المُدرَج
@@ -1471,5 +1471,8 @@ menu	View	عرض
 	Y offset (mm)	إزاحة Y (مم)
 	Yards	ياردات
 	Your changes will be lost if you don't save them.	ستضيع تغييراتك إن لم تحفظها.
-	contains authoring elements. Open in Block Editor?	يحتوي على عناصر تأليف. هل تريد فتحه في محرر الكتل؟
+	contains authoring elements. Open in Block Editor?	يحتوي على عناصر تحرير. هل تريد فتحه في محرر الكتل؟
 	{count} more types	أنواع أخرى: {count}
+	Ctrl+Enter to apply	Ctrl+Enter للتطبيق
+	Edit Text	تحرير النص
+	The drawing changed. Close the window and open it again.	تغيّر الرسم. أغلق النافذة وافتحها مرة أخرى.

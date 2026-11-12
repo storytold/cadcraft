@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle, Image};
-use cadcraft_dxf::{Section, Tag};
 use cadcraft_geom::{Vec2, Vec3};
+use craft_dxf::{Section, Tag};
 
 /// Most clip boundary vertices kept per image (hostile files).
 const MAX_CLIP: usize = 100_000;
