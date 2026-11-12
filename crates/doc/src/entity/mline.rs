@@ -207,6 +207,41 @@ pub struct MLineGeometry {
     pub fill: Vec<Vec<Vec2>>,
 }
 
+/// For each segment direction in `dirs`, the first non-zero direction at or after it and the
+/// first at or before it, both wrapping around (`Vec2::X` when every direction is zero).
+///
+/// Two linear passes: searching from every segment separately is quadratic in a run of
+/// coincident vertices, which a hostile file can make as long as it likes (CWE-407).
+fn usable_directions(dirs: &[Vec2]) -> (Vec<Vec2>, Vec<Vec2>) {
+    let n = dirs.len();
+    let (Some(first), Some(last)) = (dirs.iter().position(|d| *d != Vec2::ZERO), dirs.iter().rposition(|d| *d != Vec2::ZERO)) else {
+        return (vec![Vec2::X; n], vec![Vec2::X; n]);
+    };
+    let (mut ahead, mut behind) = (vec![Vec2::X; n], vec![Vec2::X; n]);
+    // Walking backwards from the last usable direction, the latest one seen is the next ahead.
+    let mut cur = Vec2::X;
+    for k in 0..n {
+        let i = (last + n - k) % n;
+        if let Some(d) = dirs.get(i).filter(|d| **d != Vec2::ZERO) {
+            cur = *d;
+        }
+        if let Some(a) = ahead.get_mut(i) {
+            *a = cur;
+        }
+    }
+    // Walking forwards from the first usable direction, the latest one seen is the nearest behind.
+    for k in 0..n {
+        let i = (first + k) % n;
+        if let Some(d) = dirs.get(i).filter(|d| **d != Vec2::ZERO) {
+            cur = *d;
+        }
+        if let Some(b) = behind.get_mut(i) {
+            *b = cur;
+        }
+    }
+    (ahead, behind)
+}
+
 impl MLine {
     /// A multiline through `pts` in style `def`.
     pub fn new(def: &MLineStyle, pts: &[Vec2], closed: bool, just: MLineJust, scale: f64) -> MLine {
@@ -268,16 +303,11 @@ impl MLine {
         let dirs = self.directions();
         let n = self.vertices.len();
         let nseg = dirs.len();
-        // A degenerate segment takes its neighbour's direction.
-        let dir = |i: usize| -> Vec2 {
-            (0..nseg).map(|k| dirs.get((i + k) % nseg.max(1)).copied().unwrap_or_default()).find(|d| *d != Vec2::ZERO).unwrap_or(Vec2::X)
-        };
-        let dir_back = |i: usize| -> Vec2 {
-            (0..nseg)
-                .map(|k| dirs.get((i + nseg - k % nseg) % nseg.max(1)).copied().unwrap_or_default())
-                .find(|d| *d != Vec2::ZERO)
-                .unwrap_or(Vec2::X)
-        };
+        // A degenerate segment takes its neighbour's direction: the first usable one at or after
+        // it (`ahead`), or at or before it (`behind`), wrapping around.
+        let (ahead, behind) = usable_directions(&dirs);
+        let dir = |i: usize| -> Vec2 { ahead.get(i).copied().unwrap_or(Vec2::X) };
+        let dir_back = |i: usize| -> Vec2 { behind.get(i).copied().unwrap_or(Vec2::X) };
         let end = |d: Vec2, angle: f64| {
             let u = d.rotate(angle);
             let s = angle.sin();
@@ -424,5 +454,63 @@ impl crate::Drawing {
     pub fn current_mline_style(&self) -> MLineStyle {
         let name = self.header.str("CMLSTYLE", STANDARD_MLINE_STYLE);
         self.mline_style(&name).or_else(|| self.mline_style(STANDARD_MLINE_STYLE)).cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The nearest usable directions found by searching from each segment, as miters did before.
+    fn searched(dirs: &[Vec2]) -> (Vec<Vec2>, Vec<Vec2>) {
+        let n = dirs.len();
+        let ahead = (0..n).map(|i| (0..n).filter_map(|k| dirs.get((i + k) % n).copied()).find(|d| *d != Vec2::ZERO).unwrap_or(Vec2::X));
+        let behind = (0..n).map(|i| (0..n).filter_map(|k| dirs.get((i + n - k) % n).copied()).find(|d| *d != Vec2::ZERO).unwrap_or(Vec2::X));
+        (ahead.collect(), behind.collect())
+    }
+
+    #[test]
+    fn usable_directions_match_a_search_from_each_segment() {
+        let (z, a, b, c) = (Vec2::ZERO, Vec2::Y, -Vec2::X, Vec2::new(0.6, 0.8));
+        for dirs in [
+            vec![],
+            vec![z],
+            vec![a],
+            vec![z, z, z],
+            vec![a, z, z, b],
+            vec![z, a, z, b, z],
+            vec![z, z, c],
+            vec![c, z, z],
+            vec![a, b, c],
+            vec![z, a, z, z, b, c, z],
+        ] {
+            assert_eq!(usable_directions(&dirs), searched(&dirs), "{dirs:?}");
+        }
+    }
+
+    #[test]
+    fn coincident_vertices_at_a_corner_take_the_corner_miter() {
+        // Every vertex of a run on one point mitres between the segment before the run and the one after.
+        let style = MLineStyle::default();
+        let corner = MLine::new(&style, &[Vec2::ZERO, Vec2::Y, Vec2::new(-1.0, 1.0)], false, MLineJust::Zero, 1.0);
+        let pts = [Vec2::ZERO, Vec2::Y, Vec2::Y, Vec2::Y, Vec2::new(-1.0, 1.0)];
+        let run = MLine::new(&style, &pts, false, MLineJust::Zero, 1.0);
+        let (expected, got) = (corner.miters(), run.miters());
+        assert_eq!(got.get(1..4), Some(&[expected[1]; 3][..]));
+        assert_eq!((got.first(), got.last()), (expected.first(), expected.last()));
+    }
+
+    #[test]
+    fn a_long_run_of_coincident_vertices_takes_linear_time() {
+        // 200 000 vertices on one point but the last: the miters must not search the run once per
+        // vertex (quadratic, minutes) to find the one usable direction.
+        let mut pts = vec![Vec2::ZERO; 200_000];
+        pts.push(Vec2::new(1.0, 0.0));
+        let m = MLine::new(&MLineStyle::default(), &pts, false, MLineJust::Zero, 1.0);
+        let t = std::time::Instant::now();
+        let miters = m.miters();
+        assert_eq!(miters.len(), pts.len());
+        assert!(miters.iter().all(|v| v.is_finite()));
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
     }
 }

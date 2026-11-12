@@ -128,7 +128,9 @@ fn combine(a: &Region, b: &Region, op: Op) -> Result<Option<Region>> {
     }
     loops.retain(|l| l.vertices.len() >= 2);
     let mut r = Region { loops };
-    r.renest();
+    if !r.renest() {
+        return Err(other("These regions are too complex to combine."));
+    }
     Ok(Some(r))
 }
 

@@ -9,6 +9,12 @@ pub struct Bounds2 {
     pub max: Vec2,
 }
 
+/// `max - min`, clamped to `f64::MAX` when finite endpoints make it overflow.
+fn span(min: f64, max: f64) -> f64 {
+    let d = max - min;
+    if d.is_infinite() && min.is_finite() && max.is_finite() { f64::MAX } else { d }
+}
+
 impl Default for Bounds2 {
     fn default() -> Self {
         Bounds2::EMPTY
@@ -47,10 +53,10 @@ impl Bounds2 {
         Bounds2 { min: self.min.min(o.min), max: self.max.max(o.max) }
     }
     pub fn width(&self) -> f64 {
-        if self.is_empty() { 0.0 } else { self.max.x - self.min.x }
+        if self.is_empty() { 0.0 } else { span(self.min.x, self.max.x) }
     }
     pub fn height(&self) -> f64 {
-        if self.is_empty() { 0.0 } else { self.max.y - self.min.y }
+        if self.is_empty() { 0.0 } else { span(self.min.y, self.max.y) }
     }
     pub fn center(&self) -> Vec2 {
         if self.is_empty() {
@@ -97,5 +103,15 @@ mod tests {
         assert!((b.center().x / 1e308 - 1.3).abs() < 1e-12);
         assert_eq!(b.center().y, 5.0);
         assert_eq!(Bounds2::EMPTY.center(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn width_and_height_stay_finite_for_opposite_large_coordinates() {
+        let b = Bounds2::new(Vec2::new(-1e308, -1e308), Vec2::new(1e308, 1e308));
+        assert_eq!(b.width(), f64::MAX);
+        assert_eq!(b.height(), f64::MAX);
+        let b = Bounds2::new(Vec2::new(1e308, 0.0), Vec2::new(1.6e308, 10.0));
+        assert!((b.width() / 1e308 - 0.6).abs() < 1e-12);
+        assert_eq!(b.height(), 10.0);
     }
 }

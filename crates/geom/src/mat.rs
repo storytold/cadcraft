@@ -98,6 +98,14 @@ impl Mat3 {
     pub fn is_mirroring(&self) -> bool {
         self.det() < 0.0
     }
+    /// The rotation-and-uniform-scale factor of the linear part (mirroring allowed), or `None`
+    /// when it distorts shapes (non-uniform scale or shear).
+    pub fn similarity_scale(&self) -> Option<f64> {
+        let (u, v) = (Vec2::new(self.a, self.b), Vec2::new(self.c, self.d));
+        let (lu, lv) = (u.len(), v.len());
+        let tol = 1e-9 * lu.max(lv);
+        ((lu - lv).abs() <= tol && u.dot(v).abs() <= tol * lu.max(lv) && lu > 0.0).then_some(lu)
+    }
 }
 
 /// A 4x4 transform, row-major, for 3D views and block transforms with elevation.

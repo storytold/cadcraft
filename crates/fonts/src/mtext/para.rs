@@ -7,7 +7,7 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width};
+use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
 
 /// Columns an MTEXT's text flows through, each as wide as the MTEXT's width.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -264,6 +264,7 @@ pub struct Paragraphs {
 
 impl Paragraphs {
     pub fn scan(contents: &str) -> Paragraphs {
+        let contents = super::unescape_codes(contents);
         let chars: Vec<char> = contents.chars().collect();
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
         let mut cur = 0usize;
@@ -303,10 +304,12 @@ impl Paragraphs {
                                 cur = out.states.len() - 1;
                             }
                         }
-                        _ => {
+                        _ if super::takes_arg(code) => {
                             let (_, n) = arg(&chars, i);
                             i = n;
                         }
+                        // An unknown code has no argument: only the backslash and the code go.
+                        _ => {}
                     }
                 }
                 '\n' => {
@@ -512,8 +515,34 @@ impl<'a> LineBuilder<'a> {
         }
     }
 
+    /// Place a word (`index` > 0: the part of a word after a tab, with no space before it). A
+    /// word too wide for a line of its own breaks between its Thai words (see `split_thai`).
     fn push_text(&mut self, index: usize, segments: &[(Seg, usize)]) {
-        let word_width: f64 = segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum();
+        // An empty line can't wrap, so the word gets the room from where the line starts (a
+        // first-line indent or a tab stop); otherwise it can wrap to a line at the left indent.
+        let room = {
+            let props = self.paragraphs.props(self.paragraph);
+            let start = if self.line.items.is_empty() { self.line.width } else { props.left.max(0.0) };
+            self.available_width(props) - start
+        };
+        if self.width > 0.0 && self.word_width(segments) > room + 1e-9 {
+            for (k, piece) in split_thai(segments.to_vec()).iter().enumerate() {
+                self.place(if k == 0 { index } else { index.max(1) }, piece);
+            }
+        } else {
+            self.place(index, segments);
+        }
+    }
+
+    /// Width of a word's segments, each in its format.
+    fn word_width(&self, segments: &[(Seg, usize)]) -> f64 {
+        segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum()
+    }
+
+    /// Put a word, or a piece of one, on the current line after any pending space, or start a
+    /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
+    fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
+        let word_width = self.word_width(segments);
         let space_width = if index == 0 {
             self.pending_space
                 .map(|format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
@@ -578,7 +607,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let lines = LineBuilder::new(&paras, &fmts, base, width, h).build(&atoms);
 
     // Vertical placement: baselines below the top of each line's column.
-    let ls = if p.line_spacing > 0.0 && p.line_spacing.is_finite() { p.line_spacing } else { 1.0 };
+    let ls = super::sane_line_spacing(p.line_spacing);
     let cols = p.columns.as_ref().filter(|_| width > 0.0);
     let max_cols = match cols {
         Some(c) if c.dynamic => MAX_COLUMNS,
@@ -648,6 +677,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = super::Allowance::new();
     for (l, (c, base_y)) in lines.iter().zip(placed) {
         let pp = paras.props(l.para);
         let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(c) } else { c };
@@ -667,7 +697,15 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         };
         for it in &l.items {
             let fm = fmt(it.fmt);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
             let mut sh = seg_shape(&it.seg, fm, it.x);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(col_x + shift + per_gap * it.gap as f64, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {
