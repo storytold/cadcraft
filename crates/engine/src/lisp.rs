@@ -419,9 +419,12 @@ impl Session {
 
     /// Move printed text to the command history: complete lines, and with `all` the rest too.
     fn lisp_flush(&mut self, env: &mut Env, all: bool) {
-        while let Some(i) = env.out.find('\n') {
-            let line: String = env.out.drain(..=i).collect();
-            let line = line.trim_end_matches(['\n', '\r']).to_string();
+        // One pass over the buffer, dropping the printed lines once at the end: draining each line
+        // from the front shifted the rest every time, quadratic in newline-dense output.
+        let mut done = 0;
+        while let Some(i) = env.out.get(done..).and_then(|rest| rest.find('\n')) {
+            let line = env.out.get(done..done + i).unwrap_or_default().trim_end_matches('\r').to_string();
+            done += i + 1;
             // `(princ "\nText")` after a prompt or a command's echo ends that line instead of
             // leaving an empty one; after LISP's own line it does print an empty line.
             if line.is_empty() && env.printed_at != Some(self.log.len()) {
@@ -431,6 +434,7 @@ impl Session {
             self.echo(line);
             env.printed_at = Some(self.log.len());
         }
+        env.out.drain(..done);
         if all && !env.out.is_empty() {
             let line = std::mem::take(&mut env.out);
             self.echo(line);

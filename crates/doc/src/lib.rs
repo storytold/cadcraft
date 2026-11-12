@@ -29,7 +29,10 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached};
+pub use extents::{
+    BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame, ole_frame_accepts,
+    ole_frame_transform,
+};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
