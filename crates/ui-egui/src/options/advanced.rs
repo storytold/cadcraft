@@ -53,7 +53,26 @@ pub(super) fn parse_edit(old: &Value, text: &str) -> Result<Value, String> {
 
 /// The settings of `new` that differ from `old` (an object each): what an edited document changes.
 pub(super) fn changed(old: &Map<String, Value>, new: &Map<String, Value>) -> Map<String, Value> {
-    new.iter().filter(|(k, v)| old.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect()
+    new.iter()
+        .filter(|(k, v)| old.get(*k) != Some(*v))
+        .filter_map(|(k, v)| {
+            let v = edit_of(k, old.get(k), v);
+            (!v.as_object().is_some_and(Map::is_empty)).then(|| (k.clone(), v))
+        })
+        .collect()
+}
+
+/// What an edit of `key` from `old` to `new` sends. `dimStyle` sets the fields it names on the
+/// current dimension style and keeps them for new drawings, so only the fields that changed go:
+/// the whole reported style would overwrite the saved defaults of fields the user did not touch.
+/// Every other setting is sent as edited.
+fn edit_of(key: &str, old: Option<&Value>, new: &Value) -> Value {
+    match (key, old, new) {
+        ("dimStyle", Some(Value::Object(old)), Value::Object(new)) => {
+            Value::Object(new.iter().filter(|(k, v)| old.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect())
+        }
+        _ => new.clone(),
+    }
 }
 
 /// What a JSON document `new` changes: settings (`report` keys) and interface state (`interface`
@@ -190,7 +209,10 @@ fn row(ui: &mut egui::Ui, key: &str, label: egui::Id, value: &Value, edits: &mut
             if let Some(text) = commit_text(ui, id, &compact(other), 290.0, label) {
                 match parse_edit(other, &text) {
                     Ok(v) => {
-                        edits.insert(key.into(), v);
+                        let v = edit_of(key, Some(other), &v);
+                        if !v.as_object().is_some_and(Map::is_empty) {
+                            edits.insert(key.into(), v);
+                        }
                     }
                     Err(e) => set_error(ui, Some(format!("{key}: {e}"))),
                 }
@@ -283,6 +305,17 @@ mod tests {
         let new = json!({ "a": 1, "b": "y", "c": null, "d": true }).as_object().cloned().unwrap_or_default();
         assert_eq!(Value::Object(changed(&old, &new)), json!({ "b": "y", "d": true }));
         assert!(changed(&old, &old).is_empty());
+    }
+
+    /// An edit of the current dimension style sends only the fields that changed, so the saved
+    /// defaults of the others (`dimDefaults`) stay as they were; other objects go whole.
+    #[test]
+    fn a_dim_style_edit_sends_only_the_changed_fields() {
+        let map = |v: Value| v.as_object().cloned().unwrap_or_default();
+        let old = map(json!({ "dimStyle": { "DIMDEC": 2, "DIMTXT": 2.5 }, "other": { "a": 1, "b": 2 } }));
+        let new = map(json!({ "dimStyle": { "DIMDEC": 2, "DIMTXT": 3.5 }, "other": { "a": 1, "b": 3 } }));
+        assert_eq!(Value::Object(changed(&old, &new)), json!({ "dimStyle": { "DIMTXT": 3.5 }, "other": { "a": 1, "b": 3 } }));
+        assert_eq!(edit_of("dimStyle", old.get("dimStyle"), &json!({ "DIMDEC": 2, "DIMTXT": 2.5 })), json!({}));
     }
 
     /// Settings go to `options`, interface keys to `set_ui_state`, and a key that is neither
