@@ -63,7 +63,7 @@ fn int(v: &Value) -> i64 {
 /// A combo box over `(value, label)` pairs; a pick goes into `dim` under `var`.
 fn choice(ui: &mut egui::Ui, label: egui::Id, salt: &str, current: i64, items: &[(i64, &str)], var: &str, dim: &mut Map<String, Value>) {
     let shown = items.iter().find(|(v, _)| *v == current).map_or_else(|| current.to_string(), |(_, l)| (*l).to_string());
-    let combo = egui::ComboBox::from_id_salt(salt).selected_text(shown).width(220.0).show_ui(ui, |ui| {
+    let combo = craft_ui::ComboBox::from_id_salt(salt).selected_text(shown).width(220.0).show_ui(ui, |ui| {
         for (v, label) in items {
             if ui.selectable_label(*v == current, *label).clicked() && *v != current {
                 dim.insert(var.into(), json!(v));
@@ -186,7 +186,7 @@ pub(super) fn dimensions(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<Stri
             let sep = v("DIMDSEP").as_str().unwrap_or(".").to_string();
             let sep = if sep.is_empty() { ".".to_string() } else { sep };
             let shown = separators().iter().find(|(c, _)| *c == sep).map_or_else(|| sep.clone(), |(_, l)| (*l).to_string());
-            let combo = egui::ComboBox::from_id_salt("dim_dsep").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("dim_dsep").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                 for (c, label) in separators() {
                     if ui.selectable_label(c == sep, label).clicked() && c != sep {
                         dim.insert("DIMDSEP".into(), json!(c));

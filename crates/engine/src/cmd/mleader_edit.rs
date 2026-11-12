@@ -793,5 +793,4 @@ impl Interactive for CollectM {
 }
 
 #[cfg(test)]
-#[path = "mleader_edit_tests.rs"]
 mod tests;

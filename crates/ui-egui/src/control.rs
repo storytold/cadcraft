@@ -15,14 +15,17 @@
 //! - `ui.click {x, y, shift?, ctrl?}`, `ui.move {x, y}`: real egui pointer input in screen points
 //! - `ui.key {key, cmd?, shift?, alt?}`, `ui.text {text}`: synthetic keyboard input
 //! - `ui.set {...UiState fields}`, `ui.resize {width, height}`
-//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?}`: headless
-//!   render of the drawing (no window needed; fits the drawing unless `fit` is false; replies `pngBase64`)
+//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?, window?,
+//!   background?, plot_style?}`: headless render of the drawing (no window needed; fits the drawing
+//!   unless `fit` is false or a `window` is given; on the dark canvas unless `background` is
+//!   `white`, `paper` or `#rrggbb`; `plot_style` names a plot style table, which plots on white
+//!   unless `background` is given, or is `none`; replies `pngBase64`)
 //! - `app.open {path}`, `app.save {path?}`, `app.quit`
 //! - `control.methods`: this list, with params and a description; `ping`: replies `"pong"`
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use cadcraft_engine::Input;
@@ -83,6 +86,25 @@ impl PendingReply {
         }
         // Started: a reply that arrived just now still counts.
         self.rx.try_recv().unwrap_or_else(|_| json!({"ok": false, "error": "timeout", "state": "may-have-run"}))
+    }
+
+    /// The reply if the app has answered, without waiting: a transport that cannot block (the web
+    /// shell) polls this once a frame. A request the app dropped without answering reports that.
+    pub fn try_reply(&self) -> Option<ControlResponse> {
+        match self.rx.try_recv() {
+            Ok(reply) => Some(reply),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(json!({"ok": false, "error": "the app dropped the request"})),
+        }
+    }
+}
+
+impl Drop for PendingReply {
+    /// A reply nobody waits for any more cancels a request the app has not started, as a timed-out
+    /// [`PendingReply::wait`] does: the client was told it failed, so the app must not run it late.
+    /// A request the app already started, or answered, is unaffected.
+    fn drop(&mut self) {
+        let _ = self.state.compare_exchange(QUEUED, CANCELLED, Ordering::AcqRel, Ordering::Acquire);
     }
 }
 
@@ -211,7 +233,7 @@ const METHODS: &[(&str, &str, &str)] = &[
     ("ui.resize", "{width, height}", "Resize the window."),
     ("ui.focus", "", "Activate the native window."),
     ("ui.screenshot", "{path?}", "PNG of the window (needs a presented frame)."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Headless render of the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?, window?, background?, plot_style?}", "Headless render of the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("app.quit", "", "Quit without the unsaved-changes prompt."),
@@ -269,7 +291,7 @@ pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
         "snap": app.canvas.snap.map(|s| json!({"point": [s.point.x, s.point.y], "mode": s.name})),
         "session": app.session.summary(),
         "closePrompt": app.close_prompt(),
-        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len()), "uiFrames": app.ui_frames, "passIndex": ctx.current_pass_index()},
+        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len()), "truncated": app.canvas.list.as_ref().map(|l| l.truncated), "uiFrames": app.ui_frames, "passIndex": ctx.current_pass_index()},
     })
 }
 
@@ -468,7 +490,17 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Ok(st) = app.session.state() else { return err("no drawing") };
             // `window`: just that area, at the size given or matching its shape.
             let window = render_window(p);
-            let opts = cadcraft_render::Options { view: window, transparency: app.session.settings.transparency_display, ..Default::default() };
+            // `background` and `plot_style` (#803), read as the headless MCP backend reads them.
+            let look = match cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p) {
+                Ok(look) => look,
+                Err(e) => return err(e),
+            };
+            let opts = cadcraft_render::Options {
+                view: window,
+                transparency: app.session.settings.transparency_display,
+                plot_style_table: look.plot_style_table.clone(),
+                ..Default::default()
+            };
             let list = cadcraft_render::build(&st.doc, &st.space, &opts);
             let v = st.view();
             let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
@@ -477,23 +509,30 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 None => render_view(&list.bounds, v.center, v.height, fit, w, h),
             };
             let (w, h) = (view.width, view.height);
-            let Some(png) = cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()) else {
+            let Some(png) = cadcraft_render::raster::render_png(&list, &view, &look.raster()) else {
                 return err("render failed");
             };
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
-                if let Err(e) = std::fs::write(path, &png) {
+                let file = std::path::Path::new(&path);
+                let folder = cadcraft_engine::atomic_write::missing_folder(file);
+                if let Err(e) = cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png) {
                     return err(e);
                 }
-                return ok(render_reply(&png, w, h, Some(path)));
+                let mut reply = render_reply(&png, w, h, Some(path), list.truncated);
+                if let Some(folder) = folder {
+                    reply["createdFolder"] = json!(folder.display().to_string());
+                }
+                return ok(reply);
             }
-            ok(render_reply(&png, w, h, None))
+            ok(render_reply(&png, w, h, None, list.truncated))
         }
         "app.open" => {
             let Some(path) = s("path") else { return err("missing path") };
             wrap(app.run("open", json!({"path": path})))
         }
-        "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
+        // Never `null` params: those mean a user's Save, which may pick a file or ask.
+        "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, if p.is_null() { json!({}) } else { p.clone() })),
         "app.quit" => {
             // Programmatic calls never open dialogs: quit without the unsaved-changes prompt.
             app.quit_confirmed = true;
@@ -529,9 +568,11 @@ fn render_view(bounds: &cadcraft_geom::Bounds2, center: Vec2, height: f64, fit: 
     }
 }
 
-/// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus `bytes` and `path`.
-fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>) -> Value {
-    let mut v = json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len()});
+/// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus
+/// `bytes`, `path` and `truncated` (the build left block contents out, see #1070).
+fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>, truncated: bool) -> Value {
+    let mut v =
+        json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len(), "truncated": truncated});
     if let (Some(path), Some(o)) = (path, v.as_object_mut()) {
         o.insert("path".to_string(), json!(path));
     }
@@ -612,6 +653,35 @@ fn is_private_shot_dir(meta: &std::fs::Metadata) -> bool {
     }
 }
 
+/// Pathless screenshots share one directory per process. Tests that write them hold this guard,
+/// so no other test writes while it is cleaned up. Dropping it, even while a failed test unwinds,
+/// removes every screenshot file in the directory and then the directory itself.
+#[cfg(test)]
+pub(crate) struct PathlessShots {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+pub(crate) fn lock_pathless_shots() -> PathlessShots {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    PathlessShots { _lock: LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+}
+
+#[cfg(test)]
+impl Drop for PathlessShots {
+    fn drop(&mut self) {
+        let Ok(dir) = private_shot_dir() else { return };
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("cadcraft-shot-") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = std::fs::remove_dir(&dir);
+    }
+}
+
 /// Save a pathless screenshot into the private per-process directory: re-validate or recreate it as an owner-only real directory (0700 on Unix; plain create elsewhere), then create up to 64 exclusive files (0600 on Unix) and write a PNG.
 fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write as _;
@@ -634,8 +704,13 @@ fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Resu
         let path = dir.join(format!("cadcraft-shot-{token}-{}.png", next_pathless_nonce()));
         match create_private_file(&path) {
             Ok(mut file) => {
-                img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other)?;
-                file.flush()?;
+                let written = img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other).and_then(|()| file.flush());
+                if let Err(e) = written {
+                    // The reply carries no path on failure, so nobody else could remove the partial file.
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(e);
+                }
                 return Ok(path);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -663,6 +738,10 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
     let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else {
         return json!({"ok": false, "error": "bad image", "request": token});
     };
+    // No file system to write to (the web build): the PNG comes back inline, as `ui.render`'s does.
+    if cfg!(target_arch = "wasm32") {
+        return inline_screenshot(&img, token);
+    }
     let saved = match path {
         Some(path) => img.save(path).map(|()| path.to_string()).map_err(std::io::Error::other),
         None => save_pathless_screenshot(&img, token).map(|path| path.to_string_lossy().into_owned()),
@@ -673,9 +752,59 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
     }
 }
 
+/// A screenshot as an inline PNG reply (`pngBase64`, `width`, `height`, `bytes`, like `ui.render`), for a
+/// build that has no file system to write it to: the web build, where `std::env::temp_dir` panics.
+fn inline_screenshot(img: &image::RgbaImage, token: u64) -> Value {
+    let (w, h) = img.dimensions();
+    let mut png = Vec::new();
+    if let Err(e) = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png) {
+        return json!({"ok": false, "error": e.to_string(), "request": token});
+    }
+    json!({"ok": true, "request": token, "result": {"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "bytes": png.len()}})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inline_screenshot_carries_the_png_and_its_size() {
+        let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255]));
+        let reply = inline_screenshot(&img, 7);
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["request"], 7);
+        assert_eq!((reply["result"]["width"].as_u64(), reply["result"]["height"].as_u64()), (Some(3), Some(2)));
+        let b64 = reply["result"]["pngBase64"].as_str().unwrap_or_default();
+        assert!(b64.starts_with("iVBORw0KGgo"), "a PNG signature in base64: {b64:.20}");
+        assert!(reply["result"]["bytes"].as_u64().is_some_and(|n| n > 30), "the PNG byte count is reported");
+    }
+
+    #[test]
+    fn dropping_a_pending_reply_cancels_a_request_the_app_has_not_started() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(pending);
+        assert!(!request.begin(), "the app must skip a request nobody waits for");
+    }
+
+    #[test]
+    fn dropping_a_pending_reply_leaves_a_started_request_alone() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert!(request.begin());
+        drop(pending);
+        assert_eq!(request.state.load(Ordering::Acquire), STARTED, "a started request is not cancelled");
+    }
+
+    #[test]
+    fn try_reply_polls_without_blocking() {
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        assert_eq!(pending.try_reply(), None, "no answer yet");
+        assert!(request.begin());
+        request.reply.send(json!({"ok": true, "result": 1})).unwrap_or_default();
+        assert_eq!(pending.try_reply(), Some(json!({"ok": true, "result": 1})));
+        let (request, pending) = ControlRequest::new("ui.inspect", json!({}));
+        drop(request);
+        assert_eq!(pending.try_reply().and_then(|r| r["ok"].as_bool()), Some(false), "the app went away");
+    }
 
     #[test]
     fn render_view_fit_finds_offscreen_drawing() {
@@ -728,6 +857,7 @@ mod tests {
     /// Two pathless saves with the same token produce distinct, decodable PNGs; on Unix the files are 0600 and their directory 0700.
     #[test]
     fn pathless_screenshots_are_unique_private_png_files() {
+        let _shots = lock_pathless_shots();
         let img = egui::ColorImage::filled([4, 3], egui::Color32::RED);
         let first = save_screenshot(&img, None, 1);
         let second = save_screenshot(&img, None, 1);
@@ -752,9 +882,6 @@ mod tests {
             let dir_mode = std::fs::metadata(dir).expect("directory metadata").permissions().mode() & 0o777;
             assert_eq!(dir_mode, 0o700, "the screenshot directory is owner-only");
         }
-        for path in [&a, &b] {
-            let _ = std::fs::remove_file(path);
-        }
     }
 
     /// `create_new` refuses a pre-existing symlink with `AlreadyExists` and leaves the link target unchanged.
@@ -776,12 +903,77 @@ mod tests {
 
     #[test]
     fn render_reply_has_base64_width_height_and_keeps_old_keys() {
-        let r = render_reply(b"abc", 7, 5, Some("x.png"));
+        let r = render_reply(b"abc", 7, 5, Some("x.png"), false);
         assert_eq!(r["pngBase64"], "YWJj");
         assert_eq!(r["width"], 7);
         assert_eq!(r["height"], 5);
         assert_eq!(r["bytes"], 3);
         assert_eq!(r["path"], "x.png");
-        assert!(render_reply(b"abc", 7, 5, None).get("path").is_none());
+        assert_eq!(r["truncated"], false);
+        assert!(render_reply(b"abc", 7, 5, None, true).get("path").is_none());
+        assert_eq!(render_reply(b"abc", 7, 5, None, true)["truncated"], true);
+    }
+
+    /// The reply to a `ui.render` request in an app showing one line along y = 0: colour 7, or
+    /// red on a red layer.
+    fn render_line(red: bool, params: Value) -> Value {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.session.new_drawing(false);
+        if red {
+            app.session.execute("layer.new", &json!({"name": "Red", "color": "red", "current": true})).unwrap();
+        }
+        app.session.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        let (req, _rx) = ControlRequest::new("ui.render", params);
+        match handle(&mut app, &egui::Context::default(), &req) {
+            Outcome::Done(v) => v,
+            Outcome::Screenshot { .. } => panic!("ui.render must not take a screenshot"),
+        }
+    }
+
+    /// The RGB of a reply's corner pixel and of its middle column's darkest pixel.
+    fn corner_and_darkest(reply: &Value) -> ([u8; 3], [u8; 3]) {
+        let png = cadcraft_engine::cmd::file::base64_decode(reply["result"]["pngBase64"].as_str().unwrap_or_default()).unwrap();
+        let img = image::load_from_memory(&png).unwrap().to_rgb8();
+        let corner = img.get_pixel(0, 0).0;
+        let darkest = (0..img.height()).map(|y| img.get_pixel(img.width() / 2, y).0).min_by_key(|p| p.iter().map(|&c| u32::from(c)).sum::<u32>());
+        (corner, darkest.unwrap_or_default())
+    }
+
+    /// Guards #803 in the app: `ui.render` takes `background` and `plot_style` as the headless MCP
+    /// backend does (colour 7 drawn dark on white, a red line black with `monochrome.ctb`, white
+    /// by default with a plot style), keeps the dark canvas by default and refuses unknown values.
+    #[test]
+    fn render_takes_a_background_and_a_plot_style() {
+        // The line runs along the middle of pixel row 20 of the 120 x 40 image.
+        let window = json!([[-1.0, -1.95], [11.0, 2.05]]);
+        let render = |red: bool, mut p: Value| {
+            p["window"] = window.clone();
+            p["width"] = json!(120);
+            p["height"] = json!(40);
+            let r = render_line(red, p.clone());
+            assert_eq!(r["ok"], true, "{p}: {}", r["error"]);
+            corner_and_darkest(&r)
+        };
+        assert_eq!(render(false, json!({})).0, [33, 40, 48], "the default stays the dark canvas");
+        let (corner, ink) = render(false, json!({"background": "white"}));
+        assert_eq!(corner, [255, 255, 255]);
+        assert!(ink.iter().all(|&c| c < 128), "colour 7 is drawn dark on white: {ink:?}");
+        // A red line stays red without a plot style and plots black with monochrome.ctb, on white
+        // unless `background` says otherwise.
+        let (_, [r, g, b]) = render(true, json!({"background": "paper"}));
+        assert!(r > 200 && g < 100 && b < 100, "red without a plot style: {:?}", [r, g, b]);
+        for (p, bg) in [
+            (json!({"plot_style": "monochrome.ctb"}), [255, 255, 255]),
+            (json!({"plot_style": "monochrome.ctb", "background": "#336699"}), [0x33, 0x66, 0x99]),
+        ] {
+            let (corner, [r, g, b]) = render(true, p.clone());
+            assert_eq!(corner, bg, "{p}");
+            assert!(r < 100 && r == g && g == b, "{p}: red plots black: {:?}", [r, g, b]);
+        }
+        for p in [json!({"background": "purple"}), json!({"background": 7}), json!({"plot_style": "nope.ctb"})] {
+            let r = render_line(false, p.clone());
+            assert_eq!(r["ok"], false, "{p} must be refused");
+            assert!(r.get("result").is_none(), "{p}");
+        }
     }
 }

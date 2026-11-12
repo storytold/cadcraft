@@ -8,6 +8,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// CADCraft as craft-update knows it, with its 128 px icon and accent colour: the update
+/// prompt shows both, and an AppImage's menu entry gets the icon.
+#[cfg(not(target_arch = "wasm32"))]
+pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.cadcraft.png")),
+    accent: Some([0x3e, 0xa6, 0xe8]),
+    ..craft_update::suite::CADCRAFT
+};
+
 pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
@@ -23,10 +32,16 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+pub mod fault;
+// The Find and Replace window behind the FIND command.
+pub mod finddlg;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
+pub mod switch;
+// The Edit Text window, opened from the shortcut menu's Edit Text entry.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
 
@@ -36,6 +51,7 @@ pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
+pub mod keys;
 pub mod layers;
 pub mod managers;
 pub mod menus;
@@ -46,6 +62,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
 #[cfg(not(target_arch = "wasm32"))]
@@ -55,6 +72,7 @@ pub mod vpscale;
 
 pub mod exchange;
 
+use std::path::Path;
 use std::sync::mpsc::Receiver;
 
 use cadcraft_engine::Session;
@@ -88,7 +106,7 @@ pub struct UiState {
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
     /// pointer"), screen readers, recorders and remote desktops track the system cursor and lose it
-    /// when it is hidden. Off by default; `CADCRAFT_SYSTEM_CURSOR=1` turns it on at startup.
+    /// when it is hidden. Off unless the host defaults to it ([`CadApp::set_system_cursor_default`]).
     pub system_cursor: bool,
     /// "Drafting" or "Modeling".
     pub toolset_tab: String,
@@ -102,12 +120,14 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The user's keyboard shortcuts ([`keys`]).
+    pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
     /// setting), "on" or "off".
     pub animations: animation::AnimationPref,
-    /// The format Save As suggests for a drawing that has no file yet: "dxf" or "dwg".
+    /// The format Save As suggests: "dxf" or "dwg", for new drawings and opened files alike.
     pub save_format: SaveFormat,
     /// The version Save As writes for a drawing that has no file yet ("2000" … "2018"); a
     /// drawing opened from a file keeps that file's version.
@@ -116,13 +136,15 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
 pub use cadcraft_engine::cmd::file::Version as SaveVersion;
 
-/// The default save format for new drawings, like AutoCAD's Options > Open and Save > "Save as".
-/// A drawing opened from a file keeps that file's format.
+/// The default save format, like AutoCAD's Options > Open and Save > "Save as": the format Save As
+/// suggests for every drawing, an opened DWG or DXF too. Save (QSAVE) of an opened file keeps its file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SaveFormat {
@@ -147,13 +169,19 @@ impl SaveFormat {
         SaveFormat::ALL.into_iter().find(|f| f.as_str().eq_ignore_ascii_case(s.trim().trim_start_matches('.')))
     }
 
-    /// The name Save As suggests: a title that already has an extension (a drawing opened from a
-    /// file) keeps it; an untitled drawing gets this format's extension.
+    /// The name Save As suggests: this format's extension, replacing a drawing's own (DWG, DXF or
+    /// DWT, from a drawing opened from a file); any other extension is kept.
     pub fn suggested_name(self, title: Option<&str>) -> String {
-        match title.map(str::trim).filter(|t| !t.is_empty()) {
-            Some(t) if std::path::Path::new(t).extension().is_some() => t.to_owned(),
-            Some(t) => format!("{t}.{}", self.as_str()),
-            None => format!("Drawing.{}", self.as_str()),
+        let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) else { return format!("Drawing.{}", self.as_str()) };
+        let path = std::path::Path::new(t);
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if ["dwg", "dxf", "dwt"].iter().any(|d| d.eq_ignore_ascii_case(e)) => {
+                // the extension is ASCII, so this is a char boundary
+                let stem = t.get(..t.len().saturating_sub(e.len() + 1)).unwrap_or(t);
+                format!("{stem}.{}", self.as_str())
+            }
+            Some(_) => t.to_owned(),
+            None => format!("{t}.{}", self.as_str()),
         }
     }
 }
@@ -173,7 +201,7 @@ impl Default for UiState {
             show_viewcube: true,
             show_ucs_icon: true,
             show_layer_list: false,
-            system_cursor: std::env::var("CADCRAFT_SYSTEM_CURSOR").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false" | "off")),
+            system_cursor: false,
             toolset_tab: "Drafting".into(),
             collapsed_groups: Vec::new(),
             hidden_tools: Vec::new(),
@@ -182,12 +210,14 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -197,6 +227,12 @@ impl Default for UiState {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Where set, the file dialogs are shown with this instead of calling `pick_open` /
+    /// `pick_save` / `pick_lisp` (which must still be set, to say which dialogs there are), and
+    /// the answer is acted on in a later frame ([`CadApp::pick_then`]). macOS needs it: a panel run modally
+    /// inside the window's event handler gets the window events of its own resizing sent back
+    /// into that handler, and winit aborts the app (#1527).
+    pub start_pick: Option<StartPick>,
     /// Pick a `.lsp` file for APPLOAD, starting in the given folder (empty for the default one).
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
@@ -204,6 +240,38 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+}
+
+/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Open,
+    Save(String),
+    Lisp(String),
+    Pgp(String),
+}
+
+/// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
+/// chosen path, or `None` when the dialog is cancelled ([`Services::start_pick`]).
+pub type StartPick = Box<dyn Fn(Pick, Box<dyn FnOnce(Option<String>) + Send>)>;
+
+/// What to do with the path a file dialog chose ([`CadApp::pick_then`]).
+type PickDone = Box<dyn FnOnce(&mut CadApp, String) -> Result<Value, String>>;
+
+/// A file dialog shown with [`Services::start_pick`] that has not answered yet.
+struct PendingPick {
+    answer: Receiver<Option<String>>,
+    /// The drawing (its `uid`) the answer is for: Save As writes that drawing, export and plot
+    /// read it, and so on, whichever drawing is active when the answer arrives. `None` for the
+    /// dialogs that open a drawing (Open, New from Template, Recover).
+    doc: Option<u64>,
+    /// The close prompt's Save is waiting for this dialog: its other answers wait too
+    /// ([`closing`]).
+    for_close: bool,
+    then: PickDone,
 }
 
 pub struct CadApp {
@@ -211,6 +279,8 @@ pub struct CadApp {
     /// Whether the operating system shows animations, as the host reads it; `None` when the OS
     /// states nothing or the host cannot ask ([`animation`]).
     pub system_animations: Option<bool>,
+    /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
+    pub system_cursor_default: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -219,6 +289,8 @@ pub struct CadApp {
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
+    /// Calculator data shared by its floating and docked views; durable fields live in prefs.
+    pub(crate) quickcalc: palettes::quickcalc::State,
     pub cmd: cmdline::CmdLine,
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
@@ -271,6 +343,10 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
+    /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
+    pub save_loss: Option<save_loss::Pending>,
+    /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
+    pub save_loss_accepted: Option<save_loss::Accepted>,
     /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
     pub autosave: Option<cadcraft_engine::autosave::Autosaver>,
     /// Drawing Recovery: autosave files a crashed app left behind.
@@ -279,12 +355,18 @@ pub struct CadApp {
     pub gpu_faults: std::sync::Arc<gpu::GpuFaults>,
     /// The notice shown after one (see [`autosave::gpu_notice`]).
     pub gpu_notice: Option<autosave::GpuNotice>,
+    /// Panics caught around the frame ([`fault`]).
+    pub fault: fault::UiFault,
+    /// The notice shown while autosave fails (see [`autosave::failure_notice`]).
+    pub autosave_notice: Option<autosave::AutosaveNotice>,
     /// The Command Aliases dialog while open ([`aliasdlg`]).
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
+    pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -296,12 +378,14 @@ impl CadApp {
         CadApp {
             system_languages: Vec::new(),
             system_animations: None,
+            system_cursor_default: false,
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
             services,
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),
+            quickcalc: palettes::quickcalc::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
@@ -330,16 +414,150 @@ impl CadApp {
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
+            save_loss: None,
+            save_loss_accepted: None,
             autosave: None,
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
             gpu_notice: None,
+            fault: fault::UiFault::default(),
+            autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            pending_pick: None,
         }
+    }
+
+    /// Ask for a file with the host's dialog (`pick`) and run `then` with the chosen path, on the
+    /// drawing that is active now. `None` when the host has no dialog of that kind. Cancelling
+    /// gives `Ok(Null)`. With a synchronous picker the result is `then`'s; with
+    /// [`Services::start_pick`] the dialog opens and this returns `Ok(Null)` at once: `then` runs
+    /// in a later frame ([`Self::logic`]) with that drawing made active again (if something else
+    /// was switched to meanwhile, such as a control-channel `document.switch`), and not at all if
+    /// the drawing was closed. Its error, if any, shows in the status bar. With no drawing open
+    /// it refuses without showing a dialog. While one dialog is open, no other is shown: the
+    /// request is refused with an error, also shown in the status bar.
+    pub fn pick_then(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, true, Box::new(then))
+    }
+
+    /// [`Self::pick_then`] for a dialog that opens a drawing (Open, New from Template, Recover):
+    /// `then` does not act on the drawing that was active, so it runs whatever was switched to
+    /// or closed meanwhile.
+    pub fn pick_then_open(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, false, Box::new(then))
+    }
+
+    /// Show the dialog `pick` for `then`, bound to the active drawing when `bound`.
+    fn pick_for(&mut self, pick: Pick, bound: bool, then: PickDone) -> Option<Result<Value, String>> {
+        let available = match pick {
+            Pick::Open => self.services.pick_open.is_some(),
+            Pick::Save(_) => self.services.pick_save.is_some(),
+            Pick::Lisp(_) => self.services.pick_lisp.is_some(),
+            Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+        };
+        if !available {
+            return None;
+        }
+        if self.pending_pick.is_some() {
+            return Some(Err(self.refuse_pick("A file dialog is already open; answer it first.".into())));
+        }
+        // A bound answer must not land on a drawing created or opened while the dialog is up.
+        let doc = match (bound, self.session.state()) {
+            (false, _) => None,
+            (true, Ok(st)) => Some(st.uid),
+            (true, Err(e)) => {
+                let why = e.to_string();
+                return Some(Err(self.refuse_pick(why)));
+            }
+        };
+        if let Some(start) = &self.services.start_pick {
+            let (tx, answer) = std::sync::mpsc::channel();
+            start(
+                pick,
+                Box::new(move |path| {
+                    let _ = tx.send(path);
+                }),
+            );
+            self.pending_pick = Some(PendingPick { answer, doc, for_close: false, then });
+            return Some(Ok(Value::Null));
+        }
+        let path = match &pick {
+            Pick::Open => self.services.pick_open.as_ref().and_then(|f| f()),
+            Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
+            Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
+            Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+        };
+        Some(match path {
+            Some(path) => then(self, path),
+            None => Ok(Value::Null),
+        })
+    }
+
+    /// A file dialog that is not shown: the reason goes to the status bar too, since a typed or
+    /// menu command's result is not shown ([`Self::start`]).
+    fn refuse_pick(&mut self, why: String) -> String {
+        self.set_status(why.clone());
+        why
+    }
+
+    /// Start the interactive command `id` with a dialog's answer. `was_prompting`: whether a
+    /// command was running when the dialog was asked for. Starting cancels the running command,
+    /// so a command started while the dialog was open (a control request, say) is kept and this
+    /// one refused instead; one that was already running is cancelled as when the dialog answers
+    /// at once.
+    pub fn start_after_pick(&mut self, id: &str, was_prompting: bool) -> Result<(), String> {
+        if !was_prompting && self.session.prompting() {
+            return Err(format!("{}: another command started while the file dialog was open; run it again.", id.to_ascii_uppercase()));
+        }
+        self.session.start(id).map_err(|e| e.to_string())
+    }
+
+    /// Act on the answer of a dialog started with [`Services::start_pick`], once it arrives.
+    fn finish_pick(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_pick else { return };
+        match pending.answer.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+            Ok(None) => self.pending_pick = None,
+            // The host dropped the answer without giving one: the dialog never opened (its
+            // thread could not start) or failed.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_pick = None;
+                self.set_status("The file dialog could not be shown.");
+            }
+            Ok(Some(path)) => {
+                if let Some(PendingPick { doc, then, .. }) = self.pending_pick.take()
+                    && let Err(e) = self.make_active(doc, &path).and_then(|()| then(self, path))
+                {
+                    self.set_status(e);
+                }
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Make the drawing `uid` active again for the answer `path` of a dialog it asked for, or
+    /// refuse when it was closed meanwhile.
+    fn make_active(&mut self, uid: Option<u64>, path: &str) -> Result<(), String> {
+        let Some(uid) = uid else { return Ok(()) };
+        let Some(i) = self.session.docs.iter().position(|d| d.uid == uid) else {
+            return Err(format!("The drawing was closed before the file dialog answered; nothing was done with {path}."));
+        };
+        if self.session.active != i {
+            self.run("document.switch", json!({ "index": i }))?;
+        }
+        Ok(())
     }
 
     /// The interface language shown: the chosen one, or English when this computer has no font
@@ -392,7 +610,9 @@ impl CadApp {
                 o.insert(k.clone(), v.clone());
             }
         }
-        let u: UiState = serde_json::from_value(cur).map_err(|e| e.to_string())?;
+        let mut u: UiState = serde_json::from_value(cur).map_err(|e| e.to_string())?;
+        // Shortcuts are checked as the preferences check them.
+        u.shortcuts = keys::from_prefs(&serde_json::json!(u.shortcuts));
         docking::validate(&u.docking).map_err(|e| e.to_string())?;
         self.ui = u;
         Ok(())
@@ -411,6 +631,13 @@ impl CadApp {
     /// Submit a line of command-line text. A refused line is echoed to the history; the error is
     /// also returned.
     pub fn cmdline(&mut self, text: &str) -> Option<String> {
+        self.cmdline_or(text, None)
+    }
+
+    /// [`CadApp::cmdline`], but a command name nothing knows (no command, alias, UI command, LISP
+    /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
+    /// the highlighted AutoComplete suggestion.
+    pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -419,7 +646,11 @@ impl CadApp {
                 return None;
             }
         }
-        let e = self.session.cmdline(text).err()?.to_string();
+        let e = match (self.session.cmdline(text), fallback) {
+            (Ok(()), _) => return None,
+            (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
+            (Err(e), _) => e.to_string(),
+        };
         self.session.echo(e.clone());
         Some(e)
     }
@@ -443,6 +674,7 @@ impl CadApp {
             "interfaceLanguage": self.ui.interface_language.code(),
             "saveFormat": self.ui.save_format.as_str(),
             "saveVersion": self.ui.save_version,
+            "quickcalc": self.quickcalc.prefs(),
         });
         if self.spacemouse.settings != spacemouse::Settings::default() {
             prefs["spacemouse"] = json!(self.spacemouse.settings);
@@ -453,12 +685,21 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
+        if !self.ui.shortcuts.is_empty() {
+            prefs["shortcuts"] = json!(self.ui.shortcuts);
+        }
         prefs.to_string()
     }
 
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(calculator) = v.get("quickcalc") {
+            self.quickcalc.load_prefs(calculator);
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }
@@ -483,6 +724,21 @@ impl CadApp {
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
         }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
+            self.ui.shortcuts = keys::from_prefs(keys);
+        }
+    }
+
+    /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
+    /// resets never turn it off then.
+    pub fn set_system_cursor_default(&mut self, on: bool) {
+        self.system_cursor_default = on;
+        if on {
+            self.ui.system_cursor = true;
+        }
     }
 
     pub fn set_status(&mut self, s: impl Into<String>) {
@@ -497,12 +753,12 @@ impl CadApp {
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
-    pub fn open_path(&mut self, path: &str) {
+    pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {
-                Some(text) => self.load_lisp(path, &text),
-                None => self.open_failed(format!("APPLOAD: can't read {path}")),
+                Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
+                None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
             return;
         }
@@ -512,7 +768,10 @@ impl CadApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let r = self.run("open", json!({ "path": path }));
+            let r = match path.to_str() {
+                Some(text) => self.run("open", json!({ "path": text })),
+                None => Err(format!("open: {}: the path is not valid Unicode", path.display())),
+            };
             self.opened(r);
         }
     }
@@ -520,7 +779,13 @@ impl CadApp {
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (_, outcome) in self.opening.poll() {
+        for (path, outcome) in self.opening.poll() {
+            // A recent file that is gone can never be opened again: drop it from the list. A path
+            // whose existence can't be checked (a folder that denies access) stays.
+            if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
+                let path = path.to_string_lossy();
+                self.ui.recent_files.retain(|p| *p != path);
+            }
             let r = match outcome {
                 Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
@@ -584,7 +849,8 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
-                self.canvas.zoom_pending = true;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
                     self.remember_recent(path);
@@ -622,6 +888,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        self.finish_pick(ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
         capture::note_identity(self, ctx);
@@ -675,11 +942,11 @@ impl CadApp {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
-    /// Whether a modal dialog is up: the "Save changes?" prompt or Drawing Recovery. The
+    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning or Drawing Recovery. The
     /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
     /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
@@ -816,9 +1083,9 @@ impl CadApp {
         {
             let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
             for file in dropped {
-                let path = file.path().to_string_lossy().to_string();
-                if !path.is_empty() {
-                    self.open_path(&path);
+                let path = file.path();
+                if !path.as_os_str().is_empty() {
+                    self.open_path(path);
                 }
             }
         }
@@ -860,8 +1127,10 @@ impl CadApp {
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
+        save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
+        autosave::failure_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
     }
 
@@ -906,8 +1175,8 @@ pub fn now_ms() -> f64 {
 }
 
 /// A LISP source file, by its name.
-fn is_lisp_file(name: &str) -> bool {
-    std::path::Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+fn is_lisp_file(name: impl AsRef<Path>) -> bool {
+    name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
 }
 
 #[cfg(test)]
@@ -1095,7 +1364,8 @@ mod tests {
         frame(&mut a, &ctx, None);
         assert_eq!(Tokens::get(), Tokens::of(theme::SYSTEM_FALLBACK), "no OS appearance: the documented fallback");
         assert_eq!(a.ui.theme, ThemePref::System);
-        assert_eq!(a.prefs_json(), r#"{"animations":"system","interfaceLanguage":"auto","saveFormat":"dxf","saveVersion":"2018","theme":"system"}"#);
+        let prefs: Value = serde_json::from_str(&a.prefs_json()).unwrap();
+        assert_eq!(prefs["theme"], "system");
     }
 
     #[test]
@@ -1133,11 +1403,17 @@ mod tests {
         b.start("ui.saveformat.dwg");
         b.start("ui.resetpalettes");
         assert_eq!(b.ui.save_format, SaveFormat::Dwg);
-        // Untitled drawings get the format's extension; files keep their own.
+        // Untitled drawings get the format's extension, and so do opened drawings (#2199).
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("Drawing1")), "Drawing1.dwg");
         assert_eq!(SaveFormat::Dxf.suggested_name(Some("Drawing1")), "Drawing1.dxf");
-        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
-        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.DWG");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dwg");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Title block.dwt")), "Title block.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("v1.2 plan.Dxf")), "v1.2 plan.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("平面図.dxf")), "平面図.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some(".dxf")), ".dxf.dwg", "a dot file has no extension");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("logo.svg")), "logo.svg", "other files keep their type");
         assert_eq!(SaveFormat::Dwg.suggested_name(None), "Drawing.dwg");
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();

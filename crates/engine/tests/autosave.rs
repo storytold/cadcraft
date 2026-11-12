@@ -169,6 +169,7 @@ fn recovery_offers_files_of_apps_that_stopped() {
 
 #[test]
 fn autosave_files_are_written_in_the_background_and_removed_on_exit() {
+    let _turn = folder_turn();
     hooks();
     let dir = temp_dir("write");
     let mut s = Session::new();
@@ -185,6 +186,14 @@ fn autosave_files_are_written_in_the_background_and_removed_on_exit() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(std::fs::read(&path).unwrap().ends_with(b"EOF\n"));
+    // The file exists before the write finishes (the folder sync comes after the rename); until
+    // it has, the drawing is busy and the change drawn below would not be planned.
+    for _ in 0..500 {
+        if !a.writing() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     // While the app runs, its lock keeps its files out of recovery. SAVETIME and SAVEFILEPATH
     // are system variables (process-wide, so set in this test only).
     assert_eq!(cadcraft_engine::sysvars::get(&s, "SAVETIME"), Some(json!(10)));
@@ -247,6 +256,108 @@ fn a_new_autosave_folder_is_owner_only() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// SAVEFILEPATH is process-wide: the tests that set it take turns.
+static FOLDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn folder_turn() -> std::sync::MutexGuard<'static, ()> {
+    FOLDER.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Run autosave once in `dir`, so `a` writes a file and takes its lock, and wait for the file.
+fn autosave_once(a: &mut Autosaver, s: &Session, dir: &std::path::Path) -> String {
+    autosave::set_savefilepath(&dir.to_string_lossy());
+    assert_eq!(a.save_now(s), 1);
+    for _ in 0..500 {
+        a.reap();
+        if !a.writing() && !a.files().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    a.files().pop().unwrap()
+}
+
+#[test]
+fn a_crashed_app_is_offered_at_once_and_a_running_one_never() {
+    hooks();
+    let _turn = folder_turn();
+    let dir = temp_dir("instant");
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("41-e");
+    let file = autosave_once(&mut a, &s, &dir);
+    let lock = dir.join("41-e.lock");
+    assert!(std::fs::metadata(&lock).is_ok());
+
+    // Running: not offered, even once its lock file looks old (a suspended laptop).
+    std::fs::File::options().write(true).open(&lock).unwrap().set_modified(SystemTime::now() - Duration::from_secs(3600)).ok();
+    assert!(autosave::recoverable(&dir, "9-f").is_empty());
+    autosave::prune_locks(&dir);
+    assert!(lock.exists(), "a running app's lock stays");
+
+    // Gone without closing, as in a crash: the file is fresh, and it is offered right away.
+    std::fs::File::options().write(true).open(&lock).unwrap().set_modified(SystemTime::now()).ok();
+    drop(a);
+    let found = autosave::recoverable(&dir, "9-f");
+    assert_eq!(found.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), vec![file.as_str()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_emergency_save_finishes_before_it_returns_even_with_savetime_off() {
+    hooks();
+    let _turn = folder_turn();
+    let dir = temp_dir("emergency");
+    autosave::set_savefilepath(&dir.to_string_lossy());
+    let before = autosave::savetime();
+    autosave::set_savetime(0);
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("43-e");
+    assert_eq!(a.save_now(&s), 0, "an ordinary save honours SAVETIME 0");
+    assert_eq!(a.emergency_save(&s), 1);
+    autosave::set_savetime(before);
+    let file = a.files().pop().unwrap();
+    assert!(std::fs::read(&file).unwrap().ends_with(b"EOF\n"), "the file is whole on return");
+    assert_eq!(a.emergency_save(&s), 0, "nothing changed since");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_autosave_folder_keeps_the_old_folder_locked() {
+    hooks();
+    let _turn = folder_turn();
+    let (old, new) = (temp_dir("moved-old"), temp_dir("moved-new"));
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("44-e");
+    autosave_once(&mut a, &s, &old);
+    autosave::set_savefilepath(&new.to_string_lossy());
+    draw(&mut s);
+    assert_eq!(a.emergency_save(&s), 1);
+    assert!(new.join("44-e.lock").exists());
+    assert!(autosave::recoverable(&old, "9-f").is_empty(), "this app is still running");
+    a.shutdown();
+    assert!(!old.join("44-e.lock").exists() && !new.join("44-e.lock").exists());
+    let _ = std::fs::remove_dir_all(&old);
+    let _ = std::fs::remove_dir_all(&new);
+}
+
+#[test]
+fn a_normal_exit_removes_the_lock_file() {
+    hooks();
+    let _turn = folder_turn();
+    let dir = temp_dir("exit");
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("42-e");
+    autosave_once(&mut a, &s, &dir);
+    assert!(dir.join("42-e.lock").exists());
+    a.shutdown();
+    assert!(!dir.join("42-e.lock").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_failed_autosave_is_tried_again_without_another_change() {
     hooks();
@@ -275,6 +386,7 @@ fn a_failed_autosave_is_tried_again_without_another_change() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(rearmed, "a failed autosave must be tried again");
+    assert!(a.failures().next().is_some_and(|(_, why)| why.contains("out")));
 
     std::fs::remove_file(&out).unwrap();
     let jobs = a.plan(&s, 180.0, 1, &dir);
@@ -295,6 +407,36 @@ fn a_failed_autosave_is_tried_again_without_another_change() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(a.next_due(1e4, 1), None);
+    assert_eq!(a.failures().next(), None, "a write that worked clears the failure");
+    a.shutdown();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_failure_ends_when_the_drawing_no_longer_needs_a_copy() {
+    hooks();
+    let root = temp_dir("failed-close");
+    let out = root.join("out");
+    std::fs::write(&out, b"not a folder").unwrap();
+    let dir = out.to_string_lossy().to_string();
+    let mut s = Session::new();
+    draw(&mut s);
+    let mut a = Autosaver::new("32-e");
+    a.plan(&s, 0.0, 1, &dir);
+    let jobs = a.plan(&s, 60.0, 1, &dir);
+    a.perform(jobs);
+    for _ in 0..500 {
+        a.reap();
+        if a.failures().next().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(a.failures().next().is_some());
+    let i = s.active;
+    s.execute("close", &json!({ "index": i })).unwrap();
+    a.plan(&s, 120.0, 1, &dir);
+    assert_eq!(a.failures().next(), None);
     a.shutdown();
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -345,6 +487,7 @@ fn a_block_editor_that_cannot_be_composed_is_not_autosaved_as_the_old_host() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     d.model.push(Entity::new(h, kind));
     assert!(s.state().unwrap().recovery_drawing().is_err());
