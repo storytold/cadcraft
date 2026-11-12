@@ -49,6 +49,20 @@ pub fn io() -> Option<&'static IoHooks> {
     IO.get()
 }
 
+/// Edit one field of a Tangent (天正) custom entity, installed by the app with the DWG bridge
+/// (a lower layer). `None` in builds without the native DWG bridge (e.g. web), where such
+/// entities are not read either.
+pub type TianzhengSetter = fn(&mut Drawing, cadcraft_doc::Handle, &str, &str) -> bool;
+
+static TIANZHENG_SETTER: OnceLock<TianzhengSetter> = OnceLock::new();
+
+pub fn set_tianzheng_setter(f: TianzhengSetter) {
+    let _ = TIANZHENG_SETTER.set(f);
+}
+pub fn tianzheng_setter() -> Option<TianzhengSetter> {
+    TIANZHENG_SETTER.get().copied()
+}
+
 /// An entity as DXF groups and back, for AutoLISP's `entget`, `entmake` and `entmod`
 /// (installed by the app with the DXF reader and writer, a lower layer).
 pub struct EntityCodec {

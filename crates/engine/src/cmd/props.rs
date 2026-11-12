@@ -264,6 +264,21 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("properties.set", "nothing selected"));
     }
     let (hs, left_out) = LeftOut::split(s, hs)?;
+    // 天正自定义实体：属性面板按字段名（T20xx）编辑字符串字段，字段名是动态的。
+    if let Some(field) = str_param(p, "tianzhengField") {
+        let value = str_param(p, "tianzhengValue").unwrap_or_default();
+        let Some(set_field) = crate::cmd::file::tianzheng_setter() else {
+            return Ok(left_out.result(0));
+        };
+        let d = s.doc_mut()?;
+        let mut changed = 0;
+        for h in &hs {
+            if set_field(d, *h, field, value) {
+                changed += 1;
+            }
+        }
+        return Ok(left_out.result(changed));
+    }
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")

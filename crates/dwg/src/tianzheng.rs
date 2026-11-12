@@ -77,8 +77,15 @@ mod native {
 
     /// 从 DWG 字节提取所有天正实体（含 failsafe 读取，坏记录跳过而非整文件失败）。
     ///
-    /// 天正自定义实体（`TCH_*`）在 acadrust 里被解析为 `EntityType::Unknown`（不是 Proxy），
-    /// 其完整数据在 `raw_dwg_data`（原始 merged-stream record 位流）里。
+    /// 天正自定义实体（`TCH_*`）在 acadrust 里可能是两种形态，取决于文件是否经过
+    /// CADCraft 的保存往返：
+    /// - 首次打开原始 DWG：acadrust 不认识 `TCH_*` 的 type_code，解析为
+    ///   `EntityType::Unknown`，完整 merged 流在 `raw_dwg_data`。
+    /// - 保存往返后（`dxf_bridge` 把天正当 `ACAD_PROXY_ENTITY` 写出，再编码回 DWG）：
+    ///   解析为 `EntityType::Extended(Proxy)`，完整 merged 流在 `common.raw_record`。
+    ///
+    /// 两种形态的完整 merged-stream record 位流布局一致（`[main][text][modular_short]
+    /// [flag][handles]`），字段提取逻辑（[`extract_text_stream`]）对二者都成立。
     pub fn read_tianzheng(bytes: &[u8]) -> Result<Vec<TianzhengEntity>, String> {
         let outcome = acadrust::DwgReader::from_stream_with_options(
             Cursor::new(bytes),
@@ -88,16 +95,41 @@ mod native {
         .map_err(|e| format!("DWG: {e}"))?;
         let mut entities = Vec::new();
         for e in outcome.document.entities() {
-            let acadrust::entities::EntityType::Unknown(u) = e else { continue };
-            if !super::is_tianzheng_class(&u.dxf_name) {
-                continue;
-            }
+            let (dxf_class, handle, raw_data, graphic_data, handle_bits) = match e {
+                acadrust::entities::EntityType::Unknown(u) => {
+                    if !super::is_tianzheng_class(&u.dxf_name) {
+                        continue;
+                    }
+                    (
+                        u.dxf_name.clone(),
+                        u.common.handle.value(),
+                        u.raw_dwg_data.clone().unwrap_or_default(),
+                        u.common.graphic_data.clone().unwrap_or_default(),
+                        u.dwg_handle_bits,
+                    )
+                }
+                acadrust::entities::EntityType::Extended(x) => {
+                    let acadrust::entities::ExtendedEntityData::Proxy(p) = &x.data else { continue };
+                    if !super::is_tianzheng_class(&p.dxf_subclass) {
+                        continue;
+                    }
+                    let raw = x.common.raw_record.as_deref();
+                    (
+                        p.dxf_subclass.clone(),
+                        x.common.handle.value(),
+                        raw.map(|r| r.data.clone()).unwrap_or_default(),
+                        x.common.graphic_data.clone().unwrap_or_default(),
+                        raw.map(|r| r.handle_bits).unwrap_or(0),
+                    )
+                }
+                _ => continue,
+            };
             entities.push(TianzhengEntity {
-                dxf_class: u.dxf_name.clone(),
-                handle: u.common.handle.value(),
-                raw_data: u.raw_dwg_data.clone().unwrap_or_default(),
-                graphic_data: u.common.graphic_data.clone().unwrap_or_default(),
-                handle_bits: u.dwg_handle_bits,
+                dxf_class,
+                handle,
+                raw_data,
+                graphic_data,
+                handle_bits,
             });
         }
         Ok(entities)
@@ -233,11 +265,21 @@ mod native {
     /// 明文字符串用 `write_variable_text` 写；加密字段的乱码字符串（UTF-16 code units 在
     /// 0x18B-0x1A4 范围）也由 `write_variable_text` 按 UTF-16 原样写回。
     pub fn encode_text_strings(strings: &[String]) -> Vec<u8> {
+        encode_text_strings_with_bits(strings).0
+    }
+
+    /// [`encode_text_strings`]，另返回精确的字符串 bit 数（不含末尾 byte 对齐 padding）。
+    ///
+    /// text 流在 DWG 里按 `str_size`（bit）记录，末尾可能 padding 到 byte 边界；而 proxy
+    /// DXF 的 310 里 `text_payload.bit_count`（group 162）记录的是**精确**的字符串 bit 数。
+    /// 这个 bit 数必须在 `into_bytes` 之前取（[`DwgBitWriter::position_in_bits`]）。
+    pub fn encode_text_strings_with_bits(strings: &[String]) -> (Vec<u8>, i64) {
         let mut w = DwgBitWriter::new(DwgVersion::AC24, DxfVersion::AC1032);
         for s in strings {
             w.write_variable_text(s);
         }
-        w.into_bytes()
+        let bits = w.position_in_bits();
+        (w.into_bytes(), bits)
     }
 
     /// 把新 text 流替换回 `raw_dwg_data` 的 merged record，返回新的 raw_dwg_data。
@@ -327,7 +369,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, extract_text_stream, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, TianzhengEntity};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, TianzhengEntity};
 
 #[cfg(test)]
 mod tests {

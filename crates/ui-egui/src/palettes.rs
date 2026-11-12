@@ -1260,7 +1260,11 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 prop_row(ui, "Class", |ui| read_only(ui, &t.class_name));
                 for (name, value) in &t.fields {
                     if !value.is_empty() {
-                        prop_row(ui, name, |ui| read_only(ui, value));
+                        prop_row(ui, name, |ui| {
+                            if let Some(v) = edit_field(ui, ui.scope_id().with(("tz", e.handle, name)), value.clone()) {
+                                set = Some(json!({ "handles": ids, "tianzhengField": name, "tianzhengValue": v }));
+                            }
+                        });
                     }
                 }
             }

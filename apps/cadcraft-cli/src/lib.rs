@@ -54,6 +54,8 @@ fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // Tangent (天正) custom-entity field edits go through the DWG bridge.
+    cadcraft_engine::cmd::file::set_tianzheng_setter(cadcraft_io::set_tianzheng_field);
 }
 
 /// `path` as text, for the engine and io calls that take a file name as a string.

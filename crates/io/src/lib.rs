@@ -26,7 +26,7 @@ mod svg_read;
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;
 
-use cadcraft_doc::{Drawing, Space};
+use cadcraft_doc::{Drawing, RawTag, Space};
 use cadcraft_geom::Bounds2;
 use std::path::{Path, PathBuf};
 
@@ -97,9 +97,103 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
     Ok((d, None))
 }
 
-/// 修改天正实体的一个字段值，并把改动写回 `raw_data`（供保存 DWG 用）。
+/// 小写 hex 编码（DXF 310/319 的 binary group 值）。
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+/// 小写 hex 解码（DXF 310/319 的 binary group 值）。
+fn hex_decode(s: &str) -> Vec<u8> {
+    let s = s.trim();
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap_or(0))
+        .collect()
+}
+
+/// 把修改后的 text 流写回 Tianzheng 的 tags（310 data 的 text_payload 部分），供保存 DWG 用。
 ///
-/// 从 `raw_data` 重新提取 text 流 → 解析字符串列表 → 改值 → 重新编码 → 替换回 `raw_data`。
+/// proxy DXF 的 data 310 = payload（对象数据，前 `payload_bits.div_ceil(8)` 字节）+ text_payload
+/// （字符串流，其余）。字段名和字符串值都在 text 流里，数值字段在 payload（main 流）里；因此
+/// 改字符串字段只需替换 data 310 的 text_payload 部分，payload 和 graphics 保持不变。
+/// `new_text` 的末尾按 `new_text_bits` 清零 padding（`ProxyPayload::data` 的做法）。
+fn sync_tianzheng_text(tags: &mut Vec<RawTag>, new_text_bits: i64, new_text: &[u8]) -> bool {
+    // payload 的 bit 数（group 161，R2004 为 93）。
+    let mut payload_bits = 0u32;
+    for tag in tags.iter() {
+        if tag.code == 161 || tag.code == 93 {
+            payload_bits = tag.value.trim().parse().unwrap_or(0);
+            break;
+        }
+    }
+    if payload_bits == 0 {
+        return false;
+    }
+    let payload_bytes = (payload_bits as usize).div_ceil(8);
+
+    // 收集 data 310 的前 payload_bytes 字节（payload 部分，保持不变）。
+    let mut in_data = false;
+    let mut payload: Vec<u8> = Vec::new();
+    for tag in tags.iter() {
+        if tag.code == 161 || tag.code == 93 {
+            in_data = true;
+            continue;
+        }
+        if in_data && (tag.code == 310 || tag.code == 319) {
+            payload.extend_from_slice(&hex_decode(&tag.value));
+            if payload.len() >= payload_bytes {
+                break;
+            }
+        }
+    }
+    payload.truncate(payload_bytes);
+
+    // 新 text 流：末尾按精确 bit 数清零 padding。
+    let mut text = new_text.to_vec();
+    let rem = (new_text_bits.max(0) as usize) % 8;
+    if rem != 0 {
+        if let Some(last) = text.last_mut() {
+            *last &= 0xFF << (8 - rem);
+        }
+    }
+
+    let mut data = payload;
+    data.extend_from_slice(&text);
+    let chunks: Vec<RawTag> = data.chunks(127).map(|c| RawTag { code: 310, value: hex_encode(c) }).collect();
+
+    // 重建 tags：更新 text_bits（162 / 96），替换 data 310 段为新的 chunk。
+    let mut out: Vec<RawTag> = Vec::with_capacity(tags.len() + chunks.len());
+    let mut i = 0;
+    while i < tags.len() {
+        let code = tags[i].code;
+        if code == 162 || code == 96 {
+            out.push(RawTag { code, value: new_text_bits.to_string() });
+            i += 1;
+            continue;
+        }
+        if code == 161 || code == 93 {
+            out.push(tags[i].clone());
+            i += 1;
+            while i < tags.len() && (tags[i].code == 310 || tags[i].code == 319) {
+                i += 1;
+            }
+            out.extend(chunks.iter().cloned());
+            continue;
+        }
+        out.push(tags[i].clone());
+        i += 1;
+    }
+    *tags = out;
+    true
+}
+
+/// 修改天正实体的一个字段值，并把改动写回 `raw_data` 和 tags（供保存 DWG 用）。
+///
+/// 从 `raw_data` 重新提取 text 流 → 解析字符串列表 → 改值 → 重新编码 → 替换回 `raw_data`，
+/// 同时把新 text 流同步回 `tags` 的 310（否则保存走 tags 原始值，改动不落盘）。
 /// 返回是否成功（实体非天正、无 raw_data、或字段不存在时返回 false）。
 pub fn set_tianzheng_field(d: &mut Drawing, handle: cadcraft_doc::Handle, field_name: &str, new_value: &str) -> bool {
     use cadcraft_doc::EntityKind;
@@ -132,7 +226,7 @@ pub fn set_tianzheng_field(d: &mut Drawing, handle: cadcraft_doc::Handle, field_
     if !changed {
         return false;
     }
-    let new_text = cadcraft_dwg::tianzheng::encode_text_strings(&new_strings);
+    let (new_text, new_text_bits) = cadcraft_dwg::tianzheng::encode_text_strings_with_bits(&new_strings);
     let new_raw = match cadcraft_dwg::tianzheng::replace_text_stream(&raw, t.handle_bits, &new_text) {
         Some(r) => r,
         None => return false,
@@ -140,6 +234,7 @@ pub fn set_tianzheng_field(d: &mut Drawing, handle: cadcraft_doc::Handle, field_
     d.model.modify(handle, |entity| {
         if let EntityKind::Tianzheng(t) = &mut entity.kind {
             t.raw_data = Some(new_raw);
+            sync_tianzheng_text(&mut t.tags, new_text_bits, &new_text);
             for (name, value) in &mut t.fields {
                 if name == field_name {
                     *value = new_value.to_string();
