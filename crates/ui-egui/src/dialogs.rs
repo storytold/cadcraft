@@ -26,6 +26,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "saveas" => crate::saveas::dialog(app, ctx, &mut open),
         "hatch" => crate::hatchdlg::dialog(app, ctx, &mut open),
         "aliasedit" => crate::aliasdlg::dialog(app, ctx, &mut open),
+        "find" => crate::finddlg::dialog(app, ctx, &mut open),
+        crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
@@ -34,6 +36,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
+        o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
     }
     // A dialog that closed by opening another (Plot Preview back to Plot) keeps the new one.
@@ -89,7 +92,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         let mut deg = current;
         ui.horizontal(|ui| {
             let label = ui.label(crate::tl!("Increment angle"));
-            let combo = egui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
                 for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
                     ui.selectable_value(&mut deg, a, format!("{a}"));
                 }
@@ -234,7 +237,7 @@ const INSERTION_UNITS: [&str; 25] = [
 /// A combo box over `(value, label)` options.
 fn pick(ui: &mut egui::Ui, salt: &str, value: &mut i64, options: &[(i64, String)]) {
     let current = options.iter().find(|o| o.0 == *value).map(|o| o.1.clone()).unwrap_or_default();
-    egui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
         for (k, label) in options {
             ui.selectable_value(value, *k, label);
         }
@@ -327,7 +330,7 @@ fn about(ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("About CADCraft"))
         .id(egui::Id::unique("About CADCraft"))
         .open(open)
-        .default_size(vec2(640.0, 420.0))
+        .default_size(vec2(820.0, 420.0))
         .collapsible(false)
         .show(ctx, |ui| {
             let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
@@ -434,7 +437,7 @@ fn insert_block(app: &mut CadApp, name: &str) {
 /// Interface Language combo; selecting a language runs `ui.language` with its code.
 fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("Interface Language")).id(egui::Id::unique("interface_language")).open(open).resizable(false).show(ctx, |ui| {
-        egui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
             for preference in crate::i18n::Preference::for_picker() {
                 if ui.selectable_label(app.ui.interface_language == preference, preference.name()).clicked() {
                     let _ = app.run("ui.language", serde_json::json!({"lang": preference.code()}));

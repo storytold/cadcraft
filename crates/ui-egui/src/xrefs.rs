@@ -6,8 +6,8 @@
 use egui::RichText;
 use serde_json::{Value, json};
 
-use crate::CadApp;
 use crate::docking::Panel;
+use crate::{CadApp, Pick};
 
 /// XREF typed or chosen from a menu opens this palette; XATTACH there asks for the file first
 /// (with the host's file picker, where there is one). JSON calls (with parameters) run the
@@ -19,37 +19,27 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     match cadcraft_engine::cmd::resolve_alias(id).as_str() {
         "xref" => Some(open_palette(app)),
         "xattach" => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f())?;
-            let path = relative_to_host(app, &picked);
-            if let Err(e) = app.session.start("xattach") {
-                return Some(Err(e.to_string()));
-            }
-            // Submit the picked filename as literal text, not through the command line: a path is
-            // attacker-controlled (the file picker returns whatever the user selected), and
-            // `cmdline` interprets command syntax, so a name like `'closeall` would run an engine
-            // command instead of naming the file (CWE-74).
-            if let Err(e) = app.session.input(cadcraft_engine::Input::Text(path)) {
-                return Some(Err(e.to_string()));
-            }
-            Some(Ok(Value::Null))
+            app.services.pick_open.as_ref()?;
+            let was_prompting = app.session.prompting();
+            app.pick_then(Pick::Open, move |app, picked| {
+                let path = relative_to_host(app, &picked);
+                app.start_after_pick("xattach", was_prompting)?;
+                // Submit the picked filename as literal text, not through the command line: a
+                // path is attacker-controlled (the file picker returns whatever the user
+                // selected), and `cmdline` interprets command syntax, so a name like `'closeall`
+                // would run an engine command instead of naming the file (CWE-74).
+                app.session.input(cadcraft_engine::Input::Text(path)).map_err(|e| e.to_string())?;
+                Ok(Value::Null)
+            })
         }
         _ => None,
     }
 }
 
-/// Show the palette. The first time it docks below the Layers palette (where the palettes column
-/// is); after that it comes back where it was.
+/// Show the palette. The first time it docks below Properties in the right dock; after that it
+/// comes back where it was.
 fn open_palette(app: &mut CadApp) -> Result<Value, String> {
-    let panel = Panel::ExternalRefs;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
-    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
-    if first && app.ui.docking.layout.contains(&Panel::Layers) {
-        let moved = json!({ "operation": "move", "panel": panel.id(), "target": Panel::Layers.id(), "zone": "bottom" });
-        if let Ok(r) = crate::docking::command(app, false, &moved) {
-            return Ok(r);
-        }
-    }
-    Ok(r)
+    crate::docking::command(app, false, &json!({ "operation": "open", "panel": Panel::ExternalRefs.id() }))
 }
 
 /// A picked file inside the host drawing's folder is attached by its relative path, so the
@@ -87,10 +77,16 @@ fn rows(app: &CadApp, ui: &egui::Ui) -> Vec<Row> {
     let xrefs: Vec<_> = d.blocks.values().filter(|b| b.xref_path.is_some() && !b.name.contains('|')).collect();
     let mut counts = vec![0usize; xrefs.len()];
     if !xrefs.is_empty() {
+        // Xref name (ASCII-upper-cased) → its row, the first of names that differ only in case, so
+        // each INSERT is one lookup instead of a scan of the xref list.
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (k, b) in xrefs.iter().enumerate() {
+            index.entry(b.name.to_ascii_uppercase()).or_insert(k);
+        }
         let mut count = |store: &cadcraft_engine::doc::EntityStore| {
             for e in store.iter() {
                 if let cadcraft_engine::doc::EntityKind::Insert(i) = &e.kind
-                    && let Some(k) = xrefs.iter().position(|b| b.name.eq_ignore_ascii_case(&i.block))
+                    && let Some(&k) = index.get(&i.block.to_ascii_uppercase())
                     && let Some(c) = counts.get_mut(k)
                 {
                     *c += 1;
@@ -201,7 +197,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
 fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>) {
     let name = r.name.clone();
     let loaded = r.status == "Loaded" || r.status == "Unreferenced";
-    let op = |option: &str| json!({ "option": option, "names": name });
+    let op = |option: &str| json!({ "option": option, "names": name, "exact": true });
     ui.horizontal_wrapped(|ui| {
         ui.add_space(8.0);
         if ui.button(crate::tl!("Reload")).clicked() {
@@ -225,7 +221,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
             .on_hover_text(crate::tl!("Make it a block of this drawing, keeping its layer names"))
             .clicked()
         {
-            *act = Some(Act::Run("-xref", json!({ "option": "bind", "names": name, "insert": true })));
+            *act = Some(Act::Run("-xref", json!({ "option": "bind", "names": name, "exact": true, "insert": true })));
         }
         if ui.add_enabled(r.status != "Not Found", egui::Button::new(crate::tl!("Open"))).clicked() {
             *act = Some(Act::Run("xopen", json!({ "name": name })));
@@ -239,7 +235,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
         let a = ui.radio_value(&mut overlay, false, crate::tl!("Attach")).clicked();
         let o = ui.radio_value(&mut overlay, true, crate::tl!("Overlay")).clicked();
         if (a || o) && overlay != r.overlay {
-            *act = Some(Act::Run("-xref", json!({ "option": "type", "names": name, "overlay": overlay })));
+            *act = Some(Act::Run("-xref", json!({ "option": "type", "names": name, "exact": true, "overlay": overlay })));
         }
     });
     ui.add_space(4.0);
@@ -252,7 +248,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
         let apply = ui.add_enabled(!text.trim().is_empty() && text != r.path, egui::Button::new(crate::tl!("Apply"))).clicked()
             || (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && text != r.path);
         if apply {
-            *act = Some(Act::Run("-xref", json!({ "option": "path", "names": name, "path": text.trim() })));
+            *act = Some(Act::Run("-xref", json!({ "option": "path", "names": name, "exact": true, "path": text.trim() })));
             ui.data_mut(|d| d.remove::<String>(path_id));
         } else if text != r.path {
             ui.data_mut(|d| d.insert_temp(path_id, text));

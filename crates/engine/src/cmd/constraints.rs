@@ -14,7 +14,8 @@ use cadcraft_geom::{Line, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, point_value, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 macro_rules! gc {
@@ -460,7 +461,7 @@ impl Interactive for GcM {
             }
             Input::Point(p) => {
                 let space = s.space();
-                let Some(h) = crate::select::pick(s.doc()?, &space, p, aperture(s)) else {
+                let Some(h) = s.pick_object(&space, p, aperture(s))? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
@@ -705,11 +706,11 @@ impl Interactive for DcM {
             Input::Point(p) => {
                 let space = s.space();
                 let ap = aperture(s);
-                let d = s.doc()?;
-                let Some(h) = crate::select::pick(d, &space, p, ap) else {
+                let Some(h) = s.pick_object(&space, p, ap)? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
+                let d = s.doc()?;
                 let want = match dc {
                     Dc::Radius | Dc::Diameter => Want::Curve,
                     Dc::Angular if self.refs.is_empty() => {
@@ -1199,5 +1200,4 @@ pub fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, ok: bool) {
 }
 
 #[cfg(test)]
-#[path = "constraints_tests.rs"]
 mod tests;

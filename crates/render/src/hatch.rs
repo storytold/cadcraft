@@ -12,7 +12,7 @@ use super::{Builder, Ctx, Ink, fill, ink, max_scale};
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::library::{PatternLine, pattern_for};
 use cadcraft_doc::{Drawing, Entity, Gradient, Hatch};
-use cadcraft_geom::{Bounds2, Polyline, Vec2, point_in_polygon};
+use cadcraft_geom::{Bounds2, PolyVertex, Polyline, Vec2, point_in_polygon};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Draw a hatch entity: `rgb` is its resolved colour, `tol` the chord tolerance.
@@ -128,7 +128,17 @@ const MAX_DEDUP_COMPARISONS: u64 = 50_000_000;
 /// within islands alternate), 1 outer keeps the outermost loops and their first islands, 2
 /// ignore keeps only the outermost loops. Nesting depth = how many other loops enclose a loop.
 pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
-    let mut loops: Vec<Vec<Vec2>> = h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(tol)).collect();
+    // One point budget for all the loops: many short arcs across loops must not add up unbounded.
+    let mut budget = cadcraft_geom::MAX_TESSELLATED_POINTS;
+    // Source loops that are the same boundary up to start vertex and winding are tessellated once, so a
+    // duplicate cannot be sampled coarser than its twin by the shared budget and then escape `dedup_polygons`.
+    let mut seen = std::collections::HashSet::new();
+    let mut loops: Vec<Vec<Vec2>> = h
+        .loops
+        .iter()
+        .filter(|l| seen.insert(canonical_key(&l.vertices)))
+        .map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate_within(tol, &mut budget))
+        .collect();
     dedup_polygons(&mut loops);
     let max_depth = match h.style {
         1 => 1,
@@ -144,6 +154,50 @@ pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
         loops.iter().enumerate().filter(|(j, o)| *j != i && point_in_polygon(o, p)).count()
     };
     loops.iter().enumerate().filter(|(i, l)| depth(*i, l) <= max_depth).map(|(_, l)| l.clone()).collect()
+}
+
+/// Start index of the least rotation of `s` (two-pointer scan, O(n)).
+fn least_rotation(s: &[[u64; 3]]) -> usize {
+    let n = s.len();
+    let (mut i, mut j, mut k) = (0, 1, 0);
+    while i < n && j < n && k < n {
+        let (a, b) = (s.get((i + k) % n), s.get((j + k) % n));
+        if a == b {
+            k += 1;
+            continue;
+        }
+        if a > b {
+            i += k + 1;
+        } else {
+            j += k + 1;
+        }
+        if i == j {
+            j += 1;
+        }
+        k = 0;
+    }
+    i.min(j)
+}
+
+/// A key equal for loops that are the same boundary starting at another vertex or wound the other way
+/// (reversing moves each bulge to the other end of its edge and negates it). Exact bits only; the
+/// tolerance-based `dedup_polygons` still catches near matches.
+fn canonical_key(v: &[PolyVertex]) -> Vec<[u64; 3]> {
+    let bits = |x: f64| (x + 0.0).to_bits(); // -0.0 and 0.0 match
+    let n = v.len();
+    let fwd: Vec<[u64; 3]> = v.iter().map(|q| [bits(q.p.x), bits(q.p.y), bits(q.bulge)]).collect();
+    let rev: Vec<[u64; 3]> = (0..n)
+        .map(|j| {
+            let i = n - 1 - j;
+            let edge = v.get((i + n - 1) % n).map_or(0.0, |q| -q.bulge);
+            v.get(i).map_or([0; 3], |q| [bits(q.p.x), bits(q.p.y), bits(edge)])
+        })
+        .collect();
+    let rotated = |s: &[[u64; 3]]| {
+        let k = least_rotation(s);
+        s.iter().cycle().skip(k).take(s.len()).copied().collect::<Vec<_>>()
+    };
+    rotated(&fwd).min(rotated(&rev))
 }
 
 /// A point of a loop to test its nesting with: the middle of its first non-degenerate edge
@@ -367,6 +421,7 @@ pub fn reads_solid(d: &Drawing, h: &Hatch, px: f64) -> bool {
 /// `px`: a pixel in the hatch's units for the level of detail (a dash or dot repeat under two
 /// pixels is one continuous run); 0 = full detail, as plots, exports and picks use. `view`: only
 /// the part of the hatch inside it is generated; `None` = all of it.
+#[cfg(test)]
 pub fn pattern_lines(d: &Drawing, h: &Hatch, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>) -> Vec<Vec<Vec2>> {
     pattern_lines_until(d, h, loops, px, view, None)
 }
@@ -381,6 +436,21 @@ pub(crate) fn pattern_lines_until(
     view: Option<&Bounds2>,
     cancel: Option<&AtomicBool>,
 ) -> Vec<Vec<Vec2>> {
+    pattern_lines_within(d, h, loops, px, view, cancel, MAX_RUNS, MAX_HATCH_WORK)
+}
+
+/// [`pattern_lines_until`] with the most runs and the dash-work allowance given.
+#[allow(clippy::too_many_arguments)]
+fn pattern_lines_within(
+    d: &Drawing,
+    h: &Hatch,
+    loops: &[Vec<Vec2>],
+    px: f64,
+    view: Option<&Bounds2>,
+    cancel: Option<&AtomicBool>,
+    max_runs: usize,
+    work_limit: u64,
+) -> Vec<Vec<Vec2>> {
     let lines = lines_of(d, h);
     let scale = scale_of(h);
     let px = if px.is_finite() && px > 0.0 { px } else { 0.0 };
@@ -388,7 +458,7 @@ pub(crate) fn pattern_lines_until(
     // Shared work budget across all families and spans, counting dash-processing steps even when
     // they emit no geometry: gap-only families produce no runs, so `out.len()` alone cannot bound
     // their cost (CWE-400).
-    let mut work: u64 = MAX_HATCH_WORK;
+    let mut work: u64 = work_limit;
     for fam in &lines {
         // A family with dashes but no positive (ink) element can never draw: skip it so its gaps
         // are not swept at all.
@@ -403,8 +473,8 @@ pub(crate) fn pattern_lines_until(
             continue;
         }
         let dashes: Vec<f64> = fam.dashes.iter().map(|d| d * scale).collect();
-        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
-        if out.len() >= MAX_RUNS || work == 0 || is_set(cancel) {
+        Family { max_runs, origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
+        if out.len() >= max_runs || work == 0 || is_set(cancel) {
             break;
         }
     }
@@ -415,6 +485,8 @@ pub(crate) fn pattern_lines_until(
 const SWATCH_REPEATS: f64 = 6.0;
 /// Most runs a swatch holds.
 const MAX_SWATCH_RUNS: usize = 4000;
+/// The dash-work allowance of a swatch (a hatch's is [`MAX_HATCH_WORK`]).
+const MAX_SWATCH_WORK: u64 = 2_000_000;
 
 /// A preview of a pattern for a pattern picker: the runs of its line families `lines` inside the
 /// `side` × `side` square with a corner at the origin, at a scale that shows a few repeats of the
@@ -441,14 +513,19 @@ pub fn pattern_swatch(lines: &[PatternLine], side: f64) -> Vec<Vec<Vec2>> {
         pattern_lines: lines.to_vec(),
     };
     let square = vec![Vec2::new(0.0, 0.0), Vec2::new(side, 0.0), Vec2::new(side, side), Vec2::new(0.0, side)];
-    let mut runs = pattern_lines(&Drawing::default(), &h, &[square], 0.0, None);
+    // The generator stops at the swatch's own limits, so a compact pattern is never made in full
+    // (about a million runs) to keep a few thousand.
+    let mut runs = pattern_lines_within(&Drawing::default(), &h, &[square], 0.0, None, None, MAX_SWATCH_RUNS, MAX_SWATCH_WORK);
     runs.truncate(MAX_SWATCH_RUNS);
+    runs.shrink_to_fit();
     runs
 }
 
 /// One pattern line family, scaled and placed: parallel lines `spacing` apart through `origin`
 /// at angle `ang`, each shifted along itself by `delta`'s along-line part from the last.
 struct Family<'a> {
+    /// Most runs the hatch may hold in all ([`MAX_RUNS`], less for a swatch).
+    max_runs: usize,
     origin: Vec2,
     ang: f64,
     delta: Vec2,
@@ -465,28 +542,41 @@ impl Family<'_> {
         self.origin + p.rotate(self.ang)
     }
 
-    /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
-    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
-        let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
-        let bb = Bounds2::from_points(local.iter().flatten().copied());
-        if bb.is_empty() {
-            return;
-        }
-        // The lines swept: the boundary's extent, cut to the view's (its corners in this frame)
-        // when there is one. Spans are cut to the view's extent only: they already lie within the
-        // boundary, and cutting them to its extent too would move an end that sits on a boundary
-        // corner by a rounding error, so a view covering the hatch would change its lines.
+    /// The range of the lines swept, in this frame: the boundary's extent, cut to the view's
+    /// when there is one, and the view's x extent that spans are cut to. Spans are cut to the
+    /// view's extent only: they already lie within the boundary, and cutting them to its extent
+    /// too would move an end that sits on a boundary corner by a rounding error, so a view
+    /// covering the hatch would change its lines. `None` when the view misses the boundary.
+    fn lines_range(&self, bb: &Bounds2, view: Option<&Bounds2>) -> Option<(Vec2, Vec2, Option<(f64, f64)>)> {
         let (mut lo, mut hi) = (bb.min, bb.max);
         let mut span_cut = None;
         if let Some(v) = view {
             let vb = Bounds2::from_points(v.corners().iter().map(|p| self.to_local(*p)));
-            if vb.is_empty() || !vb.intersects(&bb) {
-                return;
+            if vb.is_empty() || !vb.intersects(bb) {
+                return None;
             }
             lo = Vec2::new(lo.x.max(vb.min.x), lo.y.max(vb.min.y));
             hi = Vec2::new(hi.x.min(vb.max.x), hi.y.min(vb.max.y));
             span_cut = Some((vb.min.x, vb.max.x));
         }
+        Some((lo, hi, span_cut))
+    }
+
+    /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
+    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+        // Transforming the boundary is charged before it is done, at the scanline rate (one unit per 8 vertices).
+        let verts: u64 = loops.iter().map(|l| l.len() as u64).sum();
+        let transform_charge = verts / 8 + 1;
+        if transform_charge > *work {
+            return;
+        }
+        *work -= transform_charge;
+        let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
+        let bb = Bounds2::from_points(local.iter().flatten().copied());
+        if bb.is_empty() {
+            return;
+        }
+        let Some((lo, hi, span_cut)) = self.lines_range(&bb, view) else { return };
         let shift_per_line = self.delta.rotate(-self.ang).x;
         let k0 = (lo.y / self.spacing).floor() as i64;
         let k1 = (hi.y / self.spacing).ceil() as i64;
@@ -499,22 +589,19 @@ impl Family<'_> {
         // family draws anything at all).
         let draws = self.dashes.iter().any(|d| *d >= 0.0);
         let solid_line = self.dashes.is_empty() || pat_len < 1e-12 || (px > 0.0 && pat_len < 2.0 * px && draws);
+        // Each scanline visits every boundary edge and sorts the intersections. Charge both the
+        // traversal and an n*ceil(log2(n)) upper bound for sorting, scaled to one unit per eight
+        // operations, whether or not any dash is made.
+        let edges: u64 = local.iter().map(|l| l.len() as u64).sum();
+        let sort_levels = if edges > 1 { (u64::BITS - (edges - 1).leading_zeros()) as u64 } else { 0 };
+        let crossings_charge = edges.saturating_add(edges.saturating_mul(sort_levels)) / 8 + 1;
         for k in k0..=k1 {
-            if out.len() >= MAX_RUNS || *work == 0 || is_set(cancel) {
+            if out.len() >= self.max_runs || crossings_charge > *work || is_set(cancel) {
                 return;
             }
+            *work -= crossings_charge;
             let y = k as f64 * self.spacing;
-            let mut xs: Vec<f64> = Vec::new();
-            for l in &local {
-                let n = l.len();
-                for i in 0..n {
-                    let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
-                    if (a.y > y) != (b.y > y) {
-                        xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
-                    }
-                }
-            }
-            xs.sort_by(f64::total_cmp);
+            let xs = crossings(&local, y);
             let offset = shift_per_line * k as f64;
             for span in xs.chunks(2) {
                 let [x0, x1] = span else { continue };
@@ -528,24 +615,24 @@ impl Family<'_> {
                 if solid_line {
                     out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
                 } else {
-                    self.dash(x0, x1, y, offset, pat_len, out, work);
+                    self.dash((x0, x1), y, offset, pat_len, out, work);
                 }
             }
         }
     }
 
     /// The dashes and dots of the span `x0..x1` of the line at `y`, phase anchored at x = `offset`.
-    fn dash(&self, x0: f64, x1: f64, y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         let start_rep = ((x0 - offset) / pat_len).floor();
         let mut x = offset + start_rep * pat_len;
         let mut guard = 0;
         'outer: while x < x1 {
             for d in self.dashes {
                 guard += 1;
-                *work = work.saturating_sub(1);
-                if guard > 100_000 || out.len() >= MAX_RUNS || *work == 0 {
+                if guard > 100_000 || out.len() >= self.max_runs || *work == 0 {
                     break 'outer;
                 }
+                *work -= 1;
                 let len = d.abs();
                 if *d > 0.0 {
                     let a = x.max(x0);
@@ -563,6 +650,22 @@ impl Family<'_> {
             }
         }
     }
+}
+
+/// The x positions where the boundary loops cross the horizontal line at `y`, in order.
+fn crossings(local: &[Vec<Vec2>], y: f64) -> Vec<f64> {
+    let mut xs: Vec<f64> = Vec::new();
+    for l in local {
+        let n = l.len();
+        for i in 0..n {
+            let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
+            if (a.y > y) != (b.y > y) {
+                xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+            }
+        }
+    }
+    xs.sort_by(f64::total_cmp);
+    xs
 }
 
 #[cfg(test)]

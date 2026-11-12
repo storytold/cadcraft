@@ -8,7 +8,8 @@
 use cadcraft_doc::{Drawing, PlotStyle, PlotStyleKind, PlotStyleTable};
 use serde_json::{Value, json};
 
-use super::*;
+use super::super::targets;
+use super::{CommandSpec, Result, Session, bad, str_param};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -302,11 +303,9 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let meta = std::fs::metadata(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
-                        if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
-                            return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
-                        }
-                        std::fs::read_to_string(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
+                        let bytes = crate::capped_read::read_capped(std::path::Path::new(_path), cadcraft_doc::MAX_TABLE_FILE)
+                            .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        String::from_utf8(bytes).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
                     }
                     #[cfg(target_arch = "wasm32")]
                     return Err(bad(cmd, "files can't be read here: pass `text`"));
@@ -332,9 +331,8 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let tmp = format!("{_path}.cadcraft-tmp");
-                        std::fs::write(&tmp, text.as_bytes()).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
-                        std::fs::rename(&tmp, _path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        crate::atomic_write::write_atomic(std::path::Path::new(_path), text.as_bytes())
+                            .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         Ok(json!({ "name": name, "path": _path, "bytes": text.len() }))
                     }
                     #[cfg(target_arch = "wasm32")]

@@ -70,20 +70,17 @@ pub struct SaveAsState {
 }
 
 impl SaveAsState {
-    /// The choices a drawing starts from: its own file type and version (an untitled drawing:
-    /// the default save format and version) and its binary flag.
+    /// The choices a drawing starts from: the default save format, the drawing's own version (an
+    /// untitled drawing: the default save version) and its binary flag.
     pub fn for_app(app: &CadApp) -> SaveAsState {
         let st = app.session.state().ok();
         let untitled = st.as_ref().is_none_or(|s| s.path.is_none());
-        let title = st.as_ref().map(|s| s.title.clone()).unwrap_or_default();
-        let from_title = std::path::Path::new(&title).extension().and_then(|e| FileType::from_ext(&e.to_string_lossy()));
-        let default_type = match app.ui.save_format {
+        // The default save format, for an opened drawing too (#2199: AutoCAD's Options > Open and
+        // Save > "Save as"); the dialog can change it.
+        let file_type = match app.ui.save_format {
             SaveFormat::Dxf => FileType::Dxf,
             SaveFormat::Dwg => FileType::Dwg,
         };
-        // A drawing from a file keeps its type (a template stays a template); an untitled one,
-        // or one from an image, takes the default save format.
-        let file_type = from_title.filter(|t| t.versioned() || (*t == FileType::Dwt && !untitled)).unwrap_or(default_type);
         let own =
             app.session.doc().ok().and_then(|d| d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(SaveVersion::for_acadver));
         let version = match (untitled, own) {
@@ -134,19 +131,28 @@ pub(crate) fn with_extension(path: &str, ext: &str) -> String {
     if has { path.to_string() } else { format!("{path}.{ext}") }
 }
 
-/// Ask the host where to save and run `saveas` with the dialog's choices. `Some(true)` once
-/// saved, `Some(false)` when the picker was cancelled or the save failed (the dialog stays),
-/// `None` without a picker (said on the command line).
+/// Ask the host where to save and run `saveas` with the dialog's choices, on the drawing that is
+/// active now. `Some(true)` once saved, or once an asynchronous file dialog is shown (the save
+/// happens when it answers, [`CadApp::pick_then`]); `Some(false)` when the picker was cancelled
+/// or the save failed (the dialog stays); `None` without a picker (said on the command line).
 pub fn save(app: &mut CadApp) -> Option<bool> {
     let st = app.saveas.clone().unwrap_or_else(|| SaveAsState::for_app(app));
     let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
-    let Some(pick) = app.services.pick_save.as_ref() else {
+    if app.services.pick_save.is_none() {
         app.session
             .echo(r#"SAVEAS: there is no file dialog here; run it with parameters, e.g. saveas {"path": "plan.dxf", "version": 2018}"#.to_string());
         return None;
-    };
-    let Some(path) = pick(&st.suggested_name(&title)) else { return Some(false) };
-    Some(app.run("saveas", st.params(&with_extension(&path, st.file_type.ext()))).is_ok())
+    }
+    let asynchronous = app.services.start_pick.is_some();
+    let saved = std::rc::Rc::new(std::cell::Cell::new(false));
+    let flag = saved.clone();
+    let name = st.suggested_name(&title);
+    let r = app.pick_then(crate::Pick::Save(name), move |app, path| {
+        let r = app.run("saveas", st.params(&with_extension(&path, st.file_type.ext())));
+        flag.set(r.is_ok());
+        r
+    })?;
+    Some(r.is_ok() && (asynchronous || saved.get()))
 }
 
 /// A dimmed, wrapping note.
@@ -173,7 +179,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.set_max_width(440.0);
             egui::Grid::new("saveas_grid").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
                 ui.label(crate::tl!("File type"));
-                egui::ComboBox::from_id_salt("saveas_type").selected_text(st.file_type.label()).width(260.0).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("saveas_type").selected_text(st.file_type.label()).width(260.0).show_ui(ui, |ui| {
                     for ft in FileType::ALL {
                         ui.selectable_value(&mut st.file_type, ft, ft.label());
                     }
@@ -181,7 +187,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.end_row();
                 if st.file_type.versioned() {
                     ui.label(crate::tl!("Version"));
-                    egui::ComboBox::from_id_salt("saveas_version").selected_text(version_label(st.version)).width(260.0).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt("saveas_version").selected_text(version_label(st.version)).width(260.0).show_ui(ui, |ui| {
                         for v in SaveVersion::ALL {
                             ui.selectable_value(&mut st.version, v, version_label(v));
                         }

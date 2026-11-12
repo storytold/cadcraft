@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, MAX_BLOCK_DEPTH, Space, entity_bounds};
+use cadcraft_doc::{BlockBoundsCache, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_DEPTH, Space, entity_bounds_cached};
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{CommandSpec, bad, str_param};
+
 use super::{base64_decode, io};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -109,7 +110,7 @@ fn other_drawing(s: &Session, p: &Value) -> Result<(Arc<Drawing>, String)> {
 fn read_path(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("compare", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), super::MAX_DRAWING_BYTES).map_err(|e| bad("compare", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("compare", "paths are not available on the web: open the other drawing and compare with it by name (`document`)"))
@@ -374,16 +375,20 @@ fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let Diff { added, removed, changed, common, truncated } = diff(&cur, &other, &space);
     let mut boxes = Vec::new();
-    let mut bound = |d: &Drawing, h: Handle| {
-        if let Some(b) = d.entity(h).map(|e| entity_bounds(d, e, 0)).filter(|b| !b.is_empty() && b.min.is_finite() && b.max.is_finite()) {
+    // One block-bounds cache for each drawing, so a block many differing entities refer to is
+    // measured once, not once per entity.
+    let (mut cur_cache, mut other_cache) = (BlockBoundsCache::default(), BlockBoundsCache::default());
+    fn bound<'a>(boxes: &mut Vec<Bounds2>, d: &'a Drawing, h: Handle, cache: &mut BlockBoundsCache<'a>) {
+        if let Some(b) = d.entity(h).map(|e| entity_bounds_cached(d, e, 0, cache)).filter(|b| !b.is_empty() && b.min.is_finite() && b.max.is_finite())
+        {
             boxes.push(b);
         }
-    };
-    added.iter().for_each(|h| bound(&cur, *h));
-    removed.iter().for_each(|h| bound(&other, *h));
+    }
+    added.iter().for_each(|h| bound(&mut boxes, &cur, *h, &mut cur_cache));
+    removed.iter().for_each(|h| bound(&mut boxes, &other, *h, &mut other_cache));
     for (a, b, _, _) in &changed {
-        bound(&cur, *a);
-        bound(&other, *b);
+        bound(&mut boxes, &cur, *a, &mut cur_cache);
+        bound(&mut boxes, &other, *b, &mut other_cache);
     }
     let regions = regions(&boxes);
     let ch: Vec<Value> = changed

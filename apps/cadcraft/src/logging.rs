@@ -3,7 +3,7 @@
 //! Without a logger every `log::warn!`/`log::error!`/`log::info!` in the workspace (a broken app
 //! icon, the GPU canvas set-up, the control server) vanished. A launch from a desktop menu has no
 //! terminal, so the file is what a bug report can attach: `<settings dir>/logs/cadcraft.log`
-//! (`CADCRAFT_CONFIG_DIR`, or the platform settings directory; see `config_dir` in `main.rs`).
+//! (`CADCRAFT_CONFIG_DIR`, or the platform settings directory; empty means none; see `env.rs`).
 //! Each start moves the previous log to `cadcraft.1.log` (and that one to `.2`), so the log of a
 //! run that crashed survives the next launch.
 //!
@@ -148,7 +148,20 @@ pub fn rotate(dir: &Path) -> std::io::Result<(PathBuf, File)> {
 /// One formatted log line: `<timestamp> <LEVEL> [<thread>] <target>: <message>\n`.
 pub fn format_line(ts: &str, level: log::Level, thread: &str, target: &str, message: &str) -> String {
     let message = message.strip_suffix('\n').unwrap_or(message);
-    format!("{ts} {level:<5} [{thread}] {target}: {message}\n")
+    // A message can carry text from a file (a code page name, a path), so it must not be able to
+    // start what looks like another record: control characters other than tab and line feed are
+    // shown escaped, and every continuation line is indented, so only this function's own
+    // timestamp is ever at the start of a line.
+    let mut safe = String::with_capacity(message.len());
+    for c in message.chars() {
+        match c {
+            '\n' => safe.push_str("\n    "),
+            '\t' => safe.push('\t'),
+            c if c.is_control() => safe.extend(c.escape_default()),
+            c => safe.push(c),
+        }
+    }
+    format!("{ts} {level:<5} [{thread}] {target}: {safe}\n")
 }
 
 /// Where formatted lines go besides standard error: kept in memory until a file is attached,
@@ -441,8 +454,14 @@ mod tests {
             format_line("2026-10-08T07:59:17.728Z", log::Level::Warn, "main", "cadcraft", "app icon: invalid PNG signature"),
             "2026-10-08T07:59:17.728Z WARN  [main] cadcraft: app icon: invalid PNG signature\n"
         );
-        // A multi-line message keeps its lines; the record still ends in exactly one newline.
-        assert!(format_line("t", log::Level::Error, "w", "x", "a\nb\n").ends_with("x: a\nb\n"));
+        // A multi-line message keeps its lines, indented so they can't pass for records; the
+        // record still ends in exactly one newline.
+        assert!(format_line("t", log::Level::Error, "w", "x", "a\nb\n").ends_with("x: a\n    b\n"));
+        // Control characters in a message (from a file) can't forge a record.
+        let forged = format_line("t", log::Level::Warn, "w", "x", "page\r\n2026-01-01T00:00:00Z ERROR [main] x: fake\u{1b}[0m");
+        assert_eq!(forged.lines().count(), 2);
+        assert!(forged.lines().skip(1).all(|l| l.starts_with("    ")));
+        assert!(!forged.contains('\r') && !forged.contains('\u{1b}'));
     }
 
     #[test]

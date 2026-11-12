@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Drawing, Entity, EntityKind, Handle, Insert, MLeader, MLeaderStyle, MText};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
+use craft_dxf::Tag;
 
 /// Most leader roots (landings) read per multileader.
 const MAX_ROOTS: usize = 256;
@@ -325,6 +325,7 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }
     });
     MLeader {

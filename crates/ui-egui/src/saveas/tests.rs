@@ -22,17 +22,18 @@ fn app_with_picker(answer: Option<String>) -> (CadApp, Rc<RefCell<Vec<String>>>)
     (CadApp::new(Session::new(), services), asked)
 }
 
-/// Save As opens the dialog, not the picker, on the drawing's own type and version (a template
-/// stays a template), and its choices become the `saveas` parameters.
+/// Save As opens the dialog, not the picker, on the default save format (for an opened drawing
+/// too, #2199) and the drawing's own version, and its choices become the `saveas` parameters.
 #[test]
-fn save_as_opens_the_dialog_with_the_drawings_own_type_and_version() {
+fn save_as_opens_the_dialog_with_the_default_format_and_the_drawings_own_version() {
     let (mut app, asked) = app_with_picker(Some("x.dxf".into()));
     app.start("ui.saveas");
     assert_eq!(app.ui.dialog.as_deref(), Some("saveas"));
     assert!(asked.borrow().is_empty(), "the picker waits for Save...");
     let st = app.saveas.clone().unwrap();
     assert_eq!((st.file_type, st.version, st.binary), (FileType::Dxf, SaveVersion::R2018, false));
-    // A drawing opened as a 2000 DWG.
+    // A drawing opened as a 2000 DWG, with DWG as the default save format.
+    app.ui.save_format = crate::SaveFormat::Dwg;
     let mut d = cadcraft_doc::Drawing::new_metric();
     d.header.set_str("ACADVER", "AC1015");
     app.session.open_drawing(d, "plan.dwg", Some("/tmp/plan.dwg".into()));
@@ -41,10 +42,15 @@ fn save_as_opens_the_dialog_with_the_drawings_own_type_and_version() {
     assert_eq!((st.file_type, st.version), (FileType::Dwg, SaveVersion::R2000));
     assert_eq!(st.suggested_name("plan.dwg"), "plan.dwg");
     assert_eq!(st.params("/tmp/plan.dwg"), json!({ "path": "/tmp/plan.dwg", "version": "2000" }));
-    // A template from a file stays a template.
+    // With DXF as the default, the same DWG is offered as DXF in its own version.
+    app.ui.save_format = crate::SaveFormat::Dxf;
+    open(&mut app);
+    let st = app.saveas.clone().unwrap();
+    assert_eq!((st.file_type, st.version), (FileType::Dxf, SaveVersion::R2000));
+    // A template from a file is offered in the default format too, as upstream's Save As does.
     app.session.open_drawing(cadcraft_doc::Drawing::new_metric(), "base.dwt", Some("/tmp/base.dwt".into()));
     open(&mut app);
-    assert_eq!(app.saveas.as_ref().map(|s| s.file_type), Some(FileType::Dwt));
+    assert_eq!(app.saveas.as_ref().map(|s| s.file_type), Some(FileType::Dxf));
 }
 
 /// Choices that don't go together settle (binary is for DXF), images and templates carry no

@@ -5,7 +5,8 @@ use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, Entity, Handle};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, str_param};
+
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -107,8 +108,9 @@ fn property(d: &Drawing, e: &Entity, name: &str) -> Option<Value> {
 
 /// Glob match, case-insensitive: `*` any run, `?` one character, `#` one digit.
 pub fn wildcard(pat: &str, text: &str) -> bool {
-    let p: Vec<char> = pat.to_lowercase().chars().take(1024).collect();
-    let t: Vec<char> = text.to_lowercase().chars().take(4096).collect();
+    // Only the characters that can match are lower-cased, so a huge text isn't copied whole.
+    let p: Vec<char> = pat.chars().take(1024).flat_map(char::to_lowercase).collect();
+    let t: Vec<char> = text.chars().take(4096).flat_map(char::to_lowercase).collect();
     // Iterative matcher with single back-track point (linear-ish, no recursion).
     let (mut pi, mut ti) = (0usize, 0usize);
     let mut star: Option<(usize, usize)> = None;
@@ -174,8 +176,14 @@ pub fn compare(prop: &Value, op: Op, value: &Value) -> bool {
             if ptxt.eq_ignore_ascii_case(vtxt.trim()) {
                 return true;
             }
-            // Colours: `red` = `1` = `Red`; `bylayer` = `ByLayer`.
-            match (Color::parse(&ptxt), Color::parse(vtxt.trim())) {
+            // Colours: `red` = `1` = `Red`; `bylayer` = `ByLayer`. No colour spelling is long, so a
+            // long text (a layer name from a file) isn't parsed, copied and split per entity.
+            const MAX_COLOR_TEXT: usize = 64;
+            let (pc, vc) = (ptxt.trim(), vtxt.trim());
+            if pc.len() > MAX_COLOR_TEXT || vc.len() > MAX_COLOR_TEXT {
+                return false;
+            }
+            match (Color::parse(pc), Color::parse(vc)) {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             }
@@ -320,9 +328,8 @@ fn run_info(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
+    use serde_json::json;
 
     fn session() -> Session {
         let mut s = Session::new();
@@ -398,5 +405,28 @@ mod tests {
         assert!(!wildcard("a*d", "abc"));
         assert!(wildcard("*b*", "abc"));
         assert!(!wildcard(&"*a".repeat(500), &"b".repeat(4000)));
+    }
+}
+
+#[cfg(test)]
+mod long_text_tests {
+    use super::*;
+
+    /// A long string property is compared as text only, and a colour name still equals its index.
+    #[test]
+    fn long_values_skip_colour_parsing() {
+        let long = Value::String("x".repeat(100_000));
+        assert!(compare(&long, Op::Eq, &long));
+        assert!(!compare(&long, Op::Eq, &Value::String("red".into())));
+        assert!(compare(&Value::String("red".into()), Op::Eq, &Value::String("1".into())));
+    }
+
+    /// Padding is trimmed before the length limit, so a padded colour still matches.
+    #[test]
+    fn padded_colours_still_match() {
+        let padded = |c: &str| Value::String(format!("{}{c}{}", " ".repeat(100), " ".repeat(100)));
+        assert!(compare(&padded("red"), Op::Eq, &Value::String("1".into())));
+        assert!(compare(&Value::String("red".into()), Op::Eq, &padded("1")));
+        assert!(!compare(&padded("red"), Op::Ne, &padded("1")));
     }
 }
