@@ -117,6 +117,12 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
             _ => {}
         }
     }
+    // Each Copy clones every selected object: the copies together stay within MAXARRAY, as an array's do.
+    // Erased handles are skipped by `apply`, so only live objects count (none: nothing is copied).
+    let live = counts(s, &objs)?.0;
+    if live > 0 {
+        crate::cmd::array::check_size(s, ops.iter().filter(|o| matches!(o, Op::Copy(_))).count() as u64, live)?;
+    }
     let mut copies = Vec::new();
     for op in ops {
         copies.extend(apply(s, &objs, &mut base, op)?);
@@ -150,6 +156,12 @@ pub(super) struct MocoroM {
 
 impl MocoroM {
     fn run(&mut self, s: &mut Session, op: Op) -> Result<Step> {
+        if matches!(op, Op::Copy(_)) {
+            let live = counts(s, &self.objs)?.0;
+            if live > 0 {
+                crate::cmd::array::check_size(s, 1, live)?;
+            }
+        }
         let before = s.state()?.doc.clone();
         let base = self.base;
         apply(s, &self.objs, &mut self.base, op)?;

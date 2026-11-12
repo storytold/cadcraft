@@ -153,6 +153,40 @@ pub struct MTextLayout {
     pub bounds: Bounds2,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
+    /// Whether the geometry stops short: the layout reached its allowance of retained points
+    /// ([`Allowance`]) and the segments after that are not drawn.
+    pub truncated: bool,
+}
+
+/// The points all the segments of one layout may keep together, each counted for both copies the
+/// layout holds: the allowance one shaped line has (`MAX_SHAPED_POINTS`), so a short repeated detailed glyph over many segments cannot multiply it.
+pub(crate) struct Allowance(usize);
+
+impl Allowance {
+    pub(crate) fn new() -> Self {
+        Allowance(crate::ttf::MAX_SHAPED_POINTS)
+    }
+
+    /// Whether any allowance is left, before a segment is shaped.
+    pub(crate) fn left(&self) -> bool {
+        self.0 > 0
+    }
+
+    /// Charge the points of `sh`; false (and nothing left) when it does not fit.
+    pub(crate) fn charge(&mut self, sh: &Shaped) -> bool {
+        // Kept twice: in the piece and again in the layout's flat `strokes`.
+        let n = 2 * (sh.strokes.iter().map(Vec::len).sum::<usize>() + sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>());
+        match self.0.checked_sub(n) {
+            Some(rest) => {
+                self.0 = rest;
+                true
+            }
+            None => {
+                self.0 = 0;
+                false
+            }
+        }
+    }
 }
 
 /// Inline character format.
@@ -850,6 +884,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = Allowance::new();
     for (l, base_y) in lines.iter().zip(baselines) {
         let x0 = match col {
             0 => 0.0,
@@ -859,7 +894,15 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
         for it in &l.items {
             let Some(sg) = &it.seg else { continue };
             let fm = fmt(it.fmt);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
             let mut sh = seg_shape(sg, fm, it.x);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(x0, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {
@@ -896,6 +939,17 @@ mod tests {
         assert_eq!(l.lines[0], "alpha beta gamma");
     }
 
+    /// The points of all the segments of one layout are charged against one allowance.
+    #[test]
+    fn a_layout_shares_one_point_allowance() {
+        let big = Shaped { strokes: vec![vec![Vec2::ZERO; crate::ttf::MAX_SHAPED_POINTS / 4 + 1]], ..Default::default() };
+        let mut a = Allowance::new();
+        assert!(a.left() && a.charge(&big), "the first segment fits");
+        assert!(!a.charge(&big), "the second does not, though each alone would");
+        assert!(!a.left(), "and nothing is left to shape another");
+        assert!(!layout_mtext("plain text", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0).truncated);
+    }
+
     #[test]
     fn strips_formatting() {
         assert_eq!(plain_mtext("{\\fArial|b1;Bold}\\Pline 2"), "Bold\nline 2");
@@ -904,7 +958,7 @@ mod tests {
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
         assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
-        assert_eq!(plain_mtext("\\U+12"), "", "a short escape is a code with an argument");
+        assert_eq!(plain_mtext("\\U+12"), "+12", "a short escape loses only the backslash and the code");
     }
 
     #[test]
@@ -928,6 +982,8 @@ mod tests {
         assert_eq!(plain_mtext("\\M+5BCFE x;y"), "\u{4ef6} x;y");
         // Malformed escapes lose only the backslash and the code.
         assert_eq!(plain_mtext("a\\U+12 b"), "a+12 b");
+        assert_eq!(lay("a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
+        assert_eq!(lay("\\pxql;a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
         assert_eq!(plain_mtext("a\\M+ b"), "a+ b");
     }
 
