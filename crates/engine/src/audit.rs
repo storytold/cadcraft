@@ -319,9 +319,13 @@ fn all_handles(d: &Drawing) -> HashSet<Handle> {
 }
 
 /// The next handle is above every handle in use, so new objects never take an existing one.
+///
+/// A handle at or above [`cadcraft_doc::HANDLE_LIMIT`] is the file's own and is deliberately not
+/// followed: the seed never moves past it, and new objects take free handles in the band above
+/// the limit. Reporting it would repeat the same repair on every audit, so it is not an issue.
 fn handseed(d: &mut Drawing, out: &mut Vec<Issue>) {
     let Some(max) = each_entity(d).map(|e| e.handle).max() else { return };
-    if max.0 >= d.handseed {
+    if max.0 >= d.handseed && max.0 < cadcraft_doc::HANDLE_LIMIT {
         out.push(issue(
             "handseed",
             "header",

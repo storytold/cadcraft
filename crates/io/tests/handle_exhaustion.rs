@@ -90,3 +90,46 @@ fn nine_objects_drawn_after_a_saturated_seed_save_and_reopen_distinct() {
     let unique: std::collections::HashSet<Handle> = handles.iter().copied().collect();
     assert_eq!(unique.len(), handles.len(), "repeated handles on reopen: {handles:?}");
 }
+
+/// The first handle in the reserved band above [`HANDLE_LIMIT`].
+const BAND: &str = "FFFFFFFF00000000";
+
+#[test]
+fn a_seed_in_the_reserved_band_does_not_hand_out_the_files_handle() {
+    // #913's remaining case: a file says its next handle is FFFFFFFF00000000 and an object holds
+    // that handle. Following the seed once would hand the object's handle to the new object, and
+    // `EntityStore` would replace the file's line.
+    let mut d = read(&dxf(Some(BAND), BAND));
+    assert_eq!(d.model.len(), 1);
+    let n = d.add(&Space::Model, Common::default(), line(10.0, 10.0)).unwrap();
+    assert_ne!(n, Handle::parse_hex(BAND).unwrap(), "the new object took the file object's handle");
+    assert_eq!(d.model.len(), 2, "the file's line was replaced");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 0.0)), "the file's line is gone");
+
+    let bytes = cadcraft_io::write(&d, "band-seed.dxf").unwrap();
+    let r = cadcraft_io::read_dxf(&bytes).unwrap();
+    let handles = distinct(&r);
+    let unique: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+    assert_eq!(unique.len(), handles.len(), "repeated handles on reopen: {handles:?}");
+    assert_eq!(r.model.len(), 2, "a line did not survive the save");
+}
+
+#[test]
+fn a_save_does_not_give_a_structural_record_an_objects_handle() {
+    // The writer numbers its own records from `seed + 0x1000`; with the seed at the bottom of the
+    // reserved band that lands on the file's own handle. The file must keep one record per handle.
+    let object = "FFFFFFFF00001000";
+    let d = read(&dxf(Some(object), "FFFFFFFEFFFFFFFF"));
+    let bytes = cadcraft_io::write(&d, "band-structural.dxf").unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
+    // Record handles start with the TABLES section; before it the HEADER's `$HANDSEED` is the
+    // next free handle, not a record's.
+    let after_header = tags.iter().position(|t| t.code == 2 && t.str() == "TABLES").unwrap();
+    let written: Vec<String> = tags[after_header..].iter().filter(|t| t.code == 5 || t.code == 105).map(|t| t.str().to_string()).collect();
+    let unique: std::collections::HashSet<&String> = written.iter().collect();
+    assert_eq!(unique.len(), written.len(), "the save repeats a handle: {written:?}");
+    assert_eq!(written.iter().filter(|h| h.as_str() == object).count(), 1, "the object's handle was not written exactly once");
+
+    let r = cadcraft_io::read_dxf(&bytes).unwrap();
+    assert!(r.entity(Handle::parse_hex(object).unwrap()).is_some(), "the file's object is gone");
+}

@@ -214,11 +214,31 @@ impl Drawing {
         }
     }
 
-    /// Allocate a fresh handle.
+    /// Allocate a fresh handle: the first one at or above the seed that no object uses.
+    ///
+    /// The seed alone is not enough. A hostile or damaged file may name a `$HANDSEED` in the
+    /// reserved band above [`HANDLE_LIMIT`], and a file object may hold that same handle; taking
+    /// the seed as-is would hand the file's object's handle to a new object and `EntityStore`
+    /// would replace it (#913). The band above the limit is where new objects grow, so a used
+    /// handle there is skipped rather than handed out.
     pub fn new_handle(&mut self) -> Handle {
-        let h = Handle(self.handseed);
-        self.handseed = self.handseed.saturating_add(1);
-        h
+        loop {
+            let h = Handle(self.handseed);
+            self.handseed = self.handseed.saturating_add(1);
+            if !self.handle_in_use(h) {
+                return h;
+            }
+            // All 64-bit handles in use: wrap into the band the file's own handles sit above,
+            // which is also where growth happens, and keep looking there.
+            if h.0 == u64::MAX {
+                self.handseed = HANDLE_LIMIT;
+            }
+        }
+    }
+
+    /// Whether an object in any space or block definition already holds `h`.
+    fn handle_in_use(&self, h: Handle) -> bool {
+        self.model.contains(h) || self.layouts.iter().any(|l| l.entities.contains(h)) || self.blocks.values().any(|b| b.entities.contains(h))
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
     ///

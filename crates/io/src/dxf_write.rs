@@ -3,7 +3,7 @@
 //! the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller picks the text encoding) and
 //! MULTILEADER entities (older files get LEADER + MTEXT).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{
@@ -39,6 +39,9 @@ use sections::tags_for;
 struct W {
     t: Vec<Tag>,
     next: u64,
+    /// Handles the drawing's objects already hold: structural records skip them, so writing a
+    /// file whose own handles sit near the top of the range never repeats a handle (#913).
+    used: HashSet<u64>,
     /// Upper-case plot style name → its `ACDBPLACEHOLDER` handle (group 390 of layers and objects).
     pstyles: HashMap<String, String>,
     /// Upper-case layer name → its LAYER table record handle (group 331/341 of viewports).
@@ -46,6 +49,21 @@ struct W {
     /// Persistent reactors of source geometry: the associative hatches and DIMASSOC objects
     /// that follow it (groups `{ACAD_REACTORS 330 …}`).
     reactors: HashMap<Handle, Vec<String>>,
+}
+
+/// Where the writer's own records (tables, objects, dictionaries) start numbering: above every
+/// object handle and the drawing's seed, with headroom for handles the drawing allocates next.
+fn structural_start(d: &Drawing) -> u64 {
+    let highest = entity_handles(d).max().unwrap_or(0);
+    d.handseed.max(0x100).max(highest.saturating_add(1)).saturating_add(0x1000)
+}
+
+/// Every handle an object holds, plus the drawing's next one.
+fn entity_handles(d: &Drawing) -> impl Iterator<Item = u64> + '_ {
+    let model = d.model.iter().map(|e| e.handle.0);
+    let layouts = d.layouts.iter().flat_map(|l| l.entities.iter()).map(|e| e.handle.0);
+    let blocks = d.blocks.values().flat_map(|b| b.entities.iter()).map(|e| e.handle.0);
+    model.chain(layouts).chain(blocks).chain(std::iter::once(d.handseed))
 }
 
 impl W {
@@ -71,10 +89,21 @@ impl W {
         format!("{:X}", self.next_handle())
     }
     /// A new handle for a record the drawing doesn't hold (as [`W::h`]).
+    ///
+    /// Skips every handle in use, so a file object carrying a handle above the seed (the
+    /// reserved band) is not handed out again, and wraps into that band if the writer runs off
+    /// the top of the range.
     fn next_handle(&mut self) -> u64 {
-        let h = self.next;
-        self.next = self.next.saturating_add(1);
-        h
+        loop {
+            let h = self.next;
+            self.next = self.next.saturating_add(1);
+            if self.used.insert(h) {
+                return h;
+            }
+            if h == u64::MAX {
+                self.next = cadcraft_doc::HANDLE_LIMIT;
+            }
+        }
     }
     /// A `102 {NAME` … `102 }` group of handles.
     fn group(&mut self, name: &str, code: i32, handles: &[&str]) {
@@ -152,7 +181,8 @@ fn bridge_markers(tags: &mut [Tag]) {
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
     let mut w = W {
         t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
+        next: structural_start(d),
+        used: entity_handles(d).collect(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         reactors: HashMap::new(),

@@ -329,3 +329,21 @@ fn auditctl_generates_adt_report_file() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_handle_in_the_reserved_band_is_not_repaired_on_every_audit() {
+    // A file object above HANDLE_LIMIT keeps its handle, and the seed deliberately does not move
+    // past it (#913). AUDIT must not report that policy as an error its own repair never fixes.
+    let band = Handle(cadcraft_engine::doc::HANDLE_LIMIT);
+    let mut d = Drawing::new_imperial();
+    d.space_mut(&Space::Model).unwrap().push(Entity { handle: band, common: Common::default(), kind: line((0.0, 0.0), (1.0, 0.0)) });
+    d.handseed = band.0;
+    for _ in 0..3 {
+        let r = cadcraft_engine::audit::check(&d);
+        assert!(r.issues.iter().all(|i| i.kind != "handseed"), "{}", r.message());
+    }
+    let mut repaired = d.clone();
+    let r = cadcraft_engine::audit::repair(&mut repaired);
+    assert!(r.iter().all(|i| i.kind != "handseed"), "{r:?}");
+    assert_eq!(repaired.handseed, band.0, "the seed moved past the file's own handle");
+}
