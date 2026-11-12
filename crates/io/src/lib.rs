@@ -5,6 +5,8 @@
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
+/// XCLIP boundaries as SPATIAL_FILTER objects.
+mod dxf_clip;
 mod dxf_ext;
 mod dxf_image;
 mod dxf_mleader;
@@ -29,7 +31,7 @@ use cadcraft_geom::Bounds2;
 use std::path::{Path, PathBuf};
 
 pub use cadcraft_doc::Format;
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
@@ -112,10 +114,10 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
             // Before 2007 the text is in the code page the header declares.
             let code_page = dxf_write::code_page(d, version);
             Ok(match (opts.binary, version.utf8()) {
-                (true, true) => cadcraft_dxf::write_binary(&tags, true),
-                (true, false) => cadcraft_dxf::write_binary_in(&tags, &code_page),
-                (false, true) => cadcraft_dxf::write_ascii_as(&tags, true).into_bytes(),
-                (false, false) => cadcraft_dxf::write_ascii_in(&tags, &code_page),
+                (true, true) => craft_dxf::write_binary(&tags, true),
+                (true, false) => craft_dxf::write_binary_in(&tags, &code_page),
+                (false, true) => craft_dxf::write_ascii_as(&tags, true).into_bytes(),
+                (false, false) => craft_dxf::write_ascii_in(&tags, &code_page),
             })
         }
         // The DWG bridge reads our R2000 DXF and writes the DWG at the version asked for. Without
@@ -139,9 +141,12 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 }
 
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
-/// there is one.
+/// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
+/// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
+/// reads them as that version.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    cadcraft_dwg::encode_noted(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
+    let bridge = dxf_write::dwg_bridge(d, version);
+    cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
