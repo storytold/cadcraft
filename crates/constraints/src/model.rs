@@ -14,9 +14,11 @@
 //! Constraints may append auxiliary unknowns after the entity parameters (contact parameters of
 //! a tangency between curves); they are never written back.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use cadcraft_doc::{Drawing, EntityKind, GeomRef, Handle, Insert, Sub};
+use cadcraft_doc::{Block, Drawing, EntityKind, GeomRef, Handle, Insert, Sub};
 use cadcraft_geom::{Spline as GSpline, Vec2, ccw_sweep};
 
 use crate::curves::{Ell, Frame, clamped, spline_end};
@@ -32,6 +34,8 @@ pub const MAX_RIGID_POINTS: usize = 256;
 const MAX_RIGID_MEMBERS: usize = 100_000;
 /// Shared across every model built for one analysis request.
 pub(crate) const MAX_RIGID_WORK: usize = 1_000_000;
+/// How far past 1 a solved ellipse ratio may land by rounding and still be stored as 1.
+const RATIO_TOL: f64 = 1e-9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -68,6 +72,9 @@ pub(crate) struct Slot {
     pub len: usize,
 }
 
+/// The spline last rebuilt for each handle, with the defining points it was rebuilt from.
+type SplineCache = HashMap<Handle, (Vec<Vec2>, Rc<GSpline>)>;
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Model {
     pub slots: Vec<Slot>,
@@ -77,20 +84,75 @@ pub(crate) struct Model {
     splines: HashMap<Handle, GSpline>,
     /// Block reference rigid points relative to the insertion point at rotation 0.
     rigid: HashMap<Handle, Vec<Vec2>>,
+    /// Rebuilt splines, shared with every model of the same [`Prep`]: residuals that ask for the
+    /// same spline at the same defining points (several constraints on one spline, or derivatives
+    /// taken along other objects' parameters) reuse one rebuild instead of a dense solve each.
+    rebuilt: Rc<RefCell<SplineCache>>,
+}
+
+/// Geometry preparation shared by every model built for one operation (a solve, a DOF report, a
+/// purge): rigid samples per block, a case-insensitive block-name index and rebuilt splines. A
+/// block referenced by many Inserts is sampled once, an unknown block name costs one hashed
+/// lookup, and a spline referenced by many constraints is rebuilt once (CWE-407).
+#[derive(Debug)]
+pub(crate) struct Prep {
+    /// Block members that may still be examined across the operation.
+    members_left: usize,
+    /// Block-local rigid samples by the name an Insert gives (`None`: no such block).
+    blocks: HashMap<String, Option<Rc<[Vec2]>>>,
+    /// Lower-cased block name to the stored name it resolves to, built on the first exact miss.
+    folded: Option<HashMap<String, String>>,
+    rebuilt: Rc<RefCell<SplineCache>>,
+}
+
+impl Prep {
+    /// Preparation that may examine at most `members` block members in all.
+    pub(crate) fn new(members: usize) -> Prep {
+        Prep { members_left: members, blocks: HashMap::new(), folded: None, rebuilt: Rc::default() }
+    }
+
+    /// The block an Insert names, as [`Drawing::block`] resolves it (exact name, else the first
+    /// stored name equal ignoring ASCII case), without scanning every block on each miss.
+    fn resolve<'d>(&mut self, d: &'d Drawing, name: &str) -> Option<&'d Block> {
+        if let Some(b) = d.blocks.get(name) {
+            return Some(b);
+        }
+        let folded = self.folded.get_or_insert_with(|| {
+            let mut m = HashMap::with_capacity(d.blocks.len());
+            for k in d.blocks.keys() {
+                m.entry(k.to_ascii_lowercase()).or_insert_with(|| k.clone());
+            }
+            m
+        });
+        d.blocks.get(folded.get(&name.to_ascii_lowercase())?).map(|b| &**b)
+    }
+
+    /// Finite characteristic points of a block in its own coordinates, sampled once per name.
+    fn block_points(&mut self, d: &Drawing, name: &str) -> Option<Rc<[Vec2]>> {
+        if let Some(s) = self.blocks.get(name) {
+            return s.clone();
+        }
+        let sampled = self.resolve(d, name).map(|b| sample_block(b, &mut self.members_left));
+        self.blocks.insert(name.to_string(), sampled.clone());
+        sampled
+    }
+
+    /// World positions of an Insert's rigid points, at most [`MAX_RIGID_POINTS`].
+    fn rigid_points(&mut self, d: &Drawing, ins: &Insert) -> Vec<Vec2> {
+        let Some(local) = self.block_points(d, &ins.block) else { return Vec::new() };
+        let Some(block) = self.resolve(d, &ins.block) else { return Vec::new() };
+        let m = ins.transform(block.base.xy());
+        local.iter().map(|p| m.apply(*p)).filter(|p| p.is_finite()).take(MAX_RIGID_POINTS).collect()
+    }
 }
 
 impl Model {
     /// Work for a spline that an endpoint residual actually reconstructs. Fit interpolation
     /// uses dense Gaussian elimination (cubic); control splines clone and evaluate their template.
     pub(crate) fn spline_reconstruct_cost(&self, handle: Handle) -> f64 {
-        let Some(s) = self.splines.get(&handle) else { return 0.0 };
-        let n = s.fit.len() as f64;
-        if fit_mode(s) {
-            n * n * n
-        } else {
-            let n = s.control.len() as f64;
-            n * n
-        }
+        let Some(Shape::Spline { n, fit, .. }) = self.slot(handle).map(|s| s.shape) else { return 0.0 };
+        let n = n as f64;
+        if fit { n * n * n } else { n * n }
     }
 }
 
@@ -113,23 +175,18 @@ pub fn supported(kind: &EntityKind) -> bool {
 /// centres, vertices, nested insertion points) of the block's own objects, at most
 /// [`MAX_RIGID_POINTS`]. Nested blocks are not entered.
 pub fn rigid_points(d: &Drawing, ins: &Insert) -> Vec<Vec2> {
-    let mut members_left = MAX_RIGID_MEMBERS;
-    rigid_points_budgeted(d, ins, &mut members_left)
+    Prep::new(MAX_RIGID_MEMBERS).rigid_points(d, ins)
 }
 
-/// Sample finite block points within per-insert and caller-shared member limits.
-/// Members that contribute no points still consume traversal work; nested blocks are not entered.
-fn rigid_points_budgeted(d: &Drawing, ins: &Insert, members_left: &mut usize) -> Vec<Vec2> {
-    let Some(block) = d.block(&ins.block) else { return Vec::new() };
-    let m = ins.transform(block.base.xy());
+/// Sample a block's finite characteristic points in block coordinates, within the per-block
+/// member limit and the caller-shared `members_left`. Members that contribute no points still
+/// consume traversal work; nested blocks are not entered.
+fn sample_block(block: &Block, members_left: &mut usize) -> Rc<[Vec2]> {
     let mut out = Vec::new();
     // Bound the members examined, not only the points collected: entities that contribute no
-    // points (Text, Ray, …) still cost traversal, so a block full of them — scanned again for
-    // every Insert — would otherwise be unbounded (CWE-407).
-    let mut examined = 0usize;
-    for e in block.entities.iter() {
-        examined += 1;
-        if out.len() >= MAX_RIGID_POINTS || examined > MAX_RIGID_MEMBERS || *members_left == 0 {
+    // points (Text, Ray, …) still cost traversal (CWE-407).
+    for (examined, e) in block.entities.iter().enumerate() {
+        if out.len() >= MAX_RIGID_POINTS || examined >= MAX_RIGID_MEMBERS || *members_left == 0 {
             break;
         }
         *members_left -= 1;
@@ -146,10 +203,10 @@ fn rigid_points_budgeted(d: &Drawing, ins: &Insert, members_left: &mut usize) ->
             EntityKind::LwPolyline(p) => p.vertices.iter().take(MAX_RIGID_POINTS).map(|v| v.p).collect(),
             _ => Vec::new(),
         };
-        out.extend(pts.into_iter().map(|p| m.apply(p)).filter(|p| p.is_finite()));
+        out.extend(pts.into_iter().filter(|p| p.is_finite()));
     }
     out.truncate(MAX_RIGID_POINTS);
-    out
+    out.into()
 }
 
 /// Constraint points of an object as the solver sees them (`Sub`, position): end points,
@@ -185,84 +242,98 @@ fn fit_mode(s: &GSpline) -> bool {
 impl Model {
     /// Build a model for the given entities. Unsupported or missing entities are skipped.
     pub fn build(d: &Drawing, handles: &[Handle]) -> Model {
-        let mut members_left = MAX_RIGID_WORK;
-        Self::build_budgeted(d, handles, &mut members_left)
+        Self::build_with(d, handles, &mut Prep::new(MAX_RIGID_WORK))
     }
 
-    /// Build solver parameters for supported entities while sharing rigid-member sampling work with other models.
-    pub(crate) fn build_budgeted(d: &Drawing, handles: &[Handle], members_left: &mut usize) -> Model {
-        let mut m = Model::default();
+    /// Add the parameters of one supported entity to `m`, and return its shape; `None` when it is
+    /// left out (too large, degenerate or unsupported).
+    fn add_params(m: &mut Model, d: &Drawing, h: Handle, kind: &EntityKind, off: usize, prep: &mut Prep) -> Option<Shape> {
+        let shape = match kind {
+            EntityKind::Line(l) => {
+                m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
+                Shape::Line
+            }
+            EntityKind::Circle(c) => {
+                m.x0.extend([c.center.x, c.center.y, c.radius]);
+                Shape::Circle
+            }
+            EntityKind::Arc(a) => {
+                m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
+                Shape::Arc
+            }
+            EntityKind::LwPolyline(p) => {
+                if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
+                    return None;
+                }
+                for v in &p.vertices {
+                    m.x0.extend([v.p.x, v.p.y]);
+                }
+                Shape::Poly { n: p.vertices.len(), closed: p.closed }
+            }
+            EntityKind::Point(p) => {
+                m.x0.extend([p.p.x, p.p.y]);
+                Shape::Point
+            }
+            EntityKind::Ellipse(el) => {
+                let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
+                let arc = !ell.is_full();
+                m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
+                if arc {
+                    m.x0.extend([el.start, el.end]);
+                }
+                Shape::Ellipse { arc }
+            }
+            EntityKind::Spline(sp) => {
+                let fit = fit_mode(sp);
+                let pts = if fit { &sp.fit } else { &sp.control };
+                let n = pts.len();
+                if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
+                    return None;
+                }
+                for p in pts {
+                    m.x0.extend([p.x, p.y]);
+                }
+                // Fit points interpolate exactly, so the curve's ends are the first and last
+                // fit point; a control polygon's ends are its first and last points when the
+                // knots are clamped.
+                let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
+                // Keep only what rebuilding reads, so each rebuild copies no unused data: missing
+                // weights default to 1 in eval and only excess weights are unused; a control
+                // spline's fit points are dropped when its control points move (write_back), and
+                // a fit spline is rebuilt from its parameters, not from its old control net.
+                let mut kept = if fit {
+                    GSpline { fit_opts: sp.fit_opts, closed: sp.closed, ..GSpline::default() }
+                } else {
+                    GSpline { fit: Vec::new(), ..sp.clone() }
+                };
+                kept.weights.truncate(kept.control.len());
+                m.splines.insert(h, kept);
+                Shape::Spline { n, fit, ends }
+            }
+            EntityKind::Insert(ins) => {
+                let base = Vec2::new(ins.insert.x, ins.insert.y);
+                let pts: Vec<Vec2> = prep.rigid_points(d, ins).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
+                m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
+                let n = pts.len();
+                m.rigid.insert(h, pts);
+                Shape::Insert { n }
+            }
+            _ => return None,
+        };
+        Some(shape)
+    }
+
+    /// Build solver parameters for supported entities, sharing block sampling, its member budget
+    /// and spline rebuilds with every other model built from `prep`.
+    pub(crate) fn build_with(d: &Drawing, handles: &[Handle], prep: &mut Prep) -> Model {
+        let mut m = Model { rebuilt: Rc::clone(&prep.rebuilt), ..Model::default() };
         for &h in handles {
             if m.index.contains_key(&h) {
                 continue;
             }
             let Some(e) = d.entity(h) else { continue };
             let off = m.x0.len();
-            let shape = match &e.kind {
-                EntityKind::Line(l) => {
-                    m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
-                    Shape::Line
-                }
-                EntityKind::Circle(c) => {
-                    m.x0.extend([c.center.x, c.center.y, c.radius]);
-                    Shape::Circle
-                }
-                EntityKind::Arc(a) => {
-                    m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
-                    Shape::Arc
-                }
-                EntityKind::LwPolyline(p) => {
-                    if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
-                        continue;
-                    }
-                    for v in &p.vertices {
-                        m.x0.extend([v.p.x, v.p.y]);
-                    }
-                    Shape::Poly { n: p.vertices.len(), closed: p.closed }
-                }
-                EntityKind::Point(p) => {
-                    m.x0.extend([p.p.x, p.p.y]);
-                    Shape::Point
-                }
-                EntityKind::Ellipse(el) => {
-                    let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
-                    let arc = !ell.is_full();
-                    m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
-                    if arc {
-                        m.x0.extend([el.start, el.end]);
-                    }
-                    Shape::Ellipse { arc }
-                }
-                EntityKind::Spline(sp) => {
-                    let fit = fit_mode(sp);
-                    let pts = if fit { &sp.fit } else { &sp.control };
-                    let n = pts.len();
-                    if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
-                        continue;
-                    }
-                    for p in pts {
-                        m.x0.extend([p.x, p.y]);
-                    }
-                    // Fit points interpolate exactly, so the curve's ends are the first and last
-                    // fit point; a control polygon's ends are its first and last points when the
-                    // knots are clamped.
-                    let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
-                    // Missing weights default to 1 in eval; only excess weights are unused.
-                    let mut kept = sp.clone();
-                    kept.weights.truncate(kept.control.len());
-                    m.splines.insert(h, kept);
-                    Shape::Spline { n, fit, ends }
-                }
-                EntityKind::Insert(ins) => {
-                    let base = Vec2::new(ins.insert.x, ins.insert.y);
-                    let pts: Vec<Vec2> = rigid_points_budgeted(d, ins, members_left).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
-                    m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
-                    let n = pts.len();
-                    m.rigid.insert(h, pts);
-                    Shape::Insert { n }
-                }
-                _ => continue,
-            };
+            let Some(shape) = Self::add_params(&mut m, d, h, &e.kind, off, prep) else { continue };
             if m.x0.len() > MAX_PARAMS || m.x0.get(off..).unwrap_or(&[]).iter().any(|v| !v.is_finite()) {
                 m.x0.truncate(off);
                 continue;
@@ -364,18 +435,20 @@ impl Model {
         self.slot(r.handle).is_some_and(|s| matches!(s.shape, Shape::Spline { .. }))
     }
 
-    /// The spline of a reference with the defining points taken from `x`.
-    fn spline(&self, x: &[f64], s: &Slot) -> Option<GSpline> {
+    /// The spline of a reference with the defining points taken from `x`. The last rebuild of
+    /// each spline is kept, so asking again at the same points costs a comparison, not a rebuild.
+    fn spline(&self, x: &[f64], s: &Slot) -> Option<Rc<GSpline>> {
         let Shape::Spline { n, fit, .. } = s.shape else { return None };
         let t = self.splines.get(&s.handle)?;
         let pts = (0..n).map(|i| p2(x, s.off + 2 * i)).collect::<Option<Vec<_>>>()?;
-        Some(if fit {
-            t.refit(&pts, t.closed)
-        } else {
-            let mut sp = t.clone();
-            sp.control = pts;
-            sp
-        })
+        if let Some((at, sp)) = self.rebuilt.borrow().get(&s.handle)
+            && *at == pts
+        {
+            return Some(Rc::clone(sp));
+        }
+        let sp = Rc::new(if fit { t.refit(&pts, t.closed) } else { GSpline { control: pts.clone(), ..t.clone() } });
+        self.rebuilt.borrow_mut().insert(s.handle, (pts, Rc::clone(&sp)));
+        Some(sp)
     }
 
     /// The start (`at_end` false) or end of a curve reference, in the curve's own direction:
@@ -412,7 +485,7 @@ impl Model {
                 let e = self.ell_at(x, o, true)?;
                 e.frame(if at_end { e.t1 } else { e.t0 })
             }
-            (Shape::Spline { ends: true, .. }, Sub::Whole | Sub::Start | Sub::End) => spline_end(&self.spline(x, s)?, at_end),
+            (Shape::Spline { ends: true, .. }, Sub::Whole | Sub::Start | Sub::End) => spline_end(&*self.spline(x, s)?, at_end),
             _ => None,
         }
     }
@@ -477,6 +550,18 @@ impl Model {
         }
     }
 
+    /// The points of an object a Fix locks directly (ends, centre, vertices, insertion point).
+    pub fn point_refs(&self, h: Handle) -> Vec<GeomRef> {
+        let Some(s) = self.slot(h) else { return Vec::new() };
+        let at = |sub: Sub| GeomRef { handle: h, sub };
+        match s.shape {
+            Shape::Line => vec![at(Sub::Start), at(Sub::End)],
+            Shape::Point => vec![at(Sub::Whole)],
+            Shape::Circle | Shape::Arc | Shape::Ellipse { .. } | Shape::Insert { .. } => vec![at(Sub::Center)],
+            Shape::Poly { n, .. } | Shape::Spline { n, .. } => (0..n).filter_map(|i| u32::try_from(i).ok()).map(|i| at(Sub::Vertex(i))).collect(),
+        }
+    }
+
     /// Parameters a Fix on this reference locks directly. `None` when the reference is a derived
     /// point (fixed through a residual instead).
     pub fn lock_indices(&self, r: &GeomRef) -> Option<Vec<usize>> {
@@ -504,6 +589,57 @@ impl Model {
         Some(v)
     }
 
+    /// Can `write_back` store `x` as it is? An ellipse keeps 0 < ratio <= 1, its major axis the
+    /// longer one: a solution past that is stored with its axes swapped or its minor axis
+    /// mirrored (see [`Model::stored_form`]), which renumbers the axis ends.
+    pub fn storable(&self, x: &[f64]) -> bool {
+        self.slots.iter().all(|s| match s.shape {
+            Shape::Ellipse { .. } => x.get(s.off + 4).is_some_and(|r| *r > 0.0 && *r <= 1.0 + RATIO_TOL),
+            _ => true,
+        })
+    }
+
+    /// `x` with every ellipse re-expressed as [`Model::write_back`] stores it (the same curve with
+    /// the major axis the longer one, a full ellipse's negative ratio made positive), so the
+    /// constraints can be checked against what would be stored. `None` when an elliptical arc has
+    /// a negative ratio or an ellipse a zero one.
+    pub fn stored_form(&self, x: &[f64]) -> Option<Vec<f64>> {
+        let mut xc = x.to_vec();
+        for s in &self.slots {
+            let Shape::Ellipse { arc } = s.shape else { continue };
+            let o = s.off;
+            let mut ratio = *x.get(o + 4)?;
+            if ratio < 0.0 && !arc {
+                ratio = -ratio;
+            }
+            if ratio <= 0.0 {
+                return None;
+            }
+            if ratio > 1.0 + RATIO_TOL {
+                let major = p2(x, o + 2)?.perp() * ratio;
+                *xc.get_mut(o + 2)? = major.x;
+                *xc.get_mut(o + 3)? = major.y;
+                ratio = 1.0 / ratio;
+                if arc {
+                    *xc.get_mut(o + 5)? -= std::f64::consts::FRAC_PI_2;
+                    *xc.get_mut(o + 6)? -= std::f64::consts::FRAC_PI_2;
+                }
+            }
+            *xc.get_mut(o + 4)? = ratio;
+        }
+        Some(xc)
+    }
+
+    /// The parameter `stored_form` gives the point at parameter `t` on ellipse `h` (unchanged for
+    /// any other object): `-t` where a negative ratio was made positive, a quarter turn back where
+    /// the axes were swapped.
+    pub fn stored_t(&self, x: &[f64], h: Handle, t: f64) -> f64 {
+        let Some(s) = self.slot(h) else { return t };
+        let (Shape::Ellipse { .. }, Some(&ratio)) = (s.shape, x.get(s.off + 4)) else { return t };
+        let (t, ratio) = if ratio < 0.0 { (-t, -ratio) } else { (t, ratio) };
+        if ratio > 1.0 + RATIO_TOL { t - std::f64::consts::FRAC_PI_2 } else { t }
+    }
+
     /// Write solved parameters back. Returns the handles that moved.
     pub fn write_back(&self, d: &mut Drawing, x: &[f64]) -> Vec<Handle> {
         let mut moved = Vec::new();
@@ -518,7 +654,8 @@ impl Model {
             }
             let shape = s.shape;
             // A control-point spline loses its fit data once its control points move.
-            let spline = self.spline(x, s).map(|mut sp| {
+            let spline = self.spline(x, s).map(|sp| {
+                let mut sp = GSpline::clone(&sp);
                 if matches!(shape, Shape::Spline { fit: false, .. }) {
                     sp.fit.clear();
                 }
@@ -572,8 +709,9 @@ impl Model {
                             [a, b] if arc => (*a, *b),
                             _ => (el.start, el.end),
                         };
-                        // Keep the stored form: the major axis is the longer one.
-                        if ratio > 1.0 {
+                        // Keep the stored form: the major axis is the longer one. `storable` lets a
+                        // solved ratio exceed 1 only by rounding: that is a circle, not a swap.
+                        if ratio > 1.0 + RATIO_TOL {
                             major = major.perp() * ratio;
                             ratio = 1.0 / ratio;
                             if arc {
@@ -639,21 +777,21 @@ mod budget_tests {
         }
     }
 
-    /// A second model receives no sampled block points after the first model spends the shared member budget.
-    #[test]
-    fn rigid_sampling_budget_is_shared_between_models() {
-        let mut d = Drawing::default();
-        let mut block = Block::new("BAR");
-        for _ in 0..3 {
+    fn add_block(d: &mut Drawing, name: &str, lines: usize) {
+        let mut block = Block::new(name);
+        for _ in 0..lines {
             block.entities.push(Entity {
                 handle: d.new_handle(),
                 common: Common::default(),
                 kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }),
             });
         }
-        d.blocks.insert("BAR".into(), Arc::new(block));
-        let ins = Insert {
-            block: "BAR".into(),
+        d.blocks.insert(name.into(), Arc::new(block));
+    }
+
+    fn insert(block: &str) -> Insert {
+        Insert {
+            block: block.into(),
             insert: Vec3::ZERO,
             scale: Vec3::new(1.0, 1.0, 1.0),
             rotation: 0.0,
@@ -662,13 +800,80 @@ mod budget_tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
-        };
-        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
-        let mut budget = 2;
-        let first = Model::build_budgeted(&d, &[h], &mut budget);
-        assert_eq!(first.rigid[&h].len(), 4);
-        assert_eq!(budget, 0);
-        let next = Model::build_budgeted(&d, &[h], &mut budget);
-        assert!(next.rigid[&h].is_empty());
+            clip: None,
+        }
+    }
+
+    fn add_insert(d: &mut Drawing, block: &str) -> Handle {
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(insert(block))).unwrap()
+    }
+
+    /// The member budget is shared by every model of one preparation, and a block it already
+    /// sampled is reused by later Inserts without examining its members again.
+    #[test]
+    fn rigid_sampling_budget_is_shared_and_blocks_sampled_once() {
+        let mut d = Drawing::default();
+        add_block(&mut d, "BAR", 3);
+        add_block(&mut d, "BAZ", 3);
+        let (bar, baz, bar2) = (add_insert(&mut d, "BAR"), add_insert(&mut d, "BAZ"), add_insert(&mut d, "BAR"));
+        let mut prep = Prep::new(2);
+        let first = Model::build_with(&d, &[bar], &mut prep);
+        assert_eq!(first.rigid[&bar].len(), 4);
+        assert_eq!(prep.members_left, 0);
+        let other = Model::build_with(&d, &[baz], &mut prep);
+        assert!(other.rigid[&baz].is_empty());
+        let again = Model::build_with(&d, &[bar2], &mut prep);
+        assert_eq!(again.rigid[&bar2].len(), 4);
+    }
+
+    /// Block names resolve ignoring ASCII case, as `Drawing::block` does, through one index.
+    #[test]
+    fn block_names_resolve_ignoring_case() {
+        let mut d = Drawing::default();
+        add_block(&mut d, "Bar", 2);
+        let (lower, missing) = (add_insert(&mut d, "bAR"), add_insert(&mut d, "nope"));
+        let mut prep = Prep::new(MAX_RIGID_WORK);
+        let m = Model::build_with(&d, &[lower, missing], &mut prep);
+        assert_eq!(m.rigid[&lower].len(), 4);
+        assert!(m.rigid[&missing].is_empty());
+        assert!(prep.folded.as_ref().is_some_and(|f| f.len() == 1));
+        assert_eq!(rigid_points(&d, &insert("BAR")).len(), 4);
+    }
+
+    /// A spline asked for again at the same defining points is not rebuilt, also from another
+    /// model of the same preparation; moved points rebuild it.
+    #[test]
+    fn spline_rebuilds_are_reused_at_the_same_points() {
+        let mut d = Drawing::default();
+        let pts: Vec<Vec2> = (0..6).map(|i| Vec2::new(i as f64, (i % 2) as f64)).collect();
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Spline(GSpline::fit_with(&pts, false, Default::default()))).unwrap();
+        let mut prep = Prep::new(MAX_RIGID_WORK);
+        let a = Model::build_with(&d, &[h], &mut prep);
+        let b = Model::build_with(&d, &[h], &mut prep);
+        let (sa, sb) = (a.slot(h).unwrap(), b.slot(h).unwrap());
+        assert!(matches!(sa.shape, Shape::Spline { fit: true, .. }));
+        let first = a.spline(&a.x0, sa).unwrap();
+        assert!(Rc::ptr_eq(&first, &a.spline(&a.x0, sa).unwrap()));
+        assert!(Rc::ptr_eq(&first, &b.spline(&b.x0, sb).unwrap()));
+        let mut moved = a.x0.clone();
+        moved[1] += 0.5;
+        let other = a.spline(&moved, sa).unwrap();
+        assert!(!Rc::ptr_eq(&first, &other));
+        assert_eq!(other.fit[0], Vec2::new(0.0, 0.5));
+    }
+
+    /// A control spline's template keeps no fit points and no excess weights.
+    #[test]
+    fn control_template_drops_unused_data() {
+        let mut d = Drawing::default();
+        let mut sp = GSpline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 2.0), Vec2::new(3.0, 0.0), Vec2::new(4.0, 1.0)], 3);
+        sp.fit = vec![Vec2::ZERO; 10_000];
+        sp.fit_opts.tolerance = 0.5;
+        sp.weights = vec![1.0; 10_000];
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Spline(sp)).unwrap();
+        let m = Model::build(&d, &[h]);
+        let t = &m.splines[&h];
+        assert!(t.fit.is_empty());
+        assert_eq!(t.weights.len(), 4);
     }
 }

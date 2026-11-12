@@ -10,6 +10,7 @@
 //! loaded further up (a circular reference) is not loaded again. Every failure leaves the xref's
 //! block empty with a status saying why; nothing here stops the host drawing from opening.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -208,13 +209,50 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     }
     let (files, refused) = candidates(path, host, chosen);
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.into_iter().find(|p| p.is_file());
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p)));
     #[cfg(target_arch = "wasm32")]
     let found: Option<PathBuf> = {
         let _ = files;
         None
     };
     found.ok_or(refused.map_or(Missing::NotFound, Missing::Refused))
+}
+
+/// Upper bound on directory entries scanned per path component by [`case_insensitive`].
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_CASE_SCAN: usize = 10_000;
+
+/// The existing file `p` names when its letters' case is ignored, on file systems that don't
+/// ignore it themselves. Drawings made on Windows often store a reference as `PLAN.DWG` for
+/// `Plan.dwg`; Windows finds it, and so should Linux. Each missing component is matched against
+/// its folder's entries; an exact match always wins, and an ambiguous one finds nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn case_insensitive(p: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        let Component::Normal(name) = c else {
+            out.push(c.as_os_str());
+            continue;
+        };
+        let exact = out.join(name);
+        if exact.exists() {
+            out = exact;
+            continue;
+        }
+        let want = name.to_str()?.to_lowercase();
+        let mut hits = std::fs::read_dir(if out.as_os_str().is_empty() { Path::new(".") } else { &out })
+            .ok()?
+            .take(MAX_CASE_SCAN)
+            .flatten()
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.to_lowercase() == want));
+        let hit = hits.next()?;
+        if hits.next().is_some() {
+            return None;
+        }
+        out.push(hit.file_name());
+    }
+    out.is_file().then_some(out)
 }
 
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
@@ -275,7 +313,23 @@ pub(crate) fn load(d: &mut Drawing, name: &str, host: Option<&str>, chosen: bool
 /// [`load`] the xrefs `names` within one set of limits.
 pub(crate) fn load_each(d: &mut Drawing, names: &[String], host: Option<&str>, chosen: bool) -> Vec<Outcome> {
     let mut cx = Ctx::new(host);
-    names.iter().flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
+    // Names are case-insensitive, so a name that differs only by case from an earlier one is the same xref.
+    let mut seen = std::collections::HashMap::new();
+    names
+        .iter()
+        .flat_map(|n| match seen.entry(n.to_ascii_lowercase()) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(n.as_str());
+                load_with(d, n, host, chosen, &mut cx)
+            }
+            // Reported, not silent: the skipped xref keeps its status and is not loaded here.
+            std::collections::hash_map::Entry::Occupied(o) => vec![Outcome {
+                name: String::new(),
+                status: XrefStatus::Unresolved,
+                detail: format!("xref \"{n}\" not loaded: it differs only by case from \"{}\"", o.get()),
+            }],
+        })
+        .collect()
 }
 
 impl Ctx {
@@ -302,14 +356,15 @@ fn load_in(d: &mut Drawing, name: &str, host: Option<&Path>, chosen: bool, cx: &
     let (status, detail) = match fetch(&path, host, chosen, cx, depth) {
         Ok((x, file)) => match import(d, &key, &x, cx) {
             Ok(()) => (XrefStatus::Loaded, file.to_string_lossy().into_owned()),
-            Err(e) => (XrefStatus::Unresolved, e),
+            Err(e) => {
+                // Whatever made it in before the failure goes again. A fetch that failed imported
+                // nothing, so it doesn't pay for a second scan of the block table.
+                clear(d, &key);
+                (XrefStatus::Unresolved, e)
+            }
         },
         Err(e) => e,
     };
-    if status != XrefStatus::Loaded {
-        // Whatever made it in before the failure goes again.
-        clear(d, &key);
-    }
     set_status(d, &key, status);
     (status, detail)
 }
@@ -353,9 +408,15 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
         return Err(format!("more than {MAX_XREF_OBJECTS} objects"));
     }
     let dep = |sym: Sym, n: &str| (!shared(sym, n)).then(|| format!("{key}|{n}"));
+    // The host's names per table, looked up in a set built once: both drawings are hostile input,
+    // so a scan per imported record would be quadratic.
+    fn names<T>(all: &[T], name: fn(&T) -> &str) -> HashSet<String> {
+        all.iter().map(|t| name(t).to_ascii_uppercase()).collect()
+    }
+    let mut have = names(&d.layers, |l| &l.name);
     for l in &x.layers {
         if let Some(n) = dep(Sym::Layer, &l.name)
-            && d.layer(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let mut l = l.clone();
             l.name = n;
@@ -363,39 +424,44 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
             d.layers.push(l);
         }
     }
+    let mut have = names(&d.linetypes, |t| &t.name);
     for t in &x.linetypes {
         if let Some(n) = dep(Sym::Linetype, &t.name)
-            && d.linetype(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.linetypes.push(cadcraft_doc::Linetype { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.text_styles, |t| &t.name);
     for t in &x.text_styles {
         if let Some(n) = dep(Sym::Style, &t.name)
-            && d.text_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.text_styles.push(cadcraft_doc::TextStyle { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.dim_styles, |t| &t.name);
     for t in &x.dim_styles {
         if let Some(n) = dep(Sym::DimStyle, &t.name)
-            && d.dim_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.dim_styles.push(cadcraft_doc::DimStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.mleader_styles, |t| &t.name);
     for t in &x.mleader_styles {
         if let Some(n) = dep(Sym::MLeaderStyle, &t.name)
-            && !d.mleader_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.mleader_styles.push(cadcraft_doc::MLeaderStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.table_styles, |t| &t.name);
     for t in &x.table_styles {
         if let Some(n) = dep(Sym::TableStyle, &t.name)
-            && !d.table_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             d.table_styles.push(cadcraft_doc::TableStyle { name: n, ..t.clone() });
         }
@@ -420,6 +486,17 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
         nb.anonymous = b.anonymous;
         nb.explodable = b.explodable;
         nb.units = b.units;
+        // Array parameters keep their kind and spacing; block names follow the block renaming, and
+        // a source edit in progress in the referenced file is not carried over.
+        nb.array = b.array.as_ref().map(|a| {
+            let mut a = a.clone();
+            a.source = dep(Sym::Block, &a.source).unwrap_or(a.source);
+            for r in &mut a.replaced {
+                r.block = dep(Sym::Block, &r.block).unwrap_or_else(|| r.block.clone());
+            }
+            a.editing = None;
+            a
+        });
         for e in b.entities.iter() {
             let e = adopt(d, e);
             nb.entities.push(e);
@@ -531,5 +608,36 @@ mod tests {
         assert!(has_prefix("SITE|Walls", "site|"));
         assert!(!has_prefix("SITE", "site|"));
         assert!(!has_prefix("é", "ab"));
+    }
+
+    #[test]
+    fn imported_array_blocks_keep_their_parameters() {
+        use cadcraft_doc::{ArrayKind, ArrayParams, Block, RectArray, ReplacedItem};
+        let rect = RectArray { cols: 3, rows: 2, col_spacing: 5.0, row_spacing: 4.0, axis_angle: 0.0, row_elevation: 0.0 };
+        let params = ArrayParams {
+            source: "*U1".into(),
+            kind: ArrayKind::Rect(rect),
+            levels: 1,
+            level_spacing: 0.0,
+            replaced: vec![ReplacedItem { i: 1, j: 0, level: 0, block: "ALT".into() }],
+            editing: Some(Default::default()),
+        };
+        let mut arr = Block::new("*U2");
+        arr.array = Some(params);
+        let mut x = Drawing::default();
+        x.blocks.insert("*U2".into(), Arc::new(arr));
+
+        let mut d = Drawing::default();
+        d.blocks.insert("SITE".into(), Arc::new(Block::new("SITE")));
+        let mut cx = Ctx { chain: Vec::new(), objects: 0, files: 0, bytes: 0, notes: Vec::new() };
+        assert!(import(&mut d, "SITE", &x, &mut cx).is_ok());
+
+        let got = d.blocks.get("SITE|*U2").and_then(|b| b.array.clone());
+        let Some(got) = got else { panic!("array parameters were dropped") };
+        assert_eq!(got.source, "SITE|*U1");
+        assert_eq!(got.replaced[0].block, "SITE|ALT");
+        assert!(got.editing.is_none());
+        let ArrayKind::Rect(r) = got.kind else { panic!("not a rectangular array") };
+        assert_eq!((r.cols, r.rows), (3, 2));
     }
 }

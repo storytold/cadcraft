@@ -4,12 +4,16 @@ use serde_json::{Value, json};
 
 use crate::{Headless, Server};
 
+/// Send one JSON-RPC request to the server and return the parsed reply; fails the test if the
+/// server does not answer or answers with invalid JSON.
 fn call(s: &mut Server, id: u64, method: &str, params: Value) -> Value {
     let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
     let r = s.handle_line(&line).expect("reply");
     serde_json::from_str(&r).unwrap()
 }
 
+/// Call an MCP tool and return its decoded result: JSON text is parsed, an image is passed
+/// through, and a tool error fails the test with the reported message.
 fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     let r = call(s, 99, "tools/call", json!({"name": name, "arguments": args}));
     let c = &r["result"]["content"][0];
@@ -17,6 +21,8 @@ fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     if c["type"] == "text" { serde_json::from_str(c["text"].as_str().unwrap()).unwrap_or(Value::Null) } else { c.clone() }
 }
 
+/// The MCP handshake works: `initialize` names the server, the `initialized` notification is
+/// accepted, `tools/list` offers the command line, and an unknown method is -32601.
 #[test]
 fn lifecycle_and_tools() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -30,6 +36,8 @@ fn lifecycle_and_tools() {
     assert_eq!(bad["error"]["code"], -32601);
 }
 
+/// Guards that an agent can complete a drawing (plate, holes, layer, text) using only the MCP
+/// tools, and verify it only through MCP: counts, selection queries, undo and a PNG render.
 #[test]
 fn agent_draws_a_plate_with_holes() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -70,6 +78,8 @@ fn agent_draws_a_plate_with_holes() {
     assert!(img["data"].as_str().unwrap().len() > 100);
 }
 
+/// Guards that bad input is reported, not fatal: a refused command and a screenshot without a
+/// UI are `isError` results, and malformed JSON is a parse error (-32700).
 #[test]
 fn errors_are_tool_errors_not_crashes() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -111,6 +121,19 @@ fn bad_tool_calls_are_invalid_params() {
     assert_eq!(s.handle_line("[]").map(|r| serde_json::from_str::<Value>(&r).unwrap()["error"]["code"].clone()), Some(json!(-32600)));
 }
 
+/// `open` reads both DXF and DWG, so `tools/list` must advertise both (#1875).
+#[test]
+fn open_tool_description_names_dxf_and_dwg() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let open = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "open").unwrap();
+    let desc = open["description"].as_str().unwrap();
+    assert!(desc.contains("DXF"), "`open` must still name DXF: {desc}");
+    assert!(desc.contains("DWG"), "`open` reads DWG too: {desc}");
+}
+
+/// Guards that `query_entities` advertises its `selected` filter and honours it (active-space
+/// selection only, both ways) without changing the drawing.
 #[test]
 fn query_entities_selection_filter_is_discoverable_and_forwarded() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -149,6 +172,8 @@ fn query_entities_pages_and_windows_by_geometry() {
     assert_eq!(r["count"], 1, "only the circle is entirely inside: {r}");
 }
 
+/// Guards that the `list_commands` filter matches ids, labels and aliases but not parameter
+/// docs, so searching `circle` does not return QSELECT merely for mentioning circles.
 #[test]
 fn list_commands_filter_matches_names_not_docs() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -160,6 +185,8 @@ fn list_commands_filter_matches_names_not_docs() {
     assert!(r.as_array().unwrap().iter().any(|c| c["id"] == "pline"), "aliases and ids match");
 }
 
+/// Guards that `find_text` returns TEXT and MTEXT with their placement, strips MTEXT formatting,
+/// and filters by text, layer and window; a windowed render keeps that area's aspect ratio.
 #[test]
 fn find_text_reads_texts_and_render_shows_one_area() {
     let mut s = Server::new(Box::new(Headless::default()));
@@ -199,6 +226,8 @@ fn find_text_reads_texts_and_render_shows_one_area() {
     assert_eq!((w, h), (1600, 800));
 }
 
+/// Guards a lazy Remote bridge: it serves tools without the app, reports how to start it
+/// (`--control`), and reaches the app once that app starts listening on the port.
 #[test]
 fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     // Nothing listens on a port that was just freed.
@@ -229,4 +258,136 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     let r = call(&mut s, 4, "tools/call", json!({"name": "command_line", "arguments": {"text": ""}}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
+}
+
+/// The pixels of a `render` tool result.
+fn render_pixels(s: &mut Server, args: Value) -> tiny_skia::Pixmap {
+    let img = tool(s, "render", args);
+    assert_eq!(img["type"], "image", "{img}");
+    let png = cadcraft_engine::cmd::file::base64_decode(img["data"].as_str().unwrap()).unwrap();
+    tiny_skia::Pixmap::decode_png(&png).unwrap()
+}
+
+/// The RGB of pixel (x, y).
+fn rgb(pm: &tiny_skia::Pixmap, x: u32, y: u32) -> (u8, u8, u8) {
+    let c = pm.pixel(x, y).unwrap();
+    (c.red(), c.green(), c.blue())
+}
+
+/// The pixel of the middle column that differs most from the corner: what the line along the
+/// middle of the image is drawn with.
+fn ink(pm: &tiny_skia::Pixmap) -> (u8, u8, u8) {
+    let bg = rgb(pm, 0, 0);
+    let far = |c: &(u8, u8, u8)| bg.0.abs_diff(c.0) as u32 + bg.1.abs_diff(c.1) as u32 + bg.2.abs_diff(c.2) as u32;
+    (0..pm.height()).map(|y| rgb(pm, pm.width() / 2, y)).max_by_key(far).unwrap()
+}
+
+/// A drawing with one line along y = 0: colour 7 (layer 0's colour), or red on a red layer.
+fn line_drawing(red: bool) -> Server {
+    let mut s = Server::new(Box::new(Headless::default()));
+    if red {
+        tool(&mut s, "execute", json!({"command": "layer.new", "params": {"name": "Red", "color": "red", "current": true}}));
+    }
+    tool(&mut s, "execute", json!({"command": "line", "params": {"points": [[0, 0], [10, 0]]}}));
+    s
+}
+
+/// Around the line, which runs along the middle of pixel row 20 of a 120 x 40 image (not on a
+/// pixel edge, so it isn't blended across two rows).
+const WINDOW: [[f64; 2]; 2] = [[-1.0, -1.95], [11.0, 2.05]];
+
+/// Guards #803: `render` draws on the background asked for (`white`, `paper`, `#rrggbb`) and a
+/// colour-7 line follows it, as on a plot: dark on white, light on the dark canvas, which stays
+/// the default.
+#[test]
+fn render_draws_on_the_background_asked_for() {
+    let mut s = line_drawing(false);
+    let dark = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40}));
+    assert_eq!(rgb(&dark, 0, 0), (33, 40, 48), "the default stays the dark canvas");
+    let (r, g, b) = ink(&dark);
+    assert!(r > 200 && g > 200 && b > 200, "colour 7 is light on the dark canvas: {:?}", (r, g, b));
+    for bg in ["white", "paper", "WHITE"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": bg}));
+        let (w, h) = (pm.width(), pm.height());
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            assert_eq!(rgb(&pm, x, y), (255, 255, 255), "{bg}: corner ({x}, {y})");
+        }
+        let (r, g, b) = ink(&pm);
+        assert!(r < 128 && g < 128 && b < 128, "{bg}: colour 7 is drawn dark on white: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "#336699"}));
+    assert_eq!(rgb(&pm, 0, 0), (0x33, 0x66, 0x99));
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "dark"}));
+    assert_eq!(rgb(&pm, 0, 0), (33, 40, 48));
+}
+
+/// Guards #803: `plot_style` draws with a built-in plot style table: `monochrome.ctb` turns a red
+/// line black, which without one stays red.
+#[test]
+fn render_draws_with_the_plot_style_asked_for() {
+    let mut s = line_drawing(true);
+    let plain = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white"}));
+    let (r, g, b) = ink(&plain);
+    assert!(r > 200 && g < 100 && b < 100, "red without a plot style: {:?}", (r, g, b));
+    for table in ["monochrome.ctb", "Monochrome", "monochrome.CTB"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": table}));
+        let (r, g, b) = ink(&pm);
+        assert!(r < 100 && r == g && g == b, "{table}: red plots black: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": "grayscale.ctb"}));
+    let (r, g, b) = ink(&pm);
+    assert!(r == g && g == b, "grayscale.ctb draws red grey: {:?}", (r, g, b));
+}
+
+/// Guards #803: a plot style alone plots on white, as on paper, so `monochrome.ctb` doesn't draw
+/// black on the dark canvas; `background` still wins, and `plot_style: "none"` keeps the canvas
+/// and the objects' colours.
+#[test]
+fn render_with_a_plot_style_plots_on_white() {
+    for red in [false, true] {
+        let mut s = line_drawing(red);
+        for table in ["monochrome.ctb", "grayscale.ctb"] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": table}));
+            assert_eq!(rgb(&pm, 0, 0), (255, 255, 255), "{table} without a background plots on white");
+            let (r, g, b) = ink(&pm);
+            assert!(r == g && g == b && r < 128, "{table}, red {red}: drawn dark grey or black on white: {:?}", (r, g, b));
+        }
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": "monochrome.ctb", "background": "dark"}));
+        assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "an explicit background wins");
+        for none in ["none", ""] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": none}));
+            assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "{none:?} keeps the dark canvas");
+            let (r, g, b) = ink(&pm);
+            let light = r > 200 && g > 200 && b > 200;
+            assert!(if red { r > 200 && g < 100 && b < 100 } else { light }, "{none:?}, red {red}: own colour {:?}", (r, g, b));
+        }
+    }
+}
+
+/// Guards #803: an unknown `background` or `plot_style` is refused with what is accepted, not
+/// drawn some other way; a value of the wrong type is invalid params.
+#[test]
+fn render_refuses_unknown_backgrounds_and_plot_styles() {
+    let mut s = line_drawing(false);
+    for (args, wants) in [
+        (json!({"background": "purple"}), "#rrggbb"),
+        (json!({"background": "#12345"}), "#rrggbb"),
+        (json!({"background": "336699"}), "#rrggbb"),
+        (json!({"background": ""}), "#rrggbb"),
+        (json!({"plot_style": "nope.ctb"}), "monochrome.ctb"),
+        (json!({"plot_style": "default.ctx"}), "monochrome.ctb"),
+    ] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["result"]["isError"], json!(true), "{args} must be refused, not drawn");
+        let msg = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(msg.contains(wants), "{args}: {msg}");
+    }
+    for args in [json!({"background": 7}), json!({"plot_style": ["monochrome.ctb"]})] {
+        let r = call(&mut s, 2, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["error"]["code"], -32602, "{args} must be invalid params");
+    }
+    // The headless control method refuses them too.
+    let mut h = Headless::default();
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"background": "purple"})).is_err());
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"plot_style": 3})).is_err());
 }

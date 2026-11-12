@@ -120,6 +120,29 @@ fn circle_circle_hits() {
 }
 
 #[test]
+fn small_circle_crossing_a_huge_circle_gives_two_hits() {
+    // Radii 1e7 and 1 with centres 1e7 apart: the small circle crosses the large one.
+    let big = Circle::new(Vec2::ZERO, 1e7);
+    let small = Circle::new(Vec2::new(1e7, 0.0), 1.0);
+    for hits in [circle_circle(&big, &small), circle_circle(&small, &big)] {
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        for p in &hits {
+            assert!((p.dist(small.center) - 1.0).abs() < 1e-6, "{p:?} is off the small circle");
+            assert!((p.dist(big.center) - 1e7).abs() < 1e-6, "{p:?} is off the big circle");
+        }
+        assert!(hits[0].dist(hits[1]) > 1.0, "{hits:?}");
+    }
+    // Touching from outside and from inside is still one tangent point, in both orders.
+    for (x, touch) in [(1e7 + 1.0, 1e7), (1e7 - 1.0, 1e7)] {
+        let small = Circle::new(Vec2::new(x, 0.0), 1.0);
+        for hits in [circle_circle(&big, &small), circle_circle(&small, &big)] {
+            assert_eq!(hits.len(), 1, "{hits:?}");
+            assert!(hits[0].dist(Vec2::new(touch, 0.0)) < 1e-6, "{hits:?}");
+        }
+    }
+}
+
+#[test]
 fn tiny_circle_secants_and_separated_circles() {
     let first = Circle::new(Vec2::ZERO, 1e-9);
     // Both radii and center separation are below the old absolute tolerance.
@@ -196,6 +219,18 @@ fn segment_offset() {
         panic!()
     }
     assert!(s.offset(6.0).is_none());
+}
+
+/// A polyline of many fine arcs samples at most the point budget, then draws chords.
+#[test]
+fn polyline_tessellation_is_bounded() {
+    let vertices: Vec<PolyVertex> = (0..3000).map(|i| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(f64::from(i) * 1e6, 0.0)) }).collect();
+    let pl = Polyline { vertices, closed: false };
+    let pts = pl.tessellate(1e-9);
+    assert!(pts.len() <= MAX_TESSELLATED_POINTS + 2 * 3000 + 4096, "{}", pts.len());
+    assert!(pts.len() > 3000);
+    let mut budget = 10;
+    assert!(pl.tessellate_within(1e-9, &mut budget).len() <= 4096 + 2 * 3000);
 }
 
 #[test]
@@ -330,4 +365,14 @@ fn long_secant_keeps_both_intersections() {
     assert_eq!(hits.len(), 2);
     assert!(hits[0].0.near(Vec2::new(-2.0, 0.0), 1e-8), "{hits:?}");
     assert!(hits[1].0.near(Vec2::new(2.0, 0.0), 1e-8), "{hits:?}");
+}
+
+#[test]
+fn open_polyline_centroid_ignores_last_bulge() {
+    let pts = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+    let mut pl = Polyline::from_points(&pts, false);
+    let before = pl.centroid().unwrap();
+    pl.vertices[2].bulge = 1.0;
+    let after = pl.centroid().unwrap();
+    assert!(before.near(after, 1e-9), "{before:?} -> {after:?}");
 }

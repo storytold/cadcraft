@@ -134,7 +134,19 @@ pub fn run(_root: &Path, exact: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Counts, count_tests, walk};
+    use super::{Counts, count_tests};
+
+    /// A new private directory in the temp folder. It is created, never reused: an existing path
+    /// (planted by another user, or a symlink) makes the test fail instead of redirecting its writes.
+    fn fresh_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let p = std::env::temp_dir().join(format!("cadcraft-{tag}-{}-{nanos}", std::process::id()));
+        let mut b = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        b.create(&p).unwrap();
+        p
+    }
 
     #[test]
     fn counts_attributes_and_proptest_blocks() {
@@ -147,23 +159,21 @@ mod tests {
     #[test]
     fn walk_does_not_follow_directory_symlinks() {
         use std::os::unix::fs::symlink;
-        let base = std::env::temp_dir().join(format!("cadcraft-xtask-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let base = fresh_dir("xtask");
         let real = base.join("real");
         std::fs::create_dir_all(&real).unwrap();
         std::fs::write(real.join("a.rs"), "fn a() {}\n").unwrap();
         // A directory symlink pointing back at `real` would be re-scanned if followed.
         symlink(&real, base.join("alias")).unwrap();
         let mut c = Counts::default();
-        walk(&base, &mut c).unwrap();
+        super::walk(&base, &mut c).unwrap();
         assert_eq!(c.files, 1, "the aliased directory was followed and counted twice");
         std::fs::remove_dir_all(&base).ok();
     }
     /// Traversal reports an exhausted entry budget and accepts a tree that exactly fits it.
     #[test]
     fn walk_reports_budget_exhaustion() {
-        let base = std::env::temp_dir().join(format!("cadcraft-stats-budget-{}", std::process::id()));
-        std::fs::create_dir_all(&base).unwrap();
+        let base = fresh_dir("stats-budget");
         std::fs::write(base.join("a.rs"), "fn a() {}\n").unwrap();
         let error = super::walk_inner(&base, &mut Counts::default(), &mut 0).unwrap_err();
         assert!(error.contains("budget exhausted"));

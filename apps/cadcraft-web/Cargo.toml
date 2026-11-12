@@ -4,6 +4,7 @@ description = "CADCraft in the browser (eframe web runner, WebGPU with WebGL2 fa
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version = "1.95"
 publish = false
 
 [lints]
@@ -17,6 +18,11 @@ path = "src/main.rs"
 cadcraft-engine = { workspace = true }
 cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
+cadcraft-fonts = { workspace = true }
+# The host messages (storytold/craft-libs): one contract and one bridge for the web builds.
+# The page command API (storytold/craft-libs#413): window.cadcraft over the control channel.
+craft-web-api = { path = "../../../cadcraft-vendor/craft-libs-fd5e2fe/crates/web-api", version = "0.1.0" }
+craft-web-host = { path = "../../../cadcraft-vendor/craft-libs-fd5e2fe/crates/web-host", version = "0.1.0" }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
@@ -26,7 +32,8 @@ serde_json = { workspace = true }
 web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-eframe = { workspace = true, features = ["persistence", "default_fonts", "wgpu", "accesskit"] }
+eframe = { workspace = true, features = ["persistence", "wgpu", "accesskit"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag", "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList"] }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag", "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList", "Event", "EventTarget", "CustomEvent", "CustomEventInit"] }

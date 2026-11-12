@@ -1,0 +1,223 @@
+# 天正 T20 自定义实体 DWG 序列化格式（逆向笔记）
+
+> 逆向来源：`C:\Tangent\T20-PlugInV8.0\sys24x64\tch_kernal.arx`
+> （天正 T20 V8.0 全平台内核，AutoCAD 2024 对应版本；stripped x86_64，导入 acdb24.dll 等 ObjectARX 库，sha256 `e30522f3…b8eb4be`）
+>
+> **状态**：格式主体已还原；加密算法经汇编级验证。但 **尚未用真实 .dwg 样本实测**，且各实体派生类的具体字段语义未完全展开。
+
+## 1. 概述
+
+天正 T20（Tangent）在 DWG 中通过 ObjectARX 自定义实体（代理实体 proxy entity，DXF 类名 `TCH_*`）存储建筑 / 结构 / 给排水 / 暖通 / 电气对象。不经过天正运行时，第三方 CAD 只能看到 `ACAD_PROXY_ENTITY`，读不到真实几何与属性。
+
+`tch_kernal.arx` 是天正全平台共享内核。所有自定义实体从基类 `TEntityBase` 派生，序列化入口是 `TEntityBase::DwgOutFields` / `TEntityBase::DwgInFields`。
+
+## 2. 实体类清单（proxy DXF 类名）
+
+字符串直接提取自二进制，按专业分组：
+
+| 专业 | DXF 类名 |
+|---|---|
+| 建筑 | `TCH_WALL`、`TCH_COLUMN`、`TCH_OPENING`、`TCH_SPACE`、`TCH_CURTAIN_WALL`、`TCH_WALL_PATCH`、`TCH_BALCONY`、`TCH_CORNER_WINDOW`、`TCH_BAND_WINDOW`、`TCH_CAMERA`、`TCH_APRON`、`TCH_ASCENT`、`TCH_AXIS_LABEL`、`TCH_BLOCK_INSERT`、`TCH_MVINSERT`、`TCH_DIMENSION`、`TCH_DIMENSION2`、`TCH_RADIUSDIM`、`TCH_FLOORLINE`、`TCH_CURVEMESH`、`TCH_CURVEMESH2`、`TCH_STAIR` 系列 |
+| 结构 | `TCH_STRUBEAM`、`TCH_STRU_FLOORSLAB`、`TCH_STRU_HOLE`、`TCH_STRUSELFBASE`、`TCH_STRUBARBASE`、`TCH_STRUSLABHOLE`、`TCH_STRUHANGER`、`TCH_STRUNODEPOINT`、`TCH_STRUPLAINNUMBER`、`TCH_STRUREINBAR`、`TCH_STRUSECTSTAIR`、`TCH_STRUSTIRRUP`、`TCH_STRUSYMBFOCUS`、`TCH_STRUSYMBINSITU`、`TCH_STRU_WCOLUSECT`、`TCH_STRUEXENTSZONETABLE` |
+| 给排水 | `TCH_PIPE`、`TCH_PIPEVALVE`、`TCH_PIPEFITTING`、`TCH_PUMP`、`TCH_FLANGE`、`TCH_DOUBLELINEPIPE`、`TCH_VPIPEDIM`、`TCH_TRENCH` |
+| 暖通 | `TCH_DBHVACDUCT`、`TCH_DBHEQUIPMENT`、`TCH_DBHFITTING`、`TCH_RADIATOR` |
+| 电气 | `TCH_CABLETRY`、`TCH_EEQUIPMENT`、`TCH_EFITTING`、`TCH_EQUIPMENT` |
+| 其他 | `TCH_SECTIONPATHSIGN`、`TCH_Section`、`TCH_TESTSECTIONPLANE`、`TCH_TESTSECTIONLINE`、`TCH_KATANA`、`TCH_FIREZONE`、`TCH_FLOORRECT`、`TCH_EVACPATH`、`TCH_PROTECT_ENTITY`、`TCH_AREAREDLINE`、`TCH_REIN_INDEX_DIM`、`TCH_TDBINSIGHT`、`TCH_DRAWINGNAME`、`TCH_SYMB_*` 系列、`TCH_GROUP` / `TCH_HIDE_GROUP`、`TCH_DBCONFIG` / `TCH_DBPSCONFIG` |
+
+另有 `_TCH_` 前缀的内部/隐藏类名（`_TCH_SOLID`、`_TCH_SPACE`、`_TCH_WINDOW`、`_TCH_AXIS`、`_TCH_DIM`、`_TCH_LABEL` 等）。proxy 应用名（app name）为 `TCH_KERNAL`。
+
+## 3. 数据混淆算法（`TgDataEncrypt`）
+
+天正对写入 DWG 的**实体固定字段**做混淆（不是真密码学加密）。
+
+- **启用条件**：仅 DWG 2004+（保存版本号 ≥ 16，即 R2004 起）启用；更早版本明文直写。
+- **密钥**：`0x05`，硬编码（来自常量 `0x528` 的第二字节），与保存版本无关。
+
+算法（对称）：
+
+```
+加密 = 每个字节 b → ('A' + b/26)('A' + b%26)，其中 b = 原字节 ^ 0x05
+解密 = 每两个字母 ((c0-'A')*26 + (c1-'A')) → 字节 = b ^ 0x05
+```
+
+即：先 XOR `0x05`，再做 Base-26（两个大写字母表示一个 0–255 字节）。
+
+对应函数（stripped 内部名）：
+- `TDEncrypt` = `sub_1c49b4b0`
+- `TDUnEncrypt` = `sub_1c49b320`
+- 上下文构造 = `sub_1c49b310`（写死 `0x528`）
+
+因为 Base-26 只编码低字节（0–255），天正**只加密可单字节表示的内容**——数值/布尔先 `swprintf` 成 ASCII 字符串，再加密。因此密文是原字符串两倍长度的大写字母串。
+
+## 4. 实体序列化结构
+
+`TEntityBase` 内存布局（偏移，x86_64）：
+
+| 偏移 | 内容 |
+|---|---|
+| +0x08 | double |
+| +0x10 | double |
+| +0x20 | 对象列表（`TDPtrList`，软指针 id） |
+| +0x60 | 对象列表（`TDPtrList`） |
+| +0xa0 | `TEntityFields` 字段容器 |
+| +0xd0 | 子对象（有独立虚表） |
+| +0x110 | `TWCString`（产品标识 GUID） |
+
+`TEntityBase::DwgOutFields` 写序：
+
+1. 版本相关前置（据 DWG 保存版本分支）
+2. 固定字段（两个 double、两个对象列表）→ **经 `TgDataEncrypt` 加密**
+3. `TEntityFields` 字段容器 → **明文**
+4. 子对象（+0xd0）
+5. 产品标识 GUID 字符串（6 选 1，明文）
+
+## 5. 字段容器格式（明文）
+
+`TEntityFields::DwgOut`（字段数 + 逐字段）：
+
+```
+[字段数 int32]                       # 明文
+  每个字段 TEntityField::DwgOut:
+    [字段名 wchar]                   # 明文
+    [数据类型 int16]                 # 明文，枚举 0..210
+    [字段值]                         # 明文，按类型经 filer 直写
+```
+
+`TEntityField` 布局：+0x10 存数据类型（int16），+0x18 起存值数据。字段值通过 `GetData` 取出后由 `AcDbDwgFiler` 虚函数直写，不经加密。
+
+## 6. 加密边界（关键结论）
+
+- **实体固定字段**（`TEntityBase` 及各派生实体自己的成员：坐标、尺寸、对象 id 列表等）→ **加密**
+- **命名字段容器**（`TEntityFields` 内的字段名 / 类型 / 值）→ **明文**
+
+不要误以为天正实体数据全加密——命名字段容器是明文的，可直接解析。
+
+## 7. 产品标识 GUID
+
+`TEntityBase::DwgOutFields` 末尾按全局枚举写 6 个 GUID 之一（疑似区分建筑/结构/给排水/暖通/电气/其他产品系列）：
+
+```
+{B0713E6B-AFF6-4871-A273-7896834D6676}
+{CE0D96A4-364C-46C2-B793-D33FD4CE9C92}
+{209943AA-4212-4AFA-BB0C-AB88470D5E81}
+{2143F26C-50DE-40D1-8DC1-33A8F24F5E74}
+{FB4404A7-2317-4C60-90E7-DEE93987E6F6}
+{20DE790C-46D3-4D54-89D6-B09837DBBD7E}
+```
+
+## 8. 参考实现
+
+解密/加密的独立参考实现见 `reference/tianzheng_crypt.py`。
+
+## 9. 样本实测（TIANZHENTEST.dwg，已坐实）
+
+用 `crates/dwg/src/tianzheng.rs`（`read_tianzheng` + `extract_text_stream` + `parse_text_strings`）实测解出 TCH_WALL 的 text 流 45 个字符串，结构：
+
+```
+[0]  {61309675-BD2E-44BE-B870-B80B03BB3A76}   产品 GUID（明文）
+[1-6] 乱码 ×6                                 加密的固定字段
+[7]  TDBXDATAMAP_BLOCK_BEGIN_                  字段容器开始标记（明文）
+[8-23] T20b2 / T20b3 / T20d12 / T20d7 / T20s9 / T20u6 ...  字段名（明文，与加密字段值交替）
+[24] TDBXDATAMAP_BLOCK_END_                   字段容器结束标记（明文）
+[25] {209943AA-4212-4AFA-BB0C-AB88470D5E81}   关联对象 GUID（6 个产品 GUID 之一）
+[26+] 乱码                                    更多加密字段
+```
+
+**坐实的结论**：
+- 字段容器是明文的，边界是 `TDBXDATAMAP_BLOCK_BEGIN_` / `TDBXDATAMAP_BLOCK_END_`。
+- 字段名格式 `T20` + 类型字母 + 序号（如 `T20b2`、`T20d7`、`T20s9`、`T20u6`）。
+- 加密字段（固定字段 + 字段值）以乱码出现在 text 流，需进一步解密（见下）。
+
+### 字段名类型字母（DataType 分类，逆向确认）
+
+字段名 `T20` + 类型字母 + 序号，类型字母决定字段值类型和存储位置：
+
+| 前缀 | 类型字母 | 类型 | 值存储 | 样本字段值示例 |
+|---|---|---|---|---|
+| `T20b*` | b | byte/bool | main 流（bit 编码） | 数值 |
+| `T20d*` | d | double | main 流（bit 编码） | 数值（坐标/尺寸） |
+| `T20s*` | s | string | text 流（明文） | `A级`、`填充墙`、`多孔材料`、`保温层` |
+| `T20u*` | u | uint | main 流（bit 编码） | 数值 |
+
+统计（tch_kernal.arx 内）：`T20b`×3、`T20d`×9、`T20s`×7、`T20u`×2。
+
+### main 流结构（DataType 位编码，实测解出）
+
+main 流（`raw_dwg_data[0..text_start]`）= `[字段数 int32(BL)][逐字段：类型 RC 1字节 + 值]`。
+
+实测 TCH_WALL：字段数 = 27，字段类型用 **RC（raw char，1 字节）** 编码，读出的 DataType 值：
+
+```
+字段 0-1: 类型 2   = byte/bool（对应 T20b2/T20b3）
+字段 2-3: 类型 202/164 = double 子类型（对应 T20d12/T20d7）
+字段 4-5: 类型 32  = string（对应 T20s1/T20s14，值在 text 流）
+字段 6-11: 类型 0  = 空/未设置
+字段 12:  类型 2   = byte
+字段 13:  类型 173 = ?
+字段 16-20: 类型 67/161/162/146/7 = uint 等子类型
+字段 21:  类型 32  = string
+字段 22-23: 类型 114/10 = ?
+字段 24-26: 类型 0  = 空
+```
+
+**已确认的 DataType 分类**（索引表 `0x469c44`：DataType 0-210 → 20 个基础类型 case + 1 个 default）：
+
+- DataType 0-7 → 索引 0-6（bool/char/byte/uint16/int16/int32/复杂）
+- DataType 8-99 → default（return，不写 main 流）
+- DataType 100-101 → 索引 7/8
+- DataType 102-199 → default
+- DataType 200-210 → 索引 9-19（double 等）
+
+### 字段值 bit 编码（实测解出）
+
+字段值按 DataType 编码（`TEntityField::DwgOut` 的 switch case 逆向）：
+
+| DataType | 索引 | case 槽位 | 类型 | bit 编码 |
+|---|---|---|---|---|
+| 0 | 0 | 0x170 | bool | BB（1 bit）|
+| 1/2 | 1 | 0xb0 | char | RC（1 字节）|
+| 3 | 2 | 0x160 | byte | RC（1 字节）|
+| 4 | 3 | 0x120 | uint16 | BS |
+| 5 | 4 | 0x150 | int16 | BS |
+| 6 | 5 | 0x110 | int32 | BL |
+| 7 | 6 | 0x140 | 复杂 | 待逆向 |
+| 100 | 7 | 多函数 | 复杂 | 待逆向 |
+| 101 | 8 | 0xd0 | string | text 流 |
+| 200-210 | 9-19 | 0x190-0xf0 | double 等 | BD |
+
+**关键发现**：switch 的 default case 是 `return`（`0x469bda`），即 DataType 8-99、102-199（190 个 DataType）的字段值**不通过 TEntityField::DwgOut 直接写 main 流**。
+
+**关键结论（几何数据位置）**：main 流的字段值只占约 225 bit（基础类型 bool/char/double），剩余的 326 bit（main 流 [451, 777)）是 **TEntityBase 子对象（+0xd0 偏移）的序列化**——子对象是几何数据容器（墙的路径/高度/方向），其 DwgOut（虚函数）写 main 流。即：
+
+```
+main 流 = 字段数(BL) + 字段类型×N(RC) + 字段值(基础类型)
+        + 子对象几何数据(+0xd0 的 DwgOut 输出)
+```
+
+天正实体的**几何核心在子对象（+0xd0）**，字段容器只存属性（材料/等级/尺寸），子对象存几何（路径/坐标）。
+
+### 子对象（+0xd0）几何结构（逆向确认）
+
+子对象是几何数据容器：构造函数 `0x1c409d20`、vftable `0x1c675a60`（5 虚函数）、DwgOut `0x1c40e840`、DwgIn `0x1c40e480`。
+
+DwgOut 写 9 个字段（几何数据）：
+
+| # | 槽位 | 类型 | 语义 |
+|---|---|---|---|
+| 1 | 0xd0 | string | 类型标识 |
+| 2 | 0xd0 | string | ? |
+| 3 | 0x110 | int32 | 路径点数（float 截断） |
+| 4 | 0xa0 | 指针 | 对象引用 |
+| 5 | 0x190 | double | 高度/厚度 |
+| 6 | 0x110 | int32 | 整数 |
+| 7 | 0x90 | 指针 | 对象引用 |
+| 8 | 0xd0 | string | ? |
+| 9 | 0x1d0 | double | double |
+
+`0x90`/`0xa0` 槽位是**指针/对象引用**（非 Point2d/Vector3d），几何坐标是 double 字段（0x190/0x1d0）+ 整数（路径点数）。
+
+## 10. 待完成
+
+- [ ] 数值字段值（b/d/u）从 main 流位解码（需按字段顺序读取，字段名在 text 流、数值在 main 流交错对应）。
+- [ ] 各实体派生类（墙/柱/梁/管段…）的固定字段语义。
+- [ ] 字段数据类型枚举（0..210）的完整映射（已确认 s/b/d/u 四类，其余类型待展开）。

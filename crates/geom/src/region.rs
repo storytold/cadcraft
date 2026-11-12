@@ -60,7 +60,123 @@ struct Graph {
     edge_src: HashMap<(usize, usize), usize>,
 }
 
+/// Records the crossing of segments `i` and `j`, if any, as split parameters on both.
+fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize) {
+    let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { return };
+    let li = Line::new(si.0, si.1);
+    let lj = Line::new(sj.0, sj.1);
+    if let Some(x) = line_line(&li, &lj) {
+        if let Some(v) = splits.get_mut(i) {
+            v.push(li.param_of(x).clamp(0.0, 1.0));
+        }
+        if let Some(v) = splits.get_mut(j) {
+            v.push(lj.param_of(x).clamp(0.0, 1.0));
+        }
+    }
+}
+
+/// Upper bound on candidate-pair *visits*. Every visit counts, including repeats of a pair that shares several grid
+/// cells, not only the distinct pairs actually tested. A long segment replicated across many
+/// cells makes the same pair reappear in each, so a budget on distinct pairs alone leaves the
+/// repeated work unbounded (CWE-407).
+const MAX_PAIR_VISITS: u64 = 60_000_000;
+/// Upper bound on distinct segment pairs tested for a crossing.
+const MAX_PAIRS_TESTED: usize = 20_000_000;
+
+/// Split parameters of every segment (always `0` and `1`, plus every crossing), found with a uniform grid.
+fn pair_splits(segs: &[(Vec2, Vec2)], bb: &Bounds2) -> Option<Vec<Vec<f64>>> {
+    pair_splits_limited(segs, bb, MAX_PAIR_VISITS, MAX_PAIRS_TESTED)
+}
+
+/// `pair_splits` with explicit budgets: `None` once more than `max_visits` candidate pairs were visited
+/// or more than `max_pairs` distinct pairs were tested.
+fn pair_splits_limited(segs: &[(Vec2, Vec2)], bb: &Bounds2, max_visits: u64, max_pairs: usize) -> Option<Vec<Vec<f64>>> {
+    let n = segs.len();
+    let cells = ((n as f64).sqrt().ceil() as usize).clamp(1, 512);
+    let cw = (bb.width() / cells as f64).max(1e-12);
+    let ch = (bb.height() / cells as f64).max(1e-12);
+    let cell = |p: Vec2| {
+        (
+            ((p.x - bb.min.x) / cw).floor().clamp(0.0, (cells - 1) as f64) as usize,
+            ((p.y - bb.min.y) / ch).floor().clamp(0.0, (cells - 1) as f64) as usize,
+        )
+    };
+    // Cell lists in a flat grid, indexed `gx * cells + gy`; each list is in ascending segment order.
+    let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
+    // The lowest cell of each segment's cell range; the lowest cell two segments share is the
+    // componentwise maximum of their two.
+    let mut low: Vec<(usize, usize)> = vec![(0, 0); n];
+    let mut is_long = vec![false; n];
+    let mut long: Vec<usize> = Vec::new();
+    for (i, (a, b)) in segs.iter().enumerate() {
+        let (x0, y0) = cell(a.min(*b));
+        let (x1, y1) = cell(a.max(*b));
+        if let Some(l) = low.get_mut(i) {
+            *l = (x0, y0);
+        }
+        if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096 {
+            // Very long segment: too many cells to register in; it is tested against every segment below.
+            long.push(i);
+            if let Some(f) = is_long.get_mut(i) {
+                *f = true;
+            }
+            continue;
+        }
+        for gx in x0..=x1 {
+            for gy in y0..=y1 {
+                if let Some(list) = grid.get_mut(gx * cells + gy) {
+                    list.push(i);
+                }
+            }
+        }
+    }
+    let mut splits: Vec<Vec<f64>> = vec![vec![0.0, 1.0]; n];
+    let mut tested: usize = 0;
+    let mut visits: u64 = 0;
+    for (c, list) in grid.iter().enumerate() {
+        let (gx, gy) = (c / cells, c % cells);
+        for (k, &i) in list.iter().enumerate() {
+            let Some(&(ix, iy)) = low.get(i) else { continue };
+            for &j in list.iter().skip(k + 1) {
+                visits += 1;
+                if visits > max_visits {
+                    return None;
+                }
+                let Some(&(jx, jy)) = low.get(j) else { continue };
+                // A pair sharing several cells is tested once, in the lowest cell both occupy.
+                if i == j || gx != ix.max(jx) || gy != iy.max(jy) {
+                    continue;
+                }
+                split_pair(segs, &mut splits, i, j);
+                tested += 1;
+                if tested > max_pairs {
+                    return None;
+                }
+            }
+        }
+    }
+    // A long segment is in no cell list. Two long segments are tested once, from the lower index.
+    for &i in &long {
+        for j in 0..n {
+            if i == j || (j < i && is_long.get(j).copied().unwrap_or(false)) {
+                continue;
+            }
+            split_pair(segs, &mut splits, i, j);
+            tested += 1;
+            if tested > max_pairs {
+                return None;
+            }
+        }
+    }
+    Some(splits)
+}
+
 fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
+    build_with(polys, tol, pair_splits)
+}
+
+/// `build` with the crossing search injected, so tests can run the old and the new search on the same input.
+fn build_with(polys: &[Vec<Vec2>], tol: f64, find_splits: impl Fn(&[(Vec2, Vec2)], &Bounds2) -> Option<Vec<Vec<f64>>>) -> Option<Graph> {
     let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
     let mut owner: Vec<usize> = Vec::new();
     for (k, pl) in polys.iter().enumerate() {
@@ -81,72 +197,9 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
     if segs.is_empty() || segs.len() > MAX_SEGMENTS {
         return None;
     }
-    // Split points per segment (parameters), found with a uniform grid.
     let bb = Bounds2::from_points(segs.iter().flat_map(|(a, b)| [*a, *b]));
     let n = segs.len();
-    let cells = ((n as f64).sqrt().ceil() as usize).clamp(1, 512);
-    let cw = (bb.width() / cells as f64).max(1e-12);
-    let ch = (bb.height() / cells as f64).max(1e-12);
-    let cell = |p: Vec2| {
-        (
-            ((p.x - bb.min.x) / cw).floor().clamp(0.0, (cells - 1) as f64) as usize,
-            ((p.y - bb.min.y) / ch).floor().clamp(0.0, (cells - 1) as f64) as usize,
-        )
-    };
-    let mut grid: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-    for (i, (a, b)) in segs.iter().enumerate() {
-        let (x0, y0) = cell(a.min(*b));
-        let (x1, y1) = cell(a.max(*b));
-        if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096 {
-            // Very long segment: register in a coarse band.
-            for gx in (x0..=x1).step_by(((x1 - x0) / 64).max(1)) {
-                for gy in (y0..=y1).step_by(((y1 - y0) / 64).max(1)) {
-                    grid.entry((gx, gy)).or_default().push(i);
-                }
-            }
-            continue;
-        }
-        for gx in x0..=x1 {
-            for gy in y0..=y1 {
-                grid.entry((gx, gy)).or_default().push(i);
-            }
-        }
-    }
-    let mut splits: Vec<Vec<f64>> = vec![vec![0.0, 1.0]; n];
-    let mut tested = std::collections::HashSet::new();
-    // Count every candidate-pair *visit*, including repeats of a pair that shares several grid
-    // cells, not only the distinct pairs actually tested. A long segment replicated across many
-    // cells makes the same pair reappear in each, so a budget on distinct pairs alone leaves the
-    // repeated hashing unbounded (CWE-407).
-    let mut visits: u64 = 0;
-    const MAX_PAIR_VISITS: u64 = 60_000_000;
-    for list in grid.values() {
-        for (k, &i) in list.iter().enumerate() {
-            for &j in list.iter().skip(k + 1) {
-                visits += 1;
-                if visits > MAX_PAIR_VISITS {
-                    return None;
-                }
-                if i == j || !tested.insert((i.min(j), i.max(j))) {
-                    continue;
-                }
-                let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { continue };
-                let li = Line::new(si.0, si.1);
-                let lj = Line::new(sj.0, sj.1);
-                if let Some(x) = line_line(&li, &lj) {
-                    if let Some(v) = splits.get_mut(i) {
-                        v.push(li.param_of(x).clamp(0.0, 1.0));
-                    }
-                    if let Some(v) = splits.get_mut(j) {
-                        v.push(lj.param_of(x).clamp(0.0, 1.0));
-                    }
-                }
-                if tested.len() > 20_000_000 {
-                    return None;
-                }
-            }
-        }
-    }
+    let splits = find_splits(&segs, &bb)?;
     let mut g = Graph { pts: Vec::new(), adj: Vec::new(), src: Vec::with_capacity(n), edge_src: HashMap::new() };
     let mut index: HashMap<(i64, i64), usize> = HashMap::new();
     let mut vid = |p: Vec2, g: &mut Graph| -> usize {
@@ -378,10 +431,10 @@ fn outside(core: &Graph, u: usize, steps: usize) -> Option<Vec<Vec2>> {
 }
 
 /// Outlines of the groups of curves inside the face `outer` (vertex indices into `g`).
-fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
+fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Option<Vec<Island>> {
     let comp = components(g);
     let outer_comp: std::collections::HashSet<usize> = outer.iter().filter_map(|&i| comp.get(i).copied()).collect();
-    let Some(outer_pts) = points(g, outer) else { return Vec::new() };
+    let outer_pts = points(g, outer)?;
     let ob = Bounds2::from_points(outer_pts.iter().copied());
     let core = prune(g);
     // Leftmost (then lowest) vertex still on a cycle, per component.
@@ -411,25 +464,132 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
     let mut starts: Vec<(usize, usize)> = start.into_iter().collect();
     starts.sort_unstable();
     let mut out = Vec::new();
+    // Each containment test scans a whole polygon, accepted or not: they share one allowance of
+    // polygon edges, and the search ends when it is spent.
+    let mut edges_left: usize = 100_000_000;
     for (c, u) in starts {
         if out.len() >= MAX_ISLANDS {
             break;
         }
         let Some(&pu) = core.pts.get(u) else { continue };
-        if !ob.contains(pu) || !point_in_polygon(&outer_pts, pu) {
+        if !ob.contains(pu) {
+            continue;
+        }
+        let left = edges_left.checked_sub(outer_pts.len())?;
+        edges_left = left;
+        if !point_in_polygon(&outer_pts, pu) {
             continue;
         }
         let steps = edges.get(&c).copied().unwrap_or(0).saturating_add(4);
         let Some(lp) = outside(&core, u, steps) else { continue };
         let area = shoelace(&lp);
         let ib = Bounds2::from_points(lp.iter().copied());
-        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) || point_in_polygon(&lp, p) {
+        if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) {
+            continue;
+        }
+        let left = edges_left.checked_sub(lp.len())?;
+        edges_left = left;
+        if point_in_polygon(&lp, p) {
             continue;
         }
         let mut src = sources.remove(&c).unwrap_or_default();
         src.sort_unstable();
         src.dedup();
         out.push(Island { outline: lp, sources: src });
+    }
+    Some(out)
+}
+
+/// The point of the nearest other curve within `snap` of the end `e` of curve `i`, as (curve,
+/// segment, parameter, point). `None` when the end touches a curve, or none is near. `Err` when
+/// the budget of segment checks runs out.
+fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, budget: &mut usize) -> Result<Option<(usize, usize, f64, Vec2)>, ()> {
+    let mut best: Option<(f64, usize, usize, f64, Vec2)> = None;
+    let mut touching = false;
+    for (j, other) in polys.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        // A curve with no segment costs a visit too, so many of them can't multiply the searches.
+        if other.len() < 2 {
+            *budget = budget.checked_sub(1).ok_or(())?;
+        }
+        for (k, w) in other.windows(2).enumerate() {
+            if *budget == 0 {
+                return Err(());
+            }
+            *budget -= 1;
+            let [a, b] = w else { continue };
+            if !(a.is_finite() && b.is_finite())
+                || e.x < a.x.min(b.x) - snap
+                || e.x > a.x.max(b.x) + snap
+                || e.y < a.y.min(b.y) - snap
+                || e.y > a.y.max(b.y) + snap
+            {
+                continue;
+            }
+            let line = Line::new(*a, *b);
+            let t = line.param_of(e).clamp(0.0, 1.0);
+            let q = line.at(t);
+            let d = q.dist(e);
+            if d <= tol {
+                touching = true;
+            } else if d <= snap && best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, j, k, t, q));
+            }
+        }
+    }
+    Ok(best.filter(|_| !touching).map(|(_, j, k, t, q)| (j, k, t, q)))
+}
+
+/// The curves with each open end that stops within `snap` of another curve moved onto that
+/// curve (which gains a vertex there), so the two meet exactly. A curve that is flattened
+/// into chords (an ellipse, a spline) lies up to the flattening tolerance off the true curve,
+/// so a line that ends on the true curve can stop just short of the chords.
+pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
+    let mut out: Vec<Vec<Vec2>> = polys.to_vec();
+    if !(snap.is_finite() && snap > tol) {
+        return out;
+    }
+    // build() refuses this input anyway; don't spend ends x segments work on it.
+    let total: usize = polys.iter().map(|p| p.len().saturating_sub(1)).sum();
+    if total > MAX_SEGMENTS {
+        return out;
+    }
+    // (target polyline, segment index, parameter on it, the point) for every vertex to insert.
+    let mut inserts: Vec<(usize, usize, f64, Vec2)> = Vec::new();
+    let mut budget = MAX_GAP_PAIRS;
+    'ends: for (i, pl) in polys.iter().enumerate() {
+        let (Some(&first), Some(&last)) = (pl.first(), pl.last()) else { continue };
+        if pl.len() < 2 || first.near(last, tol) {
+            continue;
+        }
+        for at_end in [false, true] {
+            let e = if at_end { last } else { first };
+            if !e.is_finite() {
+                continue;
+            }
+            let Ok(near) = nearest_curve(polys, i, e, snap, tol, &mut budget) else { break 'ends };
+            let Some((j, k, t, q)) = near else { continue };
+            let Some(slot) = out.get_mut(i).and_then(|v| if at_end { v.last_mut() } else { v.first_mut() }) else { continue };
+            *slot = q;
+            let ends = polys.get(j).and_then(|o| o.get(k).zip(o.get(k + 1)));
+            if let Some((&a, &b)) = ends
+                && !q.near(a, tol)
+                && !q.near(b, tol)
+            {
+                inserts.push((j, k, t, q));
+            }
+        }
+    }
+    // Later segments and larger parameters first, so earlier indices stay valid.
+    inserts.sort_by(|x, y| y.0.cmp(&x.0).then(y.1.cmp(&x.1)).then(y.2.total_cmp(&x.2)));
+    for (j, k, _, q) in inserts {
+        if let Some(v) = out.get_mut(j)
+            && k < v.len()
+        {
+            v.insert(k + 1, q);
+        }
     }
     out
 }
@@ -455,7 +615,7 @@ pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Opti
     let g = build_gap(polys, tol, gap)?;
     let ids = outer_face(&g, p)?;
     let outer = points(&g, &ids)?;
-    let islands = islands(&g, &ids, p);
+    let islands = islands(&g, &ids, p)?;
     let mut outer_sources: Vec<usize> =
         ids.iter().zip(ids.iter().cycle().skip(1)).filter_map(|(&u, &v)| g.edge_src.get(&(u.min(v), u.max(v))).copied()).collect();
     outer_sources.sort_unstable();
@@ -525,6 +685,201 @@ mod tests {
 
     fn square(x0: f64, y0: f64, s: f64) -> Vec<Vec2> {
         vec![Vec2::new(x0, y0), Vec2::new(x0 + s, y0), Vec2::new(x0 + s, y0 + s), Vec2::new(x0, y0 + s), Vec2::new(x0, y0)]
+    }
+
+    /// The crossing search before the lowest-shared-cell rule: a `HashSet` of tested pairs over a `HashMap` grid.
+    fn pair_splits_oracle(segs: &[(Vec2, Vec2)], bb: &Bounds2, max_visits: u64, max_pairs: usize) -> Option<Vec<Vec<f64>>> {
+        let n = segs.len();
+        let cells = ((n as f64).sqrt().ceil() as usize).clamp(1, 512);
+        let cw = (bb.width() / cells as f64).max(1e-12);
+        let ch = (bb.height() / cells as f64).max(1e-12);
+        let cell = |p: Vec2| {
+            (
+                ((p.x - bb.min.x) / cw).floor().clamp(0.0, (cells - 1) as f64) as usize,
+                ((p.y - bb.min.y) / ch).floor().clamp(0.0, (cells - 1) as f64) as usize,
+            )
+        };
+        let mut grid: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        let mut long: Vec<usize> = Vec::new();
+        for (i, (a, b)) in segs.iter().enumerate() {
+            let (x0, y0) = cell(a.min(*b));
+            let (x1, y1) = cell(a.max(*b));
+            if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096 {
+                long.push(i);
+                continue;
+            }
+            for gx in x0..=x1 {
+                for gy in y0..=y1 {
+                    grid.entry((gx, gy)).or_default().push(i);
+                }
+            }
+        }
+        let mut splits: Vec<Vec<f64>> = vec![vec![0.0, 1.0]; n];
+        let mut tested = std::collections::HashSet::new();
+        let mut visits: u64 = 0;
+        for list in grid.values() {
+            for (k, &i) in list.iter().enumerate() {
+                for &j in list.iter().skip(k + 1) {
+                    visits += 1;
+                    if visits > max_visits {
+                        return None;
+                    }
+                    if i == j || !tested.insert((i.min(j), i.max(j))) {
+                        continue;
+                    }
+                    split_pair(segs, &mut splits, i, j);
+                    if tested.len() > max_pairs {
+                        return None;
+                    }
+                }
+            }
+        }
+        for &i in &long {
+            for j in 0..n {
+                if i == j || !tested.insert((i.min(j), i.max(j))) {
+                    continue;
+                }
+                split_pair(segs, &mut splits, i, j);
+                if tested.len() > max_pairs {
+                    return None;
+                }
+            }
+        }
+        Some(splits)
+    }
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// Random segments: short ones, some long ones, and some on a coarse lattice (shared ends, overlaps).
+    fn random_segments(r: &mut Rng, n: usize, size: f64, long_every: u64) -> Vec<(Vec2, Vec2)> {
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let a = Vec2::new(r.unit() * size, r.unit() * size);
+            let seg = match r.next() % 4 {
+                0 if long_every > 0 && r.next().is_multiple_of(long_every) => (
+                    Vec2::new(r.unit() * size * 0.02, r.unit() * size * 0.02),
+                    Vec2::new(size * (0.98 + r.unit() * 0.02), size * (0.98 + r.unit() * 0.02)),
+                ),
+                1 => {
+                    let q = |r: &mut Rng| (r.next() % 9) as f64 * size / 8.0;
+                    (Vec2::new(q(r), q(r)), Vec2::new(q(r), q(r)))
+                }
+                _ => (a, a + Vec2::new((r.unit() - 0.5) * size * 0.1, (r.unit() - 0.5) * size * 0.1)),
+            };
+            if !seg.0.near(seg.1, 1e-9) {
+                out.push(seg);
+            }
+        }
+        out
+    }
+
+    fn sorted_bits(splits: &[Vec<f64>]) -> Vec<Vec<u64>> {
+        splits
+            .iter()
+            .map(|v| {
+                let mut v = v.clone();
+                v.sort_by(f64::total_cmp);
+                v.iter().map(|x| x.to_bits()).collect()
+            })
+            .collect()
+    }
+
+    fn bounds_of(segs: &[(Vec2, Vec2)]) -> Bounds2 {
+        Bounds2::from_points(segs.iter().flat_map(|(a, b)| [*a, *b]))
+    }
+
+    fn assert_same_search(segs: &[(Vec2, Vec2)], max_visits: u64, max_pairs: usize) {
+        let bb = bounds_of(segs);
+        let old = pair_splits_oracle(segs, &bb, max_visits, max_pairs);
+        let new = pair_splits_limited(segs, &bb, max_visits, max_pairs);
+        assert_eq!(old.as_deref().map(sorted_bits), new.as_deref().map(sorted_bits), "n={} visits<={max_visits} pairs<={max_pairs}", segs.len());
+    }
+
+    #[test]
+    fn pair_search_matches_oracle_with_budgets() {
+        // Small inputs in few cells: many pairs share several cells. Sweeping each budget over
+        // 0..=400 crosses its exhaustion point for most seeds, including the exact boundary.
+        for seed in 1..=150u64 {
+            let mut r = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let n = 2 + (r.next() % 28) as usize;
+            let segs = random_segments(&mut r, n, 100.0, 0);
+            if segs.is_empty() {
+                continue;
+            }
+            for v in 0..=400u64 {
+                assert_same_search(&segs, v, usize::MAX);
+            }
+            for p in 0..=400usize {
+                assert_same_search(&segs, u64::MAX, p);
+            }
+            assert_same_search(&segs, 60_000_000, 20_000_000);
+        }
+    }
+
+    #[test]
+    fn pair_search_matches_oracle_with_long_segments() {
+        // Around 5000 segments give a 71x71 grid, so a diagonal covers more than 4096 cells and takes the long path.
+        for seed in 1..=3u64 {
+            let mut r = Rng(seed.wrapping_mul(0xD1B5_4A32_D192_ED03) | 1);
+            let n = 5_000 + (r.next() % 500) as usize;
+            let segs = random_segments(&mut r, n, 1000.0, 40);
+            let bb = bounds_of(&segs);
+            let cells = ((segs.len() as f64).sqrt().ceil() as usize).clamp(1, 512);
+            assert!(cells >= 64, "grid too coarse to reach the long path");
+            assert_same_search(&segs, 60_000_000, 20_000_000);
+            // Budgets exhausted in the cell phase (visits, then pairs).
+            assert_same_search(&segs, 3_000, 20_000_000);
+            assert_same_search(&segs, 60_000_000, 200);
+            assert!(pair_splits_limited(&segs, &bb, 3_000, 20_000_000).is_none());
+            assert!(pair_splits_limited(&segs, &bb, 60_000_000, 200).is_none());
+            let (cw, ch) = ((bb.width() / cells as f64).max(1e-12), (bb.height() / cells as f64).max(1e-12));
+            let span = |a: f64, b: f64, o: f64, w: f64| {
+                (((b.max(a) - o) / w).floor().min((cells - 1) as f64) - ((b.min(a) - o) / w).floor().max(0.0) + 1.0) as usize
+            };
+            let long = segs.iter().filter(|(a, b)| span(a.x, b.x, bb.min.x, cw) * span(a.y, b.y, bb.min.y, ch) > 4096).count();
+            assert!(long > 0, "seed {seed}: no segment takes the long path");
+        }
+    }
+
+    #[test]
+    fn build_matches_oracle_on_random_drawings() {
+        for seed in 1..=60u64 {
+            let mut r = Rng(seed.wrapping_mul(0xA076_1D64_78BD_642F) | 1);
+            let n = 5 + (r.next() % 400) as usize;
+            let polys: Vec<Vec<Vec2>> = random_segments(&mut r, n, 100.0, 0).into_iter().map(|(a, b)| vec![a, b]).collect();
+            let old = build_with(&polys, 1e-6, |s, bb| pair_splits_oracle(s, bb, MAX_PAIR_VISITS, MAX_PAIRS_TESTED));
+            let new = build(&polys, 1e-6);
+            let (Some(old), Some(new)) = (old, new) else { panic!("seed {seed}: build failed") };
+            assert_eq!(old.pts, new.pts, "seed {seed}");
+            assert_eq!(old.adj, new.adj, "seed {seed}");
+            assert_eq!(old.src, new.src, "seed {seed}");
+            assert_eq!(old.edge_src, new.edge_src, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn long_segment_crossing_in_unsampled_cell_is_split() {
+        // A diagonal long enough to skip the grid, and a short segment crossing it in a cell the old coarse sampling missed.
+        let mut polys = vec![vec![Vec2::new(0.0, 0.0), Vec2::new(1000.0, 1000.0)], vec![Vec2::new(11.0, 12.0), Vec2::new(12.0, 11.0)]];
+        for i in 0..17_000usize {
+            let x = 600.0 + (i % 130) as f64 * 2.0;
+            let y = 100.0 + (i / 130) as f64 * 2.0;
+            polys.push(vec![Vec2::new(x, y), Vec2::new(x + 1.0, y)]);
+        }
+        let g = build(&polys, 1e-6).unwrap();
+        let hit = g.pts.iter().position(|p| p.near(Vec2::new(11.5, 11.5), 1e-6)).unwrap();
+        assert_eq!(g.adj[hit].len(), 4);
     }
 
     #[test]
@@ -720,5 +1075,35 @@ mod tests {
         // Hostile gaps.
         assert!(enclosing_loop_gap(&polys, p, 1e-9, f64::NAN).is_none());
         assert!(enclosing_loop_gap(&polys, p, 1e-9, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn line_ending_just_short_of_a_chord_is_joined_to_it() {
+        // A strip between two verticals and a flattened arc that bows below the ends of the
+        // verticals by 0.05 (the verticals stop on the true curve, the chord is lower).
+        let top = vec![Vec2::new(0.0, 10.0), Vec2::new(2.0, 10.0)];
+        let left = vec![Vec2::new(0.0, 10.0), Vec2::new(0.0, 0.05)];
+        let right = vec![Vec2::new(2.0, 10.0), Vec2::new(2.0, 0.05)];
+        let chord = vec![Vec2::new(-5.0, 0.0), Vec2::new(5.0, 0.0)];
+        let polys = vec![top, left, right, chord];
+        let p = Vec2::new(1.0, 5.0);
+        assert!(enclosing_loop(&polys, p, 1e-9).is_none());
+        let snapped = snap_ends(&polys, 0.1, 1e-9);
+        let l = enclosing_loop(&snapped, p, 1e-9).unwrap();
+        assert!((shoelace(&l) - 20.0).abs() < 1e-6, "{}", shoelace(&l));
+        // Too far away: left alone.
+        assert_eq!(snap_ends(&polys, 0.01, 1e-9), polys);
+    }
+
+    #[test]
+    fn snap_ends_skips_input_over_the_segment_cap() {
+        let mut polys: Vec<Vec<Vec2>> = (0..=MAX_SEGMENTS)
+            .map(|i| {
+                let x = i as f64 * 10.0;
+                vec![Vec2::new(x, 0.0), Vec2::new(x, 1.0)]
+            })
+            .collect();
+        polys.push(vec![Vec2::new(0.0, 1.05), Vec2::new(5.0, 1.05)]);
+        assert_eq!(snap_ends(&polys, 0.1, 1e-9), polys);
     }
 }

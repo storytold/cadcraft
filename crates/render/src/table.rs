@@ -133,6 +133,20 @@ pub fn table_geometry(d: &Drawing, t: &Table) -> TableGeom {
     if parts.len() <= 1 {
         return layout(d, t);
     }
+    // Every part is laid out and kept, so the cells of all of them count together (a header repeated
+    // on each part adds to each); past the limit only the table's outline is drawn.
+    let cols = t.col_widths.len().min(10_000);
+    let total: usize = parts.iter().map(|p| p.rows.len().min(10_000).saturating_mul(cols)).fold(0, usize::saturating_add);
+    if total > MAX_LAYOUT_CELLS {
+        // One outline per part, at the part's origin and as tall as its displayed rows.
+        let w = edges(&t.col_widths, cols).last().copied().unwrap_or(0.0);
+        let mut g = TableGeom::default();
+        for p in parts {
+            let h: f64 = p.rows.iter().take(10_000).map(|r| t.row_heights.get(*r).copied().filter(|v| v.is_finite()).unwrap_or(0.0)).sum();
+            outline_box(&mut g, p.origin, w, h);
+        }
+        return g;
+    }
     let mut g = TableGeom::default();
     for p in parts {
         let mut pg = layout(d, &part_table(t, &p.rows, p.origin));
@@ -156,16 +170,20 @@ fn part_table(t: &Table, rows: &[usize], origin: Vec2) -> Table {
     // Otherwise `layout` renders an outline, so materialising millions of empty cells here would be
     // wasted work an attacker can trigger with a compact dimension array (CWE-789).
     if rows.len().min(10_000).saturating_mul(cols) <= MAX_LAYOUT_CELLS {
+        // `run[i]`: how many rows from part row `i` follow one another in the table, found once so a
+        // merge is cut by a lookup, not by walking the rows it spans.
+        let mut run = vec![1u32; rows.len()];
+        for i in (0..rows.len().saturating_sub(1)).rev() {
+            if rows.get(i + 1).zip(rows.get(i)).is_some_and(|(next, this)| *next == this + 1) {
+                run[i] = run.get(i + 1).copied().unwrap_or(0).saturating_add(1);
+            }
+        }
         for (i, row) in cells.iter_mut().enumerate() {
             row.resize_with(cols, Default::default);
             for cell in row.iter_mut() {
                 if let Some((rs, cs)) = cell.merged {
                     // Rows of the merge that follow in this part.
-                    let start = rows.get(i).copied().unwrap_or(0);
-                    let mut n = 1u32;
-                    while n < rs && rows.get(i + n as usize).is_some_and(|r| *r == start + n as usize) {
-                        n += 1;
-                    }
+                    let n = rs.max(1).min(run.get(i).copied().unwrap_or(1));
                     cell.merged = (n > 1 || cs > 1).then_some((n, cs));
                 }
             }
@@ -186,6 +204,27 @@ fn part_table(t: &Table, rows: &[usize], origin: Vec2) -> Table {
     }
 }
 
+/// The table's outline alone, for a table too large to lay out.
+fn outline(t: &Table) -> TableGeom {
+    let rows = t.row_heights.len().min(10_000);
+    let cols = t.col_widths.len().min(10_000);
+    let (w, h) = (edges(&t.col_widths, cols).last().copied().unwrap_or(0.0), edges(&t.row_heights, rows).last().copied().unwrap_or(0.0));
+    let mut g = TableGeom::default();
+    outline_box(&mut g, t.insert.xy(), w, h);
+    g
+}
+
+/// The four sides of a `w` by `h` box hanging down from `o`.
+fn outline_box(g: &mut TableGeom, o: Vec2, w: f64, h: f64) {
+    let p = |x: f64, y: f64| o + Vec2::new(x, -y);
+    let corners = [p(0.0, 0.0), p(w, 0.0), p(w, h), p(0.0, h), p(0.0, 0.0)];
+    for s in corners.windows(2) {
+        if let [a, b] = s {
+            g.lines.push(TableLine { a: *a, b: *b, color: Color::ByBlock, lineweight: Lineweight::ByBlock });
+        }
+    }
+}
+
 /// Lay out one part.
 fn layout(d: &Drawing, t: &Table) -> TableGeom {
     let st = table_style_of(d, t);
@@ -203,14 +242,7 @@ fn layout(d: &Drawing, t: &Table) -> TableGeom {
     }
     let cov = coverage(t);
     if rows.saturating_mul(cols) > MAX_LAYOUT_CELLS || cov.is_err() {
-        let (w, h) = (x_at(cols), y_at(rows));
-        let corners = [p(0.0, 0.0), p(w, 0.0), p(w, h), p(0.0, h), p(0.0, 0.0)];
-        for s in corners.windows(2) {
-            if let [a, b] = s {
-                g.lines.push(TableLine { a: *a, b: *b, color: Color::ByBlock, lineweight: Lineweight::ByBlock });
-            }
-        }
-        return g;
+        return outline(t);
     }
     let k = style_scale(&st, t);
     // Cell styles by name, scaled to the table.
@@ -375,7 +407,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
     }
     for tx in &g.texts {
         let ts = crate::text_style(ctx.d, &tx.style);
-        let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+        let font = crate::style_font(&ts);
         // Cell content is MTEXT (`\P`, `{\Q15;…}`, `\F…;`): laid out as such, at the cell's
         // alignment point (its numbering is MTEXT's attachment).
         let mp = cadcraft_fonts::MTextParams {
