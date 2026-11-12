@@ -53,25 +53,21 @@ pub(super) fn parse_edit(old: &Value, text: &str) -> Result<Value, String> {
 
 /// The settings of `new` that differ from `old` (an object each): what an edited document changes.
 pub(super) fn changed(old: &Map<String, Value>, new: &Map<String, Value>) -> Map<String, Value> {
-    new.iter()
-        .filter(|(k, v)| old.get(*k) != Some(*v))
-        .filter_map(|(k, v)| {
-            let v = edit_of(k, old.get(k), v);
-            (!v.as_object().is_some_and(Map::is_empty)).then(|| (k.clone(), v))
-        })
-        .collect()
+    new.iter().filter(|(k, v)| old.get(*k) != Some(*v)).filter_map(|(k, v)| Some((k.clone(), edit_of(k, old.get(k), v)?))).collect()
 }
 
 /// What an edit of `key` from `old` to `new` sends. `dimStyle` sets the fields it names on the
 /// current dimension style and keeps them for new drawings, so only the fields that changed go:
 /// the whole reported style would overwrite the saved defaults of fields the user did not touch.
-/// Every other setting is sent as edited.
-fn edit_of(key: &str, old: Option<&Value>, new: &Value) -> Value {
+/// `None` when no field of it changed. Every other setting is sent as edited, an empty object
+/// too (`dimDefaults: {}` forgets the defaults for new drawings).
+fn edit_of(key: &str, old: Option<&Value>, new: &Value) -> Option<Value> {
     match (key, old, new) {
         ("dimStyle", Some(Value::Object(old)), Value::Object(new)) => {
-            Value::Object(new.iter().filter(|(k, v)| old.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect())
+            let fields: Map<String, Value> = new.iter().filter(|(k, v)| old.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+            (!fields.is_empty()).then_some(Value::Object(fields))
         }
-        _ => new.clone(),
+        _ => Some(new.clone()),
     }
 }
 
@@ -209,8 +205,7 @@ fn row(ui: &mut egui::Ui, key: &str, label: egui::Id, value: &Value, edits: &mut
             if let Some(text) = commit_text(ui, id, &compact(other), 290.0, label) {
                 match parse_edit(other, &text) {
                     Ok(v) => {
-                        let v = edit_of(key, Some(other), &v);
-                        if !v.as_object().is_some_and(Map::is_empty) {
+                        if let Some(v) = edit_of(key, Some(other), &v) {
                             edits.insert(key.into(), v);
                         }
                     }
@@ -315,7 +310,12 @@ mod tests {
         let old = map(json!({ "dimStyle": { "DIMDEC": 2, "DIMTXT": 2.5 }, "other": { "a": 1, "b": 2 } }));
         let new = map(json!({ "dimStyle": { "DIMDEC": 2, "DIMTXT": 3.5 }, "other": { "a": 1, "b": 3 } }));
         assert_eq!(Value::Object(changed(&old, &new)), json!({ "dimStyle": { "DIMTXT": 3.5 }, "other": { "a": 1, "b": 3 } }));
-        assert_eq!(edit_of("dimStyle", old.get("dimStyle"), &json!({ "DIMDEC": 2, "DIMTXT": 2.5 })), json!({}));
+        assert_eq!(edit_of("dimStyle", old.get("dimStyle"), &json!({ "DIMDEC": 2, "DIMTXT": 2.5 })), None, "nothing changed");
+        // Emptying dimDefaults forgets the defaults for new drawings: that edit goes.
+        let old = map(json!({ "dimDefaults": { "DIMDEC": 7 } }));
+        let new = map(json!({ "dimDefaults": {} }));
+        assert_eq!(Value::Object(changed(&old, &new)), json!({ "dimDefaults": {} }));
+        assert_eq!(edit_of("dimDefaults", old.get("dimDefaults"), &json!({})), Some(json!({})));
     }
 
     /// Settings go to `options`, interface keys to `set_ui_state`, and a key that is neither
