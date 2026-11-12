@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use cadcraft_dxf::{Section, Tag};
+use craft_dxf::{Section, Tag};
 
 use crate::dxf_ext::text;
 
@@ -73,7 +73,7 @@ fn raw(t: &Tag) -> RawTag {
 /// A kept group with the value type its code has (so binary output encodes it right); text that
 /// doesn't parse as that type stays text.
 fn tag(r: &RawTag) -> Tag {
-    use cadcraft_dxf::{Kind, Value, kind_of};
+    use craft_dxf::{Kind, Value, kind_of};
     let v = r.value.trim();
     let value = match kind_of(r.code) {
         Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Value::Real),
@@ -347,7 +347,8 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).and_then(|(_, _, t)| head(t).handle);
     let root_entries = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, _, t)| entries(t)).unwrap_or_default();
-    let root_key = |h: &str| root_entries.iter().find(|(_, eh)| eh == h).map(|(k, _)| k.clone());
+    let root_keys = root_key_index(&root_entries);
+    let root_key = |h: &str| root_keys.get(h).map(|k| (*k).to_string());
     // An extension dictionary of an entity or record (not of another object).
     let is_xdict = |k: usize| {
         let Some((_, _, t)) = objects.get(k) else { return false };
@@ -501,6 +502,16 @@ fn extension_dictionaries(
     dictionaries
 }
 
+/// The root dictionary's key for each entry handle (the first key when several name one handle),
+/// built once: a lookup per object scanning the entries made a large dictionary quadratic.
+fn root_key_index(root_entries: &[(String, String)]) -> HashMap<&str, &str> {
+    let mut index = HashMap::with_capacity(root_entries.len());
+    for (key, handle) in root_entries {
+        index.entry(handle.as_str()).or_insert(key.as_str());
+    }
+    index
+}
+
 /// Determine which objects belong to unmodelled dictionary entries or owners.
 fn retained_objects(
     objects: &[(&str, usize, &[Tag])],
@@ -511,7 +522,8 @@ fn retained_objects(
     root_entries: &[(String, String)],
     xdict_of: &HashMap<String, String>,
 ) -> HashMap<usize, bool> {
-    let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
+    let root_keys = root_key_index(root_entries);
+    let root_key = |handle: &str| root_keys.get(handle).copied();
     let is_xdict = |index: usize| {
         let Some((_, _, tags)) = objects.get(index) else { return false };
         let header = head(tags);

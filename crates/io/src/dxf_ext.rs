@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{ArrayParams, AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerState, Parametric, PlotStyleTable};
-use cadcraft_dxf::{Tag, Version};
 use cadcraft_render::Arrowhead;
+use craft_dxf::{Tag, Version};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -368,7 +368,7 @@ pub(crate) fn xdata_list<'a>(x: &'a [Tag], name: &str) -> &'a [Tag] {
 /// A group's text, borrowed: a string or the hex of a binary chunk (what [`Tag::str`] clones).
 pub(crate) fn text(t: &Tag) -> Option<&str> {
     match &t.value {
-        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Some(s),
+        craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => Some(s),
         _ => None,
     }
 }
@@ -852,15 +852,33 @@ pub(crate) fn apply_anno(d: &mut cadcraft_doc::Drawing, p: AnnoPayload) {
             std::sync::Arc::make_mut(b).annotative = true;
         }
     }
+    // Which layout holds each paper space object, found once: `modify_entity` searches every
+    // layout for a handle model space lacks, which a long list of missing handles made quadratic.
+    let mut in_layout: std::collections::HashMap<Handle, usize> = Default::default();
+    if !p.objects.is_empty() {
+        // First layout wins, as `modify_entity` did.
+        for (i, l) in d.layouts.iter().enumerate() {
+            for h in l.entities.handles() {
+                in_layout.entry(h).or_insert(i);
+            }
+        }
+    }
     for o in p.objects {
         let Some(h) = Handle::parse_hex(&o.handle) else { continue };
+        let store = if d.model.contains(h) {
+            &mut d.model
+        } else if let Some(l) = in_layout.get(&h).and_then(|&i| d.layouts.get_mut(i)) {
+            &mut l.entities
+        } else {
+            continue;
+        };
         let mut scales: Vec<cadcraft_doc::AnnoScale> = Vec::new();
         for s in o.scales.into_iter().filter(|s| s.is_valid() && !s.name.trim().is_empty()) {
             if scales.len() < cadcraft_doc::MAX_SCALES && !scales.iter().any(|x| x.name.eq_ignore_ascii_case(&s.name)) {
                 scales.push(s);
             }
         }
-        let _ = d.modify_entity(h, |e| {
+        store.modify(h, |e| {
             if cadcraft_doc::can_be_annotative(&e.kind) {
                 e.common.anno_scales = scales;
             }
