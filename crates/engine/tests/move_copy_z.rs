@@ -147,6 +147,7 @@ fn move_carries_z_to_text_and_insert_attributes() {
                 scale: Vec3::new(1.0, 1.0, 1.0),
                 rotation: 0.0,
                 attribs: vec![attrib("PART", 1.0, true)],
+                clip: None,
                 cols: 1,
                 rows: 1,
                 col_spacing: 0.0,
