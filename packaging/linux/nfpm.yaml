@@ -52,12 +52,13 @@ overrides:
       - libgcc_s.so.1()(64bit)
       - libxkbcommon.so.0()(64bit)
       - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
+    # The windowing libraries by soname too, so the recommendations resolve on openSUSE as well.
     recommends:
-      - libwayland-client
-      - libX11
-      - libXcursor
-      - libXi
-      - libXrandr
+      - libwayland-client.so.0()(64bit)
+      - libX11.so.6()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libXrandr.so.2()(64bit)
       - mesa-vulkan-drivers
       - xdg-desktop-portal
 
