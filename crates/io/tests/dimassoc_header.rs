@@ -4,8 +4,8 @@ use cadcraft_io::{SaveOptions, Version, read_dxf, write, write_with};
 
 /// Extract every DIMASSOC HEADER entry so duplicate or mistyped values fail the assertions.
 fn dimassoc_groups(bytes: &[u8]) -> Vec<(i32, i64)> {
-    let tags = cadcraft_dxf::parse(bytes).unwrap();
-    let header = cadcraft_dxf::sections(&tags).into_iter().find(|s| s.name == "HEADER").unwrap();
+    let tags = craft_dxf::parse(bytes).unwrap();
+    let header = craft_dxf::sections(&tags).into_iter().find(|s| s.name == "HEADER").unwrap();
     let mut found = Vec::new();
     for pair in header.tags.windows(2) {
         if pair[0].code == 9 && pair[0].str() == "$DIMASSOC" {
