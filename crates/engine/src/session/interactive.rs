@@ -124,7 +124,7 @@ impl Session {
         r
     }
 
-    fn input_to_command(&mut self, input: Input) -> Result<()> {
+    pub(crate) fn input_to_command(&mut self, input: Input) -> Result<()> {
         if self.running.is_none() {
             if input == Input::Enter
                 && let Some(last) = self.last_command.clone()
