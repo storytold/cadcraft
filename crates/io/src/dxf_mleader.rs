@@ -347,7 +347,9 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
 /// the top corner 171 names, set off from the landing so the landing meets the line 174/175
 /// name: that is the attachment. CADCraft saves the location on the landing line itself
 /// (171 the column only): such a location (or one without 171) takes its row from how the side
-/// facing the landing attaches (top line, middle or bottom line).
+/// facing the landing attaches (top line, middle or bottom line). CADCraft's landing runs along
+/// X whatever the text rotation, so its rotated text sits on the X line through the base point
+/// rather than on the line along the text; either counts as on the landing.
 fn attach_point(p: &Parsed, text_left_of_landing: bool, at: Vec3, base: Vec3, height: f64, rotation: f64) -> u8 {
     let side = if text_left_of_landing { p.right_attach.or(p.left_attach) } else { p.left_attach.or(p.right_attach) };
     let row = match side.unwrap_or(0) {
@@ -356,9 +358,11 @@ fn attach_point(p: &Parsed, text_left_of_landing: bool, at: Vec3, base: Vec3, he
         _ => 0,
     };
     let own = p.side.filter(|a| (1..=9).contains(a)).unwrap_or(1);
-    // Distance of the location from the landing line (through the base point along the text).
-    let off = ((at.y - base.y) * rotation.cos() - (at.x - base.x) * rotation.sin()).abs();
-    let on_landing = off.is_finite() && off <= height.abs() * 1e-6;
+    let near = |d: f64| d.is_finite() && d.abs() <= height.abs() * 1e-6;
+    // Distance of the location from the line through the base point along the text, and from
+    // the landing along X (the same line for unrotated text).
+    let along_text = (at.y - base.y) * rotation.cos() - (at.x - base.x) * rotation.sin();
+    let on_landing = near(along_text) || near(at.y - base.y);
     let a = if own <= 3 && (p.side.is_none() || on_landing) { row * 3 + own } else { own };
     u8::try_from(a).unwrap_or(1)
 }
