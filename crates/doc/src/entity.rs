@@ -73,6 +73,12 @@ pub struct Tianzheng {
     /// handle 流的 bit 数（raw_data 定位 text 流需要）。
     #[serde(default)]
     pub handle_bits: i64,
+    /// 原 `Unknown` 实体的 DXF 记录（含 310 代理数据），保存时按原样回写。
+    #[serde(default, skip)]
+    pub tags: Vec<RawTag>,
+    /// 原 `Unknown` 实体的 DXF 类型名（如 `ACAD_PROXY_ENTITY`），保存时按原样回写。
+    #[serde(default)]
+    pub dxf_type: String,
 }
 
 impl Unknown {

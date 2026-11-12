@@ -165,12 +165,16 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
         let raw_data = e.raw_data.clone();
         let handle_bits = e.handle_bits;
         d.model.modify(handle, |entity| {
-            if matches!(entity.kind, cadcraft_doc::EntityKind::Unknown(_)) {
+            if let cadcraft_doc::EntityKind::Unknown(u) = &mut entity.kind {
+                let tags = std::mem::take(&mut u.tags);
+                let dxf_type = std::mem::take(&mut u.dxf_type);
                 entity.kind = cadcraft_doc::EntityKind::Tianzheng(cadcraft_doc::Tianzheng {
                     class_name: class_name.clone(),
                     fields: fields.clone(),
                     raw_data: Some(raw_data.clone()),
                     handle_bits,
+                    tags,
+                    dxf_type,
                 });
             }
         });
