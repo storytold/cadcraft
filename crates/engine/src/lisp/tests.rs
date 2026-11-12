@@ -717,6 +717,22 @@ fn command_names_objects_at_prompts_picking_one() {
     assert!(has_line(&lines, [0.0, 0.0], [37.63950047463629, -13.53765134799439]), "{lines:?}");
 }
 
+/// WIPEOUT's Polyline option takes the polyline from a selection set or an entity name, as
+/// `(command "_.wipeout" "_P" ss "_Y")` gives it (#2993).
+#[test]
+fn wipeout_polyline_takes_a_selection_set_or_a_name() {
+    let pline = "(command \"_.pline\" (list 0 0) (list 10 0) (list 10 10) (list 0 10) \"_c\")";
+    let kinds = |s: &Session| s.doc().unwrap().model.iter().map(|e| e.kind.dxf_name().to_string()).collect::<Vec<_>>();
+    for (arg, erase, left) in [("(ssget \"_L\")", "_Y", vec!["WIPEOUT"]), ("(entlast)", "_N", vec!["LWPOLYLINE", "WIPEOUT"])] {
+        let mut s = session();
+        ok(&mut s, pline);
+        ok(&mut s, &format!("(command \"_.wipeout\" \"_P\" {arg} \"{erase}\")"));
+        assert!(s.running.is_none(), "{arg}: WIPEOUT is still running at {}", s.prompt_text());
+        assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"WIPEOUT\"", "{arg}");
+        assert_eq!(kinds(&s), left, "{arg}");
+    }
+}
+
 #[test]
 fn a_named_object_holds_for_its_own_input_in_its_own_space() {
     use cadcraft_doc::Space;
