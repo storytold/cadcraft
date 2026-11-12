@@ -17,7 +17,7 @@ fn typed_layout_options_prompt_for_names() {
 
     s.cmdline("LAYOUT").unwrap();
     let p = s.current_prompt().expect("LAYOUT prompts").display();
-    assert_eq!(p, "Enter layout option or [Copy/Delete/New/Template/Rename/SAveas/Set/?] <set>:");
+    assert_eq!(p, "Enter layout option [Copy/Delete/New/Template/Rename/SAveas/Set/?] <set>:");
     s.cmdline("n").unwrap();
     assert_eq!(s.current_prompt().unwrap().display(), "Enter name of new layout <Layout3>:");
     s.cmdline("Sheet9").unwrap();

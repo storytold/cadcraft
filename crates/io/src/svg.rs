@@ -96,6 +96,8 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
                 }
                 s.push_str(r#""/>"#);
             }
+            // Raster images are not written to SVG yet: their frame is.
+            Kind::Image { .. } => {}
             Kind::Point => {
                 if let Some(q) = pts.first() {
                     let _ = write!(s, r#"<circle cx="{:.dp$}" cy="{:.dp$}" r="{:.dp$}" fill="{c}"{op}/>"#, tx(q.x), ty(q.y), stroke);

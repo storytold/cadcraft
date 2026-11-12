@@ -3,7 +3,7 @@
 //! it as empty ("No data was imported..."), though it reads the same drawing as DXF (and as an
 //! AC1032 DWG) fine. The DWG bridge adds the dictionary AutoCAD writes, with its usual variables,
 //! when the DXF has none.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use std::io::Cursor;
 

@@ -135,3 +135,15 @@ fn start_page_lists_recent_files_and_opens_one_on_click() {
     assert_eq!(app.session.state().ok().and_then(|s| s.path.clone()), Some(plan.clone()));
     assert_eq!(app.ui.recent_files, [plan, section]);
 }
+
+#[test]
+fn a_recent_file_that_no_longer_exists_is_dropped_when_opening_it_fails() {
+    let (_dir, plan, _section) = drawings("missing");
+    let mut app = CadApp::new(Session::empty(), Services::default());
+    let gone = "/nonexistent/dir/gone.dxf".to_string();
+    app.ui.recent_files = vec![gone.clone(), plan.clone()];
+    let id = open_recent(&app).into_iter().find(|(l, _)| l == "gone.dxf").map(|(_, id)| id).unwrap_or_default();
+    menus::activate(&mut app, &id);
+    settle(&mut app);
+    assert_eq!(app.ui.recent_files, [plan], "the stale entry is removed, the others stay");
+}

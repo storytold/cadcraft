@@ -325,6 +325,7 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }
     });
     MLeader {

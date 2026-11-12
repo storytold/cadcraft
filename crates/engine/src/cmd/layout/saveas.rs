@@ -104,8 +104,10 @@ pub(super) fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     let t = template_of(d, &name)?;
     let hooks = io().ok_or_else(|| bad("layout.saveas", "file formats are not available in this build"))?;
     let bytes = (hooks.write)(&t, &path).map_err(|e| bad("layout.saveas", e))?;
+    let folder = super::super::file::new_folder(&path);
     store(&path, &bytes)?;
     let mut r = json!({ "name": name, "path": path, "bytes": bytes.len() });
+    super::super::file::report_new_folder(s, &mut r, folder);
     let lost = not_saved(&t);
     if drops_unknown(&path)
         && let Some(msg) = not_saved_message(&lost)
@@ -124,7 +126,7 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("layout.saveas", format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("layout.saveas", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
