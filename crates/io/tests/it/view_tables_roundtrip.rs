@@ -29,10 +29,9 @@ fn model_and_paper_views_round_trip() {
     let r = round_trip(&d);
     assert_eq!(r.views.len(), 3);
     for (a, b) in d.views.iter().zip(&r.views) {
-        assert_eq!(
-            (&a.name, a.center, a.height, a.width, &a.layer_state, &a.layout),
-            (&b.name, b.center, b.height, b.width, &b.layer_state, &b.layout)
-        );
+        assert_eq!((&a.name, a.height, a.width, &a.layer_state, &a.layout), (&b.name, b.height, b.width, &b.layer_state, &b.layout));
+        // A twisted view's centre is stored turned by the twist, and turned back on reading.
+        assert!((a.center - b.center).len() < 1e-9, "{}: {:?} vs {:?}", a.name, a.center, b.center);
         assert!((a.twist - b.twist).abs() < 1e-12, "{}: {} vs {}", a.name, a.twist, b.twist);
     }
 }
@@ -75,7 +74,7 @@ fn foreign_paper_view_and_hostile_twist() {
 }
 
 fn tile(min: (f64, f64), max: (f64, f64), center: (f64, f64), height: f64) -> VportTile {
-    VportTile { min: Vec2::new(min.0, min.1), max: Vec2::new(max.0, max.1), center: Vec2::new(center.0, center.1), height, aspect: 0.75 }
+    VportTile { min: Vec2::new(min.0, min.1), max: Vec2::new(max.0, max.1), center: Vec2::new(center.0, center.1), height, aspect: 0.75, twist: 0.0 }
 }
 
 #[test]
