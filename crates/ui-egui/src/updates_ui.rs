@@ -40,12 +40,19 @@ pub fn check_now(app: &mut CadApp) {
     app.updates_rt.result_echoed = false;
 }
 
+/// Whether the startup check runs: the host asked for it and the user did not turn it off
+/// (Options ▸ User Preferences, `checkUpdatesAtStart`).
+fn checks_at_start(app: &CadApp) -> bool {
+    app.updates_rt.enabled && app.options.check_updates_at_start
+}
+
 /// Start the checks and collect the answers.
 pub fn tick(app: &mut CadApp, ctx: &egui::Context) {
+    let at_start = checks_at_start(app);
     let rt = &mut app.updates_rt;
     if std::mem::take(&mut rt.check_requested) {
         rt.updater.check_now(ctx);
-    } else if rt.enabled {
+    } else if at_start {
         rt.updater.check_at_start(ctx);
     }
     rt.updater.tick(ctx);
@@ -117,5 +124,28 @@ mod tests {
             assert!(!result_window_shows(status, true), "{status:?} over the prompt");
         }
         assert!(!result_window_shows(&Status::Idle, false));
+    }
+
+    /// The startup check runs only where the host enabled it and the user did not turn it off;
+    /// the choice is kept in the profile and set through the OPTIONS JSON form.
+    #[test]
+    fn the_startup_check_can_be_turned_off() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        assert!(!checks_at_start(&app), "tests and the web never check");
+        app.enable_update_check();
+        assert!(checks_at_start(&app), "on by default");
+        let r = app.run("options", serde_json::json!({ "checkUpdatesAtStart": false })).unwrap();
+        assert_eq!(r["checkUpdatesAtStart"], false);
+        assert!(!checks_at_start(&app));
+        assert!(app.run("options", serde_json::json!({ "checkUpdatesAtStart": "no" })).is_err());
+        // Kept across restarts.
+        let profile = app.profile_json();
+        let mut next = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        next.enable_update_check();
+        next.load_profile(&profile);
+        assert!(!checks_at_start(&next));
+        // Reset to Defaults turns it back on.
+        app.run("options", serde_json::json!({ "reset": true })).unwrap();
+        assert!(checks_at_start(&app));
     }
 }
