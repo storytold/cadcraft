@@ -297,7 +297,7 @@ pub fn open_create(app: &mut CadApp, gradient: bool) {
 /// pick a hatch first.
 pub fn open_edit(app: &mut CadApp) {
     let Ok(st) = app.session.state() else { return };
-    let (mut edit, mut create) = (edit_state(&st.doc, st.uid, st.selection.clone()), create_state(&st.doc, st.uid, false));
+    let (mut edit, mut create) = (edit_state(&st.doc, st.uid, st.shown_selection()), create_state(&st.doc, st.uid, false));
     create.space = st.edit_space();
     if let Some(e) = edit.as_mut() {
         e.space = st.edit_space();

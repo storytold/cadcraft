@@ -18,10 +18,12 @@ use cadcraft_engine::doc::dynblock::{DynGrip, GripShape};
 /// Most selected references whose grips are shown.
 const MAX_REFERENCES: usize = 200;
 
-/// The dynamic grips of the selection, worked out once per drawing revision and selection.
+/// The dynamic grips of the selection, worked out once per drawing revision, selection and set
+/// of layers frozen in the active viewport: entering another viewport changes which references
+/// are shown without changing the drawing.
 #[derive(Clone, Default)]
 pub struct Cache {
-    key: (u64, u64, Vec<Handle>),
+    key: (u64, u64, Vec<Handle>, Vec<String>),
     grips: Arc<Vec<(Handle, DynGrip)>>,
 }
 
@@ -29,12 +31,12 @@ pub struct Cache {
 pub(crate) fn of_selection(app: &mut CadApp) -> Arc<Vec<(Handle, DynGrip)>> {
     let sel = app.session.selection();
     let Ok(st) = app.session.state() else { return Arc::default() };
-    let key = (st.uid, st.revision, sel.clone());
+    let key = (st.uid, st.revision, sel.clone(), st.viewport_frozen().to_vec());
     if app.canvas.dyn_grips.key != key {
         let grips: Vec<(Handle, DynGrip)> = sel
             .iter()
             .filter(|h| matches!(st.doc.entity(**h).map(|e| &e.kind), Some(cadcraft_engine::doc::EntityKind::Insert(_))))
-            .filter(|h| st.doc.entity(**h).is_some_and(|e| st.doc.is_visible(e) && !st.doc.layer(&e.common.layer).is_some_and(|l| l.locked)))
+            .filter(|h| st.doc.entity(**h).is_some_and(|e| st.shows(e) && !st.doc.layer(&e.common.layer).is_some_and(|l| l.locked)))
             .take(MAX_REFERENCES)
             .flat_map(|h| cadcraft_engine::doc::dynblock::grips(&st.doc, *h).into_iter().map(move |g| (*h, g)))
             .collect();
@@ -195,6 +197,62 @@ mod tests {
         (s, h)
     }
 
+    /// An app with the reference of [`door`] on the layer "Hidden", and two viewports on Layout1
+    /// over the model: the first freezes "Hidden", the second freezes nothing. Returns the app,
+    /// the reference and the two viewports, in paper space.
+    fn door_in_two_viewports() -> (CadApp, Handle, String, String) {
+        let (session, h) = door();
+        let mut app = CadApp::new(session, Services::default());
+        app.session.execute("layer.new", &json!({ "name": "Hidden" })).unwrap();
+        app.session.execute("properties.set", &json!({ "handles": [h.hex()], "layer": "Hidden" })).unwrap();
+        assert_eq!(app.session.doc().unwrap().entity(h).unwrap().common.layer, "Hidden");
+        app.session.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        let made = app.session.execute("mview", &json!({ "count": 2, "p1": [20, 20], "p2": [220, 120] })).unwrap();
+        let viewport = |i: usize| made["viewports"][i].as_str().unwrap().to_string();
+        let (a, b) = (viewport(0), viewport(1));
+        app.session.execute("vplayer", &json!({ "handles": [a], "freeze": ["Hidden"] })).unwrap();
+        (app, h, a, b)
+    }
+
+    /// Makes `viewport` the active MSPACE viewport and selects `h` there (entering a viewport
+    /// clears the selection; Undo or another selection source can put the reference back).
+    fn enter_and_select(app: &mut CadApp, viewport: &str, h: Handle) {
+        app.session.execute("mspace", &json!({ "handle": viewport })).unwrap();
+        app.session.set_selection(vec![h]);
+    }
+
+    /// A selected reference shows its dynamic grips through a viewport that draws its layer. Once
+    /// the layer is frozen in that viewport the grips are gone although the reference is still
+    /// selected, and thawing the layer there brings them back.
+    #[test]
+    fn a_reference_the_viewport_does_not_draw_has_no_dynamic_grips() {
+        let (mut app, h, _, b) = door_in_two_viewports();
+        enter_and_select(&mut app, &b, h);
+        assert_eq!(of_selection(&mut app).len(), 2, "this viewport draws the reference: its two grips");
+        app.session.execute("vplayer", &json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+        assert_eq!(app.session.state().unwrap().selection, [h], "the reference must still be selected");
+        assert!(of_selection(&mut app).is_empty(), "a reference the viewport no longer draws kept its dynamic grips");
+        app.session.execute("vplayer", &json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+        assert_eq!(app.session.state().unwrap().selection, [h]);
+        assert_eq!(of_selection(&mut app).len(), 2, "thawed in the viewport: the grips are back");
+    }
+
+    /// Entering another viewport changes which references are drawn without changing the drawing,
+    /// so the cached grips of the same selection must not be reused from one viewport to the next.
+    #[test]
+    fn the_dynamic_grip_cache_follows_the_active_viewport() {
+        let (mut app, h, a, b) = door_in_two_viewports();
+        enter_and_select(&mut app, &b, h);
+        assert_eq!(of_selection(&mut app).len(), 2);
+        let revision = app.session.state().unwrap().revision;
+        enter_and_select(&mut app, &a, h);
+        assert_eq!(app.session.state().unwrap().revision, revision, "entering a viewport must not look like a change of the drawing");
+        assert!(of_selection(&mut app).is_empty(), "the grips cached in the other viewport were reused where the reference is not drawn");
+        enter_and_select(&mut app, &b, h);
+        assert_eq!(app.session.state().unwrap().revision, revision);
+        assert_eq!(of_selection(&mut app).len(), 2, "the empty result cached in the other viewport was reused where the reference is drawn");
+    }
+
     /// A hidden reference restored to the selection (Undo, or another selection source) shows
     /// and takes no dynamic grips, as ordinary grips are not shown for it either.
     #[test]
@@ -208,5 +266,18 @@ mod tests {
         let st = app.session.state().unwrap();
         assert!(!st.doc.is_visible(st.doc.entity(h).unwrap()), "the reference must be hidden");
         assert!(of_selection(&mut app).is_empty(), "a hidden reference must not offer dynamic grips");
+    }
+
+    /// BEDIT without a block name opens the editor on the one selected reference, and its dialog
+    /// when there is none. A selected reference the viewport does not draw is none to start from.
+    #[test]
+    fn bedit_opens_its_dialog_when_the_viewport_does_not_draw_the_selected_reference() {
+        let (mut app, h, a, b) = door_in_two_viewports();
+        enter_and_select(&mut app, &b, h);
+        assert!(crate::bedit::route(&mut app, "bedit", &serde_json::Value::Null).is_none(), "one reference is selected: no dialog");
+        assert_eq!(app.ui.dialog, None);
+        enter_and_select(&mut app, &a, h);
+        assert!(crate::bedit::route(&mut app, "bedit", &serde_json::Value::Null).is_some(), "the dialog must open");
+        assert_eq!(app.ui.dialog.as_deref(), Some("bedit"));
     }
 }

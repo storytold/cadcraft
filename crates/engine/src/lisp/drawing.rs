@@ -651,15 +651,19 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Some("X") => all(s, true),
         Some("L") => {
             let order = handles_in_order(ctx);
-            order.last().copied().into_iter().collect()
+            // Inside an MSPACE viewport, the objects that viewport does not draw are passed over.
+            let st = ctx.s.state().ok();
+            let drawn = |h: &Handle| st.is_none_or(|st| st.doc.entity(*h).is_none_or(|e| !st.hidden_in_viewport(e)));
+            order.iter().rev().copied().find(drawn).into_iter().collect()
         }
-        Some("P") => ctx.s.state().map(|st| st.previous_selection.clone()).unwrap_or_default(),
+        Some("P") => ctx.s.state().map(|st| st.drawn_in_viewport(&st.previous_selection)).unwrap_or_default(),
         Some("I") => ctx.s.selection(),
         Some("W") | Some("C") => {
             let (p1, p2) = (point(0)?, point(1)?);
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-            crate::select::select_window(d, &space, cadcraft_geom::Bounds2::from_points([p1, p2]), mode.as_deref() == Some("C"))
+            let bx = cadcraft_geom::Bounds2::from_points([p1, p2]);
+            crate::select::select_window_in(d, &space, s.viewport_frozen(), bx, mode.as_deref() == Some("C"))
         }
         Some("F") | Some("WP") | Some("CP") => {
             let poly: Vec<Vec2> =
@@ -667,8 +671,8 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
             match mode.as_deref() {
-                Some("F") => crate::select::select_fence(d, &space, &poly),
-                m => crate::select::select_polygon(d, &space, &poly, m == Some("CP")),
+                Some("F") => crate::select::select_fence_in(d, &space, s.viewport_frozen(), &poly),
+                m => crate::select::select_polygon_in(d, &space, s.viewport_frozen(), &poly, m == Some("CP")),
             }
         }
         Some(":S") | Some("A") | None => {
@@ -684,7 +688,7 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                 let s = &*ctx.s;
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-                crate::select::pick(d, &space, p, ap).into_iter().collect()
+                crate::select::pick_in(d, &space, s.viewport_frozen(), p, ap).into_iter().collect()
             }
         }
         Some(m) => return Err(LispError::new(format!("bad argument value: ssget mode {m}"))),

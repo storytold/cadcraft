@@ -59,7 +59,7 @@ fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bo
     let fb = Bounds2::from_points(pts.iter().copied());
     let tol = crate::select::window_tol(&fb);
     let mut work: Vec<(Handle, Vec<Vec2>)> = Vec::new();
-    for h in crate::select::select_fence(d, &space, pts) {
+    for h in crate::select::select_fence_in(d, &space, s.viewport_frozen(), pts) {
         let Some(e) = d.entity(h) else { continue };
         let polys = crate::select::hit_polylines(d, e, tol);
         let mut xs: Vec<Vec2> = Vec::new();
@@ -96,7 +96,7 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
     ];
     let inside = |p: Vec2| bx.expand(tol).contains(p);
     let mut work: Vec<(Handle, Vec<Vec2>)> = Vec::new();
-    for h in crate::select::select_window(d, &space, bx, true) {
+    for h in crate::select::select_window_in(d, &space, s.viewport_frozen(), bx, true) {
         let Some(e) = d.entity(h) else { continue };
         let mut best: Option<Vec2> = None;
         for pl in crate::select::hit_polylines(d, e, tol) {

@@ -700,7 +700,8 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
             let filter = app.session.settings.previewfilter;
-            app.canvas.hover = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
+            let ap = app.session.settings.pickbox.max(1.0) * 1.5 / scale;
+            app.canvas.hover = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, ap)
                 .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
             app.canvas.hover_at = hover_pos;
         }
@@ -1104,7 +1105,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h)
-                && st.doc.is_visible(e)
+                && st.shows(e)
             {
                 let grips = e.kind.grips();
                 let count = grips.len();

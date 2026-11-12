@@ -99,14 +99,21 @@ pub(crate) fn similar(e: &Entity, r: &Entity, mode: u32) -> bool {
         && (mode & NAME == 0 || same_text(object_name(e), object_name(r)))
 }
 
-/// The visible objects of the current space like any of `refs`.
+/// The objects of the current space like any of `refs` that a selection can take there: visible,
+/// and inside an MSPACE viewport not on a layer frozen in it.
 fn similar_objects(s: &Session, d: &Drawing, refs: &[Handle], mode: u32) -> Vec<Handle> {
     let refs: Vec<&Entity> = refs.iter().filter_map(|h| d.entity(*h).map(|e| e.as_ref())).collect();
     if refs.is_empty() {
         return Vec::new();
     }
     let Some(store) = d.space(&s.space()) else { return Vec::new() };
-    store.iter().take(MAX_SCAN).filter(|e| d.is_visible(e) && refs.iter().any(|r| similar(e, r, mode))).map(|e| e.handle).collect()
+    let frozen = s.viewport_frozen();
+    store
+        .iter()
+        .take(MAX_SCAN)
+        .filter(|e| crate::select::selectable(d, e, frozen) && refs.iter().any(|r| similar(e, r, mode)))
+        .map(|e| e.handle)
+        .collect()
 }
 
 fn mode_param(s: &Session, p: &Value) -> Result<u32> {
