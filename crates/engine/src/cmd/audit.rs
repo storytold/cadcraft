@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(Audit))),
         CommandSpec::new("recover", "Recover...", run_recover)
             .menu(&["File", "Drawing Utilities", "Recover..."])
-            .params("{path, copy?: bool (an unsaved copy without a file name), title?} | {data: base64, name} → {index, uid, errors, fixed, issues, message}")
+            .params("{path, copy?: bool (an unsaved copy without a file name), title?} | {data: base64, name} → {index, uid, errors, fixed, issues, warnings: what reading the file left out, message}")
             .enabled(always)
             .noundo()
             .interactive(|_| Ok(Box::new(Recover))),
