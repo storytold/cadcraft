@@ -184,6 +184,9 @@ pub fn shape_stroke_dir(s: &str, height: f64, width_factor: f64, oblique: f64, b
     let mut under_start: Option<f64> = None;
     let mut over_start: Option<f64> = None;
     let mut gap = stroke::GAP * sc * wf;
+    // Retained fallback-outline points over the line, as the TrueType path caps them: a short string
+    // repeating one detailed glyph would otherwise copy its outline per occurrence.
+    let mut points_left = ttf::MAX_SHAPED_POINTS;
     // The simple path lays a line out left to right: one asked to run right to left goes through
     // the bidi path even without right-to-left letters.
     if (complex::needed(s) || base_rtl == Some(true))
@@ -202,7 +205,13 @@ pub fn shape_stroke_dir(s: &str, height: f64, width_factor: f64, oblique: f64, b
             None if !c.is_whitespace() => match ttf::fallback_glyph(c) {
                 Some(g) => {
                     let (y, scale) = stroke_fallback_metrics(&g, c, h);
-                    let contours = ttf::place_glyph_at(&g, Vec2::new(x, y), scale, wf, shear);
+                    let contours = match points_left.checked_sub(g.points) {
+                        Some(rest) => {
+                            points_left = rest;
+                            ttf::place_glyph_at(&g, Vec2::new(x, y), scale, wf, shear)
+                        }
+                        None => Vec::new(),
+                    };
                     if !contours.is_empty() {
                         out.push_glyph(contours, ttf::text_glyph_at(&g, c, Vec2::new(x + y * shear, y), scale, wf, shear));
                     }

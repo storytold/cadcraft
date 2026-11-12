@@ -217,15 +217,14 @@ pub fn import(app: &mut CadApp, path: &str) -> Result<(), String> {
 /// then load it. A cancelled picker is a no-op; without a native picker (the web) the error names
 /// the ALIASEDIT `text` form, since the web has no file system to read a path from.
 pub fn pick_and_import(app: &mut CadApp) -> Result<(), String> {
-    let dir = app.ui.last_pgp_dir.clone();
-    let picked = app.services.pick_pgp.as_ref().map(|pick| pick(dir.as_deref()));
-    match picked {
+    let dir = app.ui.last_pgp_dir.clone().unwrap_or_default();
+    // Through `pick_for`, so macOS shows it as a sheet (#1527); aliases belong to no drawing.
+    match app.pick_for(crate::Pick::Pgp(dir), false, Box::new(|app, path| import(app, &path).map(|()| serde_json::Value::Null))) {
         None => Err(refused(
             app,
             crate::tl!("Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.").to_string(),
         )),
-        Some(None) => Ok(()),
-        Some(Some(path)) => import(app, &path),
+        Some(r) => r.map(|_| ()),
     }
 }
 
@@ -448,6 +447,39 @@ mod tests {
 
     fn clear(app: &mut CadApp) {
         let _ = app.run("aliasedit", json!({ "clear": true }));
+    }
+
+    /// Where the host shows dialogs without waiting (macOS sheets, #1527), Import… does not run
+    /// the blocking picker; the file loads once the sheet answers.
+    #[test]
+    fn import_waits_for_a_sheet_instead_of_blocking() {
+        type Done = Box<dyn FnOnce(Option<String>) + Send>;
+        let _guard = alone();
+        let dir = temp_dir("sheet");
+        let path = dir.join("aliases.pgp");
+        std::fs::write(&path, "XXS, *LINE\n").unwrap_or_default();
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let answer: Rc<RefCell<Option<Done>>> = Rc::default();
+        let (log, slot) = (Rc::clone(&asked), Rc::clone(&answer));
+        let services = Services {
+            pick_pgp: Some(Box::new(|_: Option<&str>| panic!("the blocking picker ran"))),
+            start_pick: Some(Box::new(move |pick, done| {
+                log.borrow_mut().push(pick);
+                *slot.borrow_mut() = Some(done);
+            })),
+            ..Services::default()
+        };
+        let mut app = CadApp::new(Session::new(), services);
+        open(&mut app);
+
+        pick_and_import(&mut app).expect("the sheet starts");
+        assert!(matches!(asked.borrow().as_slice(), [crate::Pick::Pgp(_)]));
+        answer.borrow_mut().take().expect("a sheet was started")(Some(path.to_string_lossy().to_string()));
+        app.finish_pick(&egui::Context::default());
+
+        let st = app.alias_dlg.as_ref().expect("the dialog stays open");
+        assert_eq!(st.user.get("xxs").map(String::as_str), Some("line"));
+        clear(&mut app);
     }
 
     #[test]
