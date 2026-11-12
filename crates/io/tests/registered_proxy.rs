@@ -46,10 +46,10 @@ fn check(bytes: &[u8], name: &str) -> cadcraft_doc::Drawing {
         .unwrap();
     assert!(unknown.tags.iter().any(|t| t.code == 340 && t.value == line.hex()));
     let dxf = if name.ends_with(".dwg") { cadcraft_dwg::dwg_to_dxf(bytes).unwrap() } else { bytes.to_vec() };
-    let tags = cadcraft_dxf::parse(&dxf).unwrap();
-    let sections = cadcraft_dxf::sections(&tags);
+    let tags = craft_dxf::parse(&dxf).unwrap();
+    let sections = craft_dxf::sections(&tags);
     let classes = sections.iter().find(|s| s.name == "CLASSES").unwrap();
-    let classes = cadcraft_dxf::records(&classes.tags);
+    let classes = craft_dxf::records(&classes.tags);
     let decoded = acadrust::DxfReader::from_reader(Cursor::new(dxf)).unwrap().read().unwrap();
     let proxy = decoded
         .entities()
@@ -119,15 +119,15 @@ fn duplicate_class_dxf() -> Vec<u8> {
 fn duplicate_names_keep_distinct_classes_for_entities_and_dictionary_objects() {
     let source = duplicate_class_dxf();
     for binary in [false, true] {
-        let input = if binary { cadcraft_dxf::write_binary(&cadcraft_dxf::parse(&source).unwrap(), true) } else { source.clone() };
+        let input = if binary { craft_dxf::write_binary(&craft_dxf::parse(&source).unwrap(), true) } else { source.clone() };
         let mut drawing = cadcraft_io::read(&input, "source.dxf").unwrap();
         for _ in 0..3 {
             for name in ["copy.dxf", "copy.dwg"] {
                 let bytes = cadcraft_io::write_with(&drawing, name, &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
                 let dxf = if name.ends_with(".dwg") { cadcraft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes.clone() };
-                let tags = cadcraft_dxf::parse(&dxf).unwrap();
-                let sections = cadcraft_dxf::sections(&tags);
-                let classes = cadcraft_dxf::records(&sections.iter().find(|s| s.name == "CLASSES").unwrap().tags);
+                let tags = craft_dxf::parse(&dxf).unwrap();
+                let sections = craft_dxf::sections(&tags);
+                let classes = craft_dxf::records(&sections.iter().find(|s| s.name == "CLASSES").unwrap().tags);
                 let custom: Vec<_> = classes.iter().filter(|(_, t)| t.iter().any(|t| t.code == 1 && t.str() == "CUSTOM")).collect();
                 assert_eq!(custom.len(), 3);
                 for (class, (cpp, flags)) in custom.iter().zip([("First", 1025), ("Second", 128), ("Object", 17)]) {
@@ -137,7 +137,7 @@ fn duplicate_names_keep_distinct_classes_for_entities_and_dictionary_objects() {
                     assert!(class.1.iter().any(|t| t.code == 280 && t.i64() == 1));
                 }
                 let records: Vec<_> =
-                    sections.iter().flat_map(|s| cadcraft_dxf::records(&s.tags)).filter(|(kind, _)| kind.starts_with("ACAD_PROXY_")).collect();
+                    sections.iter().flat_map(|s| craft_dxf::records(&s.tags)).filter(|(kind, _)| kind.starts_with("ACAD_PROXY_")).collect();
                 assert_eq!(records.len(), 3);
                 let mut identities = Vec::new();
                 for (_, tags) in &records {
@@ -216,16 +216,13 @@ fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
         let drawing = cadcraft_io::read(dxf.as_bytes(), "source.dxf").unwrap();
         assert_eq!(drawing.entity_count(), 3);
         let out = cadcraft_io::write_with(&drawing, "copy.dxf", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
-        let tags = cadcraft_dxf::parse(&out).unwrap();
+        let tags = craft_dxf::parse(&out).unwrap();
         assert!(tags.iter().any(|t| t.code == 0 && t.str() == entity));
         let bytes = cadcraft_io::write_with(&drawing, "copy.dwg", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
         let decoded = cadcraft_dwg::dwg_to_dxf(&bytes).unwrap();
-        let tags = cadcraft_dxf::parse(&decoded).unwrap();
-        let proxies: Vec<_> = cadcraft_dxf::sections(&tags)
-            .iter()
-            .flat_map(|s| cadcraft_dxf::records(&s.tags))
-            .filter(|(kind, _)| kind.starts_with("ACAD_PROXY_"))
-            .collect();
+        let tags = craft_dxf::parse(&decoded).unwrap();
+        let proxies: Vec<_> =
+            craft_dxf::sections(&tags).iter().flat_map(|s| craft_dxf::records(&s.tags)).filter(|(kind, _)| kind.starts_with("ACAD_PROXY_")).collect();
         assert_eq!(proxies.len(), 3);
         for (_, tags) in proxies {
             assert!(tags.iter().any(|t| t.code == 310 && t.str() == "A580"));
@@ -239,7 +236,7 @@ fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
 /// Exercise the actual ASCII bridge, which writes Unicode as CIF escapes.
 #[test]
 fn unicode_class_identity_survives_the_ascii_bridge() {
-    let mut tags = cadcraft_dxf::parse(&duplicate_class_dxf()).unwrap();
+    let mut tags = craft_dxf::parse(&duplicate_class_dxf()).unwrap();
     for tag in &mut tags {
         let text = tag.str();
         let replacement = match (tag.code, text.as_str()) {
@@ -251,10 +248,10 @@ fn unicode_class_identity_survives_the_ascii_bridge() {
             _ => None,
         };
         if let Some(text) = replacement {
-            *tag = cadcraft_dxf::Tag::s(tag.code, text);
+            *tag = craft_dxf::Tag::s(tag.code, text);
         }
     }
-    let text = cadcraft_dxf::write_ascii(&tags);
+    let text = craft_dxf::write_ascii(&tags);
     assert!(text.contains("\\U+"));
     let mut drawing = cadcraft_io::read(text.as_bytes(), "unicode.dxf").unwrap();
     for _ in 0..2 {

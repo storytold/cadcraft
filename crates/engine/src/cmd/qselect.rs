@@ -108,8 +108,9 @@ fn property(d: &Drawing, e: &Entity, name: &str) -> Option<Value> {
 
 /// Glob match, case-insensitive: `*` any run, `?` one character, `#` one digit.
 pub fn wildcard(pat: &str, text: &str) -> bool {
-    let p: Vec<char> = pat.to_lowercase().chars().take(1024).collect();
-    let t: Vec<char> = text.to_lowercase().chars().take(4096).collect();
+    // Only the characters that can match are lower-cased, so a huge text isn't copied whole.
+    let p: Vec<char> = pat.chars().take(1024).flat_map(char::to_lowercase).collect();
+    let t: Vec<char> = text.chars().take(4096).flat_map(char::to_lowercase).collect();
     // Iterative matcher with single back-track point (linear-ish, no recursion).
     let (mut pi, mut ti) = (0usize, 0usize);
     let mut star: Option<(usize, usize)> = None;
