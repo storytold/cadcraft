@@ -252,17 +252,18 @@ fn parse_line(bytes: &[u8]) -> Line {
         Ok(v) => v,
         Err(e) => return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection")),
     };
-    let Some(obj) = msg.as_object() else {
+    let Value::Object(mut obj) = msg else {
         return Line::Reject("not a control request (expected a JSON object); closing the connection".into());
     };
-    let Some(method) = obj.get("method").and_then(Value::as_str) else {
+    let Some(Value::String(method)) = obj.remove("method") else {
         return Line::Reject("not a control request (missing string `method`); closing the connection".into());
     };
+    // Moved out of the parsed object, not cloned: `params` can be most of the line.
     Line::Request {
-        id: obj.get("id").cloned().unwrap_or(Value::Null),
-        method: method.to_string(),
-        params: obj.get("params").cloned().unwrap_or(json!({})),
-        token: obj.get("token").and_then(Value::as_str).map(str::to_string),
+        id: obj.remove("id").unwrap_or(Value::Null),
+        method,
+        params: obj.remove("params").unwrap_or(json!({})),
+        token: obj.remove("token").and_then(|t| if let Value::String(t) = t { Some(t) } else { None }),
     }
 }
 

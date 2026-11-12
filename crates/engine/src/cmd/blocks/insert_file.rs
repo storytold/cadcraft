@@ -99,7 +99,8 @@ fn read_drawing(path: &str) -> Result<Drawing> {
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("insert", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("insert", "paths are not available on the web"))

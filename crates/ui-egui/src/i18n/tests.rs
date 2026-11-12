@@ -169,13 +169,25 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
 
 /// Every `.rs` file under `dir`, at any depth, so code split into submodules stays scanned.
 fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
+    // `file_type` doesn't follow links, so a symlink (a directory alias or a file) is skipped,
+    // not walked again as a new subtree.
+    // An unreadable entry must fail the scan, not silently shrink the translation report.
+    let mut paths: Vec<_> = entries
+        .map(|e| {
+            let e = e.expect("read module directory entry");
+            let kind = e.file_type().expect("read module entry type");
+            (e.path(), kind)
+        })
+        .collect();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in paths {
+        if kind.is_dir() {
             module_files(&path, files);
-        } else if path.extension().is_some_and(|x| x == "rs") {
+        } else if kind.is_file() && path.extension().is_some_and(|x| x == "rs") {
             files.push(path);
         }
     }
