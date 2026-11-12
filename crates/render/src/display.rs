@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bounds2, Handle, Pen, Rgb, Sheet, Vec2, outline};
 
 /// Handle carried by model-space geometry drawn inside a paper-space viewport (it belongs to no
 /// single paper-space entity, so selection highlighting never matches it).
@@ -22,6 +22,51 @@ pub enum Kind {
     Point,
     /// An infinite line or ray: `verts[start]` = base, `verts[start+1]` = unit direction.
     Infinite { ray: bool },
+    /// A raster image, [`DisplayList::images`]`[index]`; `verts[start..start+4]` are its corners
+    /// (top left, top right, bottom right, bottom left of the pixel grid).
+    Image { index: u32 },
+}
+
+/// A raster image placed in the world.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DImage {
+    pub raster: std::sync::Arc<cadcraft_doc::Raster>,
+    /// Where the top-left corner of the top-left pixel is.
+    pub origin: Vec2,
+    /// One pixel to the right and one pixel down, in world units.
+    pub right: Vec2,
+    pub down: Vec2,
+    /// Closed outlines the image is cut to (all of them: its own clip boundary, then the
+    /// viewports it is seen through). Empty: the whole image.
+    pub clips: Vec<Vec<Vec2>>,
+    /// Fade towards the background, percent (0..=100).
+    pub fade: u8,
+}
+
+impl DImage {
+    /// The world position of pixel-grid point (`x`, `y`), `y` down from the top.
+    pub fn at(&self, x: f64, y: f64) -> Vec2 {
+        self.origin + self.right * x + self.down * y
+    }
+    /// The pixel-grid point at world position `q` (the inverse of [`DImage::at`]); `None` for an
+    /// image squashed to a line or a point.
+    pub fn pixel_of(&self, q: Vec2) -> Option<Vec2> {
+        let det = self.right.x * self.down.y - self.right.y * self.down.x;
+        if !(det.is_finite() && det.abs() > 0.0) {
+            return None;
+        }
+        let d = q - self.origin;
+        Some(Vec2::new((d.x * self.down.y - d.y * self.down.x) / det, (self.right.x * d.y - self.right.y * d.x) / det))
+    }
+    /// How opaque the image is drawn, 0..=1: the object's opacity `alpha` (0..=255) less the fade.
+    pub fn opacity(&self, alpha: u8) -> f32 {
+        f32::from(alpha) / 255.0 * (1.0 - f32::from(self.fade.min(100)) / 100.0)
+    }
+    /// The corners: top left, top right, bottom right, bottom left.
+    pub fn corners(&self) -> [Vec2; 4] {
+        let (w, h) = (f64::from(self.raster.width()), f64::from(self.raster.height()));
+        [self.at(0.0, 0.0), self.at(w, 0.0), self.at(w, h), self.at(0.0, h)]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,6 +91,8 @@ pub struct DisplayList {
     pub prims: Vec<DPrim>,
     pub verts: Vec<Vec2>,
     pub tris: Vec<Vec2>,
+    /// The raster images drawn by [`Kind::Image`] primitives.
+    pub images: Vec<DImage>,
     /// Plots ([`build_plot`]): for each primitive, the index in [`Drawing::layers`] of the layer
     /// it is drawn on (block contents on layer 0: the block reference's; [`NO_LAYER`] when the
     /// layer isn't in the table), for PDF layers. Empty for other lists.
@@ -59,6 +106,10 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
+    /// The expansion budget was spent: block contents past it are not in the list. The screen,
+    /// plots and exports draw what is here; the CLI and the control channel report this, so an
+    /// output that leaves contents out is never silent (#1070).
+    pub truncated: bool,
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
@@ -107,6 +158,65 @@ pub fn alpha(transparency: u8) -> u8 {
 pub const MAX_TRANSPARENCY: u8 = 90;
 
 impl DisplayList {
+    /// Add what `other` draws (built for the same drawing, in the same coordinates) after what
+    /// this list draws: a plot stamp, say.
+    pub fn append(&mut self, other: DisplayList) {
+        append(self, other);
+    }
+
+    /// Keep only the primitives that reach into `area` (same coordinates as the list): what a
+    /// plot of a window draws. Infinite lines are kept (they are cut where they are drawn); text
+    /// glyphs, layers and pens follow their primitives. The vertex and triangle arrays are
+    /// compacted, so a small window of a large drawing writes and rasterises only its part.
+    pub fn retain_within(&mut self, area: &Bounds2) {
+        if area.is_empty() || !area.min.is_finite() || !area.max.is_finite() {
+            return;
+        }
+        let keep: Vec<bool> = self
+            .prims
+            .iter()
+            .map(|p| matches!(p.kind, Kind::Infinite { .. }) || Bounds2::from_points(self.points(p).iter().copied()).intersects(area))
+            .collect();
+        if keep.iter().all(|k| *k) {
+            return;
+        }
+        let (mut prims, mut verts, mut tris) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut layers, mut pens) = (Vec::new(), Vec::new());
+        // The new index of each old primitive that is kept.
+        let mut moved: Vec<Option<u32>> = Vec::with_capacity(self.prims.len());
+        for (i, (p, k)) in self.prims.iter().zip(&keep).enumerate() {
+            let tri = matches!(p.kind, Kind::Tris | Kind::Mask);
+            let (src, dst) = if tri { (&self.tris, &mut tris) } else { (&self.verts, &mut verts) };
+            let (Ok(index), Ok(start), true) = (u32::try_from(prims.len()), u32::try_from(dst.len()), *k) else {
+                moved.push(None);
+                continue;
+            };
+            let from = p.start as usize;
+            dst.extend_from_slice(src.get(from..from.saturating_add(p.len as usize)).unwrap_or(&[]));
+            if let Some(pen) = self.pens.get(i) {
+                pens.resize(prims.len(), Pen::default());
+                pens.push(*pen);
+            }
+            prims.push(DPrim { start, ..*p });
+            if let Some(l) = self.prim_layers.get(i) {
+                layers.push(*l);
+            }
+            moved.push(Some(index));
+        }
+        self.texts.retain_mut(|t| {
+            if t.prim >= PlotText::CLIPPED {
+                return t.bounds.intersects(area);
+            }
+            match moved.get(t.prim as usize).copied().flatten() {
+                Some(i) => {
+                    t.prim = i;
+                    true
+                }
+                None => false,
+            }
+        });
+        (self.prims, self.verts, self.tris, self.prim_layers, self.pens) = (prims, verts, tris, layers, pens);
+    }
     pub fn segment_count(&self) -> usize {
         self.prims.iter().filter(|p| p.kind == Kind::Polyline).map(|p| p.len.saturating_sub(1) as usize).sum()
     }
@@ -128,17 +238,21 @@ impl DisplayList {
 }
 
 /// Append `src` to `dst`: its primitives index into `dst`'s vertex and triangle arrays.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     let (verts, tris, prims) = (dst.verts.len() as u32, dst.tris.len() as u32, dst.prims.len() as u32);
+    let images = dst.images.len() as u32;
     // Pens are parallel to the primitives, with missing entries meaning "use object".
     if !src.pens.is_empty() {
         dst.pens.resize(dst.prims.len(), Pen::default());
     }
     dst.prims.extend(src.prims.into_iter().map(|mut p| {
         p.start += if matches!(p.kind, Kind::Tris | Kind::Mask) { tris } else { verts };
+        if let Kind::Image { index } = &mut p.kind {
+            *index = index.saturating_add(images);
+        }
         p
     }));
+    dst.images.extend(src.images);
     dst.verts.extend(src.verts);
     dst.tris.extend(src.tris);
     dst.prim_layers.extend(src.prim_layers);

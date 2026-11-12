@@ -7,7 +7,7 @@
 //! stays I/O-agnostic; the JSON forms never open dialogs (the UI asks for files when these
 //! commands come from a menu, the tool bar or the command line).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cadcraft_color::Rgb;
@@ -55,11 +55,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["printpdf", "pdfb"])
             .params("{path?: \"DIR/NAME^NAME2.pdf\" (default: the drawing's file; a `^` splits the name into one book name per row of frames; else returns base64 `data` per book), names?: [book names], frameHeight?: mm (default 297), unit?: mm per drawing unit (default 1)} → {books: [{name, pages, bytes, path? | data}], skipped}: closed polylines of the frame height in model space are sheet frames; each row (same lower edge, bottom to top) is one PDF, its frames left to right one page each on the paper (ISO A-series, either orientation) they match")
             .noundo(),
-        CommandSpec::new("attach", "Attach", |_, _| {
-            Err(EngineError::Other("ATTACH is not available yet: raster images and PDF/DWF/DGN underlays can't be shown yet".into()))
+        CommandSpec::new("attach", "Attach", |s, p| match str_param(p, "path").map(extension) {
+            Some(e) if super::image::is_image_ext(&e) => super::image::run_imageattach(s, p),
+            _ => Err(EngineError::Other("ATTACH is not available yet for this file: only raster images (PNG, JPEG, BMP, TIFF; see IMAGEATTACH) can be attached, PDF/DWF/DGN underlays can't be shown yet".into())),
         })
-        .params("not available yet")
-        .noundo(),
+        .params("{path: image file, …} as IMAGEATTACH; other file types are not available yet"),
         CommandSpec::new("share", "Share", |_, _| {
             Err(EngineError::Other("SHARE is not available yet: there is no online service to share through; EXPORT or PUBLISH the drawing and send the file".into()))
         })
@@ -82,7 +82,7 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the export write (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -117,14 +117,19 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
-    match path {
+    let file = format!("export.{format}");
+    let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
+    let folder = path.and_then(super::file::new_folder);
+    let mut r = match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
-            Ok(json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") }))
+            json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") })
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() })),
-    }
+        None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
+    };
+    super::file::report_new_folder(s, &mut r, folder);
+    super::file::report_loss(s, &mut r, &file);
+    Ok(r)
 }
 
 // ---------- IMPORT ----------
@@ -161,7 +166,7 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
     let space = s.space();
     let d = s.doc_mut()?;
     let (layers, styles) = merge_tables(d, src);
-    let renames = block_names(d, src);
+    let renames = crate::cmd::merge::block_renames(d, src, None);
     for (from, to) in &renames {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
@@ -199,7 +204,8 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("import", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("import", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("import", "paths are not available on the web; pass `data`"))
@@ -208,16 +214,7 @@ fn read_file(_path: &str) -> Result<Vec<u8>> {
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that
 /// exists keeps this drawing's definition). Returns how many layers and how many other records were added.
 fn merge_tables(d: &mut Drawing, src: &Drawing) -> (usize, usize) {
-    fn merge<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) -> usize {
-        let mut n = 0;
-        for t in theirs {
-            if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
-                n += 1;
-            }
-        }
-        n
-    }
+    use crate::cmd::merge::merge_named as merge;
     let layers = merge(&mut d.layers, &src.layers, |l| &l.name);
     let others = merge(&mut d.linetypes, &src.linetypes, |l| &l.name)
         + merge(&mut d.text_styles, &src.text_styles, |t| &t.name)
@@ -225,35 +222,6 @@ fn merge_tables(d: &mut Drawing, src: &Drawing) -> (usize, usize) {
         + merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name)
         + merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
     (layers, others)
-}
-
-/// Which source blocks to copy, and under which name: new names keep theirs, generated
-/// (anonymous `*…`) blocks that collide get a fresh generated name, and a named block this drawing
-/// already has keeps this drawing's definition (not copied).
-fn block_names(d: &Drawing, src: &Drawing) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let mut taken: BTreeSet<String> = d.blocks.keys().map(|k| k.to_ascii_uppercase()).collect();
-    for (name, b) in &src.blocks {
-        let upper = name.to_ascii_uppercase();
-        if upper.starts_with("*MODEL_SPACE") || upper.starts_with("*PAPER_SPACE") {
-            continue;
-        }
-        let anonymous = b.anonymous || name.starts_with('*');
-        let to = if !taken.contains(&upper) {
-            name.clone()
-        } else if anonymous {
-            let prefix: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
-            match (1..=1_000_000).map(|i| format!("{prefix}{i}")).find(|n| !taken.contains(&n.to_ascii_uppercase())) {
-                Some(n) => n,
-                None => continue,
-            }
-        } else {
-            continue;
-        };
-        taken.insert(to.to_ascii_uppercase());
-        out.insert(name.clone(), to);
-    }
-    out
 }
 
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
@@ -331,17 +299,23 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
         page.landscape = l;
     }
+    // A layout's saved page setup (plot window, scale to fit, scale, centring) applies unless the call says otherwise (#2493).
+    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot.
+    let plain = p.get("fit").and_then(Value::as_bool) == Some(false) && p.get("scale").is_none();
+    let saved = if space.is_paper() && !plain { cadcraft_render::paper::saved_plot(&page) } else { Default::default() };
     let sheet = Sheet::from_page(&page, paper::page_unit_mm(d, &page));
     let lineweights = p.get("lineweights").and_then(Value::as_bool).unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let transparency = super::plotters::plot_transparency(s, p).unwrap_or(page.plot_transparency);
-    let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(matches!(space, Space::Model));
-    let scale = p.get("scale").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
+    let given_scale = p.get("scale").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
+    // A saved scale to fit applies only when the call gives neither `fit` nor `scale`, as in the PDF.
+    let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(matches!(space, Space::Model) || (saved.fit && given_scale.is_none()));
+    let scale = given_scale.or(saved.scale);
     let width = p.get("width").and_then(Value::as_u64).unwrap_or(PREVIEW_PX).clamp(16, MAX_PREVIEW_PX);
     let height = ((width as f64) * sheet.size.y / sheet.size.x).round();
     let height = if height.is_finite() { (height as u64).clamp(16, MAX_PREVIEW_PX) } else { width };
     let px_per_paper_unit = width as f64 / sheet.size.x;
     // Curves are flattened to about half a pixel.
-    let est = plot_scale(&d.extents(&space), &sheet, fit, scale);
+    let est = plot_scale(&saved.window.unwrap_or_else(|| d.extents(&space)), &sheet, fit, scale);
     let tol = 0.5 / (px_per_paper_unit * est);
     // The plot style table the sheet plots with (the `plotStyleTable` option, else its page setup's),
     // so the preview shows the printed colours, screening and lineweights.
@@ -358,13 +332,22 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         ..Default::default()
     };
     let mut list = cadcraft_render::build_plot(d, &space, &ropts);
-    let b = list.bounds;
+    let b = saved.window.unwrap_or(list.bounds);
     // Paper point q shows drawing point (q - to) / k + from.
-    let (from, k, to) = if fit || space == Space::Model {
+    let (from, k, to) = if saved.window.is_some() {
+        // A saved window, fitted or at a saved scale: its centre (or corner) on the printable area's.
+        let c = saved.center;
+        (if c { b.center() } else { b.min }, plot_scale(&b, &sheet, fit, scale), if c { sheet.printable.center() } else { sheet.printable.min })
+    } else if fit || space == Space::Model {
         (if b.is_empty() { Vec2::ZERO } else { b.center() }, plot_scale(&b, &sheet, fit, scale), sheet.printable.center())
     } else {
         (Vec2::ZERO, plot_scale(&b, &sheet, fit, scale), Vec2::ZERO)
     };
+    // A saved window shows only what is inside it, as the plotters plot it.
+    if let Some(w) = saved.window.filter(|w| !w.is_empty()) {
+        let reach = 3.0 / (sheet.unit_mm * k);
+        list.retain_within(&w.expand(if reach.is_finite() && reach > 0.0 { reach } else { 0.0 } + w.width().max(w.height()) * 0.01));
+    }
     // The table's line ends, joins and fill patterns at the plot scale, as the plotters draw them.
     cadcraft_render::pen::apply(&mut list, k * sheet.unit_mm);
     let world = Bounds2::new((Vec2::ZERO - to) / k + from, (sheet.size - to) / k + from);
@@ -380,7 +363,30 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         px_per_mm: if lineweights && px_per_mm.is_finite() { px_per_mm } else { 0.0 },
         antialias: true,
     };
-    let png = cadcraft_render::raster::render_png(&list, &view, &ro).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
+    let mut pm = cadcraft_render::raster::render(&list, &view, &ro).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
+    // A placed plot (fitted, or a saved window) shows only inside the printable area, as the PDF and PNG plots clip it.
+    if fit || saved.window.is_some() || space == Space::Model {
+        // The view may scale and centre the sheet (the height cap), so map the printable corners
+        // (paper point q shows drawing point (q - to) / k + from) through it.
+        let screen = |q: Vec2| {
+            let (x, y) = view.to_screen((q - to) / k + from);
+            (f64::from(x), f64::from(y))
+        };
+        let (min, max) = (sheet.printable.min, sheet.printable.max);
+        let (mut a, mut b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
+        // A saved window also cuts the plot at its own edges.
+        if let Some(w) = saved.window.filter(|w| !w.is_empty()) {
+            let (x0, y1) = view.to_screen(w.min);
+            let (x1, y0) = view.to_screen(w.max);
+            a = (a.0.max(f64::from(x0)), a.1.max(f64::from(y0)));
+            b = (b.0.min(f64::from(x1)), b.1.min(f64::from(y1)));
+            if a.0 >= b.0 || a.1 >= b.1 {
+                (a, b) = ((0.0, 0.0), (0.0, 0.0));
+            }
+        }
+        cadcraft_render::raster::blank_outside_pixels(&mut pm, a, b);
+    }
+    let png = pm.encode_png().map_err(|_| bad("preview", "rendering the preview failed"))?;
     let layout = space.tab_name();
     Ok(json!({ "data": base64_encode(&png), "width": w, "height": h, "layout": layout, "paper": page.paper, "landscape": page.landscape }))
 }
@@ -660,6 +666,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     }
 
@@ -746,6 +753,140 @@ mod tests {
         assert_ne!(png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false, "scale": 0.5 })), default, "scale 0.5 is not 1:1");
     }
 
+    /// A layout's saved page setup (plot window, scale to fit) shapes its preview by default, as
+    /// it shapes the PDF; `fit: false` still gives the plain 1:1 sheet (#2493).
+    #[test]
+    fn preview_uses_the_layouts_saved_page_setup_by_default() {
+        let mut s = Session::new();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        s.execute("line", &json!({ "points": [[20.0, 5.0], [836.0, 589.0]] })).unwrap();
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [0, 0, 0, 0] })).unwrap();
+        let png = |s: &mut Session, p: Value| s.execute("preview", &p).unwrap()["data"].as_str().unwrap_or_default().to_string();
+        let unsaved = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+        page.plot_area = "window".into();
+        page.plot_window = [20.0, 5.0, 836.0, 589.0];
+        page.scale_to_fit = true;
+        let saved = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        assert_ne!(saved, unsaved, "the saved window and scale to fit change the preview");
+        assert_eq!(png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false })), unsaved, "fit: false is the plain 1:1 sheet");
+    }
+
+    /// With a saved plot window the preview follows the page setup's centring (fitted or not) and an
+    /// explicit `scale` beats a saved scale to fit, as in the PDF.
+    /// A placed saved window shows only inside the printable area, as the PDF and PNG plots clip it:
+    /// geometry in the margin leaves the preview unchanged.
+    #[test]
+    fn preview_clips_a_saved_window_to_the_printable_area() {
+        let build = |margin_line: bool| {
+            let mut s = Session::new();
+            s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+            s.execute("line", &json!({ "points": [[0.0, 30.0], [100.0, 30.0]] })).unwrap();
+            if margin_line {
+                s.execute("line", &json!({ "points": [[-3.0, 0.0], [-3.0, 60.0]] })).unwrap();
+            }
+            s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [10, 10, 10, 10] })).unwrap();
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.plot_area = "window".into();
+            page.plot_window = [0.0, 0.0, 100.0, 60.0];
+            page.scale_to_fit = true;
+            page.center = true;
+            s.execute("preview", &json!({ "layout": "Layout1", "width": 600 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(build(true), build(false), "a line in the margin is clipped away");
+    }
+
+    /// On a tall sheet the height cap makes the view scale and centre the sheet in the image; the
+    /// printable clip must follow it, so ink in the margin is still blanked.
+    #[test]
+    fn preview_clip_follows_the_view_when_the_height_cap_applies() {
+        let build = |margin_line: bool| {
+            let mut s = Session::new();
+            s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+            s.execute("line", &json!({ "points": [[0.0, 50.0], [100.0, 50.0]] })).unwrap();
+            if margin_line {
+                s.execute("line", &json!({ "points": [[-2.6, 0.0], [-2.6, 100.0]] })).unwrap();
+            }
+            s.execute("pagesetup", &json!({ "layout": "Layout1", "margins": [10, 10, 10, 10] })).unwrap();
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.width_mm = 210.0;
+            page.height_mm = 1200.0;
+            page.landscape = false;
+            page.plot_area = "window".into();
+            page.plot_window = [0.0, 0.0, 100.0, 100.0];
+            page.scale_to_fit = true;
+            page.center = true;
+            s.execute("preview", &json!({ "layout": "Layout1", "width": 1000 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(build(true), build(false), "a line in the margin is clipped away on a tall sheet");
+    }
+
+    /// Hostile saved setups (a degenerate or far-away window, a scale of 0 or not finite) fall back
+    /// to the plain preview and never panic, and a layout with no saved setup previews exactly as
+    /// the plain 1:1 sheet does.
+    #[test]
+    fn preview_survives_hostile_saved_setups_and_default_is_unchanged() {
+        let mut s = Session::new();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        s.execute("line", &json!({ "points": [[20.0, 5.0], [200.0, 100.0]] })).unwrap();
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true })).unwrap();
+        let png = |s: &mut Session, p: Value| s.execute("preview", &p).unwrap()["data"].as_str().unwrap_or_default().to_string();
+        let call = json!({ "layout": "Layout1", "width": 200 });
+        let plain = png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false }));
+        assert_eq!(png(&mut s, call.clone()), plain, "no saved setup: the default preview is the plain sheet");
+        let set = |s: &mut Session, window: [f64; 4], scale: f64, fit: bool| {
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.plot_area = "window".into();
+            page.plot_window = window;
+            page.scale = scale;
+            page.scale_to_fit = fit;
+        };
+        let good = [0.0, 0.0, 100.0, 60.0];
+        let (nan, inf) = (f64::NAN, f64::INFINITY);
+        for window in [[5.0, 5.0, 5.0, 40.0], [5.0, 5.0, 40.0, 5.0], [nan, 0.0, 10.0, 10.0], [0.0, 0.0, inf, 10.0]] {
+            set(&mut s, window, 1.0, true);
+            assert_eq!(png(&mut s, call.clone()), plain, "{window:?}: a degenerate window changes nothing");
+        }
+        for scale in [0.0, -2.0, nan, inf] {
+            set(&mut s, good, scale, false);
+            let _ = png(&mut s, call.clone());
+            set(&mut s, [5.0, 5.0, 5.0, 40.0], scale, false);
+            assert_eq!(png(&mut s, call.clone()), plain, "{scale}: an unusable saved scale is ignored");
+        }
+        set(&mut s, [1e9, 1e9, 1e9 + 10.0, 1e9 + 10.0], 1.0, true);
+        let _ = png(&mut s, call.clone());
+        set(&mut s, [-1e300, -1e300, 1e300, 1e300], 1.0, true);
+        let _ = png(&mut s, call.clone());
+    }
+
+    #[test]
+    fn preview_honours_saved_centering_and_an_explicit_scale() {
+        let mut s = Session::new();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        s.execute("line", &json!({ "points": [[20.0, 5.0], [836.0, 589.0]] })).unwrap();
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [0, 0, 0, 0] })).unwrap();
+        let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+        page.plot_area = "window".into();
+        page.plot_window = [20.0, 5.0, 400.0, 200.0];
+        page.scale_to_fit = true;
+        let png = |s: &mut Session, p: Value| s.execute("preview", &p).unwrap()["data"].as_str().unwrap_or_default().to_string();
+        let set_center = |s: &mut Session, c: bool| s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.center = c;
+        set_center(&mut s, true);
+        let centred = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        set_center(&mut s, false);
+        // The window is fitted by width, so only the other axis shows where it sits.
+        let corner = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        assert_ne!(corner, centred, "a saved centre: false puts the fitted window at the printable corner");
+        let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+        page.center = true;
+        let by_scale = png(&mut s, json!({ "layout": "Layout1", "width": 200, "scale": 0.5 }));
+        assert_ne!(by_scale, centred, "an explicit scale is not the fitted plot");
+        assert_eq!(
+            by_scale,
+            png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false, "scale": 0.5 })),
+            "scale decides, not the saved fit"
+        );
+    }
     #[test]
     fn pdfbook_collects_frames_into_one_pdf_per_row() {
         our_hooks();
@@ -762,19 +903,20 @@ mod tests {
         s.cmdline("").unwrap();
         s.cmdline("pline 0,900 50,900 50,950 0,950 c").unwrap();
         s.cmdline("").unwrap();
-        let r = s.execute("pdfbook", &json!({ "path": temp("a^b.pdf").to_string_lossy() }));
+        // `a^b.pdf` names one book per row, both in the folder of the path.
+        let dir = crate::temp_dir::TempDir::new("pdfbook");
+        let r = s.execute("pdfbook", &json!({ "path": dir.path_str("a^b.pdf") }));
         let r = r.unwrap();
         let books = r["books"].as_array().unwrap();
         assert_eq!(books.len(), 2);
         assert_eq!(books[0]["pages"], 3);
         assert_eq!(books[1]["pages"], 1);
-        let first = temp("a.pdf");
+        let first = dir.join("a.pdf");
         let text = String::from_utf8(std::fs::read(&first).unwrap()).unwrap();
         let (a4, a3) = (text.find("ISO A4").unwrap(), text.find("ISO A3").unwrap());
         assert!(a4 < a3, "frames go left to right: {text}");
         assert!(text.contains("\"landscape\":true"));
-        let _ = std::fs::remove_file(first);
-        let _ = std::fs::remove_file(temp("b.pdf"));
+        assert!(dir.join("b.pdf").is_file(), "the second row's book is written beside the first");
         // No frames: an error, not a panic.
         assert!(Session::new().execute("pdfbook", &json!({})).is_err());
     }

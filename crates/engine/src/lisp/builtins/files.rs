@@ -1,6 +1,6 @@
 use super::args::{R, arity, string};
 use super::output::emit;
-use super::*;
+use super::{Ctx, Flow, LispError, Value, charge_bytes};
 
 // ---------------- files ----------------
 
@@ -27,8 +27,14 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
     if !writing {
         match read_text_file(&path) {
             Some(t) => {
-                charge_bytes(t.len())?;
-                f.lines = t.lines().map(str::to_string).collect();
+                // Each line has a String header and a separately allocated buffer. Charge a
+                // conservative 64 bytes per line for both, including the allocator's minimum
+                // allocation size, before collecting so many short lines cannot evade the budget.
+                let count = t.lines().count();
+                charge_bytes(t.len().saturating_add(count.saturating_mul(64)))?;
+                // Exact capacity: collecting would grow by doubling and hold unbilled slack.
+                f.lines = std::collections::VecDeque::with_capacity(count);
+                f.lines.extend(t.lines().map(str::to_string));
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
@@ -73,17 +79,17 @@ pub(super) fn findfile(a: &[Value]) -> R {
 
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn read_text_file(path: &str) -> Option<String> {
+pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
     // Read through a byte-limited, regular-file-only reader so a path naming an endless device
     // cannot exhaust memory before the 64 MiB cap is enforced (CWE-400).
     const MAX: usize = 64 * 1024 * 1024;
-    let bytes = crate::capped_read::read_capped(std::path::Path::new(path), MAX).ok()?;
+    let bytes = crate::capped_read::read_capped(path.as_ref(), MAX).ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Return `None` on the web, where native filesystem paths are unavailable.
 #[cfg(target_arch = "wasm32")]
-pub fn read_text_file(_path: &str) -> Option<String> {
+pub fn read_text_file(_path: impl AsRef<std::path::Path>) -> Option<String> {
     None
 }
 
@@ -100,8 +106,19 @@ fn can_write(_path: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn write_text_file(path: &str, text: &str, append: bool) {
     use std::io::Write;
-    let f = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(path);
-    if let Ok(mut f) = f {
+    // Opened without blocking and without truncating, so a FIFO with no reader fails at once
+    // instead of stalling the interpreter; only a regular file is then truncated and written.
+    let mut o = std::fs::OpenOptions::new();
+    o.create(true).write(true).append(append);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NONBLOCK);
+    }
+    if let Ok(mut f) = o.open(path)
+        && f.metadata().is_ok_and(|m| m.is_file())
+        && (append || f.set_len(0).is_ok())
+    {
         let _ = f.write_all(text.as_bytes());
     }
 }
@@ -117,4 +134,30 @@ fn file_exists(path: &str) -> bool {
 #[cfg(target_arch = "wasm32")]
 fn file_exists(_path: &str) -> bool {
     false
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Writing to a FIFO with no reader returns at once, and a regular file is still replaced.
+    #[test]
+    fn write_to_a_fifo_without_a_reader_does_not_block() {
+        // A fresh directory: `create_dir` fails if the name exists, so no stale pipe or planted symlink is reused.
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("cadcraft-lispfifo-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let fifo = dir.join("pipe");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let started = std::time::Instant::now();
+        write_text_file(fifo.to_str().unwrap(), "x", false);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let f = dir.join("f.txt");
+        std::fs::write(&f, "long old text").unwrap();
+        write_text_file(f.to_str().unwrap(), "new", false);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "new");
+        write_text_file(f.to_str().unwrap(), "+", true);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "new+");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

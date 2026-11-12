@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, HAlign, Input, Interactive, MText, PolyVertex, Prompt, Result, Session, Step, Text, VAlign, Value, Vec2, added, bad, bool_or,
+    f64_or, lwpoly, number, point_req, str_param, v3,
+};
 
 /// Justification code → (halign, valign).
 pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {

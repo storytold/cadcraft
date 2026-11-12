@@ -1,4 +1,9 @@
-use super::*;
+use crate::DisplayOnly;
+
+use super::{
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
+    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+};
 
 impl Session {
     // ---------------- interactive commands ----------------
@@ -6,6 +11,7 @@ impl Session {
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;
+        self.pick_hint = None;
         let name = name.trim();
         let (transparent, name) = match name.strip_prefix('\'') {
             Some(n) => (true, n),
@@ -195,7 +201,7 @@ impl Session {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
-                    let crossing = p.x < pw.corner.x;
+                    let crossing = self.window_is_crossing(pw.corner, p);
                     let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
@@ -275,7 +281,10 @@ impl Session {
         let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
-            Some(Input::Cancel) => Ok(Step::Cancel),
+            Some(Input::Cancel) => {
+                run.machine.cancelled(self);
+                Ok(Step::Cancel)
+            }
             Some(i) => {
                 if let Input::Point(p) = &i {
                     self.last_point = *p;
@@ -337,7 +346,21 @@ impl Session {
         }
     }
 
+    /// End a command: every way out of one comes through here. The passes after a command
+    /// (constraints, associativity, groups) can panic like the command itself; a panic restores
+    /// the drawing as it was before the command, as a panic in its `input` does.
     fn finish(&mut self, run: Running, cancelled: bool) {
+        let (id, before, selection) = (run.id.clone(), run.before.clone(), run.selection_before.clone());
+        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.finish_guarded(run, cancelled))) {
+            if let Ok(st) = self.state_mut() {
+                st.doc = before;
+                st.selection = selection;
+            }
+            self.echo(format!("Internal error in {id}: {}", crate::guard::message(&*p)));
+        }
+    }
+
+    fn finish_guarded(&mut self, run: Running, cancelled: bool) {
         // A typed selection mode or SIngle never outlives its command.
         self.select_mode = None;
         self.select_single = false;
@@ -361,12 +384,16 @@ impl Session {
         }
         self.after_command(Some(&run.before), None, true);
         // A transparent command's changes belong to the command it ran inside, and a command a
-        // LISP routine ran belongs to the routine's single undo step.
+        // LISP routine ran belongs to the routine's single undo step (the routine keeps it for U
+        // inside it).
         if self.suspended.is_some() || self.lisp_groups_undo() {
             if let Ok(st) = self.state_mut()
                 && !Arc::ptr_eq(&run.before, &st.doc)
             {
                 st.revision += 1;
+                if self.suspended.is_none() {
+                    self.lisp_record_step(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+                }
             }
             return;
         }
@@ -387,6 +414,8 @@ impl Session {
     /// started in, so associativity is not applied across a document switch; `ok` is false for a
     /// failed or non-undoable programmatic command, which skips the constraint pass.
     pub(super) fn after_command(&mut self, before: Option<&Arc<Drawing>>, uid: Option<u64>, ok: bool) {
+        #[cfg(test)]
+        crate::guard::tests::panic_if_armed();
         cmd::groups::after_command(self, before);
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);
@@ -414,7 +443,8 @@ impl Session {
         }
         if self.running.is_some() {
             if self.suspended.is_some() {
-                if let Some(nested) = self.running.take() {
+                if let Some(mut nested) = self.running.take() {
+                    nested.machine.cancelled(self);
                     self.finish(nested, true);
                 }
                 self.running = self.suspended.take();
@@ -497,6 +527,13 @@ impl Session {
         }
         out.extend(kinds.into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }));
         out
+    }
+
+    /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
+    /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
+    /// `None`: the drawing.
+    pub fn display_only(&self) -> Option<DisplayOnly> {
+        [&self.running, &self.suspended].into_iter().flatten().find_map(|r| r.machine.display_only(self))
     }
 
     /// The active command's preview as a transform of existing objects (see

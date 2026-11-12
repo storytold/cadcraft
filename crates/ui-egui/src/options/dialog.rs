@@ -141,7 +141,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_display", |ui| {
         let theme_caption = ui.label(crate::tl!("Interface theme"));
         let mut theme = app.ui.theme;
-        let theme_combo = egui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
+        let theme_combo = craft_ui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
             for t in ThemePref::ALL {
                 ui.selectable_value(&mut theme, t, theme_label(t));
             }
@@ -154,7 +154,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
 
         let animations_caption = ui.label(crate::tl!("Animation effects"));
         let mut animations = app.ui.animations;
-        let animations_combo = egui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
+        let animations_combo = craft_ui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
             for a in AnimationPref::ALL {
                 ui.selectable_value(&mut animations, a, animations_label(a));
             }
@@ -168,7 +168,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         let scale_caption = ui.label(crate::tl!("Interface scale"));
         let scale = app.options.interface_scale;
         let percent = |s: f32| format!("{} %", (s * 100.0).round());
-        let scale_combo = egui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
+        let scale_combo = craft_ui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
             for n in [75u16, 100, 125, 150, 175, 200, 250, 300] {
                 let s = f32::from(n) / 100.0;
                 if ui.selectable_label((scale - s).abs() < 1e-4, format!("{n} %")).clicked() && (scale - s).abs() >= 1e-4 {
@@ -225,6 +225,8 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         ui.end_row();
         autosave_row(ui, changes);
         ui.end_row();
+        backup_row(ui, changes);
+        ui.end_row();
         savefile_row(ui, changes);
         ui.end_row();
     });
@@ -252,7 +254,7 @@ fn save_version_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, V
     let version_caption = ui.label(crate::tl!("Default save version"));
     let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
     let mut version = current;
-    let version_combo = egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
+    let version_combo = craft_ui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
         for v in crate::SaveVersion::ALL {
             ui.selectable_value(&mut version, v, v.year());
         }
@@ -282,6 +284,15 @@ fn autosave_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     let max = cadcraft_engine::autosave::MAX_SAVETIME;
     if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).labelled_by(minutes_caption.id).changed() {
         changes.insert("SAVETIME".into(), json!(minutes));
+    }
+}
+
+/// ISAVEBAK: keep the previous file as `<name>.bak` when saving over a drawing.
+fn backup_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Backup copy"));
+    let mut bak = cadcraft_engine::autosave::isavebak();
+    if ui.checkbox(&mut bak, crate::tl!("Create backup copy with each save")).changed() {
+        changes.insert("ISAVEBAK".into(), json!(i32::from(bak)));
     }
 }
 
@@ -526,12 +537,13 @@ fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, 
     });
 }
 
-/// Preferences tab: interface language, largest-array limit and time-sensitive right-click; edits accumulate in `changes`.
+/// Preferences tab: interface language, largest-array limit, time-sensitive right-click and the Right-Click Customization window; edits accumulate in `changes`.
 fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let mut right_click = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(RIGHT_CLICK)).unwrap_or(false));
     grid(ui, "options_preferences", |ui| {
         let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
-        let language_combo = egui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
+        let language_combo = craft_ui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
             for p in crate::i18n::Preference::for_picker() {
                 ui.selectable_value(&mut lang, p, p.name());
             }
@@ -559,7 +571,95 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
-    hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    hint(ui, crate::tl!("Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode."));
+    if ui.button(crate::tl!("Right-Click Customization...")).clicked() {
+        right_click = true;
+    }
+    if right_click {
+        right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
+}
+
+/// Whether the Right-Click Customization window is open (egui temp data).
+const RIGHT_CLICK: &str = "cc_options_right_click";
+
+/// Right-Click Customization (Options ▸ User Preferences): the time-sensitive right-click and its
+/// duration, and what a right-click does in Default, Edit and Command modes. Changes apply at
+/// once, as on the Options tabs.
+fn right_click_window(o: &super::UiOptions, ctx: &egui::Context, open: &mut bool, changes: &mut Map<String, Value>) {
+    use super::{CommandClick, IdleClick};
+    let mut close = false;
+    egui::Window::new(crate::tl!("Right-Click Customization"))
+        .id(egui::Id::unique("cc_right_click"))
+        .open(open)
+        .resizable(false)
+        .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            let mut timed = o.time_sensitive_right_click;
+            if ui.checkbox(&mut timed, crate::tl!("Turn on time-sensitive right-click")).changed() {
+                changes.insert("timeSensitiveRightClick".into(), json!(timed));
+            }
+            ui.add_enabled_ui(o.time_sensitive_right_click, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    let caption = ui.label(crate::tl!("Longer click duration:"));
+                    let mut ms = o.right_click_hold_ms;
+                    let range = super::RIGHT_CLICK_DURATIONS;
+                    if ui.add(egui::DragValue::new(&mut ms).range(range).speed(10.0)).labelled_by(caption.id).changed() {
+                        changes.insert("rightClickDuration".into(), json!(ms));
+                    }
+                    ui.label(crate::tl!("milliseconds"));
+                });
+                hint(ui, crate::tl!("While a command runs, a quick click is Enter and a longer click opens the shortcut menu."));
+            });
+            ui.add_space(6.0);
+            for (title, note, key, current) in [
+                (crate::tl!("Default Mode"), crate::tl!("No objects selected and no command running:"), "rightClickDefault", o.right_click_default),
+                (crate::tl!("Edit Mode"), crate::tl!("Objects selected and no command running:"), "rightClickEdit", o.right_click_edit),
+            ] {
+                heading(ui, title);
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    hint(ui, note);
+                    for (choice, label) in [(IdleClick::Repeat, crate::tl!("Repeat last command")), (IdleClick::Menu, crate::tl!("Shortcut Menu"))] {
+                        if ui.radio(current == choice, label).clicked() && current != choice {
+                            changes.insert(key.into(), json!(choice.as_str()));
+                        }
+                    }
+                });
+            }
+            ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
+                heading(ui, crate::tl!("Command Mode"));
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    hint(ui, crate::tl!("While a command runs:"));
+                    for (choice, label) in [
+                        (CommandClick::Enter, crate::tl!("ENTER")),
+                        (CommandClick::Menu, crate::tl!("Shortcut Menu: always enabled")),
+                        (CommandClick::MenuWithOptions, crate::tl!("Shortcut Menu: enabled when command options are present")),
+                    ] {
+                        if ui.radio(o.right_click_command == choice, label).clicked() && o.right_click_command != choice {
+                            changes.insert("rightClickCommand".into(), json!(choice.as_str()));
+                        }
+                    }
+                });
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(crate::tl!("Close")).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+    if close {
+        *open = false;
+    }
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

@@ -1,5 +1,8 @@
 use super::common::{DimText, add_dim, assoc_enabled, dim, hex_param, pick_at, segment_at, with_assoc};
-use super::*;
+use super::{
+    Accept, AssocSnap, DimAssoc, DimKind, EntityKind, Handle, Input, Interactive, Prompt, Result, Segment, Session, Step, Value, Vec2, bad, json,
+    point_req, targets, v3,
+};
 
 /// Two-line angular dimension (type 2) between two lines, attached to them.
 fn angular_from_lines(s: &Session, h1: Handle, h2: Handle, at: Vec2) -> Option<EntityKind> {

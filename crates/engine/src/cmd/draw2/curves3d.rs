@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Handle, Helix, HelixConstrain, Input, Interactive, MAX_GEN, Polyline3d, Prompt, Result, Session, Spline, Step, Value, Vec2,
+    Vec3, added, bad, bool_or, circle, curves, f64_or, f64_req, line, number, other, point_req, points_param, v3,
+};
 
 // =====================================================================================
 // 3DPOLY
@@ -150,19 +153,17 @@ impl Interactive for HelixM {
         }
         match (self.center, self.rb, self.rt) {
             (None, ..) => Prompt::new("Specify center point of base", Accept::POINT),
-            (Some(c), None, _) => {
-                Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius or" }, Accept::POINT_OR_NUMBER)
-                    .kw(if self.diameter { &[] } else { &["Diameter"] })
-                    .default("1.0000")
-                    .base(c)
-            }
+            (Some(c), None, _) => Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius" }, Accept::POINT_OR_NUMBER)
+                .kw(if self.diameter { &[] } else { &["Diameter"] })
+                .default("1.0000")
+                .base(c),
             (Some(c), Some(rb), None) => {
-                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius or" }, Accept::POINT_OR_NUMBER)
+                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius" }, Accept::POINT_OR_NUMBER)
                     .kw(if self.diameter { &[] } else { &["Diameter"] })
                     .default(format!("{rb:.4}"))
                     .base(c)
             }
-            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height or", Accept::POINT_OR_NUMBER)
+            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height", Accept::POINT_OR_NUMBER)
                 .kw(&["Axis endpoint", "Turns", "turn Height", "tWist"])
                 .default("1.0000")
                 .base(c),

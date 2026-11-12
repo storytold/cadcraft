@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Input, Interactive, PolyVertex, Prompt, Result, Session, Step, Value, Vec2, added, bad, bool_or, curves, f64_or, lwpoly,
+    number, other, point_param, point_req, rect_with_corners, size_param,
+};
+use crate::last_used::RectangModes;
 
 // =====================================================================================
 // RECTANG with Area / Dimensions / Rotation / Width / Elevation / Thickness
@@ -112,11 +116,58 @@ pub(crate) struct RectM2 {
     asking: Option<RAsk>,
 }
 
+/// A rectangle's rotation as AutoCAD 2024 shows it: degrees from 0 to 360, two decimals.
+fn rotation_text(rotation: f64) -> String {
+    let t = format!("{:.2}", rotation.to_degrees().rem_euclid(360.0));
+    if t == "360.00" { "0.00".into() } else { t }
+}
+
+/// AutoCAD 2024's line listing the RECTANG modes that are set, `None` when none is ("Current
+/// rectangle modes:  Chamfer=2.2518 x 3.7663  Rotation=50.50"): distances in the drawing's
+/// units, the rotation as [`rotation_text`] shows it.
+fn modes_line(s: &Session, m: &RectangModes) -> Option<String> {
+    let (u, p) = s.doc().map(|d| (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4))).unwrap_or((2, 4));
+    let d = |v: f64| crate::units::format_distance(v, u, p);
+    let mut parts = Vec::new();
+    if m.chamfer.0 > 0.0 || m.chamfer.1 > 0.0 {
+        parts.push(format!("Chamfer={} x {}", d(m.chamfer.0), d(m.chamfer.1)));
+    }
+    if m.fillet > 0.0 {
+        parts.push(format!("Fillet={}", d(m.fillet)));
+    }
+    if m.elevation != 0.0 {
+        parts.push(format!("Elevation={}", d(m.elevation)));
+    }
+    if m.thickness != 0.0 {
+        parts.push(format!("Thickness={}", d(m.thickness)));
+    }
+    if m.width > 0.0 {
+        parts.push(format!("Width={}", d(m.width)));
+    }
+    let rot = rotation_text(m.rotation);
+    if rot != "0.00" {
+        parts.push(format!("Rotation={rot}"));
+    }
+    (!parts.is_empty()).then(|| format!("Current rectangle modes:  {}", parts.join("  ")))
+}
+
 impl RectM2 {
+    /// The modes the next rectangle starts from.
+    fn modes(&self) -> RectangModes {
+        RectangModes {
+            chamfer: self.chamfer,
+            fillet: self.fillet,
+            width: self.width,
+            elevation: self.elevation,
+            thickness: self.thickness,
+            rotation: self.rotation,
+        }
+    }
     /// Adds the rectangle of full size `w` × `h` with the collected options, drawing it from
     /// the centre when centre mode is on, then applies the requested thickness.
     fn make(&self, s: &mut Session, w: f64, h: f64) -> Result<Step> {
         let Some(a) = self.first else { return Ok(Step::Cancel) };
+        s.last_used.rectang = self.modes();
         if w.abs() < 1e-12 || h.abs() < 1e-12 {
             return Err(other("The rectangle has no area."));
         }
@@ -152,6 +203,20 @@ impl Interactive for RectM2 {
     fn name(&self) -> &'static str {
         "RECTANG"
     }
+    /// Starts from the modes the last rectangle left, and lists the ones that are set.
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let m = s.last_used.rectang;
+        self.chamfer = m.chamfer;
+        self.fillet = m.fillet;
+        self.width = m.width;
+        self.elevation = m.elevation;
+        self.thickness = m.thickness;
+        self.rotation = m.rotation;
+        if let Some(line) = modes_line(s, &m) {
+            s.echo(line);
+        }
+        Ok(Step::Continue)
+    }
     /// Asks for the pending option's value, or for the first and second points; in centre mode
     /// the first prompt asks for the centre instead of a corner.
     fn prompt(&self, _s: &Session) -> Prompt {
@@ -170,9 +235,9 @@ impl Interactive for RectM2 {
                 RAsk::AreaWidth => num("Enter rectangle width", 10.0),
                 RAsk::DimL => num("Specify length for rectangles", self.dims.map(|d| d.0).unwrap_or(10.0)),
                 RAsk::DimW => num("Specify width for rectangles", self.dims.map(|d| d.1).unwrap_or(10.0)),
-                RAsk::Rotation => Prompt::new("Specify rotation angle or", Accept::POINT_OR_NUMBER)
+                RAsk::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER)
                     .kw(&["Pick points"])
-                    .default(format!("{:.0}", self.rotation.to_degrees()))
+                    .default(rotation_text(self.rotation))
                     .base_opt(self.first),
                 RAsk::RotPick1 => Prompt::new("Specify first point", Accept::POINT),
                 RAsk::RotPick2(b) => Prompt::new("Specify second point", Accept::POINT).base(b),
@@ -204,8 +269,14 @@ impl Interactive for RectM2 {
                     self.chamfer.1 = self.chamfer.0;
                     self.asking = Some(RAsk::Chamfer2);
                 }
-                RAsk::Chamfer2 => self.chamfer.1 = val(&i, self.chamfer.1)?.max(0.0),
-                RAsk::Fillet => self.fillet = val(&i, self.fillet)?.max(0.0),
+                RAsk::Chamfer2 => {
+                    self.chamfer.1 = val(&i, self.chamfer.1)?.max(0.0);
+                    self.fillet = 0.0;
+                }
+                RAsk::Fillet => {
+                    self.fillet = val(&i, self.fillet)?.max(0.0);
+                    self.chamfer = (0.0, 0.0);
+                }
                 RAsk::Width => self.width = val(&i, self.width)?.max(0.0),
                 RAsk::Elevation => self.elevation = val(&i, self.elevation)?,
                 RAsk::Thickness => self.thickness = val(&i, self.thickness)?,
@@ -257,6 +328,8 @@ impl Interactive for RectM2 {
                     }
                 }
             }
+            // A mode is kept as soon as it is set, even if no rectangle follows.
+            s.last_used.rectang = self.modes();
             return Ok(Step::Continue);
         }
         match i {

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, EntityKind, Handle, LwPolyline, PolyVertex, Result, Session, TanObj, Vec2, arc, ccw_sweep, curve_edits, curves, line, line_circle,
+    line_line_infinite, other, push_entity, set_kind,
+};
 
 // =====================================================================================
 // FILLET extensions (arcs, circles, polylines)

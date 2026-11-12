@@ -1,5 +1,5 @@
 use super::view::{ModelTiles, View, usable_view};
-use super::*;
+use super::{Arc, Drawing, Handle, Space, Vec2, blockedit, undoctl};
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -35,6 +35,11 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// What the last erase removed, for OOPS.
+    pub(crate) erased: crate::cmd::Erased,
+    /// The fonts missing on Windows that a save last named: the next save names them again only
+    /// when they change.
+    pub(crate) fonts_noted: String,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -61,12 +66,23 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            erased: Default::default(),
+            fonts_noted: String::new(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet
     /// saved into its block.
     pub fn is_dirty(&self) -> bool {
         !Arc::ptr_eq(self.drawing(), &self.saved) || self.block_unsaved()
+    }
+    /// Show the drawing an undo or redo step holds, with nothing selected; returns the drawing as
+    /// it was, as the step back.
+    pub(crate) fn swap_in(&mut self, snap: Snapshot) -> Snapshot {
+        let cur = Snapshot { label: snap.label, doc: std::mem::replace(&mut self.doc, snap.doc), selection: std::mem::take(&mut self.selection) };
+        self.follow_layout(&cur.doc);
+        self.reconcile_untiled_twist();
+        self.revision += 1;
+        cur
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,
@@ -120,7 +136,8 @@ impl DocState {
         match self.active_viewport() {
             Some((_, vp)) => {
                 let k = vp.view_height / vp.height;
-                View { center: vp.view_center + (pv.center - vp.center.xy()) * k, height: pv.height * k }
+                // The viewport's twist turns the model view inside it.
+                View { center: vp.paper_to_model(pv.center), height: pv.height * k, twist: vp.view_twist() }
             }
             None => pv,
         }
@@ -135,16 +152,18 @@ impl DocState {
             if vp.locked {
                 // A locked viewport keeps its scale: pan/zoom the sheet instead.
                 let k0 = vp.view_height / vp.height;
-                let pc = vp.center.xy() + (v.center - vp.view_center) / k0;
-                let paper = View { center: pc, height: v.height / k0 };
+                let pc = vp.model_to_paper(v.center);
+                let paper = View { center: pc, height: v.height / k0, twist: pv.twist };
                 if !usable_view(&paper) {
                     return false;
                 }
                 self.put_paper_view(paper);
             } else {
-                let center = v.center - (pv.center - vp.center.xy()) * k;
+                // `v`'s twist is the one the viewport shows (a non-finite one keeps its own).
+                let twist = if v.twist.is_finite() { v.twist } else { vp.view_twist() };
+                let center = v.center - ((pv.center - vp.center.xy()) * k).rotate(-twist);
                 let height = vp.height * k;
-                if !usable_view(&View { center, height }) {
+                if !usable_view(&View { center, height, twist }) {
                     return false;
                 }
                 let doc = Arc::make_mut(&mut self.doc);
@@ -153,6 +172,7 @@ impl DocState {
                         if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
                             x.view_center = center;
                             x.view_height = height;
+                            x.twist = twist;
                         }
                     });
                 }
@@ -166,6 +186,36 @@ impl DocState {
         match self.views.iter_mut().find(|(s, _)| *s == self.space) {
             Some((_, slot)) => *slot = v,
             None => self.views.push((self.space.clone(), v)),
+        }
+        if self.space == Space::Model {
+            self.keep_untiled_twist(v);
+        }
+    }
+    /// An untiled Model tab keeps its view twist in the drawing as a lone `*Active` VPORT tile
+    /// (written as that record's group 51 and read back), so it survives save and reopen. Only a
+    /// change of twist touches the drawing; an untwisted view keeps no record.
+    /// After undo or redo has put back another drawing: its untiled-twist record follows the
+    /// Model tab's live view again (views are not part of the drawing's undo).
+    pub(crate) fn reconcile_untiled_twist(&mut self) {
+        if let Some(v) = self.views.iter().find(|(s, _)| *s == Space::Model).map(|(_, v)| *v) {
+            self.keep_untiled_twist(v);
+        }
+    }
+    fn keep_untiled_twist(&mut self, v: View) {
+        use cadcraft_doc::{VportConfig, VportTile};
+        let twist = cadcraft_geom::norm_angle(v.twist);
+        let active = self.doc.vports.iter().find(|c| c.is_active());
+        if active.is_some_and(|c| c.tiles.len() > 1) {
+            return;
+        }
+        if active.and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist) == twist {
+            return;
+        }
+        let d = Arc::make_mut(&mut self.doc);
+        d.vports.retain(|c| !c.is_active());
+        if twist != 0.0 {
+            let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: v.center, height: v.height, aspect: 1.0, twist };
+            d.vports.insert(0, VportConfig { name: VportConfig::ACTIVE.into(), tiles: vec![tile] });
         }
     }
     /// Set the view, recording view history. Returns false, changing nothing, when the view (or,
@@ -195,7 +245,7 @@ impl DocState {
     /// The view ZOOM starts from: the model view of the active unlocked viewport, else [`Self::view`].
     pub fn zoom_frame(&self) -> View {
         match self.zoom_viewport() {
-            Some(v) => View { center: v.view_center, height: v.view_height },
+            Some(v) => View { center: v.view_center, height: v.view_height, twist: v.view_twist() },
             None => self.view(),
         }
     }
@@ -210,7 +260,9 @@ impl DocState {
             Some(vp) => {
                 let pv = self.paper_view();
                 let k = f.height / vp.height;
-                View { center: f.center + (pv.center - vp.center.xy()) * k, height: pv.height * k }
+                // The frame's twist turns the viewport (a non-finite one keeps the viewport's).
+                let twist = if f.twist.is_finite() { f.twist } else { vp.view_twist() };
+                View { center: f.center + ((pv.center - vp.center.xy()) * k).rotate(-twist), height: pv.height * k, twist }
             }
             None => f,
         };
@@ -218,7 +270,7 @@ impl DocState {
     }
     /// Set without recording view history (realtime pan/zoom frames).
     pub fn set_view_quiet(&mut self, v: View) {
-        if !(v.center.is_finite() && v.height.is_finite() && v.height > 1e-12) {
+        if !usable_view(&v) {
             return;
         }
         self.store_view(v);

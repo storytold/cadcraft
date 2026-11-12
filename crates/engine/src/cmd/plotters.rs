@@ -61,23 +61,13 @@ impl PlotterStore {
         }
     }
 
-    /// The `plotters` folder of the CADCraft settings directory (`CADCRAFT_CONFIG_DIR`, else
-    /// the platform's settings directory).
+    /// The `plotters` folder of the CADCraft settings directory ([`crate::settings_dir::current`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn settings_folder() -> PlotterStore {
         fn dir() -> std::result::Result<std::path::PathBuf, String> {
-            use std::path::PathBuf;
-            let get = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-            let root = match std::env::var_os("CADCRAFT_CONFIG_DIR") {
-                Some(r) if !r.is_empty() => Some(PathBuf::from(r)),
-                Some(_) => None,
-                None => match std::env::consts::OS {
-                    "macos" => get("HOME").map(|h| h.join("Library/Application Support/CADCraft")),
-                    "windows" => get("APPDATA").map(|r| r.join("CADCraft")),
-                    _ => get("XDG_CONFIG_HOME").map(|r| r.join("cadcraft")).or_else(|| get("HOME").map(|h| h.join(".config/cadcraft"))),
-                },
-            };
-            root.map(|r| r.join("plotters")).ok_or_else(|| "there is no settings folder for plotter configurations".to_string())
+            crate::settings_dir::current()
+                .map(|r| r.join("plotters"))
+                .ok_or_else(|| "there is no settings folder for plotter configurations".to_string())
         }
         /// A plain file name of ours (no separators, no parent references).
         fn file(n: &str) -> std::result::Result<std::path::PathBuf, String> {
@@ -111,9 +101,7 @@ impl PlotterStore {
             write: |n, t| {
                 let p = file(n)?;
                 std::fs::create_dir_all(dir()?).map_err(|e| e.to_string())?;
-                let tmp = p.with_extension("json.cadcraft-tmp");
-                std::fs::write(&tmp, t).map_err(|e| format!("{n}: {e}"))?;
-                std::fs::rename(&tmp, &p).map_err(|e| format!("{n}: {e}"))
+                crate::atomic_write::write_atomic(&p, t.as_bytes()).map_err(|e| format!("{n}: {e}"))
             },
             delete: |n| std::fs::remove_file(file(n)?).map_err(|e| format!("{n}: {e}")),
         }
@@ -493,6 +481,11 @@ pub fn page_device(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
     Ok(false)
 }
 
+/// The output a path's extension (any case) asks for: png, svg or pdf; other extensions ask for none.
+fn path_output(path: &str) -> Option<PlotOutput> {
+    PlotOutput::parse(&std::path::Path::new(path).extension()?.to_string_lossy())
+}
+
 /// The options PLOT / EXPORTPDF hand the plotter with `device` and the device's papers
 /// resolved: `device` (else the layout's page setup device) picks the output (`output`: pdf,
 /// png or svg; EXPORTPDF always writes PDF) and `resolution`; a paper of the device becomes
@@ -530,9 +523,42 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
             o.insert("stamp".into(), json!(text));
         }
     }
-    let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else { return Ok(out) };
+    // The path's extension names the format, like EXPORT, unless a device is given; a given
+    // device that writes another format is refused. EXPORTPDF always writes PDF.
+    let by_path = if cmd == "exportpdf" { None } else { str_param(p, "path").and_then(path_output) };
+    // A path whose extension names no format (or has none) would hold a PDF under that name:
+    // refuse it, as EXPORT does, unless `output` or a device says what to write.
+    if cmd == "plot"
+        && by_path.is_none()
+        && !p.get("output").and_then(Value::as_str).is_some_and(|o| PlotOutput::parse(o).is_some())
+        && !(dev.is_some() && given.is_some_and(|n| !n.is_empty()))
+        && let Some(path) = str_param(p, "path")
+    {
+        return Err(bad(
+            cmd,
+            format!("can't tell the format of `{path}`: give a path ending in .png, .svg or .pdf, or set `output` to png, svg or pdf"),
+        ));
+    }
+    if let (Some(want), Some(dev), true) = (by_path, &dev, given.is_some_and(|n| !n.is_empty()))
+        && dev.output != want
+    {
+        return Err(bad(cmd, format!("plotter `{}` writes {}, but the path asks for {}", dev.name, dev.output.as_str(), want.as_str())));
+    }
+    // An `output` that says another format than the path's extension is refused too, as a device
+    // that does is: either way the file would not hold what its name says.
+    if let (Some(want), Some(asked)) = (by_path, p.get("output").and_then(Value::as_str).and_then(PlotOutput::parse))
+        && asked != want
+    {
+        return Err(bad(cmd, format!("`output` is {}, but the path asks for {}", asked.as_str(), want.as_str())));
+    }
+    let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else {
+        if let (Some(want), Some(o)) = (by_path, out.as_object_mut()) {
+            o.insert("output".into(), json!(want.as_str()));
+        }
+        return Ok(out);
+    };
     o.remove("device");
-    let output = if cmd == "exportpdf" { PlotOutput::Pdf } else { dev.output };
+    let output = if cmd == "exportpdf" { PlotOutput::Pdf } else { by_path.unwrap_or(dev.output) };
     o.insert("output".into(), json!(output.as_str()));
     o.insert("resolution".into(), json!(dev.resolution));
     let paper = match str_param(p, "paper") {

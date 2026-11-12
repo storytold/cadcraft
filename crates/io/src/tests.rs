@@ -98,6 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
+            insertion_point: Vec3::ZERO,
         }),
     )
     .unwrap();
@@ -140,6 +141,7 @@ fn sample() -> Drawing {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     )
     .unwrap();
@@ -336,6 +338,74 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// Several SORTENTSTABLEs for one space sort it once, in the last table's order.
+#[test]
+fn repeated_sortents_tables_use_the_last() {
+    let table =
+        |a: u32, b: u32| format!("0\nSORTENTSTABLE\n5\n{:X}\n100\nAcDbSortentsTable\n330\n1F\n331\nA\n5\n{a:X}\n331\nB\n5\n{b:X}\n", 0x100 + a);
+    let mut t = String::from(
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Model_Space\n0\nENDTAB\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLINE\n5\nA\n330\n1F\n10\n0\n20\n0\n11\n1\n21\n1\n0\nLINE\n5\nB\n330\n1F\n10\n0\n20\n0\n11\n2\n21\n2\n0\nENDSEC\n\
+         0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n",
+    );
+    for _ in 0..1000 {
+        t.push_str(&table(2, 1));
+    }
+    t.push_str(&table(1, 2));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(t.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xA, 0xB]);
+    let reversed = t.replacen(&table(1, 2), &table(2, 1), 1);
+    let d = read(reversed.as_bytes(), "s.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.handle.0).collect::<Vec<_>>(), [0xB, 0xA]);
+}
+
+/// A table declaring 10 000 rows and no columns (or the reverse) is read as an empty table.
+#[test]
+fn table_with_an_empty_dimension_allocates_nothing() {
+    for (rows, cols) in [(10_000, 0), (0, 10_000)] {
+        let t = format!("0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n{rows}\n92\n{cols}\n0\nENDSEC\n0\nEOF\n");
+        let d = read(t.as_bytes(), "t.dxf").unwrap();
+        let tables: Vec<_> = d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t) } else { None }).collect();
+        assert_eq!(tables.len(), 1, "the table is read");
+        for t in tables {
+            assert!(t.row_heights.is_empty() && t.col_widths.is_empty() && t.cells.is_empty());
+        }
+    }
+}
+
+/// Many distinct layer, linetype and style names (in the tables and on entities) read in linear
+/// time, with the duplicate rules kept: first LTYPE wins, last STYLE wins, layers case-insensitive.
+#[test]
+fn many_distinct_symbol_names_read_quickly() {
+    const N: usize = 40_000;
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLTYPE\n2\nLT{i}\n3\nfirst\n0\nSTYLE\n2\nST{i}\n40\n1\n"));
+    }
+    t.push_str("0\nLTYPE\n2\nlt0\n3\nsecond\n0\nSTYLE\n2\nst0\n40\n2\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\nL{i}\n10\n0\n20\n0\n11\n1\n21\n1\n"));
+    }
+    t.push_str("0\nLINE\n8\nl0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+    assert!(d.layers.len() > N && d.layers.len() < N + 3, "{}", d.layers.len());
+    assert_eq!(d.linetype("LT0").map(|l| l.description.as_str()), Some("first"));
+    assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
+}
+
+/// Elements with many duplicate attributes are read in bounded time.
+#[test]
+fn svg_duplicate_attributes_are_not_rescanned() {
+    let dup = " x=\"1\"".repeat(20_000);
+    let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\">{}</svg>", format!("<rect{dup} width=\"1\" height=\"1\"/>").repeat(20));
+    let started = std::time::Instant::now();
+    let _ = read(svg.as_bytes(), "dup.svg");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}
+
 #[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
@@ -481,6 +551,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }),
     )
     .unwrap();
@@ -518,6 +589,164 @@ fn pdf_hostile_options_and_empty() {
     }
 }
 
+/// The view a drawing was saved at is the `*ACTIVE` VPORT record's centre and height, repeated in
+/// the `$VIEWCTR`/`$VIEWSIZE` header pair. It used to be dropped on read and replaced on write by
+/// a fit of the geometry extents, so a drawing with far-off geometry opened hundreds of times too
+/// far out, and a conversion replaced wherever the drawing had been left (#1602).
+#[test]
+fn dxf_keeps_the_view_the_drawing_was_saved_at() {
+    const SAVED: &str = "\
+0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1027\n9\n$VIEWCTR\n10\n50.0\n20\n50.0\n30\n0.0\n9\n$VIEWSIZE\n40\n20.0\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n\
+12\n50.0\n22\n50.0\n40\n20.0\n41\n1.5\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n100.0\n21\n60.0\n31\n0.0\n\
+0\nLINE\n8\n0\n10\n5000000.0\n20\n5000000.0\n30\n0.0\n11\n5000100.0\n21\n5000060.0\n31\n0.0\n0\nENDSEC\n0\nEOF\n";
+
+    // The stored view survives the read, far-away geometry and all: the extents here are
+    // 5 000 100 x 5 000 060, a fit of which is 275 000 times the height the drawing was saved at.
+    let d = read_dxf(SAVED.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)));
+    assert!(d.extents(&Space::Model).max.x > 5e6, "the far-off line is read too");
+
+    // And writing the drawing back keeps it, in both places a reader looks.
+    let text = write_dxf(&d);
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)));
+    let active = text.replace("\r\n", "\n");
+    let active = active.split("*Active").nth(1).unwrap_or_default();
+    for group in ["\n 12\n50", "\n 22\n50", "\n 40\n20"] {
+        assert!(active.contains(group), "the *ACTIVE record keeps {group:?}: {}", &active[..active.len().min(400)]);
+    }
+
+    // A drawing that stores no view is still written on its extents.
+    let mut plain = d.clone();
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    assert_eq!(plain.header.saved_view(), None);
+    let fitted = read_dxf(write_dxf(&plain).as_bytes()).unwrap();
+    let (center, height) = fitted.header.saved_view().unwrap();
+    assert!(center.x > 2.4e6 && height > 5e6, "the extents fit: {center:?} {height}");
+
+    // That fit covers the width as well: a wide, flat drawing opened on its height alone would
+    // show a sliver of it, and a drawing with no height at all would have no view.
+    let mut wide = cadcraft_doc::Drawing::new_metric();
+    for (a, b) in [([0.0, 0.0], [100.0, 10.0]), ([0.0, 10.0], [100.0, 10.0])] {
+        let line = cadcraft_doc::Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) };
+        wide.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    }
+    let back = read_dxf(write_dxf(&wide).as_bytes()).unwrap();
+    let (_, height) = back.header.saved_view().unwrap();
+    assert!(height > 60.0, "a 100 x 10 drawing needs more than its height: {height}");
+
+    let mut flat = cadcraft_doc::Drawing::new_metric();
+    let line = cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(100.0, 0.0, 0.0) };
+    flat.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    let back = read_dxf(write_dxf(&flat).as_bytes()).unwrap();
+    let (_, height) = back.header.saved_view().unwrap();
+    assert!(height > 60.0, "a horizontal line needs a view with width in it: {height}");
+}
+
+/// A `*ACTIVE` record that leaves its view centre out (no 12/22) is not a view: `$VIEWCTR` and
+/// `$VIEWSIZE` stay, rather than being replaced by the zero the missing groups read as.
+#[test]
+fn a_viewport_record_without_a_centre_keeps_the_header_view() {
+    const NO_CENTRE: &str = "\
+0\nSECTION\n2\nHEADER\n9\n$VIEWCTR\n10\n50.0\n20\n50.0\n9\n$VIEWSIZE\n40\n20.0\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n\
+40\n99.0\n0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(NO_CENTRE.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the header pair is kept");
+}
+
+/// The saved view is the first `*ACTIVE` record's even when that record's tile rectangle is
+/// unusable: the next `*ACTIVE` record is a second tile, not the first again (#2837 review).
+#[test]
+fn the_first_active_record_gives_the_view_even_with_an_unusable_tile() {
+    const TWO: &str = "\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n\
+0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n12\n50.0\n22\n50.0\n40\n20.0\n\
+0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n12\n900.0\n22\n900.0\n40\n5.0\n\
+0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(TWO.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the first record's view");
+}
+
+/// A tiled drawing need not hold a saved view: `-VPORTS` splits the current view into tiles and
+/// sets none. The first tile's own view is then the only one there is, and must not be replaced
+/// by the extents fallback `vport_table` computes for a drawing with no view (noted in review).
+#[test]
+fn a_tiled_drawing_with_no_saved_view_keeps_its_first_tiles_view() {
+    let mut d = sample();
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0 };
+    d.vports.push(VportConfig {
+        name: VportConfig::ACTIVE.to_string(),
+        tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
+    });
+    assert_eq!(d.header.saved_view(), None, "the drawing holds no saved view");
+
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    let active = back.vports.iter().find(|c| c.is_active()).expect("the tiled configuration is kept");
+    assert_eq!(active.tiles.len(), 2, "both tiles are written: {:?}", active.tiles);
+    assert_eq!(active.tiles[0].center, Vec2::new(1.0, 1.0), "the first tile keeps its own view");
+    assert_eq!(active.tiles[0].height, 10.0, "and its own height");
+    assert_eq!(active.tiles[1].center, Vec2::new(2.0, 2.0), "the second tile keeps its own view");
+    // The read takes the header's view from that first record, so it is the tile's view and not
+    // the extents fit the writer would otherwise have put there.
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(1.0, 1.0), 10.0)), "read from the first tile");
+}
+
+/// Updating the saved view of a drawing that has several model-space tiles survives a round
+/// trip. The write put the new view in HEADER but emitted the stored tiles unchanged, and the
+/// read takes its view from the first `*ACTIVE` record, so the update was read back as the old
+/// view (noted in review of #1602).
+#[test]
+fn a_saved_view_set_on_a_tiled_drawing_survives_a_round_trip() {
+    let mut d = sample();
+    // Two tiles side by side, the first the current one, each with its own old view.
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0 };
+    d.vports.push(VportConfig {
+        name: VportConfig::ACTIVE.to_string(),
+        tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
+    });
+    d.header.set_saved_view(Vec2::new(70.0, 80.0), 30.0);
+
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(70.0, 80.0), 30.0)), "the view that was set is the one read back");
+    // The tiled configuration is still there, and the first tile keeps its own half of the screen.
+    let active = back.vports.iter().find(|c| c.is_active()).expect("the tiled configuration is kept");
+    assert_eq!(active.tiles.len(), 2, "both tiles are written: {:?}", active.tiles);
+    assert_eq!(active.tiles[0].max, Vec2::new(0.5, 1.0), "the first tile keeps its rectangle");
+    assert_eq!(active.tiles[1].center, Vec2::new(2.0, 2.0), "and the second tile keeps its own view");
+}
+
+/// A first `*ACTIVE` record can hold a usable view (12/22 centre, 40 height) with a tile
+/// rectangle that is not usable. The record used to be dropped whole before the view was read,
+/// so a file whose header carries no view opened on the extent fit rather than where it was
+/// saved (noted in review of #1602).
+#[test]
+fn a_viewport_record_with_a_bad_tile_still_gives_its_view() {
+    // No `$VIEWCTR`/`$VIEWSIZE`, and a tile whose corners are equal (10/11 both 0,0), so the
+    // rectangle is unusable while the view is not: centre 50,50 and height 20.
+    const BAD_TILE: &str = "\
+0\nSECTION\n2\nHEADER\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n\
+12\n50.0\n22\n50.0\n40\n20.0\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(BAD_TILE.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the view the record holds is read");
+    // The unusable rectangle is still refused, so the split did not make the tile permissive.
+    assert!(d.vports.iter().all(|c| c.tiles.is_empty()), "the tile itself is not kept: {:?}", d.vports);
+
+    // And a record with no usable view either leaves the header alone, as before.
+    const NEITHER: &str = "\
+0\nSECTION\n2\nHEADER\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n\
+12\n50.0\n22\n50.0\n40\n0.0\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let neither = read_dxf(NEITHER.as_bytes()).unwrap();
+    assert_eq!(neither.header.saved_view(), None, "a zero height is not a view, so the header keeps none");
+}
+
 #[test]
 fn dxf_roundtrips_page_setup() {
     let mut d = sample();
@@ -535,6 +764,114 @@ fn dxf_roundtrips_page_setup() {
     assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, false));
     assert_eq!(p.margins_mm, [5.0, 6.0, 7.0, 8.0]);
     assert_eq!(p.paper, a3.name);
+}
+
+/// Groups 44, 45 and 73 of a layout's AcDbPlotSettings in DXF text.
+fn plot_paper_groups(dxf: &str, layout: &str) -> (f64, f64, i64) {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect();
+    let name = pairs.windows(2).position(|w| w[0] == ("100", "AcDbLayout") && w[1] == ("1", layout)).unwrap_or_else(|| panic!("no LAYOUT {layout}"));
+    let start = pairs[..name].iter().rposition(|p| *p == ("100", "AcDbPlotSettings")).unwrap();
+    let get = |code: &str| pairs[start..name].iter().find(|p| p.0 == code).map(|p| p.1).unwrap();
+    (get("44").parse().unwrap(), get("45").parse().unwrap(), get("73").parse().unwrap())
+}
+
+#[test]
+fn landscape_media_keeps_its_size_order_and_rotation() {
+    // A media defined wider than tall, as ZWCAD and AutoCAD name it (#1463).
+    let media = "ISO full bleed A3 (420.00 x 297.00 MM)";
+    for (landscape, rotation) in [(true, 0), (false, 1)] {
+        let mut d = sample();
+        {
+            let p = &mut d.layouts[0].page;
+            p.paper = media.into();
+            p.width_mm = 297.0;
+            p.height_mm = 420.0;
+            p.landscape = landscape;
+        }
+        let dxf = write_dxf(&d);
+        assert_eq!(plot_paper_groups(&dxf, "Layout1"), (420.0, 297.0, rotation), "DXF, landscape {landscape}");
+        let r = read_dxf(dxf.as_bytes()).unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DXF read back");
+        assert_eq!(p.paper, media);
+
+        let dwg = write(&d, "t.dwg").unwrap();
+        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        assert_eq!(plot_paper_groups(&back, "Layout1"), (420.0, 297.0, rotation), "DWG, landscape {landscape}");
+        let r = read(&dwg, "t.dwg").unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DWG read back");
+    }
+}
+
+/// A file's own groups 44, 45 and 73 are written back unchanged, in DXF and DWG, whether they
+/// follow ZWCAD's convention (the media's size, no turn) or AutoCAD's (a portrait size and a
+/// quarter turn) for a media named wider than tall. Once the page setup changes, they no
+/// longer describe it and the size and rotation are derived again.
+#[test]
+fn a_files_own_paper_groups_are_written_back() {
+    let set = |dxf: &str, (w, h, r): (f64, f64, i64)| -> String {
+        let mut lines: Vec<String> = dxf.lines().map(String::from).collect();
+        let name = (0..lines.len() - 3)
+            .find(|&i| {
+                lines[i].trim() == "100" && lines[i + 1].trim() == "AcDbLayout" && lines[i + 2].trim() == "1" && lines[i + 3].trim() == "Layout1"
+            })
+            .unwrap();
+        let start = (0..name).rev().find(|&i| lines[i].trim() == "100" && lines[i + 1].trim() == "AcDbPlotSettings").unwrap();
+        for i in (start..name).step_by(2) {
+            match lines[i].trim() {
+                "44" => lines[i + 1] = w.to_string(),
+                "45" => lines[i + 1] = h.to_string(),
+                "73" => lines[i + 1] = r.to_string(),
+                _ => {}
+            }
+        }
+        lines.join("\n")
+    };
+    // (media, groups as the program wrote them, portrait size and landscape CADCraft reads)
+    let cases = [
+        ("ISO full bleed A3 (420.00 x 297.00 MM)", (420.0, 297.0, 0), (297.0, 420.0, true)),
+        ("ISO A4 (297.00 x 210.00 MM)", (210.0, 297.0, 1), (210.0, 297.0, true)),
+        ("ISO A4 (297.00 x 210.00 MM)", (210.0, 297.0, 0), (210.0, 297.0, false)),
+    ];
+    for (media, groups, (pw, ph, landscape)) in cases {
+        let mut d = sample();
+        d.layouts[0].page.paper = media.into();
+        let file = set(&write_dxf(&d), groups);
+        let r = read_dxf(file.as_bytes()).unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (pw, ph, landscape), "{media} {groups:?} read");
+        assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DXF");
+        let dwg = write(&r, "t.dwg").unwrap();
+        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        assert_eq!(plot_paper_groups(&back, "Layout1"), groups, "{media} {groups:?} DWG");
+        let r = read(&dwg, "t.dwg").unwrap();
+        assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DWG read and saved again");
+    }
+    // Turned in CADCraft after reading: the stored groups no longer apply.
+    let mut d = sample();
+    d.layouts[0].page.paper = "ISO full bleed A3 (420.00 x 297.00 MM)".into();
+    let mut r = read_dxf(set(&write_dxf(&d), (420.0, 297.0, 0)).as_bytes()).unwrap();
+    r.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.landscape = false;
+    assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), (420.0, 297.0, 1), "portrait after the change");
+    // A plot rotation the DXF Reference doesn't define (0-3) reads as not rotated and is written
+    // back as 0, not as read (#2028 review).
+    let r = read_dxf(set(&write_dxf(&d), (210.0, 297.0, 99)).as_bytes()).unwrap();
+    assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1").2, 0, "an undefined rotation is not written back");
+}
+
+#[test]
+fn portrait_media_is_written_as_before() {
+    let mut d = sample();
+    {
+        let p = &mut d.layouts[0].page;
+        p.paper = "ISO A3 (297.00 x 420.00 MM)".into();
+        p.width_mm = 297.0;
+        p.height_mm = 420.0;
+        p.landscape = true;
+    }
+    assert_eq!(plot_paper_groups(&write_dxf(&d), "Layout1"), (297.0, 420.0, 1));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -558,6 +895,7 @@ fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -586,6 +924,7 @@ fn viewport_frozen_layers_roundtrip() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -602,6 +941,157 @@ fn viewport_frozen_layers_roundtrip() {
         .collect();
     assert!(frozen.contains(&(2, vec!["Walls".to_string(), "A B".to_string()])), "{frozen:?}");
     assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
+}
+
+/// `Layout1` with viewports 1 (the sheet), 2 and 3, written to DXF and read back with the id (69)
+/// of every viewport `blank` names replaced by -1 (ZWCAD's "unknown"): the ids and widths read.
+fn viewport_ids_read_back(blank: impl Fn(&str) -> bool) -> (Drawing, Vec<(u32, f64)>) {
+    viewport_ids_read_back_as(blank, "-1")
+}
+
+/// [`viewport_ids_read_back`], with `value` in place of the id of every viewport `blank` names.
+fn viewport_ids_read_back_as(blank: impl Fn(&str) -> bool, value: &str) -> (Drawing, Vec<(u32, f64)>) {
+    let mut d = sample();
+    let paper = Space::Paper("Layout1".into());
+    for (id, w) in [(1, 420.0), (2, 8.0), (3, 4.0)] {
+        let vp = Viewport {
+            center: Vec3::new(5.0, 4.0, 0.0),
+            width: w,
+            height: 6.0,
+            view_center: Vec2::new(5.0, 4.0),
+            view_height: 6.0,
+            id,
+            ..Viewport::default()
+        };
+        d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    }
+    let text = write_dxf(&d);
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    for i in (0..lines.len() - 1).step_by(2) {
+        if lines[i].trim() == "69" && blank(lines[i + 1].trim()) {
+            lines[i + 1] = value.into();
+        }
+    }
+    let back = read_dxf(lines.join("\n").as_bytes()).unwrap();
+    let ids =
+        back.layouts[0].entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some((v.id, v.width)) } else { None }).collect();
+    (back, ids)
+}
+
+/// ZWCAD writes every VIEWPORT with id (69) -1: they are numbered in file order, the first being
+/// the paper-space viewport, so saving adds no second sheet viewport (#1463).
+#[test]
+fn viewport_ids_unknown_are_numbered_in_order() {
+    let (back, ids) = viewport_ids_read_back(|_| true);
+    assert_eq!(ids, [(1, 420.0), (2, 8.0), (3, 4.0)]);
+    assert!(!write_dxf(&back).contains("PAPERVIEW"), "the layout already has its paper-space viewport");
+}
+
+/// A layout that mixes known ids with -1 is left alone: the known ids stay, the unknown one reads
+/// as 0 (not numbered), as before #1463.
+#[test]
+fn viewport_ids_mixed_are_kept() {
+    let (back, ids) = viewport_ids_read_back(|v| v == "2");
+    assert_eq!(ids, [(1, 420.0), (0, 8.0), (3, 4.0)]);
+    assert!(!write_dxf(&back).contains("PAPERVIEW"), "viewport 1 is still the sheet");
+}
+
+/// Only the sheet's id is unknown: no viewport has id 1, so the first one, the sheet, gets it
+/// and saving adds no second sheet (#1463).
+#[test]
+fn viewport_ids_unknown_sheet_becomes_one() {
+    let (back, ids) = viewport_ids_read_back(|v| v == "1");
+    assert_eq!(ids, [(1, 420.0), (2, 8.0), (3, 4.0)]);
+    assert!(!write_dxf(&back).contains("PAPERVIEW"), "the first viewport is the sheet");
+}
+
+/// Group 69 is a 16-bit code: an id outside 1..=32767 reads as unknown (0), and is never truncated
+/// into a real id (4294967297 would become a second id 1, a second paper-space viewport).
+#[test]
+fn viewport_ids_out_of_range_read_as_unknown() {
+    for bad in ["4294967297", "65537", "32768"] {
+        let (_, ids) = viewport_ids_read_back_as(|v| v == "2", bad);
+        assert_eq!(ids, [(1, 420.0), (0, 8.0), (3, 4.0)], "69 = {bad}");
+    }
+    let (_, ids) = viewport_ids_read_back_as(|v| v == "2", "32767");
+    assert_eq!(ids, [(1, 420.0), (32767, 8.0), (3, 4.0)]);
+}
+
+/// A layout whose only viewport has id 0 (entmake, MCP): the writer adds the PAPERVIEW sheet ahead
+/// of it and the reader drops that sheet again. The id-0 viewport must not be numbered 1, or the
+/// next save takes it as the sheet and the generated sheet is lost (#2107).
+#[test]
+fn viewport_id_zero_keeps_implicit_sheet_across_saves() {
+    let mut d = sample();
+    let vp = Viewport {
+        center: Vec3::new(5.0, 4.0, 0.0),
+        width: 8.0,
+        height: 6.0,
+        view_center: Vec2::new(5.0, 4.0),
+        view_height: 6.0,
+        id: 0,
+        ..Viewport::default()
+    };
+    d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let first = write_dxf(&d);
+    assert!(first.contains("PAPERVIEW"), "the writer adds the sheet");
+    let back = read_dxf(first.as_bytes()).unwrap();
+    let ids: Vec<u32> =
+        back.layouts[0].entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some(v.id) } else { None }).collect();
+    assert_eq!(ids, [0], "the dropped sheet is not replaced by numbering the id-0 viewport");
+    let second = write_dxf(&back);
+    let lines: Vec<&str> = second.lines().map(str::trim).collect();
+    let sheet = lines.iter().position(|l| *l == "PAPERVIEW").expect("the second save still generates the sheet");
+    let vp0 = (0..lines.len() - 1).find(|i| lines[*i] == "69" && lines[i + 1] == "0").expect("the id-0 viewport is written");
+    assert!(sheet < vp0, "the generated sheet comes first");
+}
+
+/// The same for a layout written as a `*Paper_SpaceN` block (not the active one) whose PAPERVIEW
+/// sheet lost its owner group (330): the sheet still belongs to the block's layout, as
+/// `place_blocks` puts the block's other entities there, so that layout is left alone too.
+#[test]
+fn viewport_id_zero_in_paper_block_keeps_implicit_sheet_without_owner() {
+    let mut d = sample();
+    d.layouts.push(Layout::new("Layout2", 2));
+    let vp = Viewport {
+        center: Vec3::new(5.0, 4.0, 0.0),
+        width: 8.0,
+        height: 6.0,
+        view_center: Vec2::new(5.0, 4.0),
+        view_height: 6.0,
+        id: 0,
+        ..Viewport::default()
+    };
+    d.add(&Space::Paper("Layout2".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let first = write_dxf(&d);
+    let lines: Vec<&str> = first.lines().collect();
+    let sheet = lines.iter().position(|l| l.trim() == "PAPERVIEW").expect("the writer adds the sheet");
+    let start = (0..sheet).rev().find(|i| lines[*i].trim() == "0" && lines[i + 1].trim() == "VIEWPORT").unwrap();
+    let owner = (start..sheet).find(|i| lines[*i].trim() == "330").expect("the sheet has an owner");
+    assert!(lines[start..sheet].iter().any(|l| l.trim().eq_ignore_ascii_case("*Paper_Space0") || l.trim() == "AcDbViewport"), "sheet record found");
+    let stripped: String = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != owner && *i != owner + 1)
+        .map(|(_, l)| {
+            format!(
+                "{l}
+"
+            )
+        })
+        .collect();
+    assert!(stripped.contains("*Paper_Space0"), "the second layout is a paper-space block");
+    let back = read_dxf(stripped.as_bytes()).unwrap();
+    let l2 = back.layouts.iter().find(|l| l.name == "Layout2").expect("Layout2");
+    let ids: Vec<u32> = l2.entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some(v.id) } else { None }).collect();
+    assert_eq!(ids, [0], "the dropped sheet of Layout2 is not replaced by numbering its id-0 viewport");
+    assert!(write_dxf(&back).contains("PAPERVIEW"), "the second save still generates the sheet");
+}
+
+/// `d` as an R2018 DXF (frozen viewport layers in group 331).
+fn dxf_2018(d: &Drawing) -> String {
+    let opts = SaveOptions { version: Some(Version::R2018), binary: false };
+    String::from_utf8(write_with(d, "t.dxf", &opts).unwrap()).unwrap()
 }
 
 /// A layout with viewport 2 frozen on `Walls` and `A B` (both real layers), and its written DXF as
@@ -622,12 +1112,17 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     });
     d.add(&paper, Common::default(), vp).unwrap();
-    let text = write_dxf(&d);
+    let text = dxf_2018(&d);
+    (d, pairs(&text))
+}
+
+/// The (code, value) pairs of DXF text.
+fn pairs(text: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();
-    let pairs = lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect();
-    (d, pairs)
+    lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect()
 }
 
 /// The pair range of the VIEWPORT record whose group 69 is `id`.
@@ -676,47 +1171,60 @@ fn join(p: &[(String, String)]) -> String {
         .collect()
 }
 
-#[test]
-fn viewport_frozen_layers_written_as_341_handles() {
-    let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    let rec = &p[r];
-    let h341: Vec<&str> = rec.iter().filter(|(c, _)| c == "341").map(|(_, v)| v.as_str()).collect();
-    assert_eq!(h341, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
-    let last341 = rec.iter().rposition(|(c, _)| c == "341").unwrap();
-    let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
-    assert!(last341 < x, "341 must precede the xdata");
+/// The group 331 values of viewport 2's record.
+fn frozen_331(p: &[(String, String)]) -> Vec<String> {
+    p[vp_record(p, "2")].iter().filter(|(c, _)| c == "331").map(|(_, v)| v.trim().to_string()).collect()
 }
 
 #[test]
-fn viewport_frozen_layers_read_from_341_without_xdata() {
+fn viewport_frozen_layers_written_as_331_handles() {
+    // Real layers go out as handles only, before group 90.
     let (_, p) = frozen_vp_dxf();
-    let r = vp_record(&p, "2");
-    // Strip the CADCraft xdata, and add a 341 to a handle that names no layer.
-    let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
-    let mut q: Vec<(String, String)> = p[..r.start].to_vec();
-    let mut head = p[r.start..x].to_vec();
-    head.push(("341".into(), "FFFFF".into()));
-    q.extend(head);
-    q.extend(p[r.end..].iter().cloned());
-    let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    let rec = &p[vp_record(&p, "2")];
+    assert!(!rec.iter().any(|(c, v)| c == "1000" && v == "VPFROZEN"), "no xdata for layers with a handle");
+    assert!(rec.iter().position(|(c, _)| c == "331") < rec.iter().position(|(c, _)| c == "90"));
+    // An R2000 DXF holds them in group 341, as the DXF 2000 Reference has them.
+    let (d, _) = frozen_vp_dxf();
+    let p = pairs(&write_dxf(&d));
+    let h341: Vec<String> = p[vp_record(&p, "2")].iter().filter(|(c, _)| c == "341").map(|(_, v)| v.clone()).collect();
+    assert_eq!(h341, [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
+    assert!(frozen_331(&p).is_empty());
 }
 
 #[test]
-fn viewport_frozen_xdata_wins_over_341() {
+fn viewport_frozen_layers_read_from_331_or_341_once_each() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 341 at layer 0: the xdata list must still be what is read.
-    let zero = layer_handle(&p, "0");
+    // 341 instead of 331, then Walls again in 331 and a handle that names no layer.
     let mut q = p.clone();
-    for t in &mut q[r] {
-        if t.0 == "341" {
-            t.1 = zero.clone();
+    for t in &mut q[r.clone()] {
+        if t.0 == "331" {
+            t.0 = "341".into();
         }
     }
+    q.splice(r.end..r.end, [("331".into(), "FFFFF".into()), ("331".into(), layer_handle(&p, "Walls"))]);
+    // A 331 inside another application's `102 {…}` group isn't a frozen layer.
+    let app = [("102".into(), "{ACAD_OTHER".into()), ("331".into(), layer_handle(&p, "0")), ("102".into(), "}".into())];
+    q.splice(r.start + 2..r.start + 2, app);
     let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(viewport_frozen(&back, 2), ["Walls", "A B"]);
+}
+
+#[test]
+fn viewport_freeze_edited_in_autocad_is_read_as_edited() {
+    // Every layer thawed in AutoCAD (no 331 left) stays thawed; a layer it froze instead is read.
+    let (_, p) = frozen_vp_dxf();
+    let r = vp_record(&p, "2");
+    let thawed: Vec<(String, String)> = p.iter().enumerate().filter(|(i, (c, _))| !(r.contains(i) && c == "331")).map(|(_, t)| t.clone()).collect();
+    assert!(viewport_frozen(&read_dxf(join(&thawed).as_bytes()).unwrap(), 2).is_empty());
+    let mut zero = p.clone();
+    for t in &mut zero[r] {
+        if t.0 == "331" {
+            t.1 = layer_handle(&p, "0");
+        }
+    }
+    assert_eq!(viewport_frozen(&read_dxf(join(&zero).as_bytes()).unwrap(), 2), ["0"]);
 }
 
 #[test]
@@ -725,7 +1233,9 @@ fn viewport_frozen_layers_survive_dwg() {
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
-    // Survives via the CADCraft xdata: the DWG converter does not yet carry group 341 itself.
+    // The DWG holds them in group 331, what AutoCAD reads.
+    let p = pairs(&String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
+    assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
 }
 
 #[test]
@@ -745,6 +1255,7 @@ fn viewport_layer_colors_roundtrip() {
             layer_colors: colors,
             clip: None,
             on: true,
+            twist: 0.0,
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];
@@ -982,7 +1493,7 @@ fn ac1024_dwg_with_many_entities_opens() {
     let n = 30_000;
     let dwg = ac1024_dwg(n);
     let dxf = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
-    let tags = cadcraft_dxf::parse(&dxf).unwrap().len();
+    let tags = craft_dxf::parse(&dxf).unwrap().len();
     assert!(dxf.len() < dwg.len() * 20, "DXF {} bytes from {} DWG bytes", dxf.len(), dwg.len());
     assert!(tags < dwg.len(), "{tags} group codes from {} DWG bytes", dwg.len());
     let d = read(&dwg, "big.dwg").unwrap();
@@ -1011,8 +1522,8 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
 
     // Lines that aren't even group codes: the size is reported before anything is parsed.
     let text = "not a group code\nx\n".repeat(60);
-    let e = cadcraft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
-    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
+    let e = craft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
+    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
 }
 
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
@@ -1107,7 +1618,7 @@ fn dimension_associativity_roundtrips() {
 
     // Without CADCraft's xdata (a file from another writer), the standard DIMASSOC objects
     // still give the extension-line links.
-    let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
+    let tags = craft_dxf::parse(text.as_bytes()).unwrap();
     let mut stripped = Vec::new();
     let mut skipping = false;
     for t in tags {
@@ -1120,7 +1631,7 @@ fn dimension_associativity_roundtrips() {
             stripped.push(t);
         }
     }
-    let foreign = read_dxf(cadcraft_dxf::write_ascii(&stripped).as_bytes()).unwrap();
+    let foreign = read_dxf(craft_dxf::write_ascii(&stripped).as_bytes()).unwrap();
     assert_eq!(assoc_of(&foreign, hl), lin.assoc);
     let fa = assoc_of(&foreign, ha);
     assert_eq!(fa.len(), 2);
@@ -1196,7 +1707,7 @@ fn polyline_vertex_dimensions_round_trip_by_segment() {
     ];
     let hp = d.add(&Space::Model, c(), EntityKind::Dimension(on_pl.clone())).unwrap();
     let text = write_dxf(&d);
-    let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
+    let tags = craft_dxf::parse(text.as_bytes()).unwrap();
     // Each reference to the polyline: (72, 73, 91).
     let refs: Vec<(i64, i64, i64)> = tags
         .iter()
@@ -1225,13 +1736,13 @@ fn polyline_vertex_dimensions_round_trip_by_segment() {
             in_ref = t.str() == "AcDbOsnapPointRef";
         }
         if in_ref && matches!(t.code, 10 | 20) {
-            t = cadcraft_dxf::Tag::new(t.code, cadcraft_dxf::Value::Real(0.0));
+            t = craft_dxf::Tag::new(t.code, craft_dxf::Value::Real(0.0));
         }
         if !skipping {
             stripped.push(t);
         }
     }
-    let foreign = read_dxf(cadcraft_dxf::write_ascii(&stripped).as_bytes()).unwrap();
+    let foreign = read_dxf(craft_dxf::write_ascii(&stripped).as_bytes()).unwrap();
     match &foreign.entity(hp).unwrap().kind {
         EntityKind::Dimension(x) => assert_eq!(x.assoc, on_pl.assoc),
         _ => panic!(),
@@ -1506,6 +2017,7 @@ fn intl_sample() -> Drawing {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     )
     .unwrap();
@@ -1539,7 +2051,7 @@ fn non_ascii_text_is_escaped_for_r2000_and_roundtrips() {
     let d = intl_sample();
     let text = write_dxf(&d);
     assert!(text.is_ascii(), "an AC1015 DXF must not contain UTF-8 bytes");
-    let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
+    let tags = craft_dxf::parse(text.as_bytes()).unwrap();
     let header = |name: &str| tags.windows(2).find(|w| w[0].code == 9 && w[0].str() == name).map(|w| w[1].str());
     assert_eq!(header("$ACADVER").as_deref(), Some("AC1015"));
     assert_eq!(header("$DWGCODEPAGE").as_deref(), Some("ANSI_1252"));
@@ -2109,6 +2621,152 @@ fn mirrored_hatch_extrusion_flips_boundary() {
     }
 }
 
+/// Issue #1886: a HATCH in a tilted plane (a terrain face) is drawn as seen from above, not turned
+/// about the origin. With extrusion (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and
+/// y = (0, √3/2, 1/2): the square (1,0)..(3,2) lies over (-3,0)..(-1,√3), from z 0 up to z 1.
+/// Before, the negative Z counted as a plain mirror and only x was flipped.
+#[test]
+fn tilted_hatch_is_drawn_as_seen_from_above() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 0.0), (b.max.x, -1.0), (b.max.y, 3f64.sqrt())] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+    assert!((h.elevation - 0.5).abs() < 1e-9, "the mean height of its corners: {}", h.elevation);
+}
+
+/// A tilted gradient hatch turns its gradient's direction with its boundary: in that plane OCS +X
+/// is plan -X, so a gradient at 0 runs at 180°.
+#[test]
+fn tilted_hatch_turns_its_gradient() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n\
+                450\n1\n451\n0\n452\n0\n453\n2\n460\n0\n461\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
+    let g = h.gradient.expect("a gradient");
+    assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
+}
+
+/// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
+#[test]
+fn tilted_straight_lwpolyline_keeps_its_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n40\n0.5\n41\n1\n10\n3\n20\n2\n40\n1\n41\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let got: Vec<(f64, f64)> = p.vertices.iter().map(|v| (v.start_width, v.end_width)).collect();
+    assert_eq!(got, vec![(0.5, 1.0), (1.0, 0.0)]);
+    assert!((p.vertices[1].p.x + 3.0).abs() < 1e-9 && (p.vertices[1].p.y - 3f64.sqrt()).abs() < 1e-9, "{:?}", p.vertices[1].p);
+}
+
+/// A tilted LWPOLYLINE mixing straight and bulged edges keeps the widths of its straight edges;
+/// only the points of the flattened arc have none.
+#[test]
+fn tilted_mixed_lwpolyline_keeps_its_straight_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n0.5\n41\n1\n10\n2\n20\n0\n42\n1\n10\n4\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4 && v.iter().all(|v| v.bulge == 0.0), "{} vertices", v.len());
+    assert_eq!((v[0].start_width, v[0].end_width), (0.5, 1.0), "the straight edge keeps its widths");
+    assert!(v[1..].iter().all(|v| v.start_width == 0.0 && v.end_width == 0.0), "the flattened arc has none");
+    assert!((v[1].p.x + 2.0).abs() < 1e-9 && (v[v.len() - 1].p.x + 4.0).abs() < 1e-9, "{:?} {:?}", v[1].p, v[v.len() - 1].p);
+}
+
+/// A small arc next to a long straight edge stays an arc: its flattening tolerance comes from
+/// its own size. The half circle of radius 1 bulges a whole unit off its chord.
+#[test]
+fn tilted_small_arc_beside_a_long_edge_stays_curved() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n10\n10000\n20\n0\n42\n1\n10\n10002\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8, "{} vertices", p.vertices.len());
+    // OCS y maps to plan y times √3/2: the arc's far point is about 0.866 off the chord.
+    let off = p.vertices.iter().map(|v| v.p.y.abs()).fold(0.0, f64::max);
+    assert!((off - 3f64.sqrt() / 2.0).abs() < 1e-2, "the arc reaches {off} off its chord");
+}
+
+/// A tilted tapered arc spreads its width evenly over its flattened segments: from 1 at its
+/// start to 3 at its end, each segment starting where the last one ended.
+#[test]
+fn tilted_tapered_arc_spreads_its_width() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n1\n41\n3\n42\n1\n10\n2\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4, "{} vertices", v.len());
+    let arc = &v[..v.len() - 1];
+    assert_eq!(arc.first().map(|v| v.start_width), Some(1.0));
+    assert!(arc.last().is_some_and(|v| (v.end_width - 3.0).abs() < 1e-9), "{:?}", arc.last());
+    assert!(arc.windows(2).all(|w| (w[0].end_width - w[1].start_width).abs() < 1e-9 && w[0].start_width < w[1].start_width));
+}
+
+/// A tilted polyline made of a great many arcs is flattened within a budget: past a million
+/// vertices its arcs stay chords, so a hostile file can't ask for gigabytes (#2584 review).
+#[test]
+fn a_tilted_polyline_of_many_arcs_is_flattened_within_a_budget() {
+    let n = 50_000;
+    let mut text = format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n{n}\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n");
+    for i in 0..n {
+        text.push_str(&format!("10\n{i}\n20\n0\n42\n1\n"));
+    }
+    text.push_str("0\nENDSEC\n0\nEOF\n");
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    // Every arc flattened would be millions; the budget, one last arc past it and the chords.
+    assert!(p.vertices.len() <= 1_000_000 + 4_096 + n, "{} vertices", p.vertices.len());
+    assert!(p.vertices.len() > n, "the arcs before the budget are still curved");
+}
+
+/// Far from the origin even a tilt under a thousandth moves an object visibly, so it is
+/// projected: with normal (0, 0.0009, 1) a polyline at elevation 1,000,000 lies about 900 units
+/// up from its OCS y. Noise in a plan normal moves nothing visible and keeps the arcs.
+#[test]
+fn a_slight_tilt_far_away_is_projected_and_noise_is_not() {
+    let poly = |n: &str, more: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n1000000\n{n}10\n0\n20\n0\n{more}10\n1\n20\n0\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(poly("210\n0\n220\n0.0009\n230\n1\n", "").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let ny = 0.0009 / (1.0f64 + 0.0009 * 0.0009).sqrt();
+    assert!((p.vertices[0].p.y - ny * 1.0e6).abs() < 1e-6, "{:?}", p.vertices[0].p);
+    assert_eq!(d.model.iter().next().unwrap().common.extrusion, Vec3::Z);
+    let d = read(poly("210\n0\n220\n1e-15\n230\n1\n", "42\n1\n").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 0.0], "a plan polyline keeps its arc");
+}
+
+/// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
+/// ellipse it looks like from above, flattened; a plain one keeps its bulges.
+#[test]
+fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
+    let circle = |n: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n1\n{n}10\n1\n20\n0\n42\n1\n10\n-1\n20\n0\n42\n1\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(circle("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let ry = 3f64.sqrt() / 2.0;
+    for (got, want) in [(b.min.x, -1.0), (b.min.y, -ry), (b.max.x, 1.0), (b.max.y, ry)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z);
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let plain = read(circle("").as_bytes(), "p.dxf").unwrap();
+    let p = first(&plain, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
+}
+
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
 fn hatch_edge_extents(edges: &str) -> Bounds2 {
     let n = edges.matches("72\n").count();
@@ -2272,6 +2930,48 @@ fn svg_group_transforms_apply() {
     let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
     assert!((l.a - Vec3::new(5.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
     assert!((l.b - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
+}
+
+/// The geometry of everything read, for comparing two readings of one drawing.
+fn geometry(d: &Drawing) -> String {
+    format!("{:?}", d.model.iter().map(|e| &e.kind).collect::<Vec<_>>())
+}
+
+/// `transform` on a shape element (SVG 1.1 §7.5, every graphics element takes one) maps it as
+/// the same transform on a group around it would: for every shape kind, composed after the
+/// parent group's, and not passed on to the next sibling.
+#[test]
+fn svg_element_transforms_apply_like_a_group_around_the_element() {
+    let read_svg = |body: &str| read(format!("{SVG_PAGE}{body}</svg>").as_bytes(), "t.svg").unwrap();
+    let shapes = [
+        r#"<rect x="1" y="1" width="4" height="3"/>"#,
+        r#"<circle cx="5" cy="5" r="2"/>"#,
+        r#"<ellipse cx="5" cy="5" rx="3" ry="1"/>"#,
+        r#"<line x1="0" y1="0" x2="4" y2="2"/>"#,
+        r#"<polyline points="0,0 2,0 2,2"/>"#,
+        r#"<polygon points="0,0 2,0 1,1"/>"#,
+        r#"<path d="M1 1 L4 1 A2 2 0 0 1 6 3 C7 3 8 4 8 5"/>"#,
+    ];
+    for t in ["translate(5,2)", "rotate(30 5 5)", "scale(2,1)", "skewX(20)", "matrix(1 0.2 0 1 3 -1)"] {
+        for shape in shapes {
+            let on_element = shape.replacen("/>", &format!(r#" transform="{t}"/>"#), 1);
+            let in_group = format!(r#"<g transform="{t}">{shape}</g>"#);
+            assert_eq!(geometry(&read_svg(&on_element)), geometry(&read_svg(&in_group)), "{t} on {shape}");
+        }
+    }
+    // A rotated circle stays a circle; a skewed one is an ellipse.
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="rotate(30)"/>"#)), ["Circle"]);
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="skewX(20)"/>"#)), ["Ellipse"]);
+    // Inside a group: the group's transform, then the element's.
+    let nested = read_svg(r#"<g transform="scale(2)"><line x1="0" y1="0" x2="1" y2="0" transform="translate(1,0)"/></g>"#);
+    let both = read_svg(r#"<g transform="scale(2)"><g transform="translate(1,0)"><line x1="0" y1="0" x2="1" y2="0"/></g></g>"#);
+    assert_eq!(geometry(&nested), geometry(&both));
+    // Written with an end tag too, and the next sibling keeps its own place.
+    let d = read_svg(r#"<line x1="0" y1="0" x2="1" y2="0" transform="translate(5,0)"></line><line x1="0" y1="0" x2="1" y2="0"/>"#);
+    let lines: Vec<Line> = d.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).collect();
+    assert_eq!(lines.len(), 2);
+    assert!((lines[0].a - Vec3::new(5.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[0]);
+    assert!((lines[1].a - Vec3::new(0.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[1]);
 }
 
 #[test]
@@ -2564,6 +3264,7 @@ fn pdf_strokes_each_transparent_primitive_inside_a_block() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         d.add(&Space::Model, Common { transparency: Transparency::Percent(t), ..Common::default() }, EntityKind::Insert(ins)).unwrap();
         d
@@ -2812,4 +3513,147 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
     let names: Vec<String> =
         dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().map(|r| classes[own_91(r).parse::<usize>().unwrap() - 500].clone()).collect();
     assert_eq!(names, ["VISUALSTYLE", "WIDGETX"]);
+}
+
+/// The proxies of [`proxy_file`] keep their classes in a DWG too. A proxy names its class by
+/// number, 500 plus the class's place in the CLASSES the file lists; acadrust numbers the classes
+/// it writes in its own order (its default classes first), so the DXF's numbers named other
+/// classes there: a 2018 drawing's piping proxies came out as LARGE_RADIAL_DIMENSION and
+/// SECTIONOBJECT, and the ODA File Converter refused the file ("AcDbProxyObject can't be cast to
+/// AcDbBlockTableRecord"). A DWG before 2013 leaves them out (acadrust writes no class for them).
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+#[test]
+fn proxies_keep_their_class_in_dwg() {
+    use acadrust::entities::{EntityType, ExtendedEntityData};
+    use acadrust::objects::ObjectType;
+    let d = read(&proxy_file(), "p.dxf").unwrap();
+    for version in [Version::R2018, Version::R2013, Version::R2010, Version::R2004] {
+        let dwg = write_with(&d, "p.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
+        let class_of = |id: i32| doc.classes.iter().find(|c| i32::from(c.class_number) == id).map(|c| c.dxf_name.clone());
+        let mut objects: Vec<Option<String>> = doc
+            .objects
+            .values()
+            .filter_map(|o| match o {
+                ObjectType::ProxyObject(p) => Some(class_of(p.class_id)),
+                _ => None,
+            })
+            .collect();
+        objects.sort();
+        // Before 2013 acadrust writes no class for a proxy, so the DWG leaves the proxies out.
+        let legacy = version < Version::R2013;
+        let expected = if legacy { vec![] } else { vec![Some("VISUALSTYLE".to_string()), Some("WIDGETX".to_string())] };
+        assert_eq!(objects, expected, "{version:?}: proxy objects");
+        let entities: Vec<Option<String>> = doc
+            .entities()
+            .filter_map(|e| match e {
+                EntityType::Extended(x) => match &x.data {
+                    ExtendedEntityData::Proxy(p) => Some(class_of(p.class_id)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let expected = if legacy { vec![] } else { vec![Some("WIDGETX".to_string())] };
+        assert_eq!(entities, expected, "{version:?}: proxy entity");
+    }
+}
+
+/// An ASCII DXF given to the DWG conversion directly, with a proxy whose number names no class of
+/// its CLASSES ([`proxy_file`]'s "Stray", 537): kept with that number it would name some other
+/// class of the DWG, so the DWG leaves it out, as CADCraft's own save does, and keeps the proxies
+/// whose classes it can name.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+#[test]
+fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
+    use acadrust::entities::{EntityType, ExtendedEntityData};
+    use acadrust::objects::ObjectType;
+    let dwg = cadcraft_dwg::dxf_to_dwg_as(&proxy_file(), "AC1032").unwrap();
+    let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
+    let class_of = |id: i32| doc.classes.iter().find(|c| i32::from(c.class_number) == id).map(|c| c.dxf_name.clone());
+    let mut objects: Vec<Option<String>> = doc
+        .objects
+        .values()
+        .filter_map(|o| match o {
+            ObjectType::ProxyObject(p) => Some(class_of(p.class_id)),
+            _ => None,
+        })
+        .collect();
+    objects.sort();
+    assert_eq!(objects, [Some("VISUALSTYLE".to_string()), Some("WIDGETX".to_string())]);
+    let entities: Vec<Option<String>> = doc
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Proxy(p) => Some(class_of(p.class_id)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(entities, [Some("WIDGETX".to_string())]);
+}
+
+/// What the DWG writer reports it left out counts the proxy it can't name, so a save's loss
+/// report has it with the other records the DWG doesn't keep.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_proxy_left_out_of_the_dwg_is_counted_as_unwritten() {
+    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&proxy_file(), "AC1032").unwrap();
+    assert_eq!(unwritten, [("ACAD_PROXY_OBJECT".to_string(), 1)].into_iter().collect());
+    let d = read(&proxy_file(), "p.dxf").unwrap();
+    let binary = write_with(&d, "p.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
+    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&binary, "AC1032").unwrap();
+    // CADCraft's own save already left the stray proxy out; the binary DXF's other three go.
+    assert_eq!(unwritten, [("ACAD_PROXY_ENTITY".to_string(), 1), ("ACAD_PROXY_OBJECT".to_string(), 2)].into_iter().collect());
+}
+
+/// A binary DXF given to the DWG conversion directly: its CLASSES aren't read, so the proxies'
+/// numbers can't be mapped to the DWG's classes. Kept as they were, they named other classes
+/// (the ODA refuses such a file), so the DWG leaves them out, as a pre-2013 DWG does, and the
+/// rest of the drawing is written.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+#[test]
+fn a_binary_dxf_leaves_its_proxies_out_of_the_dwg() {
+    use acadrust::entities::{EntityType, ExtendedEntityData};
+    use acadrust::objects::ObjectType;
+    let d = read(&proxy_file(), "p.dxf").unwrap();
+    let binary = write_with(&d, "p.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
+    assert!(binary.starts_with(b"AutoCAD Binary DXF"));
+    let dwg = cadcraft_dwg::dxf_to_dwg_as(&binary, "AC1032").unwrap();
+    let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
+    let proxies = doc.objects.values().filter(|o| matches!(o, ObjectType::ProxyObject(_))).count()
+        + doc.entities().filter(|e| matches!(e, EntityType::Extended(x) if matches!(x.data, ExtendedEntityData::Proxy(_)))).count();
+    assert_eq!(proxies, 0, "no proxy with an unmapped class number");
+    assert!(doc.layers.get("0").is_some(), "the drawing itself is written");
+}
+
+/// A name that isn't valid Unicode still picks its format by extension.
+#[cfg(unix)]
+#[test]
+fn non_unicode_names_pick_the_format_by_extension() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let name = |ext: &str| std::path::PathBuf::from(std::ffi::OsString::from_vec([b"caf\xe9.".as_slice(), ext.as_bytes()].concat()));
+    assert!(is_image(name("png")) && !is_image(name("dxf")));
+    let d = sample();
+    let bytes = write(&d, name("dxf")).unwrap();
+    assert!(read(&bytes, name("dxf")).is_ok());
+    assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
+    assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
+}
+
+/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
+/// wrote them for pattern fills only.
+#[test]
+fn solid_hatch_keeps_angle_scale_and_double_flag() {
+    let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
+91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
+75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
+    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let pairs = dxf_pairs(&out);
+    let h = dxf_records(&pairs, "HATCH")[0];
+    let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
+    assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
+    assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
+    assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }

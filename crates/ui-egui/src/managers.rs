@@ -1,5 +1,6 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
+//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings and Named
+//! Viewports.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -10,12 +11,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
-use crate::CadApp;
 use crate::parametric::expr_field;
 use crate::theme::Tokens;
+use crate::{CadApp, Pick};
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// Named Viewports (View > Viewports > Named Viewports...).
+mod named_vports;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -32,6 +35,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
+        "vports.named" => "namedvports",
         "plot" | "print" => {
             PLOT_GEN.fetch_add(1, Ordering::Relaxed);
             "plot"
@@ -53,6 +57,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
+        "namedvports" => named_vports::dialog(app, ctx, open),
         "plot" => plot(app, ctx, open),
         _ => {
             *open = false;
@@ -116,9 +121,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let library: Vec<String> = cadcraft_doc::library::standard_linetypes().into_iter().map(|l| l.name).filter(|n| d.linetype(n).is_none()).collect();
     let mut sel = temp::<String>(ctx, "ltmgr_sel").filter(|s| rows.iter().any(|r| r.0.eq_ignore_ascii_case(s))).unwrap_or_else(|| current.clone());
     let mut action = None;
+    let mut pick_lin = false;
     egui::Window::new("Linetype Manager").open(open).default_size(vec2(520.0, 360.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("ltmgr_load").selected_text("Load...").width(110.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("ltmgr_load").selected_text("Load...").width(110.0).show_ui(ui, |ui| {
                 if library.is_empty() {
                     ui.label("Every library linetype is loaded.");
                 } else if ui.selectable_label(false, "All").clicked() {
@@ -130,12 +136,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     }
                 }
                 // The user's own .lin file (where the host has a file picker).
-                if let Some(pick) = app.services.pick_open.as_ref() {
+                if app.services.pick_open.is_some() {
                     ui.separator();
-                    if ui.selectable_label(false, "From File...").clicked()
-                        && let Some(path) = pick()
-                    {
-                        action = Some(("linetype", json!({ "load": "*", "file": path })));
+                    if ui.selectable_label(false, "From File...").clicked() {
+                        pick_lin = true;
                     }
                 }
             });
@@ -182,6 +186,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         });
     });
     set_temp(ctx, "ltmgr_sel", sel);
+    // The user's .lin file, asked for once the window is drawn. Errors are echoed by `run`.
+    if pick_lin {
+        let _ = app.pick_then(Pick::Open, |app, path| app.run("linetype", json!({ "load": "*", "file": path })));
+    }
     action
 }
 
@@ -301,7 +309,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
 enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
-    Choice(&'static str, &'static str, String, Vec<String>),
+    Choice(&'static str, &'static str, String, std::sync::Arc<[String]>),
 }
 
 struct Style {
@@ -366,7 +374,8 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         no_drawing(ctx, "Multileader Style", open);
         return None;
     };
-    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    // One list shared by every row: a copy per style multiplied the two counts.
+    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
     let mut styles: Vec<Style> = d
         .mleader_styles
         .iter()
@@ -377,7 +386,7 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
                 Field::Num("textHeight", "Text height", s.text_height),
                 Field::Num("landingGap", "Landing gap", s.landing_gap),
                 Field::Num("dogleg", "Landing length", s.dogleg),
-                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
             ],
         })
         .collect();
@@ -445,8 +454,8 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                         Field::Choice(key, label, v, choices) => {
                             ui.label(*label);
                             let mut picked = None;
-                            egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices {
+                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                                for c in choices.iter() {
                                     if ui.selectable_label(c == v, c).clicked() && c != v {
                                         picked = Some(c.clone());
                                     }
@@ -711,7 +720,7 @@ fn page_rows(
                 .iter()
                 .find(|dv| dv.name.eq_ignore_ascii_case(&page.device))
                 .map_or_else(|| shown_label(device_label(page)).to_string(), device_name);
-            let combo = egui::ComboBox::from_id_salt(salt.with("device")).selected_text(shown).width(230.0).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt(salt.with("device")).selected_text(shown).width(230.0).show_ui(ui, |ui| {
                 if ui
                     .selectable_label(device_label(page) == "None", crate::tl!("None"))
                     .on_hover_text(crate::tl!("PDF on the paper chosen below"))
@@ -742,7 +751,7 @@ fn page_rows(
         let caption = ui.label(crate::tl!("Paper size"));
         ui.horizontal(|ui| {
             let combo =
-                egui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| match device {
+                craft_ui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| match device {
                     Some(dev) => {
                         for p in &dev.papers {
                             if ui.selectable_label(p.name == page.paper, &p.name).clicked() && (force || p.name != page.paper) {
@@ -788,7 +797,7 @@ fn page_rows(
             PageRowLabels::PlotDialog => crate::tl!("What to plot"),
         });
         ui.add_enabled_ui(rows.areas.len() > 1, |ui| {
-            let combo = egui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
                 for a in rows.areas {
                     if ui.selectable_label(page.plot_area == *a, area_label(a)).clicked() && (force || page.plot_area != *a) {
                         change = Some(("plotArea", json!(a)));
@@ -878,7 +887,7 @@ fn page_rows(
         });
         ui.horizontal(|ui| {
             let combo =
-                egui::ComboBox::from_id_salt(salt.with("styles")).selected_text(shown_label(style_label(page))).width(190.0).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt(salt.with("styles")).selected_text(shown_label(style_label(page))).width(190.0).show_ui(ui, |ui| {
                     if ui.selectable_label(style_label(page) == "None", crate::tl!("None")).clicked() && (force || style_label(page) != "None") {
                         change = Some(("plotStyleTable", json!("None")));
                     }
@@ -1297,8 +1306,10 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                         plot_section(left, crate::tl!("Page setup"), |ui| {
                             egui::Grid::new("plot_layout_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                                 let caption = ui.label(crate::tl!("Layout"));
-                                let combo =
-                                    egui::ComboBox::from_id_salt("plot_layout").selected_text(tab_label(&st.target)).width(190.0).show_ui(ui, |ui| {
+                                let combo = craft_ui::ComboBox::from_id_salt("plot_layout")
+                                    .selected_text(tab_label(&st.target))
+                                    .width(190.0)
+                                    .show_ui(ui, |ui| {
                                         for n in &targets {
                                             if ui.selectable_label(*n == st.target, tab_label(n)).clicked()
                                                 && (*n != st.target || st.sheets.len() > 1)
@@ -1620,53 +1631,71 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         if printer && let Some(o) = params.as_object_mut() {
             o.insert("copies".into(), json!(st.copies.max(1)));
         }
+        let job = PlotRun {
+            what,
+            printer: printer.then(|| st.page.device.clone()),
+            // "Save changes to layout": the settings go into the page setup first (an undoable
+            // step of its own); a refusal is echoed and the plot still runs with them.
+            layout_setup: (st.save_to_layout && !model && !several).then(|| apply_to_layout_params(&st)),
+        };
         // A file to write: a file device's plot, or a printer's PDF with "Plot to file".
-        if (!printer || st.to_file)
-            && let Some(pick) = app.services.pick_save.as_ref()
-        {
+        if (!printer || st.to_file) && app.services.pick_save.is_some() {
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let suggested = format!("{}-{}.{ext}", stem.unwrap_or_else(|| "Drawing".into()), if several { "sheets" } else { st.target.as_str() });
             // Cancelling the file dialog keeps the Plot dialog open with its settings.
-            let Some(path) = pick(&suggested) else { return action };
-            if let Some(o) = params.as_object_mut() {
-                o.insert("path".into(), json!(path));
-            }
-        }
-        // "Save changes to layout": the settings go into the page setup first (an undoable step
-        // of its own); a refusal is echoed and the plot still runs with them.
-        if st.save_to_layout && !model && !several {
-            let _ = app.run("pagesetup", apply_to_layout_params(&st));
-        }
-        *open = false;
-        match app.run("plot", params) {
-            Ok(r) => {
-                let msg = match r.get("path").and_then(Value::as_str) {
-                    Some(path) if printer => crate::tf!(
-                        "Sent {what} to {printer} (job {job}) and saved it to {path}",
-                        what = what,
-                        printer = st.page.device,
-                        job = r["job"].as_str().unwrap_or("?"),
-                        path = path
-                    ),
-                    _ if printer => {
-                        crate::tf!(
-                            "Sent {what} to {printer} (job {job})",
-                            what = what,
-                            printer = st.page.device,
-                            job = r["job"].as_str().unwrap_or("?")
-                        )
-                    }
-                    Some(path) => crate::tf!("Plotted {what} to {path}", what = what, path = path),
-                    None => crate::tf!("Plotted {what} ({bytes} bytes; there is no file dialog here)", what = what, bytes = r["bytes"]),
-                };
-                app.session.echo(msg);
-            }
-            // `run` already echoed the error; keep the dialog open to fix the settings.
-            Err(_) => *open = true,
+            let _ = app.pick_then(Pick::Save(suggested), move |app, path| {
+                let mut params = params;
+                if let Some(o) = params.as_object_mut() {
+                    o.insert("path".into(), json!(path));
+                }
+                run_plot(app, params, job);
+                Ok(Value::Null)
+            });
+        } else {
+            run_plot(app, params, job);
         }
     }
     action
+}
+
+/// What the Plot dialog's OK plots besides its parameters: what the message calls it, the system
+/// printer it goes to, and the page setup to save in the layout first.
+struct PlotRun {
+    what: String,
+    printer: Option<String>,
+    layout_setup: Option<Value>,
+}
+
+/// Plot with the Plot dialog's settings: it closes, and opens again when the plot fails.
+fn run_plot(app: &mut CadApp, params: Value, job: PlotRun) {
+    if app.ui.dialog.as_deref() == Some("plot") {
+        app.ui.dialog = None;
+    }
+    if let Some(setup) = job.layout_setup {
+        let _ = app.run("pagesetup", setup);
+    }
+    let what = job.what;
+    match app.run("plot", params) {
+        Ok(r) => {
+            let job_id = r.get("job").and_then(Value::as_str).unwrap_or("?");
+            let msg = match (r.get("path").and_then(Value::as_str), job.printer.as_deref()) {
+                (Some(path), Some(printer)) => crate::tf!(
+                    "Sent {what} to {printer} (job {job}) and saved it to {path}",
+                    what = what,
+                    printer = printer,
+                    job = job_id,
+                    path = path
+                ),
+                (None, Some(printer)) => crate::tf!("Sent {what} to {printer} (job {job})", what = what, printer = printer, job = job_id),
+                (Some(path), None) => crate::tf!("Plotted {what} to {path}", what = what, path = path),
+                (None, None) => crate::tf!("Plotted {what} ({bytes} bytes; there is no file dialog here)", what = what, bytes = r["bytes"]),
+            };
+            app.session.echo(msg);
+        }
+        // `run` already echoed the error; keep the dialog open to fix the settings.
+        Err(_) => app.ui.dialog = Some("plot".into()),
+    }
 }
 
 /// Set while the Plot Style Manager opened from Plot is open: closing it opens Plot again.

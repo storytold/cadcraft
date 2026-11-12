@@ -50,7 +50,8 @@ settings directory:
 | macOS | `~/Library/Application Support/CADCraft/plotters` |
 | Windows | `%APPDATA%\CADCraft\plotters` |
 
-`CADCRAFT_CONFIG_DIR` replaces the settings directory. On the web, devices last for the
+`CADCRAFT_CONFIG_DIR` replaces the settings directory; empty means none (`cadcraft-cli`:
+`--config-dir`, which falls back to the same variable). On the web, devices last for the
 session unless the host provides storage (`cmd::plotters::set_plotter_store`). Binary `.pc3`
 files are not read; we haven't found a public specification of that format.
 
@@ -126,9 +127,8 @@ In the file name, characters other than letters, digits, spaces and `-_()+,` bec
     an active offset is rejected rather than ignored. Layout plots do not use model offsets.
   - `exportpdf` takes the same options and always writes PDF.
 
-Model-space PDF plots don't apply the paper's margins yet. They fit the drawing inside the
-default margins. PNG plots apply them. SVG plots show a layout's whole sheet, or the
-model-space extents.
+Model-space PDF plots apply the device paper's margins as the printable area (#633; `io/src/pdf.rs`),
+as PNG plots do. SVG plots show a layout's whole sheet, or the model-space extents.
 
 ## Plot transparency
 

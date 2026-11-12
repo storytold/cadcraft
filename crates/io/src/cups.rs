@@ -285,7 +285,10 @@ pub fn lp_args(printer: &str, paper: Option<&str>, copies: u32, title: &str) -> 
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod system {
-    use super::*;
+    use super::{
+        MAX_PPD, PlotterConfig, Ppd, lp_args, paper_option, parse_default_destination, parse_destinations, parse_lpoptions, parse_ppd,
+        parse_request_id, printer_config, valid_name,
+    };
     use std::io::Write;
     use std::process::{Command, Stdio};
 

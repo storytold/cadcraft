@@ -84,7 +84,7 @@ fn crop(opts: &Value) -> Result<Option<[f64; 4]>> {
 
 /// A raster plot: the sheet at the asked resolution (capped in pixels), cropped when asked, with the stamp.
 fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
-    let o = PdfOptions::from_json(opts);
+    let o = pdf::with_saved_setup(d, space, &PdfOptions::from_json(opts));
     let (sheet, page) = sheet(d, space, &o)?;
     let crop = crop(opts)?;
     // The size of what is drawn, as fractions of the sheet.
@@ -102,10 +102,17 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let (width, height) = (px(sheet.size.x * frac_x), px(sheet.size.y * frac_y));
     let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
-    // Paper units per drawing unit: 1 for a layout at 1:1, the fitted scale for model space.
+    // Paper units per drawing unit: the fitted scale for model space or a fitted layout, else the
+    // `scale` option or 1:1, as PDF plots it.
     let fit = matches!(space, Space::Model) || o.fit == Some(true);
-    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
-    let est = if fit { fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o) } else { 1.0 };
+    let window = o.window.filter(|w| !w.is_empty());
+    // A layout over a saved window is placed like model space, the window on the printable area.
+    let placed = fit || window.is_some();
+    let est = if fit {
+        fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o)
+    } else {
+        pdf::plot_scale(&Bounds2::EMPTY, &sheet, false, o.scale)
+    };
     // Chord tolerance: a fifth of a pixel.
     let tolerance = (0.2 / (k * est)).max(1e-9);
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
@@ -118,27 +125,49 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         None => Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k),
     };
     let b = window.unwrap_or(list.bounds);
-    let s = if fit { fit_scale(&b, &sheet, &o) } else { 1.0 };
+    let s = if fit { fit_scale(&b, &sheet, &o) } else { est };
+    // A window plots only what is inside it, as PDF does.
+    if let Some(w) = window {
+        list.retain_within(&pdf::window_margin(&w, s, sheet.unit_mm));
+    }
     // Plot style ends, joins and fill patterns at the plot scale, as PDF draws them (a layout's
     // are already drawn).
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
+    let (from, to) = if placed {
+        // A window is placed like model space, whatever the space (as in PDF).
+        pdf::placement(if window.is_some() { &Space::Model } else { space }, &b, fit, &sheet, &o)
+    } else {
+        (Vec2::ZERO, Vec2::ZERO)
+    };
     if let Some(text) = &o.stamp {
         let text = crate::stamp::fill(text, space.tab_name(), &page.paper, &crate::stamp::scale_label(s));
-        let (from, to) = if fit { pdf::placement(space, &b, true, &sheet, &o) } else { (Vec2::ZERO, Vec2::ZERO) };
         let to_world = |p: Vec2| (p - to) / s + from;
         list.append(crate::stamp::display_list(d, &text, sheet.printable.min, sheet.unit_mm, to_world, 1.0 / s, &ropts));
     }
-    let view = if fit {
-        let (from, to) = pdf::placement(space, &b, true, &sheet, &o);
-        // The world point at the image centre, mapped through the same paper origin as PDF.
-        let center = from + (half - to) / s;
-        raster::View { center, scale: k * s, width, height }
-    } else {
-        raster::View { center: half, scale: k, width, height }
-    };
+    // The world point at the image centre, mapped through the same paper origin as PDF.
+    let center = from + (half - to) / s;
+    let view = raster::View { center, scale: k * s, width, height };
     let px_per_mm = if lineweights { (k / sheet.unit_mm) as f32 } else { 0.0 };
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
-    raster::render_png(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))
+    let mut pm = raster::render(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))?;
+    if placed {
+        // PDF clips a placed plot to the printable area, and a window plot to the window too:
+        // blank the rest. Corners go through the view, so a crop is blanked in the same place.
+        let to_world = |q: Vec2| (q - to) / s + from;
+        let printable = Bounds2::new(to_world(sheet.printable.min), to_world(sheet.printable.max));
+        let keep = match window {
+            Some(w) => w.intersection(&printable),
+            None => printable,
+        };
+        if keep.is_empty() {
+            raster::blank_outside_pixels(&mut pm, (0.0, 0.0), (0.0, 0.0));
+        } else {
+            let (x0, y1) = view.to_screen(keep.min);
+            let (x1, y0) = view.to_screen(keep.max);
+            raster::blank_outside_pixels(&mut pm, (f64::from(x0), f64::from(y0)), (f64::from(x1), f64::from(y1)));
+        }
+    }
+    pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
@@ -162,6 +191,9 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
+    if let Some(w) = window {
+        list.retain_within(&pdf::window_margin(&w, s, sheet.unit_mm));
+    }
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
     Ok(crate::svg::export_list(&list, window).into_bytes())
 }
@@ -241,6 +273,47 @@ mod tests {
         }
         assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": null})).is_ok(), "no crop is the whole sheet");
         assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": [0, 0, 1, 1]})).is_ok());
+    }
+
+    /// A drawing with a short line inside the window [0,0]-[10,10], a line outside it to the
+    /// right (inside the sheet once the square window is fitted on a landscape page), and many
+    /// circles far away.
+    fn windowed_drawing() -> Drawing {
+        let mut d = Drawing::new_metric();
+        let line = |a: Vec3, b: Vec3| EntityKind::Line(Line { a, b });
+        d.add(&Space::Model, Common::default(), line(Vec3::new(2.0, 5.0, 0.0), Vec3::new(8.0, 5.0, 0.0))).unwrap();
+        d.add(&Space::Model, Common::default(), line(Vec3::new(12.0, 1.0, 0.0), Vec3::new(12.0, 9.0, 0.0))).unwrap();
+        for i in 0..2000 {
+            let c =
+                cadcraft_doc::Circle { center: Vec3::new(1000.0 + f64::from(i % 50) * 10.0, 1000.0 + f64::from(i / 50) * 10.0, 0.0), radius: 4.0 };
+            d.add(&Space::Model, Common::default(), EntityKind::Circle(c)).unwrap();
+        }
+        d
+    }
+
+    /// A window plots only what is inside it (#window): the PNG is blank outside the window even
+    /// where the sheet goes on, and the PDF leaves out what lies outside instead of carrying it.
+    #[test]
+    fn a_window_plots_only_what_is_inside_it() {
+        let d = windowed_drawing();
+        let opts = json!({"output": "png", "resolution": 50, "width": 210, "height": 297, "landscape": true, "plotArea": "window", "window": [[0, 0], [10, 10]], "fit": true});
+        let png = decode(&plot(&d, &Space::Model, &opts).unwrap());
+        let dark = |x0: u32, x1: u32| {
+            (x0..x1).flat_map(|x| (0..png.height()).map(move |y| (x, y))).filter(|(x, y)| png.pixel(*x, *y).is_some_and(|p| p.red() < 128)).count()
+        };
+        let (w, h) = (png.width(), png.height());
+        // The square window fills the page's height, centred: its right edge is at w/2 + h/2.
+        let right_edge = w / 2 + h / 2;
+        assert!(dark(w / 2 - h / 4, w / 2 + h / 4) > 10, "the line inside the window is drawn");
+        assert_eq!(dark(right_edge + 2, w), 0, "nothing outside the window is drawn");
+        let mut pdf_opts = opts.clone();
+        pdf_opts["output"] = json!("pdf");
+        let windowed = plot(&d, &Space::Model, &pdf_opts).unwrap();
+        let mut all = pdf_opts.clone();
+        all["plotArea"] = json!("extents");
+        all.as_object_mut().unwrap().remove("window");
+        let whole = plot(&d, &Space::Model, &all).unwrap();
+        assert!(windowed.len() * 5 < whole.len(), "the window's PDF leaves out the far circles ({} vs {} bytes)", windowed.len(), whole.len());
     }
 
     #[test]
@@ -329,5 +402,126 @@ mod tests {
         let err = plot(&d, &model, &json!({"output": "svg", "center": false, "offset": [0, 0]})).unwrap_err();
         assert!(err.to_string().contains("not supported for SVG"));
         assert!(plot(&d, &model, &json!({"output": "svg", "center": true})).unwrap().starts_with(b"<svg"));
+    }
+
+    /// A layout whose saved page setup plots the window (0,0)-(100,60): an A4 landscape sheet with
+    /// 10 mm margins. A line crosses the window at y = 30 and a vertical one lies 3 units left of it.
+    fn layout_drawing(scale_to_fit: bool) -> Drawing {
+        let mut d = Drawing::new_metric();
+        let mut l = cadcraft_doc::Layout::new("L1", 3);
+        l.page = cadcraft_doc::PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [10.0; 4],
+            plot_area: "window".into(),
+            plot_window: [0.0, 0.0, 100.0, 60.0],
+            scale_to_fit,
+            scale: 1.0,
+            center: true,
+            ..cadcraft_doc::PageSetup::default()
+        };
+        d.layouts.push(l);
+        let sp = Space::Paper("L1".into());
+        let mut line = |a: (f64, f64), b: (f64, f64)| {
+            d.add(&sp, Common::default(), EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap();
+        };
+        line((0.0, 30.0), (100.0, 30.0));
+        line((-3.0, 0.0), (-3.0, 60.0));
+        d
+    }
+
+    /// Whether any pixel of the PNG in the column range `x0..=x1` (mm from the sheet's left edge)
+    /// at the row of `y_mm` (from the sheet's bottom edge, give or take 2 px) is not white.
+    fn inked(png: &[u8], x0_mm: f64, x1_mm: f64, y_mm: f64) -> bool {
+        let pm = tiny_skia::Pixmap::decode_png(png).unwrap();
+        let px_per_mm = f64::from(pm.width()) / 297.0;
+        let row = (f64::from(pm.height()) - y_mm * px_per_mm).round() as i64;
+        let (c0, c1) = ((x0_mm * px_per_mm).round() as i64, (x1_mm * px_per_mm).round() as i64);
+        (row - 2..=row + 2).any(|r| (c0..=c1).any(|c| pm.pixel(c as u32, r as u32).is_some_and(|p| p.red() < 200)))
+    }
+
+    const LAYOUT_PNG: &str = r#"{"output": "png", "resolution": 100}"#;
+
+    /// Without scale to fit, a saved window is still placed (centred on the printable area, 1:1) as PDF
+    /// places it, not left at the sheet origin.
+    #[test]
+    fn png_places_the_saved_window_when_fit_is_off() {
+        let d = layout_drawing(false);
+        let png = plot(&d, &Space::Paper("L1".into()), &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        // The 100 mm line is centred on the sheet: 98.5 to 198.5 mm. At the origin it would end at 100 mm.
+        assert!(inked(&png, 140.0, 160.0, 105.0), "the window's line crosses the sheet centre");
+        assert!(!inked(&png, 10.0, 90.0, 105.0), "nothing at the sheet origin");
+    }
+
+    /// An explicit scale overrides a saved scale to fit, and the PNG uses it.
+    #[test]
+    fn png_explicit_scale_beats_saved_fit() {
+        let d = layout_drawing(true);
+        let sp = Space::Paper("L1".into());
+        let fitted = plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        assert!(inked(&fitted, 200.0, 280.0, 105.0), "fitted, the 100 unit line is 277 mm wide");
+        let half = plot(&d, &sp, &json!({"output": "png", "resolution": 100, "scale": 0.5})).unwrap();
+        assert!(inked(&half, 130.0, 170.0, 105.0));
+        assert!(!inked(&half, 200.0, 280.0, 105.0), "at 0.5 the line is 50 mm wide, centred");
+    }
+
+    /// A placed window shows only inside the printable area, as PDF clips it.
+    #[test]
+    fn png_clips_a_placed_window_to_the_printable_area() {
+        let d = layout_drawing(true);
+        let png = plot(&d, &Space::Paper("L1".into()), &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        // The line 3 units left of the window lands about 1.7 mm from the sheet edge, in the margin.
+        assert!(!inked(&png, 0.0, 9.0, 105.0), "the margin stays blank");
+    }
+
+    /// A layout with `window`/`scale` saved (any values, hostile ones included).
+    fn saved_drawing(window: [f64; 4], scale: f64, fit: bool) -> Drawing {
+        let mut d = layout_drawing(fit);
+        let page = &mut d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page;
+        page.plot_window = window;
+        page.scale = scale;
+        d
+    }
+
+    /// Degenerate windows, a window off the drawing, and a saved scale of 0 or not finite fall back
+    /// to the plain plot: the setup resolves to no window or scale, and PDF and PNG still plot.
+    #[test]
+    fn hostile_saved_setups_fall_back_and_never_panic() {
+        let sp = Space::Paper("L1".into());
+        let nan = f64::NAN;
+        let inf = f64::INFINITY;
+        for window in [[5.0, 5.0, 5.0, 40.0], [5.0, 5.0, 40.0, 5.0], [nan, 0.0, 10.0, 10.0], [0.0, 0.0, inf, 10.0]] {
+            let d = saved_drawing(window, 1.0, true);
+            let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+            assert!(o.window.is_none(), "{window:?}: a degenerate window is dropped, got {:?}", o.window);
+            assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"), "{window:?}");
+            assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok(), "{window:?}");
+        }
+        for scale in [0.0, -2.0, nan, inf] {
+            let d = saved_drawing([0.0, 0.0, 100.0, 60.0], scale, false);
+            let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+            assert!(o.scale.is_none(), "{scale}: an unusable saved scale is ignored");
+            assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"), "{scale}");
+            assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok(), "{scale}");
+        }
+        // A window far from everything drawn is plotted (an empty sheet), not an error.
+        let d = saved_drawing([1e9, 1e9, 1e9 + 10.0, 1e9 + 10.0], 1.0, true);
+        assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"));
+        assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok());
+    }
+
+    /// A layout with no saved setup (`PageSetup::default()`) plots as the options say: nothing is
+    /// filled in from it.
+    #[test]
+    fn a_layout_without_saved_setup_changes_nothing() {
+        let mut d = Drawing::new_metric();
+        d.layouts.push(cadcraft_doc::Layout::new("L1", 3));
+        let sp = Space::Paper("L1".into());
+        let given = PdfOptions::from_json(&json!({"scale": 0.5}));
+        let o = pdf::with_saved_setup(&d, &sp, &given);
+        assert_eq!((o.window, o.fit, o.scale, o.center), (None, None, Some(0.5), None));
+        let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+        assert_eq!((o.window, o.fit, o.scale, o.center), (None, None, None, None));
     }
 }

@@ -1,5 +1,5 @@
 use super::display::MAX_TRANSPARENCY;
-use super::*;
+use super::{Color, Ctx, Drawing, Entity, Ink, Lineweight, ink};
 
 /// An object's colour, lineweight (mm), linetype, linetype scale, visibility and the transparency
 /// of the layer it is drawn on (for ByLayer, see [`transparency`]).

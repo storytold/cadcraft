@@ -86,7 +86,7 @@ pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], de
 
 #[cfg(windows)]
 mod system {
-    use super::*;
+    use super::{MAX_COPIES, MAX_PAPERS, MAX_PRINTERS, PlotterConfig, WinPaper, margins_from_imageable, printer_config};
     use winprint::printer::PrinterDevice;
     use winprint::ticket::document::{PrintTicketDocument, reader::ParsableXmlDocument as _};
     use winprint::ticket::{FeatureOptionPack as _, PageImageableSize, PageMediaSize, PrintCapabilities, PrintTicketBuilder};

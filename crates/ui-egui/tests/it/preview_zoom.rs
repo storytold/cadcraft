@@ -31,6 +31,13 @@ fn plots() -> Vec<Value> {
 #[test]
 fn zooming_in_draws_the_part_in_view_at_the_screens_resolution() {
     set_io(IoHooks { read: |_, _| Err("no".into()), write: |_, _| Err("no".into()), plot: Some(recording_plot) });
+    // The hooks are set once per process: when another test of this binary set them first (a
+    // plain `cargo test`; nextest runs each test alone), the preview's plots can't be watched.
+    let ours = recording_plot as fn(&Drawing, &Space, &Value) -> Result<Vec<u8>, String>;
+    if cadcraft_engine::cmd::file::io().and_then(|h| h.plot).is_none_or(|f| !std::ptr::fn_addr_eq(f, ours)) {
+        eprintln!("another test installed the file hooks first; skipped");
+        return;
+    }
     let mut app = CadApp::new(Session::default(), Services::default());
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
 
 /// Format a linear measurement per the style (plain text).
 pub fn format_linear_value(v: f64, st: &DimStyle) -> String {

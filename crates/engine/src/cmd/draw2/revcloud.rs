@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, Chain, Circle, Ellipse, EntityKind, Handle, Input, Interactive, Line, MAX_GEN, PolyVertex, Polyline, Prompt, Result, Session, Step,
+    Value, Vec2, added, bad, bool_or, curves, lwpoly, number, other, point_param, points_param, rect_vertices, shoelace, str_param,
+};
 
 // =====================================================================================
 // REVCLOUD
@@ -55,8 +58,9 @@ pub(crate) fn cloud_vertices(boundary: &[Vec2], arc_len: f64, per_edge: bool, re
             closed: true,
         };
         let k = ((perim / arc_len).round() as usize).clamp(3, MAX_GEN);
+        let ends = chain.end_lengths();
         for j in 0..k {
-            out.extend(chain.at_length(perim * j as f64 / k as f64).map(|x| x.0));
+            out.extend(chain.at_length_in(&ends, perim * j as f64 / k as f64).map(|x| x.0));
         }
     }
     let b = if reverse { -0.5 } else { 0.5 };

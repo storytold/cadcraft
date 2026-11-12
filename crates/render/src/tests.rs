@@ -137,6 +137,7 @@ fn vp(center: Vec2, w: f64, h: f64, view_center: Vec2, view_height: f64, id: u32
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     }
 }
 
@@ -370,6 +371,7 @@ fn lin_dim() -> cadcraft_doc::Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -632,6 +634,7 @@ fn hatch_in_a_squashed_block_keeps_lines_that_show() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // One pixel = 1 unit: 0.125 spacing × 100 along x is far more than a pixel.
@@ -676,6 +679,7 @@ fn insert_of(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -998,4 +1002,242 @@ fn wide_polyline_centre_line_is_drawn_on_screen_only() {
         assert!(see_through.prims.iter().any(|p| p.kind == Kind::Tris && p.transparency == 50), "{lt}: the transparent band");
         assert_eq!(lines(&see_through), 0, "{lt}: a transparent band gets no hairline");
     }
+}
+
+/// Each primitive stroked or filled on its own, as `render` did before it batched hairlines.
+fn render_one_by_one(list: &DisplayList, view: &View, o: &RasterOptions) -> tiny_skia::Pixmap {
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+    let mut pm = Pixmap::new(view.width, view.height).unwrap();
+    pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
+    for p in &list.prims {
+        let c = p.display_rgb(o.background);
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c.0, c.1, c.2, p.alpha());
+        paint.anti_alias = o.antialias;
+        let mut pb = PathBuilder::new();
+        match p.kind {
+            Kind::Polyline => {
+                for (i, q) in list.points(p).iter().enumerate() {
+                    let (x, y) = view.to_screen(*q);
+                    if i == 0 {
+                        pb.move_to(x, y);
+                    } else {
+                        pb.line_to(x, y);
+                    }
+                }
+                if let Some(path) = pb.finish() {
+                    let w = if o.px_per_mm > 0.0 && p.lw > 0.0 { (p.lw * o.px_per_mm).max(o.hairline) } else { o.hairline };
+                    let stroke = Stroke { width: w, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
+                    pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+            Kind::Tris => {
+                for t in list.points(p).chunks(3) {
+                    let [a, b, c] = t else { continue };
+                    let ((ax, ay), (bx, by), (cx, cy)) = (view.to_screen(*a), view.to_screen(*b), view.to_screen(*c));
+                    pb.move_to(ax, ay);
+                    pb.line_to(bx, by);
+                    pb.line_to(cx, cy);
+                    pb.close();
+                }
+                if let Some(path) = pb.finish() {
+                    pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+            _ => panic!("not drawn by this reference"),
+        }
+    }
+    pm
+}
+
+fn push_prim(l: &mut DisplayList, kind: Kind, color: Rgb, transparency: u8, lw: f32, pts: &[Vec2]) {
+    let arr = if kind == Kind::Tris { &mut l.tris } else { &mut l.verts };
+    let start = arr.len() as u32;
+    arr.extend_from_slice(pts);
+    for p in pts.iter().filter(|p| p.is_finite() && p.x.abs() < 1e6) {
+        l.bounds.add(*p);
+    }
+    l.prims.push(DPrim { handle: VIEWPORT_CONTENT, color, aci7: false, lw, transparency, kind, start, len: pts.len() as u32 });
+}
+
+/// Hairline polylines with the same paint are stroked as one path; the pixels must be exactly
+/// those of stroking each on its own, whatever breaks a run (colour, transparency, lineweight,
+/// fills, unusable coordinates) and with overlaps, caps and dots.
+#[test]
+fn raster_hairline_batches_match_one_by_one() {
+    let red = Rgb(255, 0, 0);
+    let blue = Rgb(0, 0, 255);
+    let mut l = DisplayList::default();
+    // A hatch-like run of crossing, overlapping and touching lines in one colour.
+    for i in 0..40 {
+        let x = f64::from(i) * 0.37;
+        push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(x, 0.0), Vec2::new(x + 6.0, 9.0)]);
+        push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(x + 3.0, 0.0), Vec2::new(x - 2.0, 9.0), Vec2::new(x + 1.0, 4.0)]);
+    }
+    // Zero-length (a dot), single-point (nothing), and repeated lines.
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(2.0, 2.0), Vec2::new(2.0, 2.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(3.0, 3.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(1.0, 1.0), Vec2::new(8.0, 2.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(1.0, 1.0), Vec2::new(8.0, 2.0)]);
+    // Transparent lines build up where they overlap, within a run and across runs.
+    for i in 0..10 {
+        let y = f64::from(i) * 0.2;
+        push_prim(&mut l, Kind::Polyline, blue, 50, 0.0, &[Vec2::new(0.0, y), Vec2::new(12.0, 8.0 - y)]);
+    }
+    push_prim(&mut l, Kind::Polyline, blue, 20, 0.0, &[Vec2::new(0.0, 5.0), Vec2::new(12.0, 5.0)]);
+    // A lineweight (a filled outline when lineweights are shown), a fill, then the run again.
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.5, &[Vec2::new(0.0, 6.0), Vec2::new(12.0, 7.0), Vec2::new(5.0, 2.0)]);
+    push_prim(&mut l, Kind::Tris, blue, 30, 0.0, &[Vec2::new(4.0, 4.0), Vec2::new(9.0, 4.0), Vec2::new(6.0, 8.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(0.0, 8.0), Vec2::new(12.0, 1.0)]);
+    // Unusable or far-out coordinates are stroked on their own, as before.
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(1.0, 1.0), Vec2::new(f64::NAN, 3.0), Vec2::new(9.0, 9.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(-1e12, 4.0), Vec2::new(1e12, 4.5)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(5.0, -1e7), Vec2::new(5.5, 1e7)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(0.0, 0.5), Vec2::new(12.0, 0.5)]);
+    // Partly and wholly off screen.
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(-30.0, -30.0), Vec2::new(40.0, 30.0)]);
+    push_prim(&mut l, Kind::Polyline, red, 0, 0.0, &[Vec2::new(100.0, 100.0), Vec2::new(120.0, 101.0)]);
+    let view = View::fit(&l.bounds, 160, 120, 0.05);
+    let bg = Rgb(33, 40, 48);
+    for o in [
+        RasterOptions::default(),
+        RasterOptions { antialias: false, ..Default::default() },
+        RasterOptions { hairline: 0.5, ..Default::default() },
+        RasterOptions { hairline: 0.0, antialias: false, ..Default::default() },
+        RasterOptions { px_per_mm: 4.0, background: Rgb(255, 255, 255), ..Default::default() },
+        RasterOptions { hairline: 1.5, background: bg, ..Default::default() },
+    ] {
+        let fast = render(&l, &view, &o).unwrap();
+        let reference = render_one_by_one(&l, &view, &o);
+        assert!(fast.data() == reference.data(), "pixels differ with {o:?}");
+    }
+}
+
+/// A real hatch pattern (many parallel lines in one colour) renders exactly as stroked line by
+/// line.
+#[test]
+fn raster_hatch_pattern_matches_one_by_one() {
+    let mut d = sample();
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(pattern_hatch("ANSI31", 0.2, (0.0, 0.0, 10.0, 10.0)))).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert!(l.prims.len() > 20);
+    let view = View::fit(&l.bounds, 300, 200, 0.05);
+    for o in [RasterOptions::default(), RasterOptions { background: Rgb(255, 255, 255), ..Default::default() }] {
+        assert!(render(&l, &view, &o).unwrap().data() == render_one_by_one(&l, &view, &o).data());
+    }
+}
+
+/// An OLE2FRAME draws its frame, the rectangle from its two corner points (#2422), and nothing
+/// when a corner is missing.
+#[test]
+fn ole_frame_draws_its_outline() {
+    let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
+    let l = build(&d, &Space::Model, &Options { tolerance: 0.01, ..Default::default() });
+    assert_eq!(l.prims.len(), 1, "only the frame with both corners is drawn");
+    assert_eq!(l.prims[0].len, 5, "a closed rectangle: five points");
+}
+
+/// `Options::linetypes` off draws a dashed line, a dashed wide polyline and a linetype on a layer
+/// as the same whole line a Continuous one draws: what hit tests look at.
+#[test]
+fn without_linetypes_every_line_is_drawn_whole() {
+    let drawing = |lt: &str| {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        d.layer_mut("0").unwrap().linetype = lt.into();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(30.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), line).unwrap();
+        let vertices = [(0.0, 5.0), (30.0, 5.0)].map(|(x, y)| PolyVertex::new(Vec2::new(x, y))).to_vec();
+        let wide = cadcraft_doc::LwPolyline { vertices, closed: false, const_width: 0.2, elevation: 0.0, plinegen: false };
+        d.add(&Space::Model, Common::default(), EntityKind::LwPolyline(wide)).unwrap();
+        d
+    };
+    let whole = Options { linetypes: false, ..Options::default() };
+    let continuous = build(&drawing("Continuous"), &Space::Model, &Options::default());
+    let dashed = build(&drawing("DASHED"), &Space::Model, &whole);
+    assert_eq!(dashed.prims.len(), continuous.prims.len());
+    assert_eq!(dashed.verts, continuous.verts);
+    assert_eq!(dashed.tris, continuous.tris);
+    let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
+    assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
+
+/// A broken table whose parts, with their repeated labels, together hold more cells than a table may
+/// lay out is drawn as its outline, though the table's own cells are within the limit.
+#[test]
+fn broken_table_cells_count_across_its_parts() {
+    let d = Drawing::new_imperial();
+    let t = cadcraft_doc::Table {
+        col_widths: vec![1.0; 600],
+        row_heights: vec![1.0; 1000],
+        title: true,
+        header: true,
+        breaks: Some(cadcraft_doc::TableBreak { enabled: true, height: 3.0, ..Default::default() }),
+        ..Default::default()
+    };
+    assert!(t.parts().len() > 500 && 1000 * 600 <= crate::MAX_LAYOUT_CELLS);
+    let g = crate::table_geometry(&d, &t);
+    let parts = t.parts();
+    assert_eq!((g.lines.len(), g.texts.len(), g.fills.len()), (4 * parts.len(), 0, 0));
+    // Each part's box starts at its own origin.
+    let top = |i: usize| g.lines[4 * i].a;
+    assert!((0..parts.len()).all(|i| top(i) == parts[i].origin));
+}
+
+#[test]
+fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
+    let ring = |rot: usize, rev: bool| {
+        let mut v: Vec<PolyVertex> = [(0.0, 0.0, 0.5), (4.0, 0.0, -0.25), (4.0, 3.0, 0.0), (0.0, 3.0, 0.1)]
+            .map(|(x, y, bulge)| PolyVertex { bulge, ..PolyVertex::new(Vec2::new(x, y)) })
+            .to_vec();
+        if rev {
+            // The same boundary wound the other way: bulges move to the other end of their edge and flip.
+            let b: Vec<f64> = v.iter().map(|q| q.bulge).collect();
+            v.reverse();
+            let n = v.len();
+            for (j, q) in v.iter_mut().enumerate() {
+                q.bulge = -b[(n - 1 - j + n - 1) % n];
+            }
+        }
+        v.rotate_left(rot);
+        HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+    };
+    let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
+    h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
+    assert_eq!(loops_of(&h).len(), 1);
+    // A different boundary is kept.
+    h.loops.push(HatchLoop {
+        vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
+        outer: true,
+        sources: Vec::new(),
+    });
+    assert_eq!(loops_of(&h).len(), 2);
+}
+
+/// `retain_within` keeps the primitives that reach into the area, with their layers, and
+/// compacts the vertex arrays; one that is all inside or all outside decides alone.
+#[test]
+fn retain_within_keeps_what_reaches_the_area() {
+    let mut d = Drawing::new_metric();
+    let line = |a: Vec3, b: Vec3| EntityKind::Line(cadcraft_doc::Line { a, b });
+    d.add(&Space::Model, Common::default(), line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(100.0, 100.0, 0.0), Vec3::new(110.0, 100.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(-5.0, -50.0, 0.0), Vec3::new(-5.0, 50.0, 0.0))).unwrap();
+    let mut list = build_plot(&d, &Space::Model, &Options::default());
+    assert_eq!(list.prims.len(), 3);
+    list.retain_within(&Bounds2::new(Vec2::new(-10.0, -1.0), Vec2::new(20.0, 1.0)));
+    assert_eq!(list.prims.len(), 2, "the far line goes, the one crossing the area stays");
+    assert_eq!(list.prim_layers.len(), 2);
+    assert!(list.verts.iter().all(|p| p.x < 50.0), "the far line's vertices are gone");
+    for p in &list.prims {
+        assert_eq!(list.points(p).len(), p.len as usize);
+    }
+    // An empty or non-finite area keeps everything.
+    let before = list.prims.len();
+    list.retain_within(&Bounds2::EMPTY);
+    assert_eq!(list.prims.len(), before);
 }

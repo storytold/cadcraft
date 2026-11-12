@@ -50,6 +50,8 @@ const MAX_LAYER_NAME: usize = 1000;
 /// Most link annotations in one file, and the longest link target (bytes).
 const MAX_LINKS: usize = 10_000;
 const MAX_URL: usize = 2048;
+/// The most link annotations in one PDF, over all pages (a page holds at most [`MAX_LINKS`]).
+const MAX_FILE_ANNOTATIONS: usize = 100_000;
 /// Longest title and page label written (characters).
 const MAX_TEXT: usize = 1000;
 
@@ -369,7 +371,10 @@ fn sheet_name(space: &Space) -> String {
 /// Write a vector PDF with one page per space (at most [`MAX_PAGES`]), each labelled with its
 /// layout name. The options apply to every sheet; layouts use their own page setups.
 pub fn pdf_sheets(d: &Drawing, spaces: &[Space], o: &PdfOptions) -> Result<Vec<u8>> {
-    let items: Vec<(Space, PdfOptions)> = spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), o.clone())).collect();
+    // Links are file-wide (`pdf_items` reads them from `o`), so a sheet's own options carry none:
+    // a copy of the list per sheet multiplied it by the sheet count.
+    let sheet = PdfOptions { links: Vec::new(), ..o.clone() };
+    let items: Vec<(Space, PdfOptions)> = spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), sheet.clone())).collect();
     pdf_items(d, &items, o)
 }
 
@@ -465,8 +470,16 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         let mut writer = Writer::new(settings, metadata);
         let mut fonts = fonts::Fonts::new(!text_as_geometry);
         let mut groups = Groups::default();
+        // Link annotations of the whole file: each page keeps its own copy of the targets, so the
+        // pages times the links must not multiply without a bound.
+        let mut annotations_left = MAX_FILE_ANNOTATIONS;
         for (s, po) in items {
-            let page = sheet(drawn, s, po, &links)?;
+            // Once the budget is spent no link is built (scanned and cloned) for later pages.
+            let mut page = sheet(drawn, s, po, if annotations_left == 0 { &links[..0] } else { &links })?;
+            // Only targets `write_page` accepts count against the budget.
+            page.links.retain(|(_, url)| uri(url).is_some());
+            page.links.truncate(annotations_left);
+            annotations_left -= page.links.len();
             let doc = writer.document_mut();
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
@@ -520,8 +533,37 @@ struct SheetPage {
     label: String,
 }
 
+/// `o` with a layout's saved page setup filled in where the options don't say: its plot window,
+/// scale to fit or saved scale, and centring (#2493). Explicit options win; model space has no
+/// saved setup.
+pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
+    let mut o = o.clone();
+    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
+    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot of the sheet.
+    if o.fit == Some(false) && o.scale.is_none() {
+        o.window = None;
+        return o;
+    }
+    let saved = paper::saved_plot(page);
+    // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
+    o.window = saved.window;
+    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+    if o.fit.is_none() && o.scale.is_none() && saved.fit {
+        o.fit = Some(true);
+    }
+    if o.scale.is_none() {
+        o.scale = saved.scale;
+    }
+    if o.center.is_none() && saved.window.is_some() {
+        o.center = Some(saved.center);
+    }
+    o
+}
+
 /// Plot one space.
 fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String)]) -> Result<SheetPage> {
+    let saved = with_saved_setup(d, space, o);
+    let o = &saved;
     let page = page_for(d, space, o)?;
     let unit_mm = paper::page_unit_mm(d, &page);
     let sheet = Sheet::from_page(&page, unit_mm);
@@ -532,6 +574,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         tolerance: 0.001,
         min_dash: 0.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights,
         view_height: 0.0,
@@ -541,8 +584,8 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         cancel: None,
     };
     let k = unit_mm * PT_PER_MM;
-    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
-    let fit = o.fit.unwrap_or(window.is_some() || matches!(space, Space::Model));
+    let window = o.window.filter(|w| !w.is_empty());
+    let fit = o.fit.unwrap_or(matches!(space, Space::Model));
     // Chord tolerance: about 0.05 mm on paper.
     let est = plot_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, fit, o.scale);
     let tol = 0.05 / unit_mm / est.max(1e-300);
@@ -553,14 +596,22 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let list = cadcraft_render::build_plot(d, space, &ropts);
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
-    let map = if fit || matches!(space, Space::Model) {
-        let (from, to) = placement(space, &b, fit, &sheet, o);
+    // A layout plotted over a window is placed like model space: the window on the printable area.
+    let placed = fit || window.is_some() || matches!(space, Space::Model);
+    let map = if placed {
+        let by = if window.is_some() { &Space::Model } else { space };
+        let (from, to) = placement(by, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {
         Map { from: Vec2::ZERO, s, to: Vec2::ZERO, k }
     };
-    // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
+    // A window plots what is inside it only: what lies wholly outside is left out of the page
+    // (a small window of a large drawing stays small), the rest is cut at the window's edges.
     let mut list = list;
+    if let Some(w) = window {
+        list.retain_within(&window_margin(&w, map.s, unit_mm));
+    }
+    // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     if let Some(text) = &o.stamp {
         let text = crate::stamp::fill(text, &sheet_name(space), &page.paper, &crate::stamp::scale_label(map.s));
@@ -568,10 +619,14 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         list.append(crate::stamp::display_list(d, &text, sheet.printable.min, unit_mm, to_world, 1.0 / map.s, &ropts));
     }
     let media = sheet.size * k;
-    let clip_pt = if fit || matches!(space, Space::Model) {
-        Bounds2::new(sheet.printable.min * k, sheet.printable.max * k)
-    } else {
-        Bounds2::new(Vec2::ZERO, media)
+    let printable_pt = Bounds2::new(sheet.printable.min * k, sheet.printable.max * k);
+    let clip_pt = match window {
+        // A window off the printable area plots nothing: a hair-thin clip at its corner.
+        Some(w) => Some(window_on_paper(&w, &map).intersection(&printable_pt))
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| Bounds2::new(printable_pt.min, printable_pt.min + Vec2::new(1e-3, 1e-3))),
+        None if placed => printable_pt,
+        None => Bounds2::new(Vec2::ZERO, media),
     };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
@@ -585,6 +640,21 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     }
     let links = links(&list, &map, &clip_pt, links_to);
     Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
+}
+
+/// `w` grown by what a plotted line may reach past it (the widest lineweight, 2.11 mm, and a
+/// little more), in drawing units at `s` paper units per drawing unit, for
+/// [`cadcraft_render::DisplayList::retain_within`].
+pub(crate) fn window_margin(w: &Bounds2, s: f64, unit_mm: f64) -> Bounds2 {
+    let reach = 3.0 / (unit_mm * s);
+    let margin = if reach.is_finite() && reach > 0.0 { reach } else { 0.0 };
+    w.expand(margin + w.width().max(w.height()) * 0.01)
+}
+
+/// A plotted window `w` on the sheet, in points: where its corners land through `map`.
+fn window_on_paper(w: &Bounds2, map: &Map) -> Bounds2 {
+    let at = |p: Vec2| ((p - map.from) * map.s + map.to) * map.k;
+    Bounds2::new(at(w.min), at(w.max))
 }
 
 /// Source and destination origins for the shared model-space PDF/PNG placement behavior.
@@ -614,7 +684,8 @@ pub(crate) fn placement(space: &Space, bounds: &Bounds2, fit: bool, sheet: &Shee
 /// The hyperlinks to plot: the options' own, then (with [`PdfOptions::hyperlinks`]) those the
 /// drawing file gave its entities as `PE_URL` extended data, at most [`MAX_LINKS`] in all.
 fn all_links(d: &Drawing, o: &PdfOptions) -> Vec<(Handle, String)> {
-    let mut out: Vec<(Handle, String)> = o.links.iter().take(MAX_LINKS).cloned().collect();
+    // A target past MAX_URL is refused at the annotation anyway; it is left out before it is copied.
+    let mut out: Vec<(Handle, String)> = o.links.iter().filter(|(_, u)| u.len() <= MAX_URL).take(MAX_LINKS).cloned().collect();
     if !o.hyperlinks {
         return out;
     }
@@ -875,6 +946,8 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
+            // Raster images are not written to PDF yet: their frame is.
+            Kind::Image { .. } => {}
         }
     }
     flush(s, &mut batch);
@@ -1018,4 +1091,87 @@ fn uri(url: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod saved_setup_tests {
+    use super::*;
+    use cadcraft_doc::{Common, EntityKind, Layout, Line};
+    use cadcraft_geom::Vec3;
+    use serde_json::json;
+
+    /// A layout drawn in mm at A1 size (frame 20,5 - 836,589) whose page setup is A4 landscape
+    /// plotting that window, as in #2493.
+    fn drawing(scale_to_fit: bool, scale: f64) -> Drawing {
+        let mut d = Drawing::new_metric();
+        let mut l = Layout::new("L1", 3);
+        l.page = PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [0.0; 4],
+            plot_area: "window".into(),
+            plot_window: [20.0, 5.0, 836.0, 589.0],
+            scale_to_fit,
+            scale,
+            center: true,
+            ..PageSetup::default()
+        };
+        d.layouts.push(l);
+        let line = EntityKind::Line(Line { a: Vec3::new(20.0, 5.0, 0.0), b: Vec3::new(836.0, 589.0, 0.0) });
+        d.add(&Space::Paper("L1".into()), Common::default(), line).unwrap();
+        d
+    }
+
+    fn map(d: &Drawing, opts: serde_json::Value) -> Map {
+        sheet(d, &Space::Paper("L1".into()), &PdfOptions::from_json(&opts), &[]).unwrap().map
+    }
+
+    /// A layout plotted with no options uses its saved scale to fit and plot window, not 1:1.
+    #[test]
+    fn a_layout_plots_its_saved_window_scaled_to_fit_by_default() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({}));
+        let want = (297.0_f64 / 816.0).min(210.0 / 584.0);
+        assert!((m.s - want).abs() < 1e-9, "scale {} not {want}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9, "window centre, got {:?}", m.from);
+        assert!(m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "page centre, got {:?}", m.to);
+    }
+
+    /// The options still win: `fit: false` is the plain 1:1 plot, and a `scale` is used as given.
+    #[test]
+    fn explicit_options_override_the_saved_setup() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"fit": false}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+        let m = map(&d, json!({"fit": false, "scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+    }
+
+    /// A saved scale (not scale to fit) is used by default, with the window centred on the page.
+    #[test]
+    fn a_layout_plots_at_its_saved_scale_by_default() {
+        let d = drawing(false, 0.3394);
+        let m = map(&d, json!({}));
+        assert!((m.s - 0.3394).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "{:?} {:?}", m.from, m.to);
+    }
+
+    /// A page setup with nothing saved to fit plots as it always did.
+    #[test]
+    fn a_layout_without_a_saved_window_or_scale_is_unchanged() {
+        let mut d = drawing(false, 1.0);
+        d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "layout".into();
+        let m = map(&d, json!({}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+    }
+
+    /// An explicit `scale` beats a saved scale to fit, in the PDF as in the preview.
+    #[test]
+    fn an_explicit_scale_overrides_the_saved_scale_to_fit() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
 }
