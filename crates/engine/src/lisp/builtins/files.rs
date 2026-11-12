@@ -18,15 +18,15 @@ pub struct LispFile {
 }
 
 /// The lines of a file's text, ended by LF or CRLF (a lone CR is data), and whether the last of
-/// them had a terminator.
-fn split_lines(t: &str) -> (std::collections::VecDeque<String>, bool) {
-    let lines = t
-        .split_inclusive('\n')
-        .map(|l| match l.strip_suffix('\n') {
-            Some(l) => l.strip_suffix('\r').unwrap_or(l).to_string(),
-            None => l.to_string(),
-        })
-        .collect();
+/// them had a terminator. `count` is the number of lines (as `str::lines` counts them), so the
+/// queue is allocated exactly once.
+fn split_lines(t: &str, count: usize) -> (std::collections::VecDeque<String>, bool) {
+    // Exact capacity: collecting would grow by doubling and hold unbilled slack.
+    let mut lines = std::collections::VecDeque::with_capacity(count);
+    lines.extend(t.split_inclusive('\n').map(|l| match l.strip_suffix('\n') {
+        Some(l) => l.strip_suffix('\r').unwrap_or(l).to_string(),
+        None => l.to_string(),
+    }));
     (lines, !t.is_empty() && !t.ends_with('\n'))
 }
 
@@ -57,7 +57,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
                 // allocation size, before collecting so many short lines cannot evade the budget.
                 let count = t.lines().count();
                 charge_bytes(t.len().saturating_add(count.saturating_mul(64)))?;
-                (f.lines, f.unterminated) = split_lines(&t);
+                (f.lines, f.unterminated) = split_lines(&t, count);
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
