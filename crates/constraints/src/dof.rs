@@ -138,7 +138,9 @@ pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
     let cons: Vec<&Constraint> = d.constraints.iter().take(MAX_CONSTRAINTS).collect();
     let mut prep = Prep::new(crate::model::MAX_RIGID_WORK);
     let (comps, _) = build_with(d, &cons, &SolveOptions::default(), &mut prep)?;
-    let want = |h: Handle| handles.is_empty() || handles.contains(&h);
+    // The selection as a set, built once: a scan of the list per slot multiplied the two sizes.
+    let selected: HashSet<Handle> = handles.iter().copied().collect();
+    let want = |h: Handle| handles.is_empty() || selected.contains(&h);
     let mut objects = Vec::new();
     let mut seen = HashSet::new();
     let mut total = Some(0usize);
