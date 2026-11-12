@@ -359,7 +359,14 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
             let (x, y) = view.to_screen((q - to) / k + from);
             (f64::from(x), f64::from(y))
         };
-        let (min, max) = (sheet.printable.min, sheet.printable.max);
+        // A saved window shows only what lies inside it (#3087): cut the printable area to the
+        // window on paper (drawing point w lands on paper point (w - from) * k + to).
+        let (mut min, mut max) = (sheet.printable.min, sheet.printable.max);
+        if let Some(w) = saved.window {
+            let (p, q) = ((w.min - from) * k + to, (w.max - from) * k + to);
+            min = p.min(q).max(min);
+            max = p.max(q).min(max).max(min);
+        }
         let (a, b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
         cadcraft_render::raster::blank_outside_pixels(&mut pm, a, b);
     }
@@ -771,6 +778,29 @@ mod tests {
             s.execute("preview", &json!({ "layout": "Layout1", "width": 600 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
         };
         assert_eq!(build(true), build(false), "a line in the margin is clipped away");
+    }
+
+    /// A saved window shows only what lies inside it, even where its shape leaves printable paper
+    /// beside it (#3087): the window (0,0)-(60,100) fitted on A4 landscape is 114 mm wide, and a
+    /// line 10 units left of it would land inside the printable area.
+    #[test]
+    fn preview_clips_a_saved_window_to_the_window() {
+        let build = |outside_line: bool| {
+            let mut s = Session::new();
+            s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+            s.execute("line", &json!({ "points": [[0.0, 50.0], [60.0, 50.0]] })).unwrap();
+            if outside_line {
+                s.execute("line", &json!({ "points": [[-10.0, 0.0], [-10.0, 100.0]] })).unwrap();
+            }
+            s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [10, 10, 10, 10] })).unwrap();
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.plot_area = "window".into();
+            page.plot_window = [0.0, 0.0, 60.0, 100.0];
+            page.scale_to_fit = true;
+            page.center = true;
+            s.execute("preview", &json!({ "layout": "Layout1", "width": 600 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(build(true), build(false), "a line beside the window is clipped away");
     }
 
     /// On a tall sheet the height cap makes the view scale and centre the sheet in the image; the

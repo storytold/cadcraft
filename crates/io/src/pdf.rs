@@ -596,7 +596,15 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let mut list = list;
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     let media = sheet.size * k;
-    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
+    let clip_pt = match window {
+        // A window plot shows only what lies inside the window (#3087), not the rest of the sheet.
+        Some(w) => {
+            let c = plot_area(&sheet.printable, Some((&w, map.from, map.s, map.to)));
+            Bounds2::new(c.min * k, c.max * k)
+        }
+        None if placed => Bounds2::new(sheet.printable.min * k, sheet.printable.max * k),
+        None => Bounds2::new(Vec2::ZERO, media),
+    };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
     if o.layers {
@@ -609,6 +617,22 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     }
     let links = links(&list, &map, &clip_pt, links_to);
     Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
+}
+
+/// The area a placed plot shows, in paper units: the printable area, cut to the plot window when
+/// there is one (`window`, then the mapping `p' = (p - from) * s + to`). A window plot is clipped
+/// to the window, so what lies outside it never reaches the sheet even when the window's shape
+/// leaves paper to spare (#3087). A window placed off the printable area gives an empty area.
+pub(crate) fn plot_area(printable: &Bounds2, window: Option<(&Bounds2, Vec2, f64, Vec2)>) -> Bounds2 {
+    let Some((w, from, s, to)) = window else { return *printable };
+    let (a, b) = ((w.min - from) * s + to, (w.max - from) * s + to);
+    let min = a.min(b).max(printable.min);
+    let max = a.max(b).min(printable.max);
+    // Not finite, or no overlap: an empty area at the printable corner (draws nothing).
+    if !(min.is_finite() && max.is_finite()) {
+        return Bounds2 { min: printable.min, max: printable.min };
+    }
+    Bounds2 { min, max: max.max(min) }
 }
 
 /// Source and destination origins for the shared model-space PDF/PNG placement behavior.
@@ -1105,6 +1129,28 @@ mod saved_setup_tests {
         d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "layout".into();
         let m = map(&d, json!({}));
         assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+    }
+
+    /// A window plot is clipped to the window placed on the sheet, not to the whole printable
+    /// area, so objects beside the window never reach the page (#3087).
+    #[test]
+    fn a_window_plot_is_clipped_to_the_window() {
+        let mut d = Drawing::new_metric();
+        let line = |x0: f64, x1: f64| EntityKind::Line(Line { a: Vec3::new(x0, 50.0, 0.0), b: Vec3::new(x1, 50.0, 0.0) });
+        d.add(&Space::Model, Common::default(), line(0.0, 60.0)).unwrap();
+        d.add(&Space::Model, Common::default(), line(-30.0, -10.0)).unwrap();
+        // A4 landscape, 10 mm margins: the window (0,0)-(60,100) fits 1.9 mm per unit, 114 mm wide,
+        // centred at x = 148.5 mm.
+        let o = json!({"paper": "A4", "landscape": true, "margins": [10, 10, 10, 10], "window": [[0, 0], [60, 100]]});
+        let p = sheet(&d, &Space::Model, &PdfOptions::from_json(&o), &[]).unwrap();
+        let mm = |v: f64| v * PT_PER_MM;
+        let want = Bounds2::new(Vec2::new(mm(91.5), mm(10.0)), Vec2::new(mm(205.5), mm(200.0)));
+        assert!(p.clip_pt.min.dist(want.min) < 1e-6 && p.clip_pt.max.dist(want.max) < 1e-6, "clip {:?}, want {want:?}", p.clip_pt);
+        // Without a window the plot area is still the whole printable area.
+        let p =
+            sheet(&d, &Space::Model, &PdfOptions::from_json(&json!({"paper": "A4", "landscape": true, "margins": [10, 10, 10, 10]})), &[]).unwrap();
+        let want = Bounds2::new(Vec2::new(mm(10.0), mm(10.0)), Vec2::new(mm(287.0), mm(200.0)));
+        assert!(p.clip_pt.min.dist(want.min) < 1e-6 && p.clip_pt.max.dist(want.max) < 1e-6, "clip {:?}, want {want:?}", p.clip_pt);
     }
 
     /// An explicit `scale` beats a saved scale to fit, in the PDF as in the preview.
