@@ -265,7 +265,7 @@ impl BlockEdit {
         // copy's).
         let mut remap = std::collections::HashMap::new();
         if !name.eq_ignore_ascii_case(&self.name) {
-            remap = cadcraft_doc::dynblock::copy_definition(&mut d, &self.name, name, &mut entities);
+            remap = cadcraft_doc::dynblock::copy_definition(&mut d, &self.name, name, &mut entities).map_err(EngineError::Other)?;
             cadcraft_doc::dynblock::restore_definition(&mut d, host, &self.name);
         }
         // Objects drawn in the editor show in the visibility state it shows only, as in AutoCAD.

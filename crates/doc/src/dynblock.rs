@@ -32,7 +32,7 @@ pub use apply::{drag_grip, set_property};
 pub use copy::{copy_definition, remap_handles, restore_definition};
 pub use edit::{ElementPoint, element_points, erase_elements, move_element, set_element_point};
 pub use grips::{DynGrip, GripPart, GripShape, grips};
-pub use lookup::{MAX_LOOKUP_ROWS, TableColumn, column_property, input_properties, set_lookup_table};
+pub use lookup::{MAX_LOOKUP_ROWS, TableColumn, cell_key, column_property, input_properties, set_lookup_table};
 pub use marks::{Mark, marks};
 pub use reference::{CustomProperty, Reference, Value, custom_properties, reference};
 pub use write::{

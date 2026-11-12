@@ -220,8 +220,13 @@ pub fn set_element_point(d: &mut Drawing, block: &str, node: i32, which: Element
 
 /// Erase parameters and actions `nodes` of block `block` (any case), as AutoCAD erases them: a
 /// parameter takes its grips, their location components and its actions along. Returns the
-/// graph ids erased (the parameters' and actions'; grips and components aren't listed).
+/// graph ids erased (the parameters' and actions'; grips and components aren't listed). All or
+/// nothing: refused partway, the drawing is left as it was.
 pub fn erase_elements(d: &mut Drawing, block: &str, nodes: &[i32]) -> Result<Vec<i32>, String> {
+    super::lookup::all_or_nothing(d, |d| erase_elements_in(d, block, nodes))
+}
+
+fn erase_elements_in(d: &mut Drawing, block: &str, nodes: &[i32]) -> Result<Vec<i32>, String> {
     // Lookup tables lose the columns of parameters erased; a lookup parameter's own table goes.
     let params: Vec<i32> =
         dynamic_block(d, block).map(|m| m.parameters.iter().map(|p| p.node).filter(|n| nodes.contains(n)).collect()).unwrap_or_default();

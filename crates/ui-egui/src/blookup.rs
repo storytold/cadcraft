@@ -9,7 +9,9 @@
 //! with several lookup actions picks one at the top (the one picked in the editor first). JSON
 //! calls skip the dialog.
 
-use cadcraft_engine::doc::dynblock::{ActionKind, DynamicBlock, ParameterKind, column_property, dynamic_block, input_properties, set_lookup_table};
+use cadcraft_engine::doc::dynblock::{
+    ActionKind, DynamicBlock, ParameterKind, cell_key, column_property, dynamic_block, input_properties, set_lookup_table,
+};
 use egui::{RichText, Stroke, vec2};
 use serde_json::{Map, Value, json};
 
@@ -80,10 +82,18 @@ impl State {
         self.columns.iter().filter(|c| !c.lookup).count()
     }
 
-    /// Whether lookup column `j`'s values repeat (or it has none): it can't be reversed then.
+    /// Whether lookup column `j`'s values repeat (or it has none): it can't be reversed then. Cells
+    /// compare as the table compares them when it is written ([`cell_key`]: `10` and `10.0` repeat).
     fn repeats(&self, j: usize) -> bool {
-        let values: Vec<String> = self.rows.iter().filter_map(|r| r.get(j)).map(|v| v.trim().to_lowercase()).filter(|v| !v.is_empty()).collect();
-        values.is_empty() || values.iter().enumerate().any(|(i, v)| values.iter().take(i).any(|w| w == v))
+        let mut seen = std::collections::HashSet::new();
+        let mut any = false;
+        for v in self.rows.iter().filter_map(|r| r.get(j)).filter(|v| !v.trim().is_empty()) {
+            any = true;
+            if !seen.insert(cell_key(v)) {
+                return true;
+            }
+        }
+        !any
     }
 
     /// Add `column` with an empty cell in every row: an input after the other inputs, a lookup

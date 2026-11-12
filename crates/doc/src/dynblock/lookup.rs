@@ -18,12 +18,16 @@
 use super::write::{Graph, dict_entry, tag};
 use super::{ActionKind, DynamicBlock, ParameterKind, dynamic_block};
 use crate::{Drawing, Handle, RawTag};
+use std::collections::HashSet;
 
 /// Most rows one lookup table is written with.
 pub const MAX_LOOKUP_ROWS: usize = 10_000;
 
 /// Most columns one lookup table is written with.
 const MAX_COLUMNS: usize = 1_000;
+
+/// Most cells (rows times columns) one lookup table is written with.
+const MAX_CELLS: usize = 1_000_000;
 
 /// A lookup table column as it is written: the parameter's graph id and the value it stands for,
 /// whether it is a lookup column, what references show when no row matches, and whether a lookup
@@ -101,8 +105,13 @@ pub fn input_properties(m: &DynamicBlock) -> Vec<(String, i32, String)> {
 /// The name a lookup table column shows: an input property's name ("Position1 X"), a lookup
 /// parameter's property name, or the property itself when the parameter is unknown.
 pub fn column_property(m: &DynamicBlock, node: i32, property: &str) -> String {
-    if let Some((n, ..)) = input_properties(m).into_iter().find(|(_, id, prop)| *id == node && prop.eq_ignore_ascii_case(property)) {
-        return n;
+    column_named(m, &input_properties(m), node, property)
+}
+
+/// [`column_property`] with block `m`'s [`input_properties`] already listed.
+fn column_named(m: &DynamicBlock, inputs: &[(String, i32, String)], node: i32, property: &str) -> String {
+    if let Some((n, ..)) = inputs.iter().find(|(_, id, prop)| *id == node && prop.eq_ignore_ascii_case(property)) {
+        return n.clone();
     }
     match m.parameters.iter().find(|p| p.node == node).map(|p| &p.kind) {
         Some(ParameterKind::Lookup { label, .. }) => label.clone(),
@@ -111,12 +120,26 @@ pub fn column_property(m: &DynamicBlock, node: i32, property: &str) -> String {
     }
 }
 
-/// Whether table cells `a` and `b` read the same (numbers compare as numbers, text in any case).
-fn same(a: &str, b: &str) -> bool {
-    match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
-        (Ok(x), Ok(y)) => (x - y).abs() <= 1e-9 * x.abs().max(y.abs()).max(1.0),
-        _ => a.trim().eq_ignore_ascii_case(b.trim()),
+/// A table cell as two cells are compared by: a number by its value to nine significant digits
+/// (`10` and `10.0` are the same), text in any case. Cells with the same key read the same.
+pub fn cell_key(cell: &str) -> String {
+    let cell = cell.trim();
+    match cell.parse::<f64>() {
+        // Adding 0 turns -0 into 0.
+        Ok(v) if v.is_finite() => format!("{:.8e}", v + 0.0),
+        _ => cell.to_lowercase(),
     }
+}
+
+/// Run `change` on `d` all or nothing: when it fails, the drawing's dynamic block data (its foreign
+/// objects, all that lookup tables and element edits change) is put back as it was.
+pub(super) fn all_or_nothing<T>(d: &mut Drawing, change: impl FnOnce(&mut Drawing) -> Result<T, String>) -> Result<T, String> {
+    let kept = std::sync::Arc::clone(&d.foreign);
+    let out = change(d);
+    if out.is_err() {
+        d.foreign = kept;
+    }
+    out
 }
 
 /// Fill lookup action `action` of block `block` (any case) with `columns` and `rows` (each row
@@ -129,17 +152,27 @@ pub fn set_lookup_table(d: &mut Drawing, block: &str, action: i32, columns: &[Ta
 }
 
 /// [`set_lookup_table`]; with `dedupe`, a row whose inputs repeat an earlier row's is left out
-/// instead of refused (a column was taken out from under it).
+/// instead of refused (a column was taken out from under it). All or nothing: a table refused
+/// partway leaves the drawing as it was.
 fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn], rows: &[Vec<String>], dedupe: bool) -> Result<(), String> {
+    all_or_nothing(d, |d| write_table_in(d, block, action, columns, rows, dedupe))
+}
+
+fn write_table_in(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn], rows: &[Vec<String>], dedupe: bool) -> Result<(), String> {
     if columns.len() > MAX_COLUMNS {
         return Err(format!("A lookup table has at most {MAX_COLUMNS} columns."));
     }
     if rows.len() > MAX_LOOKUP_ROWS {
         return Err(format!("A lookup table has at most {MAX_LOOKUP_ROWS} rows."));
     }
+    if rows.len().saturating_mul(columns.len()) > MAX_CELLS {
+        return Err(format!("A lookup table has at most {MAX_CELLS} cells."));
+    }
     let m = dynamic_block(d, block).ok_or("The block has no parameters or actions.")?;
     let a = m.actions.iter().find(|a| a.node == action).ok_or_else(|| format!("No action {action} in the block."))?;
     let ActionKind::Lookup { columns: old, .. } = &a.kind else { return Err(format!("{} is not a lookup action.", a.name)) };
+    // The action's own lookup column is written first of its lookup columns (below), so it is the
+    // first one read back.
     let own = old.iter().find(|c| c.lookup).map(|c| c.node);
     let (action_handle, name) = (a.handle, a.name.clone());
 
@@ -171,7 +204,13 @@ fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn
     {
         return Err(format!("{name} gives {}; its lookup column can't be removed.", column_property(&m, own, "lookupString")));
     }
-    cols.sort_by_key(|(_, c)| c.lookup);
+    // Inputs first, then the action's own lookup column, then the other lookup columns, each in the
+    // caller's order.
+    cols.sort_by_key(|(_, c)| (c.lookup, !(c.lookup && Some(c.node) == own)));
+    let shown: Vec<String> = {
+        let inputs = input_properties(&m);
+        cols.iter().map(|(_, c)| column_named(&m, &inputs, c.node, &c.property)).collect()
+    };
 
     // The cells, in the columns' new order.
     let states = |node: i32| match m.parameters.iter().find(|p| p.node == node).map(|p| &p.kind) {
@@ -187,9 +226,8 @@ fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn
             continue;
         }
         let mut out = Vec::with_capacity(cols.len());
-        for (i, c) in &cols {
+        for ((i, c), shown) in cols.iter().zip(&shown) {
             let cell = row.get(*i).map(|c| c.trim()).unwrap_or_default();
-            let shown = column_property(&m, c.node, &c.property);
             if cell.is_empty() {
                 return Err(format!("Row {}: {shown} needs a value.", r + 1));
             }
@@ -215,10 +253,10 @@ fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn
         table.push(out);
     }
     let inputs = cols.iter().filter(|(_, c)| !c.lookup).count();
-    let same_inputs = |a: &[String], b: &[String]| a.iter().zip(b).take(inputs).all(|(x, y)| same(x, y));
+    let mut seen: HashSet<Vec<String>> = HashSet::new();
     let mut kept: Vec<Vec<String>> = Vec::new();
     for row in table {
-        if inputs > 0 && kept.iter().any(|k| same_inputs(k, &row)) {
+        if inputs > 0 && !seen.insert(row.iter().take(inputs).map(|c| cell_key(c)).collect()) {
             if dedupe {
                 continue;
             }
@@ -229,9 +267,13 @@ fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn
     // A lookup column whose values repeat (or that has none) can't be reversed.
     let mut cols: Vec<TableColumn> = cols.into_iter().map(|(_, c)| c).collect();
     for (j, c) in cols.iter_mut().enumerate() {
-        let values: Vec<&String> = kept.iter().filter_map(|r| r.get(j)).collect();
-        let repeats = values.iter().enumerate().any(|(i, v)| values.iter().take(i).any(|w| w.eq_ignore_ascii_case(v)));
-        c.reverse = c.lookup && c.reverse && !values.is_empty() && !repeats;
+        if !(c.lookup && c.reverse) {
+            c.reverse = false;
+            continue;
+        }
+        let mut values: HashSet<String> = HashSet::new();
+        let repeats = kept.iter().filter_map(|r| r.get(j)).any(|v| !values.insert(cell_key(v)));
+        c.reverse = !values.is_empty() && !repeats;
     }
 
     // The action's object: its table, and the flag AutoCAD changes once the table has inputs.
@@ -315,6 +357,10 @@ fn write_table(d: &mut Drawing, block: &str, action: i32, columns: &[TableColumn
 /// one of them that isn't its own) loses those columns, and rows that then repeat another's
 /// inputs. Returns the lookup actions whose own parameter goes (they go with it).
 pub(super) fn drop_columns(d: &mut Drawing, block: &str, erased: &[i32]) -> Result<Vec<i32>, String> {
+    all_or_nothing(d, |d| drop_columns_in(d, block, erased))
+}
+
+fn drop_columns_in(d: &mut Drawing, block: &str, erased: &[i32]) -> Result<Vec<i32>, String> {
     let Some(m) = dynamic_block(d, block) else { return Ok(Vec::new()) };
     let mut gone = Vec::new();
     for a in &m.actions {
@@ -555,6 +601,67 @@ mod tests {
         erase_elements(&mut d, "B", &[act]).unwrap();
         assert_eq!(group(object(&d, "BLOCKLOOKUPPARAMETER"), "AcDbBlockLookUpParameter", 94), "0");
         add_action(&mut d, "B", &ActionSpec::Lookup { parameter: lk, at: v(0.0, 0.0) }).unwrap();
+    }
+
+    #[test]
+    fn the_actions_own_lookup_column_stays_first_whatever_order_it_is_given_in() {
+        let (mut d, [lin, .., lk, act]) = block();
+        let spec =
+            ParameterSpec::Lookup { at: v(-4.0, 7.0), label: Some("Other".into()), name: None, description: String::new(), show: true, grips: 1 };
+        let other = add_parameter(&mut d, "B", &spec).unwrap();
+        let rows = [row(&["1", "x", "a"]), row(&["2", "y", "b"])];
+        set_lookup_table(&mut d, "B", act, &[col(lin, "UpdatedDistance", false), col(other, "", true), col(lk, "", true)], &rows).unwrap();
+        let (cols, cells) = table(&d, act);
+        assert_eq!(cols.iter().map(|c| c.node).collect::<Vec<_>>(), [lin, lk, other]);
+        assert_eq!(cells, [row(&["1", "a", "x"]), row(&["2", "b", "y"])]);
+        // The other lookup column can go; the action's own can't, whichever comes first.
+        let without = |keep: i32| [col(lin, "UpdatedDistance", false), col(keep, "", true)];
+        assert!(set_lookup_table(&mut d.clone(), "B", act, &without(other), &[]).unwrap_err().contains("can't be removed"));
+        set_lookup_table(&mut d, "B", act, &without(lk), &[]).unwrap();
+    }
+
+    #[test]
+    fn lookup_values_that_read_the_same_number_repeat() {
+        let (mut d, [lin, .., lk, act]) = block();
+        let cols = [col(lin, "UpdatedDistance", false), col(lk, "", true)];
+        set_lookup_table(&mut d, "B", act, &cols, &[row(&["1", "10"]), row(&["2", "10.0"])]).unwrap();
+        assert!(!table(&d, act).0[1].reverse, "10 and 10.0 repeat");
+        assert_eq!(cell_key(" 10 "), cell_key("1e1"));
+        assert_eq!(cell_key("-0"), cell_key("0"));
+        assert_eq!(cell_key("Small"), cell_key("SMALL"));
+        assert_ne!(cell_key("10"), cell_key("10.5"));
+    }
+
+    #[test]
+    fn a_table_at_its_row_limit_is_written_and_too_many_cells_are_refused() {
+        let (mut d, [lin, .., lk, act]) = block();
+        let cols = [col(lin, "UpdatedDistance", false), col(lk, "", true)];
+        let rows: Vec<Vec<String>> = (0..MAX_LOOKUP_ROWS).map(|i| vec![i.to_string(), format!("v{i}")]).collect();
+        set_lookup_table(&mut d, "B", act, &cols, &rows).unwrap();
+        assert_eq!(table(&d, act).1.len(), MAX_LOOKUP_ROWS);
+        assert!(table(&d, act).0[1].reverse, "every lookup value differs");
+        let wide = vec![col(lk, "", true); MAX_CELLS / MAX_LOOKUP_ROWS + 1];
+        let err = set_lookup_table(&mut d.clone(), "B", act, &wide, &vec![Vec::new(); MAX_LOOKUP_ROWS]).unwrap_err();
+        assert!(err.contains("cells"), "{err}");
+    }
+
+    #[test]
+    fn an_erase_refused_partway_leaves_the_tables_as_they_were() {
+        let (mut d, [lin, .., lk, act]) = block();
+        let cols = [col(lin, "UpdatedDistance", false), col(lk, "", true)];
+        set_lookup_table(&mut d, "B", act, &cols, &[row(&["1", "a"])]).unwrap();
+        let before = (*d.foreign).clone();
+        // The distance's column goes first; the unknown id is refused after that.
+        assert!(erase_elements(&mut d, "B", &[lin, 9999]).is_err());
+        assert!(*d.foreign == before, "nothing changed");
+        assert_eq!(table(&d, act).0.len(), 2);
+        // A change that fails is undone whatever it did before failing.
+        let r: Result<(), String> = all_or_nothing(&mut d, |d| {
+            std::sync::Arc::make_mut(&mut d.foreign).objects.clear();
+            Err("refused".into())
+        });
+        assert!(r.is_err());
+        assert!(*d.foreign == before);
     }
 
     #[test]
