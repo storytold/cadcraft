@@ -189,19 +189,25 @@ fn premultiplied(c: Rgb, a: u8) -> [u8; 4] {
 /// Which cells of a 128 × 128 grid over a display list's bounds the lines and points of the
 /// current draw-order group touch (by bounding box), so a later fill can tell whether it overlaps
 /// any of them. One bit per cell: marking or testing a box costs one OR or AND per row it spans.
+///
+/// Wide lines and point markers are drawn a number of screen points across, so how far they reach
+/// past their centreline in world units depends on the zoom, which the mesh outlives. Their
+/// footprint is unknown here: once the group has one, every later fill in it counts as over it.
 struct StrokeGrid {
     min: Vec2,
     /// Cells per world unit along x and y (0 when the bounds have no width or height).
     scale: Vec2,
     rows: [u128; 128],
     empty: bool,
+    /// The group has a stroke drawn wider than its centreline (see [`StrokeGrid::add_wide`]).
+    wide: bool,
 }
 
 impl StrokeGrid {
     fn new(area: &Bounds2) -> StrokeGrid {
         let s = |len: f64| if len.is_finite() && len > 0.0 { 128.0 / len } else { 0.0 };
         let min = if area.is_empty() { Vec2::ZERO } else { area.min };
-        StrokeGrid { min, scale: Vec2::new(s(area.width()), s(area.height())), rows: [0; 128], empty: true }
+        StrokeGrid { min, scale: Vec2::new(s(area.width()), s(area.height())), rows: [0; 128], empty: true, wide: false }
     }
 
     /// The column bits and row range `b` covers, clamped to the grid (a side that isn't finite
@@ -229,7 +235,15 @@ impl StrokeGrid {
         }
     }
 
+    /// A stroke whose screen-sized footprint can reach any later fill at some zoom.
+    fn add_wide(&mut self) {
+        self.wide = true;
+    }
+
     fn hits(&self, b: &Bounds2) -> bool {
+        if self.wide {
+            return !b.is_empty();
+        }
         !self.empty && self.span(b).is_some_and(|(bits, rows)| self.rows.get(rows).is_some_and(|rs| rs.iter().any(|r| r & bits != 0)))
     }
 
@@ -238,6 +252,7 @@ impl StrokeGrid {
             self.rows = [0; 128];
             self.empty = true;
         }
+        self.wide = false;
     }
 }
 
@@ -260,7 +275,10 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
         let pts = list.points(prim);
         if let Some(s) = strokes.as_mut() {
             match prim.kind {
-                Kind::Polyline | Kind::Point => s.add(&Bounds2::from_points(pts.iter().copied())),
+                // Hairlines by their bounds; wide lines and point markers reach past them by a
+                // screen width (see StrokeGrid).
+                Kind::Polyline if wide_width(prim.lw, lwdisplay).is_none() => s.add(&Bounds2::from_points(pts.iter().copied())),
+                Kind::Polyline | Kind::Point => s.add_wide(),
                 Kind::Tris if s.hits(&Bounds2::from_points(pts.iter().copied())) => {
                     m.breaks.push([m.tri_vertices(), m.line_vertices(), m.quad_instances()]);
                     s.clear();
@@ -1098,9 +1116,40 @@ mod tests {
         // A wipeout's group starts empty: a fill after it over a line before it needs no break.
         l.prims = vec![p(Kind::Polyline, 0, 2), p(Kind::Mask, 0, 3), p(Kind::Tris, 0, 3)];
         assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks, vec![[0, 2, 0]]);
+        // A point marker away from the fill still splits: its size is in screen points.
+        l.verts.push(Vec2::new(100.0, 100.0));
+        l.prims = vec![p(Kind::Point, 5, 1), p(Kind::Tris, 0, 3)];
+        assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks, vec![[0, 0, 1]]);
         // Many fills over lines: the breaks stop at the budget.
         l.prims = (0..MAX_FILL_BREAKS + 50).flat_map(|_| [p(Kind::Polyline, 0, 2), p(Kind::Tris, 0, 3)]).collect();
         assert_eq!(build_mesh(&l, Vec2::ZERO, bg, false).breaks.len(), MAX_FILL_BREAKS);
+    }
+
+    #[test]
+    fn fills_beside_wide_lines_keep_draw_order() {
+        // A line along y = 20.5 and a fill just above it, in grid rows of their own. With
+        // lineweights shown the line is 3.78 points wide, which covers the fill at one point per
+        // unit and reaches further when zoomed out.
+        let mut l = DisplayList {
+            verts: vec![Vec2::new(0.0, 20.5), Vec2::new(128.0, 20.5)],
+            tris: vec![Vec2::new(20.0, 21.0), Vec2::new(30.0, 21.0), Vec2::new(25.0, 22.0)],
+            bounds: Bounds2::new(Vec2::ZERO, Vec2::new(128.0, 128.0)),
+            ..Default::default()
+        };
+        let p = |kind, start, len, lw| DPrim { handle: Handle(1), color: Rgb(255, 255, 255), aci7: false, lw, transparency: 0, kind, start, len };
+        let bg = Rgb(0, 0, 0);
+        l.prims = vec![p(Kind::Polyline, 0, 2, 1.0), p(Kind::Tris, 0, 3, 0.0)];
+        let m = build_mesh(&l, Vec2::ZERO, bg, true);
+        assert_eq!(m.quad_instances(), 1, "drawn as a wide line");
+        assert_eq!(m.breaks, vec![[0, 0, 1]], "the fill starts a group over the wide line");
+        // Lineweights off: a hairline, which stays in its own row.
+        assert!(build_mesh(&l, Vec2::ZERO, bg, false).breaks.is_empty());
+        // A thin lineweight is still a hairline.
+        l.prims = vec![p(Kind::Polyline, 0, 2, 0.1), p(Kind::Tris, 0, 3, 0.0)];
+        assert!(build_mesh(&l, Vec2::ZERO, bg, true).breaks.is_empty());
+        // A wipeout starts a group with no wide line in it.
+        l.prims = vec![p(Kind::Polyline, 0, 2, 1.0), p(Kind::Mask, 0, 3, 0.0), p(Kind::Tris, 0, 3, 0.0)];
+        assert_eq!(build_mesh(&l, Vec2::ZERO, bg, true).breaks, vec![[0, 0, 1]]);
     }
 
     #[test]
