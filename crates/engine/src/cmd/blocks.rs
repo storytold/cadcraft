@@ -2,49 +2,60 @@
 //! Block Editor.
 
 pub(crate) mod bedit;
-mod purge;
+pub(in crate::cmd) mod purge;
 
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
-use cadcraft_geom::{Mat3, Vec2, Vec3};
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase, number};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
+
+use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+mod attdef;
 mod attedit;
+mod burst;
+mod description;
 mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
+mod wblock;
+mod xclip;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("block", "Make...", run_block)
             .menu(&["Draw", "Block", "Make..."])
             .alias(&["b", "bmake"])
-            .params("{name, base: [x,y], handles?, keep?: \"convert\"|\"retain\"|\"delete\" (default \"convert\"), description?, annotative?}")
+            .params("{name, base: [x,y], handles?, keep?: \"convert\"|\"retain\"|\"delete\" (default \"convert\"), description? (up to 255 characters, one line), annotative?}")
             .interactive(|_| Ok(Box::new(BlockM::default()))),
         // -BLOCK erases the selected objects once the block is defined.
         CommandSpec::new("-block", "Create Block", run_dash_block)
             .alias(&["-b"])
-            .params("{name, base: [x,y], handles?, keep?: \"delete\"|\"retain\"|\"convert\" (default \"delete\"), description?}")
+            .params("{name, base: [x,y], handles?, keep?: \"delete\"|\"retain\"|\"convert\" (default \"delete\"), description? (up to 255 characters, one line)}")
             .interactive(|_| Ok(Box::new(BlockM { dash: true, ..BlockM::default() }))),
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
+        CommandSpec::new("minsert", "Multiple Insert", run_minsert)
+            .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
+            .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
             .params("{tag, prompt?, default?, at, height?, invisible?}")
-            .interactive(|_| Ok(Box::new(AttdefM::default()))),
+            .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
-        CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
+        wblock::wblock_spec(),
+        wblock::dash_wblock_spec(),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -72,27 +83,39 @@ pub fn specs() -> Vec<CommandSpec> {
         battman::battman_spec(),
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
+        burst::burst_spec(),
+        blockreplace::blockreplace_spec(),
         extract::dataextraction_spec(),
         extract::eattext_spec(),
+        description::description_spec(),
     ]
     .into_iter()
+    .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
     .chain(refedit::specs())
+    .chain(xclip::specs())
     .chain(bedit::specs())
     .collect()
 }
 
-fn valid_block_name(n: &str) -> bool {
+pub(crate) fn valid_block_name(n: &str) -> bool {
     !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
 }
 
-/// The block an entity references, when it is a block reference.
+/// The block an entity draws, if any: a block reference's block, a dimension's block or a
+/// multileader's block content.
 fn referenced_block(e: &Entity) -> Option<String> {
-    if let EntityKind::Insert(i) = &e.kind { Some(i.block.clone()) } else { None }
+    match &e.kind {
+        EntityKind::Insert(i) => Some(i.block.clone()),
+        EntityKind::Dimension(dm) => dm.block.clone(),
+        EntityKind::MLeader(m) => m.block.as_ref().map(|b| b.block.clone()),
+        _ => None,
+    }
 }
 
-/// Whether any of `ents` refers to block `name`, directly or through nested block references.
-fn references_block(d: &cadcraft_doc::Drawing, ents: &[Entity], name: &str) -> bool {
+/// Whether any of `ents` refers to block `name`, directly or through nested block references,
+/// dimension blocks and multileader block content.
+pub(crate) fn references_block(d: &cadcraft_doc::Drawing, ents: &[Entity], name: &str) -> bool {
     let mut todo: Vec<String> = ents.iter().filter_map(referenced_block).collect();
     let mut seen = std::collections::HashSet::new();
     while let Some(b) = todo.pop() {
@@ -108,8 +131,41 @@ fn references_block(d: &cadcraft_doc::Drawing, ents: &[Entity], name: &str) -> b
     false
 }
 
+/// What BLOCK does with the selected objects once the block is defined (the dialog's Convert to
+/// block, Retain and Delete).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Keep {
+    /// Replace the objects by a reference to the new block.
+    Convert,
+    /// Leave the objects in the drawing.
+    Retain,
+    /// Erase the objects.
+    Delete,
+}
+
+impl Keep {
+    /// The `keep` parameter's documented values, in any case; `None` for anything else.
+    pub(crate) fn parse(value: &str) -> Option<Keep> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "convert" => Some(Keep::Convert),
+            "retain" => Some(Keep::Retain),
+            "delete" => Some(Keep::Delete),
+            _ => None,
+        }
+    }
+}
+
+/// The `keep` parameter of `cmd`, `default` when absent. A value that is not documented is an
+/// error (issue #935: a misspelt value used to erase the objects without converting them).
+fn keep_param(cmd: &str, p: &Value, default: Keep) -> Result<Keep> {
+    match str_param(p, "keep") {
+        None => Ok(default),
+        Some(v) => Keep::parse(v).ok_or_else(|| bad(cmd, format!("`keep` must be \"convert\", \"retain\" or \"delete\", not {v:?}"))),
+    }
+}
+
 /// Create a block from entities. Returns the insert handle when converting.
-pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle], keep: &str, description: &str) -> Result<Option<Handle>> {
+pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle], keep: Keep, description: &str) -> Result<Option<Handle>> {
     if !valid_block_name(name) {
         return Err(bad("block", "invalid block name"));
     }
@@ -136,13 +192,20 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
         b.entities.push(e);
     }
     doc.blocks.insert(name.to_string(), Arc::new(b));
-    if keep != "retain" {
-        for h in hs {
-            doc.remove_entity(*h);
+    match keep {
+        Keep::Retain => {}
+        Keep::Convert => {
+            for h in hs {
+                doc.remove_entity(*h);
+            }
+        }
+        // As after ERASE, OOPS brings them back.
+        Keep::Delete => {
+            super::modify::erase_kept(s, hs)?;
         }
     }
     s.set_selection(Vec::new());
-    if keep == "convert" {
+    if keep == Keep::Convert {
         let h = insert(s, name, base, 1.0, 0.0, &serde_json::Map::new())?;
         return Ok(Some(h));
     }
@@ -154,19 +217,20 @@ pub(crate) fn insert(s: &mut Session, name: &str, at: Vec2, scale: f64, rotation
     insert_with(s, name, at, Vec2::new(scale, scale), rotation, None, values)
 }
 
-/// The block reference INSERT places: X/Y scale factors, and an optional base point (in block
+/// The block reference INSERT places: X/Y/Z scale factors, and an optional base point (in block
 /// coordinates) that lands on `at` instead of the block's own base point.
-fn insert_entity(blk: &Block, at: Vec2, scale: Vec2, rotation: f64, base: Option<Vec2>) -> Insert {
+fn insert_entity(blk: &Block, at: Vec2, scale: Vec3, rotation: f64, base: Option<Vec2>) -> Insert {
     let mut ins = Insert {
         block: blk.name.clone(),
         insert: v3(at),
-        scale: Vec3::new(scale.x, scale.y, scale.x),
+        scale,
         rotation,
         attribs: Vec::new(),
         cols: 1,
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     if let Some(b) = base {
         let landed = ins.transform(blk.base.xy()).apply(b);
@@ -175,7 +239,35 @@ fn insert_entity(blk: &Block, at: Vec2, scale: Vec2, rotation: f64, base: Option
     ins
 }
 
-/// [`insert`] with separate X/Y scale factors and an optional base point (see [`insert_entity`]).
+/// MINSERT's rectangular array of a block reference: rows and columns, and the distances between
+/// them along the reference's rotated axes (not scaled with it). One row and one column is a plain
+/// reference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Grid {
+    rows: u32,
+    cols: u32,
+    row_spacing: f64,
+    col_spacing: f64,
+}
+
+impl Grid {
+    const ONE: Grid = Grid { rows: 1, cols: 1, row_spacing: 0.0, col_spacing: 0.0 };
+    /// The most rows or columns MINSERT takes, as AutoCAD 2024 asks for them.
+    const MAX: u32 = 32767;
+
+    /// A distance is kept only along an axis with more than one copy: AutoCAD 2024 asks for no
+    /// other and stores 0 for it (one row of three columns: 44 = 20, 45 = 0).
+    fn new(rows: u32, cols: u32, row_spacing: f64, col_spacing: f64) -> Grid {
+        Grid { rows, cols, row_spacing: if rows > 1 { row_spacing } else { 0.0 }, col_spacing: if cols > 1 { col_spacing } else { 0.0 } }
+    }
+
+    fn apply(self, ins: &mut Insert) {
+        (ins.rows, ins.cols, ins.row_spacing, ins.col_spacing) = (self.rows, self.cols, self.row_spacing, self.col_spacing);
+    }
+}
+
+/// [`insert`] with separate X/Y scale factors (Z as X) and an optional base point (see
+/// [`insert_entity`]).
 pub(crate) fn insert_with(
     s: &mut Session,
     name: &str,
@@ -185,8 +277,25 @@ pub(crate) fn insert_with(
     base: Option<Vec2>,
     values: &serde_json::Map<String, Value>,
 ) -> Result<Handle> {
+    insert_scaled(s, name, at, Vec3::new(scale.x, scale.y, scale.x), rotation, base, values, Grid::ONE)
+}
+
+/// [`insert_with`] with a Z scale factor of its own, and MINSERT's grid. A grid has the one set
+/// of attributes (AutoCAD 2024 asks for their values once).
+#[allow(clippy::too_many_arguments)]
+fn insert_scaled(
+    s: &mut Session,
+    name: &str,
+    at: Vec2,
+    scale: Vec3,
+    rotation: f64,
+    base: Option<Vec2>,
+    values: &serde_json::Map<String, Value>,
+    grid: Grid,
+) -> Result<Handle> {
     let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
     let mut ins = insert_entity(&blk, at, scale, rotation, base);
+    grid.apply(&mut ins);
     let m = ins.transform(blk.base.xy());
     for e in blk.entities.iter() {
         if let EntityKind::AttDef(ad) = &e.kind {
@@ -219,8 +328,10 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("block", "`name` is required"))?.to_string();
     let base = point_param(p, "base").unwrap_or(Vec2::ZERO);
     let hs = targets(s, p)?;
-    let keep = str_param(p, "keep").unwrap_or("convert").to_string();
-    let r = make_block(s, &name, base, &hs, &keep, str_param(p, "description").unwrap_or(""))?;
+    let keep = keep_param("block", p, Keep::Convert)?;
+    let description = str_param(p, "description").unwrap_or("");
+    description::check_text("block", description)?;
+    let r = make_block(s, &name, base, &hs, keep, description)?;
     // An annotative block: its references (the converted selection too) are annotative.
     if bool_or(p, "annotative", false) {
         let d = s.doc_mut()?;
@@ -236,24 +347,52 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
+    insert_json(s, p, "insert", Grid::ONE)
+}
+
+/// MINSERT's JSON form: INSERT's parameters and the grid.
+fn run_minsert(s: &mut Session, p: &Value) -> Result<Value> {
+    let count = |key: &str| -> Result<u32> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(1),
+            Some(v) => v
+                .as_f64()
+                .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= f64::from(Grid::MAX))
+                .map(|n| n as u32)
+                .ok_or_else(|| bad("minsert", format!("`{key}` must be an integer between 1 and {}", Grid::MAX))),
+        }
+    };
+    // A distance given must be a number: `"15"` is refused, not taken as 0.
+    let spacing = |key: &str| -> Result<f64> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("minsert", format!("`{key}` must be a number"))),
+        }
+    };
+    let grid = Grid::new(count("rows")?, count("columns")?, spacing("rowSpacing")?, spacing("columnSpacing")?);
+    insert_json(s, p, "minsert", grid)
+}
+
+/// INSERT's and MINSERT's JSON form.
+fn insert_json(s: &mut Session, p: &Value, cmd: &str, grid: Grid) -> Result<Value> {
     let p = &insert_file::json_params(s, p)?;
-    let name = str_param(p, "name").ok_or_else(|| bad("insert", "`name` is required"))?.to_string();
-    let at = point_req("insert", p, "at")?;
+    let name = str_param(p, "name").ok_or_else(|| bad(cmd, "`name` is required"))?.to_string();
+    let at = point_req(cmd, p, "at")?;
     // `scale`: one factor, or [x, y] for different X and Y scale factors.
     let scale = match p.get("scale") {
-        Some(v) if v.is_array() => point_value(v).ok_or_else(|| bad("insert", "`scale` must be a number or [x, y]"))?,
+        Some(v) if v.is_array() => point_value(v).ok_or_else(|| bad(cmd, "`scale` must be a number or [x, y]"))?,
         _ => {
             let f = f64_or(p, "scale", 1.0);
             Vec2::new(f, f)
         }
     };
     if scale.x == 0.0 || scale.y == 0.0 {
-        return Err(bad("insert", "scale cannot be 0"));
+        return Err(bad(cmd, "scale cannot be 0"));
     }
     let rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
-    let h = insert_with(s, &name, at, scale, rot, point_param(p, "basePoint"), &vals)?;
-    if bool_or(p, "explode", false) {
+    let h = insert_scaled(s, &name, at, Vec3::new(scale.x, scale.y, scale.x), rot, point_param(p, "basePoint"), &vals, grid)?;
+    if cmd == "insert" && bool_or(p, "explode", false) {
         // The EXPLODE command body, not `execute`: INSERT records the one undo step.
         let explode = find_command("explode").ok_or_else(|| EngineError::UnknownCommand("explode".into()))?;
         return (explode.run)(s, &json!({ "handles": [h.hex()] }));
@@ -297,53 +436,6 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
-fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
-    let src = s.doc()?;
-    let mut d = cadcraft_doc::Drawing::new_imperial();
-    d.layers = src.layers.clone();
-    d.linetypes = src.linetypes.clone();
-    d.text_styles = src.text_styles.clone();
-    d.dim_styles = src.dim_styles.clone();
-    d.blocks = src.blocks.clone();
-    // The base point becomes the written drawing's origin, its insertion base: by default 0,0 for
-    // objects and the block's base point for a block (`base` is then in block coordinates).
-    let base = point_param(p, "base");
-    d.header.set("INSBASE", cadcraft_doc::HVal::Point(Vec3::ZERO));
-    let m = Mat3::translate(-base.unwrap_or(Vec2::ZERO));
-    let ents: Vec<Entity> = if let Some(name) = str_param(p, "name") {
-        let b = src.block(name).ok_or_else(|| bad("wblock", format!("no block `{name}`")))?;
-        let m = Mat3::translate(-base.unwrap_or(b.base.xy()));
-        b.entities
-            .iter()
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    } else {
-        targets(s, p)?
-            .iter()
-            .filter_map(|h| src.entity(*h))
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    };
-    for mut e in ents {
-        e.handle = d.new_handle();
-        d.model.push(e);
-    }
-    let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
-    let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
-    #[cfg(not(target_arch = "wasm32"))]
-    std::fs::write(&path, &bytes).map_err(|e| bad("wblock", format!("{path}: {e}")))?;
-    Ok(json!({ "path": path, "entities": d.model.len(), "bytes": bytes.len() }))
-}
-
 fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
     let at = point_req("base", p, "at")?;
     s.doc_mut()?.header.set("INSBASE", cadcraft_doc::HVal::Point(v3(at)));
@@ -352,8 +444,11 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    // One object index for the whole listing: rebuilding it per block multiplies the block count
+    // by the drawing's kept object count (CWE-407).
+    let objects = cadcraft_doc::dynblock::ObjectIndex::new(d);
     let block = |b: &Block| {
-        let dynamic = cadcraft_doc::dynblock::dynamic_block(d, &b.name).is_some();
+        let dynamic = cadcraft_doc::dynblock::is_dynamic_block_in(d, &objects, &b.name);
         json!({"name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y], "description": b.description, "dynamic": dynamic})
     };
     Ok(json!({ "blocks": d.blocks.values().filter(|b| !b.anonymous).map(|b| block(b)).collect::<Vec<_>>() }))
@@ -495,7 +590,7 @@ impl BlockM {
     fn finish(&mut self, s: &mut Session, hs: &[Handle]) -> Result<Step> {
         let (Some(name), Some(base)) = (self.name.clone(), self.base) else { return Ok(Step::Cancel) };
         // A definition that can't be made (e.g. one that would reference itself) ends the command.
-        let keep = if self.dash { "delete" } else { "convert" };
+        let keep = if self.dash { Keep::Delete } else { Keep::Convert };
         if let Err(e) = make_block(s, &name, base, hs, keep, "") {
             s.echo(e.to_string());
             return Ok(Step::Done);
@@ -516,17 +611,32 @@ enum InsStage {
     /// A file whose block already exists: redefine it from the file?
     Redefine,
     Point,
-    /// Basepoint: a new base point, picked on the block shown at its definition position.
+    /// Basepoint: a new base point, picked on the block dropped where it was (at the cursor).
     BasePoint,
     /// Scale preset before the insertion point.
     PresetScale,
+    /// X, Y or Z scale preset (0, 1, 2) before the insertion point: that axis alone.
+    PresetAxis(usize),
     /// Rotate preset before the insertion point.
     PresetRotation,
     XScale,
     Corner,
     YScale,
+    /// XYZ: the Z scale factor, after X and Y.
+    ZScale,
     Rotation,
+    /// MINSERT: the number of rows, then of columns.
+    Rows,
+    Cols,
+    /// MINSERT: the distance between rows, or a unit cell's first corner.
+    RowSpacing,
+    /// MINSERT: the unit cell's opposite corner (its width between columns, its height between
+    /// rows).
+    Cell(Vec2),
+    ColSpacing,
     Attribs,
+    /// A Verify attribute asked again.
+    Verify,
 }
 
 #[derive(Default)]
@@ -537,13 +647,31 @@ struct InsertM {
     base: Option<Vec2>,
     x_scale: Option<f64>,
     scale: Option<Vec2>,
+    /// The Z scale factor when given (a preset or XYZ); otherwise the X factor's size. AutoCAD
+    /// keeps a Z factor typed at XYZ's Z prompt as given, and stores the size of any other.
+    z_scale: Option<f64>,
+    /// X/Y/Z presets given so far.
+    axes: [Option<f64>; 3],
+    /// XYZ at the X scale prompt: X, Y and Z are asked in turn.
+    xyz: bool,
+    /// Where the block was dropped to pick a Basepoint on it.
+    dropped: Option<Vec2>,
     rotation: Option<f64>,
-    attdefs: Vec<(String, String, String)>,
+    /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
+    attdefs: Vec<(String, String, String, bool)>,
     values: serde_json::Map<String, Value>,
+    /// Verify attributes asked again so far.
+    verified: usize,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
     /// The file waiting for the Redefine answer.
     file: Option<insert_file::FileRef>,
+    /// MINSERT: after the rotation, the grid's rows and columns and the distances between them.
+    minsert: bool,
+    rows: Option<u32>,
+    cols: Option<u32>,
+    row_spacing: Option<f64>,
+    col_spacing: Option<f64>,
 }
 
 impl InsertM {
@@ -553,14 +681,27 @@ impl InsertM {
             if self.explode { InsStage::PresetScale } else { InsStage::XScale }
         } else if self.rotation.is_none() {
             InsStage::Rotation
+        } else if let Some(g) = self.grid_stage() {
+            g
         } else {
             InsStage::Attribs
         };
+        if self.stage == InsStage::Attribs && self.values.is_empty() && !self.attdefs.is_empty() {
+            s.echo("Enter attribute values");
+        }
+        // Then the Verify attributes are asked again, with the values typed.
+        if self.stage == InsStage::Attribs && self.values.len() >= self.attdefs.len() && self.verified < self.verifying().len() {
+            if self.verified == 0 {
+                s.echo("Verify attribute values");
+            }
+            self.stage = InsStage::Verify;
+            return Ok(Step::Continue);
+        }
         if self.stage == InsStage::Attribs
             && self.values.len() >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
-            let h = insert_with(s, &n, a, sc, r, self.base, &self.values)?;
+            let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values, self.grid())?;
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
@@ -569,20 +710,50 @@ impl InsertM {
         Ok(Step::Continue)
     }
 
-    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point.
+    /// MINSERT's next grid prompt, if any is left (as AutoCAD 2024 asks them): the rows, the
+    /// columns, then the distance between rows when there is more than one row and between
+    /// columns when there is more than one column. A unit cell gives both distances.
+    fn grid_stage(&self) -> Option<InsStage> {
+        if !self.minsert {
+            return None;
+        }
+        let (Some(rows), Some(cols)) = (self.rows, self.cols) else {
+            return Some(if self.rows.is_none() { InsStage::Rows } else { InsStage::Cols });
+        };
+        if rows > 1 && self.row_spacing.is_none() {
+            Some(InsStage::RowSpacing)
+        } else if cols > 1 && self.col_spacing.is_none() {
+            Some(InsStage::ColSpacing)
+        } else {
+            None
+        }
+    }
+
+    /// The grid answered so far (one copy for INSERT).
+    fn grid(&self) -> Grid {
+        Grid::new(self.rows.unwrap_or(1), self.cols.unwrap_or(1), self.row_spacing.unwrap_or(0.0), self.col_spacing.unwrap_or(0.0))
+    }
+
+    /// The Verify attributes asked for.
+    fn verifying(&self) -> Vec<&(String, String, String, bool)> {
+        self.attdefs.iter().filter(|a| a.3).collect()
+    }
+
+    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point. Constant
+    /// and Preset attributes take their values without asking, and so do all of them with ATTREQ 0.
     fn choose(&mut self, s: &mut Session, name: &str) -> Result<()> {
         let Some(b) = s.doc()?.block(name).cloned() else {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.attdefs = if self.explode {
+        self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {
             b.entities
                 .iter()
                 .filter_map(|e| {
                     if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone()))
+                        (!a.constant && !a.modes.preset).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone(), a.modes.verify))
                     } else {
                         None
                     }
@@ -606,6 +777,23 @@ impl InsertM {
         }
     }
 
+    /// X/Y scale factors with Z: as given, else the X factor's size (AutoCAD 2024: X -1 with Y
+    /// as X stores Z +1).
+    /// X and Y from a corner: XYZ still asks Z, which defaults to the size of X.
+    fn corner_scale(&mut self, s: &mut Session, sc: Vec2) -> Result<Step> {
+        self.scale = Some(sc);
+        if self.xyz {
+            self.x_scale = Some(sc.x);
+            self.stage = InsStage::ZScale;
+            return Ok(Step::Continue);
+        }
+        self.advance(s)
+    }
+
+    fn scale3(&self, sc: Vec2) -> Vec3 {
+        Vec3::new(sc.x, sc.y, self.z_scale.unwrap_or(sc.x.abs()))
+    }
+
     /// Scale factors from an opposite corner: the X and Y distances from the insertion point.
     fn corner(a: Vec2, p: Vec2) -> Result<Vec2> {
         let d = p - a;
@@ -616,13 +804,18 @@ impl InsertM {
     }
 }
 
+/// A distance typed at MINSERT's grid prompts: any finite number, negative or 0 too.
+fn distance(t: &str) -> Result<f64> {
+    number(t).filter(|v| v.is_finite()).ok_or_else(|| EngineError::Other("Requires a distance.".into()))
+}
+
 fn nonzero(t: &str) -> Result<f64> {
     number(t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))
 }
 
 impl Interactive for InsertM {
     fn name(&self) -> &'static str {
-        "INSERT"
+        if self.minsert { "MINSERT" } else { "INSERT" }
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let at = self.at.unwrap_or_default();
@@ -636,19 +829,34 @@ impl Interactive for InsertM {
                 let name = self.file.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                 Prompt::new(format!("Block \"{name}\" already exists. Redefine it?"), super::curves::KW).kw(&["Yes", "No"]).default("N")
             }
-            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "Rotate"]),
+            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "X", "Y", "Z", "Rotate"]),
             InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
             InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
+            InsStage::PresetAxis(i) => Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::NUMBER).default("1"),
             InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
+            InsStage::XScale if self.xyz => Prompt::new("Specify X scale factor", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at),
             InsStage::XScale => {
-                Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at)
+                Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER).kw(&["Corner", "XYZ"]).default("1").base(at)
             }
             InsStage::Corner => Prompt::new("Specify opposite corner", Accept::POINT).base(at),
             InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
+            InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
+            InsStage::Rows => Prompt::new("Enter number of rows (---)", Accept::NUMBER).default("1"),
+            InsStage::Cols => Prompt::new("Enter number of columns (|||)", Accept::NUMBER).default("1"),
+            InsStage::RowSpacing => Prompt::new("Enter distance between rows or specify unit cell (---)", Accept::POINT_OR_NUMBER),
+            InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
+            InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
             InsStage::Attribs => {
-                let (_, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
-                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
+                let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
+                // No default shown when there is none ("Value:", AutoCAD 2024), not "<>".
+                if default.is_empty() { p } else { p.default(default) }
+            }
+            InsStage::Verify => {
+                let (tag, prompt) = self.verifying().get(self.verified).map(|a| (a.0.clone(), a.1.clone())).unwrap_or_default();
+                let typed = self.values.get(&tag).and_then(Value::as_str).unwrap_or_default().to_string();
+                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(typed)
             }
         }
     }
@@ -665,9 +873,9 @@ impl Interactive for InsertM {
                     s.echo(format!("Defined blocks: {}", names.join(", ")));
                     return Ok(Step::Continue);
                 }
-                // `*name`: insert exploded.
-                self.explode = n.starts_with('*');
-                let n = n.strip_prefix('*').map_or(n.as_str(), str::trim).to_string();
+                // `*name`: insert exploded (INSERT only: a grid has no exploded form).
+                self.explode = !self.minsert && n.starts_with('*');
+                let n = if self.explode { n.strip_prefix('*').map_or(n.as_str(), str::trim).to_string() } else { n };
                 match insert_file::file_ref(s, &n) {
                     Some(f) if f.ask_redefine(s) => {
                         self.file = Some(f);
@@ -692,14 +900,25 @@ impl Interactive for InsertM {
                     self.at = Some(p);
                     return self.advance(s);
                 }
-                Input::Keyword(k) if k == "Basepoint" => self.stage = InsStage::BasePoint,
+                Input::Keyword(k) if k == "Basepoint" => {
+                    // AutoCAD drops the block where it is being dragged, at the cursor (the origin
+                    // in a script: 2024 inserted (15, 5) for base point (612350.678, 2398770.432)
+                    // and insertion point (612365.678, 2398775.432)).
+                    self.dropped = Some(s.cursor);
+                    self.stage = InsStage::BasePoint;
+                }
                 Input::Keyword(k) if k == "Scale" => self.stage = InsStage::PresetScale,
+                Input::Keyword(k) if k == "X" => self.stage = InsStage::PresetAxis(0),
+                Input::Keyword(k) if k == "Y" => self.stage = InsStage::PresetAxis(1),
+                Input::Keyword(k) if k == "Z" => self.stage = InsStage::PresetAxis(2),
                 Input::Keyword(k) if k == "Rotate" => self.stage = InsStage::PresetRotation,
                 _ => {}
             },
             InsStage::BasePoint => {
                 if let Input::Point(p) = i {
-                    self.base = Some(p);
+                    // From the dropped block to its own coordinates.
+                    let def = s.doc()?.block(self.name.as_deref().unwrap_or_default()).map_or(Vec2::ZERO, |b| b.base.xy());
+                    self.base = Some(def + (p - self.dropped.unwrap_or(def)));
                     self.stage = InsStage::Point;
                 }
             }
@@ -710,10 +929,28 @@ impl Interactive for InsertM {
                     _ => return Ok(Step::Continue),
                 };
                 self.scale = Some(Vec2::new(f, f));
+                self.z_scale = Some(f.abs());
+                // An axis preset after it changes that axis alone (Scale -3 then X 2: 2/-3/3).
+                self.axes = [Some(f), Some(f), Some(f.abs())];
                 // Exploded insertion asks its one scale factor after the insertion point.
                 if self.at.is_some() {
                     return self.advance(s);
                 }
+                self.stage = InsStage::Point;
+            }
+            // One axis preset: the others are 1, and no scale factors are asked after the point.
+            InsStage::PresetAxis(ax) => {
+                let f = match i {
+                    Input::Text(t) => nonzero(&t)?,
+                    Input::Enter => 1.0,
+                    _ => return Ok(Step::Continue),
+                };
+                if let Some(a) = self.axes.get_mut(ax) {
+                    *a = Some(f);
+                }
+                let [x, y, z] = self.axes.map(|a| a.unwrap_or(1.0));
+                self.scale = Some(Vec2::new(x, y));
+                self.z_scale = Some(z.abs());
                 self.stage = InsStage::Point;
             }
             InsStage::PresetRotation => {
@@ -726,9 +963,10 @@ impl Interactive for InsertM {
             }
             InsStage::XScale => match i {
                 Input::Keyword(k) if k == "Corner" => self.stage = InsStage::Corner,
+                Input::Keyword(k) if k == "XYZ" => self.xyz = true,
                 Input::Point(p) => {
-                    self.scale = Some(Self::corner(self.at.unwrap_or_default(), p)?);
-                    return self.advance(s);
+                    let sc = Self::corner(self.at.unwrap_or_default(), p)?;
+                    return self.corner_scale(s, sc);
                 }
                 Input::Text(t) => {
                     self.x_scale = Some(nonzero(&t)?);
@@ -742,8 +980,8 @@ impl Interactive for InsertM {
             },
             InsStage::Corner => {
                 if let Input::Point(p) = i {
-                    self.scale = Some(Self::corner(self.at.unwrap_or_default(), p)?);
-                    return self.advance(s);
+                    let sc = Self::corner(self.at.unwrap_or_default(), p)?;
+                    return self.corner_scale(s, sc);
                 }
             }
             InsStage::YScale => {
@@ -754,6 +992,18 @@ impl Interactive for InsertM {
                     _ => return Ok(Step::Continue),
                 };
                 self.scale = Some(Vec2::new(x, y));
+                if self.xyz {
+                    self.stage = InsStage::ZScale;
+                    return Ok(Step::Continue);
+                }
+                return self.advance(s);
+            }
+            InsStage::ZScale => {
+                self.z_scale = Some(match i {
+                    Input::Text(t) => nonzero(&t)?,
+                    Input::Enter => self.x_scale.unwrap_or(1.0).abs(),
+                    _ => return Ok(Step::Continue),
+                });
                 return self.advance(s);
             }
             InsStage::Rotation => {
@@ -765,13 +1015,66 @@ impl Interactive for InsertM {
                 });
                 return self.advance(s);
             }
+            InsStage::Rows | InsStage::Cols => {
+                let n = match i {
+                    Input::Text(t) => t
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= f64::from(Grid::MAX))
+                        .map(|v| v as u32)
+                        .ok_or_else(|| EngineError::Other(format!("Requires an integer between 1 and {}.", Grid::MAX)))?,
+                    Input::Enter => 1,
+                    _ => return Ok(Step::Continue),
+                };
+                if self.stage == InsStage::Rows {
+                    self.rows = Some(n);
+                } else {
+                    self.cols = Some(n);
+                }
+                return self.advance(s);
+            }
+            InsStage::RowSpacing => match i {
+                Input::Point(a) => self.stage = InsStage::Cell(a),
+                Input::Text(t) => {
+                    self.row_spacing = Some(distance(&t)?);
+                    return self.advance(s);
+                }
+                _ => {}
+            },
+            InsStage::Cell(a) => {
+                if let Input::Point(b) = i {
+                    (self.col_spacing, self.row_spacing) = (Some(b.x - a.x), Some(b.y - a.y));
+                    return self.advance(s);
+                }
+            }
+            InsStage::ColSpacing => {
+                if let Input::Text(t) = i {
+                    self.col_spacing = Some(distance(&t)?);
+                    return self.advance(s);
+                }
+            }
             InsStage::Attribs => {
-                let (tag, _, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                return self.advance(s);
+            }
+            // Enter keeps the value typed.
+            InsStage::Verify => {
+                let tag = self.verifying().get(self.verified).map(|a| a.0.clone()).unwrap_or_default();
+                match i {
+                    Input::Text(t) => {
+                        self.values.insert(tag, Value::String(t));
+                    }
+                    Input::Enter => {}
+                    // A click or anything else is no answer: the value is asked for again.
+                    _ => return Ok(Step::Continue),
+                }
+                self.verified += 1;
                 return self.advance(s);
             }
         }
@@ -782,7 +1085,7 @@ impl Interactive for InsertM {
         let Some(b) = d.block(n) else { return Vec::new() };
         // Picking a new base point: the block sits at its definition position.
         if self.stage == InsStage::BasePoint {
-            return vec![EntityKind::Insert(insert_entity(b, b.base.xy(), Vec2::new(1.0, 1.0), 0.0, None))];
+            return vec![EntityKind::Insert(insert_entity(b, self.dropped.unwrap_or(b.base.xy()), Vec3::new(1.0, 1.0, 1.0), 0.0, None))];
         }
         let at = self.at.unwrap_or(c);
         let scale = self.scale.unwrap_or_else(|| match (self.stage, self.x_scale) {
@@ -791,55 +1094,12 @@ impl Interactive for InsertM {
             _ => Vec2::new(1.0, 1.0),
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
-        vec![EntityKind::Insert(insert_entity(b, at, scale, rot, self.base))]
-    }
-}
-
-#[derive(Default)]
-struct AttdefM {
-    tag: Option<String>,
-    prompt: Option<String>,
-    default: Option<String>,
-}
-
-impl Interactive for AttdefM {
-    fn name(&self) -> &'static str {
-        "ATTDEF"
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => Prompt::new("Enter attribute tag name", Accept::TEXT),
-            (Some(_), None, _) => Prompt::new("Enter attribute prompt", Accept::TEXT),
-            (Some(_), Some(_), None) => Prompt::new("Enter default attribute value", Accept::TEXT),
-            _ => Prompt::new("Specify start point of text", Accept::POINT),
-        }
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        let text = match &i {
-            Input::Text(t) => Some(t.clone()),
-            Input::Enter => Some(String::new()),
-            _ => None,
-        };
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => {
-                if let Some(t) = text.filter(|t| !t.trim().is_empty() && !t.contains(' ')) {
-                    self.tag = Some(t.to_ascii_uppercase());
-                }
-            }
-            (Some(_), None, _) => self.prompt = text,
-            (Some(_), Some(_), None) => self.default = text,
-            (Some(tag), Some(pr), Some(def)) => {
-                if let Input::Point(p) = i {
-                    let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
-                    s.add_entity(k)?;
-                    return Ok(Step::Done);
-                }
-            }
-        }
-        Ok(Step::Continue)
+        let mut ins = insert_entity(b, at, self.scale3(scale), rot, self.base);
+        self.grid().apply(&mut ins);
+        vec![EntityKind::Insert(ins)]
     }
 }
 
 mod attribs;
 mod battman;
+mod blockreplace;

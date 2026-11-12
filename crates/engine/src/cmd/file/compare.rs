@@ -2,19 +2,22 @@
 //! drawing). Objects are matched by geometry and properties first (preferring the same handle),
 //! then by handle: the same handle with other geometry or properties is a change. What is left
 //! is only in this drawing or only in the other. The comparison stays on the session for the
-//! canvas overlay and next/previous navigation until COMPARECLOSE.
+//! canvas overlay, next/previous navigation and COMPAREEXPORT until COMPARECLOSE.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, MAX_BLOCK_DEPTH, Space, entity_bounds};
+use cadcraft_doc::{BlockBoundsCache, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_DEPTH, Space, entity_bounds_cached};
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{CommandSpec, bad, str_param};
+
 use super::{base64_decode, io};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
+
+mod export;
 
 /// Objects compared per drawing; more are left out (and the result says so).
 pub const MAX_OBJECTS: usize = 200_000;
@@ -36,6 +39,9 @@ pub struct Comparison {
     pub other_name: String,
     /// The other drawing (its objects are drawn where they differ).
     pub other: Arc<Drawing>,
+    /// The other drawing's file, when it has one: COMPAREEXPORT resolves its relative xref
+    /// paths from that file's folder.
+    pub other_path: Option<String>,
     /// Only in this drawing (handles here).
     pub added: Vec<Handle>,
     /// Only in the other drawing (handles there).
@@ -71,6 +77,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("compare.next", "Next Change", |s, _| step(s, 1)).params("→ {region, of}: zoom to the next area with changes").noundo(),
         CommandSpec::new("compare.previous", "Previous Change", |s, _| step(s, -1)).params("→ {region, of}").noundo(),
         CommandSpec::new("compareclose", "Close Comparison", run_close).params("{}: end the comparison and its overlay").noundo(),
+        export::spec(),
     ]
 }
 
@@ -103,7 +110,7 @@ fn other_drawing(s: &Session, p: &Value) -> Result<(Arc<Drawing>, String)> {
 fn read_path(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("compare", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), super::MAX_DRAWING_BYTES).map_err(|e| bad("compare", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("compare", "paths are not available on the web: open the other drawing and compare with it by name (`document`)"))
@@ -133,11 +140,23 @@ struct Signer<'a> {
     d: &'a Drawing,
     blocks: HashMap<String, u64>,
     work: usize,
+    /// When set, a block's signature also covers its base point, units, annotative and overlay
+    /// flags and xref file, with relative xref, image and data link paths taken from the folder
+    /// given, and the
+    /// signatures of a multileader and a dimension cover their blocks'. Each object in a block
+    /// then also counts with its visibility, transparency, thickness and extrusion, and an
+    /// anonymous block's signature leaves out its name (a dimension also leaves its block's name
+    /// out of its own geometry; an INSERT or MLEADER keeps it).
+    frames: Option<Option<&'a std::path::Path>>,
 }
 
 impl<'a> Signer<'a> {
     fn new(d: &'a Drawing) -> Self {
-        Signer { d, blocks: HashMap::new(), work: 0 }
+        Signer { d, blocks: HashMap::new(), work: 0, frames: None }
+    }
+    /// A signer whose block signatures also cover what changes how a reference draws the block.
+    fn with_frames(d: &'a Drawing, folder: Option<&'a std::path::Path>) -> Self {
+        Signer { frames: Some(folder), ..Signer::new(d) }
     }
     fn geometry(&mut self, k: &EntityKind, depth: usize) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -156,6 +175,18 @@ impl<'a> Signer<'a> {
         if let EntityKind::Insert(i) = k {
             self.block(&i.block, depth).hash(&mut h);
         }
+        if self.frames.is_some()
+            && let EntityKind::MLeader(m) = k
+            && let Some(b) = &m.block
+        {
+            self.block(&b.block, depth).hash(&mut h);
+        }
+        if self.frames.is_some()
+            && let EntityKind::Dimension(dm) = k
+            && let Some(b) = &dm.block
+        {
+            self.block(b, depth).hash(&mut h);
+        }
         h.finish()
     }
     fn block(&mut self, name: &str, depth: usize) -> u64 {
@@ -164,17 +195,42 @@ impl<'a> Signer<'a> {
             return *v;
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut h);
+        let block = self.d.block(name);
+        // With frames, an anonymous block (`*D3`, `*U7`) is signed by its contents only: the
+        // same block can have another generated name in another drawing. Only a dimension's
+        // geometry leaves the name out, so this matches renamed `*D` blocks, not `*U` references.
+        if !(self.frames.is_some() && block.is_some_and(|b| b.anonymous)) {
+            key.hash(&mut h);
+        }
         if depth < MAX_BLOCK_DEPTH
-            && let Some(b) = self.d.block(name)
+            && let Some(b) = block
         {
+            if let Some(folder) = self.frames {
+                let mut xref = b.xref_path.clone();
+                if let Some(x) = xref.as_mut() {
+                    export::rebase_path(x, folder);
+                }
+                (format!("{:?}", b.base), b.units, b.annotative, b.xref_overlay, xref).hash(&mut h);
+            }
             for e in b.entities.iter() {
                 if self.work >= MAX_BLOCK_WORK {
                     break;
                 }
                 self.work += 1;
-                self.geometry(&e.kind, depth + 1).hash(&mut h);
+                match self.frames {
+                    // An image's file and a table's data link, from the folder given.
+                    Some(folder) if matches!(e.kind, EntityKind::Image(_) | EntityKind::Table(_)) => {
+                        let mut k = e.kind.clone();
+                        export::rebase(&mut k, folder);
+                        self.geometry(&k, depth + 1).hash(&mut h);
+                    }
+                    _ => self.geometry(&e.kind, depth + 1).hash(&mut h),
+                }
                 properties(e).hash(&mut h);
+                if self.frames.is_some() {
+                    let c = &e.common;
+                    format!("{:?}|{}|{}|{:?}", c.transparency, c.visible, (c.thickness * 1e6).round(), c.extrusion).hash(&mut h);
+                }
             }
         }
         let v = h.finish();
@@ -311,6 +367,7 @@ fn listed(d: &Drawing, hs: &[Handle]) -> Vec<Value> {
 
 fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
     let (other, name) = other_drawing(s, p)?;
+    let other_path = export::source_path(s, p, &other);
     let st = s.state()?;
     let (uid, space, cur) = (st.uid, st.space.clone(), st.doc.clone());
     if Arc::ptr_eq(&cur, &other) {
@@ -318,16 +375,20 @@ fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let Diff { added, removed, changed, common, truncated } = diff(&cur, &other, &space);
     let mut boxes = Vec::new();
-    let mut bound = |d: &Drawing, h: Handle| {
-        if let Some(b) = d.entity(h).map(|e| entity_bounds(d, e, 0)).filter(|b| !b.is_empty() && b.min.is_finite() && b.max.is_finite()) {
+    // One block-bounds cache for each drawing, so a block many differing entities refer to is
+    // measured once, not once per entity.
+    let (mut cur_cache, mut other_cache) = (BlockBoundsCache::default(), BlockBoundsCache::default());
+    fn bound<'a>(boxes: &mut Vec<Bounds2>, d: &'a Drawing, h: Handle, cache: &mut BlockBoundsCache<'a>) {
+        if let Some(b) = d.entity(h).map(|e| entity_bounds_cached(d, e, 0, cache)).filter(|b| !b.is_empty() && b.min.is_finite() && b.max.is_finite())
+        {
             boxes.push(b);
         }
-    };
-    added.iter().for_each(|h| bound(&cur, *h));
-    removed.iter().for_each(|h| bound(&other, *h));
+    }
+    added.iter().for_each(|h| bound(&mut boxes, &cur, *h, &mut cur_cache));
+    removed.iter().for_each(|h| bound(&mut boxes, &other, *h, &mut other_cache));
     for (a, b, _, _) in &changed {
-        bound(&cur, *a);
-        bound(&other, *b);
+        bound(&mut boxes, &cur, *a, &mut cur_cache);
+        bound(&mut boxes, &other, *b, &mut other_cache);
     }
     let regions = regions(&boxes);
     let ch: Vec<Value> = changed
@@ -361,7 +422,7 @@ fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
         "message": message,
     });
     let changed = changed.into_iter().map(|(a, b, _, _)| (a, b)).collect();
-    s.compare = Some(Comparison { uid, space, other_name: name, other, added, removed, changed, common, truncated, regions, at: None });
+    s.compare = Some(Comparison { uid, space, other_name: name, other, other_path, added, removed, changed, common, truncated, regions, at: None });
     s.touch();
     Ok(out)
 }

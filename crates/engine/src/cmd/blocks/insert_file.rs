@@ -6,7 +6,7 @@
 //! (names this drawing already has keep this drawing's definitions). The file is read through the
 //! host's io hooks like OPEN, so the engine stays I/O-agnostic.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cadcraft_doc::{Block, Drawing, Entity, EntityKind, Handle};
@@ -59,7 +59,7 @@ pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
 }
 
 /// The file name without folders and extension (either separator, so Windows paths work anywhere).
-fn stem(path: &str) -> String {
+pub(super) fn stem(path: &str) -> String {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match file.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_string(),
@@ -85,7 +85,8 @@ fn read_drawing(path: &str) -> Result<Drawing> {
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("insert", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("insert", "paths are not available on the web"))
@@ -102,14 +103,14 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
     // Redefining keeps the existing definition's name (block names are case-insensitive).
     let name = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
     merge_tables(&mut d, src);
-    let renames = block_names(&d, src, &name);
+    let renames = crate::cmd::merge::block_renames(&d, src, Some(&name));
     for (from, to) in &renames {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(&mut d, e, &renames);
+            let e = adopt(&mut d, src, e, &renames);
             nb.entities.push(e);
         }
         d.blocks.insert(to.clone(), Arc::new(nb));
@@ -118,7 +119,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
     b.base = src.header.point("INSBASE").filter(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite()).unwrap_or_default();
     let mut ents = Vec::new();
     for e in src.model.iter() {
-        let e = adopt(&mut d, e, &renames);
+        let e = adopt(&mut d, src, e, &renames);
         d.ensure_layer(&e.common.layer);
         ents.push(e);
     }
@@ -136,55 +137,32 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that
 /// exists keeps this drawing's definition).
 fn merge_tables(d: &mut Drawing, src: &Drawing) {
-    fn merge<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
-        for t in theirs {
-            if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
-            }
-        }
-    }
+    use crate::cmd::merge::merge_named as merge;
     merge(&mut d.layers, &src.layers, |l| &l.name);
     merge(&mut d.linetypes, &src.linetypes, |l| &l.name);
     merge(&mut d.text_styles, &src.text_styles, |t| &t.name);
     merge(&mut d.dim_styles, &src.dim_styles, |t| &t.name);
     merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name);
     merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
-}
-
-/// Which source blocks to copy, and under which name: new names keep theirs, generated
-/// (anonymous `*…`) blocks that collide get a fresh generated name, and a named block this drawing
-/// already has (or the block being defined) keeps this drawing's definition (not copied).
-fn block_names(d: &Drawing, src: &Drawing, defining: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let mut taken: BTreeSet<String> = d.blocks.keys().map(|k| k.to_ascii_uppercase()).collect();
-    taken.insert(defining.to_ascii_uppercase());
-    for (name, b) in &src.blocks {
-        let upper = name.to_ascii_uppercase();
-        if upper.starts_with("*MODEL_SPACE") || upper.starts_with("*PAPER_SPACE") {
-            continue;
-        }
-        let to = if !taken.contains(&upper) {
-            name.clone()
-        } else if b.anonymous || name.starts_with('*') {
-            let prefix: String = name.chars().take_while(|c| !c.is_ascii_digit()).collect();
-            match (1..=1_000_000).map(|i| format!("{prefix}{i}")).find(|n| !taken.contains(&n.to_ascii_uppercase())) {
-                Some(n) => n,
-                None => continue,
-            }
-        } else {
-            continue;
-        };
-        taken.insert(to.to_ascii_uppercase());
-        out.insert(name.clone(), to);
-    }
-    out
+    merge(&mut d.mline_styles, &src.mline_styles, |t| &t.name);
 }
 
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
 /// links to other source objects (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn adopt(d: &mut Drawing, src: &Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
     let mut e = e.clone();
+    let old = e.handle;
     e.handle = d.new_handle();
+    // An attribute definition keeps its field: its extension dictionary and the objects in it.
+    if matches!(e.kind, EntityKind::AttDef(_))
+        && let Some(root) = src.foreign.entities.get(&old).and_then(|x| x.xdict)
+    {
+        let tree = src.foreign.tree(root);
+        let fresh: Vec<Handle> = (0..tree.len() + 2).map(|_| d.new_handle()).collect();
+        let foreign = Arc::make_mut(&mut d.foreign);
+        foreign.adopt_tree(&src.foreign, &tree, &fresh, e.handle);
+        foreign.entities.entry(e.handle).or_default().xdict = fresh.first().copied();
+    }
     match &mut e.kind {
         EntityKind::Insert(i) => {
             if let Some(n) = renames.get(&i.block) {
@@ -254,5 +232,18 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    #[test]
+    fn inserted_file_brings_its_mline_styles() {
+        let mut src = Drawing::default();
+        src.mline_styles.push(cadcraft_doc::MLineStyle { name: "WALL".into(), ..Default::default() });
+        let mut d = Drawing::default();
+        merge_tables(&mut d, &src);
+        assert!(d.mline_styles.iter().any(|m| m.name == "WALL"));
+        // A style this drawing already has keeps its own definition.
+        let before = d.mline_styles.len();
+        merge_tables(&mut d, &src);
+        assert_eq!(d.mline_styles.len(), before);
     }
 }

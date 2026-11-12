@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{ArrayParams, AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerState, Parametric, PlotStyleTable};
-use cadcraft_dxf::{Tag, Version};
 use cadcraft_render::Arrowhead;
+use craft_dxf::{Tag, Version};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -118,6 +118,10 @@ pub(crate) const DIM_CODES: &[(&str, i32, K)] = &[
     ("arrowBlock2", 344, K::Block),
     ("fixedExtLength", 49, K::Real),
     ("jogAngle", 50, K::Angle),
+    // DIMTFILL and DIMTFILLCLR (Open Design Specification for .dwg files 5.4.1, DIMSTYLE). In a
+    // DIMSTYLE record 70 also holds the record's flags, which come first.
+    ("textFill", 69, K::Int),
+    ("textFillColor", 70, K::Color),
     ("angularZeroSuppression", 79, K::Int),
     ("arcSymbol", 90, K::Int),
     ("textVerticalPos", 145, K::Real),
@@ -140,15 +144,26 @@ pub(crate) const DIM_CODES: &[(&str, i32, K)] = &[
 
 /// DIMSAH: separate arrow blocks in use.
 pub(crate) const DIMSAH: i32 = 173;
+/// DIMPOST's group in DIMSTYLE records.
+pub(crate) const DIMPOST: i32 = 3;
 
-/// Variables newer than R2000: DIMFXL, DIMJOGANG, DIMARCSYM, DIMFXLON, DIMLTYPE, DIMLTEX1,
-/// DIMLTEX2. Files of [`NEWER_SINCE`] or later get them as DIMSTYLE groups; R2000 files get them
-/// in a style's `CADCRAFT` "DIMVARS" xdata (`1070 <code>` then the value, like DSTYLE) instead of
-/// groups an R2000 reader doesn't expect. The reader takes both.
-pub(crate) const NEWER_CODES: &[i32] = &[49, 50, 90, 290, 345, 346, 347];
-/// The first version with [`NEWER_CODES`] as DIMSTYLE groups: all came with AutoCAD 2006, whose
-/// files are the 2004 format (AC1018).
+/// Variables newer than R2000: DIMFXL, DIMJOGANG, DIMTFILL, DIMTFILLCLR, DIMARCSYM, DIMFXLON,
+/// DIMLTYPE, DIMLTEX1, DIMLTEX2. Files of a variable's [`newer_since`] version or later get it as
+/// a DIMSTYLE group (R2004, and R2007 for DIMTFILL and DIMTFILLCLR); older files get it in a
+/// style's `CADCRAFT` "DIMVARS" xdata (`1070 <code>` then the value, like DSTYLE) instead of a
+/// group an older reader doesn't expect. The reader takes both.
+pub(crate) const NEWER_CODES: &[i32] = &[49, 50, 69, 70, 90, 290, 345, 346, 347];
+/// The first version with [`NEWER_CODES`] as DIMSTYLE groups, except DIMTFILL and DIMTFILLCLR
+/// (see [`newer_since`]): the others came with AutoCAD 2006, whose files are the 2004 format
+/// (AC1018).
 pub(crate) const NEWER_SINCE: Version = Version::R2004;
+
+/// The first version that has `code` (one of [`NEWER_CODES`]) as a DIMSTYLE group: R2007 for
+/// DIMTFILL and DIMTFILLCLR (Open Design Specification for .dwg files 5.4.1), else
+/// [`NEWER_SINCE`].
+pub(crate) fn newer_since(code: i32) -> Version {
+    if matches!(code, 69 | 70) { Version::R2007 } else { NEWER_SINCE }
+}
 /// Xdata list name of [`NEWER_CODES`] values.
 pub(crate) const DIMVARS_LIST: &str = "DIMVARS";
 
@@ -283,7 +298,7 @@ pub(crate) fn arrow_block_name(name: &str) -> Option<(String, Arrowhead)> {
         return None;
     }
     let kind = Arrowhead::parse(n);
-    let norm: String = n.trim_start_matches('_').chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+    let norm: String = n.trim_start_matches('_').chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase();
     if kind == Arrowhead::ClosedFilled && !matches!(norm.as_str(), "closedfilled" | "filled") {
         return None;
     }
@@ -829,15 +844,33 @@ pub(crate) fn apply_anno(d: &mut cadcraft_doc::Drawing, p: AnnoPayload) {
             std::sync::Arc::make_mut(b).annotative = true;
         }
     }
+    // Which layout holds each paper space object, found once: `modify_entity` searches every
+    // layout for a handle model space lacks, which a long list of missing handles made quadratic.
+    let mut in_layout: std::collections::HashMap<Handle, usize> = Default::default();
+    if !p.objects.is_empty() {
+        // First layout wins, as `modify_entity` did.
+        for (i, l) in d.layouts.iter().enumerate() {
+            for h in l.entities.handles() {
+                in_layout.entry(h).or_insert(i);
+            }
+        }
+    }
     for o in p.objects {
         let Some(h) = Handle::parse_hex(&o.handle) else { continue };
+        let store = if d.model.contains(h) {
+            &mut d.model
+        } else if let Some(l) = in_layout.get(&h).and_then(|&i| d.layouts.get_mut(i)) {
+            &mut l.entities
+        } else {
+            continue;
+        };
         let mut scales: Vec<cadcraft_doc::AnnoScale> = Vec::new();
         for s in o.scales.into_iter().filter(|s| s.is_valid() && !s.name.trim().is_empty()) {
             if scales.len() < cadcraft_doc::MAX_SCALES && !scales.iter().any(|x| x.name.eq_ignore_ascii_case(&s.name)) {
                 scales.push(s);
             }
         }
-        let _ = d.modify_entity(h, |e| {
+        store.modify(h, |e| {
             if cadcraft_doc::can_be_annotative(&e.kind) {
                 e.common.anno_scales = scales;
             }
@@ -864,6 +897,23 @@ pub(crate) fn parse_constraints(text: &str) -> Option<(Vec<Constraint>, Parametr
         return None;
     }
     Some((p.constraints, p.parametric))
+}
+
+/// A view centre as a file stores it (VIEWPORT and VPORT group 12, VIEW group 10), as the
+/// drawing point at the middle of the view. The stored centre is in display coordinates: their
+/// origin is the view's `target` (VIEWPORT and VPORT group 17, VIEW group 12) and their axes are
+/// turned by the view's `twist` (radians). Turning back keeps a twisted view on its part of the
+/// drawing however far that is from the origin; a non-finite result keeps the stored centre.
+pub(crate) fn dcs_center_to_model(c: cadcraft_geom::Vec2, twist: f64, target: cadcraft_geom::Vec2) -> cadcraft_geom::Vec2 {
+    let m = c.rotate(-twist) + if target.is_finite() { target } else { cadcraft_geom::Vec2::ZERO };
+    if m.is_finite() { m } else { c }
+}
+
+/// The display-coordinate view centre a file stores for the drawing point `m` at the middle of
+/// a view with `twist`, its target at the origin (the inverse of [`dcs_center_to_model`]).
+pub(crate) fn model_center_to_dcs(m: cadcraft_geom::Vec2, twist: f64) -> cadcraft_geom::Vec2 {
+    let c = m.rotate(twist);
+    if c.is_finite() { c } else { m }
 }
 
 #[cfg(test)]

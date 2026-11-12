@@ -163,7 +163,8 @@ pub struct Ctx<'a> {
 pub const MAX_STACK: usize = 100_000;
 /// Nesting depth of synchronous callbacks (`vl-sort` comparing with a LISP function, …).
 const MAX_SYNC_DEPTH: usize = 32;
-
+/// Steps per slice while driving a synchronous callback ([`Ctx::call_sync`]).
+const SYNC_SLICE: u64 = 400_000;
 enum State {
     Eval(Value),
     Ret(Value),
@@ -199,6 +200,10 @@ impl Machine {
             n += 1;
             if n > budget {
                 return Outcome::Wait(Need::Yield);
+            }
+            // Charge a callback's step as it runs, so callbacks it calls see what it already spent.
+            if ctx.depth > 0 {
+                ctx.s.lisp.callback_used = ctx.s.lisp.callback_used.saturating_add(1);
             }
             let r = match std::mem::replace(&mut self.state, State::Ret(Value::Nil)) {
                 State::Eval(expr) => self.eval(ctx, expr),
@@ -645,12 +650,46 @@ impl Ctx<'_> {
             super::value::charge_result(&v)?;
             return Ok(v);
         }
+        let cap = self.s.lisp.limits.callback_steps;
+        let start = self.s.lisp.callback_used;
+        // This callback may run until `callback_used` reaches `ceiling`: `cap` steps from now, or
+        // sooner where a caller's allowance ends, so callbacks nested in callbacks share one
+        // allowance instead of each taking a fresh one (an exponential tree otherwise).
+        let outer = self.s.lisp.callback_ceiling;
+        let ceiling = start.saturating_add(cap).min(outer.unwrap_or(u64::MAX));
+        self.s.lisp.callback_ceiling = Some(ceiling);
+        let r = self.drive_callback(f, args, ceiling);
+        self.s.lisp.callback_ceiling = outer;
+        r
+    }
+
+    /// Run callback `f` in slices until it finishes or `callback_used` reaches `ceiling`.
+    fn drive_callback(&mut self, f: &Value, args: Vec<Value>, ceiling: u64) -> Result<Value, LispError> {
+        let cap = self.s.lisp.limits.callback_steps;
         let mut m = Machine::calling(f.clone(), args);
         let mut sub = Ctx { s: &mut *self.s, env: &mut *self.env, depth: self.depth + 1 };
-        match m.run(&mut sub, u64::MAX) {
-            Outcome::Done(v) => Ok(v),
-            Outcome::Error(e) => Err(e),
-            Outcome::Wait(_) => Err(LispError::new("this function can't ask for input here")),
+        // Drive the callback in bounded slices instead of granting it `u64::MAX` fuel. A `Yield`
+        // (the step budget ran out) is retried until the ceiling, so a constant-memory infinite
+        // loop inside a comparator or predicate terminates with an error rather than hanging the
+        // thread and bypassing the blocking execution cap (CWE-400). The steps of callbacks this
+        // one calls are counted in `callback_used` too.
+        loop {
+            let remaining = ceiling.saturating_sub(sub.s.lisp.callback_used);
+            if remaining == 0 {
+                return Err(LispError::new(format!("callback stopped after {cap} steps")));
+            }
+            let slice = remaining.min(SYNC_SLICE);
+            let outcome = m.run(&mut sub, slice);
+            match outcome {
+                // The steps were charged as they ran; finishing past the shared allowance is a failure too.
+                Outcome::Done(_) if sub.s.lisp.callback_used > ceiling => {
+                    return Err(LispError::new(format!("callback stopped after {cap} steps")));
+                }
+                Outcome::Done(v) => return Ok(v),
+                Outcome::Error(e) => return Err(e),
+                Outcome::Wait(Need::Yield) => {}
+                Outcome::Wait(_) => return Err(LispError::new("this function can't ask for input here")),
+            }
         }
     }
 }

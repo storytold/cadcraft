@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Bounds2, EPS, PI, TAU, Vec2, angle_in_sweep, arc_segments, ccw_sweep, norm_angle};
+use crate::{Bounds2, EPS, Mat3, PI, TAU, Vec2, angle_in_sweep, arc_segments, ccw_sweep, norm_angle};
 
 /// A straight segment.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -247,6 +247,23 @@ impl Ellipse {
     pub fn sweep(&self) -> f64 {
         ccw_sweep(self.start, self.end)
     }
+    /// The image under the affine transform `m`, exactly: the conjugate semi-diameters
+    /// `A·major`, `A·minor` give the new principal axes; parameters shift with them (and
+    /// reverse under a mirroring transform).
+    pub fn transformed(&self, m: &Mat3) -> Ellipse {
+        let center = m.apply(self.center);
+        let (am, an) = (m.apply_vec(self.major), m.apply_vec(self.minor()));
+        // |am·cos t + an·sin t| is largest at t0: the new major axis.
+        let t0 = 0.5 * (2.0 * am.dot(an)).atan2(am.dot(am) - an.dot(an));
+        let (s0, c0) = t0.sin_cos();
+        let (u, v) = (am * c0 + an * s0, an * c0 - am * s0);
+        let ratio = if u.len() > 0.0 { (v.len() / u.len()).min(1.0) } else { 1.0 };
+        if self.is_full() {
+            return Ellipse::full(center, u, ratio);
+        }
+        let (start, end) = if u.cross(v) >= 0.0 { (self.start - t0, self.end - t0) } else { (t0 - self.end, t0 - self.start) };
+        Ellipse { center, major: u, ratio, start: norm_angle(start), end: norm_angle(end) }
+    }
     pub fn tessellate(&self, tol: f64, out: &mut Vec<Vec2>) {
         let r = self.major.len();
         let sweep = self.sweep();
@@ -437,6 +454,10 @@ pub fn bulge_to_arc(a: Vec2, b: Vec2, bulge: f64) -> Option<(Arc, bool)> {
         return None;
     }
     let theta = 4.0 * bulge.atan(); // signed included angle
+    // A sweep at or below EPS would be read back as a full circle by `ccw_sweep`; it is a straight segment.
+    if theta.abs() <= EPS {
+        return None;
+    }
     let chord = a.dist(b);
     let r = chord / (2.0 * (theta / 2.0).sin().abs());
     let mid = a.mid(b);
@@ -462,6 +483,9 @@ pub struct Polyline {
     pub vertices: Vec<PolyVertex>,
     pub closed: bool,
 }
+
+/// Sampled points one [`Polyline::tessellate`] call produces before arcs become chords.
+pub const MAX_TESSELLATED_POINTS: usize = 4_000_000;
 
 impl Polyline {
     pub fn from_points(pts: &[Vec2], closed: bool) -> Self {
@@ -495,10 +519,24 @@ impl Polyline {
         b
     }
     pub fn tessellate(&self, tol: f64) -> Vec<Vec2> {
+        let mut budget = MAX_TESSELLATED_POINTS;
+        self.tessellate_within(tol, &mut budget)
+    }
+    /// [`Polyline::tessellate`] spending about `budget` sampled points (shared by the caller
+    /// across many polylines). The budget is checked before each segment, so the last segment
+    /// started may overshoot it by that one segment's samples. Once it is spent, the remaining arcs are drawn as chords, so the
+    /// output stays proportional to the input vertices. Each arc can sample thousands of points,
+    /// so a compact polyline could otherwise expand into gigabytes (CWE-400).
+    pub fn tessellate_within(&self, tol: f64, budget: &mut usize) -> Vec<Vec2> {
         let mut out: Vec<Vec2> = Vec::new();
         for s in self.segments() {
             let mut pts = Vec::new();
-            s.tessellate(tol, &mut pts);
+            if *budget > 0 {
+                s.tessellate(tol, &mut pts);
+                *budget = budget.saturating_sub(pts.len());
+            } else {
+                pts.extend([s.start(), s.end()]);
+            }
             let skip = usize::from(out.last().is_some_and(|l| pts.first().is_some_and(|f| l.near(*f, 1e-9))));
             out.extend(pts.into_iter().skip(skip));
         }
@@ -550,6 +588,42 @@ impl Polyline {
     pub fn contains(&self, p: Vec2) -> bool {
         point_in_polygon(&self.tessellate(1e-3), p)
     }
+    /// Area centroid of the closed polyline, exact with bulges: the chord triangles fanned from the
+    /// first vertex plus each bulge's circular segment, weighted by signed area. `None` at zero area.
+    pub fn centroid(&self) -> Option<Vec2> {
+        let origin = self.vertices.first()?.p;
+        let n = self.vertices.len();
+        let (mut area, mut mx, mut my) = (0.0, 0.0, 0.0);
+        let mut add = |a: f64, c: Vec2| {
+            area += a;
+            mx += a * c.x;
+            my += a * c.y;
+        };
+        for i in 0..n {
+            let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else { continue };
+            let (pa, pb) = (a.p - origin, b.p - origin);
+            add(pa.cross(pb) / 2.0, (pa + pb) * (1.0 / 3.0));
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
+                let t = arc.sweep();
+                let seg = arc.radius * arc.radius * (t - t.sin()) / 2.0;
+                if seg > 0.0 {
+                    // A circular segment's centroid lies on the bisector, 4r·sin³(θ/2) / 3(θ − sin θ) from the centre.
+                    let d = 4.0 * arc.radius * (t / 2.0).sin().powi(3) / (3.0 * (t - t.sin()));
+                    let dir = (arc.mid_point() - arc.center).normalized();
+                    add(if ccw { seg } else { -seg }, arc.center - origin + dir * d);
+                }
+            }
+        }
+        let scale = self.vertices.iter().map(|v| (v.p - origin).len()).fold(0.0, f64::max);
+        (area.is_finite() && area.abs() > 1e-12 * scale * scale).then(|| origin + Vec2::new(mx / area, my / area))
+    }
+}
+
+/// Area centroid of a closed polygon. `None` at zero area.
+pub fn polygon_centroid(pts: &[Vec2]) -> Option<Vec2> {
+    Polyline::from_points(pts, true).centroid()
 }
 
 /// Signed polygon area (CCW positive).

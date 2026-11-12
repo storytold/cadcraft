@@ -74,6 +74,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("TRIMEXTENDMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
+    // XCLIP boundaries: 0 hidden, 1 shown and plotted, 2 shown but not plotted.
+    ("XCLIPFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.
@@ -81,7 +83,11 @@ const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));
-const SETTINGS: &[Toggle] = &[("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v)];
+const SETTINGS: &[Toggle] = &[
+    ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
+    ("ATTREQ", |s| s.attreq, |s, v| s.attreq = v),
+    ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v),
+];
 
 fn header_var(name: &str) -> Option<&'static (&'static str, Kind, Def)> {
     HEADER.iter().find(|(n, _, _)| *n == name)

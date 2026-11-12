@@ -8,7 +8,7 @@
 
 use std::f64::consts::FRAC_PI_2;
 
-use crate::spline::{basis, find_span};
+use crate::spline::{MAX_STACK_DEGREE, basis, find_span};
 use crate::{EPS, Ellipse, Spline, TAU, Vec2};
 
 /// Highest degree the editing operations work with.
@@ -88,6 +88,34 @@ fn elevate_bezier(p: &[H]) -> Vec<H> {
         .collect()
 }
 
+/// Basis functions of degree `p` in `n[..=p]` and of degree `p - 1` in `lower[..p]` for `p >= 1`,
+/// in one Cox-de Boor sweep: the degree `p - 1` values are the state just before the last step,
+/// so they match [`basis`] exactly. `left` and `right` are scratch of `p + 1` values; the outputs
+/// stay untouched when a slice is too short.
+#[allow(clippy::too_many_arguments)]
+fn basis_pair_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], lower: &mut [f64], left: &mut [f64], right: &mut [f64]) {
+    if p == 0 || n.len() <= p || lower.len() < p || left.len() <= p || right.len() <= p {
+        return;
+    }
+    n[0] = 1.0;
+    for j in 1..=p {
+        let k = |i: isize| knots.get(i.max(0) as usize).copied().unwrap_or(0.0);
+        left[j] = u - k(span as isize + 1 - j as isize);
+        right[j] = k(span as isize + j as isize) - u;
+        if j == p {
+            lower[..p].copy_from_slice(&n[..p]);
+        }
+        let mut saved = 0.0;
+        for r in 0..j {
+            let den = right[r + 1] + left[j - r];
+            let tmp = if den.abs() > 1e-300 { n[r] / den } else { 0.0 };
+            n[r] = saved + right[r + 1] * tmp;
+            saved = left[j - r] * tmp;
+        }
+        n[j] = saved;
+    }
+}
+
 impl Spline {
     fn weight(&self, i: usize) -> f64 {
         if self.weights.is_empty() { 1.0 } else { self.weights.get(i).copied().unwrap_or(1.0) }
@@ -124,13 +152,37 @@ impl Spline {
         if !self.is_valid() {
             return Vec2::ZERO;
         }
+        self.derivative_unchecked(t)
+    }
+
+    /// First derivative without re-validating the spline. The caller must have confirmed
+    /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
+    /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
+    /// Up to degree [`MAX_STACK_DEGREE`] both bases come from one stack-only sweep; higher degrees
+    /// compute them on the heap.
+    fn derivative_unchecked(&self, t: f64) -> Vec2 {
+        let d = self.velocity(t);
+        if d.is_finite() { d } else { Vec2::ZERO }
+    }
+
+    /// [`Spline::derivative_unchecked`] before a value past f64's range is read as zero.
+    fn velocity(&self, t: f64) -> Vec2 {
         let p = self.degree;
-        let n = self.control.len() - 1;
+        let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
         let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
         let span = find_span(n, p, t, &self.knots);
-        let nb = basis(span, t, p, &self.knots);
-        let nd = basis(span, t, p - 1, &self.knots);
+        let (mut sb, mut sd, mut sl, mut sr) =
+            ([0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1]);
+        let (hb, hd);
+        let (nb, nd): (&[f64], &[f64]) = if (1..=MAX_STACK_DEGREE).contains(&p) {
+            basis_pair_into(span, t, p, &self.knots, &mut sb, &mut sd, &mut sl, &mut sr);
+            (&sb, &sd)
+        } else {
+            hb = basis(span, t, p, &self.knots);
+            hd = basis(span, t, p - 1, &self.knots);
+            (&hb, &hd)
+        };
         let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
         let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
         let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
@@ -151,8 +203,7 @@ impl Spline {
         if w.abs() < 1e-300 {
             return Vec2::ZERO;
         }
-        let d = (da - a / w * dw) / w;
-        if d.is_finite() { d } else { Vec2::ZERO }
+        (da - a / w * dw) / w
     }
 
     /// Unit tangent at `t` in the direction of increasing parameter; a central difference stands
@@ -470,20 +521,18 @@ impl Spline {
         out
     }
 
-    /// Arc length of one integration panel.
-    fn panel_length(&self, a: f64, b: f64) -> f64 {
-        let speed = |t: f64| self.derivative(t).len();
+    /// Arc length of one integration panel, at the speed of `derivative`. The spline is validated
+    /// once by the callers ([`Spline::integrated_length`]/[`Spline::param_at_length`]) before any
+    /// panel is measured, so the derivative is an unchecked one, to avoid re-scanning the knots per
+    /// sample.
+    fn panel_length(&self, a: f64, b: f64, derivative: fn(&Spline, f64) -> Vec2) -> f64 {
+        let speed = |t: f64| derivative(self, t).len();
         adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
-        if !self.is_valid() || !(a.is_finite() && b.is_finite()) {
-            return 0.0;
-        }
-        let (lo, hi) = self.domain();
-        let (a, b) = (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi));
-        let l: f64 = self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y)).sum();
+        let l = self.integrated_length(a, b);
         if l.is_finite() { l } else { 0.0 }
     }
 
@@ -491,6 +540,25 @@ impl Spline {
     pub fn length(&self) -> f64 {
         let (lo, hi) = self.domain();
         self.length_between(lo, hi)
+    }
+
+    /// Arc length of the whole spline, or `None` when it is past f64's range, where
+    /// [`Spline::length`] reads 0. An invalid spline's is 0.
+    pub fn checked_length(&self) -> Option<f64> {
+        let (lo, hi) = self.domain();
+        let l = self.integrated_length(lo, hi);
+        l.is_finite().then_some(l)
+    }
+
+    /// Arc length between `a` and `b`, infinite or NaN when it overflows (the length, or the speed
+    /// along the way); 0 for an invalid spline or a non-finite parameter.
+    fn integrated_length(&self, a: f64, b: f64) -> f64 {
+        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
+            return 0.0;
+        }
+        let (lo, hi) = self.domain();
+        let (a, b) = (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi));
+        self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y, Spline::velocity)).sum()
     }
 
     /// The parameter `len` along the curve from parameter `from` (forward for positive `len`,
@@ -512,7 +580,7 @@ impl Spline {
         }
         let mut acc = 0.0;
         for (x0, x1) in ivs {
-            let l = self.panel_length(x0, x1);
+            let l = self.panel_length(x0, x1, Spline::derivative_unchecked);
             if acc + l >= target && l > 0.0 {
                 // Bisect inside this interval, measuring from its near end.
                 let rest = target - acc;
@@ -520,7 +588,7 @@ impl Spline {
                 let (mut s0, mut s1) = (near, far);
                 for _ in 0..60 {
                     let m = (s0 + s1) / 2.0;
-                    let lm = self.panel_length(near.min(m), near.max(m));
+                    let lm = self.panel_length(near.min(m), near.max(m), Spline::derivative_unchecked);
                     if lm < rest {
                         s0 = m;
                     } else {
@@ -548,7 +616,14 @@ impl Ellipse {
         }
         let n = ((sweep / TAU) * 128.0).ceil().clamp(1.0, 512.0) as usize;
         let h = sweep / n as f64;
-        let l: f64 = (0..n).map(|i| gauss(t0 + h * i as f64, t0 + h * (i + 1) as f64, |t| self.derivative(t).len())).sum();
+        // Each panel halved where it needs it: a flat ellipse turns sharply at its ends.
+        let speed = |t: f64| self.derivative(t).len();
+        let l: f64 = (0..n)
+            .map(|i| {
+                let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+            })
+            .sum();
         if l.is_finite() { l } else { 0.0 }
     }
 
@@ -586,6 +661,132 @@ mod tests {
 
     fn cubic() -> Spline {
         Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 3.0), Vec2::new(6.0, -3.0), Vec2::new(9.0, 0.0), Vec2::new(12.0, 2.0)], 3)
+    }
+
+    /// The previous implementation (two heap-allocated bases), kept as the oracle for the
+    /// allocation-free `derivative_unchecked`.
+    impl Spline {
+        fn derivative_unchecked_old(&self, t: f64) -> Vec2 {
+            let p = self.degree;
+            let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
+            let (lo, hi) = self.domain();
+            let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
+            let span = find_span(n, p, t, &self.knots);
+            let nb = basis(span, t, p, &self.knots);
+            let nd = basis(span, t, p - 1, &self.knots);
+            let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
+            let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
+            let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
+            for j in 0..=p {
+                let Some(i) = (span + j).checked_sub(p) else { continue };
+                let Some(c) = self.control.get(i) else { continue };
+                let wi = self.weight(i);
+                let n0 = nb.get(j).copied().unwrap_or(0.0);
+                // N'_{i,p} = p (N_{i,p-1} / (u_{i+p} - u_i) - N_{i+1,p-1} / (u_{i+p+1} - u_{i+1})).
+                let left = if j >= 1 { ratio(nd.get(j - 1), k(i + p) - k(i)) } else { 0.0 };
+                let right = if j < p { ratio(nd.get(j), k(i + p + 1) - k(i + 1)) } else { 0.0 };
+                let dn = p as f64 * (left - right);
+                a += *c * (n0 * wi);
+                w += n0 * wi;
+                da += *c * (dn * wi);
+                dw += dn * wi;
+            }
+            if w.abs() < 1e-300 {
+                return Vec2::ZERO;
+            }
+            let d = (da - a / w * dw) / w;
+            if d.is_finite() { d } else { Vec2::ZERO }
+        }
+    }
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// A valid random spline of degree `p`: clamped or unclamped knots, repeated interior knots,
+    /// and non-rational, rational or zero/negative weights.
+    fn random_spline(r: &mut XorShift, p: usize) -> Spline {
+        let n = p + 1 + r.below(8);
+        let control = (0..n).map(|_| Vec2::new(r.unit() * 100.0 - 50.0, r.unit() * 100.0 - 50.0)).collect();
+        let total = n + p + 1;
+        let mut knots: Vec<f64> =
+            (0..total).map(|_| (r.unit() * 8.0).floor() * if r.below(3) == 0 { 0.5 } else { 1.0 } + r.unit() * f64::from(r.below(2) == 0)).collect();
+        knots.sort_by(f64::total_cmp);
+        if r.below(2) == 0 {
+            // Clamp both ends.
+            let (lo, hi) = (knots[p], knots[n]);
+            knots[..=p].fill(lo);
+            knots[n..].fill(hi);
+        }
+        let weights = match r.below(4) {
+            0 => Vec::new(),
+            1 => (0..n).map(|_| 0.2 + r.unit() * 4.0).collect(),
+            2 => (0..n).map(|_| if r.below(5) == 0 { 0.0 } else { r.unit() * 2.0 - 0.5 }).collect(),
+            _ => (0..n).map(|_| 1.0 + r.unit() * 1e-9).collect(),
+        };
+        Spline { degree: p, knots, control, weights, ..Spline::default() }
+    }
+
+    fn bits(v: Vec2) -> (u64, u64) {
+        (v.x.to_bits(), v.y.to_bits())
+    }
+
+    #[test]
+    fn derivative_is_bit_identical_to_the_heap_implementation() {
+        let mut r = XorShift(0x9E37_79B9_7F4A_7C15);
+        let mut zero_results = 0usize;
+        for p in 1..=12usize {
+            let mut compared = 0usize;
+            for _ in 0..400 {
+                let s = random_spline(&mut r, p);
+                if !s.is_valid() {
+                    continue;
+                }
+                let (lo, hi) = s.domain();
+                let mut ts = vec![lo, hi, 0.5 * (lo + hi), lo - 1.0, hi + 1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+                ts.extend(s.knots.iter().copied());
+                ts.extend(s.knots.iter().map(|k| k.next_up()));
+                ts.extend(s.knots.iter().map(|k| k.next_down()));
+                ts.extend((0..8).map(|_| lo + (hi - lo) * r.unit()));
+                for t in ts {
+                    let (new, old) = (s.derivative_unchecked(t), s.derivative_unchecked_old(t));
+                    assert_eq!(bits(new), bits(old), "degree {p}, t = {t}, knots {:?}, weights {:?}", s.knots, s.weights);
+                    compared += 1;
+                    zero_results += usize::from(old == Vec2::ZERO);
+                }
+            }
+            assert!(compared > 1000, "degree {p}: only {compared} comparisons ran");
+        }
+        // The zero-vector exits (vanishing weight sum, non-finite result) are exercised too.
+        assert!(zero_results > 0);
+    }
+
+    #[test]
+    fn derivative_dispatch_around_the_stack_limit_does_not_change_results() {
+        // The last stack degree and the first heap degree both match the oracle on a clamped
+        // uniform spline (the heap degree runs the unchanged old path; this checks the dispatch).
+        for p in [MAX_STACK_DEGREE, MAX_STACK_DEGREE + 1] {
+            let ctrl: Vec<Vec2> = (0..p + 4).map(|i| Vec2::new(i as f64, (i * i % 7) as f64)).collect();
+            let s = Spline::from_control(ctrl, p);
+            assert_eq!(s.degree, p);
+            let (lo, hi) = s.domain();
+            for i in 0..=50 {
+                let t = lo + (hi - lo) * f64::from(i) / 50.0;
+                assert_eq!(bits(s.derivative_unchecked(t)), bits(s.derivative_unchecked_old(t)), "degree {p}, t = {t}");
+            }
+        }
     }
 
     #[test]
@@ -720,6 +921,24 @@ mod tests {
     }
 
     #[test]
+    fn checked_length_tells_an_overflow_from_a_zero_length() {
+        let l = Spline::from_line(Vec2::ZERO, Vec2::new(3.0, 4.0), 3);
+        assert_eq!(l.checked_length(), Some(l.length()));
+        let dot = Spline::from_line(Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0), 1);
+        assert_eq!((dot.length(), dot.checked_length()), (0.0, Some(0.0)));
+        // Finite ends 2e308 apart: over a knot span of 4 the speed is in f64's range and the length
+        // past it; over a span of 1 the speed is past it too. `length` reads both as 0.
+        let ends = vec![Vec2::new(-1e308, 0.0), Vec2::new(1e308, 0.0)];
+        for span in [4.0, 1.0] {
+            let huge = Spline { degree: 1, knots: vec![0.0, 0.0, span, span], control: ends.clone(), ..Spline::default() };
+            assert_eq!((huge.length(), huge.checked_length()), (0.0, None), "{span}");
+        }
+        let mut invalid = l.clone();
+        invalid.knots.reverse();
+        assert_eq!(invalid.checked_length(), Some(0.0));
+    }
+
+    #[test]
     fn spline_arc_length_on_a_tight_bend() {
         // One Bezier span that turns sharply: four fixed Gauss panels come out 0.3% short, and
         // the inverse disagrees with the measure (#705). Reference by composite Simpson.
@@ -768,5 +987,8 @@ mod tests {
         assert!((t + FRAC_PI_2).abs() < 1e-9);
         assert!(e.param_at_length(0.0, e.length() * 2.0).is_none());
         assert!(e.param_at_length(f64::NAN, 1.0).is_none());
+        // A 100:1 ellipse, against the arithmetic-geometric mean's 40.010983297227.
+        let flat = Ellipse::full(Vec2::ZERO, Vec2::new(10.0, 0.0), 0.01);
+        assert!((flat.length() - 40.010_983_297_227).abs() < 1e-9, "{}", flat.length());
     }
 }

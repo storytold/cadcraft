@@ -4,6 +4,7 @@ description = "CADCraft desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version = "1.95"
 publish = false
 default-run = "cadcraft"
 
@@ -14,10 +15,18 @@ workspace = true
 cadcraft-engine = { workspace = true }
 cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
+# For the shared per-session control-token helper (control_server.rs authentication).
+cadcraft-mcp = { workspace = true }
+eframe = { workspace = true, features = ["clipboard", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+# Reads eframe's app.ron to tell whether a window state was saved (main.rs `saved_window`).
+# Already in Cargo.lock through eframe; same version so nothing is built twice.
+ron = "0.12"
 
 [build-dependencies]
 winresource = "0.1"
@@ -30,14 +39,27 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Floating panels open in their own OS windows on the desktop; the web build keeps them in the page.
+craft-ui = { workspace = true, features = ["native-windows"] }
+craft-update = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# `title_bar::sync_movable`: AppKit's title-band drag leaves the window still under the row's
+# controls and under floating panels.
+craft-window = { workspace = true }
 muda = { version = "0.21", default-features = false }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }
+# The same winit eframe uses (the storytold fork, patched in the workspace): its opt-in that turns
+# AppKit's terminate (Cmd+Q, Dock Quit) into a close request, so unsaved changes are asked about.
+# `rwh_06`: the window handle a file dialog shown as a sheet attaches to (src/sheet.rs).
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+# Waits for the answer of a file dialog shown as a sheet (src/sheet.rs). MIT OR Apache-2.0, already
+# in Cargo.lock through eframe.
+pollster = "1"
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]

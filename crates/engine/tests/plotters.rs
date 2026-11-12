@@ -6,6 +6,8 @@ use cadcraft_doc::{Drawing, Space};
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::{IoHooks, base64_decode, set_io};
 use cadcraft_engine::cmd::plotters::{PlotterStore, set_plotter_store};
+use cadcraft_engine::snap::tracking::CursorQuery;
+use cadcraft_engine::{Input, geom::Vec2};
 use serde_json::{Value, json};
 
 /// The plot hook echoes the options it gets.
@@ -13,6 +15,7 @@ fn echo_plot(_: &Drawing, _: &Space, opts: &Value) -> Result<Vec<u8>, String> {
     Ok(opts.to_string().into_bytes())
 }
 
+/// A session with in-memory plotters and I/O hooks, holding one line so layouts have content.
 fn session() -> Session {
     set_plotter_store(PlotterStore::memory());
     set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Err("no writer in this test".into()), plot: Some(echo_plot) });
@@ -22,6 +25,7 @@ fn session() -> Session {
     s
 }
 
+/// The device names the PLOTTERMANAGER report lists, in the order it lists them.
 fn names(s: &mut Session) -> Vec<String> {
     let r = s.execute("plottermanager", &json!({})).unwrap();
     r["devices"].as_array().unwrap().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect()
@@ -34,6 +38,8 @@ fn plotted(r: Value) -> Value {
 }
 
 #[test]
+/// PLOTTERMANAGER creates, edits, saves, loads and deletes user devices; built-ins are fixed,
+/// duplicate names and papers with margins larger than the page are refused.
 fn manage_devices() {
     let mut s = session();
     let n = names(&mut s);
@@ -73,6 +79,8 @@ fn manage_devices() {
 }
 
 #[test]
+/// PAGESETUP copies the device's papers and margins into the layout's page, keeps a paper the new
+/// device also has, and falls back to the device default when it does not.
 fn page_setup_takes_a_device_and_its_papers() {
     let mut s = session();
     s.execute("plottermanager", &json!({"action": "new", "name": "Plan Printer", "output": "pdf"})).unwrap();
@@ -110,6 +118,8 @@ fn page_setup_takes_a_device_and_its_papers() {
 }
 
 #[test]
+/// PLOT and EXPORTPDF hand the hook the device's output, resolution, paper and margins, and a
+/// layout plots with its own page setup; unknown devices and papers are refused.
 fn plot_uses_the_device() {
     let mut s = session();
     s.execute("plottermanager", &json!({"action": "new", "name": "Sketch PNG", "output": "png", "resolution": 96})).unwrap();
@@ -136,6 +146,7 @@ fn plot_uses_the_device() {
 }
 
 #[test]
+/// The typed -PLOTTERMANAGER prompt machine creates a device, adds a paper to it and deletes it.
 fn typed_plotter_manager() {
     let mut s = session();
     for line in ["-plottermanager", "New", "Typed Plotter", "Svg"] {
@@ -155,6 +166,8 @@ fn typed_plotter_manager() {
 }
 
 #[test]
+/// Hostile names and values (empty or path-like names, unknown output, huge resolution, negative
+/// or enormous paper sizes, oversized loads) are refused instead of panicking.
 fn hostile_names_and_values_are_refused() {
     let mut s = session();
     let r = s.execute("plottermanager", &json!({"action": "new", "name": "../../etc/passwd"})).unwrap();
@@ -174,6 +187,8 @@ fn hostile_names_and_values_are_refused() {
 }
 
 #[test]
+/// PLOTWINDOW keeps both picked corners for the plot dialog, previews the rubber-band rectangle
+/// after the first pick, and refuses a window with no area (JSON form included).
 fn plotwindow_keeps_the_picked_window_for_the_plot_dialog() {
     let mut s = Session::new();
     // Typed: two corners, with the window's rectangle following the cursor after the first.
@@ -189,4 +204,38 @@ fn plotwindow_keeps_the_picked_window_for_the_plot_dialog() {
     let r = s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 4]})).unwrap();
     assert_eq!(r["window"], json!([[0.0, 0.0], [3.0, 4.0]]));
     assert!(s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 0]})).is_err());
+}
+
+/// Snap `raw` at the current prompt the way the canvas does, so a test sees the pick ORTHO and
+/// object snap would really produce.
+fn hover(s: &mut Session, raw: Vec2) -> Vec2 {
+    let p = s.current_prompt().expect("a prompt");
+    let q = CursorQuery { base: p.base, deferred: p.deferred, corner: p.corner, aperture: 1e-6, tol: 1e-6, now: 0.0, shift: false };
+    s.snap_cursor(raw, &q).point
+}
+
+#[test]
+/// Regression (#1641): with ORTHO on, PLOTWINDOW's opposite corner stays where the cursor is so
+/// the window keeps both extents, while an ordinary point prompt still follows ortho.
+fn plotwindow_picks_both_corners_with_ortho_on() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 0})).unwrap();
+    s.execute("setvar", &json!({"name": "ORTHOMODE", "value": 1})).unwrap();
+    s.cmdline("plotwindow").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify first corner");
+    let a = hover(&mut s, Vec2::new(10.0, 20.0));
+    s.input(Input::Point(a)).unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify opposite corner");
+    let c = hover(&mut s, Vec2::new(40.0, 5.0));
+    assert!(c.near(Vec2::new(40.0, 5.0), 1e-9), "the opposite corner is where the cursor is: {c:?}");
+    s.input(Input::Point(c)).unwrap();
+    assert!(s.running.is_none());
+    let w = s.plot_window.expect("the picked window");
+    assert!(w.width() > 0.0 && w.height() > 0.0, "the window has both extents: {w:?}");
+    assert_eq!((w.min.x, w.min.y, w.max.x, w.max.y), (10.0, 5.0, 40.0, 20.0));
+
+    // An ordinary point prompt still follows ortho: a line's next point stays on its axis.
+    s.cmdline("line 0,0").unwrap();
+    let c = hover(&mut s, Vec2::new(10.0, 4.0));
+    assert!(c.near(Vec2::new(10.0, 0.0), 1e-9), "ortho keeps the line horizontal: {c:?}");
 }
