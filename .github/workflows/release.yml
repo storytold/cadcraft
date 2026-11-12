@@ -83,7 +83,7 @@ jobs:
       dry-run: ${{ github.event_name == 'schedule' }}
       app-name: cadcraft
       app-title: CADCraft
-      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      craft-fonts-ref: c1db6d1a8ed772191241c3d185e2104be84d8691
       version: ${{ inputs.version }}
       contributors-artifact: ${{ needs.credits.outputs.artifact-name }}
     secrets:
