@@ -131,6 +131,18 @@ pub(crate) fn with_extension(path: &str, ext: &str) -> String {
     if has { path.to_string() } else { format!("{path}.{ext}") }
 }
 
+/// Where a save to the picked `path` as `ext` writes: [`with_extension`]. The picker asked before
+/// replacing `path`, not the file with the extension added, so when that is another file that
+/// already exists it is refused (choose it in the picker to replace it) instead of replaced
+/// without asking.
+pub(crate) fn destination(path: &str, ext: &str) -> Result<String, String> {
+    let target = with_extension(path, ext);
+    if target != path && std::path::Path::new(&target).exists() {
+        return Err(format!("{target} already exists: choose it in the file dialog to replace it, or give another name"));
+    }
+    Ok(target)
+}
+
 /// Ask the host where to save and run `saveas` with the dialog's choices, on the drawing that is
 /// active now. `Some(true)` once saved, or once an asynchronous file dialog is shown (the save
 /// happens when it answers, [`CadApp::pick_then`]); `Some(false)` when the picker was cancelled
@@ -148,7 +160,10 @@ pub fn save(app: &mut CadApp) -> Option<bool> {
     let flag = saved.clone();
     let name = st.suggested_name(&title);
     let r = app.pick_then(crate::Pick::Save(name), move |app, path| {
-        let r = app.run("saveas", st.params(&with_extension(&path, st.file_type.ext())));
+        let r = destination(&path, st.file_type.ext()).and_then(|p| app.run("saveas", st.params(&p)));
+        if let Err(e) = &r {
+            app.session.echo(e.clone());
+        }
         flag.set(r.is_ok());
         r
     })?;

@@ -77,6 +77,28 @@ fn choices_settle_and_become_saveas_parameters() {
     assert!(SaveVersion::ALL.iter().all(|v| version_label(*v).starts_with("AutoCAD ")));
 }
 
+/// The picker confirms replacing the file it returns, not the one with the extension added: when
+/// that one already exists, Save As refuses (the dialog stays, the reason is on the command line)
+/// and leaves it untouched; the picked file itself, or a new name, saves.
+#[test]
+fn an_existing_file_the_picker_did_not_confirm_is_not_replaced() {
+    let dir = std::env::temp_dir().join(format!("cadcraft-saveas-dest-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let picked = dir.join("plan.dwg").to_string_lossy().to_string();
+    let other = dir.join("plan.dwg.pdf");
+    std::fs::write(&other, b"keep").unwrap();
+    assert!(destination(&picked, "pdf").is_err_and(|e| e.contains("already exists")));
+    assert_eq!(destination(&picked, "dwg").as_deref(), Ok(picked.as_str()), "the picked file was confirmed");
+    assert_eq!(destination(&picked, "dxf"), Ok(format!("{picked}.dxf")), "a new file");
+    let (mut app, _) = app_with_picker(Some(picked.clone()));
+    app.start("ui.saveas");
+    app.saveas = Some(SaveAsState { file_type: FileType::Pdf, version: SaveVersion::R2018, binary: false });
+    assert_eq!(save(&mut app), Some(false));
+    assert_eq!(std::fs::read(&other).unwrap(), b"keep");
+    assert!(app.session.log.last().is_some_and(|l| l.contains("already exists")), "{:?}", app.session.log.last());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Save… offers the picker a name with the chosen extension and keeps the dialog when it is
 /// cancelled; without a picker the command line says how to save.
 #[test]

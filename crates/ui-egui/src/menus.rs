@@ -461,7 +461,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), |app, p| {
                 // The default format is the format written, whatever extension the picker gave.
-                let p = crate::saveas::with_extension(&p, app.ui.save_format.as_str());
+                let p = crate::saveas::destination(&p, app.ui.save_format.as_str()).inspect_err(|e| app.session.echo(e.clone()))?;
                 app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
             })
             .unwrap_or(Ok(Value::Null))
