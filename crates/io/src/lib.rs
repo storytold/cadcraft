@@ -36,7 +36,7 @@ use cadcraft_geom::Bounds2;
 use std::path::{Path, PathBuf};
 
 pub use cadcraft_doc::Format;
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
@@ -125,10 +125,10 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
             // Before 2007 the text is in the code page the header declares.
             let code_page = dxf_write::code_page(d, version);
             Ok(match (opts.binary, version.utf8()) {
-                (true, true) => cadcraft_dxf::write_binary(&tags, true),
-                (true, false) => cadcraft_dxf::write_binary_in(&tags, &code_page),
-                (false, true) => cadcraft_dxf::write_ascii_as(&tags, true).into_bytes(),
-                (false, false) => cadcraft_dxf::write_ascii_in(&tags, &code_page),
+                (true, true) => craft_dxf::write_binary(&tags, true),
+                (true, false) => craft_dxf::write_binary_in(&tags, &code_page),
+                (false, true) => craft_dxf::write_ascii_as(&tags, true).into_bytes(),
+                (false, false) => craft_dxf::write_ascii_in(&tags, &code_page),
             })
         }
         // The DWG bridge reads our R2000 DXF and writes the DWG at the version asked for. Without
