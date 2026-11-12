@@ -73,7 +73,8 @@ fn arithmetic_follows_autolisp() {
 /// `=` answers for the symbols `type` returns, which is how AutoLISP routines test a type:
 /// `(= (type x) 'INT)`. Coercing the symbol to a number failed the whole routine with "bad
 /// argument type" instead, so a routine written for AutoLISP stopped at its first type test
-/// (#1597). The ordering comparisons are still numbers and strings, as AutoLISP has them.
+/// (#1597). The ordering comparisons are still numbers and strings, plus nil against anything,
+/// as AutoLISP has them.
 #[test]
 fn equality_compares_symbols_as_autolisp_does() {
     let mut s = session();
@@ -101,6 +102,48 @@ fn equality_compares_symbols_as_autolisp_does() {
 
     // Ordering still refuses what AutoLISP refuses.
     assert_eq!(eval(&mut s, "(< 'a 'b)"), Err("bad argument type: numberp: A".into()));
+}
+
+/// The ordering comparisons take nil as below anything else, and equal to itself, so `(> var 0)`
+/// guards a variable that was never set (#2984). Each answer was checked in AutoCAD 2026: nil is
+/// not 0 there, since `(< nil -1e300)` and `(< nil 0)` are T.
+#[test]
+fn ordering_takes_nil_as_below_anything_else() {
+    let mut s = session();
+    for (code, want) in [
+        ("(> nil 0)", "nil"),
+        ("(>= nil 0)", "nil"),
+        ("(< nil 1)", "T"),
+        ("(<= nil 0)", "T"),
+        ("(< nil 0)", "T"),
+        ("(< nil 0.0)", "T"),
+        ("(> nil -1)", "nil"),
+        ("(< nil -1e300)", "T"),
+        ("(< 0 nil)", "nil"),
+        ("(> 0 nil)", "T"),
+        ("(>= 0 nil)", "T"),
+        ("(< nil \"a\")", "T"),
+        ("(> \"a\" nil)", "T"),
+        ("(< nil \"\")", "T"),
+        ("(>= nil \"\")", "nil"),
+        ("(< nil 'a)", "T"),
+        ("(>= nil 'a)", "nil"),
+        ("(> 'a nil)", "T"),
+        ("(< nil T)", "T"),
+        ("(> T nil)", "T"),
+        ("(< nil '(1))", "T"),
+        ("(> '(1) nil)", "T"),
+        ("(< nil nil)", "nil"),
+        ("(> nil nil)", "nil"),
+        ("(<= nil nil)", "T"),
+        ("(>= nil nil)", "T"),
+        ("(< 1 2 nil)", "nil"),
+        ("(> 3 nil 1)", "nil"),
+    ] {
+        assert_eq!(ok(&mut s, code), want, "{code}");
+    }
+    // A pair without nil is still refused: `'a` against `1` here, as in AutoCAD 2026.
+    assert_eq!(eval(&mut s, "(< nil 'a 1)"), Err("bad argument type: numberp: A".into()));
 }
 
 #[test]
