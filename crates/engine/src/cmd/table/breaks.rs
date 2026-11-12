@@ -12,7 +12,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Largest linked file read (bytes).
 #[cfg(not(target_arch = "wasm32"))]
-const MAX_LINK_BYTES: u64 = 8 << 20;
+const MAX_LINK_BYTES: usize = 8 << 20;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -112,7 +112,7 @@ impl Interactive for BreakM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.table {
             None => Prompt::new("Select a table", Accept::SELECT),
-            Some(_) => Prompt::new("Enter maximum part height or", Accept::POINT_OR_NUMBER).kw(&["Off"]),
+            Some(_) => Prompt::new("Enter maximum part height", Accept::POINT_OR_NUMBER).kw(&["Off"]),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
@@ -238,11 +238,9 @@ fn read_link(id: &str, file: &std::path::Path) -> Result<String> {
     let path = file.display();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let meta = std::fs::metadata(file).map_err(|e| bad(id, format!("{path}: {e}")))?;
-        if meta.len() > MAX_LINK_BYTES {
-            return Err(bad(id, format!("{path}: larger than {} MB", MAX_LINK_BYTES >> 20)));
-        }
-        let bytes = std::fs::read(file).map_err(|e| bad(id, format!("{path}: {e}")))?;
+        // The limit is enforced on the bytes read, not on reported metadata, so a device or FIFO
+        // that misreports its length can't be buffered to EOF.
+        let bytes = crate::capped_read::read_capped(file, MAX_LINK_BYTES).map_err(|e| bad(id, format!("{path}: {e}")))?;
         let text = String::from_utf8_lossy(&bytes);
         Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
     }
@@ -369,6 +367,16 @@ fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A linked path naming an endless device is refused instead of buffered to EOF.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn link_to_endless_device_is_rejected() {
+        let dev = std::path::Path::new("/dev/zero");
+        if dev.exists() {
+            assert!(read_link("datalink", dev).is_err());
+        }
+    }
 
     #[test]
     fn csv_parsing() {
