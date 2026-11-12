@@ -1526,6 +1526,54 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
 }
 
+/// Issue #3017: a file cut inside a group code / value pair ends with a code (here `21`) that no
+/// value follows. The pairs before the cut are complete, so the drawing opens with them and a
+/// read note says the file was truncated, instead of being refused with "unexpected end of file";
+/// the record the cut fell in keeps the pairs that had arrived, its missing value defaulting. A
+/// dangling code with a line break after it is the same cut (no line follows a final terminator,
+/// LF, CRLF or CR alike), and a file cut before its ENDSEC/EOF still opens the same way (#865):
+/// the note is what tells a partial read from a complete one.
+#[test]
+fn dxf_cut_inside_a_group_code_pair_opens_the_pairs_before_it() {
+    let lines = |n: usize| {
+        let mut text = String::from("0\nSECTION\n2\nENTITIES\n");
+        for i in 0..n {
+            text += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");
+        }
+        text + "0\nENDSEC\n0\nEOF\n"
+    };
+    // A file cut inside the 24th LINE's `21` group code: no value follows it, and the ENDSEC and
+    // EOF of the whole file are past the cut, as an interrupted save leaves them.
+    let mut cut = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..23 {
+        cut += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");
+    }
+    cut += "0\nLINE\n8\n0\n10\n23\n20\n0\n11\n23\n21";
+    let crlf = cut.replace('\n', "\r\n");
+    for cut in [cut.as_str(), &format!("{cut}\n"), &crlf, &format!("{crlf}\r\n")] {
+        let d = read_dxf(cut.as_bytes()).unwrap();
+        assert_eq!(d.entity_count(), 24, "{cut:?}");
+        assert_eq!(d.read_notes.len(), 1, "{:?}", d.read_notes);
+        let note = &d.read_notes[0];
+        assert!(note.starts_with("DXF: the file was cut"), "{note}");
+        // The cut LINE keeps the pairs that had arrived; its missing last value defaults.
+        match &d.model.last().map(|e| &e.kind) {
+            Some(EntityKind::Line(l)) => assert_eq!((l.b.x, l.b.y), (23.0, 0.0), "{cut:?}"),
+            other => panic!("the cut record is a LINE, not {other:?}"),
+        }
+    }
+
+    // The control from the issue: the same drawing whole reads without a note.
+    let whole = read_dxf(lines(24).as_bytes()).unwrap();
+    assert_eq!(whole.entity_count(), 24);
+    assert!(whole.read_notes.is_empty(), "{:?}", whole.read_notes);
+
+    // A cut inside a binary DXF's value can't be told from a complete pair, so it stays refused.
+    let binary = crate::write_with(&whole, "x.dxf", &crate::SaveOptions { binary: true, ..Default::default() }).unwrap();
+    let at = (40..binary.len() - 1).find(|&at| craft_dxf::parse(&binary[..at]).is_err()).expect("some cut of the binary DXF fails to parse");
+    assert!(read_dxf(&binary[..at]).is_err(), "a binary cut at {at} must not open");
+}
+
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
 /// rest opens, and the drawing's read notes say how many records were left out and of which
 /// types, so a partial read never passes for a complete one. A complete read has no notes.

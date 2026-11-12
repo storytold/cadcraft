@@ -108,12 +108,18 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let hooks = file::io().ok_or_else(|| bad("recover", "file formats are not available in this build"))?;
     let d = (hooks.read)(&bytes, &name).map_err(|e| bad("recover", format!("{name} can't be read: {e}")))?;
+    // What reading the file left out (a truncated DXF, DWG records that wouldn't decode) is told
+    // here as OPEN tells it, or a partial read would pass for a complete one (#3017).
+    let notes = d.read_notes.clone();
     let title = match str_param(p, "title") {
         Some(t) => t.to_string(),
         None => std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.clone()),
     };
     let copy = bool_or(p, "copy", false);
     let i = s.open_drawing(d, &title, if copy { None } else { path });
+    for note in &notes {
+        s.echo(note.clone());
+    }
     let st = s.state_mut()?;
     let report = crate::audit::fix(Arc::make_mut(&mut st.doc));
     if report.issues.is_empty() {
@@ -131,6 +137,7 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = report.to_json();
     r["index"] = json!(i);
     r["uid"] = json!(uid);
+    r["warnings"] = json!(notes);
     Ok(r)
 }
 
