@@ -99,7 +99,7 @@ fn utf8_wins_when_valid() {
 /// A code page CADCraft doesn't know (or none) reads as ANSI_1252, as before.
 #[test]
 fn unknown_code_page_falls_back_to_ansi_1252() {
-    for cp in ["ANSI_1361", "EBCDIC", "", "\u{1}"] {
+    for cp in ["ANSI_9999", "EBCDIC", "", "\u{1}"] {
         let d = cadcraft_io::read_dxf(&ascii_dxf("AC1015", cp, b"Caf\xE9", b"B", b"\x80 \xD8")).unwrap();
         assert_eq!(names(&d), ("Café".into(), "B".into(), "€ Ø".into()), "{cp:?}");
     }
@@ -209,7 +209,7 @@ fn binary_dxf_honours_the_code_page() {
     // a pre-R2007 binary file has no way to escape to UTF-8, so its strings are never read as it.
     assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "СІ");
     assert_eq!(read(&bin("AC1021", "ANSI_1251", "Привет".as_bytes())), "Привет");
-    assert_eq!(read(&bin("AC1015", "ANSI_1361", b"Caf\xE9")), "Café");
+    assert_eq!(read(&bin("AC1015", "ANSI_9999", b"Caf\xE9")), "Café");
 }
 
 /// Truncated and invalid multibyte sequences become U+FFFD; nothing panics and the structure of
