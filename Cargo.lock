@@ -696,27 +696,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "cadcraft-dxf"
-version = "0.20.1"
-dependencies = [
- "encoding_rs",
- "log",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "cadcraft-engine"
 version = "0.20.1"
 dependencies = [
  "cadcraft-color",
  "cadcraft-constraints",
  "cadcraft-doc",
- "cadcraft-dxf",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-render",
  "craft-docpath",
+ "craft-dxf",
  "libc",
  "log",
  "rstar",
@@ -729,8 +720,8 @@ dependencies = [
 name = "cadcraft-fonts"
 version = "0.20.1"
 dependencies = [
- "cadcraft-dxf",
  "cadcraft-geom",
+ "craft-dxf",
  "encoding_rs",
  "harfrust 0.14.0",
  "icu_segmenter",
@@ -753,10 +744,10 @@ dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-dwg",
- "cadcraft-dxf",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-render",
+ "craft-dxf",
  "craft-pdf",
  "image",
  "miniz_oxide 0.9.1",
@@ -1151,6 +1142,16 @@ dependencies = [
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
+
+[[package]]
+name = "craft-dxf"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=006e4df225fca57e95ead0fb1f91920900798a99#006e4df225fca57e95ead0fb1f91920900798a99"
+dependencies = [
+ "encoding_rs",
+ "log",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "craft-fonts-build"

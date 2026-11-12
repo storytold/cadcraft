@@ -6,8 +6,8 @@
 //! kept as unknown objects.
 
 use cadcraft_doc::{EntityKind, HatchLoop, LwPolyline, MAX_REGION_LOOPS, Region};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::{PolyVertex, Vec2};
+use craft_dxf::Tag;
 
 use crate::dxf_ext::{APP, xdata, xdata_list};
 
