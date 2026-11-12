@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0 };
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();

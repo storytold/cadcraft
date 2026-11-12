@@ -1,4 +1,4 @@
-use super::{Bounds2, CadApp, Shape, Stroke, Tokens, Vec2, Xf, pos2};
+use super::{Bounds2, CadApp, Shape, Stroke, Tokens, Vec2, Xf};
 
 /// Grid spacing adapted to the zoom: multiply the unit until lines are at least `min_px` apart.
 fn adaptive(unit: f64, scale: f64, min_px: f64) -> f64 {
@@ -36,21 +36,20 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let major = minor * major_n;
         let mut lines = Vec::new();
         if let Some(((x0, x1), (y0, y1))) = grid_index_ranges(&wb, minor) {
+            // World-aligned lines across the visible box (the painter clips them to the rect).
             for i in x0..=x1 {
                 let x = i as f64 * minor;
                 let is_major = (x / major).round() * major - x == 0.0 || ((x / major) - (x / major).round()).abs() < 1e-6;
-                let sx = xf.to_screen(Vec2::new(x, 0.0)).x;
                 lines.push(Shape::line_segment(
-                    [pos2(sx, xf.rect.top()), pos2(sx, xf.rect.bottom())],
+                    [xf.to_screen(Vec2::new(x, wb.min.y)), xf.to_screen(Vec2::new(x, wb.max.y))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
             for j in y0..=y1 {
                 let y = j as f64 * minor;
                 let is_major = ((y / major) - (y / major).round()).abs() < 1e-6;
-                let sy = xf.to_screen(Vec2::new(0.0, y)).y;
                 lines.push(Shape::line_segment(
-                    [pos2(xf.rect.left(), sy), pos2(xf.rect.right(), sy)],
+                    [xf.to_screen(Vec2::new(wb.min.x, y)), xf.to_screen(Vec2::new(wb.max.x, y))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
@@ -58,12 +57,11 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         p.extend(lines);
     }
     // Axes through the origin.
-    let o = xf.to_screen(Vec2::ZERO);
-    if xf.rect.y_range().contains(o.y) {
-        p.line_segment([pos2(xf.rect.left(), o.y), pos2(xf.rect.right(), o.y)], Stroke::new(1.0, t.axis_x));
+    if (wb.min.y..=wb.max.y).contains(&0.0) {
+        p.line_segment([xf.to_screen(Vec2::new(wb.min.x, 0.0)), xf.to_screen(Vec2::new(wb.max.x, 0.0))], Stroke::new(1.0, t.axis_x));
     }
-    if xf.rect.x_range().contains(o.x) {
-        p.line_segment([pos2(o.x, xf.rect.top()), pos2(o.x, xf.rect.bottom())], Stroke::new(1.0, t.axis_y));
+    if (wb.min.x..=wb.max.x).contains(&0.0) {
+        p.line_segment([xf.to_screen(Vec2::new(0.0, wb.min.y)), xf.to_screen(Vec2::new(0.0, wb.max.y))], Stroke::new(1.0, t.axis_y));
     }
 }
 

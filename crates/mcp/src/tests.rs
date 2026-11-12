@@ -259,3 +259,135 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
 }
+
+/// The pixels of a `render` tool result.
+fn render_pixels(s: &mut Server, args: Value) -> tiny_skia::Pixmap {
+    let img = tool(s, "render", args);
+    assert_eq!(img["type"], "image", "{img}");
+    let png = cadcraft_engine::cmd::file::base64_decode(img["data"].as_str().unwrap()).unwrap();
+    tiny_skia::Pixmap::decode_png(&png).unwrap()
+}
+
+/// The RGB of pixel (x, y).
+fn rgb(pm: &tiny_skia::Pixmap, x: u32, y: u32) -> (u8, u8, u8) {
+    let c = pm.pixel(x, y).unwrap();
+    (c.red(), c.green(), c.blue())
+}
+
+/// The pixel of the middle column that differs most from the corner: what the line along the
+/// middle of the image is drawn with.
+fn ink(pm: &tiny_skia::Pixmap) -> (u8, u8, u8) {
+    let bg = rgb(pm, 0, 0);
+    let far = |c: &(u8, u8, u8)| bg.0.abs_diff(c.0) as u32 + bg.1.abs_diff(c.1) as u32 + bg.2.abs_diff(c.2) as u32;
+    (0..pm.height()).map(|y| rgb(pm, pm.width() / 2, y)).max_by_key(far).unwrap()
+}
+
+/// A drawing with one line along y = 0: colour 7 (layer 0's colour), or red on a red layer.
+fn line_drawing(red: bool) -> Server {
+    let mut s = Server::new(Box::new(Headless::default()));
+    if red {
+        tool(&mut s, "execute", json!({"command": "layer.new", "params": {"name": "Red", "color": "red", "current": true}}));
+    }
+    tool(&mut s, "execute", json!({"command": "line", "params": {"points": [[0, 0], [10, 0]]}}));
+    s
+}
+
+/// Around the line, which runs along the middle of pixel row 20 of a 120 x 40 image (not on a
+/// pixel edge, so it isn't blended across two rows).
+const WINDOW: [[f64; 2]; 2] = [[-1.0, -1.95], [11.0, 2.05]];
+
+/// Guards #803: `render` draws on the background asked for (`white`, `paper`, `#rrggbb`) and a
+/// colour-7 line follows it, as on a plot: dark on white, light on the dark canvas, which stays
+/// the default.
+#[test]
+fn render_draws_on_the_background_asked_for() {
+    let mut s = line_drawing(false);
+    let dark = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40}));
+    assert_eq!(rgb(&dark, 0, 0), (33, 40, 48), "the default stays the dark canvas");
+    let (r, g, b) = ink(&dark);
+    assert!(r > 200 && g > 200 && b > 200, "colour 7 is light on the dark canvas: {:?}", (r, g, b));
+    for bg in ["white", "paper", "WHITE"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": bg}));
+        let (w, h) = (pm.width(), pm.height());
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            assert_eq!(rgb(&pm, x, y), (255, 255, 255), "{bg}: corner ({x}, {y})");
+        }
+        let (r, g, b) = ink(&pm);
+        assert!(r < 128 && g < 128 && b < 128, "{bg}: colour 7 is drawn dark on white: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "#336699"}));
+    assert_eq!(rgb(&pm, 0, 0), (0x33, 0x66, 0x99));
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "dark"}));
+    assert_eq!(rgb(&pm, 0, 0), (33, 40, 48));
+}
+
+/// Guards #803: `plot_style` draws with a built-in plot style table: `monochrome.ctb` turns a red
+/// line black, which without one stays red.
+#[test]
+fn render_draws_with_the_plot_style_asked_for() {
+    let mut s = line_drawing(true);
+    let plain = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white"}));
+    let (r, g, b) = ink(&plain);
+    assert!(r > 200 && g < 100 && b < 100, "red without a plot style: {:?}", (r, g, b));
+    for table in ["monochrome.ctb", "Monochrome", "monochrome.CTB"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": table}));
+        let (r, g, b) = ink(&pm);
+        assert!(r < 100 && r == g && g == b, "{table}: red plots black: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": "grayscale.ctb"}));
+    let (r, g, b) = ink(&pm);
+    assert!(r == g && g == b, "grayscale.ctb draws red grey: {:?}", (r, g, b));
+}
+
+/// Guards #803: a plot style alone plots on white, as on paper, so `monochrome.ctb` doesn't draw
+/// black on the dark canvas; `background` still wins, and `plot_style: "none"` keeps the canvas
+/// and the objects' colours.
+#[test]
+fn render_with_a_plot_style_plots_on_white() {
+    for red in [false, true] {
+        let mut s = line_drawing(red);
+        for table in ["monochrome.ctb", "grayscale.ctb"] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": table}));
+            assert_eq!(rgb(&pm, 0, 0), (255, 255, 255), "{table} without a background plots on white");
+            let (r, g, b) = ink(&pm);
+            assert!(r == g && g == b && r < 128, "{table}, red {red}: drawn dark grey or black on white: {:?}", (r, g, b));
+        }
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": "monochrome.ctb", "background": "dark"}));
+        assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "an explicit background wins");
+        for none in ["none", ""] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": none}));
+            assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "{none:?} keeps the dark canvas");
+            let (r, g, b) = ink(&pm);
+            let light = r > 200 && g > 200 && b > 200;
+            assert!(if red { r > 200 && g < 100 && b < 100 } else { light }, "{none:?}, red {red}: own colour {:?}", (r, g, b));
+        }
+    }
+}
+
+/// Guards #803: an unknown `background` or `plot_style` is refused with what is accepted, not
+/// drawn some other way; a value of the wrong type is invalid params.
+#[test]
+fn render_refuses_unknown_backgrounds_and_plot_styles() {
+    let mut s = line_drawing(false);
+    for (args, wants) in [
+        (json!({"background": "purple"}), "#rrggbb"),
+        (json!({"background": "#12345"}), "#rrggbb"),
+        (json!({"background": "336699"}), "#rrggbb"),
+        (json!({"background": ""}), "#rrggbb"),
+        (json!({"plot_style": "nope.ctb"}), "monochrome.ctb"),
+        (json!({"plot_style": "default.ctx"}), "monochrome.ctb"),
+    ] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["result"]["isError"], json!(true), "{args} must be refused, not drawn");
+        let msg = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(msg.contains(wants), "{args}: {msg}");
+    }
+    for args in [json!({"background": 7}), json!({"plot_style": ["monochrome.ctb"]})] {
+        let r = call(&mut s, 2, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["error"]["code"], -32602, "{args} must be invalid params");
+    }
+    // The headless control method refuses them too.
+    let mut h = Headless::default();
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"background": "purple"})).is_err());
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"plot_style": 3})).is_err());
+}

@@ -226,6 +226,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         }
         EntityKind::Solid(s) | EntityKind::Trace(s) => set_xy(s.corners.get_mut(index)?, to),
         EntityKind::Face3d(f) => set_xy(f.corners.get_mut(index)?, to),
+        EntityKind::PolyfaceMesh(m) => set_xy(m.vertices.get_mut(index)?, to),
         EntityKind::Region(_) => return Some(translated(kind, delta)),
         EntityKind::Viewport(v) => {
             let opposite = *grips.get((index + 2) % 4)?;

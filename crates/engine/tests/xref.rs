@@ -52,6 +52,7 @@ fn insert(block: &str, x: f64) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -188,6 +189,28 @@ fn reload_unload_path_and_detach() {
     s.execute("-xref", &json!({ "option": "reload", "names": "SITE" })).unwrap();
     assert_eq!(objects(&s, "site"), 3, "reload reads the file again");
     assert!(s.doc().unwrap().layer("site|Walls").unwrap().frozen);
+
+    // `exact`: a name is literal, so `#` or `*` in it doesn't reach other xrefs.
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": "s#te", "exact": true })).is_err());
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": "*", "exact": true })).is_err());
+    s.execute("-xref", &json!({ "option": "reload", "names": "SITE", "exact": true })).unwrap();
+
+    // Two xrefs that differ only by case: an exact selection of both is refused before anything loads,
+    // and reload-all loads one of them once.
+    let mut twin = Block::new("SITE");
+    twin.xref_path = Some("site.dxf".into());
+    s.doc_mut().unwrap().blocks.insert("SITE".into(), Arc::new(twin));
+    assert!(s.execute("-xref", &json!({ "option": "reload", "names": ["site", "SITE"], "exact": true })).is_err());
+    let r = s.execute("-xref", &json!({ "option": "reload" })).unwrap();
+    assert_eq!(r["xrefs"].as_array().map(Vec::len), Some(1));
+    // Detaching one of them, or giving both a new path, is refused before anything changes.
+    assert!(s.execute("-xref", &json!({ "option": "detach", "names": "site", "exact": true })).is_err());
+    assert!(s.doc().unwrap().block("site").is_some());
+    assert!(s.execute("-xref", &json!({ "option": "path", "names": "*", "path": "other.dxf" })).is_err());
+    for k in ["site", "SITE"] {
+        assert_eq!(s.doc().unwrap().blocks.get(k).and_then(|b| b.xref_path.clone()).as_deref(), Some("site.dxf"), "{k}");
+    }
+    s.doc_mut().unwrap().blocks.remove("SITE");
 
     s.execute("-xref", &json!({ "option": "unload", "names": "site" })).unwrap();
     assert_eq!((status(&s, "site"), objects(&s, "site")), (Some(XrefStatus::Unloaded), 0));
@@ -505,4 +528,21 @@ fn saved_xref_paths_are_followed_beside_the_host_or_on_this_computer_only() {
     let far = elsewhere.join("far.dxf");
     s.execute("-xref", &json!({ "option": "path", "names": "unc", "path": far.to_str().unwrap() })).unwrap();
     assert_eq!(status(&s, "unc"), Some(XrefStatus::Loaded));
+}
+
+/// A reference saved on Windows with different letter case (`..\XR\PLAN.DWG` for
+/// `../xr/plan.dxf`) is still found on case-sensitive file systems.
+#[test]
+fn saved_xref_paths_ignore_letter_case() {
+    hooks();
+    let base = folder("case");
+    std::fs::create_dir_all(base.join("host")).unwrap();
+    std::fs::create_dir_all(base.join("Xr")).unwrap();
+    save(&site(), &base.join("Xr").join("Plan.dxf"));
+    let host = base.join("host").join("host.dxf");
+    save(&host_with_paths(&[("plan", r"..\XR\PLAN.DXF")]), &host);
+    let mut s = Session::new();
+    open(&mut s, &host);
+    assert_eq!(status(&s, "plan"), Some(XrefStatus::Loaded), "{:?}", s.log);
+    assert!(objects(&s, "plan") > 0);
 }

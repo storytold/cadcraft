@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds};
+use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds_cached};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{AABB, RTree};
@@ -44,6 +44,8 @@ struct ChunkIx {
 impl ChunkIx {
     fn build(d: &Drawing, key: usize, items: &[Arc<Entity>]) -> ChunkIx {
         let mut infinite = Vec::new();
+        // One block-bounds cache for the chunk: references to the same block measure it once.
+        let mut cache = BlockBoundsCache::default();
         let bounds = items
             .iter()
             .enumerate()
@@ -51,7 +53,7 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds(d, e, 0)
+                entity_bounds_cached(d, e, 0, &mut cache)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -200,7 +202,7 @@ impl SpatialIndex {
         let (c, l) = self.locate(i)?;
         c.ents.get(l)
     }
-    /// The bounds of the entity at draw index `i` (as [`entity_bounds`] computes them).
+    /// The bounds of the entity at draw index `i` (as [`cadcraft_doc::entity_bounds`] computes them).
     pub fn bounds(&self, i: u32) -> Bounds2 {
         self.locate(i).and_then(|(c, l)| c.bounds.get(l).copied()).unwrap_or(Bounds2::EMPTY)
     }
@@ -362,6 +364,7 @@ mod tests {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 }),
                 8 if i % 40 == 8 => EntityKind::XLine(cadcraft_doc::RayLine { base: v3(x, y), dir: v3(r.r(-1.0, 1.0), 1.0) }),
                 8 if i % 40 == 18 => EntityKind::Ray(cadcraft_doc::RayLine { base: v3(x, y), dir: v3(1.0, r.r(-1.0, 1.0)) }),
@@ -544,6 +547,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         };
         let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
         let small = Bounds2::new(Vec2::new(-2.0, -2.0), Vec2::new(2.0, 2.0));

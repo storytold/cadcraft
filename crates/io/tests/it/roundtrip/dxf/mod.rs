@@ -39,7 +39,7 @@ fn check_version_with(case: &str, original: &Drawing, expected: &Drawing, versio
         for pass in 1..=2 {
             let context = format!("{case} · {version} · binary={binary} · pass={pass}");
             let bytes = write_with(&current, "memory.dxf", &options).unwrap_or_else(|e| panic!("{context}: write: {e}"));
-            assert_eq!(cadcraft_dxf::is_binary(&bytes), binary, "{context}: encoding");
+            assert_eq!(craft_dxf::is_binary(&bytes), binary, "{context}: encoding");
             let back = read(&bytes, "memory.dxf").unwrap_or_else(|e| panic!("{context}: read: {e}"));
             assert_eq!(save_version(&back), version, "{context}: version");
             assert!(back.read_notes.is_empty(), "{context}: read notes: {:?}", back.read_notes);
