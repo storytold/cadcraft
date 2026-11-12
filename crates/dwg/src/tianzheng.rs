@@ -194,10 +194,19 @@ mod native {
 
     /// 从天正实体的 text 流解析出字段名 → 值对。
     ///
-    /// 字段名以 `T20` 开头；字符串字段值（如中文材料）紧跟在字段名后；数值字段的值在
-    /// main 流（此处记空字符串）。返回 `(字段名, 值)` 列表，按出现顺序。
+    /// 天正有两种 text 流格式：
+    /// - **T20 二进制**（老版/测试文件）：字段名以 `T20` 开头，字符串值紧跟其后，数值值在 main 流。
+    /// - **XML 自描述**（真实生产图纸，如 `_t5.dwg`）：`<Tag>value</Tag>`，字段名是语义化标签
+    ///   （`<LintelHeight>50</LintelHeight>`），根标签不是字段。
+    ///
+    /// 返回 `(字段名, 值)` 列表，按出现顺序。
     pub fn parse_tianzheng_fields(text: &[u8]) -> Vec<(String, String)> {
         let strings = parse_text_strings(text);
+        // XML 自描述格式：任一字符串含 `</`（结束标签）。T20 的字段名/中文值/加密 Base-26
+        // 乱码/GUID 都不含 `<`，不会误判。
+        if strings.iter().any(|s| s.contains("</")) {
+            return parse_xml_fields(&strings);
+        }
         let mut fields = Vec::new();
         let mut i = 0;
         while i < strings.len() {
@@ -222,6 +231,85 @@ mod native {
             i += 1;
         }
         fields
+    }
+
+    /// 解析 XML 自描述格式的字段：`<Tag>value</Tag>`。
+    ///
+    /// 根标签（值含嵌套 `<Tag>`）不是字段，内部扁平标签是字段；空标签/空值跳过。
+    fn parse_xml_fields(strings: &[String]) -> Vec<(String, String)> {
+        let mut fields = Vec::new();
+        for s in strings {
+            let mut rest = s.as_str();
+            while let Some(lt) = rest.find('<') {
+                let after_lt = &rest[lt + 1..];
+                // 结束标签 </Tag>：跳过
+                if let Some(r) = after_lt.strip_prefix('/') {
+                    let Some(gt) = r.find('>') else { break };
+                    rest = &r[gt + 1..];
+                    continue;
+                }
+                // 开始标签 <Tag>；带属性的标签（含空格）不做字段名，直接向内。
+                let Some(gt) = after_lt.find('>') else { break };
+                let tag_name = after_lt[..gt].trim();
+                let content = &after_lt[gt + 1..];
+                let close_tag = format!("</{}>", tag_name);
+                let Some(close_pos) = content.find(&close_tag) else { break };
+                let value = &content[..close_pos];
+                if !tag_name.is_empty() && !tag_name.contains(' ') && !value.contains('<') && !value.trim().is_empty() {
+                    // 叶子字段：值为纯文本
+                    fields.push((tag_name.to_string(), value.trim().to_string()));
+                    rest = &content[close_pos + close_tag.len()..];
+                } else {
+                    // 根标签（值含嵌套）或空标签：前进到 `>` 之后，继续向内扫描
+                    rest = content;
+                }
+            }
+        }
+        fields
+    }
+
+    /// 修改 text 流字符串列表里的一个字段值，自动识别 T20 二进制与 XML 自描述两种格式。
+    ///
+    /// - T20：字段名是独立字符串，值紧跟其后。
+    /// - XML：字段是 `<field_name>value</field_name>`，嵌在 XML 字符串里。
+    ///
+    /// 返回修改后的字符串列表；字段不存在或不是字符串值字段时返回 `None`。
+    pub fn update_tianzheng_field_strings(strings: &[String], field_name: &str, new_value: &str) -> Option<Vec<String>> {
+        if strings.iter().any(|s| s.contains("</")) {
+            return update_xml_field(strings, field_name, new_value);
+        }
+        let mut new_strings = strings.to_vec();
+        let mut changed = false;
+        for i in 0..new_strings.len() {
+            if new_strings[i] == field_name
+                && i + 1 < new_strings.len()
+                && !new_strings[i + 1].starts_with("T20")
+                && !new_strings[i + 1].starts_with("TDBX")
+            {
+                new_strings[i + 1] = new_value.to_string();
+                changed = true;
+            }
+        }
+        changed.then_some(new_strings)
+    }
+
+    /// 修改 XML 自描述 text 流里的一个字段值（`<field_name>value</field_name>` → 新值）。
+    fn update_xml_field(strings: &[String], field_name: &str, new_value: &str) -> Option<Vec<String>> {
+        let open = format!("<{field_name}>");
+        let close = format!("</{field_name}>");
+        let mut new_strings = strings.to_vec();
+        let mut changed = false;
+        for s in new_strings.iter_mut() {
+            if !s.contains("</") {
+                continue;
+            }
+            let Some(start) = s.find(&open) else { continue };
+            let value_start = start + open.len();
+            let Some(end) = s[value_start..].find(&close) else { continue };
+            s.replace_range(value_start..value_start + end, new_value);
+            changed = true;
+        }
+        changed.then_some(new_strings)
     }
 
     /// 解密 text 流里的加密字段（UTF-16 code units → 明文字节）。
@@ -369,7 +457,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, TianzhengEntity};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
 
 #[cfg(test)]
 mod tests {
@@ -443,5 +531,41 @@ mod tests {
         let encoded = encode_text_strings(&strings);
         let decoded = parse_text_strings(&encoded);
         assert_eq!(decoded, strings);
+    }
+
+    /// XML 自描述格式（真实生产图纸 `_t5.dwg`）的字段解析。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn parses_xml_fields() {
+        let strings = vec![
+            "<SwrOpening>\r\n<StoreyFlag>0</StoreyFlag>\r\n<LintelHeight>50</LintelHeight>\r\n<LintelExt>50</LintelExt>\r\n</SwrOpening>".to_string(),
+            "FM乙1122".to_string(),
+        ];
+        let encoded = encode_text_strings(&strings);
+        let fields = parse_tianzheng_fields(&encoded);
+        assert_eq!(
+            fields,
+            vec![
+                ("StoreyFlag".to_string(), "0".to_string()),
+                ("LintelHeight".to_string(), "50".to_string()),
+                ("LintelExt".to_string(), "50".to_string()),
+            ]
+        );
+    }
+
+    /// T20 二进制格式仍照旧解析（不误判为 XML）。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn t20_fields_still_parse() {
+        let strings = vec![
+            "{61309675-BD2E-44BE-B870-B80B03BB3A76}".to_string(),
+            "T20s14".to_string(),
+            "砖墙".to_string(),
+            "T20s9".to_string(),
+            "隔热层".to_string(),
+        ];
+        let encoded = encode_text_strings(&strings);
+        let fields = parse_tianzheng_fields(&encoded);
+        assert_eq!(fields, vec![("T20s14".to_string(), "砖墙".to_string()), ("T20s9".to_string(), "隔热层".to_string())]);
     }
 }

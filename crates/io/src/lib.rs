@@ -210,22 +210,10 @@ pub fn set_tianzheng_field(d: &mut Drawing, handle: cadcraft_doc::Handle, field_
         None => return false,
     };
     let strings = cadcraft_dwg::tianzheng::parse_text_strings(&text);
-    // 找字段名，改其后的字符串值
-    let mut new_strings = strings;
-    let mut changed = false;
-    for i in 0..new_strings.len() {
-        if new_strings[i] == field_name
-            && i + 1 < new_strings.len()
-            && !new_strings[i + 1].starts_with("T20")
-            && !new_strings[i + 1].starts_with("TDBX")
-        {
-            new_strings[i + 1] = new_value.to_string();
-            changed = true;
-        }
-    }
-    if !changed {
+    // 找字段名改值（T20 二进制与 XML 自描述两种格式自动识别）
+    let Some(new_strings) = cadcraft_dwg::tianzheng::update_tianzheng_field_strings(&strings, field_name, new_value) else {
         return false;
-    }
+    };
     let (new_text, new_text_bits) = cadcraft_dwg::tianzheng::encode_text_strings_with_bits(&new_strings);
     let new_raw = match cadcraft_dwg::tianzheng::replace_text_stream(&raw, t.handle_bits, &new_text) {
         Some(r) => r,
@@ -325,8 +313,19 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
+    // 天正自定义实体靠 proxy class 保身份，只有 AC1027（2013）+ 的 DWG 能写自定义 class；
+    // 更早版本 acadrust 只写它认识的 class，proxy 会被整体丢弃。含天正实体时至少存为 2013。
+    let version = if has_tianzheng(d) { version.max(Version::R2013) } else { version };
     let bridge = dxf_write::dwg_bridge(d, version);
     cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
+}
+
+/// 图纸里是否有天正自定义实体（决定保存版本至少 2013，见 [`write_dwg`]）。
+fn has_tianzheng(d: &Drawing) -> bool {
+    std::iter::once(&d.model)
+        .chain(d.layouts.iter().map(|l| &l.entities))
+        .chain(d.blocks.values().map(|b| &b.entities))
+        .any(|s| s.iter().any(|e| matches!(e.kind, cadcraft_doc::EntityKind::Tianzheng(_))))
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
