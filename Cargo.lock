@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-collab"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-doc",
  "cadcraft-geom",
