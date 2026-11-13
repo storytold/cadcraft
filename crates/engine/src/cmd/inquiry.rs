@@ -50,6 +50,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("time", "Time", run_time).menu(&["Tools", "Inquiry", "Time"]).noundo(),
         CommandSpec::new("status", "Status", run_status).menu(&["Tools", "Inquiry", "Status"]).noundo(),
         CommandSpec::new("drawing.inspect", "Inspect Drawing", run_inspect).params("{entities?: bool, limit?: n}").noundo(),
+        CommandSpec::new("drawing.readability", "Drawing Readability", run_readability)
+            .params("{} → {modelEntities, layoutEntities, blockDefs, anonymousDefs, anonymousRefs, missingBlockRefs, \
+                     proxy: {acadProxy, ole2Frame, arcDimension, other, withDrawable, classes: [{class, app?, count, drawable, records, unparsed, drawableChunks}]}, \
+                     textsInModel, textsInLayouts, textsInBlocks (per placed reference), textsInBlockDefs (per definition), \
+                     unreachable: [{kind, count, reason}], truncated, selfCheck, message}")
+            .noundo(),
         CommandSpec::new("entities", "Query Entities", run_entities)
             .params("{type?, layer?, selected?: bool (default false; true = current selection in active space), window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit?, offset?} → {count (all matches), returned, offset, entities}")
             .noundo(),
@@ -990,6 +996,194 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 mod count;
+
+/// DRAWING.READABILITY: what a reader can and cannot reach in this drawing — the counts behind
+/// "read everything before concluding the drawing lacks it" (#1440's discipline, for the whole
+/// drawing rather than one analysis): the entities, the block definitions (anonymous ones
+/// included) and how far references reach, the proxies and whether their graphics draw anything,
+/// the texts in the spaces against the ones inside blocks, and what stays out of reach, with the
+/// reason.
+fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
+    let st = s.state()?;
+    let d = &st.doc;
+    let model_entities = d.model.len();
+    let layout_entities: usize = d.layouts.iter().map(|l| l.entities.len()).sum();
+    let block_defs = d.blocks.len();
+    let anonymous_defs = d.blocks.values().filter(|b| b.anonymous || b.name.starts_with('*')).count();
+    let block_entities: usize = d.blocks.values().map(|b| b.entities.len()).sum();
+
+    // References as placed copies (a MINSERT grid counts per cell), nested ones included: the
+    // anonymous ones the drawing reaches through, and the ones that point at no definition.
+    fn is_anonymous(d: &cadcraft_doc::Drawing, name: &str) -> bool {
+        d.block(name).is_some_and(|b| b.anonymous || b.name.starts_with('*'))
+    }
+    fn count_refs(d: &cadcraft_doc::Drawing, x: &mut count::Expander, name: &str, copies: u64, anonymous: &mut u64, missing: &mut u64) {
+        if d.block(name).is_none() {
+            *missing = missing.saturating_add(copies);
+            return;
+        }
+        if is_anonymous(d, name) {
+            *anonymous = anonymous.saturating_add(copies);
+        }
+        for (k, v) in x.expand(name, cadcraft_doc::MAX_BLOCK_DEPTH.saturating_sub(1)).iter() {
+            if d.block(k).is_none() {
+                *missing = missing.saturating_add(copies.saturating_mul(*v));
+            } else if is_anonymous(d, k) {
+                *anonymous = anonymous.saturating_add(copies.saturating_mul(*v));
+            }
+        }
+    }
+    let mut x = count::Expander::new(d);
+    let mut anonymous_refs = 0u64;
+    let mut missing_refs = 0u64;
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
+        if let EntityKind::Insert(i) = &e.kind {
+            let name = x.canonical(&i.block);
+            let copies = u64::from(i.cols.max(1)) * u64::from(i.rows.max(1));
+            count_refs(d, &mut x, &name, copies, &mut anonymous_refs, &mut missing_refs);
+        }
+    }
+
+    // The proxies of the spaces: by class, and whether their graphics cache draws anything.
+    #[derive(Default)]
+    struct ClassTally {
+        count: u64,
+        with_drawable: u64,
+        records: u64,
+        unparsed: u64,
+        histogram: BTreeMap<String, u64>,
+    }
+    let mut classes: BTreeMap<(String, String), ClassTally> = BTreeMap::new();
+    let mut acad_proxy = 0u64;
+    let mut ole_frames = 0u64;
+    let mut arc_dimensions = 0u64;
+    let mut other_unknowns = 0u64;
+    let mut with_drawable = 0u64;
+    let mut no_graphics = 0u64;
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
+        let EntityKind::Unknown(u) = &e.kind else { continue };
+        match u.dxf_type.to_ascii_uppercase().as_str() {
+            "ACAD_PROXY_ENTITY" => acad_proxy += 1,
+            "OLE2FRAME" => ole_frames += 1,
+            "ARC_DIMENSION" => arc_dimensions += 1,
+            _ => other_unknowns += 1,
+        }
+        let Some(f) = proxy::frames(&u.tags) else {
+            // A proxy without any graphics data can neither be read nor judged.
+            no_graphics += 1;
+            continue;
+        };
+        if f.drawable > 0 {
+            with_drawable += 1;
+        }
+        let app = d.foreign.proxy_class(&u.tags).unwrap_or_default().to_string();
+        let t = classes.entry((u.dxf_type.clone(), app)).or_default();
+        t.count += 1;
+        if f.drawable > 0 {
+            t.with_drawable += 1;
+        }
+        t.records += f.records;
+        t.unparsed += f.unparsed;
+        for (k, v) in f.histogram {
+            *t.histogram.entry(k).or_default() += v;
+        }
+    }
+
+    // The texts: in the spaces themselves, and inside the blocks their references draw.
+    let texts_in_model: usize = d.model.iter().map(|e| texts_of(e).len()).sum();
+    let texts_in_layouts: usize = d.layouts.iter().flat_map(|l| l.entities.iter()).map(|e| texts_of(e).len()).sum();
+    let texts_in_block_defs: usize = d.blocks.values().flat_map(|b| b.entities.iter()).map(|e| texts_in_definition(e, "", 1).len()).sum();
+    let keep_all = |_: &TextHit| true;
+    let walk = nested_texts(d, &d.model, &keep_all);
+    let mut texts_in_blocks = walk.hits.len();
+    let (mut truncated, mut depth_capped) = (walk.truncated, walk.depth_capped);
+    for l in &d.layouts {
+        let w = nested_texts(d, &l.entities, &keep_all);
+        texts_in_blocks += w.hits.len();
+        truncated |= w.truncated;
+        depth_capped |= w.depth_capped;
+    }
+
+    // What stays out of reach, and why.
+    let mut unreachable: Vec<Value> = Vec::new();
+    let mut check = SelfCheck::new();
+    check.found((model_entities + layout_entities) as u64);
+    check.analyzed((model_entities + layout_entities) as u64);
+    let out_of_reach = |list: &mut Vec<Value>, check: &mut SelfCheck, kind: &str, count: u64, reason: &str| {
+        if count > 0 {
+            list.push(json!({ "kind": kind, "count": count, "reason": reason }));
+            check.skip(kind, reason, count);
+        }
+    };
+    out_of_reach(&mut unreachable, &mut check, "missingBlock", missing_refs, "placed copies of a reference to a block the drawing does not define");
+    let xref_not_loaded = d.blocks.values().filter(|b| b.xref_path.is_some() && b.entities.is_empty()).count() as u64;
+    out_of_reach(&mut unreachable, &mut check, "xrefNotLoaded", xref_not_loaded, "an external reference whose drawing is not loaded");
+    out_of_reach(&mut unreachable, &mut check, "proxyDrawable", with_drawable, "proxy graphics that draw; kept as raw records, not as entities");
+    out_of_reach(&mut unreachable, &mut check, "proxyNoGraphics", no_graphics, "a proxy without graphics data: neither readable nor drawable");
+    out_of_reach(&mut unreachable, &mut check, "ole2Frame", ole_frames, "an embedded OLE picture");
+    let skipped_records: usize = d.skipped_records.values().sum();
+    out_of_reach(&mut unreachable, &mut check, "skippedRecords", skipped_records as u64, "records the file reader could not place");
+    if truncated {
+        check.cap("textHits", MAX_TEXT_HITS as u64);
+    }
+    if depth_capped {
+        check.cap("textDepth", u64::from(MAX_TEXT_DEPTH));
+    }
+
+    let message = format!(
+        "{} entities ({} in model space), {} block definitions ({} anonymous, {} entities), {} anonymous references ({} to a missing definition)\n\
+         proxies: {} ACAD_PROXY_ENTITY, {} OLE2FRAME, {} ARC_DIMENSION, {} other; {} with drawable graphics, {} without any\n\
+         texts: {} in the spaces ({} in model space), {} inside blocks per placed reference, {} per definition\n\
+         out of reach: {}",
+        model_entities + layout_entities,
+        model_entities,
+        block_defs,
+        anonymous_defs,
+        block_entities,
+        anonymous_refs,
+        missing_refs,
+        acad_proxy,
+        ole_frames,
+        arc_dimensions,
+        other_unknowns,
+        with_drawable,
+        no_graphics,
+        texts_in_model + texts_in_layouts,
+        texts_in_model,
+        texts_in_blocks,
+        texts_in_block_defs,
+        if unreachable.is_empty() { "nothing".to_string() } else { format!("{} kind(s)", unreachable.len()) },
+    );
+    Ok(json!({
+        "modelEntities": model_entities,
+        "layoutEntities": layout_entities,
+        "blockDefs": block_defs,
+        "anonymousDefs": anonymous_defs,
+        "blockEntities": block_entities,
+        "anonymousRefs": anonymous_refs,
+        "missingBlockRefs": missing_refs,
+        "proxy": {
+            "acadProxy": acad_proxy,
+            "ole2Frame": ole_frames,
+            "arcDimension": arc_dimensions,
+            "other": other_unknowns,
+            "withDrawable": with_drawable,
+            "noGraphics": no_graphics,
+            "classes": classes.iter().map(|((class, app), t)| json!({
+                "class": class, "app": app, "count": t.count, "drawable": t.with_drawable,
+                "records": t.records, "unparsed": t.unparsed, "drawableChunks": t.histogram,
+            })).collect::<Vec<_>>(),
+        },
+        "textsInModel": texts_in_model,
+        "textsInLayouts": texts_in_layouts,
+        "textsInBlocks": texts_in_blocks,
+        "textsInBlockDefs": texts_in_block_defs,
+        "unreachable": unreachable,
+        "truncated": truncated,
+        "selfCheck": check.to_json(),
+        "message": message,
+    }))
+}
 
 #[derive(Default)]
 pub(super) struct DistM {

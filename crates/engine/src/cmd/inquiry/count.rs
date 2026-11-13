@@ -109,7 +109,7 @@ fn copies(i: &Insert) -> u64 {
 
 /// Nested block references per block definition, memoised by (block, levels left) so shared and
 /// cyclic definitions don't expand exponentially.
-struct Expander<'a> {
+pub(super) struct Expander<'a> {
     d: &'a Drawing,
     memo: HashMap<(String, usize), Rc<BTreeMap<String, u64>>>,
     work: u64,
@@ -120,15 +120,15 @@ struct Expander<'a> {
 
 impl<'a> Expander<'a> {
     /// An expander that has not traversed any block yet.
-    fn new(d: &'a Drawing) -> Self {
+    pub(super) fn new(d: &'a Drawing) -> Self {
         Expander { d, memo: HashMap::new(), work: 0, truncated: false, depth_capped: false }
     }
     /// The definition's own name for a referenced block (names are case-insensitive).
-    fn canonical(&self, name: &str) -> String {
+    pub(super) fn canonical(&self, name: &str) -> String {
         self.d.block(name).map_or_else(|| name.to_string(), |b| b.name.clone())
     }
     /// References inside block `name` and its nested blocks, `levels` deep: name → copies.
-    fn expand(&mut self, name: &str, levels: usize) -> Rc<BTreeMap<String, u64>> {
+    pub(super) fn expand(&mut self, name: &str, levels: usize) -> Rc<BTreeMap<String, u64>> {
         let key = (name.to_ascii_lowercase(), levels);
         if let Some(m) = self.memo.get(&key) {
             return m.clone();
