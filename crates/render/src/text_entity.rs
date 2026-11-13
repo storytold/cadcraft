@@ -1,4 +1,4 @@
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, ink};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, Vec2, ink};
 
 /// The text style of an entity (Standard defaults when missing).
 pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
@@ -25,8 +25,9 @@ pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (c
         oblique: t.oblique,
         h,
         v,
-        backwards: ts.backwards,
-        upside_down: ts.upside_down,
+        // The text's own generation flags (set from its style when it was made), as AutoCAD.
+        backwards: t.backwards,
+        upside_down: t.upside_down,
     };
     cadcraft_fonts::place(&font, value, &p)
 }
@@ -74,6 +75,36 @@ pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: In
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
+    if t.frame
+        && let Some(r) = mtext_frame(ctx.d, t)
+    {
+        b.polyline(ctx, rgb, lw, &r);
+    }
+}
+
+/// The Text frame of multiline text: its box (the defined width, the text's height) with a margin
+/// of a quarter of the text height (border offset factor 1.5), turned with the text; closed.
+pub fn mtext_frame(d: &Drawing, t: &cadcraft_doc::MText) -> Option<Vec<Vec2>> {
+    let mut flat = t.clone();
+    flat.rotation = 0.0;
+    let bb = layout_mtext_entity(d, &flat).bounds;
+    if bb.is_empty() {
+        return None;
+    }
+    let ins = t.insert.xy();
+    let col = f64::from((t.attach.clamp(1, 9) - 1) % 3);
+    let (x0, x1) = if t.width > 0.0 {
+        let left = ins.x - col * t.width / 2.0;
+        (left.min(bb.min.x), (left + t.width).max(bb.max.x))
+    } else {
+        (bb.min.x, bb.max.x)
+    };
+    let m = t.height * 0.25;
+    let corners =
+        [Vec2::new(x0 - m, bb.min.y - m), Vec2::new(x1 + m, bb.min.y - m), Vec2::new(x1 + m, bb.max.y + m), Vec2::new(x0 - m, bb.max.y + m)];
+    let mut pts: Vec<Vec2> = corners.iter().map(|c| ins + (*c - ins).rotate(t.rotation)).collect();
+    pts.push(*pts.first()?);
+    pts.iter().all(|p| p.is_finite()).then_some(pts)
 }
 
 /// A TEXT's justification as the fonts' alignment (used where text is placed outside a build).

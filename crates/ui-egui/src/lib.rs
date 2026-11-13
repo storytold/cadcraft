@@ -21,6 +21,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod bidi_edit;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
@@ -31,7 +32,9 @@ pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod dimstyles;
 pub mod docking;
+pub mod editor_glyphs;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
@@ -40,6 +43,7 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+pub mod table_editor;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
@@ -227,6 +231,8 @@ impl Default for UiState {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Pick a folder (Options ▸ Fonts, the Custom Patterns folder); `None` where the host has no folder dialog.
+    pub pick_folder: Option<Box<dyn Fn() -> Option<String>>>,
     /// Where set, the file dialogs are shown with this instead of calling `pick_open` /
     /// `pick_save` / `pick_lisp` (which must still be set, to say which dialogs there are), and
     /// the answer is acted on in a later frame ([`CadApp::pick_then`]). macOS needs it: a panel run modally
@@ -296,6 +302,8 @@ pub struct CadApp {
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
+    /// The table editor's selected cells ([`table_editor`]); `None` while it is closed.
+    pub table_edit: Option<table_editor::TableEdit>,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -390,6 +398,7 @@ impl CadApp {
             status: None,
             opening: opening::Opening::default(),
             integrated_titlebar: false,
+            table_edit: None,
             control_rx: None,
             capture_geometry: None,
             capture_epoch: 0,
@@ -841,6 +850,22 @@ impl CadApp {
                 // the command line.
                 if let Some(w) = v.get("warnings").and_then(Value::as_array).and_then(|w| w.first()).and_then(Value::as_str) {
                     self.set_status(w.to_string());
+                }
+                // Fonts the drawing's text styles name that can't be found: say what stands in.
+                let missing = self.session.doc().map(cadcraft_engine::cmd::missing_fonts).unwrap_or_default();
+                if !missing.is_empty() {
+                    let names: Vec<&str> = missing.iter().map(|(_, f)| f.as_str()).take(6).collect();
+                    let more = if missing.len() > names.len() { format!(" (+{})", missing.len() - names.len()) } else { String::new() };
+                    let msg = format!(
+                        "{} {}{more}. {} {}. {}",
+                        crate::tl!("Fonts not found:"),
+                        names.join(", "),
+                        crate::tl!("Text in them is drawn with"),
+                        cadcraft_engine::cmd::substitute_font(),
+                        crate::tl!("Add a font folder in Tools ▸ Options ▸ Fonts.")
+                    );
+                    self.session.echo(msg.clone());
+                    self.set_status(msg);
                 }
                 // A dynamic block's own drawing: ask whether to open it in the Block Editor.
                 if self.session.state().is_ok_and(|st| cadcraft_engine::blockedit::has_authoring_elements(&st.doc)) {

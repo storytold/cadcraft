@@ -533,6 +533,7 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
+    crate::table_editor::paint(app, ui, painter, &xf);
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
         draw_ucs_icon(painter, rect);
@@ -542,7 +543,9 @@ fn paint_pointer_overlay(
         draw_viewcube(app, ui, rect);
     }
     viewport_label(painter, rect);
-    // Typing and Escape reach the command line even when its overlay is hidden.
+    // The table editor's keys first; typing and Escape reach the command line even when its
+    // overlay is hidden.
+    crate::table_editor::keyboard(app, ui.ctx());
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
     if app.ui.show_command_line {
@@ -601,6 +604,12 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         let pp = xf_paper.to_world(hp);
         let in_rect = |v: &cadcraft_doc::Viewport| (pp.x - v.center.x).abs() <= v.width / 2.0 && (pp.y - v.center.y).abs() <= v.height / 2.0;
         let in_active = active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)));
+        // On the sheet itself (no viewport active), a block, text or dimension drawn on the sheet
+        // is edited as in model space; elsewhere the click goes into a viewport.
+        let on_sheet = app.session.state().is_ok_and(|st| st.mspace.is_none());
+        if on_sheet && app.session.running.is_none() && edit_text_at(app, pp) {
+            return None;
+        }
         if !in_active {
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
@@ -614,7 +623,8 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
             return None;
         }
     }
-    // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
+    // Double-click text, a dimension, a multileader or a table cell to edit it in place, as in
+    // AutoCAD: TEXTEDIT (TABLEDIT) with that object already picked.
     if inside
         && double
         && app.session.running.is_none()
@@ -910,6 +920,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
+        } else if crate::table_editor::click(app, raw_world.unwrap_or(p), mods.shift) {
+            // A cell of the table being edited.
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
@@ -924,6 +936,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if !app.session.settings.pickdrag {
         app.canvas.drag_window = false;
     }
+    if app.session.running.is_none() {
+        crate::table_editor::drag(app, ui, &resp, &xf);
+    }
     if app.session.settings.pickdrag
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
@@ -931,6 +946,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && app.session.pending_window.is_none()
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         && rect.contains(origin)
+        && !(app.session.running.is_none() && crate::table_editor::owns(app, &xf, origin))
         && grip_at(app, &xf, Some(origin)).is_none()
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {
@@ -1104,7 +1120,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h) {
-                let grips = e.kind.grips();
+                let grips = cadcraft_engine::grips::grip_points(&st.doc, &e.kind);
                 let count = grips.len();
                 for (gi, g) in grips.into_iter().enumerate() {
                     let sp = xf.to_screen(g);

@@ -162,6 +162,25 @@ impl Table {
         b
     }
 
+    /// The top-left corner, width and height of cell (`row`, `col`) — over its merged span — in
+    /// the part that holds the row.
+    pub fn cell_rect(&self, row: usize, col: usize) -> Option<(Vec2, f64, f64)> {
+        if col >= self.col_widths.len() || row >= self.row_heights.len() {
+            return None;
+        }
+        let (rs, cs) =
+            self.cells.get(row).and_then(|r| r.get(col)).and_then(|c| c.merged).map_or((1, 1), |(a, b)| (a.max(1) as usize, b.max(1) as usize));
+        let x: f64 = self.col_widths.iter().take(col).map(|w| size(*w)).sum();
+        let w: f64 = self.col_widths.iter().skip(col).take(cs).map(|w| size(*w)).sum();
+        for part in self.parts() {
+            let Some(at) = part.rows.iter().position(|r| *r == row) else { continue };
+            let y: f64 = part.rows.iter().take(at).map(|r| size(self.row_heights.get(*r).copied().unwrap_or(0.0))).sum();
+            let h: f64 = part.rows.iter().skip(at).take(rs).map(|r| size(self.row_heights.get(*r).copied().unwrap_or(0.0))).sum();
+            return Some((part.origin + Vec2::new(x, -y), w, h));
+        }
+        None
+    }
+
     /// The cell (row, col) under `p`, in any part.
     pub fn cell_at_point(&self, p: Vec2) -> Option<(usize, usize)> {
         for part in self.parts() {
@@ -214,6 +233,16 @@ mod tests {
             header: true,
             ..Table::default()
         }
+    }
+
+    #[test]
+    fn cell_rect_covers_the_merged_span_and_hostile_indices_are_none() {
+        let mut t = table(3);
+        assert_eq!(t.cell_rect(1, 1), Some((Vec2::new(2.0, -1.0), 3.0, 1.0)));
+        t.cells[0][0].merged = Some((1, 2));
+        assert_eq!(t.cell_rect(0, 0), Some((Vec2::ZERO, 5.0, 1.0)));
+        assert_eq!(t.cell_rect(9, 0), None);
+        assert_eq!(t.cell_rect(0, usize::MAX), None);
     }
 
     #[test]
