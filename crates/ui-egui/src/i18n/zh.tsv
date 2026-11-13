@@ -1382,6 +1382,10 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Text Formulas	文字公式
+	Update Fields	更新字段
+	Edit Table Cells	编辑表格单元格
+	Edit Text	编辑文字
 	Find All	查找全部
 	Find what:	查找内容：
 	Match case	区分大小写
@@ -1474,5 +1478,4 @@ menu	View	视图
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
 	Ctrl+Enter to apply	Ctrl+Enter 应用
-	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
