@@ -1398,6 +1398,9 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Креслення змінилося. Закрийте вікно та відкрийте його знову.
+	Ribbon	Стрічка
+	Windows Layout (Ribbon)	Розкладка Windows (стрічка)
+	Mac Layout (Tool Sets)	Розкладка Mac (набори інструментів)
 	Keyboard Shortcuts...	Комбінації клавіш...
 	Keyboard Shortcuts	Комбінації клавіш
 	Replaces the shortcut of {commands}	Замінює комбінацію клавіш команди: {commands}

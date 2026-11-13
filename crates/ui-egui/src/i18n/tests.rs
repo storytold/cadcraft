@@ -20,7 +20,7 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
         let (catalog, errors) = parse(language.source);
         assert!(errors.is_empty(), "{}: {errors:?}", language.code);
         for ((context, key), value) in catalog {
-            assert!(["", "menu", "@plural"].contains(&context), "unknown context: {context}");
+            assert!(["", "menu", "ribbon", "@plural"].contains(&context), "unknown context: {context}");
             let forms: Vec<_> = if context == "@plural" { value.split('|').collect() } else { vec![value] };
             if context == "@plural" {
                 assert_eq!(forms.len(), language.plural_forms, "{}: {key}", language.code);
@@ -667,4 +667,16 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
         assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
         assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
     }
+}
+
+#[test]
+fn ribbon_labels_use_the_ribbon_context_and_fall_back_to_the_ordinary_translation() {
+    // A `ribbon` row wins over the ordinary translation.
+    with_language("fr", || assert_eq!(ribbon("Home"), "Début"));
+    // No `ribbon` row: the ordinary translation, else the English source.
+    with_language("uk", || {
+        assert_eq!(ribbon("Insert"), t("Insert"));
+        assert_eq!(ribbon("a label no catalog has"), "a label no catalog has");
+    });
+    with_language("en", || assert_eq!(ribbon("Home"), "Home"));
 }
