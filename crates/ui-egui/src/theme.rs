@@ -94,6 +94,42 @@ pub fn set_active(theme: Theme) {
 }
 
 thread_local! {
+    /// Windows, menus and buttons have rounded corners (Options ▸ Display).
+    static ROUNDED: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Whether windows, menus and buttons have rounded corners.
+pub fn rounded() -> bool {
+    ROUNDED.with(Cell::get)
+}
+
+/// A corner radius as drawn: `radius`, or square corners when rounding is off.
+pub fn r(radius: f32) -> f32 {
+    if rounded() { radius } else { 0.0 }
+}
+
+/// Turns rounded corners on or off: the app's own painting ([`r`]) and egui's windows, menus and
+/// widgets.
+pub fn set_rounded(ctx: &egui::Context, on: bool) {
+    ROUNDED.with(|c| c.set(on));
+    round_styles(ctx);
+}
+
+/// egui's windows, menus and widgets as [`rounded`] says.
+fn round_styles(ctx: &egui::Context) {
+    let on = rounded();
+    let radius = |n: u8| egui::CornerRadius::same(if on { n } else { 0 });
+    ctx.all_styles_mut(|s| {
+        let v = &mut s.visuals;
+        v.window_corner_radius = radius(6);
+        v.menu_corner_radius = radius(5);
+        for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+            w.corner_radius = radius(2);
+        }
+    });
+}
+
+thread_local! {
     /// The palette in use on the UI thread (set by [`set_palette`] each frame).
     static PALETTE: Cell<Palette> = const { Cell::new(Palette::Standard) };
 }
@@ -930,6 +966,7 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
         s.text_styles.insert(egui::TextStyle::Small, small());
         s.text_styles.insert(egui::TextStyle::Monospace, mono());
     });
+    round_styles(ctx);
 }
 
 #[cfg(test)]

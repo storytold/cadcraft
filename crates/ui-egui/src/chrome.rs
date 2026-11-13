@@ -318,9 +318,9 @@ fn draw_status_toggles(
         let br = Rect::from_min_size(pos2(rx, rect.center().y - size / 2.0), vec2(size, size));
         let resp = ui.interact(br, ui.scope_id().with(("tg", tip)), Sense::click());
         if on {
-            painter.rect_filled(br, 3.0, t.toggle_on.gamma_multiply(0.35));
+            painter.rect_filled(br, crate::theme::r(3.0), t.toggle_on.gamma_multiply(0.35));
         } else if resp.hovered() {
-            painter.rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.5));
+            painter.rect_filled(br, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.5));
         }
         icons::paint(painter, br.shrink(2.5), icon, false);
         if on {
@@ -414,7 +414,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let label = if model { "MODEL" } else { "PAPER" };
             let br = Rect::from_min_max(pos2(rx - 60.0, r.center().y - 9.0), pos2(rx - 6.0, r.center().y + 9.0));
             let resp = ui.interact(br, ui.scope_id().with("mspace_toggle"), Sense::click());
-            p.rect_filled(br, 3.0, if resp.hovered() { t.control_hover } else { t.toggle_on.gamma_multiply(0.25) });
+            p.rect_filled(br, crate::theme::r(3.0), if resp.hovered() { t.control_hover } else { t.toggle_on.gamma_multiply(0.25) });
             p.text(br.center(), egui::Align2::CENTER_CENTER, crate::i18n::t(label), crate::theme::small(), t.text);
             icons::describe_control(ui, &resp, label, None, false);
             if resp.on_hover_text(crate::tl!("Switch between model space in a viewport and paper space")).clicked() {
@@ -464,9 +464,9 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let active = active_tab == Some(i);
             let resp = ui.interact(tr, ui.scope_id().with(("lt", i)), Sense::click());
             if active {
-                tp.rect_filled(tr, 2.0, t.tab_active);
+                tp.rect_filled(tr, crate::theme::r(2.0), t.tab_active);
             } else if resp.hovered() {
-                tp.rect_filled(tr, 2.0, t.control.gamma_multiply(0.5));
+                tp.rect_filled(tr, crate::theme::r(2.0), t.control.gamma_multiply(0.5));
             }
             tp.galley(pos2(tr.left() + 13.0, tr.center().y - g.size().y / 2.0), g, if active { t.text } else { t.text_dim });
             icons::describe_control(ui, &resp, name, Some(active), true);
@@ -495,7 +495,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let mr = Rect::from_min_size(pos2(x + 2.0, r.top() + 5.0), vec2(16.0, 16.0));
             let resp = ui.interact(mr, ui.scope_id().with("layout_more"), Sense::click());
             if resp.hovered() {
-                p.rect_filled(mr, 3.0, t.control_hover.gamma_multiply(0.5));
+                p.rect_filled(mr, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.5));
             }
             icons::paint(&p, mr.shrink(2.0), Icon::ChevronDown, false);
             icons::describe_control(ui, &resp, "Layout list", None, false);
@@ -554,7 +554,7 @@ fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>)
             for path in chunk {
                 let (r, resp) = ui.allocate_exact_size(card, Sense::click());
                 let p = ui.painter();
-                p.rect_filled(r, 4.0, if resp.hovered() { t.control_hover } else { t.chrome_dark });
+                p.rect_filled(r, crate::theme::r(4.0), if resp.hovered() { t.control_hover } else { t.chrome_dark });
                 let img = Rect::from_min_size(r.min + vec2(8.0, 8.0), vec2(crate::thumbs::W as f32, crate::thumbs::H as f32));
                 let thumb = crate::thumbs::get(&ctx, path);
                 match &thumb {
@@ -563,23 +563,23 @@ fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>)
                         let [tw, th] = tex.size();
                         let k = (img.width() / tw.max(1) as f32).min(img.height() / th.max(1) as f32);
                         let fit = Rect::from_center_size(img.center(), vec2(tw as f32 * k, th as f32 * k));
-                        p.rect_filled(img, 2.0, egui::Color32::BLACK);
+                        p.rect_filled(img, crate::theme::r(2.0), egui::Color32::BLACK);
                         p.image(tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
                     }
                     crate::thumbs::Thumb::Missing => {
-                        p.rect_filled(img, 2.0, t.chrome);
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
                         crate::thumbs::paint_missing(p, img.shrink(14.0), t.text_dim);
                     }
                     crate::thumbs::Thumb::Pending => {
-                        p.rect_filled(img, 2.0, t.chrome);
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
                         p.text(img.center(), egui::Align2::CENTER_CENTER, crate::tl!("Making a preview..."), crate::theme::small(), t.text_faint);
                     }
                     crate::thumbs::Thumb::Failed => {
-                        p.rect_filled(img, 2.0, t.chrome);
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
                         icons::paint(p, Rect::from_center_size(img.center(), vec2(48.0, 48.0)), Icon::Open, true);
                     }
                 }
-                p.rect_stroke(img, 2.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
+                p.rect_stroke(img, crate::theme::r(2.0), Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
                 let missing = matches!(thumb, crate::thumbs::Thumb::Missing);
                 let clip = p.with_clip_rect(Rect::from_min_max(pos2(r.left() + 6.0, img.bottom()), pos2(r.right() - 6.0, r.bottom())));
                 let name_color = if missing { t.text_faint } else { t.text };
@@ -639,7 +639,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     for (label, cmd) in [("Open...", "open"), ("New", "new"), ("New (metric)", "new.metric"), ("Open sample drawing", "sample")] {
         let br = Rect::from_min_size(pos2(left.left() + 34.0, y), vec2(220.0, 34.0));
         let resp = ui.interact(br, ui.scope_id().with(("start", cmd)), Sense::click());
-        p.rect_stroke(br, 2.0, Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim }), egui::StrokeKind::Inside);
+        p.rect_stroke(br, crate::theme::r(2.0), Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim }), egui::StrokeKind::Inside);
         p.text(pos2(br.left() + 16.0, br.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(label), crate::theme::body(), t.text);
         if resp.clicked() {
             action = Some(cmd);
@@ -659,7 +659,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
             let resp = ui.interact(br, ui.scope_id().with(("recent_view", i)), Sense::click()).on_hover_text(tip);
             let on = app.ui.recent_grid == grid;
             if on || resp.hovered() {
-                p.rect_filled(br, 3.0, if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
+                p.rect_filled(br, crate::theme::r(3.0), if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
             }
             icons::paint(&p, br.shrink(4.0), icon, false);
             if resp.clicked() {
@@ -684,7 +684,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
                 let _ = i;
                 let p = ui.painter();
                 if resp.hovered() {
-                    p.rect_filled(row, 2.0, t.control_hover.gamma_multiply(0.5));
+                    p.rect_filled(row, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
                 }
                 let there = crate::thumbs::exists(path, now);
                 let dir = std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default();

@@ -914,6 +914,9 @@ impl CadApp {
         let palette_changed = theme::palette() != palette;
         theme::set_palette(palette);
         theme::set_canvas(self.options.canvas());
+        if theme::rounded() != self.options.rounded_corners {
+            theme::set_rounded(ctx, self.options.rounded_corners);
+        }
         let follows_system = self.ui.theme == theme::ThemePref::System;
         if self.shown_theme != Some(shown) || self.shown_follows_system != follows_system || palette_changed {
             theme::apply(ctx, shown, follows_system);

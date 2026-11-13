@@ -96,9 +96,9 @@ pub(super) fn rectangle_dims(
         let bh = value.size().y + 6.0;
         let min = pos2(at.x - bw * anchor_x, at.y - bh / 2.0);
         let r = Rect::from_min_size(min, vec2(bw, bh));
-        p.rect_filled(r, 2.0, t.chrome_dark);
+        p.rect_filled(r, crate::theme::r(2.0), t.chrome_dark);
         let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.border) };
-        p.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Inside);
+        p.rect_stroke(r, crate::theme::r(2.0), stroke, egui::StrokeKind::Inside);
         let vw = value.size().x;
         let vh = value.size().y;
         p.galley(pos2(r.left() + 5.0, r.center().y - vh / 2.0), value, t.text);
@@ -147,7 +147,7 @@ pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     // WCS pill: the label and a down chevron, drawn as lines rather than a "⌄" glyph that a UI
     // font may lack (it showed as a box, #1541).
     let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
-    p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
+    p.rect_filled(pill, crate::theme::r(8.0), Color32::from_rgb(0x48, 0x50, 0x5c));
     let ink = Tokens::DARK.canvas_ink;
     let label = p.layout_no_wrap(crate::tl!("WCS").to_string(), crate::theme::small(), ink);
     let (gap, chevron) = (4.0, 6.0);

@@ -559,8 +559,13 @@ fn paint(ui: &egui::Ui, b: Painted<'_>, chars: &[char], st: &mut EditState, fram
     let origin = |sx: f32| pos2(rect.left() + margin + sx, rect.top() + margin);
     let lay = frame.layout(chars);
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 2.0, t.field);
-    p.rect_stroke(rect, 2.0, Stroke::new(if focused { 1.5 } else { 1.0 }, if focused { t.accent } else { t.border }), egui::StrokeKind::Inside);
+    p.rect_filled(rect, crate::theme::r(2.0), t.field);
+    p.rect_stroke(
+        rect,
+        crate::theme::r(2.0),
+        Stroke::new(if focused { 1.5 } else { 1.0 }, if focused { t.accent } else { t.border }),
+        egui::StrokeKind::Inside,
+    );
     let (cl, cx) = lay.caret_x(st.cursor);
     // A one-line box scrolls to keep the caret in sight.
     if single_line {

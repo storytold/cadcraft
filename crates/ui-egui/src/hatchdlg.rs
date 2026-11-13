@@ -432,10 +432,15 @@ pub fn background_menu(ui: &mut egui::Ui, current: Option<Color>) -> Option<Stri
         match current {
             Some(c) => {
                 let rgb = c.resolve(Color::Index(7), Color::Index(7));
-                ui.painter().rect_filled(r, 2.0, egui::Color32::from_rgb(rgb.0, rgb.1, rgb.2));
+                ui.painter().rect_filled(r, crate::theme::r(2.0), egui::Color32::from_rgb(rgb.0, rgb.1, rgb.2));
             }
             None => {
-                ui.painter().rect_stroke(r, 2.0, egui::Stroke::new(1.0, crate::theme::Tokens::get().text_dim), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(
+                    r,
+                    crate::theme::r(2.0),
+                    egui::Stroke::new(1.0, crate::theme::Tokens::get().text_dim),
+                    egui::StrokeKind::Inside,
+                );
             }
         }
         ui.menu_button(shown, |ui| {

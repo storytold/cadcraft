@@ -112,7 +112,7 @@ fn listing(folder: &str, typing: bool) -> (std::rc::Rc<Vec<Found>>, Option<Strin
 /// Draw a pattern's preview in `r`: its lines over a few repeats, or "SOLID" filled.
 pub fn preview(p: &egui::Painter, r: Rect, lines: &[PatternLine]) {
     let t = Tokens::get();
-    p.rect_filled(r, 3.0, t.field);
+    p.rect_filled(r, crate::theme::r(3.0), t.field);
     let inner = r.shrink(4.0);
     let runs = cadcraft_engine::render::pattern_swatch(lines, 1.0);
     let at = |v: &cadcraft_engine::geom::Vec2| pos2(inner.min.x + v.x as f32 * inner.width(), inner.max.y - v.y as f32 * inner.height());
@@ -128,7 +128,7 @@ pub fn preview(p: &egui::Painter, r: Rect, lines: &[PatternLine]) {
             }
         }
     }
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    p.rect_stroke(r, crate::theme::r(3.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
 }
 
 /// What the tab asks the dialog to do.
@@ -194,7 +194,7 @@ pub fn tab_ui(ui: &mut egui::Ui, folder: &mut String, pattern: &mut String, file
                 }
                 None => {
                     let t = Tokens::get();
-                    ui.painter().rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(r, crate::theme::r(3.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, crate::tl!("Preview"), crate::theme::small(), t.text_faint);
                 }
             }

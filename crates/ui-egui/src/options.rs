@@ -24,6 +24,7 @@
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
 //! | `fontFolders` | folders searched for TrueType/OpenType fonts before the system's, in order (up to 16) |
 //! | `interfaceScale` | the interface's size, 0.5–3 (1: the system's own) |
+//! | `roundedCorners` | windows, menus and buttons with rounded corners (default) or square ones |
 //!
 //! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
 //! rather than in the profile.
@@ -74,6 +75,8 @@ pub struct UiOptions {
     pub time_sensitive_right_click: bool,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
+    /// Windows, menus and buttons have rounded corners; off: square ones.
+    pub rounded_corners: bool,
 }
 
 impl Default for UiOptions {
@@ -85,6 +88,7 @@ impl Default for UiOptions {
             selection_color: None,
             time_sensitive_right_click: true,
             interface_scale: 1.0,
+            rounded_corners: true,
         }
     }
 }
@@ -153,6 +157,7 @@ struct UiChanges {
     time_sensitive_right_click: Option<bool>,
     font_folders: Option<Vec<String>>,
     interface_scale: Option<f32>,
+    rounded_corners: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -194,6 +199,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             let name = v.as_str().map_or_else(|| v.to_string(), str::to_string);
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
+        "roundedCorners" => c.rounded_corners = Some(v.as_bool().ok_or("roundedCorners must be true or false")?),
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
         "fontFolders" => {
             let list =
@@ -242,6 +248,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("ISAVEBAK".into(), json!(i32::from(cadcraft_engine::autosave::isavebak())));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    m.insert("roundedCorners".into(), json!(o.rounded_corners));
     m.insert("fontFolders".into(), json!(cadcraft_fonts::ttf::font_dirs()));
     m
 }
@@ -319,6 +326,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(b) = ui.rounded_corners {
+        app.options.rounded_corners = b;
+    }
     if let Some(dirs) = &ui.font_folders {
         cadcraft_fonts::ttf::set_font_dirs(dirs);
     }
@@ -385,6 +395,7 @@ impl CadApp {
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "fontFolders": cadcraft_fonts::ttf::font_dirs(),
             "interfaceScale": self.options.interface_scale,
+            "roundedCorners": self.options.rounded_corners,
         })
         .to_string()
     }
@@ -409,6 +420,7 @@ impl CadApp {
             "timeSensitiveRightClick",
             "fontFolders",
             "interfaceScale",
+            "roundedCorners",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -439,6 +451,9 @@ impl CadApp {
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
+        if let Some(b) = c.rounded_corners {
+            self.options.rounded_corners = b;
+        }
     }
 }
 
@@ -454,5 +469,27 @@ mod tests {
         for bad in ["#+f+0+0", "", "#fff", "#gggggg", "#12345678", "#ééé", "#1234567"] {
             assert_eq!(parse_hex(bad), None, "{bad}");
         }
+    }
+
+    /// Rounded corners can be turned off (Options ▸ Display); the choice is kept in the profile
+    /// and squares the app's own painting and egui's windows and buttons.
+    #[test]
+    fn rounded_corners_turn_off_and_are_kept() {
+        let mut app = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        assert!(app.options.rounded_corners);
+        app.run("options", json!({ "roundedCorners": false })).unwrap();
+        assert!(!app.options.rounded_corners);
+        assert!(app.run("options", json!({ "roundedCorners": 1 })).is_err());
+        let profile = app.profile_json();
+        let mut other = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        other.load_profile(&profile);
+        assert!(!other.options.rounded_corners);
+        let ctx = egui::Context::default();
+        theme::set_rounded(&ctx, false);
+        assert_eq!(theme::r(3.0), 0.0);
+        assert_eq!(ctx.global_style().visuals.window_corner_radius, egui::CornerRadius::ZERO);
+        theme::set_rounded(&ctx, true);
+        assert_eq!(theme::r(3.0), 3.0);
+        assert_eq!(ctx.global_style().visuals.window_corner_radius, egui::CornerRadius::same(6));
     }
 }

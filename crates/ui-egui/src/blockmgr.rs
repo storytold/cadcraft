@@ -73,7 +73,7 @@ fn build(d: &Drawing, name: &str) -> Option<(cadcraft_render::DisplayList, Bound
 /// Draw a display list fitted into `r` on `bg` (a framed square of the canvas colour).
 pub fn paint_list(p: &egui::Painter, r: Rect, list: &cadcraft_render::DisplayList, bounds: &Bounds2) {
     let t = Tokens::get();
-    p.rect_filled(r, 3.0, t.canvas);
+    p.rect_filled(r, crate::theme::r(3.0), t.canvas);
     let inner = r.shrink(10.0);
     if !bounds.is_empty() {
         let (w, h) = (bounds.width().max(1e-12), bounds.height().max(1e-12));
@@ -112,7 +112,7 @@ pub fn paint_list(p: &egui::Painter, r: Rect, list: &cadcraft_render::DisplayLis
             }
         }
     }
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    p.rect_stroke(r, crate::theme::r(3.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
 }
 
 /// The preview of `name`, from the cache when the drawing hasn't changed.
@@ -254,7 +254,7 @@ fn body(ui: &mut egui::Ui, v: &View, st: &mut State, as_panel: bool, act: &mut O
         match pv {
             Some(p) => paint_list(ui.painter(), r, &p.list, &p.bounds),
             None => {
-                ui.painter().rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(r, crate::theme::r(3.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, crate::tl!("Preview"), crate::theme::small(), t.text_faint);
             }
         }

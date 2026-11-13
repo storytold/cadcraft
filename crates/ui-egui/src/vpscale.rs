@@ -122,7 +122,7 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let lr = Rect::from_min_size(pos2(right - 20.0, cy - 9.0), vec2(18.0, 18.0));
     let lresp = ui.interact(lr, ui.scope_id().with("vp_lock"), Sense::click());
     if lresp.hovered() {
-        p.rect_filled(lr, 3.0, t.control_hover.gamma_multiply(0.5));
+        p.rect_filled(lr, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.5));
     }
     icons::paint(&p, lr.shrink(2.0), if vp.locked { Icon::Lock } else { Icon::Unlock }, false);
     let tip = if vp.locked { crate::tl!("Unlock viewport") } else { crate::tl!("Lock viewport") };
@@ -139,7 +139,7 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let w = g.size().x + 22.0;
     let sr = Rect::from_min_max(pos2(lr.left() - 4.0 - w, cy - 9.0), pos2(lr.left() - 4.0, cy + 9.0));
     let sresp = ui.interact(sr, ui.scope_id().with("vp_scale"), Sense::click());
-    p.rect_filled(sr, 3.0, if sresp.hovered() { t.control_hover } else { t.control.gamma_multiply(0.5) });
+    p.rect_filled(sr, crate::theme::r(3.0), if sresp.hovered() { t.control_hover } else { t.control.gamma_multiply(0.5) });
     p.galley(pos2(sr.left() + 6.0, sr.center().y - g.size().y / 2.0), g, t.text);
     let (ax, ay) = (sr.right() - 9.0, sr.center().y);
     p.line_segment([pos2(ax - 3.0, ay - 1.5), pos2(ax, ay + 1.5)], egui::Stroke::new(1.2, t.text_dim));

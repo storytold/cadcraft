@@ -135,8 +135,8 @@ fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(220.0, 170.0), egui::Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 4.0, t.canvas);
-    p.rect_stroke(rect, 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    p.rect_filled(rect, crate::theme::r(4.0), t.canvas);
+    p.rect_stroke(rect, crate::theme::r(4.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     match list.filter(|l| !l.bounds.is_empty() && !l.prims.is_empty()) {
         Some(l) => {
             let b = l.bounds;

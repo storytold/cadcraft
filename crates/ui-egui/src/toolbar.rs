@@ -1013,7 +1013,7 @@ fn name_list(ui: &mut egui::Ui, salt: &str, current: &str, names: &[String], pre
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::click());
             let p = ui.painter();
             if on || resp.hovered() {
-                p.rect_filled(r, 2.0, if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
+                p.rect_filled(r, crate::theme::r(2.0), if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
             }
             let pr = Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(PREVIEW_W, r.height()));
             paint_preview(p, pr, pv, n, t.text);
@@ -1133,7 +1133,7 @@ fn strip_with(app: &mut CadApp, ui: &mut egui::Ui, area: Rect, vertical: bool, b
             paint_name_combo(ui, br, resp.hovered() || resp.dragged(), vertical, tool.icon, names.as_ref().map(|(c, _)| c.as_str()));
         } else {
             if resp.hovered() || resp.dragged() {
-                ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
+                ui.painter().rect_filled(br, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.6));
             }
             icons::paint(ui.painter(), br.shrink(4.0), tool.icon, !tool.enabled());
         }
@@ -1253,7 +1253,7 @@ fn more_menu(
     let br = axis.slot(pos, BUTTON, BUTTON);
     let response = ui.interact(br, id.with("toolbar_more"), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
+        ui.painter().rect_filled(br, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.6));
     }
     for offset in [-5.0, 0.0, 5.0] {
         let d = if vertical { vec2(0.0, offset) } else { vec2(offset, 0.0) };
@@ -1314,7 +1314,7 @@ fn history_button(app: &CadApp, ui: &egui::Ui, axis: Axis, id: egui::Id, command
     let hr = axis.slot(pos, HISTORY_W, BUTTON);
     let hresp = ui.interact(hr, id.with(("tb_history", command)), Sense::click());
     if hresp.hovered() {
-        ui.painter().rect_filled(hr, 3.0, t.control_hover.gamma_multiply(0.6));
+        ui.painter().rect_filled(hr, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.6));
     }
     icons::paint(ui.painter(), Rect::from_center_size(hr.center(), vec2(10.0, 10.0)), Icon::ChevronDown, false);
     let undo = command == "u";
@@ -1470,8 +1470,8 @@ fn grip_handle(ui: &egui::Ui, id: egui::Id, bar: Bar, axis: Axis, start: f32) ->
                 Dock::Left => Rect::from_min_size(screen.min, vec2(THICKNESS, screen.height())),
             };
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, id.with("dock_preview")));
-            painter.rect_filled(preview, 2.0, t.accent.gamma_multiply(0.25));
-            painter.rect_stroke(preview, 2.0, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+            painter.rect_filled(preview, crate::theme::r(2.0), t.accent.gamma_multiply(0.25));
+            painter.rect_stroke(preview, crate::theme::r(2.0), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
         }
     }
     if grip_resp.drag_stopped() { ui.ctx().pointer_latest_pos().and_then(|p| drop_target(screen, p)) } else { None }
@@ -1537,8 +1537,8 @@ fn drag_feedback(
         if let (Some(p), Some(tool)) = (pointer, items.get(from).and_then(|c| find(c))) {
             let ghost = Rect::from_center_size(p + vec2(10.0, 10.0), vec2(BUTTON, BUTTON));
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, id.with("ghost")));
-            painter.rect_filled(ghost, 3.0, t.control_hover);
-            painter.rect_stroke(ghost, 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+            painter.rect_filled(ghost, crate::theme::r(3.0), t.control_hover);
+            painter.rect_stroke(ghost, crate::theme::r(3.0), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
             icons::paint(&painter, ghost.shrink(4.0), tool.icon, false);
         }
     }
@@ -1592,7 +1592,7 @@ fn app_button(ui: &mut egui::Ui, rect: Rect, id: egui::Id, vertical: bool) -> bo
     let resp = ui.interact(rect, id, Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, 3.0, t.control_hover.gamma_multiply(0.8));
+        ui.painter().rect_filled(rect, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.8));
     }
     match app_icon(ui.ctx()) {
         Some(tex) => {
@@ -1652,7 +1652,7 @@ fn app_menu_row(ui: &mut egui::Ui, command: &str, label: &str) -> egui::Response
     let text = crate::i18n::t(label);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text.to_string()));
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 3.0, t.control_hover);
+        ui.painter().rect_filled(rect, crate::theme::r(3.0), t.control_hover);
     }
     let icon = Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(28.0, 28.0));
     icons::paint(ui.painter(), icon, app_menu_icon(command), false);
@@ -1688,12 +1688,12 @@ fn paint_combo(ui: &egui::Ui, rect: Rect, hovered: bool, vertical: bool, layers:
     let p = ui.painter();
     if vertical {
         if hovered {
-            p.rect_filled(rect, 3.0, t.control_hover.gamma_multiply(0.6));
+            p.rect_filled(rect, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.6));
         }
         icons::paint(p, rect.shrink(4.0), Icon::Layers, false);
         return;
     }
-    p.rect_filled(rect, 3.0, if hovered { t.control_hover } else { t.control });
+    p.rect_filled(rect, crate::theme::r(3.0), if hovered { t.control_hover } else { t.control });
     let current = layers.and_then(|(cur, rows)| rows.iter().find(|r| r.0.eq_ignore_ascii_case(cur)));
     if let Some((name, on, frozen, locked, color)) = current {
         let mut x = rect.left() + 6.0;
@@ -1718,12 +1718,12 @@ fn paint_name_combo(ui: &egui::Ui, rect: Rect, hovered: bool, vertical: bool, ic
     let p = ui.painter();
     if vertical {
         if hovered {
-            p.rect_filled(rect, 3.0, t.control_hover.gamma_multiply(0.6));
+            p.rect_filled(rect, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.6));
         }
         icons::paint(p, rect.shrink(4.0), icon, false);
         return;
     }
-    p.rect_filled(rect, 3.0, if hovered { t.control_hover } else { t.control });
+    p.rect_filled(rect, crate::theme::r(3.0), if hovered { t.control_hover } else { t.control });
     icons::paint(p, Rect::from_min_size(pos2(rect.left() + 4.0, rect.center().y - 8.0), vec2(16.0, 16.0)), icon, false);
     if let Some(name) = current {
         let shown = if ["ByLayer", "ByBlock"].contains(&name) { crate::i18n::t(name).to_string() } else { name.to_string() };

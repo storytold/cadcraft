@@ -375,8 +375,8 @@ fn section_header(ui: &mut egui::Ui, title: &str) -> Rect {
 
 pub(crate) fn swatch(p: &egui::Painter, r: Rect, c: Color) {
     let rgb = c.resolve(Color::Index(7), Color::Index(7));
-    p.rect_filled(r, 1.0, Color32::from_rgb(rgb.0, rgb.1, rgb.2));
-    p.rect_stroke(r, 1.0, Stroke::new(1.0, Color32::from_gray(30)), egui::StrokeKind::Inside);
+    p.rect_filled(r, crate::theme::r(1.0), Color32::from_rgb(rgb.0, rgb.1, rgb.2));
+    p.rect_stroke(r, crate::theme::r(1.0), Stroke::new(1.0, Color32::from_gray(30)), egui::StrokeKind::Inside);
 }
 
 /// The strip collapsed Tool Sets leave on the left edge, like a collapsed palette title bar:
@@ -504,7 +504,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         let w = ui.available_width() - 10.0;
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
         let p = ui.painter();
-        p.rect_filled(rect, 3.0, t.control);
+        p.rect_filled(rect, crate::theme::r(3.0), t.control);
         if let Some((name, on, frozen, locked, color)) = &cur_info {
             let mut x = rect.left() + 6.0;
             for icon in [
@@ -528,7 +528,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         let w = ui.available_width() - 10.0;
         let (rect, _) = ui.allocate_exact_size(vec2(w, 24.0), Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, t.control);
+        ui.painter().rect_filled(rect, crate::theme::r(3.0), t.control);
         ui.painter().text(
             pos2(rect.left() + 8.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -604,9 +604,9 @@ fn value_box(ui: &mut egui::Ui, text: &str, combo: bool, enabled: bool) -> egui:
     let t = Tokens::get();
     let w = ui.available_width() - 10.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
-    ui.painter().rect_filled(rect, 2.0, if enabled { t.control } else { t.panel });
+    ui.painter().rect_filled(rect, crate::theme::r(2.0), if enabled { t.control } else { t.panel });
     if !enabled {
-        ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, t.control), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, crate::theme::r(2.0), Stroke::new(1.0, t.control), egui::StrokeKind::Inside);
     }
     ui.painter().text(
         pos2(rect.left() + 6.0, rect.center().y),
@@ -782,10 +782,10 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
     let hr = section_header(ui, "Properties");
     // All | My segmented control ("My" property sets don't exist yet).
     let seg = Rect::from_min_size(pos2(hr.right() - 120.0, hr.top() + 4.0), vec2(70.0, 18.0));
-    ui.painter().rect_filled(seg, 3.0, t.chrome_dark);
+    ui.painter().rect_filled(seg, crate::theme::r(3.0), t.chrome_dark);
     let half = Rect::from_min_size(seg.min, vec2(35.0, 18.0));
     let my = half.translate(vec2(35.0, 0.0));
-    ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
+    ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, crate::theme::r(3.0), t.control);
     ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, crate::tl!("All"), crate::theme::small(), t.text);
     ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, crate::tl!("My"), crate::theme::small(), t.text_faint);
     ui.interact(my, ui.scope_id().with("prop_my"), Sense::hover()).on_hover_text(crate::tl!("My properties: not available yet"));
@@ -1498,7 +1498,7 @@ pub fn ribbon(app: &mut CadApp, ui: &mut egui::Ui) {
             if active {
                 p.rect_filled(tr, egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, t.panel);
             } else if resp.hovered() {
-                p.rect_filled(tr, 3.0, t.control_hover);
+                p.rect_filled(tr, crate::theme::r(3.0), t.control_hover);
             }
             p.text(tr.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(13.0), if active { t.text } else { t.text_dim });
             icons::describe_control(ui, &resp, label, Some(active), true);

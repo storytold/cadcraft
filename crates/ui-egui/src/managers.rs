@@ -277,7 +277,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
                 } else {
                     t.control
                 };
-                ui.painter().rect_filled(rect, 3.0, fill);
+                ui.painter().rect_filled(rect, crate::theme::r(3.0), fill);
                 draw_point(ui.painter(), rect.center(), 9.0, *v, Stroke::new(1.5, t.text));
                 if r.on_hover_text(format!("PDMODE {v}")).clicked() && *v != mode {
                     action = set(*v, size, rel);
