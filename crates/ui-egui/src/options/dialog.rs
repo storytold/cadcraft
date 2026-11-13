@@ -139,7 +139,7 @@ fn preview_square(ui: &mut egui::Ui, side: f32, color: Color32) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 3.0, t.canvas);
+    p.rect_filled(rect, crate::theme::r(3.0), t.canvas);
     let side = side.clamp(1.0, 32.0);
     p.rect_stroke(egui::Rect::from_center_size(rect.center(), vec2(side, side)), 0.0, Stroke::new(2.0, color), egui::StrokeKind::Middle);
 }
@@ -220,6 +220,10 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         changes.insert("systemCursor".into(), json!(system_cursor));
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
+    let mut rounded = app.options.rounded_corners;
+    if ui.checkbox(&mut rounded, crate::tl!("Rounded corners on windows and buttons")).changed() {
+        changes.insert("roundedCorners".into(), json!(rounded));
+    }
 }
 
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.
@@ -686,7 +690,7 @@ fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, 
     ui.horizontal(|ui| {
         let c = cadcraft_color::aci_rgb(current);
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-        ui.painter().rect_filled(r, 2.0, Color32::from_rgb(c.0, c.1, c.2));
+        ui.painter().rect_filled(r, crate::theme::r(2.0), Color32::from_rgb(c.0, c.1, c.2));
         let mut v = current;
         if ui.add(egui::DragValue::new(&mut v).range(1..=255).prefix(format!("{} ", crate::tl!("Color")))).labelled_by(label).changed() {
             changes.insert(key.into(), json!(v));
@@ -694,8 +698,9 @@ fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, 
     });
 }
 
-/// Preferences tab: interface language, largest-array limit and time-sensitive right-click; edits accumulate in `changes`.
+/// Preferences tab: interface language, largest-array limit, time-sensitive right-click and the Right-Click Customization window; edits accumulate in `changes`.
 fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let mut right_click = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(RIGHT_CLICK)).unwrap_or(false));
     grid(ui, "options_preferences", |ui| {
         let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
@@ -727,7 +732,95 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
-    hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    hint(ui, crate::tl!("Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode."));
+    if ui.button(crate::tl!("Right-Click Customization...")).clicked() {
+        right_click = true;
+    }
+    if right_click {
+        right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
+}
+
+/// Whether the Right-Click Customization window is open (egui temp data).
+const RIGHT_CLICK: &str = "cc_options_right_click";
+
+/// Right-Click Customization (Options ▸ User Preferences): the time-sensitive right-click and its
+/// duration, and what a right-click does in Default, Edit and Command modes. Changes apply at
+/// once, as on the Options tabs.
+fn right_click_window(o: &super::UiOptions, ctx: &egui::Context, open: &mut bool, changes: &mut Map<String, Value>) {
+    use super::{CommandClick, IdleClick};
+    let mut close = false;
+    egui::Window::new(crate::tl!("Right-Click Customization"))
+        .id(egui::Id::unique("cc_right_click"))
+        .open(open)
+        .resizable(false)
+        .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            let mut timed = o.time_sensitive_right_click;
+            if ui.checkbox(&mut timed, crate::tl!("Turn on time-sensitive right-click")).changed() {
+                changes.insert("timeSensitiveRightClick".into(), json!(timed));
+            }
+            ui.add_enabled_ui(o.time_sensitive_right_click, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    let caption = ui.label(crate::tl!("Longer click duration:"));
+                    let mut ms = o.right_click_hold_ms;
+                    let range = super::RIGHT_CLICK_DURATIONS;
+                    if ui.add(egui::DragValue::new(&mut ms).range(range).speed(10.0)).labelled_by(caption.id).changed() {
+                        changes.insert("rightClickDuration".into(), json!(ms));
+                    }
+                    ui.label(crate::tl!("milliseconds"));
+                });
+                hint(ui, crate::tl!("While a command runs, a quick click is Enter and a longer click opens the shortcut menu."));
+            });
+            ui.add_space(6.0);
+            for (title, note, key, current) in [
+                (crate::tl!("Default Mode"), crate::tl!("No objects selected and no command running:"), "rightClickDefault", o.right_click_default),
+                (crate::tl!("Edit Mode"), crate::tl!("Objects selected and no command running:"), "rightClickEdit", o.right_click_edit),
+            ] {
+                heading(ui, title);
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    hint(ui, note);
+                    for (choice, label) in [(IdleClick::Repeat, crate::tl!("Repeat last command")), (IdleClick::Menu, crate::tl!("Shortcut Menu"))] {
+                        if ui.radio(current == choice, label).clicked() && current != choice {
+                            changes.insert(key.into(), json!(choice.as_str()));
+                        }
+                    }
+                });
+            }
+            ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
+                heading(ui, crate::tl!("Command Mode"));
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    hint(ui, crate::tl!("While a command runs:"));
+                    for (choice, label) in [
+                        (CommandClick::Enter, crate::tl!("ENTER")),
+                        (CommandClick::Menu, crate::tl!("Shortcut Menu: always enabled")),
+                        (CommandClick::MenuWithOptions, crate::tl!("Shortcut Menu: enabled when command options are present")),
+                    ] {
+                        if ui.radio(o.right_click_command == choice, label).clicked() && o.right_click_command != choice {
+                            changes.insert("rightClickCommand".into(), json!(choice.as_str()));
+                        }
+                    }
+                });
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(crate::tl!("Close")).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+    if close {
+        *open = false;
+    }
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

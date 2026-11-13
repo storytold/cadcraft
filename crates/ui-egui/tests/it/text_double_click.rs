@@ -120,3 +120,27 @@ fn double_click_on_a_block_reference_opens_the_block_editor() {
     double_click(&mut h, Vec2::new(32.0, 20.0));
     assert!(h.state().session.state().unwrap().block_edit.is_some(), "the Block Editor is open");
 }
+
+/// #1081: double-clicking a multileader's text edits it, as for TEXT and MTEXT.
+#[test]
+fn double_click_on_a_multileaders_text_starts_textedit() {
+    let mut h = harness();
+    h.state_mut().run("mleader", json!({ "points": [[16, -10], [20, -5]], "text": "example text" })).unwrap();
+    h.run_steps(3);
+    let at = h
+        .state()
+        .session
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|e| if let EntityKind::MLeader(m) = &e.kind { m.text.as_ref().map(|t| t.insert.xy()) } else { None })
+        .unwrap();
+    double_click(&mut h, at + Vec2::new(1.0, -0.05));
+    let s = &h.state().session;
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("textedit.object"));
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Enter new text");
+    assert_eq!(p.default.as_deref(), Some("example text"));
+    assert!(s.editing_mtext().is_some(), "the in-place editor opens on it");
+}

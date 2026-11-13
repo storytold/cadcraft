@@ -210,9 +210,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                 rects.push(r);
                                 let on = st.selected.contains(&i);
                                 if on {
-                                    ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(0.35));
+                                    ui.painter().rect_filled(r, crate::theme::r(2.0), t.accent.gamma_multiply(0.35));
                                 } else if resp.hovered() {
-                                    ui.painter().rect_filled(r, 2.0, t.control_hover.gamma_multiply(0.6));
+                                    ui.painter().rect_filled(r, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.6));
                                 }
                                 let y = r.center().y;
                                 let cell = |k: usize| Rect::from_min_size(pos2(r.left() + col_x(k), r.top()), vec2(cols[k], r.height()));

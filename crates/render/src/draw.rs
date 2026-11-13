@@ -45,9 +45,10 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
-    // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
-    // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// A top-level annotative object draws at the view's annotation scale: a viewport's scale for
+/// model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// Whether it was drawn (or hidden) here.
+fn annotative_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) -> bool {
     if ctx.depth == 0 && cadcraft_doc::is_annotative(e) {
         let mode = if ctx.top == VIEWPORT_CONTENT {
             cadcraft_doc::anno_draw(e, 1.0 / ctx.xf.scale_factor().max(1e-12), ctx.d.anno_all_visible())
@@ -55,14 +56,22 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             ctx.d.anno_draw(e)
         };
         match mode {
-            cadcraft_doc::AnnoDraw::Hidden => return,
+            cadcraft_doc::AnnoDraw::Hidden => return true,
             cadcraft_doc::AnnoDraw::Scaled(f) => {
                 let mut scaled = cadcraft_doc::anno_scaled(e, f);
                 scaled.common.anno_scales.clear();
-                return entity_parts(b, ctx, &scaled);
+                entity_parts(b, ctx, &scaled);
+                return true;
             }
             cadcraft_doc::AnnoDraw::Plain => {}
         }
+    }
+    false
+}
+
+fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
+    if annotative_parts(b, ctx, e) {
+        return;
     }
     let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
     if !visible {
@@ -227,6 +236,12 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
             for l in &fig.lines {
                 b.polyline(ctx, rgb, lw, l);
+            }
+        }
+        // An OLE object's content is not drawn; its frame, from its two corner points, is.
+        EntityKind::Unknown(u) if u.is_ole_frame() => {
+            if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
+                b.polyline(ctx, rgb, lw, &q);
             }
         }
         kind => {

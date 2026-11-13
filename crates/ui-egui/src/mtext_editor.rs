@@ -287,7 +287,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                     let any = if undo { !st.undo.is_empty() } else { !st.redo.is_empty() };
                     let (r, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
                     if resp.hovered() && any {
-                        ui.painter().rect_filled(r, 3.0, t.control_hover);
+                        ui.painter().rect_filled(r, crate::theme::r(3.0), t.control_hover);
                     }
                     crate::icons::paint(ui.painter(), r.shrink(3.0), icon, !any);
                     if resp.on_hover_text(tip(undo)).clicked() && any {
@@ -548,7 +548,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             ui.horizontal(|ui| {
                 for v in SWATCHES {
                     let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
-                    ui.painter().rect_filled(r, 2.0, color32(MTextColor::Aci(v)));
+                    ui.painter().rect_filled(r, crate::theme::r(2.0), color32(MTextColor::Aci(v)));
                     if resp.clicked() {
                         change(st, |c| c.color = Some(MTextColor::Aci(v)));
                         refocus = true;
@@ -708,7 +708,7 @@ fn icon_button_sized(
         None
     };
     if let Some(fill) = fill {
-        ui.painter().rect_filled(rect, 3.0, fill);
+        ui.painter().rect_filled(rect, crate::theme::r(3.0), fill);
     }
     let color = if resp.hovered() || on { t.text } else { ui.visuals().text_color() };
     paint(ui.painter(), Rect::from_center_size(rect.center(), icon), color);
@@ -804,7 +804,7 @@ fn header(ui: &mut egui::Ui, title: &str, cell: bool) -> bool {
             ui.add_space(2.0);
             let (rect, resp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(rect, 3.0, Color32::from_rgb(196, 43, 28));
+                ui.painter().rect_filled(rect, crate::theme::r(3.0), Color32::from_rgb(196, 43, 28));
             }
             let c = if resp.hovered() { Color32::WHITE } else { ui.visuals().text_color() };
             let k = Rect::from_center_size(rect.center(), vec2(9.0, 9.0));

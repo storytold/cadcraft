@@ -106,6 +106,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "dialogs",
         "hatchdlg",
         "aliasdlg",
+        "keys",
         "mtext_editor",
         "layers",
         "bedit",
@@ -115,6 +116,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "vpscale",
         "options/dialog",
         "finddlg",
+        "textdlg",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
@@ -160,13 +162,25 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
 
 /// Every `.rs` file under `dir`, at any depth, so code split into submodules stays scanned.
 fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
+    // `file_type` doesn't follow links, so a symlink (a directory alias or a file) is skipped,
+    // not walked again as a new subtree.
+    // An unreadable entry must fail the scan, not silently shrink the translation report.
+    let mut paths: Vec<_> = entries
+        .map(|e| {
+            let e = e.expect("read module directory entry");
+            let kind = e.file_type().expect("read module entry type");
+            (e.path(), kind)
+        })
+        .collect();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in paths {
+        if kind.is_dir() {
             module_files(&path, files);
-        } else if path.extension().is_some_and(|x| x == "rs") {
+        } else if kind.is_file() && path.extension().is_some_and(|x| x == "rs") {
             files.push(path);
         }
     }
@@ -204,6 +218,7 @@ fn assert_additional_locale_aliases() {
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -215,7 +230,7 @@ fn assert_additional_locale_aliases() {
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
     let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
-    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish"];
+    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
@@ -483,7 +498,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -577,6 +592,22 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
         missing
     });
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
+}
+
+/// A Georgian noun stays singular after a numeral, so one count form; the Dimension menu and the
+/// dimension object take different words. Mtavruli (U+1C90–U+1CBF) is a display style, not upper
+/// case: never in the catalog.
+#[test]
+fn georgian_counts_menu_headings_and_no_mtavruli() {
+    with_language("ka", || {
+        for n in [0, 1, 2, 5, 21, u64::MAX] {
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} კომიტი"));
+        }
+        assert_eq!(menu("Dimension"), "ზომების დატანა");
+        assert_eq!(t("Dimension"), "ზომა");
+    });
+    let mtavruli: Vec<char> = include_str!("ka.tsv").chars().filter(|c| ('\u{1c90}'..='\u{1cbf}').contains(c)).collect();
+    assert!(mtavruli.is_empty(), "{mtavruli:?}");
 }
 
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.

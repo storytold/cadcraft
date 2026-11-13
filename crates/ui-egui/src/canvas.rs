@@ -555,6 +555,7 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
+    crate::table_editor::paint(app, ui, painter, &xf);
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
         draw_ucs_icon(painter, rect);
@@ -564,7 +565,9 @@ fn paint_pointer_overlay(
         draw_viewcube(app, ui, rect);
     }
     viewport_label(painter, rect);
-    // Typing and Escape reach the command line even when its overlay is hidden.
+    // The table editor's keys first; typing and Escape reach the command line even when its
+    // overlay is hidden.
+    crate::table_editor::keyboard(app, ui.ctx());
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
     if app.ui.show_command_line {
@@ -611,6 +614,18 @@ fn paint_pointer_overlay(
         if !fields || app.session.current_prompt().is_some_and(|p| p.distance) {
             dynamic_input(app, painter, hp, fields);
         }
+    }
+    // A prompt for a name, a value or a choice started from a menu, a tab or a ribbon button
+    // shows beside the pointer there too, so what is typed is seen where the user is looking.
+    if !inside
+        && app.session.settings.dynmode
+        && app.ui.dialog.is_none()
+        && app.session.current_prompt().is_some_and(|p| !p.accept.point)
+        && let Some(hp) = ui.ctx().pointer_latest_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("cc_dyn_outside"));
+        let p = egui::Painter::new(ui.ctx().clone(), layer, ui.ctx().content_rect());
+        dyn_boxes::prompt_beside_pointer(app, &p, hp);
     }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
@@ -701,7 +716,7 @@ fn update_canvas_cursor(
         // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
+            && (e.first_locked().is_some() || app.cmd.second_locked())
         {
             eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
             app.canvas.snap = None;
@@ -721,7 +736,8 @@ fn update_canvas_cursor(
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none() && !app.cmd.second_locked())
+        {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.
@@ -968,6 +984,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
+        } else if crate::table_editor::click(app, raw_world.unwrap_or(p), mods.shift) {
+            // A cell of the table being edited.
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
@@ -982,6 +1000,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if !app.session.settings.pickdrag {
         app.canvas.drag_window = false;
     }
+    if app.session.running.is_none() {
+        crate::table_editor::drag(app, ui, &resp, &xf);
+    }
     if app.session.settings.pickdrag
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
@@ -989,6 +1010,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && app.session.pending_window.is_none()
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         && rect.contains(origin)
+        && !(app.session.running.is_none() && crate::table_editor::owns(app, &xf, origin))
         && grip_at(app, &xf, Some(origin)).is_none()
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {

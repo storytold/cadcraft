@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use egui::{RichText, Sense, Stroke, vec2};
 use serde_json::{Value, json};
 
-use crate::CadApp;
 use crate::parametric::expr_field;
 use crate::theme::Tokens;
+use crate::{CadApp, Pick};
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
@@ -126,6 +126,7 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let library: Vec<String> = cadcraft_doc::library::standard_linetypes().into_iter().map(|l| l.name).filter(|n| d.linetype(n).is_none()).collect();
     let mut sel = temp::<String>(ctx, "ltmgr_sel").filter(|s| rows.iter().any(|r| r.0.eq_ignore_ascii_case(s))).unwrap_or_else(|| current.clone());
     let mut action = None;
+    let mut pick_lin = false;
     egui::Window::new("Linetype Manager").open(open).default_size(vec2(520.0, 360.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
             craft_ui::ComboBox::from_id_salt("ltmgr_load").selected_text("Load...").width(110.0).show_ui(ui, |ui| {
@@ -140,12 +141,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     }
                 }
                 // The user's own .lin file (where the host has a file picker).
-                if let Some(pick) = app.services.pick_open.as_ref() {
+                if app.services.pick_open.is_some() {
                     ui.separator();
-                    if ui.selectable_label(false, "From File...").clicked()
-                        && let Some(path) = pick()
-                    {
-                        action = Some(("linetype", json!({ "load": "*", "file": path })));
+                    if ui.selectable_label(false, "From File...").clicked() {
+                        pick_lin = true;
                     }
                 }
             });
@@ -192,6 +191,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         });
     });
     set_temp(ctx, "ltmgr_sel", sel);
+    // The user's .lin file, asked for once the window is drawn. Errors are echoed by `run`.
+    if pick_lin {
+        let _ = app.pick_then(Pick::Open, |app, path| app.run("linetype", json!({ "load": "*", "file": path })));
+    }
     action
 }
 
@@ -277,7 +280,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
                 } else {
                     t.control
                 };
-                ui.painter().rect_filled(rect, 3.0, fill);
+                ui.painter().rect_filled(rect, crate::theme::r(3.0), fill);
                 draw_point(ui.painter(), rect.center(), 9.0, *v, Stroke::new(1.5, t.text));
                 if r.on_hover_text(format!("PDMODE {v}")).clicked() && *v != mode {
                     action = set(*v, size, rel);
@@ -311,7 +314,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
 enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
-    Choice(&'static str, &'static str, String, Vec<String>),
+    Choice(&'static str, &'static str, String, std::sync::Arc<[String]>),
 }
 
 struct Style {
@@ -335,7 +338,7 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
                     if !s.font.trim().is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(s.font.trim())) {
                         names.insert(0, s.font.clone());
                     }
-                    names
+                    names.into()
                 }),
                 Field::Num("height", "Height (0 = ask)", s.height),
                 Field::Num("widthFactor", "Width factor", s.width_factor),
@@ -383,7 +386,8 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         no_drawing(ctx, "Multileader Style", open);
         return None;
     };
-    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    // One list shared by every row: a copy per style multiplied the two counts.
+    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
     let mut styles: Vec<Style> = d
         .mleader_styles
         .iter()
@@ -394,7 +398,7 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
                 Field::Num("textHeight", "Text height", s.text_height),
                 Field::Num("landingGap", "Landing gap", s.landing_gap),
                 Field::Num("dogleg", "Landing length", s.dogleg),
-                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
             ],
         })
         .collect();
@@ -585,9 +589,39 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let [left, right] = cols else { return };
             left.label(RichText::new("Layouts").strong());
             egui::ScrollArea::vertical().id_salt("pagesetup_list").max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
+                // The layouts drag to a new place in the tab order.
+                let mut rows: Vec<(String, egui::Rect)> = Vec::new();
+                let mut dragged: Option<(String, bool)> = None;
                 for (_, name, _) in &layouts {
-                    if ui.selectable_label(*name == sel, name).clicked() {
+                    let r = ui.add(egui::Button::selectable(*name == sel, name).sense(egui::Sense::click_and_drag()));
+                    if r.clicked() {
                         sel = name.clone();
+                    }
+                    if r.dragged() || r.drag_stopped() {
+                        dragged = Some((name.clone(), r.drag_stopped()));
+                    }
+                    rows.push((name.clone(), r.rect));
+                }
+                if let Some((name, dropped)) = dragged
+                    && let Some(py) = ui.ctx().pointer_latest_pos().map(|q| q.y)
+                {
+                    let target = rows.iter().find(|(_, r)| py < r.center().y).map(|(n, _)| n.clone());
+                    let mark_y = match &target {
+                        Some(b) => rows.iter().find(|(n, _)| n == b).map(|(_, r)| r.top()),
+                        None => rows.last().map(|(_, r)| r.bottom()),
+                    };
+                    if let (Some(y), Some((_, first))) = (mark_y, rows.first()) {
+                        ui.painter().line_segment([egui::pos2(first.left(), y), egui::pos2(first.right(), y)], egui::Stroke::new(2.0, t.accent));
+                    }
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if dropped && target.as_ref() != Some(&name) {
+                        action = Some((
+                            "layout.move",
+                            match target {
+                                Some(b) => json!({ "name": name, "before": b }),
+                                None => json!({ "name": name }),
+                            },
+                        ));
                     }
                 }
             });
@@ -1122,31 +1156,44 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         return action;
     }
     if ok {
-        let mut params = plot_params(&st, None);
-        if let Some(pick) = app.services.pick_save.as_ref() {
+        let params = plot_params(&st, None);
+        let target = st.target.clone();
+        if app.services.pick_save.is_some() {
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let suggested = format!("{}-{}.{ext}", stem.unwrap_or_else(|| "Drawing".into()), st.target);
             // Cancelling the file dialog keeps the Plot dialog open with its settings.
-            let Some(path) = pick(&suggested) else { return action };
-            if let Some(o) = params.as_object_mut() {
-                o.insert("path".into(), json!(path));
-            }
-        }
-        *open = false;
-        match app.run("plot", params) {
-            Ok(r) => {
-                let msg = match r.get("path").and_then(Value::as_str) {
-                    Some(path) => format!("Plotted {} to {path}", st.target),
-                    None => format!("Plotted {} ({} bytes of PDF; there is no file dialog here)", st.target, r["bytes"]),
-                };
-                app.session.echo(msg);
-            }
-            // `run` already echoed the error; keep the dialog open to fix the settings.
-            Err(_) => *open = true,
+            let _ = app.pick_then(Pick::Save(suggested), move |app, path| {
+                let mut params = params;
+                if let Some(o) = params.as_object_mut() {
+                    o.insert("path".into(), json!(path));
+                }
+                run_plot(app, params, &target);
+                Ok(Value::Null)
+            });
+        } else {
+            run_plot(app, params, &target);
         }
     }
     action
+}
+
+/// Plot with the Plot dialog's settings: it closes, and opens again when the plot fails.
+fn run_plot(app: &mut CadApp, params: Value, target: &str) {
+    if app.ui.dialog.as_deref() == Some("plot") {
+        app.ui.dialog = None;
+    }
+    match app.run("plot", params) {
+        Ok(r) => {
+            let msg = match r.get("path").and_then(Value::as_str) {
+                Some(path) => format!("Plotted {target} to {path}"),
+                None => format!("Plotted {target} ({} bytes of PDF; there is no file dialog here)", r["bytes"]),
+            };
+            app.session.echo(msg);
+        }
+        // `run` already echoed the error; keep the dialog open to fix the settings.
+        Err(_) => app.ui.dialog = Some("plot".into()),
+    }
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.

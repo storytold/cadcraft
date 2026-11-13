@@ -23,13 +23,15 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "macos")]
+mod sheet;
 mod spacemouse;
 mod system_animations;
 mod workspace;
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::switch::Switch;
-use cadcraft_ui_egui::{CadApp, Services, i18n};
+use cadcraft_ui_egui::{CadApp, Pick, Services, i18n};
 
 struct App {
     cad: CadApp,
@@ -161,29 +163,42 @@ pub fn install_io() {
 
 fn services() -> Services {
     Services {
-        pick_open: Some(Box::new(|| {
-            rfd::FileDialog::new()
-                .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
-                .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
-                .add_filter(i18n::t("All files"), &["*"])
-                .pick_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
-        pick_save: Some(Box::new(|name: &str| {
-            filters_for_save(name)
-                .iter()
-                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
-                .save_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_open: Some(Box::new(|| file_dialog(&Pick::Open).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| file_dialog(&Pick::Save(name.into())).save_file().map(|p| p.to_string_lossy().to_string()))),
         pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string()))),
+        // macOS shows the dialogs as sheets (`sheet::start_pick`), set once the window exists.
+        start_pick: None,
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
-        pick_lisp: Some(Box::new(|dir: &str| {
-            let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
-            let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
-            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_lisp: Some(Box::new(|dir: &str| file_dialog(&Pick::Lisp(dir.into())).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
+    }
+}
+
+/// The file types `pick` offers: (label, extensions). Shared by the blocking dialogs and the
+/// macOS sheets.
+fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
+    match pick {
+        Pick::Open => vec![
+            (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
+            (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
+            (i18n::t("All files"), vec!["*"]),
+        ],
+        Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
+        Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
+        Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+    }
+}
+
+/// The blocking dialog for `pick` (Windows, Linux, FreeBSD).
+fn file_dialog(pick: &Pick) -> rfd::FileDialog {
+    let dialog = filters(pick).iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
+    match pick {
+        Pick::Save(name) => dialog.set_file_name(name),
+        Pick::Lisp(dir) | Pick::Pgp(dir) if !dir.is_empty() => dialog.set_directory(dir),
+        _ => dialog,
     }
 }
 
@@ -237,6 +252,25 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         stencil_buffer: STENCIL_BITS,
         ..Default::default()
     }
+}
+
+/// Windows: the title row is the window's title bar (no OS decorations), with the Tool Bar in it.
+/// `CADCRAFT_TITLEBAR=system` keeps the system's title bar (`=app` asks for the app's elsewhere); so does OpenGL alone, where some
+/// drivers show an undecorated window's picture a caption's height lower than the pointer.
+fn app_titlebar(options: &eframe::NativeOptions) -> bool {
+    use eframe::wgpu::Backends;
+    let asked = std::env::var("CADCRAFT_TITLEBAR").map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
+    if asked == "app" {
+        return true;
+    }
+    if !cfg!(target_os = "windows") || asked == "system" {
+        return false;
+    }
+    let backends = match &options.wgpu_options.wgpu_setup {
+        eframe::egui_wgpu::WgpuSetup::CreateNew(setup) => setup.instance_descriptor.backends,
+        _ => eframe::wgpu::Backends::all(),
+    };
+    !(backends.contains(Backends::GL) && !backends.intersects(Backends::DX12 | Backends::VULKAN))
 }
 
 const APP_ID: &str = "ai.storyteller.cadcraft";
@@ -320,6 +354,8 @@ fn main() -> eframe::Result {
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
     graphics::configure(&mut options, eframe::wgpu::Backends::from_env(), eframe::wgpu::Dx12Compiler::from_env());
+    let custom_titlebar = app_titlebar(&options);
+    options.viewport = options.viewport.with_decorations(!custom_titlebar);
     // Command previews (COPY, MOVE...) of large selections are tessellated by egui, whose index
     // buffer outgrew wgpu's default 256 MiB cap; the validation error is fatal. Ask for what the
     // adapter actually supports.
@@ -356,6 +392,12 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the
+            // app when the dialog is resized (#1527).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
@@ -389,6 +431,7 @@ fn main() -> eframe::Result {
                 app.session.set_lisp_support_dir(Some(support));
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            app.custom_titlebar = custom_titlebar;
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }

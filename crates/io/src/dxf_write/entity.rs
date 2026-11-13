@@ -544,6 +544,9 @@ fn write_table_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
                 if let Some(h) = cell.and_then(|x| x.text_height).filter(|h| h.is_finite() && *h > 0.0) {
                     w.f(140, h);
                 }
+                if let Some(a) = cell.and_then(|x| x.align).filter(|a| (1..=9).contains(a)) {
+                    w.i(170, i64::from(a));
+                }
                 // Long text: 250-character code-2 chunks, the rest in code 1.
                 let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
                 let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();

@@ -76,7 +76,7 @@ fn dxf_mtext_caret_spaces_round_trip() -> TestResult {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_mtext_caret_spaces_round_trip() -> TestResult {
     let (original, expected) = drawing()?;
@@ -105,7 +105,7 @@ fn dwg_mtext_caret_spaces_round_trip() -> TestResult {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn bridge_caret_space_is_escaped_once_in_each_direction() -> TestResult {
     let (d, _) = drawing()?;

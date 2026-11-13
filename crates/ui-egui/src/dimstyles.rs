@@ -880,7 +880,7 @@ pub fn preview(ui: &mut egui::Ui, st: &DimStyle, size: egui::Vec2, src: Option<&
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 2.0, t.canvas);
+    p.rect_filled(rect, crate::theme::r(2.0), t.canvas);
     let key = format!("{:p}{}", src.map_or(std::ptr::null(), |d| d as *const _), serde_json::to_string(st).unwrap_or_default());
     let list = PREVIEWS.with(|c| {
         let mut c = c.borrow_mut();
