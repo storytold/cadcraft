@@ -752,9 +752,9 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
 }
 
 /// Shape a segment with its left end at `x` on the baseline. `budget` is what is left of the
-/// layout's allowance: a tracked segment, shaped a character at a time, stops once it has
-/// outgrown it (the layout then drops the segment), so it never holds more than that and one
-/// character, as an untracked segment shaped in one call doesn't.
+/// layout's allowance. A tracked segment is shaped a character at a time and stops once it has
+/// outgrown it, so it holds at most that plus one character's shape (capped like any one shape);
+/// a segment that stopped early never fits, and the layout drops it.
 fn seg_shape(seg: &Seg, f: &Fmt, x: f64, budget: &Allowance) -> Shaped {
     let h = f.height;
     let mut out = Shaped::default();
@@ -1222,7 +1222,7 @@ mod tests {
         let text = Seg::Text("H".repeat(40));
         let whole = seg_shape(&text, &f, 0.0, &Allowance::new());
         let one = Allowance::cost(&seg_shape(&Seg::Text("H".into()), &f, 0.0, &Allowance::new()));
-        assert!(Allowance::cost(&whole) == 40 * one, "with room, every character is shaped");
+        assert_eq!(Allowance::cost(&whole), 40 * one, "with room, every character is shaped");
         let budget = Allowance(5 * one);
         let cut = seg_shape(&text, &f, 0.0, &budget);
         assert_eq!(Allowance::cost(&cut), 6 * one, "it stops one character past the budget");
