@@ -13,8 +13,8 @@
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::{Entity, Handle, RawTag, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
+use craft_dxf::Tag;
 
 use super::LispError;
 use super::builtins::args_err;
@@ -182,7 +182,12 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
         Value::Nil => serde_json::Value::Null,
         Value::Int(i) => serde_json::json!(i),
         Value::Real(r) => serde_json::json!(r),
-        Value::Str(s) => serde_json::json!(&**s),
+        Value::Str(s) => {
+            // A string is copied whole each time it occurs: it spends the allowance by its length
+            // (one unit per 16 bytes, so about 32 MB in all), shared or not.
+            *budget = budget.checked_sub(s.len() as u64 / 16)?;
+            serde_json::json!(&**s)
+        }
         Value::Cons(_) => {
             let mut arr = Vec::new();
             for x in v.iter() {
@@ -251,20 +256,20 @@ fn convert_angles(kind: &str, tags: &mut [Tag], f: fn(f64) -> f64) {
             continue;
         }
         let v = match t.value {
-            cadcraft_dxf::Value::Real(r) => r,
-            cadcraft_dxf::Value::Int(i) => i as f64,
+            craft_dxf::Value::Real(r) => r,
+            craft_dxf::Value::Int(i) => i as f64,
             _ => continue,
         };
-        t.value = cadcraft_dxf::Value::Real(f(v));
+        t.value = craft_dxf::Value::Real(f(v));
     }
 }
 
 fn tag_value(t: &Tag) -> Value {
     match &t.value {
-        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Value::str(s),
-        cadcraft_dxf::Value::Real(r) => Value::Real(*r),
-        cadcraft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
-        cadcraft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
+        craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => Value::str(s),
+        craft_dxf::Value::Real(r) => Value::Real(*r),
+        craft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
+        craft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
     }
 }
 
@@ -299,12 +304,16 @@ fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     out
 }
 
+/// The most string bytes an entity list may hold (counted per occurrence, shared or not).
+const MAX_GROUP_TEXT: usize = 32 << 20;
+
 /// An association list back to DXF groups (points split into x, y, z groups). The type
 /// (`0`), the entity name (`-1`), the handle (`5`), the owner (`330`) and the layout (`410`) are
 /// left out: they aren't the entity's to set.
 fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
     let mut kind = None;
     let mut tags = Vec::new();
+    let mut text_left = MAX_GROUP_TEXT;
     for item in list.iter() {
         let Value::Cons(c) = &item else { return Err(LispError::bad_arg("listp", &item)) };
         let Value::Int(code) = c.car else { return Err(LispError::bad_arg("fixnump", &c.car)) };
@@ -326,7 +335,11 @@ fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
             _ => tags.push(match &v {
                 Value::Int(i) => Tag::i(code, i64::from(*i)),
                 Value::Real(r) => Tag::f(code, *r),
-                Value::Str(s) => Tag::s(code, &**s),
+                Value::Str(s) => {
+                    // Each occurrence of a shared string becomes its own copy in the tag.
+                    text_left = text_left.checked_sub(s.len()).ok_or_else(|| LispError::new("out of memory: the entity list holds too much text"))?;
+                    Tag::s(code, &**s)
+                }
                 Value::Ename(h) => Tag::s(code, h.hex()),
                 other => return Err(LispError::bad_arg("DXF group value", other)),
             }),
@@ -380,7 +393,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 /// A group kept raw, typed by its code (so a 1070 lists as an integer, a 1040 as a real).
 fn typed_tag(r: &RawTag) -> Tag {
-    use cadcraft_dxf::{Kind, Value as V, kind_of};
+    use craft_dxf::{Kind, Value as V, kind_of};
     let v = r.value.trim();
     let value = match kind_of(r.code) {
         Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(V::Real),
@@ -459,12 +472,12 @@ fn xdata_from_list(list: &Value) -> Result<Option<Vec<(String, Vec<RawTag>)>>, L
                     if p.iter().any(|v| !v.is_finite()) {
                         return Err(bad("xdata point must be finite"));
                     }
-                    groups.push(RawTag { code, value: cadcraft_dxf::format_real(p[0]) });
-                    groups.push(RawTag { code: code + 10, value: cadcraft_dxf::format_real(p[1]) });
-                    groups.push(RawTag { code: code + 20, value: cadcraft_dxf::format_real(p[2]) });
+                    groups.push(RawTag { code, value: craft_dxf::format_real(p[0]) });
+                    groups.push(RawTag { code: code + 10, value: craft_dxf::format_real(p[1]) });
+                    groups.push(RawTag { code: code + 20, value: craft_dxf::format_real(p[2]) });
                 }
                 Value::Int(i) => groups.push(RawTag { code, value: i.to_string() }),
-                Value::Real(r) => groups.push(RawTag { code, value: cadcraft_dxf::format_real(*r) }),
+                Value::Real(r) => groups.push(RawTag { code, value: craft_dxf::format_real(*r) }),
                 Value::Str(s) => groups.push(RawTag { code, value: s.to_string() }),
                 Value::Ename(h) => groups.push(RawTag { code, value: h.hex() }),
                 other => return Err(LispError::bad_arg("DXF group value", other)),
@@ -1309,4 +1322,28 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
     candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// One 64 KB string occurring many times is charged by its length each time.
+    #[test]
+    fn shared_strings_spend_the_conversion_budgets() {
+        let big = Value::str(&"x".repeat(64 << 10));
+        // 600 x 64 KB is over the 32 MiB an entity list may hold; 100 x 64 KB is not.
+        let list = |n: usize| {
+            let mut items = vec![Value::cons(Value::Int(0), Value::str("TEXT"))];
+            items.extend(std::iter::repeat_n(Value::cons(Value::Int(1), big.clone()), n));
+            Value::list(items)
+        };
+        assert!(list_to_groups(&list(600)).is_err());
+        assert!(list_to_groups(&list(100)).is_ok());
+        // 1,000 x 64 KB is 4,096,000 units of the 2,000,000 SETVAR allows; 100 x 64 KB is not.
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big.clone(); 1_000]), 0, &mut budget).is_none());
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big; 100]), 0, &mut budget).is_some());
+    }
 }

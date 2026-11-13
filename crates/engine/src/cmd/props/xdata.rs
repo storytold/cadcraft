@@ -151,7 +151,7 @@ fn groups_from_json(app: &str, pairs: &[Value]) -> Result<Vec<RawTag>, String> {
             Some([c, v]) => (c.as_i64().and_then(|c| i32::try_from(c).ok()).ok_or_else(|| format!("{}: the code must be an integer", at()))?, v),
             _ => return Err(format!("{}: each group is a [code, value] pair", at())),
         };
-        let real = |x: &Value| x.as_f64().filter(|x| x.is_finite()).map(cadcraft_dxf::format_real);
+        let real = |x: &Value| x.as_f64().filter(|x| x.is_finite()).map(craft_dxf::format_real);
         match code {
             1000 | 1003 => {
                 let s = value.as_str().ok_or_else(|| format!("{}: group {code} takes a string", at()))?;

@@ -110,12 +110,9 @@ fn properties_set_replaces_removes_and_round_trips_through_dxf() {
 
     // Saved and read back the same, with an APPID record for each application.
     let text = cadcraft_io::write_dxf(s.doc().unwrap());
-    let tags = cadcraft_dxf::parse_ascii(&text).unwrap();
-    let appids: Vec<String> = cadcraft_dxf::records(&tags)
-        .iter()
-        .filter(|(k, _)| k == "APPID")
-        .filter_map(|(_, t)| t.iter().find(|t| t.code == 2).map(|t| t.str()))
-        .collect();
+    let tags = craft_dxf::parse_ascii(&text).unwrap();
+    let appids: Vec<String> =
+        craft_dxf::records(&tags).iter().filter(|(k, _)| k == "APPID").filter_map(|(_, t)| t.iter().find(|t| t.code == 2).map(|t| t.str())).collect();
     assert!(appids.contains(&"ACME".to_string()) && appids.contains(&"PE_URL".to_string()), "{appids:?}");
     let mut back = session_from(&text);
     assert_eq!(handle_of(&back, true), h, "the line keeps its handle");
