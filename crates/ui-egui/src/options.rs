@@ -554,7 +554,6 @@ impl CadApp {
             "rightClickDefault",
             "rightClickEdit",
             "rightClickCommand",
-            "interfaceScale",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);

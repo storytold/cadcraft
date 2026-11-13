@@ -555,6 +555,7 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
+    crate::table_editor::paint(app, ui, painter, &xf);
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
         draw_ucs_icon(painter, rect);
@@ -564,7 +565,9 @@ fn paint_pointer_overlay(
         draw_viewcube(app, ui, rect);
     }
     viewport_label(painter, rect);
-    // Typing and Escape reach the command line even when its overlay is hidden.
+    // The table editor's keys first; typing and Escape reach the command line even when its
+    // overlay is hidden.
+    crate::table_editor::keyboard(app, ui.ctx());
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
     if app.ui.show_command_line {
@@ -981,6 +984,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
+        } else if crate::table_editor::click(app, raw_world.unwrap_or(p), mods.shift) {
+            // A cell of the table being edited.
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
@@ -995,6 +1000,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if !app.session.settings.pickdrag {
         app.canvas.drag_window = false;
     }
+    if app.session.running.is_none() {
+        crate::table_editor::drag(app, ui, &resp, &xf);
+    }
     if app.session.settings.pickdrag
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
@@ -1002,6 +1010,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && app.session.pending_window.is_none()
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         && rect.contains(origin)
+        && !(app.session.running.is_none() && crate::table_editor::owns(app, &xf, origin))
         && grip_at(app, &xf, Some(origin)).is_none()
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {

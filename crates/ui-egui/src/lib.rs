@@ -47,6 +47,7 @@ mod panel_state;
 pub mod spacemouse;
 pub mod switch;
 pub mod thumbs;
+pub mod table_editor;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
@@ -351,6 +352,8 @@ pub struct CadApp {
     /// Windows: no OS decorations; the title row is the title bar, with its own caption buttons
     /// and resize edges ([`chrome::title_and_toolbar`]).
     pub custom_titlebar: bool,
+    /// The table editor's selected cells ([`table_editor`]); `None` while it is closed.
+    pub table_edit: Option<table_editor::TableEdit>,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -446,6 +449,7 @@ impl CadApp {
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             custom_titlebar: false,
+            table_edit: None,
             control_rx: None,
             capture_geometry: None,
             capture_epoch: 0,

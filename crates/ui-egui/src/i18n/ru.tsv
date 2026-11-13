@@ -1030,6 +1030,40 @@
 	Minimize	Свернуть
 	Maximize	Развернуть
 	Rounded corners on windows and buttons	Скруглённые углы окон и кнопок
+	Common	Общие
+	Set Row Height / Column Width	Высота строк / ширина столбцов
+	Fit Rows / Columns to Contents	Подогнать строки / столбцы по содержимому
+	Set Cell Properties	Свойства ячеек
+	Row ↑	Строка ↑
+	Row ↓	Строка ↓
+	Column ←	Столбец ←
+	Column →	Столбец →
+	Insert a row above	Вставить строку сверху
+	Insert a row below	Вставить строку снизу
+	Insert a column to the left	Вставить столбец слева
+	Insert a column to the right	Вставить столбец справа
+	Delete rows	Удалить строки
+	Delete the selected rows	Удалить выбранные строки
+	Delete columns	Удалить столбцы
+	Delete the selected columns	Удалить выбранные столбцы
+	Merge	Объединить
+	Merge the selected cells	Объединить выбранные ячейки
+	Unmerge	Разъединить
+	Unmerge the cell	Разъединить ячейку
+	By cell style	По стилю ячейки
+	Fit width	По ширине
+	Columns as wide as their text	Ширина столбцов по тексту
+	Fit height	По высоте
+	Rows as high as their text	Высота строк по тексту
+	Equal widths	Выровнять ширину
+	The selected columns share their width equally	Выбранные столбцы одинаковой ширины
+	Equal heights	Выровнять высоту
+	The selected rows share their height equally	Выбранные строки одинаковой высоты
+	Select all	Выделить все
+	Select every cell (Ctrl+A)	Выделить все ячейки (Ctrl+A)
+	Edit text	Изменить текст
+	Edit the text of the cell (Enter, or double-click it)	Изменить текст ячейки (Enter или двойной щелчок)
+	Close the table editor (Esc)	Закрыть редактор таблиц (Esc)
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Чертёж изменился. Закройте окно и откройте его снова.

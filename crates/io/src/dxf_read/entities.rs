@@ -388,15 +388,18 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
         // The cell's own text height: 140 outside the value block (301 … 304), where it is a number.
         let mut in_value = false;
         let mut text_height = None;
+        let mut align = None;
         for x in cell {
             match x.code {
                 301 => in_value = true,
                 304 => in_value = false,
                 140 if !in_value => text_height = Some(x.f64()).filter(|h| h.is_finite() && *h > 0.0 && *h < 1e9),
+                // The cell's own alignment (1 top left … 9 bottom right).
+                170 if !in_value => align = u8::try_from(x.i64()).ok().filter(|a| (1..=9).contains(a)),
                 _ => {}
             }
         }
-        flat.push(TableCell { text, merged, text_height, ..TableCell::default() });
+        flat.push(TableCell { text, merged, text_height, align, ..TableCell::default() });
     }
     flat.resize(rows * cols, TableCell::default());
     let cells: Vec<Vec<TableCell>> = if cols == 0 { vec![Vec::new(); rows] } else { flat.chunks(cols).map(<[TableCell]>::to_vec).collect() };
