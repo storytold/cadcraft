@@ -19,7 +19,7 @@
 
 5. **几何回写已实现（`encode_wall_segments` 逆操作）**：`encode_wall_segments(graphic_data, segments)` 把新 segments 反向构造成类型 6 图元（payload 重写为 `u32 2 + 6×f64`，其余图元原样保留；**段数必须等于类型 6 图元数**，否则拒绝）。保存路径：`cadcraft_io::move_tianzheng_wall`/`move_tianzheng_segment`/`set_tianzheng_segment` 改 `Tianzheng.segments` → `encode_wall_segments` 生成新 graphic_data → `sync_tianzheng_graphics` 写回 tags 的 `160`(i64)/`92`(i32) 长度 + 紧跟的 `310` 段（graphics 段在 `162`/`96` text bits 之前，与 data 的 `161`/`93`+`310` 段区分）。命令层经 `properties.set` 的 `tianzhengGeometry` 参数（`{"op":"moveWall|moveSegment|setSegment|setThickness", ...}`）接入，hook 为 `tianzheng_geometry_setter`。端到端已验证（真实图纸 52 墙，平移 (1000,2000) → 保存 → 再读坐标一致）。**`set_thickness` 已实现（仅直墙）**：`set_tianzheng_thickness` 改 2 段平行双线的间距（墙中线不动，双线各沿法线移动 `(new-old)/2`），端到端验证 240→300mm 落盘成功；拐角/开洞墙（3+ 段）返回 false，AI 用 `setSegment`/`moveSegment` 自算坐标。
 
-6. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@TDbWall`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线、`T20d7`=OutCircleTextAlignment、`T20d12`=SourceExtentY。故 binary 的 TCH_WALL 字段是「填充/保温/材料」**属性**，几何不在 T20 字段（在加密固定字段 + proxy graphics）。
+6. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@类名`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线。**纠正**：`T20d7`=OutCircleTextAlignment 属 `TDbSymbDrawingIndex`（图纸索引符号）、`T20d12`=SourceExtentY 属 `TDbSymbIndexPointer`（索引指针符号），**不是墙字段**（旧版误归 TDbWall）。故 binary 的 TCH_WALL 字段全是「填充/保温/材料」**属性**（T20b/s/u），**墙高/墙厚不在 T20 字段容器**（是 `TEntityBase` 加密固定字段 double@+0x08/+0x10），几何也不在 T20 字段（在加密固定字段 + proxy graphics）。
 
 7. **天正文字在 proxy graphics 类型 38 图元**（实测 TCH_TEXT/TCH_DIMENSION/TCH_OPENING/TCH_ELEVATION）。payload 布局：`x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 16/24/32 是 0，偏移 40 是缩放因子（恒 1.0），**偏移 48/56 是旋转方向的**方向余弦** `(cos, sin)`**（单位向量：水平 `(1,0)`、垂直 `(0,1)`、坡度箭头 `(0.993,-0.118)`），旋转角 = `atan2(sin@56, cos@48)`；偏移 72 起是 UTF-16LE null 结尾的文字内容，其后 `char_count(u32，对齐到 4)`，再对齐到 8 后是 `height(f64)`（如 297.5）与 `width_factor(f64)`（如 0.70588），更后面是字体名 `SIMPLEX`/`GBCBIG`。**上标/下标文字**（`^U2^U` 控制码对应）的 height 字段布局不同（读到 0 = 继承主文字），已用「扫描 50..5000 范围 + 继承主文字高度」启发式处理。已实现 `extract_text_entities` 提取（含 rotation）+ 渲染层按 `Text` 画出（原「offset 48=旋转角」结论作废）。
 
@@ -176,7 +176,7 @@ main 流（`raw_dwg_data[0..text_start]`）= `[字段数 int32(BL)][逐字段：
 
 ```
 字段 0-1: 类型 2   = byte/bool（对应 T20b2/T20b3）
-字段 2-3: 类型 202/164 = double 子类型（对应 T20d12/T20d7）
+字段 2-3: 类型 202/164 = double 子类型（**非** T20d12/T20d7——那两字段属符号实体，见第 6 点；此处 double 疑为墙几何/尺寸，未精确命名）
 字段 4-5: 类型 32  = string（对应 T20s1/T20s14，值在 text 流）
 字段 6-11: 类型 0  = 空/未设置
 字段 12:  类型 2   = byte
