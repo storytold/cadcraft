@@ -66,9 +66,20 @@ fn columns(layout: &Layout<Panel>, side: Side) -> Vec<Column<Panel>> {
     Vec::new()
 }
 
-/// The panels of each group of each column of the dock on `side`.
+/// The panels of each group of each column of the dock on `side`, without the Storeys palette
+/// (it docks between Layers and Properties; these tests are about the others).
 fn dock_panels(layout: &Layout<Panel>, side: Side) -> Vec<Vec<Vec<Panel>>> {
-    columns(layout, side).iter().map(|column| column.groups.iter().map(|group| group.panels.clone()).collect()).collect()
+    columns(layout, side)
+        .iter()
+        .map(|column| {
+            column
+                .groups
+                .iter()
+                .map(|group| group.panels.iter().copied().filter(|panel| *panel != Panel::Storeys).collect::<Vec<_>>())
+                .filter(|group| !group.is_empty())
+                .collect()
+        })
+        .collect()
 }
 
 /// The tab groups outside the docks: the frames of the split tree.
@@ -97,6 +108,8 @@ fn default_layout_is_tool_sets_left_and_the_palettes_right_in_dock_columns() {
     let end = columns(&workspace.layout, Side::End);
     assert_eq!(dock_panels(&workspace.layout, Side::Start), [[[Panel::ToolSets]]]);
     assert_eq!(dock_panels(&workspace.layout, Side::End), [vec![vec![Panel::Layers], vec![Panel::Properties]]]);
+    let groups: Vec<Vec<Panel>> = end[0].groups.iter().map(|group| group.panels.clone()).collect();
+    assert_eq!(groups, [[Panel::Layers], [Panel::Storeys], [Panel::Properties]], "Storeys between Layers and Properties");
     assert_eq!((start[0].width, end[0].width), (TOOL_SETS_WIDTH, PALETTES_WIDTH));
     assert!(start.iter().chain(&end).all(|column| !column.iconic));
     assert!(start.iter().chain(&end).flat_map(|column| &column.groups).all(|group| group.height.is_none() && !group.minimized));
@@ -226,7 +239,7 @@ fn docking_renders_default_float_and_redocked_at_normal_and_narrow_sizes() {
                 harness.run_steps(5);
                 harness.state().ui.docking.validate().unwrap();
                 let content = harness.state().ui.docking.layout.panels();
-                assert_eq!(content.len(), 4);
+                assert_eq!(content.len(), 5, "canvas, tool sets, layers, storeys, properties");
                 assert!(content.contains(&&Panel::Canvas));
                 if let Ok(directory) = std::env::var("CRAFT_UI_DOCKING_DIR") {
                     std::fs::create_dir_all(&directory).unwrap();
@@ -253,7 +266,7 @@ fn automation_reaches_column_and_group_resizes_tab_reorder_and_minimize_through_
     assert_eq!(dock_panels(&h.state().ui.docking.layout, Side::End), [[[Panel::Properties, Panel::Layers]]]);
     act(&mut h, Action::SetMinimized { panel: Panel::Layers, minimized: true });
     h.run_steps(4);
-    assert!(columns(&h.state().ui.docking.layout, Side::End)[0].groups[0].minimized);
+    assert!(columns(&h.state().ui.docking.layout, Side::End)[0].groups.iter().any(|group| group.panels.contains(&Panel::Layers) && group.minimized));
     assert_eq!(columns(&h.state().ui.docking.layout, Side::Start)[0].width, 280.0);
 }
 
@@ -579,9 +592,10 @@ fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
         .find(|(hit, _)| matches!(hit, Hit::DragBar(panel) if *panel == Panel::ToolSets || *panel == Panel::Layers))
         .map(|(_, rect)| rect)
         .expect("the Tool Sets group draws a drag bar");
-    // Into the middle of the Properties group, as tabs.
+    // Into the middle of the Properties group, as tabs (the column's bar is its first group's,
+    // Storeys').
     let properties = hit(&h, Hit::Tab(Panel::Properties));
-    let column = hit(&h, Hit::ColumnBar(Panel::Properties));
+    let column = hit(&h, Hit::ColumnBar(Panel::Storeys));
     let to = egui::pos2(column.center().x, properties.bottom() + 120.0);
     let document = h.state().session.doc().unwrap().clone();
     drag(&mut h, bar.center(), to);

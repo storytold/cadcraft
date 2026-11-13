@@ -193,7 +193,12 @@ fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, alpha: u8) {
     }
     // Where in the raster the triangles are.
     let Some(tris) = triangles(img, cut.outline).iter().map(|q| img.pixel_of(*q)).collect::<Option<Vec<Vec2>>>() else { return };
-    let color = Color32::from_white_alpha((img.opacity(alpha) * 255.0) as u8);
+    let a = (img.opacity(alpha) * 255.0) as u8;
+    // The vertex colour multiplies the texture: white leaves the pixels as they are.
+    let color = match img.tint {
+        Some(t) => Color32::from_rgba_unmultiplied(t.0, t.1, t.2, a),
+        None => Color32::from_white_alpha(a),
+    };
     let textures = textures(ctx);
     let Ok(mut pyramids) = textures.0.lock() else { return };
     let key = Arc::as_ptr(raster) as usize;
@@ -361,7 +366,15 @@ mod tests {
 
     #[test]
     fn the_level_follows_the_zoom() {
-        let img = |px: f64| DImage { raster: raster(1, 1), origin: v(0.0, 0.0), right: v(px, 0.0), down: v(0.0, -px), clips: Vec::new(), fade: 0 };
+        let img = |px: f64| DImage {
+            raster: raster(1, 1),
+            origin: v(0.0, 0.0),
+            right: v(px, 0.0),
+            down: v(0.0, -px),
+            clips: Vec::new(),
+            fade: 0,
+            tint: None,
+        };
         // One raster pixel to a screen pixel or larger: all of them.
         assert_eq!(level_for(&img(1.0), 1.0), 0);
         assert_eq!(level_for(&img(1.0), 5.0), 0);
@@ -432,6 +445,14 @@ mod tests {
         let got: Vec<(egui::Pos2, egui::Pos2)> = mesh.vertices.iter().map(|v| (v.pos, v.uv)).collect();
         assert_eq!(got, [tl, tr, br, tl, br, bl].map(|p| (p, uv(p))));
         assert!(mesh.vertices.iter().all(|v| v.color == Color32::WHITE));
+    }
+
+    #[test]
+    fn a_tinted_image_is_painted_in_its_tint() {
+        let mut l = list(|_| {});
+        l.images[0].tint = Some(cadcraft_color::Rgb(200, 180, 140));
+        let (_c, shapes) = painted(&l);
+        assert!(meshes(&shapes)[0].1.vertices.iter().all(|v| v.color == Color32::from_rgb(200, 180, 140)));
     }
 
     #[test]

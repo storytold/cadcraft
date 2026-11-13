@@ -19,6 +19,7 @@ mod plotter;
 mod raster;
 mod refedit;
 mod store;
+mod storey;
 mod tables;
 mod xclip;
 
@@ -41,6 +42,7 @@ pub use plotter::*;
 pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
+pub use storey::*;
 pub use tables::*;
 pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
 
@@ -115,6 +117,23 @@ pub struct Drawing {
     pub vports: Vec<VportConfig>,
     pub ucss: Vec<Ucs>,
     pub layer_states: Vec<LayerState>,
+    /// The building's storeys and the current one (see [`Storeys`]); empty when unused.
+    pub storeys: Storeys,
+    /// The storey shown as a ghost beneath the current one, for this session only. Never written
+    /// to a file.
+    pub ghost_storey: Option<u32>,
+    /// The colour the ghost storey is drawn in, for this session only.
+    pub ghost_color: cadcraft_color::Rgb,
+    /// Hatches of the ghost storey are drawn (and snapped to); off, only the current storey's
+    /// hatches show (session only, from the user's settings).
+    pub ghost_hatches: bool,
+    /// Each storey keeps the blueprint it was last shown with (session only, from the user's
+    /// settings): going back to a storey brings its blueprint back.
+    pub ghost_per_storey: bool,
+    /// The blueprint each storey was left with: (storey, its blueprint or none), session only.
+    pub ghost_memory: Vec<(u32, Option<u32>)>,
+    /// The ghost storey before it was turned off, for turning it on again (session only).
+    pub ghost_last: Option<u32>,
     pub groups: Vec<Group>,
     /// Plot style tables kept with the drawing (STYLESMANAGER); they shadow built-in tables of
     /// the same name.
@@ -194,6 +213,13 @@ impl Drawing {
             vports: Vec::new(),
             ucss: Vec::new(),
             layer_states: Vec::new(),
+            storeys: Storeys::default(),
+            ghost_storey: None,
+            ghost_color: DEFAULT_GHOST_COLOR,
+            ghost_hatches: true,
+            ghost_per_storey: true,
+            ghost_memory: Vec::new(),
+            ghost_last: None,
             groups: Vec::new(),
             plot_style_tables: Vec::new(),
             constraints: Vec::new(),
@@ -374,9 +400,13 @@ impl Drawing {
     }
 
     /// Effective visibility of an entity (its own flag, its layer on/thawed, not hidden by object
-    /// isolation).
+    /// isolation, on the current storey). Ghost-storey objects are not visible here: they are only
+    /// drawn and snapped to, see [`Drawing::is_ghost`].
     pub fn is_visible(&self, e: &Entity) -> bool {
-        e.common.visible && self.layer(&e.common.layer).is_none_or(Layer::visible) && !self.is_hidden_object(e.handle)
+        e.common.visible
+            && self.layer(&e.common.layer).is_none_or(Layer::visible)
+            && !self.is_hidden_object(e.handle)
+            && self.storey_view(e) == StoreyView::Current
     }
 
     /// Whether ISOLATEOBJECTS / HIDEOBJECTS hid `h` for this session.

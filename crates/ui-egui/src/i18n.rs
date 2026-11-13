@@ -327,7 +327,7 @@ fn parse(source: &str) -> (Catalog<'_>, Vec<String>) {
     (entries, errors)
 }
 
-fn catalog(language: &str) -> Option<&'static Catalog<'static>> {
+pub(crate) fn catalog(language: &str) -> Option<&'static Catalog<'static>> {
     LANGUAGES.iter().find(|l| l.code == language && !l.source.is_empty()).map(|l| l.catalog.get_or_init(|| parse(l.source).0))
 }
 

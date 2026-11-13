@@ -1483,3 +1483,110 @@ menu	Modify	Ändra
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+# Storeys (storey management and the ghost storey).
+	Storeys	Våningar
+	New Storey	Ny våning
+	Rename Storey	Byt namn på våning
+	Delete Storey	Ta bort våning
+	Reorder Storey	Ändra våningens ordning
+	Go to Storey	Gå till våning
+	Storey Above	Våningen ovanför
+	Storey Below	Våningen nedanför
+	Copy to Storey	Kopiera till våning
+	Move to Storey	Flytta till våning
+	No storeys yet: the first one takes everything drawn so far.	Inga våningar än: den första får allt som redan ritats.
+	Storey name	Våningens namn
+	Above the current storey	Ovanför aktuell våning
+	Only an empty storey can be deleted	Bara en tom våning kan tas bort
+	Import Plan as Storey	Importera ritning som våning
+	current	aktuell
+	The storey shown beneath the current one	Våningen som visas under den aktuella
+	Arrow keys choose, Enter applies, Esc closes	Piltangenter väljer, Enter verkställer, Esc stänger
+	Blueprint	Underlägg
+	Blueprint On/Off	Underlägg på/av
+	Blueprint Storey Above	Underläggsvåning ovanför
+	Blueprint Storey Below	Underläggsvåning nedanför
+	Choose Blueprint...	Välj underlägg...
+	Go to Storey...	Gå till våning...
+	Hide Blueprint	Dölj underlägg
+	Move Down	Flytta ned
+	Move Up	Flytta upp
+	New Storey Above	Ny våning ovanför
+	New Storey Below	Ny våning nedanför
+	Press the keys	Tryck på tangenterna
+	Show as Blueprint	Visa som underlägg
+	Shown as blueprint (click to hide)	Visas som underlägg (klicka för att dölja)
+	Storey	Våning
+	The storey to work on	Våningen som du arbetar på
+	Apply to This Drawing	Använd på den här ritningen
+	Building	Byggnad
+	Double-click to rename	Dubbelklicka för att byta namn
+	Drawing 0, drawings above, blueprints below	Ritning 0, ritningar ovanför, underlägg nedanför
+	Everything drawn so far goes on the start storey	Allt som redan ritats hamnar på startvåningen
+	Neutral	Neutral
+	New drawings, and opened drawings without storeys, get these storeys	Nya ritningar och öppnade ritningar utan våningar får dessa våningar
+	Rename	Byt namn
+	Set as Start Storey	Ange som startvåning
+	Shortcuts	Kortkommandon
+	Start Setup	Startuppsättning
+	Start Storey	Startvåning
+	Start storey	Startvåning
+	Start storey (number 0)	Startvåning (nummer 0)
+	Storey Settings...	Våningsinställningar...
+	Storey number	Våningsnummer
+	Storeys Palette	Våningspalett
+	Storeys from Setup	Våningar från uppsättningen
+	Storeys, top first, one per line	Våningar, översta först, en per rad
+	The drawing has storeys already	Ritningen har redan våningar
+	Above the current level	Ovanför aktuell nivå
+	Blueprint Level Above	Underlägg för nivån ovanför
+	Blueprint Level Below	Underlägg för nivån nedanför
+	Blueprint Settings...	Inställningar för underlägg...
+	Blueprints	Underlägg
+	Blueprints Palette	Underläggspalett
+	Blueprints and levels (any other stack)	Underlägg och nivåer (valfri annan stapel)
+	Copy Selection Here	Kopiera markeringen hit
+	Copy to Level	Kopiera till nivå
+	Copy to Level...	Kopiera till nivå...
+	Copy to Storey...	Kopiera till våning...
+	Delete Level	Ta bort nivå
+	Each level remembers its blueprint	Varje nivå minns sitt underlägg
+	Each storey remembers its blueprint	Varje våning minns sitt underlägg
+	Everything drawn so far goes on the start level	Allt som ritats hittills hamnar på startnivån
+	Go to Level	Gå till nivå
+	Go to Level...	Gå till nivå...
+	Import Plan as Level	Importera plan som nivå
+	Level	Nivå
+	Level Above	Nivå ovanför
+	Level Below	Nivå nedanför
+	Level name	Nivåns namn
+	Level number	Nivånummer
+	Levels from Setup	Nivåer från inställningarna
+	Levels, top first, one per line	Nivåer, översta först, en per rad
+	Move Selection Here	Flytta markeringen hit
+	Move to Level	Flytta till nivå
+	Move to Level...	Flytta till nivå...
+	Move to Storey...	Flytta till våning...
+	Names	Namn
+	New Level	Ny nivå
+	New Level Above	Ny nivå ovanför
+	New Level Below	Ny nivå nedanför
+	New drawings, and opened drawings without levels, get these levels	Nya ritningar och öppnade ritningar utan nivåer får dessa nivåer
+	No levels yet: the first one takes everything drawn so far.	Inga nivåer ännu: den första tar allt som ritats hittills.
+	On a dark drawing area	På en mörk rityta
+	On a light drawing area	På en ljus rityta
+	Only an empty level can be deleted	Bara en tom nivå kan tas bort
+	Select the objects first, then choose the level.	Markera objekten först och välj sedan nivån.
+	Select the objects first, then choose the storey.	Markera objekten först och välj sedan våningen.
+	Set as Start Level	Ange som startnivå
+	Show hatches in the blueprint (off: hatches on the current level only)	Visa skraffering i underlägget (av: skraffering endast på aktuell nivå)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Visa skraffering i underlägget (av: skraffering endast på aktuell våning)
+	Start level	Startnivå
+	Start level (number 0)	Startnivå (nummer 0)
+	Storeys (buildings)	Våningar (byggnader)
+	The drawing has levels already	Ritningen har redan nivåer
+	The level shown beneath the current one	Nivån som visas under den aktuella
+	The level to work on	Nivån att arbeta på
+	selected	markerade
+	selected objects, copied in place to	markerade objekt, kopierade på plats till
+	selected objects, moved in place to	markerade objekt, flyttade på plats till

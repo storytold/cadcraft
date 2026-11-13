@@ -1383,3 +1383,110 @@ menu	View	عرض
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	تغيّر الرسم. أغلق النافذة وافتحها مرة أخرى.
+# Storeys (storey management and the ghost storey).
+	Storeys	الطوابق
+	New Storey	طابق جديد
+	Rename Storey	إعادة تسمية الطابق
+	Delete Storey	حذف الطابق
+	Reorder Storey	إعادة ترتيب الطابق
+	Go to Storey	الانتقال إلى طابق
+	Storey Above	الطابق الأعلى
+	Storey Below	الطابق الأسفل
+	Copy to Storey	نسخ إلى طابق
+	Move to Storey	نقل إلى طابق
+	No storeys yet: the first one takes everything drawn so far.	لا توجد طوابق بعد: يأخذ الأول كل ما رُسم حتى الآن.
+	Storey name	اسم الطابق
+	Above the current storey	فوق الطابق الحالي
+	Only an empty storey can be deleted	لا يمكن حذف إلا طابق فارغ
+	Import Plan as Storey	استيراد مخطط كطابق
+	current	الحالي
+	The storey shown beneath the current one	الطابق المعروض أسفل الطابق الحالي
+	Arrow keys choose, Enter applies, Esc closes	الأسهم للاختيار، Enter للتطبيق، Esc للإغلاق
+	Blueprint	مخطط خلفي
+	Blueprint On/Off	تشغيل/إيقاف المخطط الخلفي
+	Blueprint Storey Above	الطابق الخلفي الأعلى
+	Blueprint Storey Below	الطابق الخلفي الأسفل
+	Choose Blueprint...	اختيار المخطط الخلفي...
+	Go to Storey...	الانتقال إلى طابق...
+	Hide Blueprint	إخفاء المخطط الخلفي
+	Move Down	نقل للأسفل
+	Move Up	نقل للأعلى
+	New Storey Above	طابق جديد أعلاه
+	New Storey Below	طابق جديد أسفله
+	Press the keys	اضغط المفاتيح
+	Show as Blueprint	إظهار كمخطط خلفي
+	Shown as blueprint (click to hide)	معروض كمخطط خلفي (انقر للإخفاء)
+	Storey	طابق
+	The storey to work on	الطابق الذي يُعمل عليه
+	Apply to This Drawing	تطبيق على هذا الرسم
+	Building	البناء
+	Double-click to rename	انقر نقرًا مزدوجًا لإعادة التسمية
+	Drawing 0, drawings above, blueprints below	الرسم 0، رسومات أعلاه، مخططات خلفية أسفله
+	Everything drawn so far goes on the start storey	كل ما رُسم حتى الآن ينتقل إلى طابق البداية
+	Neutral	محايد
+	New drawings, and opened drawings without storeys, get these storeys	تحصل الرسومات الجديدة والمفتوحة بلا طوابق على هذه الطوابق
+	Rename	إعادة التسمية
+	Set as Start Storey	تعيين كطابق البداية
+	Shortcuts	الاختصارات
+	Start Setup	الإعداد الأولي
+	Start Storey	طابق البداية
+	Start storey	طابق البداية
+	Start storey (number 0)	طابق البداية (الرقم 0)
+	Storey Settings...	إعدادات الطوابق...
+	Storey number	رقم الطابق
+	Storeys Palette	لوحة الطوابق
+	Storeys from Setup	طوابق من الإعداد
+	Storeys, top first, one per line	الطوابق، الأعلى أولًا، واحد في كل سطر
+	The drawing has storeys already	الرسم يحتوي على طوابق بالفعل
+	Above the current level	فوق المستوى الحالي
+	Blueprint Level Above	مخطط خلفي للمستوى الأعلى
+	Blueprint Level Below	مخطط خلفي للمستوى الأدنى
+	Blueprint Settings...	إعدادات المخطط الخلفي...
+	Blueprints	المخططات الخلفية
+	Blueprints Palette	لوحة المخططات الخلفية
+	Blueprints and levels (any other stack)	المخططات الخلفية والمستويات (أي تكديس آخر)
+	Copy Selection Here	نسخ التحديد إلى هنا
+	Copy to Level	نسخ إلى المستوى
+	Copy to Level...	نسخ إلى المستوى...
+	Copy to Storey...	نسخ إلى الطابق...
+	Delete Level	حذف المستوى
+	Each level remembers its blueprint	كل مستوى يتذكر مخططه الخلفي
+	Each storey remembers its blueprint	كل طابق يتذكر مخططه الخلفي
+	Everything drawn so far goes on the start level	كل ما رُسم حتى الآن يذهب إلى المستوى الأول
+	Go to Level	الانتقال إلى المستوى
+	Go to Level...	الانتقال إلى المستوى...
+	Import Plan as Level	استيراد المخطط كمستوى
+	Level	المستوى
+	Level Above	المستوى الأعلى
+	Level Below	المستوى الأدنى
+	Level name	اسم المستوى
+	Level number	رقم المستوى
+	Levels from Setup	المستويات من الإعداد
+	Levels, top first, one per line	المستويات، الأعلى أولاً، واحد في كل سطر
+	Move Selection Here	نقل التحديد إلى هنا
+	Move to Level	نقل إلى المستوى
+	Move to Level...	نقل إلى المستوى...
+	Move to Storey...	نقل إلى الطابق...
+	Names	الأسماء
+	New Level	مستوى جديد
+	New Level Above	مستوى جديد أعلى
+	New Level Below	مستوى جديد أدنى
+	New drawings, and opened drawings without levels, get these levels	الرسومات الجديدة والرسومات المفتوحة بلا مستويات تحصل على هذه المستويات
+	No levels yet: the first one takes everything drawn so far.	لا توجد مستويات بعد: الأول يستوعب كل ما رُسم حتى الآن.
+	On a dark drawing area	على منطقة رسم داكنة
+	On a light drawing area	على منطقة رسم فاتحة
+	Only an empty level can be deleted	لا يمكن حذف إلا مستوى فارغ
+	Select the objects first, then choose the level.	حدّد الكائنات أولاً ثم اختر المستوى.
+	Select the objects first, then choose the storey.	حدّد الكائنات أولاً ثم اختر الطابق.
+	Set as Start Level	تعيين كمستوى بداية
+	Show hatches in the blueprint (off: hatches on the current level only)	إظهار التهشيرات في المخطط الخلفي (متوقف: تهشيرات المستوى الحالي فقط)
+	Show hatches in the blueprint (off: hatches on the current storey only)	إظهار التهشيرات في المخطط الخلفي (متوقف: تهشيرات الطابق الحالي فقط)
+	Start level	مستوى البداية
+	Start level (number 0)	مستوى البداية (الرقم 0)
+	Storeys (buildings)	الطوابق (المباني)
+	The drawing has levels already	يحتوي الرسم على مستويات بالفعل
+	The level shown beneath the current one	المستوى المعروض أسفل المستوى الحالي
+	The level to work on	المستوى المراد العمل عليه
+	selected	محدد
+	selected objects, copied in place to	كائنات محددة، منسوخة في مكانها إلى
+	selected objects, moved in place to	كائنات محددة، منقولة في مكانها إلى

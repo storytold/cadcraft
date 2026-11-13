@@ -307,6 +307,8 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
 fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
     let mut e = e.clone();
     e.handle = d.new_handle();
+    // A pasted object lands on the current storey (given after the command), wherever it came from.
+    e.common.set_storey(None);
     match &mut e.kind {
         EntityKind::Insert(i) => {
             if let Some(n) = renames.get(&i.block) {

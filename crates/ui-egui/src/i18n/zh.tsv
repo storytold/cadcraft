@@ -1476,3 +1476,110 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+# Storeys (storey management and the ghost storey).
+	Storeys	楼层
+	New Storey	新建楼层
+	Rename Storey	重命名楼层
+	Delete Storey	删除楼层
+	Reorder Storey	调整楼层顺序
+	Go to Storey	转到楼层
+	Storey Above	上一层
+	Storey Below	下一层
+	Copy to Storey	复制到楼层
+	Move to Storey	移动到楼层
+	No storeys yet: the first one takes everything drawn so far.	尚无楼层：第一个楼层将包含目前已绘制的全部内容。
+	Storey name	楼层名称
+	Above the current storey	在当前楼层之上
+	Only an empty storey can be deleted	只能删除空楼层
+	Import Plan as Storey	将图纸导入为楼层
+	current	当前
+	The storey shown beneath the current one	显示在当前楼层下方的楼层
+	Arrow keys choose, Enter applies, Esc closes	方向键选择，Enter 应用，Esc 关闭
+	Blueprint	底图
+	Blueprint On/Off	底图开/关
+	Blueprint Storey Above	上一层底图
+	Blueprint Storey Below	下一层底图
+	Choose Blueprint...	选择底图...
+	Go to Storey...	转到楼层...
+	Hide Blueprint	隐藏底图
+	Move Down	下移
+	Move Up	上移
+	New Storey Above	在上方新建楼层
+	New Storey Below	在下方新建楼层
+	Press the keys	请按下按键
+	Show as Blueprint	显示为底图
+	Shown as blueprint (click to hide)	显示为底图（单击隐藏）
+	Storey	楼层
+	The storey to work on	正在编辑的楼层
+	Apply to This Drawing	应用到此图纸
+	Building	建筑
+	Double-click to rename	双击重命名
+	Drawing 0, drawings above, blueprints below	图纸 0，上方为图纸，下方为底图
+	Everything drawn so far goes on the start storey	目前绘制的所有内容都移到起始楼层
+	Neutral	通用
+	New drawings, and opened drawings without storeys, get these storeys	新图纸和没有楼层的打开图纸会获得这些楼层
+	Rename	重命名
+	Set as Start Storey	设为起始楼层
+	Shortcuts	快捷键
+	Start Setup	初始设置
+	Start Storey	起始楼层
+	Start storey	起始楼层
+	Start storey (number 0)	起始楼层（编号 0）
+	Storey Settings...	楼层设置...
+	Storey number	楼层编号
+	Storeys Palette	楼层面板
+	Storeys from Setup	按设置创建楼层
+	Storeys, top first, one per line	楼层，最上层在前，每行一个
+	The drawing has storeys already	图纸已有楼层
+	Above the current level	当前层级上方
+	Blueprint Level Above	上方层级的底图
+	Blueprint Level Below	下方层级的底图
+	Blueprint Settings...	底图设置...
+	Blueprints	底图
+	Blueprints Palette	底图面板
+	Blueprints and levels (any other stack)	底图与层级（任何其他堆栈）
+	Copy Selection Here	将选择内容复制到此处
+	Copy to Level	复制到层级
+	Copy to Level...	复制到层级...
+	Copy to Storey...	复制到楼层...
+	Delete Level	删除层级
+	Each level remembers its blueprint	每个层级都会记住自己的底图
+	Each storey remembers its blueprint	每个楼层都会记住自己的底图
+	Everything drawn so far goes on the start level	迄今所绘的全部内容都放在起始层级
+	Go to Level	转到层级
+	Go to Level...	转到层级...
+	Import Plan as Level	将平面图导入为层级
+	Level	层级
+	Level Above	上方层级
+	Level Below	下方层级
+	Level name	层级名称
+	Level number	层级编号
+	Levels from Setup	来自设置的层级
+	Levels, top first, one per line	层级，最上面的在前，每行一个
+	Move Selection Here	将选择内容移动到此处
+	Move to Level	移动到层级
+	Move to Level...	移动到层级...
+	Move to Storey...	移动到楼层...
+	Names	名称
+	New Level	新建层级
+	New Level Above	在上方新建层级
+	New Level Below	在下方新建层级
+	New drawings, and opened drawings without levels, get these levels	新图纸以及没有层级的已打开图纸将获得这些层级
+	No levels yet: the first one takes everything drawn so far.	尚无层级：第一个层级会接收迄今所绘的全部内容。
+	On a dark drawing area	在深色绘图区域
+	On a light drawing area	在浅色绘图区域
+	Only an empty level can be deleted	只能删除空层级
+	Select the objects first, then choose the level.	请先选择对象，然后选择层级。
+	Select the objects first, then choose the storey.	请先选择对象，然后选择楼层。
+	Set as Start Level	设为起始层级
+	Show hatches in the blueprint (off: hatches on the current level only)	在底图中显示填充图案（关闭：仅显示当前层级的填充图案）
+	Show hatches in the blueprint (off: hatches on the current storey only)	在底图中显示填充图案（关闭：仅显示当前楼层的填充图案）
+	Start level	起始层级
+	Start level (number 0)	起始层级（编号 0）
+	Storeys (buildings)	楼层（建筑）
+	The drawing has levels already	图纸已有层级
+	The level shown beneath the current one	显示在当前层级下方的层级
+	The level to work on	要处理的层级
+	selected	已选择
+	selected objects, copied in place to	个已选择的对象，原位复制到
+	selected objects, moved in place to	个已选择的对象，原位移动到

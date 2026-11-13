@@ -77,6 +77,9 @@ pub fn build_version() -> &'static str {
 
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {
+    /// The start setup new drawings and opened drawings without storeys get (the interface sets
+    /// it from the user's settings; `None`: no storeys unless made).
+    pub storey_template: Option<cadcraft_doc::StoreyTemplate>,
     pub docs: Vec<DocState>,
     pub active: usize,
     /// Monotonic count of changes to the open drawings and the active one. A screenshot queued
@@ -170,6 +173,7 @@ impl Session {
     /// A session with no open drawing (the Start tab).
     pub fn empty() -> Self {
         Session {
+            storey_template: None,
             docs: Vec::new(),
             active: 0,
             doc_epoch: 0,
@@ -246,7 +250,11 @@ impl Session {
     pub fn set_selection(&mut self, sel: Vec<Handle>) {
         if let Ok(st) = self.state_mut() {
             let mut seen = std::collections::HashSet::new();
-            st.selection = sel.into_iter().filter(|h| seen.insert(*h)).collect();
+            // Objects of storeys other than the current one are never selected (a script's
+            // pickfirst set, a group, a stale selection).
+            let d = &st.doc;
+            let sel: Vec<Handle> = sel.into_iter().filter(|h| seen.insert(*h) && cmd::storey::editable(d, *h)).collect();
+            st.selection = sel;
         }
     }
 

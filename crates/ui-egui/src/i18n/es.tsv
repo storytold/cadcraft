@@ -1270,3 +1270,110 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+# Storeys (storey management and the ghost storey).
+	Storeys	Plantas
+	New Storey	Nueva planta
+	Rename Storey	Cambiar nombre de planta
+	Delete Storey	Eliminar planta
+	Reorder Storey	Reordenar planta
+	Go to Storey	Ir a planta
+	Storey Above	Planta superior
+	Storey Below	Planta inferior
+	Copy to Storey	Copiar a planta
+	Move to Storey	Mover a planta
+	No storeys yet: the first one takes everything drawn so far.	Aún no hay plantas: la primera recibe todo lo dibujado hasta ahora.
+	Storey name	Nombre de la planta
+	Above the current storey	Encima de la planta actual
+	Only an empty storey can be deleted	Solo se puede eliminar una planta vacía
+	Import Plan as Storey	Importar plano como planta
+	current	actual
+	The storey shown beneath the current one	La planta que se muestra bajo la actual
+	Arrow keys choose, Enter applies, Esc closes	Flechas para elegir, Intro aplica, Esc cierra
+	Blueprint	Plano base
+	Blueprint On/Off	Plano base sí/no
+	Blueprint Storey Above	Plano base superior
+	Blueprint Storey Below	Plano base inferior
+	Choose Blueprint...	Elegir plano base...
+	Go to Storey...	Ir a planta...
+	Hide Blueprint	Ocultar plano base
+	Move Down	Bajar
+	Move Up	Subir
+	New Storey Above	Nueva planta encima
+	New Storey Below	Nueva planta debajo
+	Press the keys	Pulse las teclas
+	Show as Blueprint	Mostrar como plano base
+	Shown as blueprint (click to hide)	Mostrada como plano base (clic para ocultar)
+	Storey	Planta
+	The storey to work on	La planta en la que se trabaja
+	Apply to This Drawing	Aplicar a este dibujo
+	Building	Edificación
+	Double-click to rename	Doble clic para cambiar el nombre
+	Drawing 0, drawings above, blueprints below	Dibujo 0, dibujos encima, planos base debajo
+	Everything drawn so far goes on the start storey	Todo lo dibujado pasa a la planta inicial
+	Neutral	Neutral
+	New drawings, and opened drawings without storeys, get these storeys	Los dibujos nuevos y los abiertos sin plantas reciben estas plantas
+	Rename	Cambiar nombre
+	Set as Start Storey	Definir como planta inicial
+	Shortcuts	Atajos
+	Start Setup	Configuración inicial
+	Start Storey	Planta inicial
+	Start storey	Planta inicial
+	Start storey (number 0)	Planta inicial (número 0)
+	Storey Settings...	Ajustes de plantas...
+	Storey number	Número de planta
+	Storeys Palette	Paleta de plantas
+	Storeys from Setup	Plantas desde la configuración
+	Storeys, top first, one per line	Plantas, la superior primero, una por línea
+	The drawing has storeys already	El dibujo ya tiene plantas
+	Above the current level	Sobre el nivel actual
+	Blueprint Level Above	Plano base del nivel superior
+	Blueprint Level Below	Plano base del nivel inferior
+	Blueprint Settings...	Ajustes del plano base...
+	Blueprints	Planos base
+	Blueprints Palette	Paleta de planos base
+	Blueprints and levels (any other stack)	Planos base y niveles (cualquier otra pila)
+	Copy Selection Here	Copiar la selección aquí
+	Copy to Level	Copiar al nivel
+	Copy to Level...	Copiar al nivel...
+	Copy to Storey...	Copiar a la planta...
+	Delete Level	Eliminar nivel
+	Each level remembers its blueprint	Cada nivel recuerda su plano base
+	Each storey remembers its blueprint	Cada planta recuerda su plano base
+	Everything drawn so far goes on the start level	Todo lo dibujado hasta ahora pasa al nivel inicial
+	Go to Level	Ir al nivel
+	Go to Level...	Ir al nivel...
+	Import Plan as Level	Importar plano como nivel
+	Level	Nivel
+	Level Above	Nivel superior
+	Level Below	Nivel inferior
+	Level name	Nombre del nivel
+	Level number	Número del nivel
+	Levels from Setup	Niveles desde la configuración
+	Levels, top first, one per line	Niveles, el más alto primero, uno por línea
+	Move Selection Here	Mover la selección aquí
+	Move to Level	Mover al nivel
+	Move to Level...	Mover al nivel...
+	Move to Storey...	Mover a la planta...
+	Names	Nombres
+	New Level	Nuevo nivel
+	New Level Above	Nuevo nivel superior
+	New Level Below	Nuevo nivel inferior
+	New drawings, and opened drawings without levels, get these levels	Los dibujos nuevos y los dibujos abiertos sin niveles reciben estos niveles
+	No levels yet: the first one takes everything drawn so far.	Aún no hay niveles: el primero toma todo lo dibujado hasta ahora.
+	On a dark drawing area	Sobre un área de dibujo oscura
+	On a light drawing area	Sobre un área de dibujo clara
+	Only an empty level can be deleted	Solo se puede eliminar un nivel vacío
+	Select the objects first, then choose the level.	Seleccione primero los objetos y luego el nivel.
+	Select the objects first, then choose the storey.	Seleccione primero los objetos y luego la planta.
+	Set as Start Level	Establecer como nivel inicial
+	Show hatches in the blueprint (off: hatches on the current level only)	Mostrar las tramas en el plano base (desactivado: tramas solo del nivel actual)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Mostrar las tramas en el plano base (desactivado: tramas solo de la planta actual)
+	Start level	Nivel inicial
+	Start level (number 0)	Nivel inicial (número 0)
+	Storeys (buildings)	Plantas (edificios)
+	The drawing has levels already	El dibujo ya tiene niveles
+	The level shown beneath the current one	El nivel mostrado debajo del actual
+	The level to work on	El nivel en el que trabajar
+	selected	seleccionados
+	selected objects, copied in place to	objetos seleccionados, copiados en el mismo lugar a
+	selected objects, moved in place to	objetos seleccionados, movidos en el mismo lugar a

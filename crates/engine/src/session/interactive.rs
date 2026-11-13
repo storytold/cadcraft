@@ -219,8 +219,10 @@ impl Session {
                 let store = d.space(&space);
                 let picked = match tl.as_str() {
                     "all" => store.map(|s| s.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()),
-                    "l" | "last" => store.and_then(|s| s.last()).map(|e| vec![e.handle]),
-                    "p" | "previous" => Some(self.state()?.previous_selection.clone()),
+                    // The last object there is to select (another storey's are not).
+                    "l" | "last" => store.and_then(|s| s.iter().filter(|e| d.is_visible(e)).last()).map(|e| vec![e.handle]),
+                    // Without objects of storeys other than the current one (it may have changed since).
+                    "p" | "previous" => Some(self.state()?.previous_selection.iter().copied().filter(|h| cmd::storey::editable(d, *h)).collect()),
                     _ => None,
                 };
                 match picked {
@@ -383,6 +385,10 @@ impl Session {
             self.echo(m);
         }
         self.after_command(Some(&run.before), None, true);
+        // Storeys: checked last, over everything the command and the passes after it did.
+        if let Some(m) = cmd::storey::guard(self, &run.before, None, &run.id) {
+            self.echo(m);
+        }
         // A transparent command's changes belong to the command it ran inside, and a command a
         // LISP routine ran belongs to the routine's single undo step (the routine keeps it for U
         // inside it).
@@ -419,6 +425,7 @@ impl Session {
         cmd::groups::after_command(self, before);
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);
+        cmd::storey::after_command(self, before);
     }
 
     fn resume_suspended(&mut self) {

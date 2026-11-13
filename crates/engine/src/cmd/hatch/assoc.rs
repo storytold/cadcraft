@@ -227,7 +227,11 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> Vec<String> {
         for store in std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)) {
             for e in store.iter() {
                 let EntityKind::Hatch(h) = &e.kind else { continue };
-                if !h.associative || h.loops.iter().all(|l| l.sources.is_empty()) {
+                // A hatch does not follow a boundary on another storey (see `storey`).
+                if !h.associative
+                    || h.loops.iter().all(|l| l.sources.is_empty())
+                    || h.loops.iter().flat_map(|l| &l.sources).any(|s| !d.same_storey(e, *s))
+                {
                     continue;
                 }
                 if let Some((nh, note)) = follow(before, d, e.handle, h, &mut checked) {

@@ -80,9 +80,24 @@ impl DocState {
     pub(crate) fn swap_in(&mut self, snap: Snapshot) -> Snapshot {
         let cur = Snapshot { label: snap.label, doc: std::mem::replace(&mut self.doc, snap.doc), selection: std::mem::take(&mut self.selection) };
         self.follow_layout(&cur.doc);
+        self.follow_storeys(&cur.doc);
         self.reconcile_untiled_twist();
         self.revision += 1;
         cur
+    }
+    /// After undo or redo: stay on the storey being looked at, with the same ghost. Which storey is
+    /// shown is a view, not an edit; undo takes back edits only.
+    fn follow_storeys(&mut self, before: &Drawing) {
+        let d = &self.doc;
+        let current = Some(before.storeys.current).filter(|c| d.storeys.contains(*c)).unwrap_or(d.storeys.current);
+        let ghost = before.ghost_storey.filter(|g| d.storeys.contains(*g));
+        if d.storeys.current != current || d.ghost_storey != ghost || d.ghost_color != before.ghost_color {
+            let d = Arc::make_mut(&mut self.doc);
+            d.storeys.current = current;
+            d.ghost_storey = ghost;
+            d.ghost_color = before.ghost_color;
+            d.fix_ghost();
+        }
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,

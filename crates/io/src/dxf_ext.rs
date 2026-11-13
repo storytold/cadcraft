@@ -6,7 +6,8 @@
 //!
 //! CADCraft's own data lives under the registered application `CADCRAFT` (xdata) and the
 //! named-object-dictionary entries `CADCRAFT_CONSTRAINTS`, `CADCRAFT_LAYERSTATES`,
-//! `CADCRAFT_PLOTSTYLES`, `CADCRAFT_HANDSEED` and `CADCRAFT_MLEADERSTYLE` (XRECORDs). Other
+//! `CADCRAFT_PLOTSTYLES`, `CADCRAFT_HANDSEED`, `CADCRAFT_MLEADERSTYLE` and `CADCRAFT_STOREYS`
+//! (XRECORDs). Other
 //! readers keep or ignore them.
 
 use std::collections::HashMap;
@@ -24,6 +25,9 @@ pub(crate) const APP: &str = "CADCRAFT";
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.
 pub(crate) const LAYER_STATES_KEY: &str = "CADCRAFT_LAYERSTATES";
+/// Named-object-dictionary key of the storeys XRECORD (the storey list and the current storey;
+/// each object's storey is its own xdata, see [`cadcraft_doc::STOREY_APP`]).
+pub(crate) const STOREYS_KEY: &str = "CADCRAFT_STOREYS";
 /// Named-object-dictionary key of the drawing's plot style tables XRECORD.
 pub(crate) const PLOT_STYLES_KEY: &str = "CADCRAFT_PLOTSTYLES";
 /// Named-object-dictionary key of the annotative scaling XRECORD.
@@ -740,6 +744,37 @@ pub(crate) fn parse_layer_states(text: &str) -> Option<Vec<LayerState>> {
         return None;
     }
     Some(p.states)
+}
+
+/// The storeys stored in the `CADCRAFT_STOREYS` XRECORD.
+#[derive(Serialize, Deserialize)]
+struct StoreysPayload {
+    version: u32,
+    #[serde(default)]
+    storeys: cadcraft_doc::Storeys,
+}
+
+/// JSON chunks for the storeys XRECORD, or `None` when the drawing has no storeys.
+pub(crate) fn storey_chunks(storeys: &cadcraft_doc::Storeys) -> Option<Vec<String>> {
+    if !storeys.active() {
+        return None;
+    }
+    let json = serde_json::to_string(&StoreysPayload { version: 1, storeys: storeys.clone() }).ok()?;
+    Some(json_chunks(&json))
+}
+
+/// Parse the storeys XRECORD text (sanitized); `None` when it is not a payload we understand.
+pub(crate) fn parse_storeys(text: &str) -> Option<cadcraft_doc::Storeys> {
+    if text.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let p: StoreysPayload = serde_json::from_str(text).ok()?;
+    if p.version != 1 || p.storeys.list.len() > cadcraft_doc::MAX_STOREYS {
+        return None;
+    }
+    let mut s = p.storeys;
+    s.sanitize();
+    s.active().then_some(s)
 }
 
 /// The drawing's plot style tables stored in the `CADCRAFT_PLOTSTYLES` XRECORD.

@@ -64,6 +64,7 @@ pub mod plotstyles;
 pub mod quick;
 pub mod save_loss;
 pub mod shortcut_menus;
+pub mod storeys;
 pub mod theme;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod updates_ui;
@@ -120,6 +121,8 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The storeys new drawings, and opened drawings without storeys, get.
+    pub storey_setup: storeys::StoreySetup,
     /// The user's keyboard shortcuts ([`keys`]).
     pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
@@ -210,6 +213,7 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            storey_setup: storeys::StoreySetup::default(),
             shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
@@ -673,6 +677,9 @@ impl CadApp {
         if !self.ui.shortcuts.is_empty() {
             prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
+        if self.ui.storey_setup != storeys::StoreySetup::default() {
+            prefs["storeySetup"] = json!(self.ui.storey_setup);
+        }
         prefs.to_string()
     }
 
@@ -711,6 +718,9 @@ impl CadApp {
         }
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
+        }
+        if let Some(setup) = v.get("storeySetup").and_then(|s| storeys::StoreySetup::deserialize(s).ok()) {
+            self.ui.storey_setup = setup;
         }
     }
 

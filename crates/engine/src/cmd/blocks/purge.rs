@@ -423,7 +423,9 @@ fn purge_kind(s: &mut Session, kind: Kind, names: &str, r: &mut Report) -> Resul
         }
         Kind::ZeroLength | Kind::EmptyText => {
             let d = s.doc_mut()?;
-            for h in degenerate(d, kind) {
+            // Objects of other storeys than the current one can't be changed (see `storey`).
+            let hs: Vec<Handle> = degenerate(d, kind).into_iter().filter(|h| crate::cmd::storey::editable(d, *h)).collect();
+            for h in hs {
                 if d.remove_entity(h).is_some() {
                     r.add(kind, &h.hex());
                 }

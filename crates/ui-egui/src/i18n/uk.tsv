@@ -1422,3 +1422,109 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+# Storeys (storey management and the ghost storey).
+	Storeys	Поверхи
+	New Storey	Новий поверх
+	Rename Storey	Перейменувати поверх
+	Delete Storey	Видалити поверх
+	Reorder Storey	Змінити порядок поверху
+	Go to Storey	Перейти на поверх
+	Storey Above	Поверх вище
+	Storey Below	Поверх нижче
+	Copy to Storey	Копіювати на поверх
+	Move to Storey	Перемістити на поверх
+	No storeys yet: the first one takes everything drawn so far.	Поверхів ще немає: перший отримає все, що вже накреслено.
+	Storey name	Назва поверху
+	Above the current storey	Над поточним поверхом
+	Only an empty storey can be deleted	Видалити можна лише порожній поверх
+	Import Plan as Storey	Імпортувати план як поверх
+	current	поточний
+	The storey shown beneath the current one	Поверх, показаний під поточним
+	Arrow keys choose, Enter applies, Esc closes	Стрілки вибирають, Enter застосовує, Esc закриває
+	Blueprint	Підкладка
+	Blueprint On/Off	Підкладка увімк./вимк.
+	Blueprint Storey Above	Поверх-підкладка вище
+	Blueprint Storey Below	Поверх-підкладка нижче
+	Choose Blueprint...	Вибрати підкладку...
+	Go to Storey...	Перейти на поверх...
+	Hide Blueprint	Сховати підкладку
+	Move Down	Нижче
+	Move Up	Вище
+	New Storey Above	Новий поверх вище
+	New Storey Below	Новий поверх нижче
+	Show as Blueprint	Показати як підкладку
+	Shown as blueprint (click to hide)	Показано як підкладку (клацніть, щоб сховати)
+	Storey	Поверх
+	The storey to work on	Поверх, на якому ви працюєте
+	Apply to This Drawing	Застосувати до цього креслення
+	Building	Будівництво
+	Double-click to rename	Двічі клацніть, щоб перейменувати
+	Drawing 0, drawings above, blueprints below	Креслення 0, креслення вище, підкладки нижче
+	Everything drawn so far goes on the start storey	Усе вже накреслене потрапить на стартовий поверх
+	Neutral	Нейтрально
+	New drawings, and opened drawings without storeys, get these storeys	Нові креслення та відкриті креслення без поверхів отримують ці поверхи
+	Rename	Перейменувати
+	Set as Start Storey	Зробити стартовим поверхом
+	Shortcuts	Клавіші
+	Start Setup	Початкове налаштування
+	Start Storey	Стартовий поверх
+	Start storey	Стартовий поверх
+	Start storey (number 0)	Стартовий поверх (номер 0)
+	Storey Settings...	Налаштування поверхів...
+	Storey number	Номер поверху
+	Storeys Palette	Палітра поверхів
+	Storeys from Setup	Поверхи з налаштування
+	Storeys, top first, one per line	Поверхи, верхній першим, по одному в рядку
+	The drawing has storeys already	Креслення вже має поверхи
+	Above the current level	Над поточним рівнем
+	Blueprint Level Above	Підкладка рівня вище
+	Blueprint Level Below	Підкладка рівня нижче
+	Blueprint Settings...	Параметри підкладки...
+	Blueprints	Підкладки
+	Blueprints Palette	Палітра підкладок
+	Blueprints and levels (any other stack)	Підкладки та рівні (будь-який інший стек)
+	Copy Selection Here	Копіювати виділене сюди
+	Copy to Level	Копіювати на рівень
+	Copy to Level...	Копіювати на рівень...
+	Copy to Storey...	Копіювати на поверх...
+	Delete Level	Видалити рівень
+	Each level remembers its blueprint	Кожен рівень запам'ятовує свою підкладку
+	Each storey remembers its blueprint	Кожен поверх запам'ятовує свою підкладку
+	Everything drawn so far goes on the start level	Усе намальоване досі потрапляє на початковий рівень
+	Go to Level	Перейти на рівень
+	Go to Level...	Перейти на рівень...
+	Import Plan as Level	Імпортувати план як рівень
+	Level	Рівень
+	Level Above	Рівень вище
+	Level Below	Рівень нижче
+	Level name	Назва рівня
+	Level number	Номер рівня
+	Levels from Setup	Рівні з налаштувань
+	Levels, top first, one per line	Рівні, зверху вниз, по одному в рядку
+	Move Selection Here	Перемістити виділене сюди
+	Move to Level	Перемістити на рівень
+	Move to Level...	Перемістити на рівень...
+	Move to Storey...	Перемістити на поверх...
+	Names	Назви
+	New Level	Новий рівень
+	New Level Above	Новий рівень вище
+	New Level Below	Новий рівень нижче
+	New drawings, and opened drawings without levels, get these levels	Нові креслення та відкриті креслення без рівнів отримують ці рівні
+	No levels yet: the first one takes everything drawn so far.	Рівнів поки немає: перший забирає все намальоване досі.
+	On a dark drawing area	На темній області малювання
+	On a light drawing area	На світлій області малювання
+	Only an empty level can be deleted	Видалити можна лише порожній рівень
+	Select the objects first, then choose the level.	Спочатку виберіть об'єкти, потім рівень.
+	Select the objects first, then choose the storey.	Спочатку виберіть об'єкти, потім поверх.
+	Set as Start Level	Призначити початковим рівнем
+	Show hatches in the blueprint (off: hatches on the current level only)	Показувати штрихування в підкладці (вимк.: штрихування лише поточного рівня)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Показувати штрихування в підкладці (вимк.: штрихування лише поточного поверху)
+	Start level	Початковий рівень
+	Start level (number 0)	Початковий рівень (номер 0)
+	Storeys (buildings)	Поверхи (будівлі)
+	The drawing has levels already	У кресленні вже є рівні
+	The level shown beneath the current one	Рівень, показаний під поточним
+	The level to work on	Рівень для роботи
+	selected	вибрано
+	selected objects, copied in place to	вибрано об'єктів, скопійованих на місці на
+	selected objects, moved in place to	вибрано об'єктів, переміщених на місці на

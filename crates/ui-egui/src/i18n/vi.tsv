@@ -1464,3 +1464,109 @@ menu	Modify	Hiệu chỉnh
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+# Storeys (storey management and the blueprint).
+	Storeys	Tầng
+	New Storey	Tầng mới
+	Rename Storey	Đổi tên tầng
+	Delete Storey	Xóa tầng
+	Reorder Storey	Sắp xếp lại tầng
+	Go to Storey	Đến tầng
+	Storey Above	Tầng trên
+	Storey Below	Tầng dưới
+	Copy to Storey	Sao chép sang tầng
+	Move to Storey	Chuyển sang tầng
+	No storeys yet: the first one takes everything drawn so far.	Chưa có tầng: tầng đầu tiên nhận mọi thứ đã vẽ.
+	Storey name	Tên tầng
+	Above the current storey	Phía trên tầng hiện hành
+	Only an empty storey can be deleted	Chỉ có thể xóa tầng trống
+	Import Plan as Storey	Nhập bản vẽ làm tầng
+	current	hiện hành
+	The storey shown beneath the current one	Tầng hiển thị bên dưới tầng hiện hành
+	Arrow keys choose, Enter applies, Esc closes	Phím mũi tên để chọn, Enter để áp dụng, Esc để đóng
+	Blueprint	Bản nền
+	Blueprint On/Off	Bật/tắt bản nền
+	Blueprint Storey Above	Bản nền: tầng trên
+	Blueprint Storey Below	Bản nền: tầng dưới
+	Choose Blueprint...	Chọn bản nền...
+	Go to Storey...	Đến tầng...
+	Hide Blueprint	Ẩn bản nền
+	Move Down	Chuyển xuống
+	Move Up	Chuyển lên
+	New Storey Above	Tầng mới phía trên
+	New Storey Below	Tầng mới phía dưới
+	Show as Blueprint	Hiển thị làm bản nền
+	Shown as blueprint (click to hide)	Đang hiển thị làm bản nền (bấm để ẩn)
+	Storey	Tầng
+	The storey to work on	Tầng đang làm việc
+	Apply to This Drawing	Áp dụng cho bản vẽ này
+	Building	Tòa nhà
+	Double-click to rename	Bấm đúp để đổi tên
+	Drawing 0, drawings above, blueprints below	Bản vẽ 0, các bản vẽ phía trên, bản nền phía dưới
+	Everything drawn so far goes on the start storey	Mọi thứ đã vẽ được đưa vào tầng bắt đầu
+	Neutral	Trung tính
+	New drawings, and opened drawings without storeys, get these storeys	Bản vẽ mới và bản vẽ mở ra chưa có tầng sẽ nhận các tầng này
+	Rename	Đổi tên
+	Set as Start Storey	Đặt làm tầng bắt đầu
+	Shortcuts	Phím tắt
+	Start Setup	Thiết lập ban đầu
+	Start Storey	Tầng bắt đầu
+	Start storey	Tầng bắt đầu
+	Start storey (number 0)	Tầng bắt đầu (số 0)
+	Storey Settings...	Cài đặt tầng...
+	Storey number	Số tầng
+	Storeys Palette	Bảng tầng
+	Storeys from Setup	Tầng theo thiết lập
+	Storeys, top first, one per line	Các tầng, từ trên xuống, mỗi dòng một tầng
+	The drawing has storeys already	Bản vẽ đã có tầng
+	Above the current level	Phía trên mức hiện hành
+	Blueprint Level Above	Bản nền: mức trên
+	Blueprint Level Below	Bản nền: mức dưới
+	Blueprint Settings...	Cài đặt bản nền...
+	Blueprints	Bản nền
+	Blueprints Palette	Bảng bản nền
+	Blueprints and levels (any other stack)	Bản nền và mức (mọi chồng lớp khác)
+	Copy Selection Here	Sao chép vùng chọn vào đây
+	Copy to Level	Sao chép sang mức
+	Copy to Level...	Sao chép sang mức...
+	Copy to Storey...	Sao chép sang tầng...
+	Delete Level	Xóa mức
+	Each level remembers its blueprint	Mỗi mức ghi nhớ bản nền của nó
+	Each storey remembers its blueprint	Mỗi tầng ghi nhớ bản nền của nó
+	Everything drawn so far goes on the start level	Mọi thứ đã vẽ được đưa vào mức bắt đầu
+	Go to Level	Đến mức
+	Go to Level...	Đến mức...
+	Import Plan as Level	Nhập bản vẽ làm mức
+	Level	Mức
+	Level Above	Mức trên
+	Level Below	Mức dưới
+	Level name	Tên mức
+	Level number	Số mức
+	Levels from Setup	Mức theo thiết lập
+	Levels, top first, one per line	Các mức, từ trên xuống, mỗi dòng một mức
+	Move Selection Here	Chuyển vùng chọn vào đây
+	Move to Level	Chuyển sang mức
+	Move to Level...	Chuyển sang mức...
+	Move to Storey...	Chuyển sang tầng...
+	Names	Tên gọi
+	New Level	Mức mới
+	New Level Above	Mức mới phía trên
+	New Level Below	Mức mới phía dưới
+	New drawings, and opened drawings without levels, get these levels	Bản vẽ mới và bản vẽ mở ra chưa có mức sẽ nhận các mức này
+	No levels yet: the first one takes everything drawn so far.	Chưa có mức: mức đầu tiên nhận mọi thứ đã vẽ.
+	On a dark drawing area	Trên vùng vẽ tối
+	On a light drawing area	Trên vùng vẽ sáng
+	Only an empty level can be deleted	Chỉ có thể xóa mức trống
+	Select the objects first, then choose the level.	Hãy chọn đối tượng trước, sau đó chọn mức.
+	Select the objects first, then choose the storey.	Hãy chọn đối tượng trước, sau đó chọn tầng.
+	Set as Start Level	Đặt làm mức bắt đầu
+	Show hatches in the blueprint (off: hatches on the current level only)	Hiển thị hatch trong bản nền (tắt: hatch chỉ ở mức hiện hành)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Hiển thị hatch trong bản nền (tắt: hatch chỉ ở tầng hiện hành)
+	Start level	Mức bắt đầu
+	Start level (number 0)	Mức bắt đầu (số 0)
+	Storeys (buildings)	Tầng (tòa nhà)
+	The drawing has levels already	Bản vẽ đã có mức
+	The level shown beneath the current one	Mức hiển thị bên dưới mức hiện hành
+	The level to work on	Mức đang làm việc
+	selected	đã chọn
+	selected objects, copied in place to	đối tượng đã chọn, sao chép tại chỗ sang
+	selected objects, moved in place to	đối tượng đã chọn, chuyển tại chỗ sang

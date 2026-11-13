@@ -1036,3 +1036,109 @@
 	Press the keys	Appuyez sur les touches
 	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
 	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
+# Storeys (storey management and the ghost storey).
+	Storeys	Niveaux
+	New Storey	Nouveau niveau
+	Rename Storey	Renommer le niveau
+	Delete Storey	Supprimer le niveau
+	Reorder Storey	Réordonner le niveau
+	Go to Storey	Aller au niveau
+	Storey Above	Niveau supérieur
+	Storey Below	Niveau inférieur
+	Copy to Storey	Copier vers un niveau
+	Move to Storey	Déplacer vers un niveau
+	No storeys yet: the first one takes everything drawn so far.	Aucun niveau pour l’instant : le premier reçoit tout ce qui est déjà dessiné.
+	Storey name	Nom du niveau
+	Above the current storey	Au-dessus du niveau courant
+	Only an empty storey can be deleted	Seul un niveau vide peut être supprimé
+	Import Plan as Storey	Importer un plan comme niveau
+	current	courant
+	The storey shown beneath the current one	Le niveau affiché sous le niveau courant
+	Arrow keys choose, Enter applies, Esc closes	Flèches pour choisir, Entrée applique, Échap ferme
+	Blueprint	Plan de fond
+	Blueprint On/Off	Plan de fond oui/non
+	Blueprint Storey Above	Plan de fond au-dessus
+	Blueprint Storey Below	Plan de fond en dessous
+	Choose Blueprint...	Choisir le plan de fond...
+	Go to Storey...	Aller au niveau...
+	Hide Blueprint	Masquer le plan de fond
+	Move Down	Descendre
+	Move Up	Monter
+	New Storey Above	Nouveau niveau au-dessus
+	New Storey Below	Nouveau niveau en dessous
+	Show as Blueprint	Afficher comme plan de fond
+	Shown as blueprint (click to hide)	Affiché comme plan de fond (clic pour masquer)
+	Storey	Niveau
+	The storey to work on	Le niveau sur lequel on travaille
+	Apply to This Drawing	Appliquer à ce dessin
+	Building	Bâtiment
+	Double-click to rename	Double-clic pour renommer
+	Drawing 0, drawings above, blueprints below	Dessin 0, dessins au-dessus, plans de fond en dessous
+	Everything drawn so far goes on the start storey	Tout ce qui est déjà dessiné va au niveau de départ
+	Neutral	Neutre
+	New drawings, and opened drawings without storeys, get these storeys	Les nouveaux dessins et les dessins ouverts sans niveaux reçoivent ces niveaux
+	Rename	Renommer
+	Set as Start Storey	Définir comme niveau de départ
+	Shortcuts	Raccourcis
+	Start Setup	Configuration de départ
+	Start Storey	Niveau de départ
+	Start storey	Niveau de départ
+	Start storey (number 0)	Niveau de départ (numéro 0)
+	Storey Settings...	Paramètres des niveaux...
+	Storey number	Numéro du niveau
+	Storeys Palette	Palette des niveaux
+	Storeys from Setup	Niveaux de la configuration
+	Storeys, top first, one per line	Niveaux, le plus haut d’abord, un par ligne
+	The drawing has storeys already	Le dessin a déjà des niveaux
+	Above the current level	Au-dessus du palier actuel
+	Blueprint Level Above	Plan de fond du palier supérieur
+	Blueprint Level Below	Plan de fond du palier inférieur
+	Blueprint Settings...	Paramètres du plan de fond...
+	Blueprints	Plans de fond
+	Blueprints Palette	Palette des plans de fond
+	Blueprints and levels (any other stack)	Plans de fond et paliers (toute autre pile)
+	Copy Selection Here	Copier la sélection ici
+	Copy to Level	Copier vers le palier
+	Copy to Level...	Copier vers le palier...
+	Copy to Storey...	Copier vers le niveau...
+	Delete Level	Supprimer le palier
+	Each level remembers its blueprint	Chaque palier mémorise son plan de fond
+	Each storey remembers its blueprint	Chaque niveau mémorise son plan de fond
+	Everything drawn so far goes on the start level	Tout ce qui est dessiné jusqu'ici va sur le palier de départ
+	Go to Level	Aller au palier
+	Go to Level...	Aller au palier...
+	Import Plan as Level	Importer le plan comme palier
+	Level	Palier
+	Level Above	Palier supérieur
+	Level Below	Palier inférieur
+	Level name	Nom du palier
+	Level number	Numéro du palier
+	Levels from Setup	Paliers issus de la configuration
+	Levels, top first, one per line	Paliers, le plus haut d'abord, un par ligne
+	Move Selection Here	Déplacer la sélection ici
+	Move to Level	Déplacer vers le palier
+	Move to Level...	Déplacer vers le palier...
+	Move to Storey...	Déplacer vers le niveau...
+	Names	Noms
+	New Level	Nouveau palier
+	New Level Above	Nouveau palier au-dessus
+	New Level Below	Nouveau palier en dessous
+	New drawings, and opened drawings without levels, get these levels	Les nouveaux dessins et les dessins ouverts sans paliers reçoivent ces paliers
+	No levels yet: the first one takes everything drawn so far.	Aucun palier pour l'instant : le premier reprend tout ce qui est dessiné jusqu'ici.
+	On a dark drawing area	Sur une zone de dessin sombre
+	On a light drawing area	Sur une zone de dessin claire
+	Only an empty level can be deleted	Seul un palier vide peut être supprimé
+	Select the objects first, then choose the level.	Sélectionnez d'abord les objets, puis choisissez le palier.
+	Select the objects first, then choose the storey.	Sélectionnez d'abord les objets, puis choisissez le niveau.
+	Set as Start Level	Définir comme palier de départ
+	Show hatches in the blueprint (off: hatches on the current level only)	Afficher les hachures dans le plan de fond (désactivé : hachures du palier actuel uniquement)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Afficher les hachures dans le plan de fond (désactivé : hachures du niveau actuel uniquement)
+	Start level	Palier de départ
+	Start level (number 0)	Palier de départ (numéro 0)
+	Storeys (buildings)	Niveaux (bâtiments)
+	The drawing has levels already	Le dessin a déjà des paliers
+	The level shown beneath the current one	Le palier affiché sous le palier actuel
+	The level to work on	Le palier sur lequel travailler
+	selected	sélectionnés
+	selected objects, copied in place to	objets sélectionnés, copiés sur place vers
+	selected objects, moved in place to	objets sélectionnés, déplacés sur place vers

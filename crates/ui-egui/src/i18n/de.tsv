@@ -1056,3 +1056,110 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Die Zeichnung hat sich geändert. Schließen Sie das Fenster und öffnen Sie es erneut.
+# Storeys (storey management and the ghost storey).
+	Storeys	Geschosse
+	New Storey	Neues Geschoss
+	Rename Storey	Geschoss umbenennen
+	Delete Storey	Geschoss löschen
+	Reorder Storey	Geschossreihenfolge ändern
+	Go to Storey	Zu Geschoss wechseln
+	Storey Above	Geschoss darüber
+	Storey Below	Geschoss darunter
+	Copy to Storey	In Geschoss kopieren
+	Move to Storey	In Geschoss verschieben
+	No storeys yet: the first one takes everything drawn so far.	Noch keine Geschosse: das erste übernimmt alles bisher Gezeichnete.
+	Storey name	Geschossname
+	Above the current storey	Über dem aktuellen Geschoss
+	Only an empty storey can be deleted	Nur ein leeres Geschoss kann gelöscht werden
+	Import Plan as Storey	Plan als Geschoss importieren
+	current	aktuell
+	The storey shown beneath the current one	Das Geschoss, das unter dem aktuellen liegt
+	Arrow keys choose, Enter applies, Esc closes	Pfeiltasten wählen, Enter übernimmt, Esc schließt
+	Blueprint	Blueprint
+	Blueprint On/Off	Blueprint ein/aus
+	Blueprint Storey Above	Blueprint-Geschoss darüber
+	Blueprint Storey Below	Blueprint-Geschoss darunter
+	Choose Blueprint...	Blueprint wählen...
+	Go to Storey...	Zu Geschoss wechseln...
+	Hide Blueprint	Blueprint ausblenden
+	Move Down	Nach unten
+	Move Up	Nach oben
+	New Storey Above	Neues Geschoss darüber
+	New Storey Below	Neues Geschoss darunter
+	Press the keys	Tasten drücken
+	Show as Blueprint	Als Blueprint darstellen
+	Shown as blueprint (click to hide)	Als Blueprint dargestellt (Klick blendet aus)
+	Storey	Geschoss
+	The storey to work on	Das Geschoss, auf dem gearbeitet wird
+	Apply to This Drawing	Auf diese Zeichnung anwenden
+	Building	Bauwesen
+	Double-click to rename	Doppelklick zum Umbenennen
+	Drawing 0, drawings above, blueprints below	Zeichnung 0, Zeichnungen darüber, Blueprints darunter
+	Everything drawn so far goes on the start storey	Alles bisher Gezeichnete kommt auf das Start-Geschoss
+	Neutral	Neutral
+	New drawings, and opened drawings without storeys, get these storeys	Neue Zeichnungen und geöffnete Zeichnungen ohne Geschosse bekommen diese Geschosse
+	Rename	Umbenennen
+	Set as Start Storey	Als Start-Geschoss festlegen
+	Shortcuts	Tastenkürzel
+	Start Setup	Start-Setup
+	Start Storey	Start-Geschoss
+	Start storey	Start-Geschoss
+	Start storey (number 0)	Start-Geschoss (Nummer 0)
+	Storey Settings...	Geschoss-Einstellungen...
+	Storey number	Geschossnummer
+	Storeys Palette	Geschoss-Palette
+	Storeys from Setup	Geschosse aus dem Setup
+	Storeys, top first, one per line	Geschosse, oberstes zuerst, eines pro Zeile
+	The drawing has storeys already	Die Zeichnung hat schon Geschosse
+	Above the current level	Über dem aktuellen Level
+	Blueprint Level Above	Blueprint: Level darüber
+	Blueprint Level Below	Blueprint: Level darunter
+	Blueprint Settings...	Blueprint-Einstellungen...
+	Blueprints	Blueprints
+	Blueprints Palette	Blueprint-Palette
+	Blueprints and levels (any other stack)	Blueprints und Level (jeder andere Stapel)
+	Copy Selection Here	Auswahl hierher kopieren
+	Copy to Level	In Level kopieren
+	Copy to Level...	In Level kopieren...
+	Copy to Storey...	In Geschoss kopieren...
+	Delete Level	Level löschen
+	Each level remembers its blueprint	Jedes Level merkt sich sein Blueprint
+	Each storey remembers its blueprint	Jedes Geschoss merkt sich seinen Blueprint
+	Everything drawn so far goes on the start level	Alles bisher Gezeichnete kommt auf das Start-Level
+	Go to Level	Zu Level wechseln
+	Go to Level...	Zu Level wechseln...
+	Import Plan as Level	Plan als Level importieren
+	Level	Level
+	Level Above	Level darüber
+	Level Below	Level darunter
+	Level name	Level-Name
+	Level number	Level-Nummer
+	Levels from Setup	Level aus dem Setup
+	Levels, top first, one per line	Level, oberstes zuerst, eines pro Zeile
+	Move Selection Here	Auswahl hierher verschieben
+	Move to Level	In Level verschieben
+	Move to Level...	In Level verschieben...
+	Move to Storey...	In Geschoss verschieben...
+	Names	Namen
+	New Level	Neues Level
+	New Level Above	Neues Level darüber
+	New Level Below	Neues Level darunter
+	New drawings, and opened drawings without levels, get these levels	Neue Zeichnungen und geöffnete Zeichnungen ohne Level bekommen diese Level
+	No levels yet: the first one takes everything drawn so far.	Noch keine Level: Das erste übernimmt alles bisher Gezeichnete.
+	On a dark drawing area	Auf dunkler Zeichenfläche
+	On a light drawing area	Auf heller Zeichenfläche
+	Only an empty level can be deleted	Nur ein leeres Level kann gelöscht werden
+	Select the objects first, then choose the level.	Erst die Objekte wählen, dann das Level.
+	Select the objects first, then choose the storey.	Wähle zuerst die Objekte aus, dann das Geschoss.
+	Set as Start Level	Als Start-Level festlegen
+	Show hatches in the blueprint (off: hatches on the current level only)	Schraffuren im Blueprint zeigen (aus: Schraffuren nur im aktuellen Level)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Schraffuren im Blueprint anzeigen (aus: Schraffuren nur des aktuellen Geschosses)
+	Start level	Start-Level
+	Start level (number 0)	Start-Level (Nummer 0)
+	Storeys (buildings)	Geschosse (Gebäude)
+	The drawing has levels already	Die Zeichnung hat schon Level
+	The level shown beneath the current one	Das Level, das unter dem aktuellen liegt
+	The level to work on	Das Level, an dem gearbeitet wird
+	selected	ausgewählt
+	selected objects, copied in place to	ausgewählte Objekte, an Ort und Stelle kopiert nach
+	selected objects, moved in place to	ausgewählte Objekte, an Ort und Stelle verschoben nach

@@ -101,19 +101,30 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        ghost: None,
+        storeys: true,
+    };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
+        let ents = in_draw_order(d, store, !paper && !plotting);
         #[cfg(not(target_arch = "wasm32"))]
         if !paper && !plotting && b.styles.is_none() && store.len() >= 2 * PARALLEL_CHUNK {
-            build_parallel(&mut b, d, store);
+            build_parallel(&mut b, d, &ents);
             return b.list;
         }
         let mut viewports = 0usize;
-        for e in store.iter() {
+        for e in ents {
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
@@ -134,6 +145,17 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     b.list
 }
 
+/// A space's entities in the order they are drawn: with a ghost storey shown (`ghosts`, model
+/// space on screen), its objects come first so the current storey is drawn over them.
+fn in_draw_order<'a>(d: &Drawing, store: &'a cadcraft_doc::EntityStore, ghosts: bool) -> Vec<&'a std::sync::Arc<Entity>> {
+    if !ghosts || d.ghost_storey.is_none() {
+        return store.iter().collect();
+    }
+    let (mut first, rest): (Vec<_>, Vec<_>) = store.iter().partition(|e| d.storey_view(e) == cadcraft_doc::StoreyView::Ghost);
+    first.extend(rest);
+    first
+}
+
 /// Top-level entities per task when a display list is built on all cores.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const PARALLEL_CHUNK: usize = 256;
@@ -144,16 +166,24 @@ pub(crate) const PARALLEL_CHUNK: usize = 256;
 /// stopped blocking the UI) and after every edit; one core made both slow on real drawings. Plots, layouts and plot styles keep the one-thread
 /// path (they run once, and their pens and per-primitive layers are built along the way).
 #[cfg(not(target_arch = "wasm32"))]
-fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStore) {
+fn build_parallel(b: &mut Builder, d: &Drawing, ents: &[&std::sync::Arc<Entity>]) {
     use rayon::prelude::*;
-    let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
     let (opts, plotting) = (b.opts, b.plotting);
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+                ghost: None,
+                storeys: true,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
@@ -205,7 +235,19 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    // Loose objects (previews, the clipboard, highlights) are drawn as they are, whatever storey
+    // their copies of model-space objects carry.
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        ghost: None,
+        storeys: false,
+    };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }

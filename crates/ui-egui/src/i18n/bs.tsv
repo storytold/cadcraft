@@ -1459,3 +1459,109 @@ menu	Modify	Izmijeni
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Crtež se promijenio. Zatvorite prozor i otvorite ga ponovo.
+# Storeys (storey management and the blueprint).
+	Storeys	Etaže
+	New Storey	Nova etaža
+	Rename Storey	Preimenuj etažu
+	Delete Storey	Izbriši etažu
+	Reorder Storey	Promijeni redoslijed etaže
+	Go to Storey	Idi na etažu
+	Storey Above	Etaža iznad
+	Storey Below	Etaža ispod
+	Copy to Storey	Kopiraj na etažu
+	Move to Storey	Pomakni na etažu
+	No storeys yet: the first one takes everything drawn so far.	Još nema etaža: prva preuzima sve dosad nacrtano.
+	Storey name	Naziv etaže
+	Above the current storey	Iznad trenutne etaže
+	Only an empty storey can be deleted	Može se izbrisati samo prazna etaža
+	Import Plan as Storey	Uvezi plan kao etažu
+	current	trenutna
+	The storey shown beneath the current one	Etaža prikazana ispod trenutne
+	Arrow keys choose, Enter applies, Esc closes	Strelice biraju, Enter primjenjuje, Esc zatvara
+	Blueprint	Podloga
+	Blueprint On/Off	Podloga uključi/isključi
+	Blueprint Storey Above	Podloga: etaža iznad
+	Blueprint Storey Below	Podloga: etaža ispod
+	Choose Blueprint...	Odaberi podlogu...
+	Go to Storey...	Idi na etažu...
+	Hide Blueprint	Sakrij podlogu
+	Move Down	Pomakni dolje
+	Move Up	Pomakni gore
+	New Storey Above	Nova etaža iznad
+	New Storey Below	Nova etaža ispod
+	Show as Blueprint	Prikaži kao podlogu
+	Shown as blueprint (click to hide)	Prikazano kao podloga (klik za skrivanje)
+	Storey	Etaža
+	The storey to work on	Etaža na kojoj se radi
+	Apply to This Drawing	Primijeni na ovaj crtež
+	Building	Zgrada
+	Double-click to rename	Dvostruki klik za preimenovanje
+	Drawing 0, drawings above, blueprints below	Crtež 0, crteži iznad, podloge ispod
+	Everything drawn so far goes on the start storey	Sve dosad nacrtano ide na početnu etažu
+	Neutral	Neutralno
+	New drawings, and opened drawings without storeys, get these storeys	Novi crteži i otvoreni crteži bez etaža dobijaju ove etaže
+	Rename	Preimenuj
+	Set as Start Storey	Postavi kao početnu etažu
+	Shortcuts	Prečice
+	Start Setup	Početna postavka
+	Start Storey	Početna etaža
+	Start storey	Početna etaža
+	Start storey (number 0)	Početna etaža (broj 0)
+	Storey Settings...	Postavke etaža...
+	Storey number	Broj etaže
+	Storeys Palette	Paleta etaža
+	Storeys from Setup	Etaže iz postavke
+	Storeys, top first, one per line	Etaže, odozgo prema dolje, jedna po redu
+	The drawing has storeys already	Crtež već ima etaže
+	Above the current level	Iznad trenutnog nivoa
+	Blueprint Level Above	Podloga: nivo iznad
+	Blueprint Level Below	Podloga: nivo ispod
+	Blueprint Settings...	Postavke podloge...
+	Blueprints	Podloge
+	Blueprints Palette	Paleta podloga
+	Blueprints and levels (any other stack)	Podloge i nivoi (bilo koji drugi niz)
+	Copy Selection Here	Kopiraj odabir ovdje
+	Copy to Level	Kopiraj na nivo
+	Copy to Level...	Kopiraj na nivo...
+	Copy to Storey...	Kopiraj na etažu...
+	Delete Level	Izbriši nivo
+	Each level remembers its blueprint	Svaki nivo pamti svoju podlogu
+	Each storey remembers its blueprint	Svaka etaža pamti svoju podlogu
+	Everything drawn so far goes on the start level	Sve dosad nacrtano ide na početni nivo
+	Go to Level	Idi na nivo
+	Go to Level...	Idi na nivo...
+	Import Plan as Level	Uvezi plan kao nivo
+	Level	Nivo
+	Level Above	Nivo iznad
+	Level Below	Nivo ispod
+	Level name	Naziv nivoa
+	Level number	Broj nivoa
+	Levels from Setup	Nivoi iz postavke
+	Levels, top first, one per line	Nivoi, odozgo prema dolje, jedan po redu
+	Move Selection Here	Pomakni odabir ovdje
+	Move to Level	Pomakni na nivo
+	Move to Level...	Pomakni na nivo...
+	Move to Storey...	Pomakni na etažu...
+	Names	Nazivi
+	New Level	Novi nivo
+	New Level Above	Novi nivo iznad
+	New Level Below	Novi nivo ispod
+	New drawings, and opened drawings without levels, get these levels	Novi crteži i otvoreni crteži bez nivoa dobijaju ove nivoe
+	No levels yet: the first one takes everything drawn so far.	Još nema nivoa: prvi preuzima sve dosad nacrtano.
+	On a dark drawing area	Na tamnoj površini crteža
+	On a light drawing area	Na svijetloj površini crteža
+	Only an empty level can be deleted	Može se izbrisati samo prazan nivo
+	Select the objects first, then choose the level.	Prvo odaberite objekte, zatim odaberite nivo.
+	Select the objects first, then choose the storey.	Prvo odaberite objekte, zatim odaberite etažu.
+	Set as Start Level	Postavi kao početni nivo
+	Show hatches in the blueprint (off: hatches on the current level only)	Prikaži šrafure u podlozi (isključeno: šrafure samo na trenutnom nivou)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Prikaži šrafure u podlozi (isključeno: šrafure samo na trenutnoj etaži)
+	Start level	Početni nivo
+	Start level (number 0)	Početni nivo (broj 0)
+	Storeys (buildings)	Etaže (zgrade)
+	The drawing has levels already	Crtež već ima nivoe
+	The level shown beneath the current one	Nivo prikazan ispod trenutnog
+	The level to work on	Nivo na kojem se radi
+	selected	odabrano
+	selected objects, copied in place to	odabranih objekata, kopirano na isto mjesto na
+	selected objects, moved in place to	odabranih objekata, pomaknuto na isto mjesto na

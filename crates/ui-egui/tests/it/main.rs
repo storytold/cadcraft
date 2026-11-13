@@ -33,6 +33,7 @@ mod shared_controls;
 mod shortcut_menus;
 mod shortcuts_checked;
 mod status_bar_toggles;
+mod storey_setup_prefs;
 mod style_dialogs;
 mod system_cursor;
 mod text_double_click;

@@ -212,6 +212,10 @@ impl Objects {
         if let Some(states) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
             d.layer_states = states;
         }
+        // The building's storeys (each object's storey is its own xdata).
+        if let Some(storeys) = self.xrecord_text(crate::dxf_ext::STOREYS_KEY).and_then(|t| crate::dxf_ext::parse_storeys(&t)) {
+            d.storeys = storeys;
+        }
         // The drawing's plot style tables.
         if let Some(tables) = self.xrecord_text(crate::dxf_ext::PLOT_STYLES_KEY).and_then(|t| crate::dxf_ext::parse_plot_styles(&t)) {
             d.plot_style_tables = tables;

@@ -362,7 +362,12 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
         for store in stores {
             for e in store.iter() {
                 let EntityKind::Dimension(dm) = &e.kind else { continue };
-                if dm.assoc.is_empty() {
+                // A dimension does not follow a source on another storey (storeys keep no such links;
+                // a file can still bring one): it could not, that storey can't be changed.
+                let crosses = |a: &cadcraft_doc::DimAssoc| {
+                    !d.same_storey(e, a.handle) || matches!(a.snap, AssocSnap::Intersection { other } if !d.same_storey(e, other))
+                };
+                if dm.assoc.is_empty() || dm.assoc.iter().any(crosses) {
                     continue;
                 }
                 let prev = match before.entity(e.handle).map(|x| &x.kind) {

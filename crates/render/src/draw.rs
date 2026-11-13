@@ -21,6 +21,20 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
         return;
     }
+    // A blueprint without hatches leaves out the hatches inside its blocks too.
+    if ctx.depth > 0 && b.ghost.is_some() && !ctx.d.ghost_hatches && matches!(e.kind, cadcraft_doc::EntityKind::Hatch(_)) {
+        return;
+    }
+    // Storeys: model-space objects of other storeys are not drawn; the ghost storey is, in the
+    // ghost colour, on screen only (not in plots and not through layout viewports).
+    if ctx.depth == 0 && b.storeys {
+        match ctx.d.storey_view(e) {
+            cadcraft_doc::StoreyView::Current => {}
+            cadcraft_doc::StoreyView::Hidden => return,
+            cadcraft_doc::StoreyView::Ghost if b.plotting || ctx.top == VIEWPORT_CONTENT => return,
+            cadcraft_doc::StoreyView::Ghost => b.ghost = Some(ctx.d.ghost_color),
+        }
+    }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
     // draws (block contents set their own).
     let (saved, saved_transparency) = (b.named, b.transparency);
@@ -28,6 +42,9 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     entity_parts(b, ctx, e);
     b.named = saved;
     b.transparency = saved_transparency;
+    if ctx.depth == 0 {
+        b.ghost = None;
+    }
     if b.plotting && b.list.prim_layers.len() < b.list.prims.len() {
         // What it drew that its block contents didn't claim is on its own layer.
         let layer = entity_layer(ctx, e);

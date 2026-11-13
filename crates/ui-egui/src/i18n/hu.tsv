@@ -1361,3 +1361,110 @@ menu	View	Nézet
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	A rajz megváltozott. Zárja be az ablakot, és nyissa meg újra.
+# Storeys (storey management and the ghost storey).
+	Storeys	Szintek
+	New Storey	Új szint
+	Rename Storey	Szint átnevezése
+	Delete Storey	Szint törlése
+	Reorder Storey	Szint sorrendjének módosítása
+	Go to Storey	Ugrás szintre
+	Storey Above	Felső szint
+	Storey Below	Alsó szint
+	Copy to Storey	Másolás szintre
+	Move to Storey	Áthelyezés szintre
+	No storeys yet: the first one takes everything drawn so far.	Még nincs szint: az első megkap mindent, ami eddig elkészült.
+	Storey name	Szint neve
+	Above the current storey	Az aktuális szint fölé
+	Only an empty storey can be deleted	Csak üres szint törölhető
+	Import Plan as Storey	Terv importálása szintként
+	current	aktuális
+	The storey shown beneath the current one	Az aktuális alatt megjelenített szint
+	Arrow keys choose, Enter applies, Esc closes	Nyilak: választás, Enter: alkalmaz, Esc: bezár
+	Blueprint	Háttérrajz
+	Blueprint On/Off	Háttérrajz be/ki
+	Blueprint Storey Above	Háttérrajz-szint feljebb
+	Blueprint Storey Below	Háttérrajz-szint lejjebb
+	Choose Blueprint...	Háttérrajz kiválasztása...
+	Go to Storey...	Ugrás szintre...
+	Hide Blueprint	Háttérrajz elrejtése
+	Move Down	Lejjebb
+	Move Up	Feljebb
+	New Storey Above	Új szint fölötte
+	New Storey Below	Új szint alatta
+	Press the keys	Nyomja le a billentyűket
+	Show as Blueprint	Megjelenítés háttérrajzként
+	Shown as blueprint (click to hide)	Háttérrajzként látható (kattintással elrejthető)
+	Storey	Szint
+	The storey to work on	A szint, amelyen dolgozik
+	Apply to This Drawing	Alkalmazás erre a rajzra
+	Building	Építészet
+	Double-click to rename	Dupla kattintás az átnevezéshez
+	Drawing 0, drawings above, blueprints below	0. rajz, fölötte rajzok, alatta háttérrajzok
+	Everything drawn so far goes on the start storey	Minden eddig rajzolt a kezdő szintre kerül
+	Neutral	Semleges
+	New drawings, and opened drawings without storeys, get these storeys	Az új rajzok és a szint nélküli megnyitott rajzok ezeket a szinteket kapják
+	Rename	Átnevezés
+	Set as Start Storey	Beállítás kezdő szintként
+	Shortcuts	Billentyűparancsok
+	Start Setup	Kezdő beállítás
+	Start Storey	Kezdő szint
+	Start storey	Kezdő szint
+	Start storey (number 0)	Kezdő szint (0. szám)
+	Storey Settings...	Szintbeállítások...
+	Storey number	Szintszám
+	Storeys Palette	Szintpaletta
+	Storeys from Setup	Szintek a beállításból
+	Storeys, top first, one per line	Szintek, a legfelső elöl, soronként egy
+	The drawing has storeys already	A rajznak már vannak szintjei
+	Above the current level	Az aktuális fokozat felett
+	Blueprint Level Above	Háttérrajz a fölötte lévő fokozatról
+	Blueprint Level Below	Háttérrajz az alatta lévő fokozatról
+	Blueprint Settings...	Háttérrajz beállításai...
+	Blueprints	Háttérrajzok
+	Blueprints Palette	Háttérrajzok palettája
+	Blueprints and levels (any other stack)	Háttérrajzok és fokozatok (bármely más verem)
+	Copy Selection Here	Kijelölés másolása ide
+	Copy to Level	Másolás fokozatra
+	Copy to Level...	Másolás fokozatra...
+	Copy to Storey...	Másolás szintre...
+	Delete Level	Fokozat törlése
+	Each level remembers its blueprint	Minden fokozat megjegyzi a háttérrajzát
+	Each storey remembers its blueprint	Minden szint megjegyzi a háttérrajzát
+	Everything drawn so far goes on the start level	Minden eddig rajzolt elem a kezdő fokozatra kerül
+	Go to Level	Ugrás a fokozatra
+	Go to Level...	Ugrás a fokozatra...
+	Import Plan as Level	Terv importálása fokozatként
+	Level	Fokozat
+	Level Above	Fokozat fölötte
+	Level Below	Fokozat alatta
+	Level name	Fokozat neve
+	Level number	Fokozat száma
+	Levels from Setup	Fokozatok a beállításokból
+	Levels, top first, one per line	Fokozatok, a legfelső elöl, soronként egy
+	Move Selection Here	Kijelölés áthelyezése ide
+	Move to Level	Áthelyezés fokozatra
+	Move to Level...	Áthelyezés fokozatra...
+	Move to Storey...	Áthelyezés szintre...
+	Names	Nevek
+	New Level	Új fokozat
+	New Level Above	Új fokozat fölötte
+	New Level Below	Új fokozat alatta
+	New drawings, and opened drawings without levels, get these levels	Az új rajzok és a fokozatok nélkül megnyitott rajzok ezeket a fokozatokat kapják
+	No levels yet: the first one takes everything drawn so far.	Még nincs fokozat: az első átveszi az eddig rajzolt összes elemet.
+	On a dark drawing area	Sötét rajzterületen
+	On a light drawing area	Világos rajzterületen
+	Only an empty level can be deleted	Csak üres fokozat törölhető
+	Select the objects first, then choose the level.	Először jelölje ki az objektumokat, majd válassza ki a fokozatot.
+	Select the objects first, then choose the storey.	Először jelölje ki az objektumokat, majd válassza ki a szintet.
+	Set as Start Level	Beállítás kezdő fokozatként
+	Show hatches in the blueprint (off: hatches on the current level only)	Sraffozás megjelenítése a háttérrajzban (ki: csak az aktuális fokozat sraffozása)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Sraffozás megjelenítése a háttérrajzban (ki: csak az aktuális szint sraffozása)
+	Start level	Kezdő fokozat
+	Start level (number 0)	Kezdő fokozat (0. szám)
+	Storeys (buildings)	Szintek (épületek)
+	The drawing has levels already	A rajz már tartalmaz fokozatokat
+	The level shown beneath the current one	Az aktuális alatt megjelenített fokozat
+	The level to work on	A szerkesztendő fokozat
+	selected	kijelölve
+	selected objects, copied in place to	kijelölt objektum, helyben másolva ide:
+	selected objects, moved in place to	kijelölt objektum, helyben áthelyezve ide:

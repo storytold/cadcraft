@@ -402,7 +402,7 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
         _ => {}
     }
-    let (_, common, kind) = match entity_from_list(ctx, list) {
+    let (_, mut common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
@@ -417,10 +417,18 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     }
     let space = ctx.s.space();
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
+    // A new object lands on the current storey, whatever storey its list names.
+    common.set_storey(d.storeys.active().then_some(d.storeys.current).filter(|_| space == cadcraft_doc::Space::Model));
     // A layer entmake names that doesn't exist yet is created.
     d.ensure_layer(&common.layer);
     match d.add(&space, common, kind) {
-        Ok(_) => {
+        Ok(h) => {
+            // No links to other storeys (an associative hatch's boundary, say).
+            if let Some(mut e) = d.model.get(h).map(|e| (**e).clone())
+                && d.cut_storey_links(&mut e)
+            {
+                d.model.replace(e);
+            }
             ctx.s.touch();
             Ok(Flow::Value(list.clone()))
         }
@@ -504,14 +512,20 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
+    // An object of another storey than the current one can't be changed.
+    if ctx.s.doc().is_ok_and(|d| !crate::cmd::storey::editable(d, h)) {
+        return Ok(Flow::Value(Value::Nil));
+    }
     let (kind_name, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
-    // entmod changes an entity, never its type.
+    // entmod changes an entity, never its type, and never its storey (that is STOREYMOVE's).
     if !kind_name.eq_ignore_ascii_case(old.kind.dxf_name()) {
         return Ok(Flow::Value(Value::Nil));
     }
+    let mut common = common;
+    common.set_storey(old.common.storey());
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     d.ensure_layer(&common.layer);
     let ok = d
@@ -538,6 +552,10 @@ pub fn entupd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let h = ename(&a[0])?;
+    // An object of another storey than the current one can't be deleted.
+    if ctx.s.doc().is_ok_and(|d| !crate::cmd::storey::editable(d, h)) {
+        return Ok(Flow::Value(Value::Nil));
+    }
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     if let Some(space) = d.space_of(h) {
         if let Some(e) = d.remove_entity(h) {
@@ -545,6 +563,18 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             ctx.s.touch();
             return Ok(Flow::Value(Value::Ename(h)));
         }
+        return Ok(Flow::Value(Value::Nil));
+    }
+    // An object deleted on another storey than the current one comes back only there.
+    if ctx
+        .env
+        .deleted
+        .get(&h)
+        // Its own storey id, not the fallback: an object of a deleted storey has none to return to.
+        .is_some_and(|(space, e)| {
+            *space == cadcraft_doc::Space::Model && d.storeys.active() && e.common.storey().is_some_and(|id| id != d.storeys.current)
+        })
+    {
         return Ok(Flow::Value(Value::Nil));
     }
     match ctx.env.deleted.remove(&h) {
@@ -689,6 +719,10 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Some(m) => return Err(LispError::new(format!("bad argument value: ssget mode {m}"))),
     };
+    // Objects of storeys other than the current one are not there for a routine either.
+    if let Ok(d) = ctx.s.doc() {
+        found.retain(|h| crate::cmd::storey::editable(d, *h));
+    }
     if let Some(f) = &filter {
         let d = ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?;
         let f = parse_filter(f)?;

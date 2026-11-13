@@ -305,7 +305,7 @@ pub const MODELING: &[(&str, &[Tool], &[Tool])] = &[
     ("View", &[(Icon::Orbit, "3dorbit", "Orbit"), (Icon::ZoomExtents, "zoom.extents", "Zoom Extents")], &[]),
 ];
 
-fn section_header(ui: &mut egui::Ui, title: &str) -> Rect {
+pub(crate) fn section_header(ui: &mut egui::Ui, title: &str) -> Rect {
     let t = Tokens::get();
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
     ui.painter().text(
@@ -366,6 +366,8 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 layers_section(app, ui);
+                ui.add_space(8.0);
+                crate::storeys::storeys_section(app, ui);
                 ui.add_space(8.0);
                 properties_section(app, ui);
             });

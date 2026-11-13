@@ -61,6 +61,12 @@ impl Session {
         if self.state().is_ok_and(|s| s.block_edit.is_some()) == editing {
             self.after_command(before.as_ref().map(|b| &b.0), before.as_ref().map(|b| b.2), spec.undoable && result.is_ok());
         }
+        // Storeys: checked last, over everything the command and the passes after it did.
+        let violation = before.as_ref().and_then(|b| cmd::storey::guard(self, &b.0, Some(b.2), spec.id));
+        let result = match (violation, result) {
+            (Some(m), Ok(_)) => Err(EngineError::Other(m)),
+            (_, r) => r,
+        };
         let result = match (result, &before) {
             (Ok(v), Some((doc, sel, uid))) if spec.undoable => self.refuse_non_finite(Some(*uid), doc, sel, spec.id).map(|()| v),
             (r, _) => r,

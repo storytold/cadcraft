@@ -982,6 +982,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     if let Some(chunks) = dxf_ext::layer_state_chunks(&d.layer_states) {
         xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
     }
+    if let Some(chunks) = dxf_ext::storey_chunks(&d.storeys) {
+        xrecords.push((dxf_ext::STOREYS_KEY, w.h(), chunks));
+    }
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
         xrecords.push((dxf_ext::PLOT_STYLES_KEY, w.h(), chunks));
     }

@@ -1350,3 +1350,110 @@ menu	View	Προβολή
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
+# Storeys (storey management and the ghost storey).
+	Storeys	Όροφοι
+	New Storey	Νέος όροφος
+	Rename Storey	Μετονομασία ορόφου
+	Delete Storey	Διαγραφή ορόφου
+	Reorder Storey	Αλλαγή σειράς ορόφου
+	Go to Storey	Μετάβαση σε όροφο
+	Storey Above	Όροφος πάνω
+	Storey Below	Όροφος κάτω
+	Copy to Storey	Αντιγραφή σε όροφο
+	Move to Storey	Μετακίνηση σε όροφο
+	No storeys yet: the first one takes everything drawn so far.	Δεν υπάρχουν ακόμη όροφοι: ο πρώτος παίρνει ό,τι έχει ήδη σχεδιαστεί.
+	Storey name	Όνομα ορόφου
+	Above the current storey	Πάνω από τον τρέχοντα όροφο
+	Only an empty storey can be deleted	Μόνο κενός όροφος μπορεί να διαγραφεί
+	Import Plan as Storey	Εισαγωγή σχεδίου ως ορόφου
+	current	τρέχων
+	The storey shown beneath the current one	Ο όροφος που εμφανίζεται κάτω από τον τρέχοντα
+	Arrow keys choose, Enter applies, Esc closes	Βέλη για επιλογή, Enter εφαρμογή, Esc κλείσιμο
+	Blueprint	Υπόβαθρο
+	Blueprint On/Off	Υπόβαθρο ναι/όχι
+	Blueprint Storey Above	Όροφος-υπόβαθρο πάνω
+	Blueprint Storey Below	Όροφος-υπόβαθρο κάτω
+	Choose Blueprint...	Επιλογή υποβάθρου...
+	Go to Storey...	Μετάβαση σε όροφο...
+	Hide Blueprint	Απόκρυψη υποβάθρου
+	Move Down	Μετακίνηση κάτω
+	Move Up	Μετακίνηση πάνω
+	New Storey Above	Νέος όροφος από πάνω
+	New Storey Below	Νέος όροφος από κάτω
+	Press the keys	Πατήστε τα πλήκτρα
+	Show as Blueprint	Εμφάνιση ως υπόβαθρο
+	Shown as blueprint (click to hide)	Εμφανίζεται ως υπόβαθρο (κλικ για απόκρυψη)
+	Storey	Όροφος
+	The storey to work on	Ο όροφος στον οποίο εργάζεστε
+	Apply to This Drawing	Εφαρμογή σε αυτό το σχέδιο
+	Building	Κτίριο
+	Double-click to rename	Διπλό κλικ για μετονομασία
+	Drawing 0, drawings above, blueprints below	Σχέδιο 0, σχέδια από πάνω, υπόβαθρα από κάτω
+	Everything drawn so far goes on the start storey	Ό,τι έχει σχεδιαστεί πηγαίνει στον όροφο εκκίνησης
+	Neutral	Ουδέτερο
+	New drawings, and opened drawings without storeys, get these storeys	Τα νέα σχέδια και όσα ανοίγουν χωρίς ορόφους παίρνουν αυτούς τους ορόφους
+	Rename	Μετονομασία
+	Set as Start Storey	Ορισμός ως όροφος εκκίνησης
+	Shortcuts	Συντομεύσεις
+	Start Setup	Αρχική διάταξη
+	Start Storey	Όροφος εκκίνησης
+	Start storey	Όροφος εκκίνησης
+	Start storey (number 0)	Όροφος εκκίνησης (αριθμός 0)
+	Storey Settings...	Ρυθμίσεις ορόφων...
+	Storey number	Αριθμός ορόφου
+	Storeys Palette	Παλέτα ορόφων
+	Storeys from Setup	Όροφοι από τη διάταξη
+	Storeys, top first, one per line	Όροφοι, ο ψηλότερος πρώτος, ένας ανά γραμμή
+	The drawing has storeys already	Το σχέδιο έχει ήδη ορόφους
+	Above the current level	Πάνω από την τρέχουσα στάθμη
+	Blueprint Level Above	Υπόβαθρο της στάθμης από πάνω
+	Blueprint Level Below	Υπόβαθρο της στάθμης από κάτω
+	Blueprint Settings...	Ρυθμίσεις υποβάθρου...
+	Blueprints	Υπόβαθρα
+	Blueprints Palette	Παλέτα υποβάθρων
+	Blueprints and levels (any other stack)	Υπόβαθρα και στάθμες (οποιαδήποτε άλλη στοίβα)
+	Copy Selection Here	Αντιγραφή επιλογής εδώ
+	Copy to Level	Αντιγραφή σε στάθμη
+	Copy to Level...	Αντιγραφή σε στάθμη...
+	Copy to Storey...	Αντιγραφή σε όροφο...
+	Delete Level	Διαγραφή στάθμης
+	Each level remembers its blueprint	Κάθε στάθμη θυμάται το υπόβαθρό της
+	Each storey remembers its blueprint	Κάθε όροφος θυμάται το υπόβαθρό του
+	Everything drawn so far goes on the start level	Ό,τι έχει σχεδιαστεί μέχρι τώρα πηγαίνει στην αρχική στάθμη
+	Go to Level	Μετάβαση σε στάθμη
+	Go to Level...	Μετάβαση σε στάθμη...
+	Import Plan as Level	Εισαγωγή σχεδίου ως στάθμης
+	Level	Στάθμη
+	Level Above	Στάθμη από πάνω
+	Level Below	Στάθμη από κάτω
+	Level name	Όνομα στάθμης
+	Level number	Αριθμός στάθμης
+	Levels from Setup	Στάθμες από τη ρύθμιση
+	Levels, top first, one per line	Στάθμες, η ψηλότερη πρώτη, μία ανά γραμμή
+	Move Selection Here	Μετακίνηση επιλογής εδώ
+	Move to Level	Μετακίνηση σε στάθμη
+	Move to Level...	Μετακίνηση σε στάθμη...
+	Move to Storey...	Μετακίνηση σε όροφο...
+	Names	Ονόματα
+	New Level	Νέα στάθμη
+	New Level Above	Νέα στάθμη από πάνω
+	New Level Below	Νέα στάθμη από κάτω
+	New drawings, and opened drawings without levels, get these levels	Τα νέα σχέδια και τα ανοιγμένα σχέδια χωρίς στάθμες παίρνουν αυτές τις στάθμες
+	No levels yet: the first one takes everything drawn so far.	Δεν υπάρχουν στάθμες ακόμη: η πρώτη παίρνει ό,τι έχει σχεδιαστεί μέχρι τώρα.
+	On a dark drawing area	Σε σκούρα περιοχή σχεδίασης
+	On a light drawing area	Σε ανοιχτόχρωμη περιοχή σχεδίασης
+	Only an empty level can be deleted	Μόνο μια κενή στάθμη μπορεί να διαγραφεί
+	Select the objects first, then choose the level.	Επιλέξτε πρώτα τα αντικείμενα και μετά τη στάθμη.
+	Select the objects first, then choose the storey.	Επιλέξτε πρώτα τα αντικείμενα και μετά τον όροφο.
+	Set as Start Level	Ορισμός ως αρχικής στάθμης
+	Show hatches in the blueprint (off: hatches on the current level only)	Εμφάνιση εκκολαπτόμενων γραμμών στο υπόβαθρο (ανενεργό: μόνο της τρέχουσας στάθμης)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Εμφάνιση εκκολαπτόμενων γραμμών στο υπόβαθρο (ανενεργό: μόνο του τρέχοντος ορόφου)
+	Start level	Αρχική στάθμη
+	Start level (number 0)	Αρχική στάθμη (αριθμός 0)
+	Storeys (buildings)	Όροφοι (κτίρια)
+	The drawing has levels already	Το σχέδιο έχει ήδη στάθμες
+	The level shown beneath the current one	Η στάθμη που εμφανίζεται κάτω από την τρέχουσα
+	The level to work on	Η στάθμη εργασίας
+	selected	επιλεγμένα
+	selected objects, copied in place to	επιλεγμένα αντικείμενα, αντιγραμμένα επί τόπου σε
+	selected objects, moved in place to	επιλεγμένα αντικείμενα, μετακινημένα επί τόπου σε

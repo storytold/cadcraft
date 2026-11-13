@@ -16,19 +16,22 @@ pub enum Panel {
     ToolSets,
     QuickCalc,
     Layers,
+    /// The storey navigator: a palette of its own, so a long layer list doesn't push it away.
+    Storeys,
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
 }
 
 impl Panel {
-    pub const ALL: &[Self] = &[Self::Canvas, Self::ToolSets, Self::Layers, Self::Properties, Self::ExternalRefs];
+    pub const ALL: &[Self] = &[Self::Canvas, Self::ToolSets, Self::Layers, Self::Storeys, Self::Properties, Self::ExternalRefs];
     pub fn id(self) -> &'static str {
         match self {
             Self::Canvas => "canvas",
             Self::ToolSets => "toolSets",
             Self::QuickCalc => "quickCalc",
             Self::Layers => "layers",
+            Self::Storeys => "storeys",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
         }
@@ -39,6 +42,7 @@ impl Panel {
             Self::ToolSets => "Tool Sets",
             Self::QuickCalc => "QuickCalc",
             Self::Layers => "Layers",
+            Self::Storeys => crate::storeys::term("Storeys"),
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
         }
@@ -51,6 +55,8 @@ impl Panel {
             Self::ToolSets => Some(Icon::Switcher),
             Self::QuickCalc => Some(Icon::Table),
             Self::Layers => Some(Icon::Layers),
+            // No storey icon of its own yet: the layer stack reads closest.
+            Self::Storeys => Some(Icon::Layers),
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
         }
@@ -85,13 +91,16 @@ pub const TOOL_SETS_WIDTH: f32 = 220.0;
 pub const PALETTES_WIDTH: f32 = 300.0;
 /// Layers' body height above Properties in a dock column.
 const LAYERS_HEIGHT: f32 = 280.0;
+/// The Storeys palette's body height, between Layers and Properties: small enough that Layers
+/// keeps its own height in a short window (more storeys scroll).
+const STOREYS_HEIGHT: f32 = 150.0;
 
 fn dock(side: Side, width: f32, groups: &[Panel]) -> Node<Panel> {
     let groups = groups.iter().map(|panel| Group::new(vec![*panel], 0)).collect();
     Node::Dock { side, columns: vec![Column::new(groups, width)] }
 }
 
-/// Tool Sets in the left dock, the drawing, and Layers above Properties in the right dock.
+/// Tool Sets in the left dock, the drawing, and Layers, Storeys and Properties in the right dock.
 pub fn default_workspace() -> Workspace {
     Workspace::new(Layout {
         root: Some(split(
@@ -102,7 +111,7 @@ pub fn default_workspace() -> Workspace {
                 SplitAxis::Horizontal,
                 SplitSize::FixedSecond(PALETTES_WIDTH),
                 tabs(Panel::Canvas),
-                dock(Side::End, PALETTES_WIDTH, &[Panel::Layers, Panel::Properties]),
+                dock(Side::End, PALETTES_WIDTH, &[Panel::Layers, Panel::Storeys, Panel::Properties]),
             ),
         )),
         floating: Vec::new(),
@@ -145,10 +154,12 @@ fn docked(layout: &Layout<Panel>, panel: Panel) -> bool {
 fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
     let neighbours: &[(Panel, bool)] = match panel {
         Panel::Canvas | Panel::ToolSets => &[],
-        Panel::Layers => &[(Panel::Properties, false), (Panel::ExternalRefs, false)],
-        Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
-        Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
-        Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::Layers => &[(Panel::Storeys, false), (Panel::Properties, false), (Panel::ExternalRefs, false)],
+        // Storeys below Layers, above Properties.
+        Panel::Storeys => &[(Panel::Layers, true), (Panel::Properties, false), (Panel::ExternalRefs, false)],
+        Panel::Properties => &[(Panel::Storeys, true), (Panel::Layers, true), (Panel::ExternalRefs, false)],
+        Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Storeys, true), (Panel::Layers, true)],
+        Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Storeys, true), (Panel::Layers, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -279,18 +290,38 @@ fn sync(workspace: &mut Workspace, app: &crate::CadApp) -> Result<(), String> {
     set_visible(workspace, Panel::ToolSets, app.ui.show_toolsets)?;
     if !app.ui.show_palettes {
         set_visible(workspace, Panel::Layers, false)?;
+        set_visible(workspace, Panel::Storeys, false)?;
         set_visible(workspace, Panel::Properties, false)?;
-    } else if !workspace.layout.contains(&Panel::Layers) && !workspace.layout.contains(&Panel::Properties) {
+    } else if ![Panel::Layers, Panel::Storeys, Panel::Properties].iter().any(|p| workspace.layout.contains(p)) {
         // Reopen the palette that closed last before the one recorded beside it.
         set_visible(workspace, Panel::Properties, true)?;
+        set_visible(workspace, Panel::Storeys, true)?;
         set_visible(workspace, Panel::Layers, true)?;
     }
+    add_storeys(workspace);
     Ok(())
+}
+
+/// A layout saved before the Storeys palette existed gets it once, below Layers (in the same
+/// dock column). One the user closed stays closed: it is among the hidden panels then.
+fn add_storeys(workspace: &mut Workspace) {
+    if workspace.layout.contains(&Panel::Storeys) || workspace.hidden.iter().any(|(p, _)| *p == Panel::Storeys) {
+        return;
+    }
+    if ![Panel::Layers, Panel::Properties].iter().any(|p| workspace.layout.contains(p)) {
+        return;
+    }
+    // Where a panel that was never placed opens (beside its docked neighbour, `home_anchor`).
+    let mut next = workspace.clone();
+    if reveal_panel(&mut next, Panel::Storeys).is_ok() && validate(&next).is_ok() {
+        *workspace = next;
+    }
 }
 
 fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
     app.ui.show_toolsets = workspace.layout.contains(&Panel::ToolSets);
-    app.ui.show_palettes = workspace.layout.contains(&Panel::Layers) || workspace.layout.contains(&Panel::Properties);
+    // Any of the palettes open counts: a Storeys palette left alone stays.
+    app.ui.show_palettes = [Panel::Layers, Panel::Storeys, Panel::Properties].iter().any(|p| workspace.layout.contains(p));
 }
 
 pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<Value, String> {
@@ -406,6 +437,12 @@ impl DockContent<Panel> for Panels<'_> {
                     .auto_shrink([false, false])
                     .show(ui, |ui| crate::palettes::layers_section(app, ui));
             }
+            Panel::Storeys => {
+                egui::ScrollArea::vertical()
+                    .id_salt("dock-storeys")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| crate::storeys::storeys_section(app, ui));
+            }
             Panel::Properties => {
                 egui::ScrollArea::vertical().id_salt("dock-properties").auto_shrink([false, false]).show(ui, |ui| {
                     crate::shortcut_menus::palette(app, ui, crate::palettes::properties_section, crate::shortcut_menus::properties_entries)
@@ -426,8 +463,13 @@ impl DockContent<Panel> for Panels<'_> {
         panel_limits(panel)
     }
     fn dock_heights(&self, panel: &Panel) -> Option<DockHeights> {
-        // Layers keeps its list's height above Properties, which takes the rest of the column.
-        (*panel == Panel::Layers).then(|| DockHeights::new(LAYERS_HEIGHT))
+        // Layers and Storeys keep their lists' heights above Properties, which takes the rest of
+        // the column.
+        match panel {
+            Panel::Layers => Some(DockHeights::new(LAYERS_HEIGHT)),
+            Panel::Storeys => Some(DockHeights::new(STOREYS_HEIGHT)),
+            _ => None,
+        }
     }
     fn paint_icon(&mut self, painter: &egui::Painter, rect: egui::Rect, panel: &Panel, _color: egui::Color32) -> bool {
         let Some(icon) = panel.icon() else { return false };
@@ -441,7 +483,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
-        Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
+        Panel::Layers | Panel::Storeys | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

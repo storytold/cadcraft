@@ -4,7 +4,11 @@ impl Session {
     /// Append a new untitled drawing (`DrawingN`, metric or imperial default view), end a running command, make it active, bump the document epoch and return its index.
     pub fn new_drawing(&mut self, metric: bool) -> usize {
         self.untitled_counter += 1;
-        let d = if metric { Drawing::new_metric() } else { Drawing::new_imperial() };
+        let mut d = if metric { Drawing::new_metric() } else { Drawing::new_imperial() };
+        // A new drawing starts with the user's storey setup, on its start storey.
+        if let Some(t) = &self.storey_template {
+            d.apply_storey_template(t);
+        }
         let mut st = DocState::new(d, &format!("Drawing{}", self.untitled_counter), None);
         st.set_view_quiet(if metric { View { center: Vec2::new(210.0, 148.5), height: 297.0, twist: 0.0 } } else { View::default() });
         self.end_running();
@@ -15,7 +19,18 @@ impl Session {
     }
 
     /// Append a loaded drawing, fit the view to its model extents (aspect-corrected, minimum height 1e-6) when non-empty, end a running command, make it active, bump the epoch and return its index.
-    pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
+    pub fn open_drawing(&mut self, mut d: Drawing, title: &str, path: Option<String>) -> usize {
+        // Objects another program added have no storey: they belong to the storey the drawing was
+        // saved on, from the start (so no undo step ever shows them on another storey).
+        d.assign_storeys();
+        d.cut_all_storey_links();
+        // A drawing with storeys opens on its start storey; one without (another office's, an old
+        // one) gets the user's storey setup, everything on the start storey.
+        if d.storeys.active() {
+            d.go_home();
+        } else if let Some(t) = &self.storey_template {
+            d.apply_storey_template(t);
+        }
         let mut st = DocState::new(d, title, path);
         // The view the file was saved at is the one every other reader opens on. Fitting the
         // extents instead showed a drawing whose extents are dominated by far-off geometry at a

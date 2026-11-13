@@ -1239,3 +1239,110 @@ menu	Modify	Modifikace
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Výkres se změnil. Zavřete okno a otevřete jej znovu.
+# Storeys (storey management and the ghost storey).
+	Storeys	Podlaží
+	New Storey	Nové podlaží
+	Rename Storey	Přejmenovat podlaží
+	Delete Storey	Odstranit podlaží
+	Reorder Storey	Změnit pořadí podlaží
+	Go to Storey	Přejít na podlaží
+	Storey Above	Podlaží výše
+	Storey Below	Podlaží níže
+	Copy to Storey	Kopírovat do podlaží
+	Move to Storey	Přesunout do podlaží
+	No storeys yet: the first one takes everything drawn so far.	Zatím žádná podlaží: první převezme vše dosud nakreslené.
+	Storey name	Název podlaží
+	Above the current storey	Nad aktuálním podlažím
+	Only an empty storey can be deleted	Odstranit lze jen prázdné podlaží
+	Import Plan as Storey	Importovat výkres jako podlaží
+	current	aktuální
+	The storey shown beneath the current one	Podlaží zobrazené pod aktuálním
+	Arrow keys choose, Enter applies, Esc closes	Šipky vybírají, Enter použije, Esc zavře
+	Blueprint	Podklad
+	Blueprint On/Off	Podklad zap./vyp.
+	Blueprint Storey Above	Podkladové podlaží výše
+	Blueprint Storey Below	Podkladové podlaží níže
+	Choose Blueprint...	Vybrat podklad...
+	Go to Storey...	Přejít na podlaží...
+	Hide Blueprint	Skrýt podklad
+	Move Down	Posunout dolů
+	Move Up	Posunout nahoru
+	New Storey Above	Nové podlaží nad
+	New Storey Below	Nové podlaží pod
+	Press the keys	Stiskněte klávesy
+	Show as Blueprint	Zobrazit jako podklad
+	Shown as blueprint (click to hide)	Zobrazeno jako podklad (kliknutím skrýt)
+	Storey	Podlaží
+	The storey to work on	Podlaží, na kterém se pracuje
+	Apply to This Drawing	Použít na tento výkres
+	Building	Stavebnictví
+	Double-click to rename	Dvojklikem přejmenujete
+	Drawing 0, drawings above, blueprints below	Výkres 0, výkresy nad, podklady pod
+	Everything drawn so far goes on the start storey	Vše dosud nakreslené přejde na výchozí podlaží
+	Neutral	Neutrální
+	New drawings, and opened drawings without storeys, get these storeys	Nové výkresy a otevřené výkresy bez podlaží dostanou tato podlaží
+	Rename	Přejmenovat
+	Set as Start Storey	Nastavit jako výchozí podlaží
+	Shortcuts	Zkratky
+	Start Setup	Výchozí nastavení
+	Start Storey	Výchozí podlaží
+	Start storey	Výchozí podlaží
+	Start storey (number 0)	Výchozí podlaží (číslo 0)
+	Storey Settings...	Nastavení podlaží...
+	Storey number	Číslo podlaží
+	Storeys Palette	Paleta podlaží
+	Storeys from Setup	Podlaží z nastavení
+	Storeys, top first, one per line	Podlaží, nejvyšší první, jedno na řádek
+	The drawing has storeys already	Výkres už podlaží má
+	Above the current level	Nad aktuální úrovní
+	Blueprint Level Above	Podklad úrovně nad
+	Blueprint Level Below	Podklad úrovně pod
+	Blueprint Settings...	Nastavení podkladu...
+	Blueprints	Podklady
+	Blueprints Palette	Paleta podkladů
+	Blueprints and levels (any other stack)	Podklady a úrovně (jakýkoli jiný zásobník)
+	Copy Selection Here	Kopírovat výběr sem
+	Copy to Level	Kopírovat do úrovně
+	Copy to Level...	Kopírovat do úrovně...
+	Copy to Storey...	Kopírovat do podlaží...
+	Delete Level	Smazat úroveň
+	Each level remembers its blueprint	Každá úroveň si pamatuje svůj podklad
+	Each storey remembers its blueprint	Každé podlaží si pamatuje svůj podklad
+	Everything drawn so far goes on the start level	Vše dosud nakreslené patří na počáteční úroveň
+	Go to Level	Přejít na úroveň
+	Go to Level...	Přejít na úroveň...
+	Import Plan as Level	Importovat plán jako úroveň
+	Level	Úroveň
+	Level Above	Úroveň nad
+	Level Below	Úroveň pod
+	Level name	Název úrovně
+	Level number	Číslo úrovně
+	Levels from Setup	Úrovně z nastavení
+	Levels, top first, one per line	Úrovně, nejvyšší první, jedna na řádek
+	Move Selection Here	Přesunout výběr sem
+	Move to Level	Přesunout do úrovně
+	Move to Level...	Přesunout do úrovně...
+	Move to Storey...	Přesunout do podlaží...
+	Names	Názvy
+	New Level	Nová úroveň
+	New Level Above	Nová úroveň nad
+	New Level Below	Nová úroveň pod
+	New drawings, and opened drawings without levels, get these levels	Nové výkresy a otevřené výkresy bez úrovní dostanou tyto úrovně
+	No levels yet: the first one takes everything drawn so far.	Zatím žádné úrovně: první převezme vše dosud nakreslené.
+	On a dark drawing area	Na tmavé kreslicí ploše
+	On a light drawing area	Na světlé kreslicí ploše
+	Only an empty level can be deleted	Smazat lze pouze prázdnou úroveň
+	Select the objects first, then choose the level.	Nejprve vyberte objekty, potom úroveň.
+	Select the objects first, then choose the storey.	Nejprve vyberte objekty, potom podlaží.
+	Set as Start Level	Nastavit jako počáteční úroveň
+	Show hatches in the blueprint (off: hatches on the current level only)	Zobrazit šrafy v podkladu (vypnuto: šrafy jen aktuální úrovně)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Zobrazit šrafy v podkladu (vypnuto: šrafy jen aktuálního podlaží)
+	Start level	Počáteční úroveň
+	Start level (number 0)	Počáteční úroveň (číslo 0)
+	Storeys (buildings)	Podlaží (budovy)
+	The drawing has levels already	Výkres už má úrovně
+	The level shown beneath the current one	Úroveň zobrazená pod aktuální
+	The level to work on	Úroveň, na které se pracuje
+	selected	vybráno
+	selected objects, copied in place to	vybraných objektů, zkopírovaných na místě do
+	selected objects, moved in place to	vybraných objektů, přesunutých na místě do

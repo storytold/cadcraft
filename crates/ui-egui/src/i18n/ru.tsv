@@ -1030,3 +1030,110 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Чертёж изменился. Закройте окно и откройте его снова.
+# Storeys (storey management and the ghost storey).
+	Storeys	Этажи
+	New Storey	Новый этаж
+	Rename Storey	Переименовать этаж
+	Delete Storey	Удалить этаж
+	Reorder Storey	Изменить порядок этажа
+	Go to Storey	Перейти на этаж
+	Storey Above	Этаж выше
+	Storey Below	Этаж ниже
+	Copy to Storey	Копировать на этаж
+	Move to Storey	Переместить на этаж
+	No storeys yet: the first one takes everything drawn so far.	Этажей пока нет: первый получит всё уже начерченное.
+	Storey name	Имя этажа
+	Above the current storey	Над текущим этажом
+	Only an empty storey can be deleted	Удалить можно только пустой этаж
+	Import Plan as Storey	Импортировать план как этаж
+	current	текущий
+	The storey shown beneath the current one	Этаж, показанный под текущим
+	Arrow keys choose, Enter applies, Esc closes	Стрелки выбирают, Enter применяет, Esc закрывает
+	Blueprint	Подложка
+	Blueprint On/Off	Подложка вкл./выкл.
+	Blueprint Storey Above	Этаж-подложка выше
+	Blueprint Storey Below	Этаж-подложка ниже
+	Choose Blueprint...	Выбрать подложку...
+	Go to Storey...	Перейти на этаж...
+	Hide Blueprint	Скрыть подложку
+	Move Down	Ниже
+	Move Up	Выше
+	New Storey Above	Новый этаж выше
+	New Storey Below	Новый этаж ниже
+	Press the keys	Нажмите клавиши
+	Show as Blueprint	Показать как подложку
+	Shown as blueprint (click to hide)	Показан как подложка (щёлкните, чтобы скрыть)
+	Storey	Этаж
+	The storey to work on	Этаж, на котором вы работаете
+	Apply to This Drawing	Применить к этому чертежу
+	Building	Строительство
+	Double-click to rename	Двойной щелчок — переименовать
+	Drawing 0, drawings above, blueprints below	Чертёж 0, чертежи выше, подложки ниже
+	Everything drawn so far goes on the start storey	Всё начерченное попадёт на стартовый этаж
+	Neutral	Нейтрально
+	New drawings, and opened drawings without storeys, get these storeys	Новые чертежи и открытые чертежи без этажей получают эти этажи
+	Rename	Переименовать
+	Set as Start Storey	Сделать стартовым этажом
+	Shortcuts	Клавиши
+	Start Setup	Начальная настройка
+	Start Storey	Стартовый этаж
+	Start storey	Стартовый этаж
+	Start storey (number 0)	Стартовый этаж (номер 0)
+	Storey Settings...	Настройки этажей...
+	Storey number	Номер этажа
+	Storeys Palette	Палитра этажей
+	Storeys from Setup	Этажи из настройки
+	Storeys, top first, one per line	Этажи, верхний первым, по одному в строке
+	The drawing has storeys already	У чертежа уже есть этажи
+	Above the current level	Над текущим уровнем
+	Blueprint Level Above	Подложка уровня выше
+	Blueprint Level Below	Подложка уровня ниже
+	Blueprint Settings...	Параметры подложки...
+	Blueprints	Подложки
+	Blueprints Palette	Палитра подложек
+	Blueprints and levels (any other stack)	Подложки и уровни (любой другой стек)
+	Copy Selection Here	Копировать выделенное сюда
+	Copy to Level	Копировать на уровень
+	Copy to Level...	Копировать на уровень...
+	Copy to Storey...	Копировать на этаж...
+	Delete Level	Удалить уровень
+	Each level remembers its blueprint	Каждый уровень запоминает свою подложку
+	Each storey remembers its blueprint	Каждый этаж запоминает свою подложку
+	Everything drawn so far goes on the start level	Всё нарисованное до сих пор попадает на начальный уровень
+	Go to Level	Перейти на уровень
+	Go to Level...	Перейти на уровень...
+	Import Plan as Level	Импортировать план как уровень
+	Level	Уровень
+	Level Above	Уровень выше
+	Level Below	Уровень ниже
+	Level name	Название уровня
+	Level number	Номер уровня
+	Levels from Setup	Уровни из настроек
+	Levels, top first, one per line	Уровни, сверху вниз, по одному в строке
+	Move Selection Here	Переместить выделенное сюда
+	Move to Level	Переместить на уровень
+	Move to Level...	Переместить на уровень...
+	Move to Storey...	Переместить на этаж...
+	Names	Названия
+	New Level	Новый уровень
+	New Level Above	Новый уровень выше
+	New Level Below	Новый уровень ниже
+	New drawings, and opened drawings without levels, get these levels	Новые чертежи и открытые чертежи без уровней получают эти уровни
+	No levels yet: the first one takes everything drawn so far.	Уровней пока нет: первый забирает всё нарисованное до сих пор.
+	On a dark drawing area	На тёмной области рисования
+	On a light drawing area	На светлой области рисования
+	Only an empty level can be deleted	Удалить можно только пустой уровень
+	Select the objects first, then choose the level.	Сначала выберите объекты, затем уровень.
+	Select the objects first, then choose the storey.	Сначала выберите объекты, затем этаж.
+	Set as Start Level	Назначить начальным уровнем
+	Show hatches in the blueprint (off: hatches on the current level only)	Показывать штриховки в подложке (выкл.: штриховки только текущего уровня)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Показывать штриховки в подложке (выкл.: штриховки только текущего этажа)
+	Start level	Начальный уровень
+	Start level (number 0)	Начальный уровень (номер 0)
+	Storeys (buildings)	Этажи (здания)
+	The drawing has levels already	В чертеже уже есть уровни
+	The level shown beneath the current one	Уровень, показанный под текущим
+	The level to work on	Уровень для работы
+	selected	выбрано
+	selected objects, copied in place to	выбрано объектов, скопированных на месте на
+	selected objects, moved in place to	выбрано объектов, перемещённых на месте на

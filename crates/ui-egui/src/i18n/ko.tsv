@@ -1259,3 +1259,110 @@ menu	Modify	수정
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	도면이 변경되었습니다. 창을 닫고 다시 여십시오.
+# Storeys (storey management and the ghost storey).
+	Storeys	층
+	New Storey	새 층
+	Rename Storey	층 이름 바꾸기
+	Delete Storey	층 삭제
+	Reorder Storey	층 순서 변경
+	Go to Storey	층 전환
+	Storey Above	위층
+	Storey Below	아래층
+	Copy to Storey	다른 층으로 복사
+	Move to Storey	다른 층으로 옮기기
+	No storeys yet: the first one takes everything drawn so far.	아직 층이 없습니다: 첫 번째 층이 지금까지 그린 모든 것을 가져옵니다.
+	Storey name	층 이름
+	Above the current storey	현재 층 위에
+	Only an empty storey can be deleted	빈 층만 삭제할 수 있습니다
+	Import Plan as Storey	도면을 층으로 가져오기
+	current	현재
+	The storey shown beneath the current one	현재 층 아래에 표시되는 층
+	Arrow keys choose, Enter applies, Esc closes	화살표로 선택, Enter 적용, Esc 닫기
+	Blueprint	밑그림
+	Blueprint On/Off	밑그림 켜기/끄기
+	Blueprint Storey Above	위층 밑그림
+	Blueprint Storey Below	아래층 밑그림
+	Choose Blueprint...	밑그림 선택...
+	Go to Storey...	층으로 이동...
+	Hide Blueprint	밑그림 숨기기
+	Move Down	아래로
+	Move Up	위로
+	New Storey Above	위에 새 층
+	New Storey Below	아래에 새 층
+	Press the keys	키를 누르세요
+	Show as Blueprint	밑그림으로 표시
+	Shown as blueprint (click to hide)	밑그림으로 표시됨 (클릭하면 숨김)
+	Storey	층
+	The storey to work on	작업 중인 층
+	Apply to This Drawing	이 도면에 적용
+	Building	건축
+	Double-click to rename	두 번 클릭하여 이름 바꾸기
+	Drawing 0, drawings above, blueprints below	도면 0, 위에는 도면, 아래에는 밑그림
+	Everything drawn so far goes on the start storey	지금까지 그린 모든 것이 시작 층으로 갑니다
+	Neutral	중립
+	New drawings, and opened drawings without storeys, get these storeys	새 도면과 층이 없는 열린 도면은 이 층을 받습니다
+	Rename	이름 바꾸기
+	Set as Start Storey	시작 층으로 설정
+	Shortcuts	단축키
+	Start Setup	시작 설정
+	Start Storey	시작 층
+	Start storey	시작 층
+	Start storey (number 0)	시작 층 (번호 0)
+	Storey Settings...	층 설정...
+	Storey number	층 번호
+	Storeys Palette	층 팔레트
+	Storeys from Setup	설정에서 층 만들기
+	Storeys, top first, one per line	층, 맨 위부터, 한 줄에 하나
+	The drawing has storeys already	도면에 이미 층이 있습니다
+	Above the current level	현재 레벨 위
+	Blueprint Level Above	위쪽 레벨의 밑그림
+	Blueprint Level Below	아래쪽 레벨의 밑그림
+	Blueprint Settings...	밑그림 설정...
+	Blueprints	밑그림
+	Blueprints Palette	밑그림 팔레트
+	Blueprints and levels (any other stack)	밑그림과 레벨(그 밖의 모든 스택)
+	Copy Selection Here	선택 항목을 여기에 복사
+	Copy to Level	레벨로 복사
+	Copy to Level...	레벨로 복사...
+	Copy to Storey...	층으로 복사...
+	Delete Level	레벨 삭제
+	Each level remembers its blueprint	각 레벨은 자신의 밑그림을 기억합니다
+	Each storey remembers its blueprint	각 층은 자신의 밑그림을 기억합니다
+	Everything drawn so far goes on the start level	지금까지 그린 모든 것은 시작 레벨에 놓입니다
+	Go to Level	레벨로 이동
+	Go to Level...	레벨로 이동...
+	Import Plan as Level	도면을 레벨로 가져오기
+	Level	레벨
+	Level Above	위쪽 레벨
+	Level Below	아래쪽 레벨
+	Level name	레벨 이름
+	Level number	레벨 번호
+	Levels from Setup	설정의 레벨
+	Levels, top first, one per line	레벨, 위에서부터, 한 줄에 하나
+	Move Selection Here	선택 항목을 여기로 이동
+	Move to Level	레벨로 이동
+	Move to Level...	레벨로 이동...
+	Move to Storey...	층으로 이동...
+	Names	이름
+	New Level	새 레벨
+	New Level Above	위에 새 레벨
+	New Level Below	아래에 새 레벨
+	New drawings, and opened drawings without levels, get these levels	새 도면과 레벨이 없는 상태로 연 도면은 이 레벨을 갖습니다
+	No levels yet: the first one takes everything drawn so far.	아직 레벨이 없습니다: 첫 번째 레벨이 지금까지 그린 모든 것을 가져옵니다.
+	On a dark drawing area	어두운 그리기 영역에서
+	On a light drawing area	밝은 그리기 영역에서
+	Only an empty level can be deleted	빈 레벨만 삭제할 수 있습니다
+	Select the objects first, then choose the level.	먼저 객체를 선택한 다음 레벨을 선택하세요.
+	Select the objects first, then choose the storey.	먼저 객체를 선택한 다음 층을 선택하세요.
+	Set as Start Level	시작 레벨로 설정
+	Show hatches in the blueprint (off: hatches on the current level only)	밑그림에 해치 표시(끄면: 현재 레벨의 해치만)
+	Show hatches in the blueprint (off: hatches on the current storey only)	밑그림에 해치 표시(끄면: 현재 층의 해치만)
+	Start level	시작 레벨
+	Start level (number 0)	시작 레벨(번호 0)
+	Storeys (buildings)	층(건물)
+	The drawing has levels already	도면에 이미 레벨이 있습니다
+	The level shown beneath the current one	현재 레벨 아래에 표시되는 레벨
+	The level to work on	작업할 레벨
+	selected	개 선택됨
+	selected objects, copied in place to	개의 선택한 객체를 제자리에서 복사할 위치:
+	selected objects, moved in place to	개의 선택한 객체를 제자리에서 이동할 위치:

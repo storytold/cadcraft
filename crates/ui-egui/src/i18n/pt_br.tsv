@@ -1465,3 +1465,110 @@ menu	View	Exibir
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	O desenho mudou. Feche a janela e abra-a novamente.
+# Storeys (storey management and the ghost storey).
+	Storeys	Pavimentos
+	New Storey	Novo pavimento
+	Rename Storey	Renomear pavimento
+	Delete Storey	Excluir pavimento
+	Reorder Storey	Reordenar pavimento
+	Go to Storey	Ir para o pavimento
+	Storey Above	Pavimento acima
+	Storey Below	Pavimento abaixo
+	Copy to Storey	Copiar para pavimento
+	Move to Storey	Mover para pavimento
+	No storeys yet: the first one takes everything drawn so far.	Ainda não há pavimentos: o primeiro recebe tudo o que já foi desenhado.
+	Storey name	Nome do pavimento
+	Above the current storey	Acima do pavimento atual
+	Only an empty storey can be deleted	Só é possível excluir um pavimento vazio
+	Import Plan as Storey	Importar planta como pavimento
+	current	atual
+	The storey shown beneath the current one	O pavimento mostrado sob o atual
+	Arrow keys choose, Enter applies, Esc closes	Setas escolhem, Enter aplica, Esc fecha
+	Blueprint	Planta de fundo
+	Blueprint On/Off	Planta de fundo liga/desliga
+	Blueprint Storey Above	Planta de fundo acima
+	Blueprint Storey Below	Planta de fundo abaixo
+	Choose Blueprint...	Escolher planta de fundo...
+	Go to Storey...	Ir para o pavimento...
+	Hide Blueprint	Ocultar planta de fundo
+	Move Down	Descer
+	Move Up	Subir
+	New Storey Above	Novo pavimento acima
+	New Storey Below	Novo pavimento abaixo
+	Press the keys	Pressione as teclas
+	Show as Blueprint	Mostrar como planta de fundo
+	Shown as blueprint (click to hide)	Mostrado como planta de fundo (clique para ocultar)
+	Storey	Pavimento
+	The storey to work on	O pavimento em que se trabalha
+	Apply to This Drawing	Aplicar a este desenho
+	Building	Construção
+	Double-click to rename	Clique duas vezes para renomear
+	Drawing 0, drawings above, blueprints below	Desenho 0, desenhos acima, plantas de fundo abaixo
+	Everything drawn so far goes on the start storey	Tudo o que já foi desenhado vai para o pavimento inicial
+	Neutral	Neutro
+	New drawings, and opened drawings without storeys, get these storeys	Desenhos novos e abertos sem pavimentos recebem estes pavimentos
+	Rename	Renomear
+	Set as Start Storey	Definir como pavimento inicial
+	Shortcuts	Atalhos
+	Start Setup	Configuração inicial
+	Start Storey	Pavimento inicial
+	Start storey	Pavimento inicial
+	Start storey (number 0)	Pavimento inicial (número 0)
+	Storey Settings...	Configurações de pavimentos...
+	Storey number	Número do pavimento
+	Storeys Palette	Paleta de pavimentos
+	Storeys from Setup	Pavimentos da configuração
+	Storeys, top first, one per line	Pavimentos, o mais alto primeiro, um por linha
+	The drawing has storeys already	O desenho já tem pavimentos
+	Above the current level	Acima do nível atual
+	Blueprint Level Above	Planta de fundo do nível acima
+	Blueprint Level Below	Planta de fundo do nível abaixo
+	Blueprint Settings...	Configurações da planta de fundo...
+	Blueprints	Plantas de fundo
+	Blueprints Palette	Paleta de plantas de fundo
+	Blueprints and levels (any other stack)	Plantas de fundo e níveis (qualquer outra pilha)
+	Copy Selection Here	Copiar a seleção para cá
+	Copy to Level	Copiar para o nível
+	Copy to Level...	Copiar para o nível...
+	Copy to Storey...	Copiar para o pavimento...
+	Delete Level	Excluir nível
+	Each level remembers its blueprint	Cada nível lembra a sua planta de fundo
+	Each storey remembers its blueprint	Cada pavimento lembra a sua planta de fundo
+	Everything drawn so far goes on the start level	Tudo o que foi desenhado até agora vai para o nível inicial
+	Go to Level	Ir para o nível
+	Go to Level...	Ir para o nível...
+	Import Plan as Level	Importar planta como nível
+	Level	Nível
+	Level Above	Nível acima
+	Level Below	Nível abaixo
+	Level name	Nome do nível
+	Level number	Número do nível
+	Levels from Setup	Níveis da configuração
+	Levels, top first, one per line	Níveis, o mais alto primeiro, um por linha
+	Move Selection Here	Mover a seleção para cá
+	Move to Level	Mover para o nível
+	Move to Level...	Mover para o nível...
+	Move to Storey...	Mover para o pavimento...
+	Names	Nomes
+	New Level	Novo nível
+	New Level Above	Novo nível acima
+	New Level Below	Novo nível abaixo
+	New drawings, and opened drawings without levels, get these levels	Desenhos novos e desenhos abertos sem níveis recebem estes níveis
+	No levels yet: the first one takes everything drawn so far.	Ainda não há níveis: o primeiro recebe tudo o que foi desenhado até agora.
+	On a dark drawing area	Em uma área de desenho escura
+	On a light drawing area	Em uma área de desenho clara
+	Only an empty level can be deleted	Somente um nível vazio pode ser excluído
+	Select the objects first, then choose the level.	Selecione primeiro os objetos e depois escolha o nível.
+	Select the objects first, then choose the storey.	Selecione primeiro os objetos e depois escolha o pavimento.
+	Set as Start Level	Definir como nível inicial
+	Show hatches in the blueprint (off: hatches on the current level only)	Mostrar hachuras na planta de fundo (desligado: hachuras apenas do nível atual)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Mostrar hachuras na planta de fundo (desligado: hachuras apenas do pavimento atual)
+	Start level	Nível inicial
+	Start level (number 0)	Nível inicial (número 0)
+	Storeys (buildings)	Pavimentos (edifícios)
+	The drawing has levels already	O desenho já tem níveis
+	The level shown beneath the current one	O nível exibido abaixo do atual
+	The level to work on	O nível em que trabalhar
+	selected	selecionados
+	selected objects, copied in place to	objetos selecionados, copiados no mesmo lugar para
+	selected objects, moved in place to	objetos selecionados, movidos no mesmo lugar para

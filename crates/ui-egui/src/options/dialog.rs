@@ -12,13 +12,14 @@ use crate::animation::AnimationPref;
 use crate::theme::{ThemePref, Tokens};
 
 /// The tabs: (id in the dialog name, label).
-pub(super) const TABS: [(&str, &str); 6] = [
+pub(super) const TABS: [(&str, &str); 7] = [
     ("display", "Display"),
     ("files", "Open and Save"),
     ("drafting", "Drafting"),
     ("selection", "Selection"),
     ("preferences", "User Preferences"),
     ("profiles", "Profiles"),
+    ("storeys", "Storeys"),
 ];
 
 const WIDTH: f32 = 580.0;
@@ -43,7 +44,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
             ui.set_width(WIDTH);
             ui.horizontal_wrapped(|ui| {
                 for (id, label) in TABS {
-                    if ui.selectable_label(tab == id, crate::i18n::t(label)).clicked() {
+                    if ui.selectable_label(tab == id, crate::i18n::t(crate::storeys::term(label))).clicked() {
                         next_tab = Some(id);
                     }
                 }
@@ -57,6 +58,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
                 "selection" => selection(app, ui, &mut changes),
                 "preferences" => preferences(app, ui, &mut changes),
                 "profiles" => profiles(app, ui, &mut changes),
+                "storeys" => crate::storeys::options_tab(app, ui),
                 _ => display(app, ui, &mut changes),
             }
             // The same height on every tab, so switching tabs doesn't move the buttons.

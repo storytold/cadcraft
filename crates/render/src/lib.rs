@@ -125,6 +125,10 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// The ghost colour while a ghost-storey object is drawn: everything it draws takes it.
+    ghost: Option<Rgb>,
+    /// Draw model space by storeys (spaces and viewports); off for loose objects.
+    storeys: bool,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -136,6 +140,9 @@ pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
+        if let Some(g) = self.ghost {
+            return (Ink { rgb: g, aci7: false, aci: 0 }, lw);
+        }
         match self.styles {
             Some(s) => s.apply(color, self.named, lw, self.opts.lineweights),
             None => (color, lw),
@@ -203,6 +210,7 @@ impl<'a> Builder<'a> {
             down: down * (i.size.y / f64::from(raster.height())),
             clips: clip.into_iter().collect(),
             fade: i.fade.min(100),
+            tint: self.ghost,
         };
         let corners = img.corners();
         if !corners.iter().all(|q| q.x.is_finite() && q.y.is_finite()) {
@@ -340,6 +348,8 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            ghost: self.ghost,
+            storeys: self.storeys,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent.

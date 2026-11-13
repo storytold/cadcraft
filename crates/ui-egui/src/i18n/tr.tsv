@@ -1364,3 +1364,110 @@ menu	View	Görünüm
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Çizim değişti. Pencereyi kapatıp yeniden açın.
+# Storeys (storey management and the ghost storey).
+	Storeys	Katlar
+	New Storey	Yeni kat
+	Rename Storey	Katı yeniden adlandır
+	Delete Storey	Katı sil
+	Reorder Storey	Kat sırasını değiştir
+	Go to Storey	Kata git
+	Storey Above	Üst kat
+	Storey Below	Alt kat
+	Copy to Storey	Kata kopyala
+	Move to Storey	Kata taşı
+	No storeys yet: the first one takes everything drawn so far.	Henüz kat yok: ilki şimdiye kadar çizilen her şeyi alır.
+	Storey name	Kat adı
+	Above the current storey	Geçerli katın üstüne
+	Only an empty storey can be deleted	Yalnızca boş bir kat silinebilir
+	Import Plan as Storey	Planı kat olarak içe aktar
+	current	geçerli
+	The storey shown beneath the current one	Geçerli katın altında gösterilen kat
+	Arrow keys choose, Enter applies, Esc closes	Ok tuşları seçer, Enter uygular, Esc kapatır
+	Blueprint	Altlık
+	Blueprint On/Off	Altlık aç/kapat
+	Blueprint Storey Above	Üstteki altlık kat
+	Blueprint Storey Below	Alttaki altlık kat
+	Choose Blueprint...	Altlık seç...
+	Go to Storey...	Kata git...
+	Hide Blueprint	Altlığı gizle
+	Move Down	Aşağı taşı
+	Move Up	Yukarı taşı
+	New Storey Above	Üste yeni kat
+	New Storey Below	Alta yeni kat
+	Press the keys	Tuşlara basın
+	Show as Blueprint	Altlık olarak göster
+	Shown as blueprint (click to hide)	Altlık olarak gösteriliyor (gizlemek için tıklayın)
+	Storey	Kat
+	The storey to work on	Üzerinde çalışılan kat
+	Apply to This Drawing	Bu çizime uygula
+	Building	Yapı
+	Double-click to rename	Yeniden adlandırmak için çift tıklayın
+	Drawing 0, drawings above, blueprints below	Çizim 0, üstte çizimler, altta altlıklar
+	Everything drawn so far goes on the start storey	Şimdiye kadar çizilen her şey başlangıç katına gider
+	Neutral	Nötr
+	New drawings, and opened drawings without storeys, get these storeys	Yeni çizimler ve katı olmayan açılan çizimler bu katları alır
+	Rename	Yeniden adlandır
+	Set as Start Storey	Başlangıç katı yap
+	Shortcuts	Kısayollar
+	Start Setup	Başlangıç düzeni
+	Start Storey	Başlangıç katı
+	Start storey	Başlangıç katı
+	Start storey (number 0)	Başlangıç katı (numara 0)
+	Storey Settings...	Kat ayarları...
+	Storey number	Kat numarası
+	Storeys Palette	Kat paleti
+	Storeys from Setup	Düzenden katlar
+	Storeys, top first, one per line	Katlar, en üstteki önce, satır başına bir
+	The drawing has storeys already	Çizimde zaten katlar var
+	Above the current level	Geçerli seviyenin üstünde
+	Blueprint Level Above	Üstteki seviyenin altlığı
+	Blueprint Level Below	Alttaki seviyenin altlığı
+	Blueprint Settings...	Altlık ayarları...
+	Blueprints	Altlıklar
+	Blueprints Palette	Altlık paleti
+	Blueprints and levels (any other stack)	Altlıklar ve seviyeler (diğer herhangi bir yığın)
+	Copy Selection Here	Seçimi buraya kopyala
+	Copy to Level	Seviyeye kopyala
+	Copy to Level...	Seviyeye kopyala...
+	Copy to Storey...	Kata kopyala...
+	Delete Level	Seviyeyi sil
+	Each level remembers its blueprint	Her seviye kendi altlığını hatırlar
+	Each storey remembers its blueprint	Her kat kendi altlığını hatırlar
+	Everything drawn so far goes on the start level	Şimdiye kadar çizilen her şey başlangıç seviyesine gider
+	Go to Level	Seviyeye git
+	Go to Level...	Seviyeye git...
+	Import Plan as Level	Planı seviye olarak içe aktar
+	Level	Seviye
+	Level Above	Üst seviye
+	Level Below	Alt seviye
+	Level name	Seviye adı
+	Level number	Seviye numarası
+	Levels from Setup	Kurulumdan gelen seviyeler
+	Levels, top first, one per line	Seviyeler, en üsttekinden başlayarak, her satırda bir tane
+	Move Selection Here	Seçimi buraya taşı
+	Move to Level	Seviyeye taşı
+	Move to Level...	Seviyeye taşı...
+	Move to Storey...	Kata taşı...
+	Names	Adlar
+	New Level	Yeni seviye
+	New Level Above	Üste yeni seviye
+	New Level Below	Alta yeni seviye
+	New drawings, and opened drawings without levels, get these levels	Yeni çizimler ve seviyesiz açılan çizimler bu seviyeleri alır
+	No levels yet: the first one takes everything drawn so far.	Henüz seviye yok: ilki şimdiye kadar çizilen her şeyi alır.
+	On a dark drawing area	Koyu bir çizim alanında
+	On a light drawing area	Açık bir çizim alanında
+	Only an empty level can be deleted	Yalnızca boş bir seviye silinebilir
+	Select the objects first, then choose the level.	Önce nesneleri seçin, sonra seviyeyi seçin.
+	Select the objects first, then choose the storey.	Önce nesneleri seçin, sonra katı seçin.
+	Set as Start Level	Başlangıç seviyesi olarak ayarla
+	Show hatches in the blueprint (off: hatches on the current level only)	Taramaları altlıkta göster (kapalı: yalnızca geçerli seviyenin taramaları)
+	Show hatches in the blueprint (off: hatches on the current storey only)	Taramaları altlıkta göster (kapalı: yalnızca geçerli katın taramaları)
+	Start level	Başlangıç seviyesi
+	Start level (number 0)	Başlangıç seviyesi (numara 0)
+	Storeys (buildings)	Katlar (binalar)
+	The drawing has levels already	Çizimde zaten seviyeler var
+	The level shown beneath the current one	Geçerli seviyenin altında gösterilen seviye
+	The level to work on	Üzerinde çalışılacak seviye
+	selected	seçili
+	selected objects, copied in place to	seçili nesne, yerinde kopyalandı:
+	selected objects, moved in place to	seçili nesne, yerinde taşındı:

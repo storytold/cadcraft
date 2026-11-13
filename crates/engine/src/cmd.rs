@@ -42,6 +42,7 @@ mod qselect;
 mod selecttools;
 mod settings;
 mod spline_opts;
+pub(crate) mod storey;
 mod table;
 mod tolerance;
 mod trimextend;
@@ -199,6 +200,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(gripcmds::specs());
         v.extend(file::compare::specs());
         v.extend(layer::specs());
+        v.extend(storey::specs());
         v.extend(layout::specs());
         v.extend(exchange::specs());
         v.extend(image::specs());
@@ -300,18 +302,26 @@ pub(crate) fn points_param(p: &Value, key: &str) -> Option<Vec<Vec2>> {
 }
 /// Handles from `handles` (hex strings or numbers), `handle`, or else the current selection. A
 /// `handle`/`handles` that can't be read is an error, never a silent fall back to the selection.
+/// Objects of storeys other than the current one are out of reach: named, they are an error; in
+/// the selection, they are left out.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     let handle = |v: &Value| v.as_str().and_then(Handle::parse_hex).or_else(|| v.as_u64().map(Handle));
     let not_handle = |key: &str, v: &Value| EngineError::Other(format!("`{key}`: {v} is not an object handle (a hex string such as \"1A2\")"));
-    match p.get("handles") {
-        None | Some(Value::Null) => {}
-        Some(Value::Array(a)) => return a.iter().map(|v| handle(v).ok_or_else(|| not_handle("handles", v))).collect(),
-        Some(v) => return Err(EngineError::Other(format!("`handles` must be an array of object handles, got {v}"))),
+    let named: Vec<Handle> = match (p.get("handles"), p.get("handle")) {
+        (Some(Value::Array(a)), _) => a.iter().map(|v| handle(v).ok_or_else(|| not_handle("handles", v))).collect::<Result<_>>()?,
+        (Some(v), _) if !v.is_null() => return Err(EngineError::Other(format!("`handles` must be an array of object handles, got {v}"))),
+        (_, None | Some(Value::Null)) => {
+            let d = s.doc().ok();
+            return Ok(s.selection().into_iter().filter(|h| d.is_none_or(|d| storey::editable(d, *h))).collect());
+        }
+        (_, Some(v)) => vec![handle(v).ok_or_else(|| not_handle("handle", v))?],
+    };
+    if let Ok(d) = s.doc()
+        && let Some(h) = named.iter().find(|h| !storey::editable(d, **h))
+    {
+        return Err(EngineError::Other(format!("object {} is on another storey than the current one", h.hex())));
     }
-    match p.get("handle") {
-        None | Some(Value::Null) => Ok(s.selection()),
-        Some(v) => Ok(vec![handle(v).ok_or_else(|| not_handle("handle", v))?]),
-    }
+    Ok(named)
 }
 pub(crate) fn ok() -> Result<Value> {
     Ok(Value::Null)
