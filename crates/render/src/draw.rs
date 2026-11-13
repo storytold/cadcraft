@@ -265,7 +265,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let tris = fill::triangulate_evenodd(&[pts]);
                 b.tris(ctx, rgb, &tris);
             }
-            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角暂未逆向，按水平画。
+            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 type 38 的方向余弦还原。
             if b.opts.text {
                 for tx in &t.texts {
                     let text = cadcraft_doc::Text {
@@ -273,7 +273,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                         align_pt: None,
                         height: tx.height,
                         value: tx.text.clone(),
-                        rotation: 0.0,
+                        rotation: tx.rotation,
                         width_factor: tx.width_factor,
                         oblique: 0.0,
                         style: "Standard".into(),

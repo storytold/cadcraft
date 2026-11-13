@@ -395,7 +395,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
         // 天正文字（标注/轴号/标高等，类型 38 图元）。
         let mut texts: Vec<cadcraft_doc::TianzhengText> = cadcraft_dwg::tianzheng::extract_text_entities(&e.graphic_data)
             .into_iter()
-            .map(|t| cadcraft_doc::TianzhengText { x: t.x, y: t.y, text: t.text, height: t.height, width_factor: t.width_factor })
+            .map(|t| cadcraft_doc::TianzhengText { x: t.x, y: t.y, text: t.text, height: t.height, width_factor: t.width_factor, rotation: t.rotation })
             .collect();
         // 上标/下标文字（height=0 表示继承主文字）继承同实体主文字高度，否则渲染为 0 不可见。
         let inherit = texts.iter().map(|t| t.height).fold(297.5_f64, f64::max);

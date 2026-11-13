@@ -73,6 +73,8 @@ pub struct TianzhengText {
     pub height: f64,
     /// 宽度因子。
     pub width_factor: f64,
+    /// 旋转角（弧度，逆时针为正）。
+    pub rotation: f64,
 }
 
 /// 天正（Tangent）自定义实体，从 DWG 解析出的字段。

@@ -88,6 +88,8 @@ mod native {
         pub height: f64,
         /// 宽度因子。
         pub width_factor: f64,
+        /// 旋转角（弧度，逆时针为正）。
+        pub rotation: f64,
     }
 
     /// 从 DWG 字节提取所有天正实体（含 failsafe 读取，坏记录跳过而非整文件失败）。
@@ -310,10 +312,11 @@ mod native {
 
     /// 从 proxy graphics 提取天正文字（类型 38 图元）。
     ///
-    /// 类型 38 图元的 payload 布局（实测 TCH_TEXT/TCH_DIMENSION）：
-    /// `x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 72 起是 UTF-16LE null 结尾的文字内容，
-    /// 其后是 `char_count(u64)`，按 8 字节对齐后是 `height(f64)` 与 `width_factor(f64)`。
-    /// 字体名（SIMPLEX/GBCBIG）在更后面，本函数不解析。
+    /// 类型 38 图元的 payload 布局（实测 TCH_TEXT/TCH_DIMENSION/TCH_OPENING/TCH_ARROW）：
+    /// `x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 40 是缩放因子（恒 1.0），偏移 48/56
+    /// 是旋转方向的**方向余弦** `(cos, sin)`（单位向量，旋转角 = `atan2(sin, cos)`），
+    /// 偏移 72 起是 UTF-16LE null 结尾的文字内容，其后是 `char_count(u64)`，按 8 字节对齐
+    /// 后是 `height(f64)` 与 `width_factor(f64)`。字体名（SIMPLEX/GBCBIG）在更后面，本函数不解析。
     pub fn extract_text_entities(graphic_data: &[u8]) -> Vec<TianzhengText> {
         let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
         let mut out = Vec::new();
@@ -324,6 +327,10 @@ mod native {
                 }
                 let x = f64::from_le_bytes(data[0..8].try_into().unwrap());
                 let y = f64::from_le_bytes(data[8..16].try_into().unwrap());
+                // 旋转角：offset 48/56 是方向余弦 (cos, sin)（如水平 (1,0)、垂直 (0,1)、
+                // 坡度箭头 (0.9930,-0.1180)），atan2 还原弧度角。
+                let rotation = f64::from_le_bytes(data[56..64].try_into().unwrap())
+                    .atan2(f64::from_le_bytes(data[48..56].try_into().unwrap()));
                 // 文字内容：偏移 72 起，UTF-16LE null 结尾。
                 let mut text = String::new();
                 let mut i = 72;
@@ -353,7 +360,7 @@ mod native {
                     }
                     pos += 8;
                 }
-                out.push(TianzhengText { x, y, text, height, width_factor });
+                out.push(TianzhengText { x, y, text, height, width_factor, rotation });
             }
         }
         out
@@ -839,33 +846,42 @@ mod tests {
         use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
         // 类型 38 图元 payload：9×f64（72B，前两个是插入点）→ UTF-16LE 文字 + null →
         // char_count(u32，对齐到 4) → 对齐到 8 → height → width_factor。
-        let mut data = Vec::new();
-        for v in [100.0_f64, 200.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0] {
-            data.extend_from_slice(&v.to_le_bytes());
-        }
-        for c in "FM".encode_utf16() {
-            data.extend_from_slice(&c.to_le_bytes());
-        }
-        data.extend_from_slice(&0u16.to_le_bytes());
-        while data.len() % 4 != 0 {
-            data.push(0);
-        }
-        data.extend_from_slice(&2u32.to_le_bytes());
-        while data.len() % 8 != 0 {
-            data.push(0);
-        }
-        data.extend_from_slice(&297.5_f64.to_le_bytes());
-        data.extend_from_slice(&0.7058823529411765_f64.to_le_bytes());
-        let g = ProxyGraphics { records: vec![ProxyGraphicRecord::Unknown { record_type: 38, data }] };
-        let graphic_data = g.encode().unwrap();
+        // 第 7/8 个 f64（offset 48/56）是旋转方向余弦 (cos, sin)，第 6 个（offset 40）是缩放因子 1.0。
+        let make = |cos: f64, sin: f64| {
+            let mut data = Vec::new();
+            for v in [100.0_f64, 200.0, 0.0, 0.0, 0.0, 1.0, cos, sin, 0.0] {
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+            for c in "FM".encode_utf16() {
+                data.extend_from_slice(&c.to_le_bytes());
+            }
+            data.extend_from_slice(&0u16.to_le_bytes());
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
+            data.extend_from_slice(&2u32.to_le_bytes());
+            while data.len() % 8 != 0 {
+                data.push(0);
+            }
+            data.extend_from_slice(&297.5_f64.to_le_bytes());
+            data.extend_from_slice(&0.7058823529411765_f64.to_le_bytes());
+            let g = ProxyGraphics { records: vec![ProxyGraphicRecord::Unknown { record_type: 38, data }] };
+            g.encode().unwrap()
+        };
 
-        let texts = extract_text_entities(&graphic_data);
+        // 水平 (cos,sin)=(1,0) → rotation 0。
+        let texts = extract_text_entities(&make(1.0, 0.0));
         assert_eq!(texts.len(), 1);
         let t = &texts[0];
         assert_eq!((t.x, t.y), (100.0, 200.0));
         assert_eq!(t.text, "FM");
         assert_eq!(t.height, 297.5);
         assert!((t.width_factor - 0.7058823529411765).abs() < 1e-12);
+        assert!(t.rotation.abs() < 1e-12, "水平文字 rotation 应为 0，实际 {}", t.rotation);
+
+        // 垂直 (cos,sin)=(0,1) → rotation π/2。
+        let texts = extract_text_entities(&make(0.0, 1.0));
+        assert!((texts[0].rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12, "垂直文字 rotation 应为 π/2，实际 {}", texts[0].rotation);
     }
 
     /// extract_circles / extract_polys 从类型 2 / 类型 9 图元提取圆与填充多边形。
