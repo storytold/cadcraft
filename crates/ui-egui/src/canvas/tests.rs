@@ -366,3 +366,32 @@ fn the_viewport_highlight_leaves_out_objects_the_viewport_does_not_draw() {
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert_eq!(outlined(&app, &mut highlight, both), both);
 }
+
+/// Selection cycling's badge beside a resting pointer follows the layers frozen in the active
+/// viewport: over two overlapping lines it shows while the viewport draws both, goes when the
+/// layer of one of them is frozen there, and comes back when the layer is thawed.
+#[test]
+fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for _ in 0..2 {
+        app.run("line", serde_json::json!({ "points": [[0, 0], [100, 0]] })).unwrap();
+    }
+    let on_top = app.session.doc().unwrap().model.handles()[1];
+    let (_, b) = viewports_freezing_hidden(&mut app);
+    app.session.execute("properties.set", &serde_json::json!({ "handles": [on_top.hex()], "layer": "Hidden" })).unwrap();
+    app.session.execute("setvar", &serde_json::json!({ "name": "SELECTIONCYCLING", "value": 1 })).unwrap();
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    let ctx = egui::Context::default();
+    /// Whether the badge shows after a frame with the pointer resting on the two lines.
+    fn badge(app: &mut CadApp, ctx: &egui::Context) -> bool {
+        let (at, on_lines) = (Some(Pos2::new(200.0, 150.0)), Some(Vec2::new(50.0, 0.0)));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| update_hover(app, ui, true, at, on_lines, 2.0));
+        output.textures_delta.clear();
+        app.canvas.cycle_badge
+    }
+    assert!(badge(&mut app, &ctx), "this viewport draws both lines: a click would choose between them");
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    assert!(!badge(&mut app, &ctx), "the badge stayed for a line the viewport no longer draws");
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+    assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
+}

@@ -1,5 +1,6 @@
 //! Inside a layout viewport an object on a layer frozen in that viewport is not drawn: selected,
-//! it paints no grips there, and the cursor does not highlight it.
+//! it paints no grips there, and the cursor does not highlight it, also when the layer is frozen
+//! while the pointer rests over the object.
 
 use cadcraft_engine::doc::Handle;
 use cadcraft_engine::geom::Vec2;
@@ -142,4 +143,28 @@ fn the_cursor_highlights_the_object_the_viewport_draws() {
         frame(&mut app, &ctx, Some(on_lines));
         assert_eq!(app.canvas.hover, Some(under_cursor));
     }
+}
+
+/// The layer of the line under a resting pointer is frozen in the active viewport, then thawed:
+/// the highlight goes to the line the viewport still draws and comes back, without the pointer
+/// moving in between.
+#[test]
+fn the_highlight_follows_the_frozen_layers_under_a_resting_pointer() {
+    let Sheet { mut app, shown, hidden, a: _, b } = sheet();
+    let ctx = egui::Context::default();
+    painted_grips(&mut app, &ctx);
+    enter(&mut app, &b);
+    painted_grips(&mut app, &ctx);
+    let on_lines = app.canvas.xf.unwrap().to_screen(Vec2::new(50.0, 0.0));
+    assert!(app.canvas.rect.unwrap().contains(on_lines), "the viewport must show the lines");
+    frame(&mut app, &ctx, Some(on_lines));
+    frame(&mut app, &ctx, Some(on_lines));
+    assert_eq!(app.canvas.hover, Some(hidden), "this viewport draws both lines, the later one on top");
+
+    app.run("vplayer", json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    frame(&mut app, &ctx, Some(on_lines));
+    assert_eq!(app.canvas.hover, Some(shown), "the cursor kept the line the viewport no longer draws");
+    app.run("vplayer", json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+    frame(&mut app, &ctx, Some(on_lines));
+    assert_eq!(app.canvas.hover, Some(hidden), "thawed in the viewport: the line on top is under the cursor again");
 }
