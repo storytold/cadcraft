@@ -26,8 +26,19 @@ const MAX_PICKED: u32 = 64;
 /// memory (each file is copied once more into the app).
 const MAX_READING_BYTES: u64 = 512 << 20;
 
-/// A file read in the browser (name, contents), or why it couldn't be read.
-type Upload = Result<(String, Vec<u8>), String>;
+/// A file read in the browser: its name, its contents or why it couldn't be read, and whether
+/// the page embedding CADCraft sent it (that page is told when it doesn't open).
+struct Upload {
+    name: String,
+    bytes: Result<Vec<u8>, String>,
+    from_host: bool,
+}
+
+impl Upload {
+    fn picked(name: String, bytes: Result<Vec<u8>, String>) -> Self {
+        Upload { name, bytes, from_host: false }
+    }
+}
 
 /// Files read in the background, waiting for the app's next frame.
 #[derive(Clone)]
@@ -47,7 +58,7 @@ impl Inbox {
     /// [`Self::drain`]; cancelling the picker does nothing.
     pub fn pick(&self) {
         if let Err(e) = self.show_picker() {
-            self.push(Err(format!("Open: the browser's file picker is not available ({e})")));
+            self.push(Upload::picked(String::new(), Err(format!("Open: the browser's file picker is not available ({e})"))));
         }
     }
 
@@ -79,7 +90,10 @@ impl Inbox {
                 }
                 let skipped: Vec<String> = (MAX_PICKED..files.length()).filter_map(|i| files.get(i)).map(|f| f.name()).collect();
                 if !skipped.is_empty() {
-                    inbox.push(Err(format!("Open: at most {MAX_PICKED} files at a time; not opened: {}", skipped.join(", "))));
+                    inbox.push(Upload::picked(
+                        String::new(),
+                        Err(format!("Open: at most {MAX_PICKED} files at a time; not opened: {}", skipped.join(", "))),
+                    ));
                 }
             }
             chosen.remove();
@@ -108,36 +122,40 @@ impl Inbox {
         let size = file.size();
         let len = if size.is_finite() && size >= 0.0 { size as u64 } else { u64::MAX };
         if let Some(e) = CadApp::open_size_error(&name, len) {
-            return self.push(Err(e));
+            return self.push(Upload::picked(name, Err(e)));
         }
         let reading = self.reading.get();
         if reading.saturating_add(len) > MAX_READING_BYTES {
-            return self.push(Err(format!("Open: {name} was not read: the files being read together are too large; open it on its own")));
+            return self.push(Upload::picked(
+                name.clone(),
+                Err(format!("Open: {name} was not read: the files being read together are too large; open it on its own")),
+            ));
         }
         self.reading.set(reading.saturating_add(len));
         let inbox = self.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let r = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-                Ok(buf) => Ok((name, js_sys::Uint8Array::new(&buf).to_vec())),
+            let bytes = match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                Ok(buf) => Ok(js_sys::Uint8Array::new(&buf).to_vec()),
                 Err(e) => Err(format!("Open: could not read {name}: {}", js_error(e))),
             };
             inbox.reading.set(inbox.reading.get().saturating_sub(len));
-            inbox.push(r);
+            inbox.push(Upload::picked(name, bytes));
         });
     }
 
-    /// A file read elsewhere (sent by the page embedding CADCraft): opened on the next frame like
-    /// a picked file, or refused when too large to open.
+    /// A file sent by the page embedding CADCraft: opened on the next frame like a picked file, or
+    /// refused when too large to open. Either way that page is told if it doesn't open.
     pub fn receive(&self, name: String, bytes: Vec<u8>) {
-        match CadApp::open_size_error(&name, bytes.len() as u64) {
-            Some(e) => self.push(Err(e)),
-            None => self.push(Ok((name, bytes))),
-        }
+        let bytes = match CadApp::open_size_error(&name, bytes.len() as u64) {
+            Some(e) => Err(e),
+            None => Ok(bytes),
+        };
+        self.push(Upload { name, bytes, from_host: true });
     }
 
-    /// A file from elsewhere refused before it was read (`error` says why).
-    pub fn refuse(&self, error: String) {
-        self.push(Err(error));
+    /// A file the embedding page sent, refused before it was read (`error` says why).
+    pub fn refuse(&self, name: String, error: String) {
+        self.push(Upload { name, bytes: Err(error), from_host: true });
     }
 
     fn push(&self, upload: Upload) {
@@ -148,23 +166,31 @@ impl Inbox {
     }
 
     /// Open what arrived since the last frame (or report why it couldn't be read). Fonts are
-    /// registered first, so drawings opened with them draw with them.
+    /// registered first, so drawings opened with them draw with them. A drawing the embedding page
+    /// sent that doesn't open is reported to that page as well.
     pub fn drain(&self, app: &mut CadApp) {
-        let (fonts, files): (Vec<Upload>, Vec<Upload>) = self.files.take().into_iter().partition(|u| u.as_ref().is_ok_and(|(n, _)| is_shx(n)));
+        let (fonts, files): (Vec<Upload>, Vec<Upload>) = self.files.take().into_iter().partition(|u| u.bytes.is_ok() && is_shx(&u.name));
         let mut registered = false;
-        for (name, bytes) in fonts.into_iter().flatten() {
-            match cadcraft_fonts::shx::register(&name, &bytes) {
+        for font in fonts {
+            let Ok(bytes) = font.bytes else { continue };
+            match cadcraft_fonts::shx::register(&font.name, &bytes) {
                 Ok(()) => registered = true,
-                Err(e) => app.open_failed(format!("{name}: {e}")),
+                Err(e) => app.open_failed(format!("{}: {e}", font.name)),
             }
         }
         if registered {
             let _ = app.run("regenall", serde_json::json!({}));
         }
         for upload in files {
-            match upload {
-                Ok((name, bytes)) => app.open_bytes(&name, &bytes),
-                Err(e) => app.open_failed(e),
+            let opened = match upload.bytes {
+                Ok(bytes) => app.open_bytes(&upload.name, &bytes),
+                Err(e) => {
+                    app.open_failed(e.clone());
+                    Err(e)
+                }
+            };
+            if let (true, Err(e)) = (upload.from_host, opened) {
+                crate::host::post_open_failed(&upload.name, &e);
             }
         }
     }

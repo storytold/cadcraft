@@ -3,7 +3,8 @@
 //! DWG files are read with the `acadrust` crate (MPL-2.0, used unmodified as a dependency) and
 //! converted to DXF bytes, which CADCraft's own DXF reader maps to its document model; saving
 //! goes the other way. Keeping the dependency behind this byte-level API isolates it: nothing
-//! else in CADCraft depends on its types. Native targets only (it memory-maps files).
+//! else in CADCraft depends on its types. The same code runs on native targets and in the web build
+//! (acadrust memory-maps files only on native targets).
 //!
 //! # Guardrails around the third-party decoder
 //!
@@ -15,8 +16,9 @@
 //! - Both directions reject oversized input *before* the decoder runs ([`Limits::max_dwg_bytes`]
 //!   for DWG→DXF, [`Limits::max_dxf_bytes`] for DXF→DWG), and the DWG→DXF output is capped while
 //!   it is written (`CappedWriter`).
-//! - The reader and writer run inside `catch_unwind`, so a decode failure is reported instead of
-//!   crashing.
+//! - On native targets the reader and writer run inside `catch_unwind`, so a decode failure is
+//!   reported instead of crashing. The web build (`wasm32-unknown-unknown`) aborts on a panic, so
+//!   there a panic inside the decoder ends the page.
 //!
 //! These bound the input- and output-size variants. A small file that declares a huge internal
 //! table or section can still make the dependency allocate before any size is known, so the app
@@ -1553,7 +1555,7 @@ fn unsupported(version: &str) -> String {
 
 /// Which build has no DWG bridge, for the stubs' errors.
 #[cfg(no_dwg_bridge)]
-const NO_BRIDGE_BUILD: &str = if cfg!(target_arch = "wasm32") { "web" } else { "FreeBSD aarch64" };
+const NO_BRIDGE_BUILD: &str = "FreeBSD aarch64";
 
 /// There's no worker without a bridge.
 #[cfg(no_dwg_bridge)]

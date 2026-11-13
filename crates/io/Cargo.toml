@@ -29,7 +29,9 @@ tiny-skia = { workspace = true }
 # Reads plotted PDFs back.
 craft-pdf = { workspace = true, features = ["read"] }
 
-# Inspect DWG output only where cadcraft-dwg builds its native bridge. An unconditional
-# dev-dependency also builds acadrust during --all-targets, breaking FreeBSD aarch64 (#2526).
-[target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dev-dependencies]
+# Inspect DWG output only where cadcraft-dwg builds its bridge (every target but FreeBSD aarch64,
+# which the xtask test dwg_test_dependency_matches_the_bridge_targets keeps in step). An
+# unconditional dev-dependency also builds acadrust during --all-targets, breaking FreeBSD
+# aarch64 (#2526).
+[target.'cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))'.dev-dependencies]
 acadrust = "0.6.6"
