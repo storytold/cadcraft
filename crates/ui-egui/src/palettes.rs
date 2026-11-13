@@ -518,13 +518,19 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    data_row(ui, crate::i18n::t(label), add);
+}
+
+/// A Properties row labelled with the drawing's own text (an attribute tag, an xdata name), shown
+/// as it is: a name that happens to match an interface string must not be translated.
+fn data_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
-        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), crate::i18n::t(label)));
+        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label));
         ui.painter().galley(pos2(lr.right() - 6.0, lr.center().y - galley.size().y / 2.0), galley, t.text_dim);
         ui.label_inputs_by(label_response.id, add);
     });
@@ -786,7 +792,6 @@ fn shown_part(s: &str) -> String {
 
 /// Properties palette: the selection's common properties, or the current defaults when nothing is selected; formats lengths per drawing units and dispatches setter commands.
 pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
-    let t = Tokens::get();
     properties_header(app, ui);
     let sel = app.session.selection();
     let Ok(d) = app.session.doc() else { return };
@@ -986,12 +991,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids = &*memo.ids();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
-    let group = |ui: &mut egui::Ui, title: &str| {
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
-        ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
-        ui.painter().text(pos2(r.left() + 12.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(title), crate::theme::small(), t.text_dim);
-    };
-    group(ui, "General");
+    let mut attrib_set: Option<Value> = None;
+    group_header(ui, "General");
     prop_row(ui, "Color", |ui| {
         let width = (ui.available_width() - 10.0).max(0.0);
         if let Some(c) = crate::layers::color_button_resolved(
@@ -1092,7 +1093,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     };
     if sel.len() == 1 {
-        group(ui, "Geometry");
+        group_header(ui, "Geometry");
         match &e.kind {
             EntityKind::Line(l) => {
                 prop_row(ui, "Start X", |ui| {
@@ -1238,7 +1239,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Rotation", "rotation", real(angles.shown(i.rotation).to_degrees()), &mut set, &mut bad, ids);
                 num(ui, "Scale", "scale", real(i.scale.x), &mut set, &mut bad, ids);
                 if let Some((_, props)) = custom.filter(|(_, p)| !p.is_empty()) {
-                    group(ui, "Custom");
+                    group_header(ui, "Custom");
                     for p in &props {
                         prop_row(ui, &p.name, |ui| {
                             let picked = match (p.editable, p.choices.is_empty()) {
@@ -1255,9 +1256,11 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                attrib_set = attributes_group(ui, e.handle, &i.attribs);
             }
             _ => {}
         }
+        extended_data_groups(ui, &e.common.xdata);
     } else if let Some(dims) = sel
         .iter()
         .map(|h| match d.entity(*h).map(|e| &e.kind) {
@@ -1268,7 +1271,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         // Several dimensions: every property of one dimension, `*VARIES*` where they differ; an
         // edit applies to all of them.
-        group(ui, "Geometry");
+        group_header(ui, "Geometry");
         let shared = |key: &'static str, f: &dyn Fn(&cadcraft_doc::Dimension, &cadcraft_doc::DimStyle) -> String| -> String {
             memo.get(key, || {
                 let vals: Vec<String> = dims
@@ -1318,7 +1321,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         // Several objects of one type: the properties of one object, `*VARIES*` where they differ.
         // Edits apply to all of them; positions are shown but stay read-only, since typing one
         // would move every object to the same place.
-        group(ui, "Geometry");
+        group_header(ui, "Geometry");
         let shared = |key: &'static str, f: &dyn Fn(&EntityKind) -> Option<String>| -> String {
             memo.get(key, || {
                 let vals: Vec<Option<String>> = sel.iter().filter_map(|h| d.entity(*h)).map(|x| f(&x.kind)).collect();
@@ -1497,6 +1500,83 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
     }
+    if let Some(p) = attrib_set {
+        let _ = app.run("attedit", p);
+    }
+}
+
+/// A Properties group title (the same band as General, Geometry, Custom).
+fn group_header(ui: &mut egui::Ui, title: &str) {
+    let t = Tokens::get();
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+    ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
+    ui.painter().text(pos2(r.left() + 12.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(title), crate::theme::small(), t.text_dim);
+}
+
+/// A block reference's attributes, invisible ones too, as AutoCAD's Properties palette lists
+/// them. A value typed here comes back as ATTEDIT parameters (one undo step). Constant
+/// attributes are read-only, and so are tags the reference repeats: ATTEDIT finds attributes by
+/// tag, so it would change all of them.
+fn attributes_group(ui: &mut egui::Ui, h: cadcraft_engine::doc::Handle, attribs: &[cadcraft_engine::doc::Attrib]) -> Option<Value> {
+    if attribs.is_empty() {
+        return None;
+    }
+    group_header(ui, "Attributes");
+    let mut out = None;
+    for a in attribs {
+        let repeated = attribs.iter().filter(|o| o.tag.eq_ignore_ascii_case(&a.tag)).count() > 1;
+        data_row(ui, &a.tag, |ui| {
+            if a.constant || repeated {
+                value_box(ui, &a.text.value, false, false).on_hover_text(crate::tl!("Read-only"));
+                return;
+            }
+            let id = ui.scope_id().with(("attrib", h, &a.tag));
+            if let Some(v) = edit_field(ui, id, a.text.value.clone()).filter(|v| *v != a.text.value) {
+                out = Some(json!({ "handle": h.hex(), "values": { a.tag.clone(): v } }));
+            }
+        });
+    }
+    out
+}
+
+/// Other applications' extended data (xdata), read-only: a group per application, each
+/// `NAME=value` string as a row of its own.
+fn extended_data_groups(ui: &mut egui::Ui, xdata: &[cadcraft_engine::doc::RawTag]) {
+    for (app_name, rows) in xdata_rows(xdata) {
+        group_header(ui, "Extended data");
+        prop_row(ui, "Application", |ui| {
+            value_box(ui, &app_name, false, false).on_hover_text(crate::tl!("Read-only"));
+        });
+        for (k, v) in &rows {
+            data_row(ui, k, |ui| {
+                value_box(ui, v, false, false).on_hover_text(crate::tl!("Read-only"));
+            });
+        }
+    }
+}
+
+/// An entity's xdata as `(application, [(label, value)])`: a string `NAME=value` (group 1000)
+/// is labelled by its name; other groups by their DXF group code. Control strings (`{`, `}`) are
+/// left out.
+fn xdata_rows(xdata: &[cadcraft_engine::doc::RawTag]) -> Vec<(String, Vec<(String, String)>)> {
+    let mut out: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for t in xdata {
+        if t.code == 1001 {
+            out.push((t.value.trim().to_string(), Vec::new()));
+            continue;
+        }
+        let Some((_, rows)) = out.last_mut() else { continue };
+        if t.code == 1002 {
+            continue;
+        }
+        let row = match t.value.split_once('=') {
+            Some((k, v)) if t.code == 1000 && !k.trim().is_empty() => (k.trim().to_string(), v.trim().to_string()),
+            _ => (t.code.to_string(), t.value.clone()),
+        };
+        rows.push(row);
+    }
+    out.retain(|(_, rows)| !rows.is_empty());
+    out
 }
 
 #[cfg(test)]
@@ -1520,6 +1600,167 @@ mod tests {
             Shape::Rect(r) => r.fill == color && (r.rect.width() - 12.0).abs() < 0.01 && (r.rect.height() - 12.0).abs() < 0.01,
             Shape::Vec(shapes) => shapes.iter().any(|shape| contains_swatch(shape, color)),
             _ => false,
+        }
+    }
+
+    fn texts(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+
+    /// The Properties texts for the selection, after two frames.
+    fn properties_texts(app: &mut CadApp) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 2400.0))), ..Default::default() };
+        let mut out = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| properties_section(app, ui));
+            out.clear();
+            output.shapes.iter().for_each(|s| texts(&s.shape, &mut out));
+            output.textures_delta.clear();
+        }
+        out
+    }
+
+    #[test]
+    fn block_reference_lists_its_attributes_and_line_its_extended_data() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({"tag": "TAG", "default": "P-101", "at": [0, 1]})).unwrap();
+        app.run("attdef", json!({"tag": "SERVICE", "default": "crude", "at": [0, 2], "invisible": true})).unwrap();
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let _ = l;
+        let hs: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        app.run("block", json!({"name": "B", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+        let r = app.run("insert", json!({"name": "B", "at": [0, 0], "attribs": {"TAG": "P-101A"}})).unwrap();
+        app.run("select", json!({ "handles": [r["handle"].clone()] })).unwrap();
+        let shown = properties_texts(&mut app);
+        for want in ["Attributes", "TAG", "P-101A", "SERVICE", "crude"] {
+            assert!(shown.iter().any(|t| t == want), "{want} not in {shown:?}");
+        }
+        // A line with another application's xdata: NAME=value strings as rows of their own.
+        let pipe = app.run("line", json!({ "points": [[0, 5], [10, 5]] })).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(pipe["handles"][0].as_str().unwrap()).unwrap();
+        let tag = |code: i32, value: &str| cadcraft_engine::doc::RawTag { code, value: value.into() };
+        app.session
+            .doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                e.common.xdata = vec![tag(1001, "SMARTPID"), tag(1000, "Line number=6\"-P-1001"), tag(1000, "From=T-101"), tag(1070, "3")]
+            })
+            .unwrap();
+        app.run("select", json!({ "handles": [pipe["handles"][0].clone()] })).unwrap();
+        let shown = properties_texts(&mut app);
+        for want in ["Extended data", "SMARTPID", "Line number", "6\"-P-1001", "From", "T-101", "1070", "3"] {
+            assert!(shown.iter().any(|t| t == want), "{want} not in {shown:?}");
+        }
+        assert!(!shown.iter().any(|t| t == "Attributes"));
+    }
+
+    #[test]
+    fn xdata_rows_split_name_value_strings_by_application() {
+        let tag = |code: i32, value: &str| cadcraft_engine::doc::RawTag { code, value: value.into() };
+        let rows = xdata_rows(&[
+            tag(1001, "A"),
+            tag(1002, "{"),
+            tag(1000, "K=v=w"),
+            tag(1000, "plain"),
+            tag(1002, "}"),
+            tag(1001, "EMPTY"),
+            tag(1001, "B"),
+            tag(1040, "2.5"),
+        ]);
+        assert_eq!(
+            rows,
+            vec![
+                ("A".to_string(), vec![("K".to_string(), "v=w".to_string()), ("1000".to_string(), "plain".to_string())]),
+                ("B".to_string(), vec![("1040".to_string(), "2.5".to_string())]),
+            ]
+        );
+    }
+
+    /// A selected reference of a block with attributes tagged `tags`, whose values are `values`.
+    fn block_with_attributes(app: &mut CadApp, tags: &[&str], values: &[&str]) -> cadcraft_engine::doc::Handle {
+        for k in 0..tags.len() {
+            app.run("attdef", json!({"tag": format!("A{k}"), "default": "x", "at": [0, k]})).unwrap();
+        }
+        app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let hs: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        app.run("block", json!({"name": "B", "base": [0, 0], "handles": hs, "keep": "delete"})).unwrap();
+        let r = app.run("insert", json!({"name": "B", "at": [0, 0]})).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        // Set here: a file can hold what the commands would not create (mixed case, repeated tags).
+        app.session
+            .doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    for ((a, tag), value) in i.attribs.iter_mut().zip(tags).zip(values) {
+                        a.tag = (*tag).to_string();
+                        a.text.value = (*value).to_string();
+                    }
+                }
+            })
+            .unwrap();
+        app.run("select", json!({ "handles": [r["handle"].clone()] })).unwrap();
+        h
+    }
+
+    fn attribute_values(app: &CadApp, h: cadcraft_engine::doc::Handle) -> Vec<String> {
+        match &app.session.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::Insert(i) => i.attribs.iter().map(|a| a.text.value.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A value typed into an attribute's field reaches the drawing, as one undo step.
+    #[test]
+    fn attribute_typed_in_properties_is_set_and_undone_as_one_step() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let attribute = block_with_attributes(&mut app, &["TAG"], &["V-1"]);
+        let mut h = palette(app);
+        h.get_all_by_value("V-1").next().unwrap().focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run_steps(2);
+        h.get_all_by_value("V-1").next().unwrap().type_text("V-2");
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        assert_eq!(attribute_values(h.state(), attribute), vec!["V-2"]);
+        h.state_mut().run("undo", json!({})).unwrap();
+        assert_eq!(attribute_values(h.state(), attribute), vec!["V-1"]);
+    }
+
+    /// ATTEDIT would write a value typed for one of them into every attribute with that tag, in
+    /// any case, so those have no field; the others keep theirs.
+    #[test]
+    fn repeated_attribute_tags_are_read_only() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        block_with_attributes(&mut app, &["TAG", "tag", "OTHER"], &["first", "second", "third"]);
+        let h = palette(app);
+        assert_eq!(h.query_all_by_value("first").count(), 0);
+        assert_eq!(h.query_all_by_value("second").count(), 0);
+        assert!(h.query_all_by_value("third").next().is_some());
+    }
+
+    /// Tags and xdata names are the drawing's text: in Spanish `To` is still `To`, not `A`, while
+    /// the interface around them is translated.
+    #[test]
+    fn attribute_tags_and_xdata_names_are_not_translated() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let r = block_with_attributes(&mut app, &["To"], &["T-201"]);
+        let tag = |code: i32, value: &str| cadcraft_engine::doc::RawTag { code, value: value.into() };
+        app.session.doc_mut().unwrap().modify_entity(r, |e| e.common.xdata = vec![tag(1001, "SMARTPID"), tag(1000, "From=P-101")]).unwrap();
+        let shown = crate::i18n::with_language("es", || properties_texts(&mut app));
+        for want in ["Atributos", "Datos extendidos", "To", "From", "P-101"] {
+            assert!(shown.iter().any(|t| t == want), "{want} not in {shown:?}");
+        }
+        for not in ["A", "Desde"] {
+            assert!(!shown.iter().any(|t| t == not), "{not} in {shown:?}");
         }
     }
 
