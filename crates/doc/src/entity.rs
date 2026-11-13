@@ -406,6 +406,9 @@ impl EntityKind {
                     l.iter_mut().for_each(t3);
                 }
                 t3(&mut ml.landing);
+                // Scaled whole, as AutoCAD scales it: the arrowhead and dogleg with the text.
+                ml.arrow_size *= s;
+                ml.dogleg *= s;
                 if let Some(t) = &mut ml.text {
                     t3(&mut t.insert);
                     t.height *= s;
