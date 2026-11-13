@@ -83,7 +83,7 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if cadcraft_dwg::is_dwg(bytes) {
         let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
-        let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
+        let mut d = read_dwg_rendition(&dxf)?;
         d.read_notes = notes;
         return Ok((d, Some(dxf)));
     }
@@ -94,6 +94,54 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
         (_, e) => Err(IoError::Unsupported(e.to_string())),
     }?;
     Ok((d, None))
+}
+
+/// A drawing from the DXF rendition the DWG reader made of a DWG: read, then with the reader's
+/// viewport numbering put right ([`sheet_viewport_first`]). Only DWG goes through here; a DXF
+/// file keeps its own ids.
+fn read_dwg_rendition(dxf: &[u8]) -> Result<Drawing> {
+    let mut d = dxf_read::read(dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
+    sheet_viewport_first(&mut d);
+    Ok(d)
+}
+
+/// Whether viewport `v` shows the sheet itself: its view is its own rectangle on paper (same
+/// centre and height), within a millionth of its height (at least of one paper unit).
+fn shows_itself(v: &cadcraft_doc::Viewport) -> bool {
+    let tol = 1e-6 * v.height.abs().max(1.0);
+    (v.view_center.x - v.center.x).abs() <= tol && (v.view_center.y - v.center.y).abs() <= tol && (v.view_height - v.height).abs() <= tol
+}
+
+/// A DWG stores no viewport ids, and the DWG reader numbers a layout's viewports itself: when the
+/// layout lists no viewports it takes the layout's last active viewport for the sheet (id 1),
+/// though that is the floating viewport a user last worked in. The sheet would then not be drawn,
+/// its model view would be skipped, and the sheet's own outline would be drawn and plotted as a
+/// viewport. AutoCAD's sheet viewport comes first in the layout and shows the sheet itself (its
+/// view is its own rectangle on paper): where the first viewport is such and the one numbered 1
+/// isn't, the two swap ids.
+fn sheet_viewport_first(d: &mut Drawing) {
+    for l in &mut d.layouts {
+        let vps: Vec<(cadcraft_doc::Handle, u32, bool)> = l
+            .entities
+            .iter()
+            .filter_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Viewport(v) => Some((e.handle, v.id, shows_itself(v))),
+                _ => None,
+            })
+            .collect();
+        let Some(&(first, first_id, true)) = vps.first() else { continue };
+        let Some(&(one, _, false)) = vps.iter().find(|(_, id, _)| *id == 1) else { continue };
+        if first_id == 1 {
+            continue;
+        }
+        for (h, id) in [(first, 1), (one, first_id)] {
+            l.entities.modify(h, |e| {
+                if let cadcraft_doc::EntityKind::Viewport(v) = &mut e.kind {
+                    v.id = id;
+                }
+            });
+        }
+    }
 }
 
 /// Write a drawing in the format chosen by the name's extension. Images (PNG, SVG, PDF) show

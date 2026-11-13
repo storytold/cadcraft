@@ -1005,6 +1005,88 @@ fn viewport_ids_unknown_sheet_becomes_one() {
     assert!(!write_dxf(&back).contains("PAPERVIEW"), "the first viewport is the sheet");
 }
 
+/// `Layout1` with the sheet viewport (it shows its own rectangle on paper) and a floating viewport
+/// onto model space, saved as a DWG of `version` and opened again: each viewport's (id, width).
+fn sheet_and_floating_viewport_through_dwg(version: Version) -> Vec<(u32, f64)> {
+    let mut d = sample();
+    let paper = Space::Paper("Layout1".into());
+    let sheet = Viewport {
+        center: Vec3::new(148.5, 105.0, 0.0),
+        width: 320.0,
+        height: 230.0,
+        view_center: Vec2::new(148.5, 105.0),
+        view_height: 230.0,
+        id: 1,
+        ..Viewport::default()
+    };
+    let floating = Viewport {
+        center: Vec3::new(120.0, 110.0, 0.0),
+        width: 200.0,
+        height: 150.0,
+        view_center: Vec2::new(5000.0, 2000.0),
+        view_height: 400.0,
+        id: 2,
+        ..Viewport::default()
+    };
+    for vp in [sheet, floating] {
+        d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    }
+    let dwg = write_with(&d, "t.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
+    let back = read(&dwg, "t.dwg").unwrap();
+    let layout = back.layouts.iter().find(|l| l.name == "Layout1").unwrap();
+    layout.entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some((v.id, v.width)) } else { None }).collect()
+}
+
+/// A DWG CADCraft saved keeps its sheet viewport id 1 in every version: the correction after
+/// reading a DWG leaves a right numbering alone.
+#[test]
+fn the_sheet_viewport_stays_the_sheet_through_dwg() {
+    for version in Version::ALL {
+        assert_eq!(sheet_and_floating_viewport_through_dwg(version), [(1, 320.0), (2, 200.0)], "{version:?}");
+    }
+}
+
+/// The ids the DWG reader gave a layout's viewports, as read from an AutoCAD 2000 title-block
+/// drawing: the sheet (first, its view its own rectangle) numbered 2 and the floating viewport,
+/// the layout's last active one, numbered 1. Read from a DWG the two swap back, so the floating
+/// viewport's model view is drawn and the sheet's outline isn't. Anything less clear is left.
+#[test]
+fn a_dwg_sheet_viewport_numbered_after_the_floating_one_becomes_id_1() {
+    let sheet = |id: u32| Viewport {
+        center: Vec3::new(594.5, 420.5, 0.0),
+        width: 1560.3,
+        height: 846.1,
+        view_center: Vec2::new(594.5, 420.5),
+        view_height: 846.1,
+        id,
+        ..Viewport::default()
+    };
+    let floating = |id: u32| Viewport {
+        center: Vec3::new(506.8, 423.7, 0.0),
+        width: 984.4,
+        height: 817.1,
+        view_center: Vec2::new(-7159.4, 22112.9),
+        view_height: 1134.8,
+        id,
+        ..Viewport::default()
+    };
+    let ids_after = |vps: Vec<Viewport>| {
+        let mut d = sample();
+        for vp in vps {
+            d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+        }
+        crate::sheet_viewport_first(&mut d);
+        let l = d.layouts.iter().find(|l| l.name == "Layout1").unwrap();
+        l.entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some(v.id) } else { None }).collect::<Vec<_>>()
+    };
+    assert_eq!(ids_after(vec![sheet(2), floating(1)]), [1, 2]);
+    // Already right, or no sign of which one is the sheet: unchanged.
+    assert_eq!(ids_after(vec![sheet(1), floating(2)]), [1, 2]);
+    assert_eq!(ids_after(vec![floating(2), floating(1)]), [2, 1]);
+    assert_eq!(ids_after(vec![sheet(2), sheet(1)]), [2, 1]);
+    assert_eq!(ids_after(vec![sheet(2), floating(3)]), [2, 3]);
+}
+
 /// Group 69 is a 16-bit code: an id outside 1..=32767 reads as unknown (0), and is never truncated
 /// into a real id (4294967297 would become a second id 1, a second paper-space viewport).
 #[test]
@@ -3656,4 +3738,129 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+}
+
+/// The sheet and the floating viewport of an AutoCAD title-block layout, with the ids given.
+fn sheet_viewport(id: u32) -> Viewport {
+    Viewport {
+        center: Vec3::new(594.5, 420.5, 0.0),
+        width: 1560.3,
+        height: 846.1,
+        view_center: Vec2::new(594.5, 420.5),
+        view_height: 846.1,
+        id,
+        ..Viewport::default()
+    }
+}
+
+fn floating_viewport(id: u32) -> Viewport {
+    Viewport {
+        center: Vec3::new(506.8, 423.7, 0.0),
+        width: 984.4,
+        height: 817.1,
+        view_center: Vec2::new(-7159.4, 22112.9),
+        view_height: 1134.8,
+        id,
+        ..Viewport::default()
+    }
+}
+
+/// The viewport ids of each layout, in layout and entity order.
+fn layout_viewport_ids(d: &Drawing) -> Vec<(String, Vec<u32>)> {
+    d.layouts
+        .iter()
+        .map(|l| (l.name.clone(), l.entities.iter().filter_map(|e| if let EntityKind::Viewport(v) = &e.kind { Some(v.id) } else { None }).collect()))
+        .filter(|(_, ids): &(String, Vec<u32>)| !ids.is_empty())
+        .collect()
+}
+
+/// `dxf` with the id (group 69) of each VIEWPORT whose centre x (group 10) is one of `ids` set
+/// as given.
+fn renumber_viewports(dxf: &str, ids: &[(&str, u32)]) -> String {
+    let lines: Vec<&str> = dxf.lines().collect();
+    let mut out: Vec<String> = lines.iter().map(|l| (*l).to_string()).collect();
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        if lines[i].trim() == "0" && lines[i + 1].trim() == "VIEWPORT" {
+            let mut j = i + 2;
+            let (mut x, mut id_at) = (None, None);
+            while j + 1 < lines.len() && lines[j].trim() != "0" {
+                match lines[j].trim() {
+                    "10" if x.is_none() => x = Some(lines[j + 1].trim()),
+                    "69" => id_at = Some(j + 1),
+                    _ => {}
+                }
+                j += 2;
+            }
+            if let (Some(x), Some(at)) = (x, id_at)
+                && let Some((_, id)) = ids.iter().find(|(cx, _)| x.parse::<f64>().ok() == cx.parse::<f64>().ok())
+            {
+                out[at] = id.to_string();
+            }
+            i = j;
+        } else {
+            i += 2;
+        }
+    }
+    out.join("\n") + "\n"
+}
+
+/// The swap runs where a DWG is read (`read_source`), not for a DXF file: the same DXF the DWG
+/// reader could have made (sheet 2, floating 1 in one layout; the other layout already right)
+/// comes out swapped through the DWG path and as it is through the DXF path, layout by layout.
+#[test]
+fn only_a_dwg_rendition_gets_its_sheet_viewport_numbered_1() {
+    let mut d = sample();
+    d.layouts.push(Layout::new("Layout2", 2));
+    // Layout2's are the same, a little to the side, so only Layout1's are renumbered below.
+    let aside = |mut v: Viewport| {
+        v.center.x += 1.0;
+        v.view_center.x += 1.0;
+        v
+    };
+    for (layout, vps) in
+        [("Layout1", [sheet_viewport(1), floating_viewport(2)]), ("Layout2", [aside(sheet_viewport(1)), aside(floating_viewport(2))])]
+    {
+        for vp in vps {
+            d.add(&Space::Paper(layout.into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+        }
+    }
+    // The writer puts the sheet (id 1) first; give Layout1's the ids the DWG reader would (the
+    // sheet, still first, 2 and the floating viewport 1), found by their centres.
+    let dxf = renumber_viewports(&write_dxf(&d), &[("594.5", 2), ("506.8", 1)]);
+    let as_dxf = read(dxf.as_bytes(), "plan.dxf").unwrap();
+    assert_eq!(layout_viewport_ids(&as_dxf), [("Layout1".to_string(), vec![2, 1]), ("Layout2".to_string(), vec![1, 2])], "a DXF keeps its ids");
+    let as_dwg = crate::read_dwg_rendition(dxf.as_bytes()).unwrap();
+    assert_eq!(
+        layout_viewport_ids(&as_dwg),
+        [("Layout1".to_string(), vec![1, 2]), ("Layout2".to_string(), vec![1, 2])],
+        "from a DWG the sheet becomes 1, in the layout that needs it only"
+    );
+}
+
+/// When a viewport counts as showing the sheet itself: within a millionth of its height (at
+/// least of one unit) of its own centre and height, wherever it lies on paper.
+#[test]
+fn a_viewport_shows_itself_within_a_millionth_of_its_height() {
+    let at = |centre: f64, height: f64, off: f64| Viewport {
+        center: Vec3::new(centre, centre, 0.0),
+        height,
+        view_center: Vec2::new(centre + off, centre),
+        view_height: height,
+        ..Viewport::default()
+    };
+    let tol = 1e-6 * 846.1;
+    assert!(crate::shows_itself(&at(594.5, 846.1, 0.0)));
+    assert!(crate::shows_itself(&at(594.5, 846.1, 0.9 * tol)), "just inside");
+    assert!(!crate::shows_itself(&at(594.5, 846.1, 1.1 * tol)), "just outside");
+    // Far from the origin the tolerance still follows the height, not the coordinates.
+    assert!(crate::shows_itself(&at(1e6, 846.1, 0.9 * tol)));
+    assert!(!crate::shows_itself(&at(1e6, 846.1, 1.1 * tol)));
+    // No height, or a negative one: at least a millionth of one unit, by its size.
+    assert!(crate::shows_itself(&at(10.0, 0.0, 0.9e-6)));
+    assert!(!crate::shows_itself(&at(10.0, 0.0, 1.1e-6)));
+    assert!(crate::shows_itself(&at(10.0, -846.1, 0.9 * tol)));
+    assert!(!crate::shows_itself(&at(10.0, -846.1, 1.1 * tol)));
+    // A height that differs from the view's by more than the tolerance: not the sheet.
+    assert!(!crate::shows_itself(&Viewport { view_height: 846.1 + 1.1 * tol, ..at(594.5, 846.1, 0.0) }));
 }
