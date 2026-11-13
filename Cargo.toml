@@ -18,6 +18,9 @@ craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "006e4df225
 cadcraft-dwg = { path = "crates/dwg" }
 cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
+cadcraft-collab = { path = "crates/collab" }
+cadcraft-collab-server = { path = "crates/collab-server" }
+cadcraft-collab-client = { path = "crates/collab-client" }
 cadcraft-constraints = { path = "crates/constraints" }
 cadcraft-fonts = { path = "crates/fonts" }
 cadcraft-render = { path = "crates/render" }
@@ -39,6 +42,9 @@ thiserror = "2"
 same-file = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+base64 = "0.22"
+# Content addresses for collaboration attachments (ADR 0021); the store names a blob by its hash.
+sha2 = "0.10"
 log = "0.4"
 # All date/time conversion goes through chrono (no hand-rolled calendar code beyond the 400-year range extension; AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }

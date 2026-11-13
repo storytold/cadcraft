@@ -18,23 +18,96 @@ pub mod download;
 mod host;
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod host_session;
+#[cfg(any(target_arch = "wasm32", test))]
 mod panel_layout;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use cadcraft_engine::Session;
+    use cadcraft_ui_egui::collab::Collab;
     use cadcraft_ui_egui::{CadApp, Services};
     use wasm_bindgen::JsCast as _;
 
+    use crate::host_session::{HostAction, HostEvent, HostPublisher, HostState};
+
     const CANVAS_ID: &str = "cadcraft_canvas";
     const LOADING_ID: &str = "cadcraft_loading";
+    /// The host's `presence` pace: a few messages a second at most (craft-web-host).
+    const PRESENCE_MS: f64 = 100.0;
 
     /// The app, the files File > Open… and drag and drop read for it in the background, the
     /// host page (`?host=parent`, or `data-host="page"` on the canvas), the browser's
     /// `prefers-reduced-motion` (it stays
     /// live, so View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting follows a change),
-    /// and the document title last written to the page.
-    struct Shell(CadApp, crate::upload::Inbox, Option<crate::host::Bridge>, Option<web_sys::MediaQueryList>, Option<String>);
+    /// the document title last written to the page, the host's collaboration messages queued by
+    /// the bridge callback, and the host's session state kept between frames.
+    struct Shell(
+        CadApp,
+        crate::upload::Inbox,
+        Option<crate::host::Bridge>,
+        Option<web_sys::MediaQueryList>,
+        Option<String>,
+        Rc<RefCell<Vec<HostEvent>>>,
+        HostState,
+        /// Decides which `session-state`/`presence` messages the cabinet needs.
+        HostPublisher,
+    );
+
+    impl Shell {
+        /// `cadcraft:session` opens the collaboration session; `cadcraft:committed` is the
+        /// cabinet's commit result. Nothing here runs without a session message.
+        fn apply_host_events(&mut self) {
+            let events: Vec<HostEvent> = std::mem::take(&mut *self.5.borrow_mut());
+            for event in events {
+                match self.6.on_event(event) {
+                    HostAction::Connect(session) => {
+                        let doc = session.session_id().to_string();
+                        match Collab::connect_host(session.ws_url(), session.token(), &doc, session.role()) {
+                            Ok(collab) => {
+                                self.0.attach_collab(collab);
+                                self.0.set_status(format!("Joining collaboration session {doc}"));
+                            }
+                            Err(message) => self.0.set_status(format!("Collaboration is unavailable: {message}")),
+                        }
+                    }
+                    HostAction::Committed { version, etag } => self.0.host_commit_result(version, etag),
+                }
+            }
+        }
+
+        /// Tell the cabinet the sync state and who is here: `cadcraft:session-state` when either
+        /// changes, `cadcraft:presence` at the sync server's pace. Leaving a session posts
+        /// `offline` once and resets the publisher for the next one.
+        fn publish_host_state(&mut self) {
+            let Some(bridge) = self.2.clone() else { return };
+            if !self.0.is_shared() {
+                if self.7.started() {
+                    if let Err(message) = bridge.post_session_state("offline", &[]) {
+                        log::warn!("session-state: {message}");
+                    }
+                    self.7.reset();
+                }
+                return;
+            }
+            let status = self.0.collab_status().map_or("offline", |status| status.word());
+            let participants = self.0.session_participants();
+            if let Some((status, people)) = self.7.session_state(status, &participants)
+                && let Err(message) = bridge.post_session_state(&status, &people)
+            {
+                log::warn!("session-state: {message}");
+            }
+            let now = js_sys::Date::now();
+            if let Some(people) = self.7.presence(now, &participants, PRESENCE_MS)
+                && let Err(message) = bridge.post_presence(&people)
+            {
+                log::warn!("presence: {message}");
+            }
+        }
+    }
 
     impl eframe::App for Shell {
         /// Runs one frame: takes in files dropped on or picked for the page, drains the background
@@ -42,11 +115,14 @@ mod web {
         /// document title when it changed (so the tab and an embedding page name the open
         /// drawing), and reports unsaved changes to that page.
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.apply_host_events();
             // Background reads are consume-based and run on hidden ticks too. Dropped files are
             // input and are read from `ui` only.
             self.1.drain(&mut self.0);
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
+            // After the frame: the session's status and presence are what this frame settled.
+            self.publish_host_state();
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
             // The crate suppresses duplicates, so reporting after every logic callback
@@ -196,12 +272,16 @@ mod web {
                             picker.pick();
                             None
                         }));
+                        let host_events: Rc<RefCell<Vec<HostEvent>>> = Rc::new(RefCell::new(Vec::new()));
                         let host = app_bridge.inspect(|bridge| {
-                            bridge.listen(inbox.clone());
+                            bridge.listen(inbox.clone(), host_events.clone(), cc.egui_ctx.clone());
+                            // The page's cabinet owns the file: a save in a shared session goes
+                            // through `cadcraft:commit` instead of a browser download.
+                            app.host_commit = Some(bridge.commit_fn());
                             bridge.post_ready();
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
-                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None)))
+                        Ok(Box::new(Shell(app, inbox, host, reduced_motion, None, host_events, HostState::default(), HostPublisher::default())))
                     }),
                 )
                 .await;

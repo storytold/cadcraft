@@ -153,6 +153,10 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// Whether an undoable command records an undo step. A long-lived server session turns this
+    /// off: history belongs to the collaboration service (ADR 0010), and per-operation snapshots
+    /// would only grow its memory.
+    pub(crate) record_undo: bool,
 }
 
 impl Default for Session {
@@ -207,6 +211,7 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             pick_hint: None,
+            record_undo: true,
         }
     }
 
@@ -261,11 +266,15 @@ impl Session {
     }
 
     /// Common properties for new objects (CLAYER, CECOLOR, CELTYPE, CELWEIGHT, CELTSCALE).
+    ///
+    /// A layer an operation named (`OpContext.clay`) takes precedence over the drawing's
+    /// `CLAYER` while that operation runs: a shared session has no single author's layer (ADR-0019).
     pub fn current_common(&self) -> Common {
         let Ok(d) = self.doc() else { return Common::default() };
         let h = &d.header;
+        let layer = self.state().ok().and_then(|s| s.clay.clone()).unwrap_or_else(|| h.str("CLAYER", "0"));
         Common {
-            layer: h.str("CLAYER", "0"),
+            layer,
             color: cadcraft_color::Color::from_aci(h.i64("CECOLOR", 256) as i16),
             linetype: h.str("CELTYPE", "ByLayer"),
             lineweight: cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16),

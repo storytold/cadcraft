@@ -1,0 +1,1552 @@
+//! One room: the authoritative drawing, the order of operations and the answers they get.
+
+use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use cadcraft_collab::{Applied, Op, OpKind, Outcome, Reject, Role, TableRegistry, TableRenames, diff_all};
+use cadcraft_doc::Drawing;
+use cadcraft_engine::Session;
+use cadcraft_io::{SaveOptions, read, write_with};
+
+use crate::assets::{AssetError, AssetStore};
+use crate::cabinet::{Cabinet, Published};
+use crate::policy::{changes_too_many, deny_reason, params_reason, size_reason};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// How many applied operations the room answers from memory before a repeat is answered as unknown.
+const IDEMPOTENCY_WINDOW: usize = 1_000;
+/// How many operations the journal keeps (compaction and snapshots come later).
+const JOURNAL_LIMIT: usize = 10_000;
+
+/// One undoable step: the drawing before and after the operation, and its renames.
+///
+/// The drawings are `Arc` clones (copy-on-write chunks), so a step pins only what it changed.
+#[derive(Clone, Debug)]
+struct UndoStep {
+    before: Arc<Drawing>,
+    after: Arc<Drawing>,
+    renames: TableRenames,
+}
+
+/// One redoable step: the drawing the undo left, the drawing to bring back, and the forward
+/// renames of the operation the redo restores.
+///
+/// A redo is exact only while the drawing is what the undo left: any other state, from this
+/// participant or another, makes it a conflict (the same rule as undo, ADR 0010).
+#[derive(Clone, Debug)]
+struct RedoStep {
+    undo_left: Arc<Drawing>,
+    restore: Arc<Drawing>,
+    renames: TableRenames,
+}
+
+/// A room's state at one version, as a drawing file.
+///
+/// The snapshot is DXF (ADR-0005): the writer keeps the data CADCraft does not model (unknown
+/// entities, other applications' objects and xdata) through its raw pass, and entity handles
+/// survive the round trip, so a journal tail still names the same objects after a restore.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    /// The drawing's version at the moment it was written.
+    pub version: u64,
+    /// The DXF bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// The file format a commit writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitFormat {
+    /// DXF, the native path (ASCII, the drawing's version).
+    Dxf,
+    /// DWG through the bridge, which runs in a child process and needs a native build.
+    Dwg,
+}
+
+impl CommitFormat {
+    fn path(self) -> &'static str {
+        match self {
+            CommitFormat::Dxf => "commit.dxf",
+            CommitFormat::Dwg => "commit.dwg",
+        }
+    }
+}
+
+/// The file a commit produced, with what the format could not keep.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Committed {
+    /// The drawing's version the file was written from.
+    pub version: u64,
+    /// The file bytes.
+    pub bytes: Vec<u8>,
+    /// What the format leaves out, by object type: the cabinet warns, keeps the previous version
+    /// and writes this to the audit (ADR-0009).
+    pub not_saved: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RoomError {
+    #[error("the room has no drawing")]
+    NoDrawing,
+    #[error("the drawing could not be saved or read back: {0}")]
+    Io(String),
+}
+
+/// The authoritative drawing and the order of operations applied to it.
+pub struct Room {
+    session: Session,
+    registry: TableRegistry,
+    version: u64,
+    applied: VecDeque<Applied>,
+    journal: VecDeque<Applied>,
+    journal_path: Option<PathBuf>,
+    undo: BTreeMap<String, Vec<UndoStep>>,
+    redo: BTreeMap<String, Vec<RedoStep>>,
+    /// Where `imageattach` bytes live, when the deployment gave the room `--assets` (ADR 0021).
+    assets: Option<Arc<AssetStore>>,
+    /// The cabinet that takes the room's commits, when this deployment publishes them (M87).
+    cabinet: Option<Arc<Cabinet>>,
+    /// The etag the cabinet returned with the last accepted commit; the next sends it as
+    /// `expectedVersion`, so a file changed outside the session is refused with `409`.
+    cabinet_etag: Option<String>,
+    /// The last file a commit built. A repeated commit of the same version is answered from it,
+    /// and a `409` keeps it so the owner can save the room's work as a copy (TASK §6).
+    last_commit: Option<Committed>,
+    /// Why the cabinet refused the last commit with `409`, until a commit is accepted.
+    conflict: Option<String>,
+}
+
+impl Room {
+    /// A room whose authoritative drawing is `drawing`.
+    pub fn new(drawing: Drawing) -> Result<Self, RoomError> {
+        // An IMAGEATTACH operation carries the raster bytes, and the engine needs a reader to
+        // decode them; the room is the one that executes it, so it installs the same reader the
+        // apps do (ADR 0021). The room never opens a file by a client's path.
+        crate::install_raster_reader();
+        let mut session = Session::empty();
+        session.docs.push(cadcraft_engine::DocState::new(drawing, "Drawing1", None));
+        session.active = 0;
+        // The service owns history (ADR 0010): a per-operation snapshot would only grow memory.
+        session.set_record_undo(false);
+        let mut registry = TableRegistry::new();
+        registry.reconcile(session.doc().map_err(|_| RoomError::NoDrawing)?);
+        Ok(Room {
+            session,
+            registry,
+            version: 0,
+            applied: VecDeque::new(),
+            journal: VecDeque::new(),
+            journal_path: None,
+            undo: BTreeMap::new(),
+            redo: BTreeMap::new(),
+            assets: None,
+            cabinet: None,
+            cabinet_etag: None,
+            last_commit: None,
+            conflict: None,
+        })
+    }
+
+    /// Give the room a cabinet to publish commits to (M87).
+    pub fn with_cabinet(mut self, cabinet: Arc<Cabinet>) -> Self {
+        self.cabinet = Some(cabinet);
+        self
+    }
+
+    /// The cabinet this room publishes to, when the deployment configured one.
+    pub fn cabinet(&self) -> Option<Arc<Cabinet>> {
+        self.cabinet.clone()
+    }
+
+    /// The etag the cabinet returned with the last accepted commit.
+    pub fn cabinet_etag(&self) -> Option<&str> {
+        self.cabinet_etag.as_deref()
+    }
+
+    /// The cabinet accepted a commit: the next one expects this etag.
+    pub fn accept_cabinet(&mut self, published: &Published) {
+        self.cabinet_etag = Some(published.etag.clone());
+        self.conflict = None;
+    }
+
+    /// Keep the file a commit built, so a repeat is idempotent and a refused one can be saved.
+    pub fn remember_commit(&mut self, committed: &Committed) {
+        self.last_commit = Some(committed.clone());
+        self.conflict = None;
+    }
+
+    /// The cabinet refused the commit with `409`: keep the file and the reason for the panel.
+    pub fn remember_conflict(&mut self, committed: &Committed, message: impl Into<String>) {
+        self.conflict = Some(message.into());
+        if self.last_commit.as_ref().is_none_or(|last| last.version != committed.version) {
+            self.last_commit = Some(committed.clone());
+        }
+    }
+
+    /// Why the cabinet refused the last commit, while the panel still offers its file as a copy.
+    pub fn conflict(&self) -> Option<&str> {
+        self.conflict.as_deref()
+    }
+
+    /// The last file a commit built, if this room has one.
+    pub fn last_commit(&self) -> Option<&Committed> {
+        self.last_commit.as_ref()
+    }
+
+    /// Take the file of a refused commit; the caller sends it to the owner exactly once.
+    ///
+    /// A copy is only offered while the cabinet's refusal stands: an accepted commit means the
+    /// room's work is stored and there is nothing to rescue.
+    pub fn take_refused_copy(&mut self) -> Option<Committed> {
+        self.conflict.as_ref()?;
+        let copy = self.last_commit.clone();
+        self.conflict = None;
+        copy
+    }
+
+    /// Give the room its attachment store (ADR 0021).
+    ///
+    /// `imageattach` then takes its bytes from the store by content address, and bytes sent
+    /// inline are stored under their address, so the drawing's label points at the room's copy.
+    pub fn with_assets(mut self, assets: Arc<AssetStore>) -> Self {
+        self.assets = Some(assets);
+        self
+    }
+
+    /// The authoritative drawing, for a snapshot or a test replica.
+    pub fn drawing(&self) -> Result<&Drawing, RoomError> {
+        self.session.doc().map_err(|_| RoomError::NoDrawing)
+    }
+
+    /// The version of the drawing; the whole order is this counter.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Apply one operation and answer with its change set.
+    ///
+    /// A repeat of an `op_id` inside the window returns the first answer: the operation is never
+    /// applied twice (ADR 0003). A structural operation with a stale `base_version` is rejected and
+    /// the client waits for the room's order instead of retrying (ADR 0004).
+    pub fn apply(&mut self, op: &Op) -> Result<Outcome, RoomError> {
+        self.apply_as(Role::Editor, op)
+    }
+
+    /// Apply one operation for a participant with `role`; a viewer is refused before anything runs.
+    pub fn apply_as(&mut self, role: Role, op: &Op) -> Result<Outcome, RoomError> {
+        if !role.may_write() {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op.op_id.clone(),
+                code: "forbidden".into(),
+                message: "this participant may view the drawing, not change it".into(),
+                retryable: false,
+            }));
+        }
+        if let Some(reason) = deny_reason(&op.command) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "forbidden".into(), message: reason.into(), retryable: false }));
+        }
+        if let Some(reason) = params_reason(op) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "invalid".into(), message: reason.into(), retryable: false }));
+        }
+        if let Some(reason) = size_reason(op) {
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "too-large".into(), message: reason.into(), retryable: false }));
+        }
+        if let Some(applied) = self.applied.iter().find(|a| a.op_id == op.op_id) {
+            return Ok(Outcome::Applied(applied.clone()));
+        }
+        if op.kind == OpKind::Structural && op.base_version != self.version {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op.op_id.clone(),
+                code: "stale".into(),
+                message: format!("the drawing is at version {}; this structural operation waited for {}", self.version, op.base_version),
+                retryable: false,
+            }));
+        }
+        let prepared = match self.prepare_attachment(op) {
+            Ok(prepared) => prepared,
+            Err(refusal) if refusal.code == "internal" => return Err(RoomError::Io(refusal.message)),
+            Err(refusal) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op.op_id.clone(),
+                    code: refusal.code.into(),
+                    message: refusal.message,
+                    retryable: false,
+                }));
+            }
+        };
+        let params = prepared.as_ref().map(|prepared| &prepared.params).unwrap_or(&op.params);
+        let before = self.drawing()?.clone();
+        if let Err(error) = self.session.execute_intent(&op.command, params, &op.context) {
+            if let Some(prepared) = &prepared {
+                self.discard_attachment(prepared);
+            }
+            return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+        }
+        let after = self.drawing()?.clone();
+        let renames = renames_of(&op.command, &op.params, &before, &after);
+        let changes = match diff_all(&before, &after, &mut self.registry, &renames) {
+            Ok(changes) => changes,
+            Err(error) => {
+                // The room and the command disagree about the drawing: give the drawing back and
+                // tell the client to resynchronise.
+                if let Ok(doc) = self.session.doc_mut() {
+                    *doc = before;
+                }
+                if let Some(prepared) = &prepared {
+                    self.discard_attachment(prepared);
+                }
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op.op_id.clone(),
+                    code: "invalid".into(),
+                    message: error.to_string(),
+                    retryable: false,
+                }));
+            }
+        };
+        if changes_too_many(changes.len()) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = before;
+            }
+            if let Some(prepared) = &prepared {
+                self.discard_attachment(prepared);
+            }
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op.op_id.clone(),
+                code: "too-large".into(),
+                message: format!("the operation changes {} objects; the limit is {}", changes.len(), crate::policy::MAX_CHANGES),
+                retryable: false,
+            }));
+        }
+        self.version = self.version.saturating_add(1);
+        let applied = Applied { op_id: op.op_id.clone(), version: self.version, actor: op.actor.clone(), changes };
+        self.remember(applied.clone());
+        self.remember_undo(op, before, after, renames);
+        // A new operation is a new branch: what this participant undid can no longer be redone.
+        self.redo.remove(&op.actor);
+        Ok(Outcome::Applied(applied))
+    }
+
+    /// Undo `actor`'s last operation, if nothing has happened since.
+    ///
+    /// The inverse is the change set from the current drawing back to the drawing before the step,
+    /// which is exact while the step is the latest: a remote change after it makes the step
+    /// conflicted instead of silently reverting someone else's edit (ADR 0010). The undo is a new
+    /// operation with its own version and journal entry; [`Room::redo`] can bring the step back
+    /// while nothing else changed.
+    pub fn undo(&mut self, actor: &str, op_id: &str) -> Result<Outcome, RoomError> {
+        let Some(step) = self.undo.get(actor).and_then(|steps| steps.last()).cloned() else {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "nothing-to-undo".into(),
+                message: "this participant has no operation to undo".into(),
+                retryable: false,
+            }));
+        };
+        let current = self.drawing()?.clone();
+        if !self.same_content(&current, &step.after) {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "undo-conflict".into(),
+                message: "the drawing changed after this operation; it cannot be undone alone".into(),
+                retryable: false,
+            }));
+        }
+        let renames = reverse_renames(&step.renames);
+        let changes = match diff_all(&current, step.before.as_ref(), &mut self.registry, &renames) {
+            Ok(changes) => changes,
+            Err(error) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op_id.to_string(),
+                    code: "invalid".into(),
+                    message: error.to_string(),
+                    retryable: false,
+                }));
+            }
+        };
+        if let Err(error) = cadcraft_collab::apply(self.session.doc_mut().map_err(|_| RoomError::NoDrawing)?, &changes) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = current;
+            }
+            return Ok(Outcome::Rejected(Reject { op_id: op_id.to_string(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+        }
+        self.version = self.version.saturating_add(1);
+        let applied = Applied { op_id: op_id.to_string(), version: self.version, actor: actor.into(), changes };
+        self.remember(applied.clone());
+        if let Some(steps) = self.undo.get_mut(actor) {
+            steps.pop();
+        }
+        // The step goes back on the redo stack: undoing again keeps the older entries, because
+        // each one is exact for the state the previous undo returns to.
+        self.redo.entry(actor.into()).or_default().push(RedoStep { undo_left: step.before, restore: step.after, renames: step.renames });
+        Ok(Outcome::Applied(applied))
+    }
+
+    /// Redo `actor`'s last undo, if nothing has happened since.
+    ///
+    /// The redo is a new operation with its own version and journal entry, and it puts the step
+    /// back on the participant's undo stack. A change after the undo — from anyone, including the
+    /// same participant — makes it `redo-conflict` instead of bringing back a stale drawing.
+    pub fn redo(&mut self, actor: &str, op_id: &str) -> Result<Outcome, RoomError> {
+        let Some(step) = self.redo.get(actor).and_then(|steps| steps.last()).cloned() else {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "nothing-to-redo".into(),
+                message: "this participant has no undone operation to redo".into(),
+                retryable: false,
+            }));
+        };
+        let current = self.drawing()?.clone();
+        if !self.same_content(&current, &step.undo_left) {
+            return Ok(Outcome::Rejected(Reject {
+                op_id: op_id.to_string(),
+                code: "redo-conflict".into(),
+                message: "the drawing changed after the undo; it cannot be redone alone".into(),
+                retryable: false,
+            }));
+        }
+        let changes = match diff_all(&current, step.restore.as_ref(), &mut self.registry, &step.renames) {
+            Ok(changes) => changes,
+            Err(error) => {
+                return Ok(Outcome::Rejected(Reject {
+                    op_id: op_id.to_string(),
+                    code: "invalid".into(),
+                    message: error.to_string(),
+                    retryable: false,
+                }));
+            }
+        };
+        if let Err(error) = cadcraft_collab::apply(self.session.doc_mut().map_err(|_| RoomError::NoDrawing)?, &changes) {
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = current;
+            }
+            return Ok(Outcome::Rejected(Reject { op_id: op_id.to_string(), code: "invalid".into(), message: error.to_string(), retryable: false }));
+        }
+        self.version = self.version.saturating_add(1);
+        let applied = Applied { op_id: op_id.to_string(), version: self.version, actor: actor.into(), changes };
+        self.remember(applied.clone());
+        if let Some(steps) = self.redo.get_mut(actor) {
+            steps.pop();
+        }
+        self.undo.entry(actor.into()).or_default().push(UndoStep { before: step.undo_left, after: step.restore, renames: step.renames });
+        Ok(Outcome::Applied(applied))
+    }
+
+    /// The answer stored for `op_id`, when the window still holds it.
+    pub fn applied(&self, op_id: &str) -> Option<&Applied> {
+        self.applied.iter().find(|a| a.op_id == op_id)
+    }
+
+    /// Write the authoritative drawing as a DXF snapshot at the current version.
+    pub fn snapshot(&self) -> Result<Snapshot, RoomError> {
+        let bytes = write_with(self.drawing()?, "snapshot.dxf", &SaveOptions::default()).map_err(|e| RoomError::Io(e.to_string()))?;
+        Ok(Snapshot { version: self.version, bytes })
+    }
+
+    /// A room restored from a snapshot; the journal tail is applied on top of it.
+    pub fn restore(snapshot: &Snapshot) -> Result<Self, RoomError> {
+        let drawing = read(&snapshot.bytes, "snapshot.dxf").map_err(|e| RoomError::Io(e.to_string()))?;
+        let mut room = Room::new(drawing)?;
+        room.version = snapshot.version;
+        Ok(room)
+    }
+
+    /// Persist every applied operation to `path`, one JSON line each.
+    ///
+    /// The journal is what a restart replays on top of the last snapshot (ADR-0005). A write that
+    /// fails is reported to the caller that set the path, not to a participant; the room keeps
+    /// working, and the next compaction writes a fresh snapshot.
+    pub fn with_journal(mut self, path: impl Into<PathBuf>) -> Result<Self, RoomError> {
+        let path = path.into();
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| RoomError::Io(e.to_string()))?;
+        }
+        std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| RoomError::Io(e.to_string()))?;
+        self.journal_path = Some(path);
+        Ok(self)
+    }
+
+    /// Restore a snapshot and replay the journal tail written by [`Room::with_journal`].
+    pub fn restore_with_journal(snapshot: &Snapshot, journal: &Path) -> Result<Self, RoomError> {
+        let mut room = Room::restore(snapshot)?;
+        let text = std::fs::read_to_string(journal).unwrap_or_default();
+        let mut entries: Vec<Applied> =
+            text.lines().filter_map(|line| serde_json::from_str::<Applied>(line).ok()).filter(|a| a.version > snapshot.version).collect();
+        entries.sort_by_key(|a| a.version);
+        for applied in entries {
+            if applied.version != room.version.saturating_add(1) {
+                return Err(RoomError::Io(format!(
+                    "the journal goes from version {} to {}, with {} missing",
+                    room.version,
+                    applied.version,
+                    applied.version - room.version - 1
+                )));
+            }
+            let doc = room.session.doc_mut().map_err(|_| RoomError::NoDrawing)?;
+            cadcraft_collab::apply(doc, &applied.changes).map_err(|e| RoomError::Io(e.to_string()))?;
+            room.version = applied.version;
+            room.remember_memory_only(applied);
+        }
+        Ok(room)
+    }
+
+    /// Write a snapshot to `snapshot` (bytes and a `.version` file beside it) and empty the
+    /// journal: everything it held is in the snapshot now.
+    pub fn compact(&mut self, snapshot: &Path) -> Result<(), RoomError> {
+        let saved = self.snapshot()?;
+        let temporary = snapshot.with_extension("dxf.tmp");
+        std::fs::write(&temporary, &saved.bytes).map_err(|e| RoomError::Io(e.to_string()))?;
+        std::fs::rename(&temporary, snapshot).map_err(|e| RoomError::Io(e.to_string()))?;
+        std::fs::write(snapshot.with_extension("version"), saved.version.to_string()).map_err(|e| RoomError::Io(e.to_string()))?;
+        self.journal.clear();
+        if let Some(path) = &self.journal_path {
+            std::fs::write(path, b"").map_err(|e| RoomError::Io(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Apply a journal tail (operations after the snapshot) in order, ignoring the answers.
+    pub fn replay(&mut self, ops: &[Op]) -> Result<(), RoomError> {
+        for op in ops {
+            self.apply(op)?;
+        }
+        Ok(())
+    }
+
+    /// Write the drawing as the file the cabinet stores.
+    ///
+    /// The loss is counted **before** anything is written (`loss_on_save`) and returned with the
+    /// bytes: DXF keeps what CADCraft does not model through its raw pass, DWG through the bridge
+    /// drops custom-class entities and some foreign data (ADR-0009). The caller must keep the
+    /// previous version and show the list.
+    pub fn commit(&self, format: CommitFormat) -> Result<Committed, RoomError> {
+        let path = format.path();
+        let not_saved = cadcraft_engine::cmd::file::loss_on_save(&self.session, path);
+        let bytes = write_with(self.drawing()?, path, &SaveOptions::default()).map_err(|e| RoomError::Io(e.to_string()))?;
+        Ok(Committed { version: self.version, bytes, not_saved })
+    }
+
+    /// The journal of applied operations, oldest first.
+    pub fn journal(&self) -> impl Iterator<Item = &Applied> {
+        self.journal.iter()
+    }
+
+    /// Whether two drawings have the same modelled content: no change set between them.
+    ///
+    /// A drawing also carries counters and file metadata (the handle seed, timestamps) that an
+    /// operation does not restore; comparing them would make every undo a conflict. The probe
+    /// registry keeps the room's identifiers untouched.
+    fn same_content(&self, a: &Drawing, b: &Drawing) -> bool {
+        let mut probe = self.registry.clone();
+        diff_all(a, b, &mut probe, &TableRenames::default()).is_ok_and(|changes| changes.is_empty())
+    }
+
+    /// Keep the step that undoes `op`: bounded per participant, with the drawing before it and
+    /// the drawing it produced (the state an undo must still find).
+    fn remember_undo(&mut self, op: &Op, before: Drawing, after: Drawing, renames: TableRenames) {
+        let steps = self.undo.entry(op.actor.clone()).or_default();
+        steps.push(UndoStep { before: Arc::new(before), after: Arc::new(after), renames });
+        while steps.len() > 200 {
+            steps.remove(0);
+        }
+    }
+
+    fn remember(&mut self, applied: Applied) {
+        if let Some(path) = &self.journal_path
+            && let Ok(line) = serde_json::to_string(&applied)
+            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        {
+            use std::io::Write as _;
+            let _ = writeln!(file, "{line}");
+        }
+        self.remember_memory_only(applied);
+    }
+
+    /// Add an applied operation to the windows without writing it again (a replayed line is
+    /// already in the file).
+    fn remember_memory_only(&mut self, applied: Applied) {
+        self.applied.push_back(applied.clone());
+        while self.applied.len() > IDEMPOTENCY_WINDOW {
+            self.applied.pop_front();
+        }
+        self.journal.push_back(applied);
+        while self.journal.len() > JOURNAL_LIMIT {
+            self.journal.pop_front();
+        }
+    }
+}
+
+/// A refusal the room turns into a `rejected` answer before the drawing changes.
+struct AttachmentRefusal {
+    /// `invalid` or `limit`; `internal` becomes a `RoomError`.
+    code: &'static str,
+    message: String,
+}
+
+/// An `imageattach` whose bytes came from the room's store; the parameters the engine runs with.
+struct PreparedAttachment {
+    params: Value,
+    /// The blob this operation created, removed again if the engine refuses the image.
+    created: Option<String>,
+}
+
+impl Room {
+    /// Resolve an `imageattach` against the room's store (ADR 0021).
+    ///
+    /// Inline `data` is stored under its content address and the drawing gets the store's label;
+    /// `asset` is read from the store, and the bytes are handed to the engine as `data`. Either
+    /// way the client's path is a label only: nothing is opened by it.
+    fn prepare_attachment(&self, op: &Op) -> Result<Option<PreparedAttachment>, AttachmentRefusal> {
+        if !op.command.trim().eq_ignore_ascii_case("imageattach") {
+            return Ok(None);
+        }
+        let mut params = op.params.clone();
+        let data = params.get("data").and_then(Value::as_str).map(str::trim).filter(|data| !data.is_empty());
+        let asset = params.get("asset").and_then(Value::as_str).map(str::trim).filter(|asset| !asset.is_empty());
+        let Some(store) = &self.assets else {
+            // Without a store an address has no bytes behind it; the engine must not fall back to
+            // opening the client's label as a file.
+            return match (data, asset) {
+                (None, Some(_)) => {
+                    Err(AttachmentRefusal { code: "invalid", message: "this room has no attachment store; send the image bytes in `data`".into() })
+                }
+                _ => Ok(None),
+            };
+        };
+        match (data.map(str::to_string), asset.map(str::to_string)) {
+            (Some(data), _) => {
+                let bytes = cadcraft_collab::message::decode_bytes(&data)
+                    .map_err(|_| AttachmentRefusal { code: "invalid", message: "`data` is not valid base64".into() })?;
+                let id = cadcraft_collab::asset_id(&bytes);
+                let stored = store.put(&id, &bytes).map_err(refusal)?;
+                params["path"] = Value::String(stored.label);
+                let created = stored.stored.then_some(id);
+                Ok(Some(PreparedAttachment { params, created }))
+            }
+            (None, Some(id)) => {
+                let bytes = store.get(&id).map_err(refusal)?;
+                let label = store.label(&id).map_err(refusal)?.ok_or_else(|| AttachmentRefusal {
+                    code: "invalid",
+                    message: "no attachment with this id is stored in this room; store it before referring to it".into(),
+                })?;
+                params["data"] = Value::String(cadcraft_collab::message::encode_bytes(&bytes));
+                params["path"] = Value::String(label);
+                Ok(Some(PreparedAttachment { params, created: None }))
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// Remove a blob this operation wrote when the engine refused the image.
+    fn discard_attachment(&self, prepared: &PreparedAttachment) {
+        if let (Some(store), Some(id)) = (&self.assets, &prepared.created) {
+            let _ = store.remove(id);
+        }
+    }
+}
+
+/// The room's answer to an attachment store error: a client fault (`invalid`, `limit`) or the
+/// room's own failure (`internal`, turned into a [`RoomError`]).
+fn refusal(error: AssetError) -> AttachmentRefusal {
+    match error {
+        AssetError::TooLarge { .. } | AssetError::TooManyFiles { .. } | AssetError::Quota { .. } => {
+            AttachmentRefusal { code: "limit", message: error.to_string() }
+        }
+        AssetError::Io(_) => AttachmentRefusal { code: "internal", message: error.to_string() },
+        AssetError::BadId | AssetError::Mismatch | AssetError::NotAnImage | AssetError::NotFound | AssetError::BadRoom { .. } => {
+            AttachmentRefusal { code: "invalid", message: error.to_string() }
+        }
+    }
+}
+
+/// The rename pairs swapped, for the inverse change set.
+fn reverse_renames(renames: &TableRenames) -> TableRenames {
+    TableRenames {
+        layers: renames.layers.iter().map(|(from, to)| (to.clone(), from.clone())).collect(),
+        layouts: renames.layouts.iter().map(|(from, to)| (to.clone(), from.clone())).collect(),
+    }
+}
+
+/// The renames an operation performed, so a rename is one change instead of a delete and a create.
+fn renames_of(command: &str, params: &Value, before: &Drawing, after: &Drawing) -> TableRenames {
+    let mut renames = TableRenames::default();
+    match command {
+        "rename" => {
+            let table = params.get("table").and_then(Value::as_str).unwrap_or("layer");
+            if table.eq_ignore_ascii_case("layer")
+                && let (Some(from), Some(to)) = (params.get("from").and_then(Value::as_str), params.get("to").and_then(Value::as_str))
+            {
+                renames.layers.push((from.into(), to.into()));
+            }
+        }
+        "layout.rename" => {
+            let to = params.get("to").and_then(Value::as_str);
+            let from = params.get("from").and_then(Value::as_str);
+            let to = match to {
+                Some(to) => to,
+                None => return renames,
+            };
+            match from {
+                Some(from) => renames.layouts.push((from.into(), to.into())),
+                None => {
+                    // The command renamed the current layout; the layout that disappeared is it.
+                    let gone: Vec<String> =
+                        before.layouts.iter().map(|l| l.name.clone()).filter(|name| !after.layouts.iter().any(|l| l.name == *name)).collect();
+                    if let [old] = gone.as_slice() {
+                        renames.layouts.push((old.clone(), to.into()));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    renames
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cadcraft_collab::{Change, OpContext};
+    use cadcraft_doc::geom::Vec3;
+    use cadcraft_doc::{Common, EntityKind, Layer, Line, Space};
+    use serde_json::json;
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn a_drawing_with_a_layer() -> Drawing {
+        let mut drawing = Drawing::new_metric();
+        drawing.layers.push(Layer::new("WALLS"));
+        drawing
+            .add(
+                &Space::Model,
+                Common { layer: "WALLS".into(), ..Default::default() },
+                EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }),
+            )
+            .unwrap();
+        drawing
+    }
+
+    #[test]
+    fn two_replicas_converge() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+        for op in [line_op("a", 0.0), line_op("b", 5.0)] {
+            let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an ordinary line must apply") };
+            cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+        }
+        assert_eq!(room.version(), 2);
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    /// The line operation of an author drawing on `layer`.
+    fn line_op_on_layer(op_id: &str, x: f64, layer: &str) -> Op {
+        Op { context: OpContext::in_space(Space::Model).on_layer(layer), ..line_op(op_id, x) }
+    }
+
+    /// The layer of the object an applied operation created.
+    fn created_layer(applied: &Applied) -> String {
+        applied
+            .changes
+            .iter()
+            .find_map(|change| match change {
+                Change::EntityCreate { entity, .. } => Some(entity.common.layer.clone()),
+                _ => None,
+            })
+            .expect("the operation created an object")
+    }
+
+    #[test]
+    fn an_operation_creates_in_the_layer_it_names_and_a_replica_follows() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+
+        let Outcome::Applied(applied) = room.apply(&line_op_on_layer("walls", 5.0, "walls")).unwrap() else { panic!() };
+
+        assert_eq!(created_layer(&applied), "WALLS", "the drawing's spelling of the layer the operation named");
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        assert_eq!(replica.header.str("CLAYER", "?"), "0", "the recipient's current layer does not switch");
+        assert_eq!(room.drawing().unwrap().header.str("CLAYER", "?"), "0", "nor does the server drawing's");
+    }
+
+    #[test]
+    fn an_operation_for_a_layer_the_room_does_not_have_is_refused_before_the_drawing_changes() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        // Three points: had the command run, the first segment would already exist.
+        let mut op = line_op_on_layer("ghost", 5.0, "GHOST");
+        op.params = json!({ "points": [[5.0, 0.0], [6.0, 0.0], [6.0, 1.0]] });
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("there is no layer `GHOST`"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("no replica has a layer the room does not"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before);
+    }
+
+    /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+    #[test]
+    fn an_imageattach_without_data_is_refused_before_the_drawing_changes() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        let mut op = line_op("image", 0.0);
+        op.command = "imageattach".into();
+        op.params = json!({ "path": "map.png", "at": [0.0, 0.0] });
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("never reads a file by the client's path"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("a shared session never reads a file by the client's path"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before, "nothing was read and nothing changed");
+        assert!(room.drawing().unwrap().rasters.is_empty());
+    }
+
+    #[test]
+    fn an_imageattach_with_data_creates_the_image_and_a_replica_follows() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+        let mut op = line_op("image", 0.0);
+        op.command = "imageattach".into();
+        op.params = json!({ "path": "map.png", "data": PNG_1X1, "at": [10.0, 5.0], "width": 100.0 });
+
+        let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an image with its bytes is a drawing operation") };
+        assert!(applied.changes.iter().any(|change| matches!(change, Change::EntityCreate { .. })), "the image arrives as a creation");
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+
+        assert_eq!(room.version(), 1);
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model), "the replicas agree on the image's placement");
+        assert!(replica.rasters.is_empty(), "the pixels are the author's; the change set carries the placement only");
+    }
+
+    #[test]
+    fn undoing_a_step_restores_the_layer_it_changed() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        let Outcome::Applied(_) = room.apply(&line_op_on_layer("walls", 5.0, "WALLS")).unwrap() else { panic!() };
+
+        let Outcome::Applied(undone) = room.undo("u1", "undo-1").unwrap() else { panic!("the step is the latest") };
+
+        assert_eq!(undone.version, 2, "undo is a new operation with its own version");
+        // The layer holds what it held before the step; the drawing's `handseed` stays ahead, as
+        // handles are never reused (ADR-0002).
+        assert_eq!(room.drawing().unwrap().space(&Space::Model), before.space(&Space::Model), "the layer holds what it held before the step");
+        assert_eq!(room.drawing().unwrap().layers, before.layers);
+    }
+
+    #[test]
+    fn an_operation_is_applied_once() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let op = line_op("once", 0.0);
+        let Outcome::Applied(first) = room.apply(&op).unwrap() else { panic!() };
+        let Outcome::Applied(again) = room.apply(&op).unwrap() else { panic!() };
+        assert_eq!(first, again);
+        assert_eq!(room.version(), 1);
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+    }
+
+    #[test]
+    fn a_stale_structural_operation_is_rejected() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let Outcome::Applied(_) = room.apply(&line_op("first", 0.0)).unwrap() else { panic!() };
+        let mut op = line_op("late", 1.0);
+        op.kind = OpKind::Structural;
+        op.base_version = 0;
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "stale");
+                assert!(!reject.retryable);
+            }
+            Outcome::Applied(_) => panic!("a structural operation built on an old version must not apply"),
+        }
+        assert_eq!(room.version(), 1);
+    }
+
+    #[test]
+    fn an_invalid_command_keeps_the_drawing_and_the_version() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut op = line_op("bad", 0.0);
+        op.command = "no-such-command".into();
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "invalid"),
+            Outcome::Applied(_) => panic!("an unknown command cannot apply"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn a_snapshot_restores_the_drawing_and_the_version() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let Outcome::Applied(_) = room.apply(&line_op("a", 0.0)).unwrap() else { panic!() };
+        let snapshot = room.snapshot().unwrap();
+        assert_eq!(snapshot.version, 1);
+
+        let restored = Room::restore(&snapshot).unwrap();
+        assert_eq!(restored.version(), room.version());
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        let names = |room: &Room| room.drawing().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&restored), names(&room));
+    }
+
+    #[test]
+    fn a_journal_tail_replays_on_top_of_a_snapshot() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let Outcome::Applied(_) = room.apply(&line_op("a", 0.0)).unwrap() else { panic!() };
+        let snapshot = room.snapshot().unwrap();
+        let after = [line_op("b", 3.0), line_op("c", 6.0)];
+        for op in &after {
+            let Outcome::Applied(_) = room.apply(op).unwrap() else { panic!() };
+        }
+
+        let mut restored = Room::restore(&snapshot).unwrap();
+        restored.replay(&after).unwrap();
+
+        assert_eq!(restored.version(), room.version());
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
+    fn a_layer_rename_is_one_change() {
+        let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+        let op = Op {
+            op_id: "rename-1".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            command: "rename".into(),
+            params: json!({ "table": "layer", "from": "WALLS", "to": "WALLS-2" }),
+            context: OpContext::in_space(Space::Model),
+        };
+        let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!() };
+        assert_eq!(applied.changes.len(), 1, "a rename is one change: {:?}", applied.changes);
+        assert!(matches!(applied.changes[0], Change::TableRename { .. }));
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+        assert_eq!(
+            replica.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+            room.drawing().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::Space;
+
+    #[test]
+    fn a_commit_writes_dxf_that_reopens_to_the_same_drawing() {
+        let mut room = Room::new(cadcraft_doc::Drawing::new_metric()).unwrap();
+        let op = Op {
+            op_id: "a".into(),
+            actor: "u".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: serde_json::json!({ "points": [[0.0, 0.0], [5.0, 5.0]] }),
+            context: OpContext::in_space(Space::Model),
+        };
+        let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!() };
+
+        let committed = room.commit(CommitFormat::Dxf).unwrap();
+        assert_eq!(committed.version, 1);
+        assert!(committed.not_saved.is_empty(), "a synthetic DXF keeps everything");
+
+        let reopened = cadcraft_io::read(&committed.bytes, "commit.dxf").unwrap();
+        assert_eq!(reopened.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use cadcraft_collab::{OpContext, OpKind};
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    fn an_op(command: &str) -> Op {
+        Op {
+            op_id: "op".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: command.into(),
+            params: json!({ "points": [[0.0, 0.0], [1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    #[test]
+    fn a_viewer_cannot_change_the_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.apply_as(Role::Viewer, &an_op("line")).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("a viewer must not write"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn a_viewer_is_refused_before_the_layer_an_operation_names_is_looked_at() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut op = an_op("line");
+        // A layer the drawing does not have would be `invalid` for an editor; for a viewer the
+        // role comes first, and the drawing is not touched either way.
+        op.context = OpContext::in_space(Space::Model).on_layer("GHOST");
+
+        match room.apply_as(Role::Viewer, &op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("a viewer must not write"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+        assert_eq!(room.drawing().unwrap().header.str("CLAYER", "?"), "0");
+    }
+
+    #[test]
+    fn a_denied_command_changes_nothing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.apply(&an_op("open")).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "forbidden"),
+            Outcome::Applied(_) => panic!("`open` must not run in a room"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn workspace() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cadcraft-journal-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.subsec_nanos()).unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_journal_replays_on_top_of_a_snapshot() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        room.compact(&state).unwrap();
+        room.apply(&line_op("c", 6.0)).unwrap();
+
+        let bytes = std::fs::read(&state).unwrap();
+        let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+        let restored = Room::restore_with_journal(&Snapshot { version, bytes }, &journal).unwrap();
+
+        assert_eq!(restored.version(), 3);
+        assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_journal_with_a_gap_is_refused() {
+        let dir = workspace();
+        let full = dir.join("full.jsonl");
+        let tail = dir.join("tail.jsonl");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&full).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        let text = std::fs::read_to_string(&full).unwrap();
+        let last = text.lines().last().unwrap().to_string();
+        std::fs::write(&tail, format!("{last}\n")).unwrap();
+
+        let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
+        assert!(Room::restore_with_journal(&snapshot, &tail).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::color::Color;
+    use cadcraft_doc::geom::Vec3;
+    use cadcraft_doc::{Common, EntityKind, Layer, Line, Space};
+    use serde_json::json;
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn applied(outcome: Outcome) -> Applied {
+        match outcome {
+            Outcome::Applied(applied) => applied,
+            Outcome::Rejected(reject) => panic!("expected an applied operation, got {reject:?}"),
+        }
+    }
+
+    #[test]
+    fn undo_restores_the_previous_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let start = room.drawing().unwrap().clone();
+        let forward = applied(room.apply(&line_op("a", 0.0)).unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+
+        let undo = applied(room.undo("u1", "undo-a").unwrap());
+
+        assert_eq!(room.version(), 2);
+        assert_eq!(room.drawing().unwrap().space(&Space::Model), start.space(&Space::Model));
+        let mut replica = start.clone();
+        cadcraft_collab::apply(&mut replica, &forward.changes).unwrap();
+        cadcraft_collab::apply(&mut replica, &undo.changes).unwrap();
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
+    fn undo_after_another_operation_is_a_conflict() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        let mut other = line_op("b", 5.0);
+        other.actor = "u2".into();
+        applied(room.apply(&other).unwrap());
+
+        match room.undo("u1", "undo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "undo-conflict"),
+            Outcome::Applied(_) => panic!("undone a step with a later operation"),
+        }
+        assert_eq!(room.version(), 2);
+    }
+
+    #[test]
+    fn undo_of_a_layer_deletion_restores_its_properties_and_objects() {
+        let mut drawing = Drawing::new_metric();
+        let mut layer = Layer::new("WALLS");
+        layer.color = Color::Index(5);
+        drawing.layers.push(layer);
+        drawing
+            .add(
+                &Space::Model,
+                Common { layer: "WALLS".into(), ..Default::default() },
+                EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }),
+            )
+            .unwrap();
+        let mut room = Room::new(drawing).unwrap();
+        let op = Op {
+            op_id: "delete-layer".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            command: "laydel".into(),
+            params: json!({ "names": ["WALLS"] }),
+            context: OpContext::in_space(Space::Model),
+        };
+        applied(room.apply(&op).unwrap());
+        assert!(room.drawing().unwrap().layers.iter().all(|l| l.name != "WALLS"));
+
+        applied(room.undo("u1", "undo-a").unwrap());
+
+        let drawing = room.drawing().unwrap();
+        let layer = drawing.layers.iter().find(|l| l.name == "WALLS").expect("the layer is back");
+        assert_eq!(layer.color, Color::Index(5));
+        assert_eq!(drawing.entity_count(), 1);
+    }
+
+    #[test]
+    fn undo_without_a_step_is_refused() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        match room.undo("nobody", "undo-none").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-undo"),
+            Outcome::Applied(_) => panic!("nothing to undo"),
+        }
+    }
+
+    #[test]
+    fn redo_restores_the_undone_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let start = room.drawing().unwrap().clone();
+        let forward = applied(room.apply(&line_op("a", 0.0)).unwrap());
+        let undo = applied(room.undo("u1", "undo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+
+        let redo = applied(room.redo("u1", "redo-a").unwrap());
+
+        assert_eq!(room.version(), 3);
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+        let mut replica = start;
+        for change in [&forward, &undo, &redo] {
+            cadcraft_collab::apply(&mut replica, &change.changes).unwrap();
+        }
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+    }
+
+    #[test]
+    fn redo_after_another_operation_is_a_conflict() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        let mut other = line_op("b", 5.0);
+        other.actor = "u2".into();
+        applied(room.apply(&other).unwrap());
+
+        match room.redo("u1", "redo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "redo-conflict"),
+            Outcome::Applied(_) => panic!("redone a step with a later operation"),
+        }
+        assert_eq!(room.version(), 3);
+    }
+
+    #[test]
+    fn redo_without_an_undo_is_refused() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        match room.redo("u1", "redo-none").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-redo"),
+            Outcome::Applied(_) => panic!("nothing to redo"),
+        }
+    }
+
+    #[test]
+    fn a_new_operation_after_undo_drops_the_redo() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        applied(room.apply(&line_op("b", 5.0)).unwrap());
+
+        match room.redo("u1", "redo-a").unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "nothing-to-redo"),
+            Outcome::Applied(_) => panic!("a new operation must drop the redo branch"),
+        }
+    }
+
+    #[test]
+    fn undo_after_redo_works() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        applied(room.redo("u1", "redo-a").unwrap());
+
+        applied(room.undo("u1", "undo-redo").unwrap());
+
+        assert_eq!(room.version(), 4);
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+    }
+
+    #[test]
+    fn consecutive_undos_are_redone_in_order() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        applied(room.apply(&line_op("a", 0.0)).unwrap());
+        applied(room.apply(&line_op("b", 5.0)).unwrap());
+        applied(room.undo("u1", "undo-b").unwrap());
+        applied(room.undo("u1", "undo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 0);
+
+        applied(room.redo("u1", "redo-a").unwrap());
+        assert_eq!(room.drawing().unwrap().entity_count(), 1);
+        applied(room.redo("u1", "redo-b").unwrap());
+
+        assert_eq!(room.version(), 6);
+        assert_eq!(room.drawing().unwrap().entity_count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod large_tests {
+    use super::*;
+    use cadcraft_collab::OpContext;
+    use cadcraft_doc::geom::Vec3;
+    use cadcraft_doc::{Common, EntityKind, Line, Space};
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn applied(outcome: Outcome) -> Applied {
+        match outcome {
+            Outcome::Applied(applied) => applied,
+            Outcome::Rejected(reject) => panic!("expected an applied operation, got {reject:?}"),
+        }
+    }
+
+    #[test]
+    fn a_ten_thousand_entity_drawing_round_trips() {
+        let mut drawing = Drawing::new_metric();
+        for i in 0..10_000 {
+            let x = f64::from(i);
+            drawing.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 1.0, 0.0) })).unwrap();
+        }
+        let mut room = Room::new(drawing).unwrap();
+        let mut replica = room.drawing().unwrap().clone();
+
+        let start = Instant::now();
+        let change = applied(room.apply(&line_op("big", 0.0)).unwrap());
+        let applied_in = start.elapsed();
+        cadcraft_collab::apply(&mut replica, &change.changes).unwrap();
+
+        assert!(applied_in < Duration::from_secs(5), "an operation on 10k entities took {applied_in:?}");
+        assert_eq!(replica.entity_count(), 10_001);
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+
+        let snapshot = room.snapshot().unwrap();
+        let restored = Room::restore(&snapshot).unwrap();
+        assert_eq!(restored.drawing().unwrap().entity_count(), 10_001);
+        assert_eq!(restored.version(), room.version());
+    }
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use crate::assets::AssetLimits;
+    use cadcraft_collab::OpContext;
+    use cadcraft_collab::asset_id;
+    use cadcraft_doc::{EntityKind, Space};
+    use serde_json::json;
+
+    /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+    fn png() -> Vec<u8> {
+        cadcraft_collab::message::decode_bytes(PNG_1X1).expect("the fixture is base64")
+    }
+
+    fn workspace(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cadcraft-room-assets-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.subsec_nanos()).unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    fn image_op(op_id: &str) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "imageattach".into(),
+            params: json!({ "path": "../../etc/passwd.png", "at": [0.0, 0.0], "width": 10.0 }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn image_path(room: &Room) -> String {
+        room.drawing()
+            .unwrap()
+            .space(&Space::Model)
+            .expect("the model space")
+            .iter()
+            .find_map(|entity| match &entity.kind {
+                EntityKind::Image(image) => Some(image.path.clone()),
+                _ => None,
+            })
+            .expect("the operation created an image")
+    }
+
+    #[test]
+    fn an_inline_image_is_stored_and_the_drawing_names_the_room_copy() {
+        let dir = workspace("inline");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut replica = room.drawing().unwrap().clone();
+        let bytes = png();
+        let id = asset_id(&bytes);
+        let mut op = image_op("inline");
+        op.params["data"] = json!(PNG_1X1);
+        op.params["path"] = json!("map.png");
+
+        let Outcome::Applied(applied) = room.apply(&op).unwrap() else { panic!("an image with its bytes is a drawing operation") };
+        cadcraft_collab::apply(&mut replica, &applied.changes).unwrap();
+
+        assert_eq!(image_path(&room), format!("demo/{id}.png"), "the label names the room's copy, not the client's path");
+        assert_eq!(image_path(&Room::restore(&room.snapshot().unwrap()).unwrap()), format!("demo/{id}.png"));
+        assert_eq!(replica.space(&Space::Model), room.drawing().unwrap().space(&Space::Model), "the replicas agree on the label");
+        assert_eq!(store.get(&id).unwrap(), bytes, "the bytes are in the store");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_asset_reference_reads_the_store_and_never_the_clients_path() {
+        let dir = workspace("reference");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let bytes = png();
+        let id = asset_id(&bytes);
+        store.put(&id, &bytes).unwrap();
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut op = image_op("reference");
+        // `asset` and `path` are different things: the path stays a label and is ignored.
+        op.params["asset"] = json!(id);
+        op.params["path"] = json!("../../etc/passwd.png");
+
+        let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!("a stored attachment is a drawing operation") };
+        assert_eq!(image_path(&room), format!("demo/{id}.png"));
+        assert_eq!(room.drawing().unwrap().rasters.len(), 1, "the engine decoded the stored bytes");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_asset_is_refused_before_the_drawing_changes() {
+        let dir = workspace("missing");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(store);
+        let before = room.drawing().unwrap().clone();
+        let mut op = image_op("missing");
+        op.params["asset"] = json!("0".repeat(64));
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("no attachment"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("a missing attachment cannot be attached"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before);
+        assert!(room.drawing().unwrap().rasters.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_image_does_not_leave_a_blob_in_the_store() {
+        let dir = workspace("failed");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        // A PNG signature the decoder refuses: the store accepts the format, the engine rejects it.
+        let damaged = b"\x89PNG\r\n\x1a\nnot really a png";
+        let mut op = image_op("damaged");
+        op.params["data"] = json!(cadcraft_collab::message::encode_bytes(damaged));
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "invalid"),
+            Outcome::Applied(_) => panic!("a damaged image cannot be attached"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(store.usage().unwrap(), (0, 0), "the blob written for the refused operation was removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_room_quota_refuses_before_the_store_or_the_drawing_changes() {
+        let dir = workspace("quota");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap().with_limits(AssetLimits { max_bytes: 8, max_files: 10, max_total: 100 }));
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut op = image_op("quota");
+        op.params["data"] = json!(PNG_1X1);
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "limit"),
+            Outcome::Applied(_) => panic!("an image over the room's limit cannot be stored"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(store.usage().unwrap(), (0, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_address_without_a_store_is_refused_and_no_label_is_opened() {
+        // A label that exists on this server's disk: had the engine read it, the image would
+        // attach, which is exactly what a shared session must not do.
+        let dir = workspace("no-store");
+        let label = dir.join("map.png");
+        std::fs::write(&label, png()).unwrap();
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let mut op = image_op("no-store");
+        op.params["asset"] = json!("0".repeat(64));
+        op.params["path"] = json!(label.to_string_lossy());
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => {
+                assert_eq!(reject.code, "invalid");
+                assert!(reject.message.contains("no attachment store"), "{}", reject.message);
+            }
+            Outcome::Applied(_) => panic!("an address without a store has no bytes"),
+        }
+        assert_eq!(room.version(), 0);
+        assert!(room.drawing().unwrap().rasters.is_empty(), "the file beside the label was not read");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_restart_keeps_the_attachment_the_drawing_names() {
+        let dir = workspace("restart");
+        let bytes = png();
+        let id = asset_id(&bytes);
+        let label = {
+            let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+            let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(store);
+            let mut op = image_op("persist");
+            op.params["data"] = json!(PNG_1X1);
+            let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!() };
+            image_path(&room)
+        };
+        let reopened = AssetStore::new(&dir, "demo").unwrap();
+        assert_eq!(reopened.get(&id).unwrap(), bytes);
+        assert_eq!(reopened.label(&id).unwrap().as_deref(), Some(label.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

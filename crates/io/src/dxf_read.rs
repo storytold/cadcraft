@@ -74,6 +74,222 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     read_budgeted(bytes, 4_000_000)
 }
 
+/// A DXF drawing read in bounded steps, for a host with no worker thread.
+///
+/// The browser has one thread: a large snapshot parsed in one call freezes the page for seconds.
+/// [`Incremental`] decodes the file's sections and its entity records in bounded batches, so a
+/// caller can spread the work over frames. The result is the same drawing [`read`] produces.
+///
+/// ```no_run
+/// # fn run(bytes: &[u8]) -> Result<(), cadcraft_io::IoError> {
+/// let mut reader = cadcraft_io::read_incremental(bytes)?;
+/// while !reader.step(4096)? {}
+/// let drawing = reader.drawing();
+/// # let _ = drawing;
+/// # Ok(())
+/// # }
+/// ```
+pub struct Incremental {
+    /// The sections, with their tags: the final passes (images, multileaders, raw objects) read
+    /// them again, so they are kept until the drawing is finished.
+    sections: Vec<craft_dxf::Section>,
+    section: usize,
+    drawing: Drawing,
+    rx: Rx,
+    blocks: Vec<BlockDef>,
+    layout_objs: Vec<LayoutDef>,
+    entities: Vec<(Option<String>, bool, Entity)>,
+    objs: Objects,
+    skipped: std::collections::BTreeMap<String, usize>,
+    cells_left: usize,
+    /// The ENTITIES section being read in batches: its record starts and the next one.
+    entity_job: Option<EntityJob>,
+    total_records: usize,
+    read_records: usize,
+    finished: bool,
+}
+
+/// One ENTITIES section split into records, read a batch at a time.
+struct EntityJob {
+    /// The index into [`Incremental::sections`], for its tags.
+    section: usize,
+    /// Tag offsets where each record (a code-0 group) starts.
+    starts: Vec<usize>,
+    /// The next record to read.
+    next: usize,
+    /// Where this section's entities begin in [`Incremental::entities`], for the per-section
+    /// duplicate-handle pass.
+    first_entity: usize,
+}
+
+impl Incremental {
+    /// Start reading a DXF file. Parsing the file's groups and splitting the sections happen here;
+    /// the entity records and the final passes happen in [`step`](Self::step).
+    pub fn new(bytes: &[u8]) -> Result<Self> {
+        let tags = craft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
+        let sections = sections(&tags);
+        if sections.is_empty() {
+            return Err(IoError::Format("no sections found".into()));
+        }
+        let mut drawing = Drawing::new_imperial();
+        drawing.layouts.clear();
+        // A file without $INSUNITS declares no units (#1209); only new drawings take the template's.
+        drawing.header.set_i64("INSUNITS", 0);
+        let rx = Rx { pstyles: plot_style_names(&sections), ..Rx::default() };
+        // Every handle another program's file already uses is taken before anything gets a new
+        // one: its $HANDSEED can be lower than its handles, and entities made while reading would
+        // otherwise get handles that records further on still have. A file CADCraft wrote names
+        // its own next handle, above which its rebuilt records are numbered (#495).
+        let ours = sections.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
+        for t in sections.iter().filter(|_| !ours).flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
+            if let Some(h) = Handle::parse_hex(t.str().trim()) {
+                drawing.bump_handseed(h);
+            }
+        }
+        let mut skipped = std::collections::BTreeMap::new();
+        count_skipped(&mut skipped, "(no section)", outside_sections(&tags));
+        let total_records =
+            sections.iter().filter(|section| section.name == "ENTITIES").map(|section| section.tags.iter().filter(|tag| tag.code == 0).count()).sum();
+        Ok(Incremental {
+            sections,
+            section: 0,
+            drawing,
+            rx,
+            blocks: Vec::new(),
+            layout_objs: Vec::new(),
+            entities: Vec::new(),
+            objs: Objects::default(),
+            skipped,
+            cells_left: 4_000_000,
+            entity_job: None,
+            total_records,
+            read_records: 0,
+            finished: false,
+        })
+    }
+
+    /// How many entity records the file has, for a progress bar (`read N/M`).
+    pub fn total_records(&self) -> usize {
+        self.total_records
+    }
+
+    /// How many entity records [`step`](Self::step) has read so far.
+    pub fn read_records(&self) -> usize {
+        self.read_records
+    }
+
+    /// Whether the drawing is complete.
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
+    /// Read up to `records` entity records, or one non-entity section, and return whether the
+    /// drawing is complete. A browser calls this once per frame with a budget it can afford.
+    pub fn step(&mut self, budget: usize) -> Result<bool> {
+        if self.finished {
+            return Ok(true);
+        }
+        loop {
+            if let Some(job) = self.entity_job.as_mut() {
+                let budget = budget.max(1);
+                let section = job.section;
+                let starts_len = job.starts.len();
+                if job.next >= starts_len {
+                    self.entity_job = None;
+                    continue;
+                }
+                let start = job.next;
+                let mut end = (start + budget).min(starts_len);
+                // A batch must not split a POLYLINE (or an INSERT with attributes) from the
+                // VERTEX/ATTRIB records that follow it: end only at a record that starts a new
+                // object. `starts_len` is always a safe end (the section is over).
+                let tags = &self.sections[section].tags;
+                while end < starts_len && matches!(tags[job.starts[end]].str().as_str(), "VERTEX" | "ATTRIB" | "SEQEND") {
+                    end += 1;
+                }
+                let from = job.starts[start];
+                let to = if end < starts_len { job.starts[end] } else { tags.len() };
+                let chunk = records(&tags[from..to]);
+                let mut skipped = 0;
+                let parsed = parse_entities(&chunk, &mut self.drawing, &mut self.rx, &mut skipped, &mut self.cells_left);
+                count_skipped(&mut self.skipped, "ENTITIES", skipped);
+                self.entities.extend(parsed);
+                self.read_records = self.read_records.saturating_add(end - start);
+                job.next = end;
+                if end < starts_len {
+                    return Ok(false);
+                }
+                // The section is over: a duplicate handle is only a duplicate within it, as in
+                // the one-call reader.
+                let Some(job) = self.entity_job.take() else { continue };
+                let mut seen = std::collections::HashSet::new();
+                for (_, _, entity) in &mut self.entities[job.first_entity..] {
+                    if !seen.insert(entity.handle) {
+                        entity.handle = self.drawing.new_handle();
+                        seen.insert(entity.handle);
+                    }
+                }
+                self.section = section + 1;
+                continue;
+            }
+            if self.section >= self.sections.len() {
+                self.finish()?;
+                return Ok(true);
+            }
+            let name = self.sections[self.section].name.clone();
+            if name == "ENTITIES" {
+                let starts: Vec<usize> =
+                    self.sections[self.section].tags.iter().enumerate().filter(|(_, tag)| tag.code == 0).map(|(i, _)| i).collect();
+                self.entity_job = Some(EntityJob { section: self.section, starts, next: 0, first_entity: self.entities.len() });
+                continue;
+            }
+            let tags = &self.sections[self.section].tags;
+            match name.as_str() {
+                "HEADER" => header(tags, &mut self.drawing),
+                "TABLES" => tables(tags, &mut self.drawing, &mut self.rx),
+                "BLOCKS" => self.blocks.extend(read_blocks(tags, &mut self.drawing, &mut self.rx, &mut self.cells_left, &mut self.skipped)),
+                "OBJECTS" => read_objects(tags, &mut self.objs, &mut self.layout_objs),
+                _ => {}
+            }
+            self.section += 1;
+            return Ok(false);
+        }
+    }
+
+    /// The finished drawing. Calling it before the last step is a programming error: the caller
+    /// gets what has been read so far, but the last sections are missing.
+    pub fn drawing(self) -> Drawing {
+        self.drawing
+    }
+
+    /// The passes that need every section at once: layouts, blocks, entities, sortents, images
+    /// and the records kept for the writer.
+    fn finish(&mut self) -> Result<()> {
+        let own_seed = self.objs.xrecord_text(crate::dxf_ext::HANDSEED_KEY).and_then(|t| Handle::parse_hex(t.trim()));
+        let (paper_block_for, first_layout) = setup_layouts(&mut self.drawing, &mut self.layout_objs, &self.rx);
+        place_blocks(&mut self.drawing, std::mem::take(&mut self.blocks), &mut self.rx, &paper_block_for, &first_layout);
+        place_entities(&mut self.drawing, std::mem::take(&mut self.entities), &self.rx, &paper_block_for, &first_layout);
+        number_unknown_viewport_ids(&mut self.drawing, &dropped_paper_views(&self.rx, &paper_block_for, &first_layout));
+        apply_sortents(&mut self.drawing, &self.objs.sortents, &self.rx.brs, &paper_block_for, &first_layout);
+        std::mem::take(&mut self.objs).apply(&mut self.drawing, &self.rx);
+        crate::dxf_image::resolve(&self.sections, &mut self.drawing);
+        crate::dxf_mline::resolve(&self.sections, &mut self.drawing);
+        // Keep handles unique against the header's seed.
+        let seed = self.drawing.header.str("HANDSEED", "");
+        if let Some(h) = own_seed.or_else(|| Handle::parse_hex(&seed)) {
+            self.drawing.bump_handseed(Handle(h.0.saturating_sub(1)));
+        }
+        if self.drawing.layer("0").is_none() {
+            self.drawing.layers.insert(0, Layer::default());
+        }
+        crate::dxf_raw::read(&self.sections, &mut self.drawing);
+        crate::dxf_clip::read(&mut self.drawing);
+        self.drawing.skipped_records = std::mem::take(&mut self.skipped);
+        self.finished = true;
+        Ok(())
+    }
+}
+
 /// A block definition read from BLOCKS: name, base point, description, entities (owner, paper
 /// flag, entity) and block flags.
 type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);

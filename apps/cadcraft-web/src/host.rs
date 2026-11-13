@@ -17,6 +17,10 @@
 //!   make a file the document, so `saveAs` is always `false`.
 //! - `cadcraft:dirty` whenever unsaved changes appear or go away, `cadcraft:failed` when the app
 //!   couldn't start.
+//! - `cadcraft:session` (from the host) opens a collaboration session: the app dials the socket
+//!   itself and never puts the token in a URL or a log. `cadcraft:commit` (to the host) asks the
+//!   cabinet to store the session, and `cadcraft:committed` (from the host) names the file version
+//!   it stored. The cabinet owns the file, so the browser never downloads a commit.
 //!
 //! In both host modes the app starts on the Start tab rather than an empty Drawing1, and the
 //! host guards leaving the page.
@@ -25,7 +29,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use cadcraft_ui_egui::CadApp;
+use cadcraft_ui_egui::collab::{HostCommitFn, SessionParticipant};
+use craft_web_host::Participant;
 use craft_web_host::web::{FileData, Host, Message};
+
+use crate::host_session::{HostEvent, HostSession};
 
 /// The app id in the host messages (`cadcraft:ready`).
 const APP: &str = "cadcraft";
@@ -41,6 +49,8 @@ thread_local! {
 #[derive(Clone)]
 pub struct Bridge {
     host: Rc<Host>,
+    /// The session the host opened, for `cadcraft:commit`.
+    session_id: Rc<RefCell<Option<String>>>,
 }
 
 impl Bridge {
@@ -48,7 +58,7 @@ impl Bridge {
     /// `data-host="page"` on the canvas, an unframed `?host=parent` page (it stays the normal app
     /// with downloads), or a parent on another origin.
     pub fn connect(canvas: &web_sys::HtmlCanvasElement) -> Option<Self> {
-        Some(Self { host: Rc::new(Host::connect(APP, canvas)?) })
+        Some(Self { host: Rc::new(Host::connect(APP, canvas)?), session_id: Rc::new(RefCell::new(None)) })
     }
 
     /// Make this the bridge [`deliver`] uses.
@@ -64,13 +74,53 @@ impl Bridge {
         let _ = self.host.post_failed(error, None);
     }
 
-    /// Hear drawings from the host; they arrive through the upload inbox.
-    pub fn listen(&self, inbox: crate::upload::Inbox) {
-        self.host.listen(move |message| {
-            if let Message::Open { name, data } = message {
-                receive_open(&name, &data, &inbox);
+    /// `cadcraft:session-state`: the cabinet's sync indicator and who is here. The crate sends it
+    /// as the contract describes; the shell decides when a change is worth a message.
+    pub fn post_session_state(&self, status: &str, participants: &[SessionParticipant]) -> Result<(), String> {
+        self.host.post_session_state(status, &host_people(participants))
+    }
+
+    /// `cadcraft:presence`: the participant list at the sync server's pace.
+    pub fn post_presence(&self, participants: &[SessionParticipant]) -> Result<(), String> {
+        self.host.post_presence(&host_people(participants))
+    }
+
+    /// Hear drawings and sessions from the host; drawings arrive through the upload inbox, the
+    /// session messages through `events`, which the shell drains each frame.
+    pub fn listen(&self, inbox: crate::upload::Inbox, events: Rc<RefCell<Vec<HostEvent>>>, ctx: egui::Context) {
+        let session_id = self.session_id.clone();
+        self.host.listen(move |message| match message {
+            Message::Open { name, data } => receive_open(&name, &data, &inbox),
+            Message::Session { session_id: id, ws_url, token, role } => match HostSession::new(id, ws_url, token, &role) {
+                Some(session) => {
+                    *session_id.borrow_mut() = Some(session.session_id().to_string());
+                    if let Ok(mut queue) = events.try_borrow_mut() {
+                        queue.push(HostEvent::Session(session));
+                    }
+                    ctx.request_repaint();
+                }
+                None => log::warn!("collaboration session refused: unknown role {role:?}"),
+            },
+            Message::Committed { version, etag } => {
+                if let Ok(mut queue) = events.try_borrow_mut() {
+                    queue.push(HostEvent::Committed { version, etag });
+                }
+                ctx.request_repaint();
             }
+            _ => {}
         });
+    }
+
+    /// `cadcraft:commit`: ask the cabinet to store a file the room built without publishing it
+    /// itself. The ordinary path is the room publishing server-to-server (M87), so this is used
+    /// only when the room answers with bytes.
+    pub fn commit_fn(&self) -> HostCommitFn {
+        let host = self.host.clone();
+        let session = self.session_id.clone();
+        Box::new(move |bytes| {
+            let id = session.borrow().clone().ok_or("the page that embeds CADCraft opened no session")?;
+            host.post_commit(&id, bytes)
+        })
     }
 
     /// After each logic callback (including a hidden tab's): tell the host when unsaved changes
@@ -92,8 +142,16 @@ pub fn deliver(name: &str, _mime: &str, bytes: &[u8]) -> Result<(), String> {
     bridge.post_save(name, bytes)
 }
 
-/// The `cadcraft:open` payload, `{ name, bytes }` where `bytes` holds a drawing: it opens like a
-/// file picked with File › Open or dropped on the window. The crate has cleaned the name (and cut
+/// The crate's participant shape, from the session's.
+fn host_people(participants: &[SessionParticipant]) -> Vec<Participant> {
+    participants
+        .iter()
+        .map(|participant| Participant { client_id: participant.client_id.clone(), role: participant.role.clone(), color: participant.color.clone() })
+        .collect()
+}
+
+/// The `cadcraft:open` payload, `{ name, bytes }` where `bytes` holds a drawing: it opens the
+/// session's document in the window (INTEGRATION.md §5.1). The crate has cleaned the name (and cut
 /// it to 255 characters); a blank one comes as `document` and becomes `Drawing.dxf`. An oversized
 /// drawing is refused before it is copied.
 fn receive_open(name: &str, data: &FileData, inbox: &crate::upload::Inbox) {
@@ -107,5 +165,5 @@ fn receive_open(name: &str, data: &FileData, inbox: &crate::upload::Inbox) {
         inbox.refuse(e);
         return;
     }
-    inbox.receive(name, array.to_vec());
+    inbox.receive_host(name, array.to_vec());
 }

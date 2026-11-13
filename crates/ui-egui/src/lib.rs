@@ -27,6 +27,7 @@ pub mod chrome;
 pub mod clipboard;
 pub mod closing;
 pub mod cmdline;
+pub mod collab;
 pub mod context_menu;
 pub mod control;
 pub mod credits;
@@ -297,6 +298,33 @@ pub struct CadApp {
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
+    /// A shared session's connection, when this drawing is being edited together.
+    pub collab: Option<collab::Collab>,
+    /// What the other participants are looking at, by actor.
+    pub remote_presence: std::collections::BTreeMap<String, cadcraft_collab::Presence>,
+    /// The version of the shared drawing this app shows.
+    pub collab_version: u64,
+    /// Whether the room's drawing has joined: the window then shows the room's drawing, not the
+    /// file it opened from, and a later `open` would fork it.
+    pub collab_joined: bool,
+    /// The last commit the shared session reported, for the panel (TASK §6).
+    pub last_collab_commit: Option<collab::CommitState>,
+    /// Why the cabinet refused the last commit (`409`), while the panel offers a copy.
+    pub collab_conflict: Option<String>,
+    /// The page that hosts the web build owns the cabinet's commit: when it set this hook, a
+    /// save in a shared session asks the host to store the session instead of the room writing a
+    /// download. The desktop leaves it unset.
+    pub host_commit: Option<collab::HostCommitFn>,
+    /// The version and etag the host's cabinet confirmed last (`cadcraft:committed`).
+    pub host_committed: Option<(u64, String)>,
+    /// Whether the shared session's participant list is open.
+    pub show_participants: bool,
+    collab_seq: u64,
+    /// Makes this window's operation ids unique in the room. The room answers a repeated `op_id`
+    /// with the first answer (ADR 0003), so two participants — or the same one after a reload —
+    /// must not both send `local-0`; the counter alone is not an id.
+    collab_run: u64,
+    last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
     /// Monotonic surface epoch, bumped whenever the window/viewport geometry changes.
@@ -391,6 +419,18 @@ impl CadApp {
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             control_rx: None,
+            collab: None,
+            remote_presence: std::collections::BTreeMap::new(),
+            collab_version: 0,
+            collab_joined: false,
+            last_collab_commit: None,
+            collab_conflict: None,
+            host_commit: None,
+            host_committed: None,
+            show_participants: false,
+            collab_seq: 0,
+            collab_run: collab::run_id(),
+            last_presence: None,
             capture_geometry: None,
             capture_epoch: 0,
             capture_identity_epoch: 0,
@@ -586,7 +626,21 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
-        let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        // Which drawing this window shows is not part of the drawing: a shared session runs the
+        // switch here instead of queueing it as a room operation, which the server has no command
+        // for and would refuse a viewer.
+        if is_local_only(id) {
+            return self.execute_here(id, &params);
+        }
+        if let Some(r) = self.collab_command(id, &params) {
+            return r;
+        }
+        self.execute_here(id, &params)
+    }
+
+    /// Run an engine command in this session, echoing its message or error as [`Self::run`] does.
+    fn execute_here(&mut self, id: &str, params: &Value) -> Result<Value, String> {
+        let r = self.session.execute(id, params).map_err(|e| e.to_string());
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -605,6 +659,12 @@ impl CadApp {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        if self.is_shared() {
+            self.session.echo(
+                "a shared session has no interactive prompt; type a complete command, e.g. `line 0,0 10,0`, `circle 5,5 2` or `move 1A2 delta 10,0`",
+            );
+            return;
+        }
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -620,6 +680,11 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        if self.is_shared() {
+            // A shared session has no prompt to fill in: the line names its own points and objects
+            // and goes to the server as one operation (see `collab::collab_cmdline`).
+            return self.collab_cmdline(text);
+        }
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -870,6 +935,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        self.collab_tick(ctx);
         self.finish_pick(ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
@@ -1137,6 +1203,13 @@ impl CadApp {
         }
         self.control_rx = Some(rx);
     }
+}
+
+/// Whether `id` changes only this window, never the drawing: a shared session runs it here
+/// instead of queueing it as a room operation. `document.switch` is the active tab, which the
+/// room does not own; an edit still goes to `collab_command`.
+fn is_local_only(id: &str) -> bool {
+    id == "document.switch"
 }
 
 /// Ask for a painted frame while no frame is being painted. Native eframe honours the viewport

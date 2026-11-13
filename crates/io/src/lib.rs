@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
+pub use dxf_read::Incremental;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
@@ -76,6 +77,12 @@ fn ext(name: impl AsRef<Path>) -> String {
 /// (SVG and gzip-compressed SVGZ).
 pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
     read_source(bytes, name.as_ref()).map(|(d, _)| d)
+}
+
+/// Start reading a DXF file in bounded steps, for a caller that cannot block (a browser frame);
+/// the finished [`Incremental::drawing`] is the same as [`read`]'s.
+pub fn read_incremental(bytes: &[u8]) -> Result<Incremental> {
+    Incremental::new(bytes)
 }
 
 /// [`read`], also returning the DXF rendition a DWG was read through (`None` for other files),
