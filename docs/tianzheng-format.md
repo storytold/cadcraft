@@ -5,6 +5,18 @@
 >
 > **状态**：格式主体已还原；加密算法经汇编级验证。但 **尚未用真实 .dwg 样本实测**，且各实体派生类的具体字段语义未完全展开。
 
+## 0. 重要修正（2026-11-12，第二次逆向）
+
+首次逆向（本文件其余章节）有几处**关键结论是错的**，已在第二次逆向（逆 `TDbWall`/`TWallData`/`TEntityField` 虚函数链 + 实测 `TIANZHENTEST_modified.dwg` 与 `02 配电装置室建筑施工图_t5.dwg`）中修正：
+
+1. **`+0xd0` 子对象不是几何，是 `TDbXDataMap`（数据映射容器）**。vftable=`0x1c675a60`，`dwgOutFields`@`0x1c40e840` 写「字段名→内存偏移」映射表（11 个 filer 间接调用）。本文件第 4 节把 `+0xd0` 当「子对象几何」、第 9 节把「子对象 DwgOut 0x1c40e840」当几何，均错。
+
+2. **墙几何是 `TWallData`，在 `+0x130` 偏移**（非 `+0xd0`）。继承链：`TDbWall(+0x00)` → `TDbCurveEntity(+0x00)` → `TEntityBase(+0x18)`。`TWallData` 继承 `TGGeCurveSegment`（几何曲线段），构造接收 `TADSGePoint3d×2 + double` = **起点/终点/高度**。另有 `TWallBase @+0x208`。`TWallData` vftable 槽[10] 是析构函数，几何序列化不在其虚函数。
+
+3. **DataType case 映射**（`TEntityField::DwgOut`@`0x1c469880`，索引表 `0x1c469c44` + 跳转表 `0x1c469bf0`）：只有 `0(bool)/1-2(char)/3(byte)/4(uint16)/5(int16)/6(int32)/7(uint)/100(嵌套字段容器)/101(string)/200-210(double BD)` **写 main 流值**；**`8-99` 与 `102-199` 是 default return，不写 main 流值**。实测字段类型 `164/32/173/67/161/162/146/114/10` 全不写值——之前 `tz_decode` 把它们当 double/byte 读，是「double 垃圾值」「main 流 [451,777) 来源不明」的根源（错位 124 bit）。
+
+4. **真实生产图纸的墙几何在 proxy graphics 的类型 6 图元**（acadrust `ProxyGraphicRecord::Unknown{record_type:6}`），payload 52 字节 = `u32 顶点数(=2) + 起点(X1,Y1,Z1) + 终点(X2,Y2,Z2)`，6 个 double LE。墙 = 多个类型 6 图元（每段路径一个；简单墙 2 段、复杂墙 18 段）。坐标是建筑坐标 mm（如 X=137026.85/Y=4505.88），双线墙间距=墙厚 240mm。已实现 `cadcraft_dwg::tianzheng::extract_wall_segments` 提取（commit `aa85032`）。**binary 格式（TIANZHENTEST）graphic_data 仅 8 字节，几何在 text 流加密固定字段**（`decrypt_field` 解密得 ASCII 数字）。
+
 ## 1. 概述
 
 天正 T20（Tangent）在 DWG 中通过 ObjectARX 自定义实体（代理实体 proxy entity，DXF 类名 `TCH_*`）存储建筑 / 结构 / 给排水 / 暖通 / 电气对象。不经过天正运行时，第三方 CAD 只能看到 `ACAD_PROXY_ENTITY`，读不到真实几何与属性。
