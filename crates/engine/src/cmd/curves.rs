@@ -453,14 +453,32 @@ impl Chain {
     }
     /// Point and unit tangent at arc length `d` from the start (clamped).
     pub fn at_length(&self, d: f64) -> Option<(Vec2, Vec2)> {
-        let mut acc = 0.0;
-        for s in &self.segs {
-            let l = s.len();
-            if d <= acc + l + 1e-12 && l > 0.0 {
-                let t = ((d - acc) / l).clamp(0.0, 1.0);
-                return Some((s.at(t), s.tangent(t)));
-            }
-            acc += l;
+        self.at_length_in(&self.end_lengths(), d)
+    }
+    /// The arc length from the chain's start to the end of each segment, for [`Self::at_length_in`].
+    pub fn end_lengths(&self) -> Vec<f64> {
+        self.segs
+            .iter()
+            .scan(0.0, |acc, s| {
+                *acc += s.len();
+                Some(*acc)
+            })
+            .collect()
+    }
+    /// [`Self::at_length`] with the segment end lengths computed once (`ends` from
+    /// [`Self::end_lengths`]), so many samples along one chain each cost a binary search.
+    pub fn at_length_in(&self, ends: &[f64], d: f64) -> Option<(Vec2, Vec2)> {
+        let first = ends.partition_point(|e| d > e + 1e-12);
+        // A segment of no length can't hold the point; the next one that has length does.
+        // `ends` never decreases, so the first segment past `first` with length is found by search
+        // (a run of zero-length segments can be long) instead of a scan.
+        let base = first.checked_sub(1).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
+        let i = first + ends.get(first..).unwrap_or_default().partition_point(|e| *e <= base);
+        let i = (i < self.segs.len()).then_some(i);
+        if let Some(s) = i.and_then(|i| self.segs.get(i)) {
+            let start = i.and_then(|i| i.checked_sub(1)).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
+            let t = ((d - start) / s.len()).clamp(0.0, 1.0);
+            return Some((s.at(t), s.tangent(t)));
         }
         self.segs.last().map(|s| (s.end(), s.tangent(1.0)))
     }
@@ -639,6 +657,34 @@ pub fn reverse_vertices(vs: &[PolyVertex], closed: bool) -> Vec<PolyVertex> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The indexed lookup gives the point and tangent a scan from the start gives, also past the
+    /// ends and over a segment of no length.
+    #[test]
+    fn at_length_in_matches_a_scan() {
+        let l = |a: (f64, f64), b: (f64, f64)| Segment::Line(Line::new(Vec2::new(a.0, a.1), Vec2::new(b.0, b.1)));
+        let c = Chain {
+            segs: vec![l((0.0, 0.0), (0.0, 0.0)), l((0.0, 0.0), (4.0, 0.0)), l((4.0, 0.0), (4.0, 0.0)), l((4.0, 0.0), (4.0, 3.0))],
+            closed: false,
+        };
+        let ends = c.end_lengths();
+        for d in [-1.0, 0.0, 1.5, 4.0, 4.0 + 1e-13, 5.0, 7.0, 9.0] {
+            // The scan this replaced.
+            let mut acc = 0.0;
+            let mut want = c.segs.last().map(|s| (s.end(), s.tangent(1.0)));
+            for s in &c.segs {
+                let len = s.len();
+                if d <= acc + len + 1e-12 && len > 0.0 {
+                    let t = ((d - acc) / len).clamp(0.0, 1.0);
+                    want = Some((s.at(t), s.tangent(t)));
+                    break;
+                }
+                acc += len;
+            }
+            assert_eq!(c.at_length_in(&ends, d), want, "d = {d}");
+            assert_eq!(c.at_length(d), want);
+        }
+    }
 
     #[test]
     fn arc_builders() {

@@ -22,7 +22,8 @@ mod vec;
 pub use bounds::Bounds2;
 pub use camera::{Camera3D, CubeQuad, build_beveled_cube, face_text_axes, intersect_ray_plane, rotate_vec_around_axis};
 pub use curve::{
-    Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, polygon_centroid, shoelace,
+    Arc, Circle, Ellipse, Line, MAX_TESSELLATED_POINTS, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon,
+    polygon_centroid, shoelace,
 };
 pub use fillet::{CornerFit, TanCurve, tangent_circles};
 pub use intersect::{circle_circle, intersect_ext, intersect_segments, line_circle, line_line, line_line_infinite};

@@ -11,6 +11,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_arch = "wasm32")]
+mod api;
+#[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
 mod host;
@@ -160,7 +162,8 @@ mod web {
                     Box::new(move |cc| {
                         // Embedded, the host sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
-                        let mut app = CadApp::new(session, services());
+                        let control = crate::api::install(cc.egui_ctx.clone());
+                        let mut app = CadApp::new(session, services()).with_control(control);
                         app.system_languages =
                             web_sys::window().map(|w| w.navigator().languages().iter().filter_map(|v| v.as_string()).collect()).unwrap_or_default();
                         if let Some(profile) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::options::PROFILE_KEY)) {

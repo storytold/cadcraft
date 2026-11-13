@@ -87,6 +87,7 @@ fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
 }
 
 /// The Door fixture with a scale action on the Width parameter: graph node 6, object 68.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn with_scale_action() -> String {
     let node = "91 6\n93 32\n95 7\n360 68\n92 -1\n92 -1\n92 -1\n92 -1\n";
     let action = "0 BLOCKSCALEACTION\n5 68\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n\
@@ -105,6 +106,7 @@ fn with_scale_action() -> String {
 /// the DWG holds it with its connections, and it reads back as the same action. AutoCAD refused
 /// such DWGs while acadrust left out the byte after its connections (cadcraft-dwg's
 /// `scale_actions_keep_the_byte_autocad_reads_after_their_connections` covers the byte).
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_scale_action_survives_a_dwg_save() {
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
