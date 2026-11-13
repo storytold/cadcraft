@@ -1382,6 +1382,8 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Text Formulas	文字公式
+	Update Fields	更新字段
 	Find All	查找全部
 	Find what:	查找内容：
 	Match case	区分大小写
@@ -1473,6 +1475,18 @@ menu	View	视图
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
+	Move Layout	移动布局
+	Move to...	移动到...
+	Move before layout:	移到布局之前：
+	(move to end)	（移到末尾）
+	Custom:	自定义:
+	By window	按窗口
+	Pick a window to fit in the viewport	选取要充满视口的窗口
+	Not a scale: {text} (type 1:x)	不是比例：{text}（请输入 1:x）
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Saving...	正在保存...
+	Plotting...	正在打印...
+	Wait until the file is written.	请等待文件写入完成。
+	The file could not be written.	无法写入文件。

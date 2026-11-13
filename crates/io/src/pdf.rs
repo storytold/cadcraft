@@ -36,6 +36,7 @@ use kr::text::{GlyphId, KrillaGlyph};
 use crate::{IoError, Result};
 
 mod fonts;
+mod outline;
 
 /// PDF points per millimetre.
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -504,6 +505,52 @@ impl Groups {
     }
 }
 
+/// Write a vector PDF of sheets from several drawings, one page per `(drawing, space)` in order
+/// (at most [`MAX_PAGES`]). Each drawing has its own layers, so none become PDF layers.
+pub fn pdf_book(items: &[(&Drawing, Space)], o: &PdfOptions) -> Result<Vec<u8>> {
+    if items.is_empty() {
+        return Err(IoError::Format("there are no sheets to plot".into()));
+    }
+    if items.len() > MAX_PAGES {
+        return Err(IoError::Format(format!("at most {MAX_PAGES} sheets fit in one PDF")));
+    }
+    let mut po = o.clone();
+    po.layers = false;
+    match write_book(items, &po, po.text_as_geometry) {
+        // As for one drawing: a font the writer can't embed plots the text as outlines instead.
+        Err(Failure::Write(e)) if !po.text_as_geometry && font_failure(&e) => write_book(items, &po, true).map_err(Failure::into_io),
+        r => r.map_err(Failure::into_io),
+    }
+}
+
+/// [`write_pdf`] for sheets of several drawings, each with its own links; no PDF layers.
+fn write_book(items: &[(&Drawing, Space)], o: &PdfOptions, text_as_geometry: bool) -> std::result::Result<Vec<u8>, Failure> {
+    write::guard(|| {
+        let title = if o.title.is_empty() { items.first().map(|(_, s)| sheet_name(s)).unwrap_or_default() } else { o.title.clone() };
+        let metadata = Metadata {
+            creator: "CADCraft".into(),
+            producer: "CADCraft".into(),
+            title: Some(title.chars().take(MAX_TEXT).collect()),
+            ..Metadata::default()
+        };
+        let settings = kr::SerializeSettings {
+            compress_content_streams: o.compress,
+            xmp_metadata: false,
+            enable_tagging: false,
+            ..kr::SerializeSettings::default()
+        };
+        let mut writer = Writer::new(settings, metadata);
+        let mut fonts = fonts::Fonts::new(!text_as_geometry);
+        let groups = Groups::default();
+        for (d, s) in items {
+            let links = all_links(d, o);
+            let page = sheet(d, s, o, &links)?;
+            write_page(writer.document_mut(), &page, &groups, &mut fonts)?;
+        }
+        Ok(writer.finish()?)
+    })
+}
+
 /// One plotted sheet, ready to be written as a page.
 struct SheetPage {
     /// Page size in points.
@@ -720,8 +767,20 @@ pub(crate) fn plot_scale(b: &Bounds2, sheet: &Sheet, fit: bool, scale: Option<f6
 /// area first. The PDF writer's geometry is `f32`.
 const MAX_COORD: f64 = 1.0e7;
 
-/// A point in points as the writer's `f32`, or `None` when it is not finite or out of range.
+/// Coordinates are written to a hundredth of a point (0.0035 mm, finer than any printer): the
+/// digits beyond that only made the file larger.
+const COORD_STEP: f64 = 100.0;
+
+/// A point in points as the writer's `f32`, to [`COORD_STEP`], or `None` when it is not finite
+/// or out of range.
 fn coord(p: Vec2) -> Option<(f32, f32)> {
+    let ok = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
+    let r = |v: f64| ((v * COORD_STEP).round() / COORD_STEP) as f32;
+    (ok(p.x) && ok(p.y)).then_some((r(p.x), r(p.y)))
+}
+
+/// [`coord`] without the rounding: for a glyph's em axes, which are scales, not places.
+fn exact(p: Vec2) -> Option<(f32, f32)> {
     let ok = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
     (ok(p.x) && ok(p.y)).then_some((p.x as f32, p.y as f32))
 }
@@ -938,11 +997,11 @@ fn polyline_points(prim: &DPrim, raw: &[Vec2], map: &Map, clip_pt: &Bounds2) -> 
 
 /// Add one run of a polyline to the batch, or paint it as a dot when it has no extent.
 fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, run: &[Vec2], style: StrokeStyle, m: Mark) {
-    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { return };
+    let Some(exact_pts) = run.iter().map(|q| exact(*q)).collect::<Option<Vec<_>>>() else { return };
     // The writer leaves out a path without extent, so a zero-length line is
     // painted as the round-cap dot its stroke would make.
-    if let Some(&(x, y)) = pts.first()
-        && pts.iter().all(|q| *q == (x, y))
+    if let Some(&(x, y)) = exact_pts.first()
+        && exact_pts.iter().all(|q| *q == (x, y))
     {
         flush(s, batch);
         let d = if m.w > 0.0 { m.w as f32 } else { HAIRLINE_DOT_PT };
@@ -951,13 +1010,27 @@ fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)
         }
         return;
     }
+    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { return };
     let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
-    for (j, (x, y)) in pts.iter().enumerate() {
-        if j == 0 {
-            pb.move_to(*x, *y);
-        } else {
-            pb.line_to(*x, *y);
+    let mut last = None;
+    let mut drawn = 0;
+    for (x, y) in pts {
+        // A point that rounds to the one before adds nothing.
+        match last {
+            None => pb.move_to(x, y),
+            Some(q) if q == (x, y) => continue,
+            Some(_) => {
+                pb.line_to(x, y);
+                drawn += 1;
+            }
         }
+        last = Some((x, y));
+    }
+    // A line shorter than the rounding still shows as its stroke's end: one step long.
+    if drawn == 0
+        && let Some((x, y)) = last
+    {
+        pb.line_to(x + (1.0 / COORD_STEP) as f32, y);
     }
 }
 
@@ -967,6 +1040,26 @@ fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) 
     // With a vertex out of range, keep the parts inside the plot area.
     let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
     let mut pb = PathBuilder::new();
+    // The outline of the triangles, when it can be told, is much shorter than the triangles.
+    if let Some(loops) = outline::loops(&tris) {
+        for ring in loops {
+            let mut last = None;
+            for q in ring {
+                let Some(c) = coord(q) else { continue };
+                match last {
+                    None => pb.move_to(c.0, c.1),
+                    Some(l) if l == c => continue,
+                    Some(_) => pb.line_to(c.0, c.1),
+                }
+                last = Some(c);
+            }
+            pb.close();
+        }
+        if let Some(path) = pb.finish() {
+            fill_path(s, &path, rgb, t);
+        }
+        return;
+    }
     for tri in tris.as_chunks::<3>().0 {
         let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
         for (j, (x, y)) in v.iter().enumerate() {
@@ -999,7 +1092,9 @@ fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, ma
 fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, rgb: Rgb, transparency: u8) {
     let k = map.s * map.k;
     let g = &t.glyph;
-    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(map.pt(g.origin))) else { return };
+    // The em axes keep their precision (rounding them would change the text's size); the
+    // origin is a point like any other.
+    let (Some((a, b)), Some((c, d)), Some((e, f))) = (exact(g.x * k), exact(g.y * k), coord(map.pt(g.origin))) else { return };
     let det = a * d - b * c;
     if !det.is_finite() || det == 0.0 {
         return;

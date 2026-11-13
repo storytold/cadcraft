@@ -505,9 +505,39 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let [left, right] = cols else { return };
             left.label(RichText::new("Layouts").strong());
             egui::ScrollArea::vertical().id_salt("pagesetup_list").max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
+                // The layouts drag to a new place in the tab order.
+                let mut rows: Vec<(String, egui::Rect)> = Vec::new();
+                let mut dragged: Option<(String, bool)> = None;
                 for (_, name, _) in &layouts {
-                    if ui.selectable_label(*name == sel, name).clicked() {
+                    let r = ui.add(egui::Button::selectable(*name == sel, name).sense(egui::Sense::click_and_drag()));
+                    if r.clicked() {
                         sel = name.clone();
+                    }
+                    if r.dragged() || r.drag_stopped() {
+                        dragged = Some((name.clone(), r.drag_stopped()));
+                    }
+                    rows.push((name.clone(), r.rect));
+                }
+                if let Some((name, dropped)) = dragged
+                    && let Some(py) = ui.ctx().pointer_latest_pos().map(|q| q.y)
+                {
+                    let target = rows.iter().find(|(_, r)| py < r.center().y).map(|(n, _)| n.clone());
+                    let mark_y = match &target {
+                        Some(b) => rows.iter().find(|(n, _)| n == b).map(|(_, r)| r.top()),
+                        None => rows.last().map(|(_, r)| r.bottom()),
+                    };
+                    if let (Some(y), Some((_, first))) = (mark_y, rows.first()) {
+                        ui.painter().line_segment([egui::pos2(first.left(), y), egui::pos2(first.right(), y)], egui::Stroke::new(2.0, t.accent));
+                    }
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if dropped && target.as_ref() != Some(&name) {
+                        action = Some((
+                            "layout.move",
+                            match target {
+                                Some(b) => json!({ "name": name, "before": b }),
+                                None => json!({ "name": name }),
+                            },
+                        ));
                     }
                 }
             });
@@ -1069,7 +1099,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
     if app.ui.dialog.as_deref() == Some("plot") {
         app.ui.dialog = None;
     }
-    match app.run("plot", params) {
+    // Plotted away from the window ([`crate::busy`]).
+    let target = target.to_string();
+    crate::busy::run(app, "plot", params, move |app, r| match r {
         Ok(r) => {
             let msg = match r.get("path").and_then(Value::as_str) {
                 Some(path) => format!("Plotted {target} to {path}"),
@@ -1077,9 +1109,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
             };
             app.session.echo(msg);
         }
-        // `run` already echoed the error; keep the dialog open to fix the settings.
+        // The error was echoed; the dialog opens again to fix the settings.
         Err(_) => app.ui.dialog = Some("plot".into()),
-    }
+    });
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.

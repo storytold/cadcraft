@@ -533,7 +533,7 @@ mod tests {
             let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0 };
             let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
                 let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
-                crate::canvas::draw_list(&painter, &xf, &l, cadcraft_color::Rgb(0, 0, 0), false);
+                crate::canvas::draw_list(&painter, &xf, &l, cadcraft_color::Rgb(0, 0, 0), crate::gpu::LwScale::Off);
             });
             out.textures_delta.clear();
             let kinds: Vec<bool> = out.shapes.iter().map(|s| matches!(s.shape, Shape::Mesh(_))).collect();

@@ -21,6 +21,7 @@ mod plotstyle;
 mod point;
 pub mod raster;
 mod text;
+pub mod textformula;
 mod tolerance;
 pub mod units;
 mod wide;
