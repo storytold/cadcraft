@@ -624,6 +624,7 @@ fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>)
             }
         });
         ui.add_space(12.0);
+    }
 }
 
 /// Layout tab `i` (not Model) for the drag: its place, and whether it is the one dragged.

@@ -46,8 +46,8 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
-pub mod thumbs;
 pub mod table_editor;
+pub mod thumbs;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
