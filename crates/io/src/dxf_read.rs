@@ -74,6 +74,50 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     read_budgeted(bytes, 4_000_000)
 }
 
+/// A DXF's group codes, and whether the file ended inside a group code / value pair. Such a file
+/// (a save interrupted, a copy cut short) ends with a code that no value follows; the pairs
+/// before the cut are complete, so the dangling code is dropped and they read (#3017). Binary DXF
+/// is left to fail as it did: a cut there can fall inside a value, and nothing says where the
+/// last complete pair ended.
+fn parse_tags(bytes: &[u8]) -> Result<(Vec<Tag>, bool)> {
+    match craft_dxf::parse(bytes) {
+        Ok(tags) => Ok((tags, false)),
+        Err(craft_dxf::DxfError::Eof) if !craft_dxf::is_binary(bytes) => {
+            let cut = before_last_line(bytes);
+            let refused = || IoError::Format("unexpected end of file".into());
+            let tags = craft_dxf::parse(cut).map_err(|_| refused())?;
+            Ok((tags, true))
+        }
+        Err(e) => Err(IoError::Format(e.to_string())),
+    }
+}
+
+/// The bytes before the last line: LF, CRLF and a lone CR all end a line, no line follows a
+/// final terminator, as [`craft_dxf`] splits them. The dangling code of a cut file is that line.
+fn before_last_line(b: &[u8]) -> &[u8] {
+    let mut after_run = 0;
+    let mut after_prev = 0;
+    let mut i = 0;
+    while i < b.len() {
+        // A CR with an LF after it is one terminator; every other CR or LF is one of its own.
+        let j = match b[i] {
+            b'\r' if b.get(i + 1) == Some(&b'\n') => i + 2,
+            b'\r' | b'\n' => i + 1,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        after_prev = after_run;
+        after_run = j;
+        i = j;
+    }
+    // Bytes after the final terminator make the last line; ending with one, the last line is the
+    // one before it that the terminator closes.
+    let start = if after_run < b.len() { after_run } else { after_prev };
+    &b[..start]
+}
+
 /// A block definition read from BLOCKS: name, base point, description, entities (owner, paper
 /// flag, entity) and block flags.
 type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);
@@ -84,12 +128,15 @@ type LayoutDef = (String, u32, String, PageSetup, Option<(Vec2, Vec2)>);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
 fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
-    let tags = craft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
+    let (tags, cut) = parse_tags(bytes)?;
     let secs = sections(&tags);
     if secs.is_empty() {
         return Err(IoError::Format("no sections found".into()));
     }
     let mut d = Drawing::new_imperial();
+    if cut {
+        d.read_notes.push("DXF: the file was cut inside a group code / value pair; the incomplete last pair was ignored".into());
+    }
     d.layouts.clear();
     // A file without $INSUNITS declares no units (#1209); only new drawings take the template's.
     d.header.set_i64("INSUNITS", 0);
