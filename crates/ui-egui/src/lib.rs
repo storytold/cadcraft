@@ -43,6 +43,7 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+pub mod table_editor;
 // The External References palette.
 pub mod xrefs;
 
@@ -254,6 +255,8 @@ pub struct CadApp {
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
+    /// The table editor's selected cells ([`table_editor`]); `None` while it is closed.
+    pub table_edit: Option<table_editor::TableEdit>,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -346,6 +349,7 @@ impl CadApp {
             status: None,
             opening: opening::Opening::default(),
             integrated_titlebar: false,
+            table_edit: None,
             control_rx: None,
             capture_geometry: None,
             capture_epoch: 0,

@@ -789,6 +789,100 @@ const TEXT_JUSTIFY: [(&str, cadcraft_doc::HAlign, cadcraft_doc::VAlign, &str); 1
     ]
 };
 
+/// The cells selected in the table editor ([`crate::table_editor`]): their row height, column
+/// width, alignment and text height (one value, or `*VARIES*`), and the text of a single cell.
+/// Whether the editor is open.
+fn table_cells_section(app: &mut CadApp, ui: &mut egui::Ui) -> bool {
+    let Some(table) = crate::table_editor::current(app) else { return false };
+    let Some(edit) = app.table_edit.clone() else { return false };
+    let Ok(d) = app.session.doc() else { return false };
+    let t = Tokens::get();
+    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+    let len = |v: f64| cadcraft_engine::units::format_distance(v, lu, lp);
+    let varies = || crate::i18n::t("*VARIES*").to_string();
+    let one = |v: &[f64]| v.first().copied().filter(|f| v.iter().all(|x| (x - f).abs() <= 1e-9 * f.abs().max(1.0)));
+    let (r0, c0, r1, c1) = edit.range();
+    let heights: Vec<f64> = table.row_heights.iter().skip(r0).take(r1 - r0 + 1).copied().collect();
+    let widths: Vec<f64> = table.col_widths.iter().skip(c0).take(c1 - c0 + 1).copied().collect();
+    let st = cadcraft_render::table_style_of(d, &table);
+    let k = Some(table.text_height / st.text_height).filter(|k| k.is_finite() && *k > 0.0).unwrap_or(1.0);
+    let mut aligns = Vec::new();
+    let mut text_heights = Vec::new();
+    for r in r0..=r1 {
+        for c in c0..=c1 {
+            let cs = st.cell_style(table.cell_style_name(r, c));
+            let cell = table.cells.get(r).and_then(|row| row.get(c));
+            aligns.push(cell.and_then(|x| x.align).unwrap_or(cs.align));
+            text_heights.push(cell.and_then(|x| x.text_height).filter(|h| *h > 0.0).map_or(cs.text_height * k, |h| h * k));
+        }
+    }
+    let single = (r0, c0) == (r1, c1);
+    let contents = single
+        .then(|| table.cells.get(r0).and_then(|row| row.get(c0)).map(|c| c.formula.clone().unwrap_or_else(|| c.text.clone())).unwrap_or_default());
+    let group = |ui: &mut egui::Ui, title: &str| {
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+        ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
+        ui.painter().text(pos2(r.left() + 12.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(title), crate::theme::small(), t.text_dim);
+    };
+    let mut run: Option<(&str, Value)> = None;
+    let mut bad: Option<String> = None;
+    let id = ui.scope_id().with(("table_cells", edit.handle, edit.range()));
+    group(ui, "Cell");
+    prop_row(ui, "Cells", |ui| read_only(ui, &edit.name()));
+    prop_row(ui, "Row height", |ui| {
+        if let Some(f) = number(edit_field(ui, id.with("rh"), one(&heights).map_or_else(varies, len)), &mut bad) {
+            run = Some(("table.size", json!({ "handle": edit.handle.hex(), "row": r0, "rows": r1 - r0 + 1, "height": f })));
+        }
+    });
+    prop_row(ui, "Column width", |ui| {
+        if let Some(f) = number(edit_field(ui, id.with("cw"), one(&widths).map_or_else(varies, len)), &mut bad) {
+            run = Some(("table.size", json!({ "handle": edit.handle.hex(), "col": c0, "cols": c1 - c0 + 1, "width": f })));
+        }
+    });
+    prop_row(ui, "Alignment", |ui| {
+        let all_same = aligns.iter().all(|a| Some(a) == aligns.first());
+        let cur = if all_same {
+            aligns.first().and_then(|a| MTEXT_JUSTIFY.get(usize::from(a.clamp(&1, &9) - 1))).map_or("Top left", |j| j.1)
+        } else {
+            "*VARIES*"
+        };
+        if let Some(n) = pick_menu(ui, crate::i18n::t(cur), MTEXT_JUSTIFY.iter().map(|j| crate::i18n::t(j.1).to_string()))
+            && let Some(j) = MTEXT_JUSTIFY.iter().find(|j| crate::i18n::t(j.1) == n)
+        {
+            let mut p = edit.params();
+            p["align"] = json!(j.0);
+            run = Some(("table.cells", p));
+        }
+    });
+    prop_row(ui, "Text height", |ui| {
+        let shown = one(&text_heights).map_or_else(varies, len);
+        if let Some(f) = number(edit_field(ui, id.with("th"), shown), &mut bad) {
+            // The cell keeps its height before the table's scale.
+            let mut p = edit.params();
+            p["textHeight"] = json!(f / k);
+            run = Some(("table.cells", p));
+        }
+    });
+    if let Some(text) = contents {
+        group(ui, "Content");
+        prop_row(ui, "Contents", |ui| {
+            if let Some(s) = edit_field(ui, id.with("txt"), text) {
+                run = Some(("table.set", json!({ "handle": edit.handle.hex(), "row": r0, "col": c0, "text": s })));
+            }
+        });
+    }
+    group(ui, "Table");
+    prop_row(ui, "Rows", |ui| read_only(ui, &table.row_heights.len().to_string()));
+    prop_row(ui, "Columns", |ui| read_only(ui, &table.col_widths.len().to_string()));
+    if let Some((cmd, p)) = run
+        && let Err(e) = app.run(cmd, p)
+    {
+        app.session.echo(e);
+    }
+    report_bad(app, bad);
+    true
+}
+
 /// Multiline text attachments 1..=9: (code, name).
 const MTEXT_JUSTIFY: [(&str, &str); 9] = [
     ("TL", "Top left"),
@@ -953,6 +1047,10 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
 pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);
+    // The table editor's cells, instead of the selected objects.
+    if table_cells_section(app, ui) {
+        return;
+    }
     let sel = app.session.selection();
     let Ok(d) = app.session.doc() else { return };
     ui.add_space(4.0);
@@ -1639,5 +1737,20 @@ mod tests {
         app.run("properties.set", Value::Object(p)).unwrap();
         let all = shown_texts(&mut app);
         assert!(all.iter().any(|s| s == "4.0000"), "{all:?}");
+    }
+
+    /// With the table editor open, Properties shows the selected cells: their name, sizes and
+    /// alignment, and the text of a single cell.
+    #[test]
+    fn the_table_editor_shows_its_cells_in_properties() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let v = app.run("table", json!({ "at": [0, 0], "rows": 2, "cols": 2, "rowHeight": 1, "colWidth": 5 })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(v["handle"].as_str().unwrap()).unwrap();
+        app.run("table.set", json!({ "handle": h.hex(), "row": 1, "col": 1, "text": "Bolt" })).unwrap();
+        app.table_edit = Some(crate::table_editor::TableEdit::new(h, (1, 1)));
+        let all = shown_texts(&mut app);
+        for want in ["B2", "Row height", "Column width", "Alignment", "Bolt"] {
+            assert!(all.iter().any(|s| s == want), "{want}: {all:?}");
+        }
     }
 }

@@ -1481,6 +1481,8 @@ fn table_sample() -> Table {
     ];
     rows[0][0].merged = Some((1, 3));
     rows[2][0].merged = Some((2, 1));
+    // A cell's own alignment (DXF 170) goes through.
+    rows[3][1].align = Some(5);
     Table {
         insert: Vec3::new(5.0, 20.0, 0.0),
         col_widths: vec![1.5, 2.5, 4.0],

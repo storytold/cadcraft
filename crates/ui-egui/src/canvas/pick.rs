@@ -49,6 +49,17 @@ pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
         }
         return true;
     }
+    // A table cell: the table editor first, the cell's text on a second double-click.
+    let table = app.session.doc().ok().and_then(|d| {
+        let space = d.space(&app.session.space())?;
+        space.iter().find_map(|e| match &e.kind {
+            EntityKind::Table(t) => t.cell_at_point(p).map(|cell| (e.handle, cell)),
+            _ => None,
+        })
+    });
+    if let Some((h, cell)) = table {
+        return crate::table_editor::double_click(app, h, cell, p);
+    }
     let picked = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
         app.session.doc().ok()?.entity(h).map(|e| match &e.kind {
             EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Dimension(_) => Some("textedit.object"),
@@ -170,6 +181,10 @@ mod hatch_pick_tests {
         assert!(matches!(app.session.text_editor().map(|e| e.kind), Some(cadcraft_engine::EditorKind::MText)));
         app.session.cancel();
         app.session.set_selection(Vec::new());
+        // A table cell: the table editor first, its text on the second double-click.
+        double_click(&mut app, Vec2::new(23.0, 7.0));
+        assert!(app.session.running.is_none());
+        assert!(app.table_edit.is_some(), "the table editor opens on the cell");
         double_click(&mut app, Vec2::new(23.0, 7.0));
         assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("tabledit.cell"));
         assert!(matches!(app.session.text_editor().map(|e| e.kind), Some(cadcraft_engine::EditorKind::TableCell { .. })));

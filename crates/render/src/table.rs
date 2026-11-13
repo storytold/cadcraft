@@ -320,7 +320,7 @@ fn layout(d: &Drawing, t: &Table) -> TableGeom {
         let Some(cell) = t.cells.get(a.row).and_then(|row| row.get(a.col)).filter(|c| !c.text.is_empty()) else { continue };
         let Some(cs) = styles.get(a.style) else { continue };
         let (x0, x1, y0, y1) = (x_at(a.col), x_at(a.col + a.cols), y_at(a.row), y_at(a.row + a.rows));
-        let attach = cs.align.clamp(1, 9);
+        let attach = cell.align.filter(|a| (1..=9).contains(a)).unwrap_or(cs.align).clamp(1, 9);
         let x = match (attach - 1) % 3 {
             0 => x0 + cs.margin_h,
             1 => (x0 + x1) / 2.0,

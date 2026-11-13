@@ -4,6 +4,7 @@
 mod breaks;
 mod cells;
 pub(crate) mod formula;
+mod sizes;
 
 pub(crate) use cells::{recalc, tablestyle_cell_style};
 
@@ -30,14 +31,15 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("table.set", "Set Table Cell", run_set)
             .params("{handle, row, col, text? (text starting with = is a formula), formula?: \"=Sum(A2:A5)\"}"),
         CommandSpec::new("table.insertrow", "Insert Row", run_insert_row).params("{handle, row? (insert before; default: append), height?}"),
-        CommandSpec::new("table.deleterow", "Delete Row", run_delete_row).params("{handle, row}"),
+        CommandSpec::new("table.deleterow", "Delete Row", run_delete_row).params("{handle, row, rows? (default 1)}"),
         CommandSpec::new("table.insertcol", "Insert Column", run_insert_col).params("{handle, col? (insert before; default: append), width?}"),
-        CommandSpec::new("table.deletecol", "Delete Column", run_delete_col).params("{handle, col}"),
+        CommandSpec::new("table.deletecol", "Delete Column", run_delete_col).params("{handle, col, cols? (default 1)}"),
         CommandSpec::new("table.merge", "Merge Cells", run_merge).params("{handle, row, col, rows, cols}"),
         CommandSpec::new("table.unmerge", "Unmerge Cells", run_unmerge).params("{handle, row, col}"),
     ]
     .into_iter()
     .chain(cells::specs())
+    .chain(sizes::specs())
     .chain(breaks::specs())
     .collect()
 }
@@ -304,40 +306,48 @@ fn run_insert_row(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_delete_row(s: &mut Session, p: &Value) -> Result<Value> {
     edit(s, p, "table.deleterow", |t| {
         let r = usize_param(p, "row").ok_or("`row` is required")?;
-        if r >= t.cells.len() || t.cells.len() <= 1 {
+        let n = usize_param(p, "rows").unwrap_or(1).max(1);
+        if r >= t.cells.len() || t.cells.len() <= n.min(t.cells.len() - r) {
             return Err("no such row (a table keeps at least one row)".into());
         }
-        let mut a = Vec::new();
-        for (ar, ac, rs, cs) in anchors(t) {
-            if ar == r {
-                // The anchor row goes: the merge (and its text) moves to the next row.
-                if rs > 1 {
-                    let text = t.cells.get(ar).and_then(|row| row.get(ac)).map(|c| c.text.clone()).unwrap_or_default();
-                    if let Some(cell) = t.cells.get_mut(ar + 1).and_then(|row| row.get_mut(ac)) {
-                        cell.text = text;
-                    }
-                    a.push((ar, ac, rs - 1, cs));
-                }
-            } else if ar > r {
-                a.push((ar - 1, ac, rs, cs));
-            } else if r < ar + rs {
-                a.push((ar, ac, rs - 1, cs));
-            } else {
-                a.push((ar, ac, rs, cs));
-            }
+        for _ in 0..n.min(t.cells.len() - r) {
+            delete_row(t, r);
         }
-        t.row_heights.remove(r);
-        t.cells.remove(r);
-        if r < t.row_styles.len() {
-            t.row_styles.remove(r);
-        }
-        if r == 0 {
-            t.title = false;
-        }
-        set_anchors(t, &a);
-        shift_formulas(t, formula::Shift::DeleteRow(r));
         Ok(())
     })
+}
+
+/// Delete row `r` (inside the table) of a table with more than one row.
+fn delete_row(t: &mut Table, r: usize) {
+    let mut a = Vec::new();
+    for (ar, ac, rs, cs) in anchors(t) {
+        if ar == r {
+            // The anchor row goes: the merge (and its text) moves to the next row.
+            if rs > 1 {
+                let text = t.cells.get(ar).and_then(|row| row.get(ac)).map(|c| c.text.clone()).unwrap_or_default();
+                if let Some(cell) = t.cells.get_mut(ar + 1).and_then(|row| row.get_mut(ac)) {
+                    cell.text = text;
+                }
+                a.push((ar, ac, rs - 1, cs));
+            }
+        } else if ar > r {
+            a.push((ar - 1, ac, rs, cs));
+        } else if r < ar + rs {
+            a.push((ar, ac, rs - 1, cs));
+        } else {
+            a.push((ar, ac, rs, cs));
+        }
+    }
+    t.row_heights.remove(r);
+    t.cells.remove(r);
+    if r < t.row_styles.len() {
+        t.row_styles.remove(r);
+    }
+    if r == 0 {
+        t.title = false;
+    }
+    set_anchors(t, &a);
+    shift_formulas(t, formula::Shift::DeleteRow(r));
 }
 
 fn run_insert_col(s: &mut Session, p: &Value) -> Result<Value> {
@@ -372,37 +382,45 @@ fn run_insert_col(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_delete_col(s: &mut Session, p: &Value) -> Result<Value> {
     edit(s, p, "table.deletecol", |t| {
         let c = usize_param(p, "col").ok_or("`col` is required")?;
-        if c >= t.col_widths.len() || t.col_widths.len() <= 1 {
+        let n = usize_param(p, "cols").unwrap_or(1).max(1);
+        if c >= t.col_widths.len() || t.col_widths.len() <= n.min(t.col_widths.len() - c) {
             return Err("no such column (a table keeps at least one column)".into());
         }
-        let mut a = Vec::new();
-        for (ar, ac, rs, cs) in anchors(t) {
-            if ac == c {
-                if cs > 1 {
-                    let text = t.cells.get(ar).and_then(|row| row.get(ac)).map(|x| x.text.clone()).unwrap_or_default();
-                    if let Some(cell) = t.cells.get_mut(ar).and_then(|row| row.get_mut(ac + 1)) {
-                        cell.text = text;
-                    }
-                    a.push((ar, ac, rs, cs - 1));
-                }
-            } else if ac > c {
-                a.push((ar, ac - 1, rs, cs));
-            } else if c < ac + cs {
-                a.push((ar, ac, rs, cs - 1));
-            } else {
-                a.push((ar, ac, rs, cs));
-            }
+        for _ in 0..n.min(t.col_widths.len() - c) {
+            delete_col(t, c);
         }
-        t.col_widths.remove(c);
-        for row in &mut t.cells {
-            if c < row.len() {
-                row.remove(c);
-            }
-        }
-        set_anchors(t, &a);
-        shift_formulas(t, formula::Shift::DeleteCol(c));
         Ok(())
     })
+}
+
+/// Delete column `c` (inside the table) of a table with more than one column.
+fn delete_col(t: &mut Table, c: usize) {
+    let mut a = Vec::new();
+    for (ar, ac, rs, cs) in anchors(t) {
+        if ac == c {
+            if cs > 1 {
+                let text = t.cells.get(ar).and_then(|row| row.get(ac)).map(|x| x.text.clone()).unwrap_or_default();
+                if let Some(cell) = t.cells.get_mut(ar).and_then(|row| row.get_mut(ac + 1)) {
+                    cell.text = text;
+                }
+                a.push((ar, ac, rs, cs - 1));
+            }
+        } else if ac > c {
+            a.push((ar, ac - 1, rs, cs));
+        } else if c < ac + cs {
+            a.push((ar, ac, rs, cs - 1));
+        } else {
+            a.push((ar, ac, rs, cs));
+        }
+    }
+    t.col_widths.remove(c);
+    for row in &mut t.cells {
+        if c < row.len() {
+            row.remove(c);
+        }
+    }
+    set_anchors(t, &a);
+    shift_formulas(t, formula::Shift::DeleteCol(c));
 }
 
 fn run_merge(s: &mut Session, p: &Value) -> Result<Value> {

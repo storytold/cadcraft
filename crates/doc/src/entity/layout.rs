@@ -170,6 +170,10 @@ pub struct TableCell {
     /// `None`: its cell style's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_height: Option<f64>,
+    /// The cell's own text alignment, as MTEXT attachment (1 top left … 9 bottom right; DXF 170
+    /// in the cell record); `None`: its cell style's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

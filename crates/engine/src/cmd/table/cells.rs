@@ -52,7 +52,7 @@ fn color_value(v: &Value) -> Option<Color> {
 }
 
 /// An alignment parameter: `TL` … `BR`, `MiddleLeft`, or the MTEXT attachment 1..9.
-fn align_value(v: &Value) -> Option<u8> {
+pub(super) fn align_value(v: &Value) -> Option<u8> {
     if let Some(n) = v.as_u64() {
         return u8::try_from(n).ok().filter(|n| (1..=9).contains(n));
     }
