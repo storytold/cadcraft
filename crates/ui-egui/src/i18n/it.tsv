@@ -1398,3 +1398,5 @@ menu	Modify	Edita
 	ENTER	INVIO
 	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
+	Objects on locked layers can't be selected	Gli oggetti sui layer bloccati non possono essere selezionati
+	They are still shown and snapped to, like a blueprint.	Restano visibili e agganciabili, come una base di riferimento.

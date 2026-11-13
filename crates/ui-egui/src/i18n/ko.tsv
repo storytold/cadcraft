@@ -1259,3 +1259,5 @@ menu	Modify	수정
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	도면이 변경되었습니다. 창을 닫고 다시 여십시오.
+	Objects on locked layers can't be selected	잠긴 도면층의 객체는 선택할 수 없습니다
+	They are still shown and snapped to, like a blueprint.	밑그림처럼 계속 표시되며 스냅도 적용됩니다.

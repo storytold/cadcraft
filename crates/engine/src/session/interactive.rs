@@ -218,9 +218,20 @@ impl Session {
                 let d = self.doc()?;
                 let store = d.space(&space);
                 let picked = match tl.as_str() {
-                    "all" => store.map(|s| s.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()),
-                    "l" | "last" => store.and_then(|s| s.last()).map(|e| vec![e.handle]),
-                    "p" | "previous" => Some(self.state()?.previous_selection.clone()),
+                    // Objects a pick could select: not those on layers locked against selection.
+                    "all" => store.map(|s| s.iter().filter(|e| select::selectable(d, e)).map(|e| e.handle).collect()),
+                    // The last object itself, or nothing when its layer is locked against selection.
+                    "l" | "last" => {
+                        store.and_then(|s| s.last()).map(|e| if select::locked_against_selection(d, e) { Vec::new() } else { vec![e.handle] })
+                    }
+                    "p" | "previous" => Some(
+                        self.state()?
+                            .previous_selection
+                            .iter()
+                            .copied()
+                            .filter(|h| !d.entity(*h).is_some_and(|e| select::locked_against_selection(d, e)))
+                            .collect(),
+                    ),
                     _ => None,
                 };
                 match picked {

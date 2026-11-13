@@ -1270,3 +1270,5 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+	Objects on locked layers can't be selected	Los objetos en capas bloqueadas no se pueden seleccionar
+	They are still shown and snapped to, like a blueprint.	Se siguen mostrando y se pueden referenciar, como un plano base.

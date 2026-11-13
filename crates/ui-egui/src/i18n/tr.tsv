@@ -1364,3 +1364,5 @@ menu	View	Görünüm
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Çizim değişti. Pencereyi kapatıp yeniden açın.
+	Objects on locked layers can't be selected	Kilitli katmanlardaki nesneler seçilemez
+	They are still shown and snapped to, like a blueprint.	Bir altlık gibi hâlâ gösterilir ve yakalanır.

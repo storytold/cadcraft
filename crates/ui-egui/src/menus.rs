@@ -921,6 +921,7 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
 /// Keyboard shortcuts and function keys: the user's ([`crate::keys`]) and CADCraft's own.
 pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     use egui::{Key, KeyboardShortcut, Modifiers};
+    crate::options::sync_view(app);
     // A recording ends with the dialog it was started in; while it lasts the keys are its own.
     if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
         crate::keys::stop_recording(ctx);

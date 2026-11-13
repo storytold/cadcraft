@@ -1464,3 +1464,5 @@ menu	Modify	Hiệu chỉnh
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+	Objects on locked layers can't be selected	Không thể chọn đối tượng trên layer bị khóa
+	They are still shown and snapped to, like a blueprint.	Chúng vẫn hiển thị và vẫn bắt điểm được, như một bản nền.

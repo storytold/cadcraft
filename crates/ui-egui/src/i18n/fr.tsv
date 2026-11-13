@@ -1036,3 +1036,5 @@
 	Press the keys	Appuyez sur les touches
 	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
 	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
+	Objects on locked layers can't be selected	Les objets sur des calques verrouillés ne peuvent pas être sélectionnés
+	They are still shown and snapped to, like a blueprint.	Ils restent affichés et accrochables, comme un plan de fond.

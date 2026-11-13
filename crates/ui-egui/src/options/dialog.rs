@@ -392,6 +392,14 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
         if left.checkbox(&mut grouping, crate::tl!("Object grouping")).changed() {
             changes.insert("PICKSTYLE".into(), json!((st.pickstyle & !1) | u8::from(grouping)));
         }
+        let mut locked = app.options.locked_unselectable;
+        if left
+            .checkbox(&mut locked, crate::tl!("Objects on locked layers can't be selected"))
+            .on_hover_text(crate::tl!("They are still shown and snapped to, like a blueprint."))
+            .changed()
+        {
+            changes.insert("lockedLayersUnselectable".into(), json!(locked));
+        }
         let mut qp = st.qpmode;
         if left.checkbox(&mut qp, crate::tl!("Show Quick Properties for selected objects")).changed() {
             changes.insert("QPMODE".into(), json!(i32::from(qp)));

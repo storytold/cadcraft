@@ -1483,3 +1483,5 @@ menu	Modify	Ändra
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+	Objects on locked layers can't be selected	Objekt på låsta lager kan inte markeras
+	They are still shown and snapped to, like a blueprint.	De visas och snappas fortfarande till, som ett underlägg.

@@ -1361,3 +1361,5 @@ menu	View	Nézet
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	A rajz megváltozott. Zárja be az ablakot, és nyissa meg újra.
+	Objects on locked layers can't be selected	A zárolt rétegeken lévő objektumok nem jelölhetők ki
+	They are still shown and snapped to, like a blueprint.	Továbbra is megjelennek, és illeszthetők hozzájuk, mint egy háttérrajzhoz.

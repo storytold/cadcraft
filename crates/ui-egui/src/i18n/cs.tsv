@@ -1239,3 +1239,5 @@ menu	Modify	Modifikace
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Výkres se změnil. Zavřete okno a otevřete jej znovu.
+	Objects on locked layers can't be selected	Objekty na zamčených hladinách nelze vybrat
+	They are still shown and snapped to, like a blueprint.	Stále se zobrazují a lze k nim přichytávat, jako k podkladu.

@@ -1350,3 +1350,5 @@ menu	View	Προβολή
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
+	Objects on locked layers can't be selected	Τα αντικείμενα σε κλειδωμένα επίπεδα δεν μπορούν να επιλεγούν
+	They are still shown and snapped to, like a blueprint.	Εξακολουθούν να εμφανίζονται και να έχουν σύλληψη, όπως ένα υπόβαθρο.

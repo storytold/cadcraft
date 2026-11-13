@@ -152,8 +152,16 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether `e` can be picked or selected: shown, and not on a locked layer when
+/// [`Drawing::locked_unselectable`] says so (snapping doesn't ask this).
+pub fn selectable(d: &Drawing, e: &Entity) -> bool {
+    d.is_visible(e) && !locked_against_selection(d, e)
+}
+
+/// Whether `e` is on a locked layer and [`Drawing::locked_unselectable`] keeps such objects from
+/// being selected.
+pub fn locked_against_selection(d: &Drawing, e: &Entity) -> bool {
+    d.locked_unselectable && d.layer(&e.common.layer).is_some_and(|l| l.locked)
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -375,12 +383,12 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
     out
 }
 
-/// The visible objects in `space` of the group called `name` (any case), or `None` when the
+/// The selectable objects in `space` of the group called `name` (any case), or `None` when the
 /// drawing has no such group.
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.

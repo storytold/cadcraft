@@ -1476,3 +1476,5 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Objects on locked layers can't be selected	无法选择已锁定图层上的对象
+	They are still shown and snapped to, like a blueprint.	它们仍会显示并可捕捉，就像底图一样。
