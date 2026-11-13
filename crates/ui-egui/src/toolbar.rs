@@ -735,7 +735,13 @@ fn drop_target(screen: Rect, pointer: Pos2) -> Option<Dock> {
 
 /// The standard bar docked at the top, in `row` of the title panel.
 pub fn top(app: &mut CadApp, ui: &mut egui::Ui, row: Rect) {
-    strip(app, ui, row, false, Bar::Standard);
+    strip_with(app, ui, row, false, Bar::Standard, false);
+}
+
+/// The Standard bar in the window's title row: the application button with the app's name after
+/// it, then the bar's buttons.
+pub fn top_in_title(app: &mut CadApp, ui: &mut egui::Ui, row: Rect) {
+    strip_with(app, ui, row, false, Bar::Standard, true);
 }
 
 /// The other bars docked at the top: one row each, below the menu bar.
@@ -1042,6 +1048,11 @@ fn layer_popup(ui: &mut egui::Ui, salt: &str, cur: &str, rows: &[crate::palettes
 
 /// Lay out and run `bar` in `area`: a row, or a column when `vertical`.
 fn strip(app: &mut CadApp, ui: &mut egui::Ui, area: Rect, vertical: bool, bar: Bar) {
+    strip_with(app, ui, area, vertical, bar, false);
+}
+
+/// A bar's strip; `brand`: the app's name follows the application button (the title row).
+fn strip_with(app: &mut CadApp, ui: &mut egui::Ui, area: Rect, vertical: bool, bar: Bar, brand: bool) {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
     let st = state(&app.ui, bar);
@@ -1062,21 +1073,28 @@ fn strip(app: &mut CadApp, ui: &mut egui::Ui, area: Rect, vertical: bool, bar: B
     let background = ui.interact(area, id.with("background"), Sense::CLICK);
     background.context_menu(|ui| options_menu(ui, bar, shown_bars, None, dock, &mut action));
 
-    if let Some(target) = grip_handle(ui, id, bar, axis, start) {
+    // In the title row the logo comes first; the bar docks elsewhere from its options menu.
+    if !brand && let Some(target) = grip_handle(ui, id, bar, axis, start) {
         action = Some(Action::Dock(target));
     }
 
     // How many items fit; the rest go to the More menu at the end.
-    let mut first = start + GRIP + 4.0;
+    let mut first = start + if brand { 0.0 } else { GRIP + 4.0 };
     // The standard bar starts with the application button: always there, never customized.
     if bar == Bar::Standard {
         let br = slot(first, BUTTON, BUTTON);
         if app_button(ui, br, id.with("app_menu"), vertical) {
             action = Some(Action::AppMenu);
         }
-        let at = first + BUTTON + GAP + (SEP - GAP) / 2.0;
+        let mut name_w = 0.0;
+        if brand && !vertical {
+            let g = ui.painter().layout_no_wrap("CADCraft".to_string(), egui::FontId::proportional(14.0), t.text);
+            name_w = g.size().x + 10.0;
+            ui.painter().galley(pos2(first + BUTTON + 6.0, cross - g.size().y / 2.0), g, t.text);
+        }
+        let at = first + BUTTON + name_w + GAP + (SEP - GAP) / 2.0;
         axis.cross_line(ui, at, BUTTON / 2.0 - 3.0, Stroke::new(1.0, t.border));
-        first += BUTTON + GAP + SEP;
+        first += BUTTON + name_w + GAP + SEP;
     }
     let extent = |item: &String| {
         if item == SEPARATOR {

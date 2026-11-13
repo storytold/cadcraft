@@ -239,6 +239,25 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
     }
 }
 
+/// Windows: the title row is the window's title bar (no OS decorations), with the Tool Bar in it.
+/// `CADCRAFT_TITLEBAR=system` keeps the system's title bar (`=app` asks for the app's elsewhere); so does OpenGL alone, where some
+/// drivers show an undecorated window's picture a caption's height lower than the pointer.
+fn app_titlebar(options: &eframe::NativeOptions) -> bool {
+    use eframe::wgpu::Backends;
+    let asked = std::env::var("CADCRAFT_TITLEBAR").map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
+    if asked == "app" {
+        return true;
+    }
+    if !cfg!(target_os = "windows") || asked == "system" {
+        return false;
+    }
+    let backends = match &options.wgpu_options.wgpu_setup {
+        eframe::egui_wgpu::WgpuSetup::CreateNew(setup) => setup.instance_descriptor.backends,
+        _ => eframe::wgpu::Backends::all(),
+    };
+    !(backends.contains(Backends::GL) && !backends.intersects(Backends::DX12 | Backends::VULKAN))
+}
+
 const APP_ID: &str = "ai.storyteller.cadcraft";
 
 /// The key eframe saves the main window state under in its storage.
@@ -320,6 +339,8 @@ fn main() -> eframe::Result {
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
     graphics::configure(&mut options, eframe::wgpu::Backends::from_env(), eframe::wgpu::Dx12Compiler::from_env());
+    let custom_titlebar = app_titlebar(&options);
+    options.viewport = options.viewport.with_decorations(!custom_titlebar);
     // Command previews (COPY, MOVE...) of large selections are tessellated by egui, whose index
     // buffer outgrew wgpu's default 256 MiB cap; the validation error is fatal. Ask for what the
     // adapter actually supports.
@@ -389,6 +410,7 @@ fn main() -> eframe::Result {
                 app.session.set_lisp_support_dir(Some(support));
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            app.custom_titlebar = custom_titlebar;
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }

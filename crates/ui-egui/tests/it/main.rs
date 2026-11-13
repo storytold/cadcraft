@@ -41,6 +41,7 @@ mod style_dialogs;
 mod system_cursor;
 mod text_double_click;
 mod text_editing;
+mod title_bar;
 mod toolbar_dock;
 mod toolsets_gear;
 mod toolsets_parametric;

@@ -30,35 +30,154 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
-/// Title row (with the integrated macOS title bar) and the Tool Bar.
+/// Title row (with the integrated macOS title bar, or the app's own on Windows) and the Tool Bar.
+/// With a title bar of the app's own the Tool Bar sits in it, after the logo and the app's name,
+/// with the drawing's name at the right and, on Windows, the caption buttons.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
-    let tb_h = if app.ui.show_toolbar && app.ui.toolbar_dock == crate::toolbar::Dock::Top { crate::toolbar::THICKNESS } else { 0.0 };
-    egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+    let tb_shown = app.ui.show_toolbar && app.ui.toolbar_dock == crate::toolbar::Dock::Top;
+    if !app.integrated_titlebar && !app.custom_titlebar {
+        if tb_shown {
+            egui::Panel::top("cc_title_toolbar").exact_size(crate::toolbar::THICKNESS).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+                let r = ui.max_rect();
+                crate::toolbar::top(app, ui, Rect::from_min_max(pos2(r.left() + 12.0, r.top()), r.max));
+            });
+        }
+        return;
+    }
+    let h = if tb_shown { crate::toolbar::THICKNESS.max(MAC_TITLE_BAR) } else { MAC_TITLE_BAR.max(if app.custom_titlebar { 32.0 } else { 0.0 }) };
+    let captions = if app.custom_titlebar { CAPTIONS_W } else { 0.0 };
+    egui::Panel::top("cc_title_toolbar").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
-        if title_h > 0.0 {
-            // The empty row moves the window; it goes first so later widgets take their own clicks.
-            craft_window::title_bar::empty_area(ui, Rect::from_min_size(r.min, vec2(r.width(), title_h)));
-            let title = match app.session.state() {
-                Ok(st) if !app.ui.start_tab => {
-                    let name = format!("{}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" });
-                    format!("CADCraft      {name}")
-                }
-                _ => format!("CADCraft      {}", crate::tl!("Start")),
-            };
+        // The empty row moves the window; it goes first so later widgets take their own clicks.
+        craft_window::title_bar::empty_area(ui, Rect::from_min_max(r.min, pos2(r.right() - captions, r.bottom())));
+        let name = match app.session.state() {
+            Ok(st) if !app.ui.start_tab => format!("{}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
+            _ => crate::tl!("Start").to_string(),
+        };
+        let left = r.left() + if app.integrated_titlebar { MAC_CONTENT_LEFT } else { 6.0 };
+        let right = r.right() - captions - 12.0;
+        if tb_shown {
+            let galley = ui.painter().layout_job(crate::i18n::job(&name, egui::FontId::proportional(13.0), t.text_dim));
+            // The drawing's name keeps its room unless the bar would get less than a few buttons.
+            let tb_right = (right - galley.size().x - 24.0).max(left + 260.0).min(right);
+            crate::toolbar::top_in_title(app, ui, Rect::from_min_max(pos2(left, r.top()), pos2(tb_right, r.bottom())));
+            if tb_right + 24.0 + galley.size().x <= right + 0.5 {
+                ui.painter().galley(pos2(right - galley.size().x, r.center().y - galley.size().y / 2.0), galley, t.text_dim);
+            }
+        } else {
+            let title = format!("CADCraft      {name}");
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
             let galley = ui.painter().layout_job(crate::i18n::job(&title, egui::FontId::proportional(13.0), t.text_dim));
-            let x = title_left(r.left(), r.width(), galley.size().x);
-            ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
+            let x = title_left(r.left(), r.width() - captions, galley.size().x);
+            ui.painter().galley(pos2(x, r.center().y - galley.size().y / 2.0), galley, t.text_dim);
         }
-        if tb_h > 0.0 {
-            let row = Rect::from_min_size(pos2(r.left(), r.top() + title_h), vec2(r.width(), tb_h));
-            let left = r.left() + if app.integrated_titlebar { 120.0 } else { 12.0 };
-            crate::toolbar::top(app, ui, Rect::from_min_max(pos2(left, row.top()), row.max));
+        if app.custom_titlebar {
+            caption_buttons(ui, r);
         }
     });
+}
+
+/// One caption button, as wide as Windows' own.
+const CAPTION_W: f32 = 46.0;
+/// The three caption buttons together.
+const CAPTIONS_W: f32 = 3.0 * CAPTION_W;
+
+fn maximized(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().maximized.unwrap_or(false))
+}
+
+/// Minimize, Maximize/Restore and Close at the right end of `bar`, full bar height, flush with
+/// the window's edge so a maximized window's corner hits Close. Close asks the window to close,
+/// which asks about unsaved drawings first.
+///
+/// Adapted from SolidCraft's `crates/ui-egui/src/window_chrome.rs` (MIT OR Apache-2.0).
+fn caption_buttons(ui: &mut egui::Ui, bar: Rect) {
+    let t = Tokens::get();
+    let max = maximized(ui.ctx());
+    for (i, label) in ["Minimize", if max { "Restore" } else { "Maximize" }, "Close"].into_iter().enumerate() {
+        let r = Rect::from_min_size(pos2(bar.right() - CAPTIONS_W + i as f32 * CAPTION_W, bar.top()), vec2(CAPTION_W, bar.height()));
+        let resp = ui.interact(r, egui::Id::unique(("cc_caption", i)), Sense::click());
+        let close = i == 2;
+        if resp.hovered() || resp.has_focus() {
+            let fill = if close { egui::Color32::from_rgb(196, 43, 28) } else { t.control_hover };
+            ui.painter().rect_filled(r, 0.0, fill);
+        }
+        let ink = if close && resp.hovered() { egui::Color32::WHITE } else { t.text };
+        let s = Stroke::new(1.0, ink);
+        let c = r.center();
+        match i {
+            0 => {
+                ui.painter().hline(c.x - 5.0..=c.x + 5.0, c.y, s);
+            }
+            1 if max => {
+                ui.painter().rect_stroke(Rect::from_center_size(c + vec2(-1.0, 1.0), vec2(8.0, 8.0)), 0.0, s, egui::StrokeKind::Inside);
+                ui.painter().line(
+                    vec![
+                        pos2(c.x - 3.0, c.y - 3.0),
+                        pos2(c.x - 3.0, c.y - 5.0),
+                        pos2(c.x + 5.0, c.y - 5.0),
+                        pos2(c.x + 5.0, c.y + 3.0),
+                        pos2(c.x + 3.0, c.y + 3.0),
+                    ],
+                    s,
+                );
+            }
+            1 => {
+                ui.painter().rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, s, egui::StrokeKind::Inside);
+            }
+            _ => {
+                ui.painter().line_segment([c + vec2(-5.0, -5.0), c + vec2(5.0, 5.0)], s);
+                ui.painter().line_segment([c + vec2(-5.0, 5.0), c + vec2(5.0, -5.0)], s);
+            }
+        }
+        icons::describe_control(ui, &resp, label, None, false);
+        if resp.on_hover_text(crate::i18n::t(label)).clicked() {
+            let cmd = match i {
+                0 => egui::ViewportCommand::Minimized(true),
+                1 => egui::ViewportCommand::Maximized(!max),
+                _ => egui::ViewportCommand::Close,
+            };
+            ui.ctx().send_viewport_cmd(cmd);
+        }
+    }
+}
+
+/// Invisible resize zones along the edges of a window without OS decorations, above everything
+/// else; a press in one starts the OS's resize in that direction. None while the window is
+/// maximized or full screen. Windows' own resize border: 8 px at 96 DPI.
+///
+/// Adapted from SolidCraft's `crates/ui-egui/src/window_chrome.rs` (MIT OR Apache-2.0).
+pub fn resize_zones(ui: &mut egui::Ui) {
+    use egui::{CursorIcon as C, ResizeDirection as D};
+    let ctx = ui.ctx().clone();
+    if maximized(&ctx) || ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+        return;
+    }
+    let w = ctx.content_rect();
+    let ppp = ctx.pixels_per_point();
+    let native = ctx.input(|i| i.viewport().native_pixels_per_point).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0);
+    let e = ((8.0 * native).round().max(1.0)) / ppp.max(0.01);
+    let c = 2.0 * e;
+    let zones = [
+        (Rect::from_min_max(w.left_top(), pos2(w.right(), w.top() + e)), D::North, C::ResizeVertical),
+        (Rect::from_min_max(pos2(w.left(), w.bottom() - e), w.right_bottom()), D::South, C::ResizeVertical),
+        (Rect::from_min_max(w.left_top(), pos2(w.left() + e, w.bottom())), D::West, C::ResizeHorizontal),
+        (Rect::from_min_max(pos2(w.right() - e, w.top()), w.right_bottom()), D::East, C::ResizeHorizontal),
+        (Rect::from_min_size(w.left_top(), vec2(c, c)), D::NorthWest, C::ResizeNwSe),
+        (Rect::from_min_size(w.right_top() - vec2(c, 0.0), vec2(c, c)), D::NorthEast, C::ResizeNeSw),
+        (Rect::from_min_size(w.left_bottom() - vec2(0.0, c), vec2(c, c)), D::SouthWest, C::ResizeNeSw),
+        (Rect::from_min_size(w.right_bottom() - vec2(c, c), vec2(c, c)), D::SouthEast, C::ResizeNwSe),
+    ];
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("cc_resize_edges"));
+    let zui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(w));
+    for (i, (r, dir, cursor)) in zones.into_iter().enumerate() {
+        let resp = zui.interact(r, egui::Id::unique(("cc_resize_edge", i)), Sense::drag()).on_hover_cursor(cursor);
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+        }
+    }
 }
 
 /// File tabs: switcher, "+", Start, open drawings.

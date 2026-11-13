@@ -301,6 +301,9 @@ pub struct CadApp {
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
+    /// Windows: no OS decorations; the title row is the title bar, with its own caption buttons
+    /// and resize edges ([`chrome::title_and_toolbar`]).
+    pub custom_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -393,6 +396,7 @@ impl CadApp {
             status: None,
             opening: opening::Opening::default(),
             integrated_titlebar: false,
+            custom_titlebar: false,
             control_rx: None,
             capture_geometry: None,
             capture_epoch: 0,
@@ -1002,6 +1006,9 @@ impl CadApp {
         autosave::gpu_notice(self, ui.ctx());
         autosave::failure_notice(self, ui.ctx());
         notices::show(self, ui.ctx());
+        if self.custom_titlebar {
+            chrome::resize_zones(ui);
+        }
         self.frame_ms = now_ms() - t0;
     }
 
