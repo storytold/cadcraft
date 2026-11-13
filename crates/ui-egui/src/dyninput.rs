@@ -180,8 +180,25 @@ pub fn split_at(text: &str, frame: &Frame) -> Option<usize> {
 /// Hold the cursor to the locked values: the first one once a separator follows it, and both
 /// when Tab has locked the second one too (`second_locked`), which pins the cursor to the point.
 pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {
-    let Some(v) = entry.first_locked() else { return p };
     let o = frame.origin();
+    let Some(v) = entry.first_locked() else {
+        // Only the second value locked (Tab past an empty first box): the angle holds and the
+        // distance follows the cursor along it, or Y holds and X follows the cursor.
+        if second_locked && let Some(w) = entry.second_value() {
+            let q = match entry.format {
+                Format::Cartesian if frame.dims => o + frame.corner_offset(frame.sides(p - o).x, frame.toward(w, frame.sides(p - o).y)),
+                Format::Cartesian => Vec2::new(p.x, o.y + frame.toward(w, p.y - o.y)),
+                Format::Polar => {
+                    let dir = Vec2::from_angle(w);
+                    o + dir * (p - o).dot(dir).max(0.0)
+                }
+            };
+            if q.is_finite() {
+                return q;
+            }
+        }
+        return p;
+    };
     if frame.dims && entry.format == Format::Cartesian {
         // Along the rectangle's own sides.
         let l = frame.sides(p - o);
@@ -296,6 +313,23 @@ mod tests {
 
     fn second_point(base: Vec2) -> Frame {
         Frame { base: Some(base), cartesian: false, absolute: false, dims: false, ..Frame::default() }
+    }
+
+    /// A value locked in the second box alone (Tab past an empty distance, then an angle and Tab)
+    /// holds: the point stays on that angle, its distance following the cursor; in X,Y boxes the
+    /// Y holds and X follows.
+    #[test]
+    fn a_second_value_locked_alone_holds() {
+        let base = Vec2::new(10.0, 10.0);
+        let polar = Frame { base: Some(base), ..Frame::default() };
+        let e = parse("<30", &polar).unwrap();
+        let q = constrain(&e, &polar, base + Vec2::new(10.0, 0.0), true);
+        let d = q - base;
+        assert!((d.angle() - 30f64.to_radians()).abs() < 1e-9 && (d.len() - 10.0 * 30f64.to_radians().cos()).abs() < 1e-9, "{d:?}");
+        assert_eq!(constrain(&e, &polar, base + Vec2::new(10.0, 0.0), false), base + Vec2::new(10.0, 0.0), "not locked: free");
+        let xy = Frame { base: Some(base), cartesian: true, ..Frame::default() };
+        let e = parse(",4", &xy).unwrap();
+        assert!(close(Some(constrain(&e, &xy, base + Vec2::new(7.0, -2.0), true)), base + Vec2::new(7.0, 4.0)));
     }
 
     /// FredApps on #2325: a rectangle's width and height typed in the boxes run along its turned
