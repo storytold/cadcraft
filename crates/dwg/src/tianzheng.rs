@@ -170,25 +170,44 @@ mod native {
         segs
     }
 
-    /// 从 proxy graphics 提取尺寸标注的箭头尖端（类型 6 图元里起点=终点的零长度「点」）。
+    /// 从 proxy graphics 提取箭头尖端（两类：尺寸箭头 + 引线箭头）。
     ///
-    /// 尺寸标注的箭头用 type 6 的零长度线段表示（起点=终点 = 箭头尖端）。返回
-    /// `(x, y, dx, dy)`：尖端位置 + 归一化方向（从最近的尺寸线端点指向尖端，即箭头指向外）。
+    /// - **尺寸箭头**：type 6 图元里起点=终点的零长度「点」（起点=终点 = 箭头尖端）。
+    /// - **引线箭头**（TCH_MULTILEADER/TCH_DRAWINGINDEX）：type 33 图元，子类型 `0x00800005`，
+    ///   尖端在 payload offset 17/25（f64 LE 建筑坐标）。payload 布局：`u32 长度 + u32 子类型
+    ///   + 17 字节头`，坐标紧随其后；其余 type 33 子类型是属性（无坐标），忽略。
+    ///
+    /// 返回 `(x, y, dx, dy)`：尖端位置 + 归一化方向（从最近的线段端点指向尖端，即箭头指向外）。
     /// 方向用于画实心三角形；无相邻线段时方向取 (1,0)。
     pub fn extract_arrow_tips(graphic_data: &[u8]) -> Vec<(f64, f64, f64, f64)> {
         let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
         let mut segs: Vec<(f64, f64, f64, f64)> = Vec::new();
         let mut tips: Vec<(f64, f64)> = Vec::new();
         for r in &g.records {
-            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 6, data } = r {
-                if data.len() >= 52 {
-                    let d = |off: usize| f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
-                    let (x1, y1, x2, y2) = (d(4), d(12), d(28), d(36));
-                    if x1 == x2 && y1 == y2 {
-                        tips.push((x1, y1));
-                    } else {
-                        segs.push((x1, y1, x2, y2));
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type, data } = r {
+                match *record_type {
+                    6 => {
+                        if data.len() >= 52 {
+                            let d = |off: usize| f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+                            let (x1, y1, x2, y2) = (d(4), d(12), d(28), d(36));
+                            if x1 == x2 && y1 == y2 {
+                                tips.push((x1, y1));
+                            } else {
+                                segs.push((x1, y1, x2, y2));
+                            }
+                        }
                     }
+                    33 => {
+                        // 引线箭头：只取带坐标的「箭头子类型」0x00800005，尖端在 offset 17/25。
+                        if data.len() >= 33
+                            && u32::from_le_bytes(data[4..8].try_into().unwrap()) == 0x0080_0005
+                        {
+                            let x = f64::from_le_bytes(data[17..25].try_into().unwrap());
+                            let y = f64::from_le_bytes(data[25..33].try_into().unwrap());
+                            tips.push((x, y));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -925,5 +944,59 @@ mod tests {
         assert_eq!((tips[0].0, tips[0].1), (600.0, 200.0));
         assert!((tips[0].2 - 1.0).abs() < 1e-9, "方向应为 +x，实际 {}", tips[0].2);
         assert!(tips[0].3.abs() < 1e-9);
+    }
+
+    /// extract_arrow_tips 从 type 33 子类型 0x00800005 提取引线箭头尖端 + 方向。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn extracts_leader_arrows_from_type33() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        let seg = |x1: f64, y1: f64, x2: f64, y2: f64| {
+            let mut d = Vec::with_capacity(52);
+            d.extend_from_slice(&2u32.to_le_bytes());
+            for v in [x1, y1, 0.0_f64, x2, y2, 0.0] {
+                d.extend_from_slice(&v.to_le_bytes());
+            }
+            d
+        };
+        // type 33 引线箭头：u32 长度 + u32 子类型 + 8 字节头 + 1 字节 0x02，尖端在 offset 17/25。
+        let leader = |x: f64, y: f64| {
+            let mut d = Vec::new();
+            d.extend_from_slice(&44u32.to_le_bytes());            // 0..4 长度（不读）
+            d.extend_from_slice(&0x0080_0005u32.to_le_bytes());   // 4..8 子类型
+            d.extend_from_slice(&0u32.to_le_bytes());             // 8..12
+            d.extend_from_slice(&0x0904_9404u32.to_le_bytes());   // 12..16 常量
+            d.push(0x02);                                         // 16
+            d.extend_from_slice(&x.to_le_bytes());                // 17..25 X
+            d.extend_from_slice(&y.to_le_bytes());                // 25..33 Y
+            d.extend_from_slice(&[0u8; 16]);                      // 33..49 尾部
+            d
+        };
+        // 引线折线 (100,200)->(500,200)，箭头尖端在折线端点外 (600,200)。
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(100.0, 200.0, 500.0, 200.0) },
+                ProxyGraphicRecord::Unknown { record_type: 33, data: leader(600.0, 200.0) },
+            ],
+        };
+        let tips = extract_arrow_tips(&g.encode().unwrap());
+        assert_eq!(tips.len(), 1);
+        assert_eq!((tips[0].0, tips[0].1), (600.0, 200.0));
+        assert!((tips[0].2 - 1.0).abs() < 1e-9, "方向应为 +x，实际 {}", tips[0].2);
+        assert!(tips[0].3.abs() < 1e-9);
+
+        // 非箭头子类型（0x41 等属性）忽略：不产生额外尖端。
+        let mut attr = Vec::new();
+        attr.extend_from_slice(&47u32.to_le_bytes());
+        attr.extend_from_slice(&0x41u32.to_le_bytes());
+        attr.resize(47, 0);
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 33, data: leader(600.0, 200.0) },
+                ProxyGraphicRecord::Unknown { record_type: 33, data: attr },
+            ],
+        };
+        let tips = extract_arrow_tips(&g.encode().unwrap());
+        assert_eq!(tips.len(), 1, "属性子类型应被忽略");
     }
 }
