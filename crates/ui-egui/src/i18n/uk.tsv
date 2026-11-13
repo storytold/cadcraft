@@ -1422,3 +1422,5 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Check for updates when CADCraft starts	Перевіряти оновлення під час запуску CADCraft
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Якщо вимкнено, CADCraft ніколи сам не пропонує оновлення; Довідка ▸ Перевірити оновлення… усе одно перевіряє.
