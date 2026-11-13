@@ -41,6 +41,8 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+// The Edit Text window, opened from the shortcut menu's Edit Text entry.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
 
@@ -50,6 +52,7 @@ pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
+pub mod keys;
 pub mod layers;
 pub mod managers;
 pub mod menus;
@@ -121,6 +124,8 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The user's keyboard shortcuts ([`keys`]).
+    pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
@@ -135,6 +140,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -208,12 +215,14 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -225,6 +234,12 @@ pub struct Services {
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Pick a folder (Options ▸ Fonts, the Custom Patterns folder); `None` where the host has no folder dialog.
     pub pick_folder: Option<Box<dyn Fn() -> Option<String>>>,
+    /// Where set, the file dialogs are shown with this instead of calling `pick_open` /
+    /// `pick_save` / `pick_lisp` (which must still be set, to say which dialogs there are), and
+    /// the answer is acted on in a later frame ([`CadApp::pick_then`]). macOS needs it: a panel run modally
+    /// inside the window's event handler gets the window events of its own resizing sent back
+    /// into that handler, and winit aborts the app (#1527).
+    pub start_pick: Option<StartPick>,
     /// Pick a `.lsp` file for APPLOAD, starting in the given folder (empty for the default one).
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
@@ -232,6 +247,38 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+}
+
+/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Open,
+    Save(String),
+    Lisp(String),
+    Pgp(String),
+}
+
+/// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
+/// chosen path, or `None` when the dialog is cancelled ([`Services::start_pick`]).
+pub type StartPick = Box<dyn Fn(Pick, Box<dyn FnOnce(Option<String>) + Send>)>;
+
+/// What to do with the path a file dialog chose ([`CadApp::pick_then`]).
+type PickDone = Box<dyn FnOnce(&mut CadApp, String) -> Result<Value, String>>;
+
+/// A file dialog shown with [`Services::start_pick`] that has not answered yet.
+struct PendingPick {
+    answer: Receiver<Option<String>>,
+    /// The drawing (its `uid`) the answer is for: Save As writes that drawing, export and plot
+    /// read it, and so on, whichever drawing is active when the answer arrives. `None` for the
+    /// dialogs that open a drawing (Open, New from Template, Recover).
+    doc: Option<u64>,
+    /// The close prompt's Save is waiting for this dialog: its other answers wait too
+    /// ([`closing`]).
+    for_close: bool,
+    then: PickDone,
 }
 
 pub struct CadApp {
@@ -325,6 +372,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
+    pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -385,7 +434,137 @@ impl CadApp {
             bedit: bedit::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            pending_pick: None,
         }
+    }
+
+    /// Ask for a file with the host's dialog (`pick`) and run `then` with the chosen path, on the
+    /// drawing that is active now. `None` when the host has no dialog of that kind. Cancelling
+    /// gives `Ok(Null)`. With a synchronous picker the result is `then`'s; with
+    /// [`Services::start_pick`] the dialog opens and this returns `Ok(Null)` at once: `then` runs
+    /// in a later frame ([`Self::logic`]) with that drawing made active again (if something else
+    /// was switched to meanwhile, such as a control-channel `document.switch`), and not at all if
+    /// the drawing was closed. Its error, if any, shows in the status bar. With no drawing open
+    /// it refuses without showing a dialog. While one dialog is open, no other is shown: the
+    /// request is refused with an error, also shown in the status bar.
+    pub fn pick_then(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, true, Box::new(then))
+    }
+
+    /// [`Self::pick_then`] for a dialog that opens a drawing (Open, New from Template, Recover):
+    /// `then` does not act on the drawing that was active, so it runs whatever was switched to
+    /// or closed meanwhile.
+    pub fn pick_then_open(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, false, Box::new(then))
+    }
+
+    /// Show the dialog `pick` for `then`, bound to the active drawing when `bound`.
+    fn pick_for(&mut self, pick: Pick, bound: bool, then: PickDone) -> Option<Result<Value, String>> {
+        let available = match pick {
+            Pick::Open => self.services.pick_open.is_some(),
+            Pick::Save(_) => self.services.pick_save.is_some(),
+            Pick::Lisp(_) => self.services.pick_lisp.is_some(),
+            Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+        };
+        if !available {
+            return None;
+        }
+        if self.pending_pick.is_some() {
+            return Some(Err(self.refuse_pick("A file dialog is already open; answer it first.".into())));
+        }
+        // A bound answer must not land on a drawing created or opened while the dialog is up.
+        let doc = match (bound, self.session.state()) {
+            (false, _) => None,
+            (true, Ok(st)) => Some(st.uid),
+            (true, Err(e)) => {
+                let why = e.to_string();
+                return Some(Err(self.refuse_pick(why)));
+            }
+        };
+        if let Some(start) = &self.services.start_pick {
+            let (tx, answer) = std::sync::mpsc::channel();
+            start(
+                pick,
+                Box::new(move |path| {
+                    let _ = tx.send(path);
+                }),
+            );
+            self.pending_pick = Some(PendingPick { answer, doc, for_close: false, then });
+            return Some(Ok(Value::Null));
+        }
+        let path = match &pick {
+            Pick::Open => self.services.pick_open.as_ref().and_then(|f| f()),
+            Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
+            Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
+            Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+        };
+        Some(match path {
+            Some(path) => then(self, path),
+            None => Ok(Value::Null),
+        })
+    }
+
+    /// A file dialog that is not shown: the reason goes to the status bar too, since a typed or
+    /// menu command's result is not shown ([`Self::start`]).
+    fn refuse_pick(&mut self, why: String) -> String {
+        self.set_status(why.clone());
+        why
+    }
+
+    /// Start the interactive command `id` with a dialog's answer. `was_prompting`: whether a
+    /// command was running when the dialog was asked for. Starting cancels the running command,
+    /// so a command started while the dialog was open (a control request, say) is kept and this
+    /// one refused instead; one that was already running is cancelled as when the dialog answers
+    /// at once.
+    pub fn start_after_pick(&mut self, id: &str, was_prompting: bool) -> Result<(), String> {
+        if !was_prompting && self.session.prompting() {
+            return Err(format!("{}: another command started while the file dialog was open; run it again.", id.to_ascii_uppercase()));
+        }
+        self.session.start(id).map_err(|e| e.to_string())
+    }
+
+    /// Act on the answer of a dialog started with [`Services::start_pick`], once it arrives.
+    fn finish_pick(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_pick else { return };
+        match pending.answer.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+            Ok(None) => self.pending_pick = None,
+            // The host dropped the answer without giving one: the dialog never opened (its
+            // thread could not start) or failed.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_pick = None;
+                self.set_status("The file dialog could not be shown.");
+            }
+            Ok(Some(path)) => {
+                if let Some(PendingPick { doc, then, .. }) = self.pending_pick.take()
+                    && let Err(e) = self.make_active(doc, &path).and_then(|()| then(self, path))
+                {
+                    self.set_status(e);
+                }
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Make the drawing `uid` active again for the answer `path` of a dialog it asked for, or
+    /// refuse when it was closed meanwhile.
+    fn make_active(&mut self, uid: Option<u64>, path: &str) -> Result<(), String> {
+        let Some(uid) = uid else { return Ok(()) };
+        let Some(i) = self.session.docs.iter().position(|d| d.uid == uid) else {
+            return Err(format!("The drawing was closed before the file dialog answered; nothing was done with {path}."));
+        };
+        if self.session.active != i {
+            self.run("document.switch", json!({ "index": i }))?;
+        }
+        Ok(())
     }
 
     /// The interface language shown: the chosen one, or English when this computer has no font
@@ -495,6 +674,12 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
+        if !self.ui.shortcuts.is_empty() {
+            prefs["shortcuts"] = json!(self.ui.shortcuts);
+        }
         prefs.to_string()
     }
 
@@ -527,6 +712,12 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
+            self.ui.shortcuts = keys::from_prefs(keys);
         }
     }
 
@@ -647,7 +838,8 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
-                self.canvas.zoom_pending = true;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
                     self.remember_recent(path);
@@ -685,6 +877,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        self.finish_pick(ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
         capture::note_identity(self, ctx);

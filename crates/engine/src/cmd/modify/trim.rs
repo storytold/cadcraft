@@ -142,22 +142,16 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let cut = trim_edges(s, edges, h)?;
-    let (e, pieces) = trim_result(s, h, pick, &cut)?;
-    let common = e.common.clone();
-    let space = s.space();
-    let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
-        // A hatch goes behind the lines again, as a new hatch does.
-        let hatch = matches!(k, EntityKind::Hatch(_));
-        if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            if hatch {
-                st.send_to_back(nh);
+    let (_, pieces) = trim_result(s, h, pick, &cut)?;
+    let hatch = pieces.iter().any(|k| matches!(k, EntityKind::Hatch(_)));
+    let out = replace_with_pieces(s, h, pieces)?;
+    // A hatch's new pieces go behind the lines, as a new hatch does.
+    if hatch {
+        let space = s.space();
+        if let Some(st) = s.doc_mut()?.space_mut(&space) {
+            for nh in out.iter().skip(1) {
+                st.send_to_back(*nh);
             }
-            out.push(nh);
         }
     }
     Ok(out)
@@ -241,6 +235,46 @@ pub(crate) fn trim_result(s: &Session, h: Handle, pick: Vec2, cut: &[Segment]) -
         k => crate::cmd::modify2::trim_other(k, cut, pick)?,
     };
     Ok((e, pieces))
+}
+
+/// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
+/// piece (the one holding the object's start, or the only piece of a circle or closed polyline)
+/// is the object itself, keeping its handle, its place in the drawing order, its groups and its
+/// extended data; the others are new objects with its properties, added at the end of its space
+/// (`entlast`); with no pieces the object is erased. Returns the pieces' handles. (A line broken
+/// in its middle keeps its handle on the piece from its start point, the piece to its end point is
+/// new; a circle broken or trimmed becomes an arc with the circle's handle.)
+///
+/// Dimensions attached to the object follow [`crate::assoc::follow_pieces`]. Its parametric
+/// constraints are removed: its new shape no longer meets them, and solving them again would move
+/// the objects they tie it to.
+pub(super) fn replace_with_pieces(s: &mut Session, h: Handle, pieces: Vec<EntityKind>) -> Result<Vec<Handle>> {
+    let d = s.doc_mut()?;
+    let mut pieces = pieces.into_iter();
+    let Some(first) = pieces.next() else {
+        d.remove_entity(h);
+        return Ok(Vec::new());
+    };
+    let (Some(space), Some(old)) = (d.space_of(h), d.entity(h).cloned()) else {
+        return Err(EngineError::Other("no such object".into()));
+    };
+    d.modify_entity(h, |e| e.kind = first)?;
+    let mut out = vec![h];
+    for kind in pieces {
+        let handle = d.new_handle();
+        if let Some(st) = d.space_mut(&space) {
+            st.push(Entity { handle, common: old.common.clone(), kind });
+            out.push(handle);
+        }
+    }
+    crate::assoc::follow_pieces(d, &old.kind, &out);
+    let n = d.constraints.len();
+    d.constraints.retain(|c| c.refs.iter().all(|r| r.handle != h));
+    let removed = n - d.constraints.len();
+    if removed > 0 {
+        s.echo(format!("{removed} constraint(s) of the broken or trimmed object removed."));
+    }
+    Ok(out)
 }
 
 /// Sub-polyline between length parameters `a` and `b` (open polylines).
