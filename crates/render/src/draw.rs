@@ -239,6 +239,19 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             for (x1, y1, _, x2, y2, _) in &t.segments {
                 stroke(b, &[Vec2::new(*x1, *y1), Vec2::new(*x2, *y2)]);
             }
+            // 天正圆（类型 2 图元：圆心 + 半径，柱子/圆洞）。
+            for (x, y, _, r) in &t.circles {
+                let c = cadcraft_geom::Circle::new(Vec2::new(*x, *y), *r);
+                let mut pts = Vec::new();
+                c.tessellate(tol, &mut pts);
+                stroke(b, &pts);
+            }
+            // 天正填充多边形（类型 9 图元：闭合顶点列表，柱截面/填充）。
+            for poly in &t.polys {
+                let pts: Vec<Vec2> = poly.iter().map(|(x, y, _)| Vec2::new(*x, *y)).collect();
+                let tris = fill::triangulate_evenodd(&[pts]);
+                b.tris(ctx, rgb, &tris);
+            }
             // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角暂未逆向，按水平画。
             if b.opts.text {
                 for tx in &t.texts {

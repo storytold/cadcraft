@@ -104,6 +104,12 @@ pub struct Tianzheng {
     /// 天正文字（标注/轴号/标高等，从 proxy graphics 类型 38 图元提取）。
     #[serde(default, skip)]
     pub texts: Vec<TianzhengText>,
+    /// 天正圆（类型 2 图元）：`(x, y, z, radius)`，圆心 + 半径。
+    #[serde(default, skip)]
+    pub circles: Vec<(f64, f64, f64, f64)>,
+    /// 天正填充多边形（类型 9 图元）：每个是闭合顶点列表。
+    #[serde(default, skip)]
+    pub polys: Vec<Vec<(f64, f64, f64)>>,
 }
 
 impl Unknown {

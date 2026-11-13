@@ -195,6 +195,58 @@ mod native {
         (i == segments.len()).then(|| g.encode()).flatten()
     }
 
+    /// 从 proxy graphics 提取天正圆（类型 2 图元）。
+    ///
+    /// 类型 2 图元 payload 7×f64：圆心 (x,y,z) + 半径 + 起点角 + 终点角 + 法线 z（1.0 = 完整圆）。
+    /// 返回 `(x, y, z, radius)`。建筑图里半径 400mm 的圆通常是柱子/圆洞。
+    pub fn extract_circles(graphic_data: &[u8]) -> Vec<(f64, f64, f64, f64)> {
+        let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
+        let mut out = Vec::new();
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 2, data } = r {
+                if data.len() >= 32 {
+                    let x = f64::from_le_bytes(data[0..8].try_into().unwrap());
+                    let y = f64::from_le_bytes(data[8..16].try_into().unwrap());
+                    let z = f64::from_le_bytes(data[16..24].try_into().unwrap());
+                    let radius = f64::from_le_bytes(data[24..32].try_into().unwrap());
+                    out.push((x, y, z, radius));
+                }
+            }
+        }
+        out
+    }
+
+    /// 从 proxy graphics 提取天正填充多边形（类型 9 图元）。
+    ///
+    /// 类型 9 图元 payload = `u32 顶点数 + N×(x,y,z 各 f64)`，是闭合填充多边形（矩形/柱截面等）。
+    /// 尾部 36 字节是填充属性，本函数不解析。返回每个多边形的顶点列表。
+    pub fn extract_polys(graphic_data: &[u8]) -> Vec<Vec<(f64, f64, f64)>> {
+        let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
+        let mut out = Vec::new();
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 9, data } = r {
+                if data.len() < 4 {
+                    continue;
+                }
+                let count = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+                let mut pts = Vec::with_capacity(count);
+                let mut off = 4;
+                for _ in 0..count {
+                    if off + 24 > data.len() {
+                        break;
+                    }
+                    let x = f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+                    let y = f64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+                    let z = f64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap());
+                    pts.push((x, y, z));
+                    off += 24;
+                }
+                out.push(pts);
+            }
+        }
+        out
+    }
+
     /// 从 proxy graphics 提取天正文字（类型 38 图元）。
     ///
     /// 类型 38 图元的 payload 布局（实测 TCH_TEXT/TCH_DIMENSION）：
@@ -568,7 +620,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
 
 #[cfg(test)]
 mod tests {
@@ -753,5 +805,41 @@ mod tests {
         assert_eq!(t.text, "FM");
         assert_eq!(t.height, 297.5);
         assert!((t.width_factor - 0.7058823529411765).abs() < 1e-12);
+    }
+
+    /// extract_circles / extract_polys 从类型 2 / 类型 9 图元提取圆与填充多边形。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn extracts_circles_and_polys() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        // 类型 2 圆：圆心(x,y,z) + 半径 + 起点角 + 终点角 + 法线 z。
+        let mut circle = Vec::new();
+        for v in [221006.849_f64, 12321.561, 0.0, 400.0, 0.0, 0.0, 1.0] {
+            circle.extend_from_slice(&v.to_le_bytes());
+        }
+        // 类型 9 多边形：u32 顶点数(4) + 4 点 × 3 f64。
+        let mut poly = Vec::new();
+        poly.extend_from_slice(&4u32.to_le_bytes());
+        for (x, y) in [(137026.849, 4505.88), (136626.849, 4505.88), (136626.849, 4005.88), (137026.849, 4005.88)] {
+            for v in [x, y, 0.0_f64] {
+                poly.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        poly.extend_from_slice(&[0u8; 36]);
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 2, data: circle },
+                ProxyGraphicRecord::Unknown { record_type: 9, data: poly },
+            ],
+        };
+        let graphic_data = g.encode().unwrap();
+
+        let circles = extract_circles(&graphic_data);
+        assert_eq!(circles, vec![(221006.849, 12321.561, 0.0, 400.0)]);
+
+        let polys = extract_polys(&graphic_data);
+        assert_eq!(polys.len(), 1);
+        assert_eq!(polys[0].len(), 4);
+        assert_eq!(polys[0][0], (137026.849, 4505.88, 0.0));
     }
 }

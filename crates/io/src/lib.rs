@@ -387,6 +387,9 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
             .unwrap_or_default();
         // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
         let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
+        // 天正圆（类型 2）与填充多边形（类型 9）。
+        let circles = cadcraft_dwg::tianzheng::extract_circles(&e.graphic_data);
+        let polys = cadcraft_dwg::tianzheng::extract_polys(&e.graphic_data);
         // 天正文字（标注/轴号/标高等，类型 38 图元）。
         let mut texts: Vec<cadcraft_doc::TianzhengText> = cadcraft_dwg::tianzheng::extract_text_entities(&e.graphic_data)
             .into_iter()
@@ -418,6 +421,8 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                     segments: segments.clone(),
                     graphic_data: graphic_data.clone(),
                     texts: texts.clone(),
+                    circles: circles.clone(),
+                    polys: polys.clone(),
                 });
             }
         });
