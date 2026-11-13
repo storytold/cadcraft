@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-collab"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "base64 0.22.1",
  "cadcraft-doc",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-collab-client"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-collab",
  "cadcraft-doc",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-collab-server"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-collab",
  "cadcraft-collab-client",
@@ -866,6 +866,7 @@ dependencies = [
  "cadcraft-engine",
  "cadcraft-fonts",
  "cadcraft-geom",
+ "cadcraft-io",
  "cadcraft-render",
  "chrono",
  "craft-ui",
@@ -876,6 +877,7 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "image",
+ "js-sys",
  "log",
  "naga",
  "serde",
