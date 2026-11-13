@@ -153,6 +153,49 @@ pub struct MTextLayout {
     pub bounds: Bounds2,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
+    /// Whether the geometry stops short: the layout reached its allowance of retained points
+    /// ([`Allowance`]) and the segments after that are not drawn.
+    pub truncated: bool,
+}
+
+/// The points all the segments of one layout may keep together, each counted for both copies the
+/// layout holds: the allowance one shaped line has (`MAX_SHAPED_POINTS`), so a short repeated detailed glyph over many segments cannot multiply it.
+pub(crate) struct Allowance(usize);
+
+impl Allowance {
+    pub(crate) fn new() -> Self {
+        Allowance(crate::ttf::MAX_SHAPED_POINTS)
+    }
+
+    /// Whether any allowance is left, before a segment is shaped.
+    pub(crate) fn left(&self) -> bool {
+        self.0 > 0
+    }
+
+    /// What keeping `sh` costs: its points, kept twice (in the piece and again in the layout's
+    /// flat `strokes`).
+    fn cost(sh: &Shaped) -> usize {
+        2 * (sh.strokes.iter().map(Vec::len).sum::<usize>() + sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>())
+    }
+
+    /// Whether `cost` (as [`Self::cost`] counts it) still fits in what is left.
+    fn covers(&self, cost: usize) -> bool {
+        cost <= self.0
+    }
+
+    /// Charge the points of `sh`; false (and nothing left) when it does not fit.
+    pub(crate) fn charge(&mut self, sh: &Shaped) -> bool {
+        match self.0.checked_sub(Self::cost(sh)) {
+            Some(rest) => {
+                self.0 = rest;
+                true
+            }
+            None => {
+                self.0 = 0;
+                false
+            }
+        }
+    }
 }
 
 /// Inline character format.
@@ -273,7 +316,7 @@ pub(crate) fn unescape_codes(s: &str) -> std::borrow::Cow<'_, str> {
                 continue;
             }
         } else if n == Some('M') && plus == Some('+') && chars.get(i + 3).is_some_and(char::is_ascii_digit) && hex4(&chars, i + 4).is_some() {
-            push_literal(&mut out, cadcraft_dxf::mif_escape_at(&chars, i).unwrap_or('\u{fffd}'));
+            push_literal(&mut out, craft_dxf::mif_escape_at(&chars, i).unwrap_or('\u{fffd}'));
             i += 8;
             continue;
         }
@@ -708,8 +751,11 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     }
 }
 
-/// Shape a segment with its left end at `x` on the baseline.
-fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
+/// Shape a segment with its left end at `x` on the baseline. `budget` is what is left of the
+/// layout's allowance: a tracked segment, shaped a character at a time, stops once it has
+/// outgrown it (the layout then drops the segment), so it never holds more than that and one
+/// character, as an untracked segment shaped in one call doesn't.
+fn seg_shape(seg: &Seg, f: &Fmt, x: f64, budget: &Allowance) -> Shaped {
     let h = f.height;
     let mut out = Shaped::default();
     let put = |s: &str, size: f64, at: Vec2| {
@@ -726,8 +772,14 @@ fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
             // Each character where its tracked advance puts it.
             let clusters = track_clusters(t);
             let mut at = x;
+            let mut spent = 0;
             for (c, advance) in clusters.iter().zip(track_advances(f, &clusters)) {
-                out.extend(put(c, h, Vec2::new(at, 0.0)));
+                if !budget.covers(spent) {
+                    break;
+                }
+                let piece = put(c, h, Vec2::new(at, 0.0));
+                spent += Allowance::cost(&piece);
+                out.extend(piece);
                 at += advance * f.tracking;
             }
         }
@@ -980,6 +1032,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = Allowance::new();
     for (l, base_y) in lines.iter().zip(baselines) {
         let x0 = match col {
             0 => 0.0,
@@ -989,7 +1042,15 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
         for it in &l.items {
             let Some(sg) = &it.seg else { continue };
             let fm = fmt(it.fmt);
-            let mut sh = seg_shape(sg, fm, it.x);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
+            let mut sh = seg_shape(sg, fm, it.x, &allowance);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(x0, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {
@@ -1150,6 +1211,33 @@ mod tests {
                 assert!((tracked - normal - (t - 1.0) * (hhh - h)).abs() < 1e-6, "{para}\\T{t} after Hebrew: {tracked} vs {normal}");
             }
         }
+    }
+
+    /// A tracked segment is shaped a character at a time, each within its own shaping cap: it
+    /// stops shaping once it has outgrown what is left of the layout's allowance, so a long
+    /// tracked line can't hold many times the allowance before the layout drops it.
+    #[test]
+    fn a_tracked_segment_stops_shaping_past_the_allowance_left() {
+        let f = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, tracking: 2.0, oblique: 0.0, valign: 1 };
+        let text = Seg::Text("H".repeat(40));
+        let whole = seg_shape(&text, &f, 0.0, &Allowance::new());
+        let one = Allowance::cost(&seg_shape(&Seg::Text("H".into()), &f, 0.0, &Allowance::new()));
+        assert!(Allowance::cost(&whole) == 40 * one, "with room, every character is shaped");
+        let budget = Allowance(5 * one);
+        let cut = seg_shape(&text, &f, 0.0, &budget);
+        assert_eq!(Allowance::cost(&cut), 6 * one, "it stops one character past the budget");
+        assert!(!Allowance(5 * one).charge(&cut), "and the layout then drops the segment");
+    }
+
+    /// The points of all the segments of one layout are charged against one allowance.
+    #[test]
+    fn a_layout_shares_one_point_allowance() {
+        let big = Shaped { strokes: vec![vec![Vec2::ZERO; crate::ttf::MAX_SHAPED_POINTS / 4 + 1]], ..Default::default() };
+        let mut a = Allowance::new();
+        assert!(a.left() && a.charge(&big), "the first segment fits");
+        assert!(!a.charge(&big), "the second does not, though each alone would");
+        assert!(!a.left(), "and nothing is left to shape another");
+        assert!(!layout_mtext("plain text", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0).truncated);
     }
 
     #[test]

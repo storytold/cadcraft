@@ -5,8 +5,8 @@
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Common, Drawing, EntityKind, MLine, MLineCaps, MLineCut, MLineElement, MLineJust, MLineStyle, Space};
-use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::Vec2;
+use craft_dxf::{Tag, records, sections};
 
 fn mlines(d: &Drawing) -> Vec<MLine> {
     d.model
@@ -84,7 +84,7 @@ fn mlines_and_styles_survive_save_and_reopen() {
     assert_eq!(back.header.f64("CMLSCALE", 0.0), 2.5);
 
     // The file links up as the DXF Reference describes.
-    let tags = cadcraft_dxf::parse(saved.as_bytes()).unwrap();
+    let tags = craft_dxf::parse(saved.as_bytes()).unwrap();
     let secs = sections(&tags);
     let recs = |name: &str| records(&secs.iter().find(|s| s.name == name).unwrap().tags);
     let val = |t: &[Tag], c: i32| t.iter().find(|g| g.code == c).map(Tag::str).unwrap_or_default();

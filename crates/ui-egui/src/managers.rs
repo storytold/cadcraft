@@ -309,7 +309,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
 enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
-    Choice(&'static str, &'static str, String, Vec<String>),
+    Choice(&'static str, &'static str, String, std::sync::Arc<[String]>),
 }
 
 struct Style {
@@ -374,7 +374,8 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         no_drawing(ctx, "Multileader Style", open);
         return None;
     };
-    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    // One list shared by every row: a copy per style multiplied the two counts.
+    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
     let mut styles: Vec<Style> = d
         .mleader_styles
         .iter()
@@ -385,7 +386,7 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
                 Field::Num("textHeight", "Text height", s.text_height),
                 Field::Num("landingGap", "Landing gap", s.landing_gap),
                 Field::Num("dogleg", "Landing length", s.dogleg),
-                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
             ],
         })
         .collect();
@@ -454,7 +455,7 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                             ui.label(*label);
                             let mut picked = None;
                             craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices {
+                                for c in choices.iter() {
                                     if ui.selectable_label(c == v, c).clicked() && c != v {
                                         picked = Some(c.clone());
                                     }
