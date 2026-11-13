@@ -361,7 +361,8 @@ mod tests {
         assert!(app.pending_pick.is_some() && app.status.is_none(), "nothing runs before the answer");
         // A second dialog is refused, and says so: in the status bar for a typed or menu
         // command, and as an error for a programmatic call.
-        app.start("publish");
+        // (PUBLISH opens the Batch Plot window, which asks for its file itself.)
+        app.start("export");
         assert!(status(&app).contains("already open"), "{:?}", app.status);
         let e = app.run("ui.open", json!(null)).unwrap_err();
         assert!(e.contains("already open"), "{e}");
