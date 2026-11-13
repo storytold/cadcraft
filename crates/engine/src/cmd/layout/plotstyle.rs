@@ -303,11 +303,8 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let meta = std::fs::metadata(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
-                        if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
-                            return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
-                        }
-                        let bytes = std::fs::read(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        let bytes = crate::capped_read::read_capped(std::path::Path::new(_path), cadcraft_doc::MAX_TABLE_FILE)
+                            .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         // AutoCAD's own .ctb/.stb files, read as they are.
                         if super::super::file::is_pia(&bytes) {
                             let reader = super::super::file::plot_style_reader()

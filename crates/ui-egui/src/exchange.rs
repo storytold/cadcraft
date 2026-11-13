@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use egui::TextureHandle;
 use serde_json::{Value, json};
 
-use crate::CadApp;
+use crate::{CadApp, Pick};
 
 /// Bumped each time PREVIEW is started, so the window renders the drawing as it is now.
 static PREVIEW_GEN: AtomicU32 = AtomicU32::new(0);
@@ -23,25 +23,17 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
             app.ui.dialog = Some("preview".into());
             Ok(Value::Null)
         }
-        "import" | "imp" => {
-            let Some(pick) = app.services.pick_open.as_ref() else { return no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#) };
-            match pick() {
-                Some(path) => app.run("import", json!({ "path": path })),
-                None => Ok(Value::Null),
-            }
-        }
+        "import" | "imp" => app
+            .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
+            .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
         "publish" => {
             // The Batch Plot window: which sheets, in what order, into one file or several.
             app.ui.dialog = Some("publish".into());
             Ok(Value::Null)
         }
-        _ => {
-            let Some(pick) = app.services.pick_save.as_ref() else { return no_picker(app, "EXPORT", r#"export {"format": "svg"}"#) };
-            match pick(&format!("{stem}.svg")) {
-                Some(path) => app.run("export", json!({ "path": path })),
-                None => Ok(Value::Null),
-            }
-        }
+        _ => app
+            .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| app.run("export", json!({ "path": path })))
+            .unwrap_or_else(|| no_picker(app, "EXPORT", r#"export {"format": "svg"}"#)),
     }
 }
 
@@ -273,7 +265,7 @@ mod tests {
     use cadcraft_engine::Session;
     use serde_json::json;
 
-    use crate::{CadApp, Services};
+    use crate::{CadApp, Pick, Services};
 
     /// An app whose file dialogs record what they were asked and cancel.
     fn app() -> (CadApp, Rc<RefCell<Vec<String>>>) {
@@ -319,5 +311,170 @@ mod tests {
 
         let e = app.run("share", json!({})).unwrap_err();
         assert!(e.contains("not available yet"), "{e}");
+    }
+
+    type Done = Box<dyn FnOnce(Option<String>) + Send>;
+
+    /// An app whose host shows its dialogs without waiting (macOS, #1527): the dialogs asked
+    /// for, and the callback that answers the open one.
+    fn deferred_app() -> (CadApp, Rc<RefCell<Vec<Pick>>>, Rc<RefCell<Option<Done>>>) {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let answer: Rc<RefCell<Option<Done>>> = Rc::default();
+        let (log, slot) = (asked.clone(), answer.clone());
+        let services = Services {
+            pick_open: Some(Box::new(|| None)),
+            pick_save: Some(Box::new(|_: &str| None)),
+            pick_lisp: Some(Box::new(|_: &str| None)),
+            start_pick: Some(Box::new(move |pick, done| {
+                log.borrow_mut().push(pick);
+                *slot.borrow_mut() = Some(done);
+            })),
+            ..Services::default()
+        };
+        (CadApp::new(Session::new(), services), asked, answer)
+    }
+
+    fn status(app: &CadApp) -> &str {
+        app.status.as_ref().map(|(s, _)| s.as_str()).unwrap_or_default()
+    }
+
+    fn uid(app: &CadApp) -> u64 {
+        app.session.state().unwrap().uid
+    }
+
+    /// Where the host shows its dialogs without waiting (macOS, #1527), the command acts on the
+    /// path in a later frame, and no second dialog opens while one is up.
+    #[test]
+    fn a_deferred_dialog_acts_when_its_answer_arrives() {
+        let (mut app, asked, answer) = deferred_app();
+        let ctx = egui::Context::default();
+
+        // Cancelled: nothing happens, and the next command may ask again.
+        app.start("export");
+        assert_eq!(*asked.borrow(), [Pick::Save("Drawing1.svg".into())]);
+        answer.borrow_mut().take().unwrap()(None);
+        app.finish_pick(&ctx);
+        assert!(app.pending_pick.is_none());
+
+        app.start("imp");
+        app.finish_pick(&ctx);
+        assert!(app.pending_pick.is_some() && app.status.is_none(), "nothing runs before the answer");
+        // A second dialog is refused, and says so: in the status bar for a typed or menu
+        // command, and as an error for a programmatic call.
+        app.start("publish");
+        assert!(status(&app).contains("already open"), "{:?}", app.status);
+        let e = app.run("ui.open", json!(null)).unwrap_err();
+        assert!(e.contains("already open"), "{e}");
+        assert_eq!(asked.borrow().len(), 2, "no second dialog while one is open");
+        app.status = None;
+        let missing = std::env::temp_dir().join(format!("cadcraft-missing-{}.dxf", std::process::id()));
+        answer.borrow_mut().take().unwrap()(Some(missing.to_string_lossy().to_string()));
+        app.finish_pick(&ctx);
+        assert!(app.pending_pick.is_none());
+        assert!(app.status.is_some(), "IMPORT ran with the picked file and reported its error");
+    }
+
+    /// A dialog's answer acts on the drawing that asked for it, even when another drawing was
+    /// made active before it arrived (a control-channel `document.switch` runs before the answer
+    /// in the same frame): Save As must not write the other drawing to the chosen file.
+    #[test]
+    fn a_deferred_dialog_acts_on_the_drawing_that_asked() {
+        let (mut app, _, answer) = deferred_app();
+        let ctx = egui::Context::default();
+        app.run("new", json!({})).unwrap();
+        app.run("document.switch", json!({ "index": 0 })).unwrap();
+        let first = uid(&app);
+        let acted_on = Rc::new(RefCell::new(None));
+        let seen = acted_on.clone();
+        let r = app.pick_then(Pick::Save("Drawing1.dxf".into()), move |app, path| {
+            *seen.borrow_mut() = Some((uid(app), path));
+            Ok(json!(null))
+        });
+        assert_eq!(r, Some(Ok(json!(null))));
+
+        app.run("document.switch", json!({ "index": 1 })).unwrap();
+        assert_ne!(uid(&app), first);
+        answer.borrow_mut().take().unwrap()(Some("a.dxf".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(*acted_on.borrow(), Some((first, "a.dxf".to_string())));
+        assert_eq!(app.session.active, 0, "the drawing that asked is shown again");
+    }
+
+    /// The drawing that asked was closed before the answer: nothing is done, and the status bar
+    /// says so. A dialog that opens a drawing (OPEN, NEW from a template) still acts.
+    #[test]
+    fn a_deferred_dialog_for_a_closed_drawing_does_nothing() {
+        let (mut app, _, answer) = deferred_app();
+        let ctx = egui::Context::default();
+        app.run("new", json!({})).unwrap();
+        let ran = Rc::new(RefCell::new(0));
+        let r1 = ran.clone();
+        let _ = app.pick_then(Pick::Save("Drawing2.svg".into()), move |_, _| {
+            *r1.borrow_mut() += 1;
+            Ok(json!(null))
+        });
+        app.run("close", json!({ "index": 1 })).unwrap();
+        answer.borrow_mut().take().unwrap()(Some("b.svg".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(*ran.borrow(), 0, "the closed drawing's export did not run on another drawing");
+        assert!(app.pending_pick.is_none());
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("closed") && s.contains("b.svg")), "{:?}", app.status);
+
+        app.run("new", json!({})).unwrap();
+        let r2 = ran.clone();
+        let _ = app.pick_then_open(Pick::Open, move |_, _| {
+            *r2.borrow_mut() += 1;
+            Ok(json!(null))
+        });
+        app.run("close", json!({ "index": 1 })).unwrap();
+        answer.borrow_mut().take().unwrap()(Some("c.dxf".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(*ran.borrow(), 1, "OPEN goes on whichever drawing closed meanwhile");
+    }
+
+    /// The host dropped the answer (its dialog thread could not start): the status bar says
+    /// the dialog could not be shown, unlike a cancelled dialog, and the next one may open.
+    #[test]
+    fn a_dialog_that_never_answers_is_reported() {
+        let services =
+            Services { pick_save: Some(Box::new(|_: &str| None)), start_pick: Some(Box::new(|_, done| drop(done))), ..Services::default() };
+        let mut app = CadApp::new(Session::new(), services);
+        app.start("export");
+        app.finish_pick(&egui::Context::default());
+        assert!(app.pending_pick.is_none());
+        assert!(status(&app).contains("could not be shown"), "{:?}", app.status);
+    }
+
+    /// With no drawing open, a dialog bound to the active drawing is not shown: its answer could
+    /// otherwise save or export a drawing opened while it was up.
+    #[test]
+    fn a_bound_dialog_needs_an_open_drawing() {
+        let (mut app, asked, _) = deferred_app();
+        app.run("close", json!({ "index": 0 })).unwrap();
+        assert!(app.session.state().is_err());
+        app.start("ui.saveas");
+        let r = app.run("ui.saveas", json!(null));
+        assert!(asked.borrow().is_empty(), "no dialog");
+        assert!(app.pending_pick.is_none());
+        assert!(r.is_err() && app.status.is_some(), "{r:?} {:?}", app.status);
+        // OPEN needs no drawing.
+        app.start("ui.open");
+        assert_eq!(*asked.borrow(), [Pick::Open]);
+    }
+
+    /// A command started while APPLOAD's dialog was open (a control request, say) keeps
+    /// running; APPLOAD is refused and says to run it again.
+    #[test]
+    fn appload_does_not_cancel_a_command_started_meanwhile() {
+        let (mut app, asked, answer) = deferred_app();
+        let ctx = egui::Context::default();
+        app.start("appload");
+        assert!(matches!(asked.borrow().as_slice(), [Pick::Lisp(_)]));
+        app.start("line");
+        assert!(app.session.prompting());
+        answer.borrow_mut().take().unwrap()(Some("routine.lsp".into()));
+        app.finish_pick(&ctx);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"), "LINE was not cancelled");
+        assert!(status(&app).starts_with("APPLOAD: another command started"), "{:?}", app.status);
     }
 }
