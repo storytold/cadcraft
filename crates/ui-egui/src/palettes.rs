@@ -454,20 +454,7 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        let w = ui.available_width() - 10.0;
-        let (rect, _) = ui.allocate_exact_size(vec2(w, 24.0), Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, t.control);
-        ui.painter().text(
-            pos2(rect.left() + 8.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            crate::tl!("Unsaved Layer State"),
-            crate::theme::body(),
-            t.text,
-        );
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
-    });
+    crate::layersets::switcher(app, ui);
     ui.add_space(4.0);
     let label = if app.ui.show_layer_list { "Hide Layer List" } else { "Show Layer List" };
     ui.horizontal(|ui| {

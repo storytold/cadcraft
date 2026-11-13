@@ -1364,3 +1364,6 @@ menu	View	Görünüm
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Çizim değişti. Pencereyi kapatıp yeniden açın.
+	Layer state name	Katman durumu adı
+	Switches layers on and off, frozen and locked	Katmanları açar ve kapatır, dondurur ve kilitler
+	Rename	Yeniden adlandır

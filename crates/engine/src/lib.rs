@@ -60,7 +60,7 @@ mod session;
 mod settings;
 mod view;
 
-pub use doc_state::{DocState, Snapshot};
+pub use doc_state::{AT_OPEN, DocState, Snapshot};
 pub use error::{EngineError, Result};
 pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};

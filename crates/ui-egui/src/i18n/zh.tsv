@@ -1476,3 +1476,6 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Layer state name	图层状态名称
+	Switches layers on and off, frozen and locked	打开和关闭图层，冻结和锁定
+	Rename	重命名

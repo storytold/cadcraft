@@ -1259,3 +1259,6 @@ menu	Modify	수정
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	도면이 변경되었습니다. 창을 닫고 다시 여십시오.
+	Layer state name	레이어 상태 이름
+	Switches layers on and off, frozen and locked	레이어를 켜고 끄며 동결하고 잠급니다
+	Rename	이름 바꾸기

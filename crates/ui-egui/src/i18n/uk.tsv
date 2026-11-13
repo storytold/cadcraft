@@ -1422,3 +1422,6 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Layer state name	Назва стану шарів
+	Switches layers on and off, frozen and locked	Вмикає й вимикає шари, заморожує та блокує
+	Rename	Перейменувати

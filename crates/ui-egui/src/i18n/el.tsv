@@ -1350,3 +1350,6 @@ menu	View	Προβολή
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
+	Layer state name	Όνομα κατάστασης επιπέδων
+	Switches layers on and off, frozen and locked	Ενεργοποιεί και απενεργοποιεί επίπεδα, τα παγώνει και τα κλειδώνει
+	Rename	Μετονομασία
