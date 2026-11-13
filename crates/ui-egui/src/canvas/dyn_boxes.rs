@@ -128,6 +128,32 @@ pub(super) fn echo_box(p: &egui::Painter, at: Pos2, message: Option<&str>, typed
 }
 
 /// The drawing's length units: (LUNITS, LUPREC).
+/// The prompt and what is typed, beside the pointer away from the drawing area (a name asked
+/// for after a tab's or a ribbon button's command): no coordinates, which belong to the drawing.
+pub(super) fn prompt_beside_pointer(app: &mut CadApp, p: &egui::Painter, hover: Pos2) {
+    app.cmd.option_rows.clear();
+    let at = match app.cmd.options {
+        Some(_) => *app.cmd.options_anchor.get_or_insert(hover),
+        None => {
+            app.cmd.options_anchor = None;
+            hover
+        }
+    };
+    let Some(prompt) = app.session.current_prompt() else { return };
+    let options = !prompt.keywords.is_empty();
+    let message = crate::i18n::t(&prompt.message);
+    let text = if app.cmd.buffer.is_empty() { message.to_string() } else { format!("{message}: {}", app.cmd.buffer) };
+    let t = Tokens::get();
+    let galley = p.layout_no_wrap(text, crate::theme::small(), t.text);
+    let hint = if options { OPTIONS_HINT_W } else { 0.0 };
+    let r = tooltip_frame(p, at, galley.size() + vec2(12.0 + hint, 8.0));
+    p.galley(r.min + vec2(6.0, 4.0), galley, t.text);
+    if options {
+        options_hint(p, r);
+    }
+    options_menu(app, p, r, hover);
+}
+
 pub(crate) fn length_units(session: &cadcraft_engine::Session) -> (i64, i64) {
     session.doc().map(|d| (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4))).unwrap_or((2, 4))
 }

@@ -612,6 +612,18 @@ fn paint_pointer_overlay(
             dynamic_input(app, painter, hp, fields);
         }
     }
+    // A prompt for a name, a value or a choice started from a menu, a tab or a ribbon button
+    // shows beside the pointer there too, so what is typed is seen where the user is looking.
+    if !inside
+        && app.session.settings.dynmode
+        && app.ui.dialog.is_none()
+        && app.session.current_prompt().is_some_and(|p| !p.accept.point)
+        && let Some(hp) = ui.ctx().pointer_latest_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("cc_dyn_outside"));
+        let p = egui::Painter::new(ui.ctx().clone(), layer, ui.ctx().content_rect());
+        dyn_boxes::prompt_beside_pointer(app, &p, hp);
+    }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
     // No continuous repaint while hovering: input events repaint by themselves. Repainting every
@@ -701,7 +713,7 @@ fn update_canvas_cursor(
         // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
+            && (e.first_locked().is_some() || app.cmd.second_locked())
         {
             eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
             app.canvas.snap = None;
@@ -721,7 +733,8 @@ fn update_canvas_cursor(
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none() && !app.cmd.second_locked())
+        {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.

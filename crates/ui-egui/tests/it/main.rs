@@ -31,6 +31,7 @@ mod options_right_click;
 mod parameters_rename;
 mod pedit_enter;
 mod pickdrag;
+mod prompt_beside_pointer;
 mod properties_units;
 mod rapid_clicks;
 mod rtl_names;
