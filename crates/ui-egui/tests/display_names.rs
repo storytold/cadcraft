@@ -85,8 +85,20 @@ fn literals(source: &str) -> Vec<String> {
                     break;
                 }
                 if c == '\\' && at < chars.len() {
-                    text.push(chars[at]);
+                    let escaped = chars[at];
                     at += 1;
+                    match escaped {
+                        'n' => text.push('\n'),
+                        't' => text.push('\t'),
+                        'r' => text.push('\r'),
+                        '0' => text.push('\0'),
+                        '\n' | '\r' => {
+                            while chars.get(at).is_some_and(|c| c.is_whitespace()) {
+                                at += 1;
+                            }
+                        }
+                        other => text.push(other),
+                    }
                 } else {
                     text.push(c);
                 }
@@ -94,6 +106,13 @@ fn literals(source: &str) -> Vec<String> {
             if !test_module {
                 out.push(text);
             }
+        } else if chars[at] == '\'' && chars.get(at + 1) == Some(&'\\') {
+            // Skip the escape and its payload, including hexadecimal/Unicode escapes.
+            at += 3;
+            while at < chars.len() && chars[at] != '\'' {
+                at += 1;
+            }
+            at += 1;
         } else if chars[at] == '\'' && chars.get(at + 2) == Some(&'\'') {
             at += 3; // A character literal such as '"', not the start of a string.
         } else {
@@ -175,4 +194,22 @@ fn guard_scans_production_after_test_only_items() {
     "###;
     assert_eq!(literals(source), ["live label"]);
     assert_eq!(literals("#[cfg(test)] mod tests; fn live() { let _ = \"live label\"; }"), ["live label"]);
+}
+
+#[test]
+fn guard_skips_escaped_character_literals() {
+    assert_eq!(literals(r#"let q = '\"'; "label""#), ["label"]);
+    assert_eq!(literals(r#"let q = '\''; "label""#), ["label"]);
+    assert_eq!(literals(r#"let q = '\\'; "label""#), ["label"]);
+    assert_eq!(literals(r#"let q = '\u{22}'; "label""#), ["label"]);
+}
+
+#[test]
+fn guard_decodes_whitespace_escapes() {
+    assert_eq!(literals(r#""one\ntwo\tthree\rfour\0""#), ["one\ntwo\tthree\rfour\0"]);
+    assert_eq!(literals("\"joined\\\n   label\""), ["joinedlabel"]);
+    for name in BANNED {
+        let source = format!("\"\\t{name}\\n\"");
+        assert!(literals(&source).iter().any(|label| banned_display(label)));
+    }
 }

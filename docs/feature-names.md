@@ -12,7 +12,7 @@ Command IDs, aliases, prompts, drawing data, DXF/DWG identifiers and interoperab
 
 ## Localization and verification
 
-Each shipped non-English interface catalog includes the new labels. Regression tests cover the labels and stable command identities. Full application tests, platform builds and visual checks are required before these drafts are marked ready.
+Each shipped non-English interface catalog includes the new labels. Regression tests cover the labels and stable command identities.
 
 ## Regression coverage
 
