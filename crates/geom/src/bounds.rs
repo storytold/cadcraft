@@ -79,6 +79,13 @@ impl Bounds2 {
     pub fn intersects(&self, o: &Bounds2) -> bool {
         !(self.is_empty() || o.is_empty() || o.min.x > self.max.x || o.max.x < self.min.x || o.min.y > self.max.y || o.max.y < self.min.y)
     }
+    /// The part both boxes cover; [`Bounds2::EMPTY`] when they don't meet.
+    pub fn intersection(&self, o: &Bounds2) -> Bounds2 {
+        if !self.intersects(o) {
+            return Bounds2::EMPTY;
+        }
+        Bounds2 { min: self.min.max(o.min), max: self.max.min(o.max) }
+    }
     pub fn expand(&self, d: f64) -> Bounds2 {
         if self.is_empty() {
             return *self;

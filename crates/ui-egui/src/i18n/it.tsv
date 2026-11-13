@@ -81,6 +81,13 @@ menu	Modify	Edita
 	Array	Serie
 	Attach	Associa
 	Attribute	Attributo
+	All layouts	Tutti i layout
+	Only this one	Solo questo
+	Plot several sheets	Stampa più fogli
+	{n} sheets in one PDF, each with its own page setup (change them in the Page Setup Manager):	{n} fogli in un solo PDF, ciascuno con la propria impostazione pagina (si modificano nel Gestore impostazioni pagina):
+	{n} sheets	{n} fogli
+	Select all	Seleziona tutti
+	{n} layouts selected: a change applies to all of them	{n} layout selezionati: una modifica vale per tutti
 	Attribute Definition	Definizione di attributo
 	Attribute Display	Visualizzazione attributi
 	Audit	Controlla
@@ -1398,3 +1405,66 @@ menu	Modify	Edita
 	ENTER	INVIO
 	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
+	Limits	Limiti
+	{name} (default)	{name} (predefinita)
+	Printer/plotter	Stampante/plotter
+	PDF on the paper chosen below	PDF sul foglio scelto sotto
+	Paper size	Formato carta
+	Orientation	Orientamento
+	Portrait	Verticale
+	Landscape	Orizzontale
+	Plot area	Area di stampa
+	What to plot	Cosa stampare
+	Fit to paper	Adatta al foglio
+	Center the plot	Centra la stampa
+	Center the plotted model bounds on the printable area	Centra i limiti del modello stampato nell'area stampabile
+	Model-space offset placement is not supported by SVG	L'SVG non supporta lo scostamento nello spazio modello
+	X offset (mm)	Scostamento X (mm)
+	Y offset (mm)	Scostamento Y (mm)
+	Distance from the printable area's lower-left corner; values range from −100000 to 100000 mm	Distanza dall'angolo inferiore sinistro dell'area stampabile; valori da −100000 a 100000 mm
+	Offsets must be within ±100000 mm	Gli scostamenti devono essere entro ±100000 mm
+	Paper units per drawing unit, or a ratio such as 1:50	Unità di carta per unità di disegno, o un rapporto come 1:50
+	Plot object lineweights	Stampa gli spessori di linea degli oggetti
+	Plot transparency	Stampa la trasparenza
+	Plot objects with their transparency (PLOTTRANSPARENCYOVERRIDE can override it)	Stampa gli oggetti con la loro trasparenza (PLOTTRANSPARENCYOVERRIDE può sostituirla)
+	System printer	Stampante di sistema
+	File ({kind})	File ({kind})
+	Plot - {layout}	Stampa - {layout}
+	Page setup	Impostazione pagina
+	Every layout, in tab order (not the Model tab)	Tutti i layout, nell'ordine delle schede (non la scheda Modello)
+	Sheets	Fogli
+	Number of copies	Numero di copie
+	Where	Destinazione
+	Plot to file	Stampa su file
+	Also save the printed PDF in a file you choose after OK	Salva anche il PDF stampato in un file scelto dopo OK
+	This device writes a file: OK asks where	Questo dispositivo scrive un file: OK chiede dove
+	Looking for printers…	Ricerca delle stampanti…
+	Refresh printers	Aggiorna stampanti
+	Ask the system for its printers again (a printer just added or switched on)	Chiede di nuovo al sistema le sue stampanti (una stampante appena aggiunta o accesa)
+	First corner	Primo angolo
+	Opposite corner	Angolo opposto
+	Window <	Finestra <
+	Pick the window's corners in the drawing	Indica gli angoli della finestra nel disegno
+	Choose Window to set the corners	Scegli Finestra per impostare gli angoli
+	Layouts plot the whole sheet	I layout stampano l'intero foglio
+	Plot offset	Scostamento di stampa
+	Origin: printable area	Origine: area stampabile
+	Plot scale	Scala di stampa
+	Open the Plot Style Manager; Plot comes back when it closes	Apre il Gestore stili di stampa; la finestra Stampa torna quando si chiude
+	Plot options	Opzioni di stampa
+	Plot with plot styles	Stampa con gli stili di stampa
+	Off: plot the objects' own colours and lineweights, keeping the table chosen above	Disattivato: stampa i colori e gli spessori propri degli oggetti, mantenendo la tabella scelta sopra
+	Plot stamp on	Timbro di stampa
+	A line at the sheet's lower-left corner: drawing, layout, date and time (UTC), device, paper and scale	Una riga nell'angolo inferiore sinistro del foglio: disegno, layout, data e ora (UTC), dispositivo, carta e scala
+	Save changes to layout	Salva le modifiche nel layout
+	OK also saves these settings in the layout's page setup	OK salva anche queste impostazioni nell'impostazione pagina del layout
+	Drawing orientation	Orientamento del disegno
+	The sheet as these settings plot it	Il foglio come lo stampano queste impostazioni
+	Apply to Layout	Applica al layout
+	Save these settings in the layout's page setup	Salva queste impostazioni nell'impostazione pagina del layout
+	Sent {what} to {printer} (job {job}) and saved it to {path}	{what} inviato a {printer} (lavoro {job}) e salvato in {path}
+	Sent {what} to {printer} (job {job})	{what} inviato a {printer} (lavoro {job})
+	Plotted {what} to {path}	{what} stampato in {path}
+	Plotted {what} ({bytes} bytes; there is no file dialog here)	{what} stampato ({bytes} byte; qui non c'è una finestra per i file)
+	landscape	orizzontale
+	portrait	verticale

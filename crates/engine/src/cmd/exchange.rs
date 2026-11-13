@@ -271,6 +271,7 @@ fn plot_scale(b: &Bounds2, sheet: &Sheet, fit: bool, scale: Option<f64>) -> f64 
     if s.is_finite() && s > 0.0 { s } else { 1.0 }
 }
 
+/// PREVIEW: a PNG of the plot the parameters (or the layout's page setup) describe, as the Plot dialog's preview shows it.
 fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let space = plot_space("preview", s, p)?;
     let d = s.doc()?;
@@ -316,6 +317,10 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     // Curves are flattened to about half a pixel.
     let est = plot_scale(&saved.window.unwrap_or_else(|| d.extents(&space)), &sheet, fit, scale);
     let tol = 0.5 / (px_per_paper_unit * est);
+    // The plot style table the sheet plots with (the `plotStyleTable` option, else its page setup's),
+    // so the preview shows the printed colours, screening and lineweights.
+    let style_name = str_param(p, "plotStyleTable").map_or_else(|| page.plot_style_table.clone(), str::to_string);
+    let plot_style_table = cadcraft_doc::plot_style_table(d, &style_name).map(std::sync::Arc::new);
     let ropts = cadcraft_render::Options {
         tolerance: if tol.is_finite() && tol > 0.0 { tol } else { 0.01 },
         min_dash: 0.0,
@@ -323,9 +328,10 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         fill: true,
         lineweights,
         transparency,
+        plot_style_table,
         ..Default::default()
     };
-    let list = cadcraft_render::build_plot(d, &space, &ropts);
+    let mut list = cadcraft_render::build_plot(d, &space, &ropts);
     let b = saved.window.unwrap_or(list.bounds);
     // Paper point q shows drawing point (q - to) / k + from.
     let (from, k, to) = if saved.window.is_some() {
@@ -337,6 +343,13 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         (Vec2::ZERO, plot_scale(&b, &sheet, fit, scale), Vec2::ZERO)
     };
+    // A saved window shows only what is inside it, as the plotters plot it.
+    if let Some(w) = saved.window.filter(|w| !w.is_empty()) {
+        let reach = 3.0 / (sheet.unit_mm * k);
+        list.retain_within(&w.expand(if reach.is_finite() && reach > 0.0 { reach } else { 0.0 } + w.width().max(w.height()) * 0.01));
+    }
+    // The table's line ends, joins and fill patterns at the plot scale, as the plotters draw them.
+    cadcraft_render::pen::apply(&mut list, k * sheet.unit_mm);
     let world = Bounds2::new((Vec2::ZERO - to) / k + from, (sheet.size - to) / k + from);
     if ![world.min.x, world.min.y, world.max.x, world.max.y].iter().all(|v| v.is_finite()) {
         return Err(bad("preview", "the drawing is too large to preview at this scale"));
@@ -360,7 +373,17 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
             (f64::from(x), f64::from(y))
         };
         let (min, max) = (sheet.printable.min, sheet.printable.max);
-        let (a, b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
+        let (mut a, mut b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
+        // A saved window also cuts the plot at its own edges.
+        if let Some(w) = saved.window.filter(|w| !w.is_empty()) {
+            let (x0, y1) = view.to_screen(w.min);
+            let (x1, y0) = view.to_screen(w.max);
+            a = (a.0.max(f64::from(x0)), a.1.max(f64::from(y0)));
+            b = (b.0.min(f64::from(x1)), b.1.min(f64::from(y1)));
+            if a.0 >= b.0 || a.1 >= b.1 {
+                (a, b) = ((0.0, 0.0), (0.0, 0.0));
+            }
+        }
         cadcraft_render::raster::blank_outside_pixels(&mut pm, a, b);
     }
     let png = pm.encode_png().map_err(|_| bad("preview", "rendering the preview failed"))?;

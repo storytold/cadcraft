@@ -33,6 +33,9 @@ craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }
+# Printing a plot's PDF on a Windows printer (the spooler's list and the job), from the same
+# craft-libs revision as craft-pdf.
+craft-print = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 
 # foundation
 thiserror = "2"

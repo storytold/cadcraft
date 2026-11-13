@@ -1217,3 +1217,27 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     });
     assert_eq!(loops_of(&h).len(), 2);
 }
+
+/// `retain_within` keeps the primitives that reach into the area, with their layers, and
+/// compacts the vertex arrays; one that is all inside or all outside decides alone.
+#[test]
+fn retain_within_keeps_what_reaches_the_area() {
+    let mut d = Drawing::new_metric();
+    let line = |a: Vec3, b: Vec3| EntityKind::Line(cadcraft_doc::Line { a, b });
+    d.add(&Space::Model, Common::default(), line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(100.0, 100.0, 0.0), Vec3::new(110.0, 100.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(-5.0, -50.0, 0.0), Vec3::new(-5.0, 50.0, 0.0))).unwrap();
+    let mut list = build_plot(&d, &Space::Model, &Options::default());
+    assert_eq!(list.prims.len(), 3);
+    list.retain_within(&Bounds2::new(Vec2::new(-10.0, -1.0), Vec2::new(20.0, 1.0)));
+    assert_eq!(list.prims.len(), 2, "the far line goes, the one crossing the area stays");
+    assert_eq!(list.prim_layers.len(), 2);
+    assert!(list.verts.iter().all(|p| p.x < 50.0), "the far line's vertices are gone");
+    for p in &list.prims {
+        assert_eq!(list.points(p).len(), p.len as usize);
+    }
+    // An empty or non-finite area keeps everything.
+    let before = list.prims.len();
+    list.retain_within(&Bounds2::EMPTY);
+    assert_eq!(list.prims.len(), before);
+}

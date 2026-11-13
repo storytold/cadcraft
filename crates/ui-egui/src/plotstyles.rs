@@ -33,11 +33,16 @@ const LINEWEIGHTS: [f64; 12] = [0.0, 0.09, 0.13, 0.18, 0.25, 0.3, 0.35, 0.5, 0.7
 /// A command to run after the dialog is drawn.
 type Action = Option<(&'static str, Value)>;
 
+/// The Plot Style Manager; opened from the Plot dialog's "Edit…", closing it goes back to Plot.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let action = window(app, ctx, open);
     if let Some((cmd, p)) = action {
         // Errors are echoed on the command line by `run`.
         let _ = app.run(cmd, p);
+    }
+    // Opened from the Plot dialog's "Edit…": closing goes back to Plot.
+    if !*open {
+        crate::managers::return_to_plot(app, ctx);
     }
 }
 

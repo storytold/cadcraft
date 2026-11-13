@@ -5,6 +5,7 @@
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
+pub mod cups;
 /// XCLIP boundaries as SPATIAL_FILTER objects.
 mod dxf_clip;
 mod dxf_ext;
@@ -20,8 +21,10 @@ pub mod plotter;
 pub mod raster;
 /// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
 pub mod roundtrip;
+pub mod stamp;
 pub mod svg;
 mod svg_read;
+pub mod winprint;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;

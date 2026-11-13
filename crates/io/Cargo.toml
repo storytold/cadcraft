@@ -24,6 +24,14 @@ craft-pdf = { workspace = true, features = ["write"] }
 quick-xml = { workspace = true }
 image = { workspace = true }
 
+# System printers on Windows (winprint.rs): the job through craft-print; the printers, their
+# papers and printable areas through the same winprint and winsafe craft-print uses (safe
+# wrappers over Win32, pinned to craft-print's versions so nothing is built twice).
+[target.'cfg(windows)'.dependencies]
+craft-print = { workspace = true }
+winprint = { git = "https://github.com/storytold/winprint.rs", rev = "5f80b9baf6b58937c401656634e42d33f00ddf49", default-features = false }
+winsafe = { version = "0.0.29", default-features = false, features = ["winspool"] }
+
 [dev-dependencies]
 tiny-skia = { workspace = true }
 # Reads plotted PDFs back.

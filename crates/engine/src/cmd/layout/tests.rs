@@ -372,3 +372,49 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The paper name of layout `name`.
+fn paper_of(s: &Session, name: &str) -> String {
+    s.doc().unwrap().layout(name).unwrap().page.paper.clone()
+}
+
+/// One change given to several layouts is applied to each, as one undo step.
+#[test]
+fn pagesetup_applies_one_change_to_several_layouts_in_one_step() {
+    let mut s = Session::new();
+    s.execute("layout.new", &json!({"name": "Sheet 3"})).unwrap();
+    let a1 = paper_of(&s, "Layout1");
+    assert_ne!(a1, "ISO A3 (420.00 x 297.00 MM)", "the test needs another starting paper");
+    let r = s.execute("pagesetup", &json!({"layouts": ["Layout1", "layout2"], "paper": "A3", "plotStyleTable": "monochrome.ctb"})).unwrap();
+    assert_eq!(r["layouts"].as_array().map(Vec::len), Some(2));
+    for n in ["Layout1", "Layout2"] {
+        let page = &s.doc().unwrap().layout(n).unwrap().page;
+        assert_eq!((page.width_mm.max(page.height_mm), page.plot_style_table.as_str()), (420.0, "monochrome.ctb"), "{n}");
+    }
+    assert_ne!(paper_of(&s, "Sheet 3"), paper_of(&s, "Layout1"), "a layout not named keeps its settings");
+    // "all" takes every layout; one undo step reverts all of it.
+    s.execute("pagesetup", &json!({"layouts": "all", "landscape": false})).unwrap();
+    assert!(s.doc().unwrap().layouts.iter().all(|l| !l.page.landscape));
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().layouts.iter().any(|l| l.page.landscape), "the whole change is one undo step");
+}
+
+/// A change a layout refuses leaves every layout as it was.
+#[test]
+fn pagesetup_for_several_layouts_is_all_or_nothing() {
+    let mut s = Session::new();
+    let before: Vec<String> = ["Layout1", "Layout2"].iter().map(|n| paper_of(&s, n)).collect();
+    for p in [
+        json!({"layouts": ["Layout1", "Nope"], "paper": "A3"}),
+        json!({"layouts": ["Layout1", "Layout2"], "paper": "Z12"}),
+        json!({"layouts": ["Layout1"], "layout": "Layout2", "paper": "A3"}),
+        json!({"layouts": ["Model"], "paper": "A3"}),
+        json!({"layouts": [], "paper": "A3"}),
+        json!({"layouts": "Layout1", "paper": "A3"}),
+        json!({"layouts": [7], "paper": "A3"}),
+    ] {
+        assert!(s.execute("pagesetup", &p).is_err(), "{p}");
+    }
+    let after: Vec<String> = ["Layout1", "Layout2"].iter().map(|n| paper_of(&s, n)).collect();
+    assert_eq!(before, after, "a refused change leaves every layout as it was");
+}

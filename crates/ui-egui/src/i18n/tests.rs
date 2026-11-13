@@ -94,6 +94,7 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     sources.into_iter().filter(|s| !s.is_empty() && !catalog.contains_key(&("", *s))).map(str::to_string).collect()
 }
 
+/// The `tl!` and `tf!` literals of the checked UI files that `language`'s catalog lacks.
 fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
@@ -116,6 +117,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "options/dialog",
         "finddlg",
         "textdlg",
+        "managers",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();

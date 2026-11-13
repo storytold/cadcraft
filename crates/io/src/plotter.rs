@@ -3,7 +3,8 @@
 //!
 //! PDF goes to [`crate::pdf`]. PNG draws the sheet on white paper at the device resolution
 //! (capped at [`MAX_PNG_PIXELS`]), with the plot style table and lineweights as PDF uses them.
-//! SVG shows the sheet of a layout or the model-space extents.
+//! SVG shows the sheet of a layout or the model-space extents. PDF and PNG plots draw the plot
+//! stamp (`stamp`, [`crate::stamp`]); SVG doesn't.
 
 use std::sync::Arc;
 
@@ -62,20 +63,43 @@ fn fit_scale(b: &Bounds2, sheet: &Sheet, o: &PdfOptions) -> f64 {
     pdf::plot_scale(b, sheet, o.fit != Some(false), o.scale)
 }
 
+/// The part of the sheet a PNG plot draws, from the `crop` option: `[x0, y0, x1, y1]` as fractions
+/// of the sheet, measured from its top-left corner (so `[0, 0, 1, 1]` is the whole sheet). A preview
+/// zoomed in on a detail asks for just that part at the resolution it needs.
+fn crop(opts: &Value) -> Result<Option<[f64; 4]>> {
+    let Some(raw) = opts.get("crop").filter(|v| !v.is_null()) else { return Ok(None) };
+    let v: Vec<f64> = raw.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    match v[..] {
+        [x0, y0, x1, y1]
+            if raw.as_array().is_some_and(|a| a.len() == 4)
+                && [x0, y0, x1, y1].iter().all(|f| f.is_finite() && (0.0..=1.0).contains(f))
+                && x1 - x0 >= 1e-6
+                && y1 - y0 >= 1e-6 =>
+        {
+            Ok(Some([x0, y0, x1, y1]))
+        }
+        _ => Err(IoError::Format("`crop` must be [x0, y0, x1, y1]: fractions of the sheet from 0 to 1, with x0 < x1 and y0 < y1".into())),
+    }
+}
+
+/// A raster plot: the sheet at the asked resolution (capped in pixels), cropped when asked, with the stamp.
 fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let o = pdf::with_saved_setup(d, space, &PdfOptions::from_json(opts));
     let (sheet, page) = sheet(d, space, &o)?;
+    let crop = crop(opts)?;
+    // The size of what is drawn, as fractions of the sheet.
+    let (frac_x, frac_y) = crop.map_or((1.0, 1.0), |c| (c[2] - c[0], c[3] - c[1]));
     let dpi = opts.get("resolution").and_then(Value::as_f64).filter(|r| r.is_finite()).unwrap_or(300.0).clamp(50.0, 2400.0);
     // Pixels per paper unit, lowered so the image stays within the caps.
     let mut k = sheet.unit_mm / 25.4 * dpi;
-    let (w, h) = (sheet.size.x * k, sheet.size.y * k);
+    let (w, h) = (sheet.size.x * frac_x * k, sheet.size.y * frac_y * k);
     let shrink = (MAX_PNG_PIXELS / (w * h).max(1.0)).sqrt().min(16384.0 / w.max(h).max(1.0)).min(1.0);
     if !(shrink.is_finite() && shrink > 0.0) {
         return Err(IoError::Format("the sheet is too large to plot as an image".into()));
     }
     k *= shrink;
     let px = |v: f64| (v * k).round().clamp(1.0, 16384.0) as u32;
-    let (width, height) = (px(sheet.size.x), px(sheet.size.y));
+    let (width, height) = (px(sheet.size.x * frac_x), px(sheet.size.y * frac_y));
     let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
     // Paper units per drawing unit: the fitted scale for model space or a fitted layout, else the
@@ -94,9 +118,18 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
-    let half = Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k);
+    // The paper point at the image centre (the sheet's centre, or the middle of the crop; the
+    // sheet's origin is its lower-left corner and the crop's is its top-left).
+    let half = match crop {
+        Some(c) => Vec2::new((c[0] + c[2]) / 2.0 * sheet.size.x, (1.0 - (c[1] + c[3]) / 2.0) * sheet.size.y),
+        None => Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k),
+    };
     let b = window.unwrap_or(list.bounds);
     let s = if fit { fit_scale(&b, &sheet, &o) } else { est };
+    // A window plots only what is inside it, as PDF does.
+    if let Some(w) = window {
+        list.retain_within(&pdf::window_margin(&w, s, sheet.unit_mm));
+    }
     // Plot style ends, joins and fill patterns at the plot scale, as PDF draws them (a layout's
     // are already drawn).
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
@@ -106,6 +139,11 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     } else {
         (Vec2::ZERO, Vec2::ZERO)
     };
+    if let Some(text) = &o.stamp {
+        let text = crate::stamp::fill(text, space.tab_name(), &page.paper, &crate::stamp::scale_label(s));
+        let to_world = |p: Vec2| (p - to) / s + from;
+        list.append(crate::stamp::display_list(d, &text, sheet.printable.min, sheet.unit_mm, to_world, 1.0 / s, &ropts));
+    }
     // The world point at the image centre, mapped through the same paper origin as PDF.
     let center = from + (half - to) / s;
     let view = raster::View { center, scale: k * s, width, height };
@@ -113,8 +151,21 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
     let mut pm = raster::render(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))?;
     if placed {
-        // PDF clips a placed plot to the printable area: blank the rest of the sheet.
-        raster::blank_outside_printable(&mut pm, &sheet.printable, k);
+        // PDF clips a placed plot to the printable area, and a window plot to the window too:
+        // blank the rest. Corners go through the view, so a crop is blanked in the same place.
+        let to_world = |q: Vec2| (q - to) / s + from;
+        let printable = Bounds2::new(to_world(sheet.printable.min), to_world(sheet.printable.max));
+        let keep = match window {
+            Some(w) => w.intersection(&printable),
+            None => printable,
+        };
+        if keep.is_empty() {
+            raster::blank_outside_pixels(&mut pm, (0.0, 0.0), (0.0, 0.0));
+        } else {
+            let (x0, y1) = view.to_screen(keep.min);
+            let (x1, y0) = view.to_screen(keep.max);
+            raster::blank_outside_pixels(&mut pm, (f64::from(x0), f64::from(y0)), (f64::from(x1), f64::from(y1)));
+        }
     }
     pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
 }
@@ -140,6 +191,9 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
+    if let Some(w) = window {
+        list.retain_within(&pdf::window_margin(&w, s, sheet.unit_mm));
+    }
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
     Ok(crate::svg::export_list(&list, window).into_bytes())
 }
@@ -157,10 +211,109 @@ mod tests {
         (be(16), be(20))
     }
 
+    /// A drawing with one line, enough for a plot to have something on the sheet.
     fn drawing() -> Drawing {
         let mut d = Drawing::new_metric();
         d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(100.0, 50.0, 0.0) })).unwrap();
         d
+    }
+
+    /// A PNG plot decoded.
+    fn decode(bytes: &[u8]) -> tiny_skia::Pixmap {
+        tiny_skia::Pixmap::decode_png(bytes).unwrap()
+    }
+
+    /// A PNG crop is that part of the sheet at the same scale.
+    #[test]
+    fn a_png_crop_is_that_part_of_the_sheet_at_the_same_scale() {
+        let d = drawing();
+        // 127 dpi is 5 pixels per mm: a 200 x 100 mm sheet is 1000 x 500 pixels, and a crop of its
+        // middle half starts on whole pixels.
+        let base = json!({"output": "png", "resolution": 127, "width": 100, "height": 200, "landscape": true, "margins": [0, 0, 0, 0]});
+        let full = decode(&plot(&d, &Space::Model, &base).unwrap());
+        assert_eq!((full.width(), full.height()), (1000, 500));
+        let mut cropped = base.clone();
+        cropped["crop"] = json!([0.25, 0.25, 0.75, 0.75]);
+        let part = decode(&plot(&d, &Space::Model, &cropped).unwrap());
+        assert_eq!((part.width(), part.height()), (500, 250), "half the sheet each way");
+        let mut drawn = 0;
+        for y in 0..part.height() {
+            for x in 0..part.width() {
+                let (a, b) = (part.pixel(x, y).unwrap(), full.pixel(x + 250, y + 125).unwrap());
+                let close = |p: u8, q: u8| p.abs_diff(q) <= 2;
+                assert!(close(a.red(), b.red()) && close(a.green(), b.green()) && close(a.blue(), b.blue()), "pixel {x},{y}");
+                drawn += usize::from(a.red() < 128);
+            }
+        }
+        assert!(drawn > 100, "the crop shows part of the drawing ({drawn} dark pixels)");
+        // A layout is cropped the same way.
+        let layout = Space::Paper(d.layouts[0].name.clone());
+        let lay = json!({"output": "png", "resolution": 127, "width": 100, "height": 200, "landscape": true, "margins": [0, 0, 0, 0]});
+        let l_full = decode(&plot(&d, &layout, &lay).unwrap());
+        let mut l_crop = lay.clone();
+        l_crop["crop"] = json!([0.0, 0.5, 0.5, 1.0]);
+        let l_part = decode(&plot(&d, &layout, &l_crop).unwrap());
+        assert_eq!((l_part.width(), l_part.height()), (l_full.width() / 2, l_full.height() / 2));
+    }
+
+    /// Bad crops are errors; no crop, or the whole sheet, is fine.
+    #[test]
+    fn a_bad_png_crop_is_an_error() {
+        let d = drawing();
+        for crop in [
+            json!([0.5, 0.0, 0.5, 1.0]),
+            json!([0.0, 0.8, 1.0, 0.2]),
+            json!([0, 0, 1]),
+            json!([0, 0, 1, 2]),
+            json!([-0.1, 0, 1, 1]),
+            json!("all"),
+            json!([0, 0, 1, f64::NAN]),
+        ] {
+            assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": crop})).is_err(), "{crop}");
+        }
+        assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": null})).is_ok(), "no crop is the whole sheet");
+        assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": [0, 0, 1, 1]})).is_ok());
+    }
+
+    /// A drawing with a short line inside the window [0,0]-[10,10], a line outside it to the
+    /// right (inside the sheet once the square window is fitted on a landscape page), and many
+    /// circles far away.
+    fn windowed_drawing() -> Drawing {
+        let mut d = Drawing::new_metric();
+        let line = |a: Vec3, b: Vec3| EntityKind::Line(Line { a, b });
+        d.add(&Space::Model, Common::default(), line(Vec3::new(2.0, 5.0, 0.0), Vec3::new(8.0, 5.0, 0.0))).unwrap();
+        d.add(&Space::Model, Common::default(), line(Vec3::new(12.0, 1.0, 0.0), Vec3::new(12.0, 9.0, 0.0))).unwrap();
+        for i in 0..2000 {
+            let c =
+                cadcraft_doc::Circle { center: Vec3::new(1000.0 + f64::from(i % 50) * 10.0, 1000.0 + f64::from(i / 50) * 10.0, 0.0), radius: 4.0 };
+            d.add(&Space::Model, Common::default(), EntityKind::Circle(c)).unwrap();
+        }
+        d
+    }
+
+    /// A window plots only what is inside it (#window): the PNG is blank outside the window even
+    /// where the sheet goes on, and the PDF leaves out what lies outside instead of carrying it.
+    #[test]
+    fn a_window_plots_only_what_is_inside_it() {
+        let d = windowed_drawing();
+        let opts = json!({"output": "png", "resolution": 50, "width": 210, "height": 297, "landscape": true, "plotArea": "window", "window": [[0, 0], [10, 10]], "fit": true});
+        let png = decode(&plot(&d, &Space::Model, &opts).unwrap());
+        let dark = |x0: u32, x1: u32| {
+            (x0..x1).flat_map(|x| (0..png.height()).map(move |y| (x, y))).filter(|(x, y)| png.pixel(*x, *y).is_some_and(|p| p.red() < 128)).count()
+        };
+        let (w, h) = (png.width(), png.height());
+        // The square window fills the page's height, centred: its right edge is at w/2 + h/2.
+        let right_edge = w / 2 + h / 2;
+        assert!(dark(w / 2 - h / 4, w / 2 + h / 4) > 10, "the line inside the window is drawn");
+        assert_eq!(dark(right_edge + 2, w), 0, "nothing outside the window is drawn");
+        let mut pdf_opts = opts.clone();
+        pdf_opts["output"] = json!("pdf");
+        let windowed = plot(&d, &Space::Model, &pdf_opts).unwrap();
+        let mut all = pdf_opts.clone();
+        all["plotArea"] = json!("extents");
+        all.as_object_mut().unwrap().remove("window");
+        let whole = plot(&d, &Space::Model, &all).unwrap();
+        assert!(windowed.len() * 5 < whole.len(), "the window's PDF leaves out the far circles ({} vs {} bytes)", windowed.len(), whole.len());
     }
 
     #[test]

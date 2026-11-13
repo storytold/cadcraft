@@ -1422,3 +1422,72 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Limits	Ліміти
+	{name} (default)	{name} (типовий)
+	Printer/plotter	Принтер/плотер
+	PDF on the paper chosen below	PDF на папері, вибраному нижче
+	Paper size	Розмір паперу
+	Orientation	Орієнтація
+	Portrait	Книжкова
+	Landscape	Альбомна
+	Plot area	Область друку
+	What to plot	Що друкувати
+	Fit to paper	Вписати в папір
+	Center the plot	Центрувати друк
+	Center the plotted model bounds on the printable area	Центрувати межі друкованої моделі в області друку
+	Model-space offset placement is not supported by SVG	SVG не підтримує зміщення в просторі моделі
+	X offset (mm)	Зміщення X (мм)
+	Y offset (mm)	Зміщення Y (мм)
+	Distance from the printable area's lower-left corner; values range from −100000 to 100000 mm	Відстань від лівого нижнього кута області друку; значення від −100000 до 100000 мм
+	Offsets must be within ±100000 mm	Зміщення мають бути в межах ±100000 мм
+	Paper units per drawing unit, or a ratio such as 1:50	Одиниць паперу на одиницю креслення або співвідношення, наприклад 1:50
+	Plot object lineweights	Друкувати ваги ліній об'єктів
+	Plot transparency	Друкувати прозорість
+	Plot objects with their transparency (PLOTTRANSPARENCYOVERRIDE can override it)	Друкувати об'єкти з їхньою прозорістю (PLOTTRANSPARENCYOVERRIDE може це змінити)
+	System printer	Системний принтер
+	File ({kind})	Файл ({kind})
+	Plot - {layout}	Друк креслення - {layout}
+	Page setup	Параметри аркуша
+	Plot several sheets	Друкувати кілька аркушів
+	All layouts	Усі аркуші
+	Every layout, in tab order (not the Model tab)	Усі аркуші в порядку вкладок (без вкладки «Модель»)
+	Only this one	Лише цей
+	Sheets	Аркуші
+	{n} sheets in one PDF, each with its own page setup (change them in the Page Setup Manager):	{n} аркушів в одному PDF, кожен зі своїми параметрами (змініть їх у диспетчері параметрів аркушів):
+	Number of copies	Кількість копій
+	Where	Куди
+	Plot to file	Друк у файл
+	Also save the printed PDF in a file you choose after OK	Також зберегти надрукований PDF у файл, вибраний після «Гаразд»
+	This device writes a file: OK asks where	Цей пристрій записує файл: «Гаразд» запитає, куди
+	Looking for printers…	Пошук принтерів…
+	Refresh printers	Оновити принтери
+	Ask the system for its printers again (a printer just added or switched on)	Знову запитати в системи її принтери (щойно доданий або увімкнений принтер)
+	First corner	Перший кут
+	Opposite corner	Протилежний кут
+	Window <	Вікно <
+	Pick the window's corners in the drawing	Вкажіть кути вікна на кресленні
+	Choose Window to set the corners	Виберіть «Вікно», щоб задати кути
+	Layouts plot the whole sheet	Аркуші друкуються повністю
+	Plot offset	Зміщення друку
+	Origin: printable area	Початок: область друку
+	Plot scale	Масштаб друку
+	Open the Plot Style Manager; Plot comes back when it closes	Відкрити диспетчер стилів друку; після його закриття повернеться вікно друку
+	Plot options	Параметри друку
+	Plot with plot styles	Друкувати зі стилями друку
+	Off: plot the objects' own colours and lineweights, keeping the table chosen above	Вимкнено: друкувати власні кольори й ваги ліній об'єктів, зберігши вибрану вище таблицю
+	Plot stamp on	Штамп друку
+	A line at the sheet's lower-left corner: drawing, layout, date and time (UTC), device, paper and scale	Рядок у лівому нижньому куті аркуша: креслення, аркуш, дата й час (UTC), пристрій, папір і масштаб
+	Save changes to layout	Зберегти зміни в аркуші
+	OK also saves these settings in the layout's page setup	«Гаразд» також зберігає ці налаштування в параметрах аркуша
+	Drawing orientation	Орієнтація креслення
+	The sheet as these settings plot it	Аркуш так, як його надрукують ці налаштування
+	Apply to Layout	Застосувати до аркуша
+	Save these settings in the layout's page setup	Зберегти ці налаштування в параметрах аркуша
+	{n} sheets	{n} аркушів
+	{n} layouts selected: a change applies to all of them	Вибрано аркушів: {n}; зміна застосується до всіх
+	Sent {what} to {printer} (job {job}) and saved it to {path}	{what} надіслано на {printer} (завдання {job}) і збережено в {path}
+	Sent {what} to {printer} (job {job})	{what} надіслано на {printer} (завдання {job})
+	Plotted {what} to {path}	{what} надруковано в {path}
+	Plotted {what} ({bytes} bytes; there is no file dialog here)	{what} надруковано ({bytes} байт; тут немає вікна вибору файлу)
+	landscape	альбомна
+	portrait	книжкова

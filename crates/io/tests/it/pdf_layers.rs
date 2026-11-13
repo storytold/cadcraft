@@ -253,6 +253,7 @@ fn unusual_titles_are_kept() {
     assert_eq!(doc.title.as_deref(), Some("Plan ü (1)\\"));
 }
 
+/// Layers beyond the PDF layer cap still print; only their PDF layers are left out.
 #[test]
 fn layers_past_the_cap_print_without_a_pdf_layer() {
     // One more drawing layer than a file has PDF layers (4096).
@@ -269,4 +270,24 @@ fn layers_past_the_cap_print_without_a_pdf_layer() {
     let c = doc.content();
     assert_eq!(pdf_read::drawn(c).iter().filter(|o| o.op == "m").count(), 4097);
     assert_eq!((pdf_read::count(c, "BDC"), pdf_read::count(c, "EMC")), (4096, 4096));
+}
+
+/// With `portraitMedia`, a landscape sheet is drawn a quarter turn on a portrait page; without it the page stays landscape.
+#[test]
+fn portrait_media_turns_landscape_sheets_for_printers() {
+    let d = layered();
+    let page = |o: serde_json::Value| read(&plot(&d, &Space::Model, &o).unwrap()).pages.into_iter().next().unwrap();
+    // The page's transforms (`cm`): the writer's own y flip, and the quarter turn when turned.
+    let cms = |p: &pdf_read::Page| -> Vec<Vec<f64>> { pdf_read::ops(&p.content).into_iter().filter(|o| o.op == "cm").map(|o| o.nums).collect() };
+    let plain = page(json!({ "paper": "Letter", "landscape": true }));
+    assert_eq!(plain.media, [0.0, 0.0, 792.0, 612.0]);
+    assert!(cms(&plain).is_empty());
+    // On portrait media: a portrait page, the sheet turned a quarter turn counterclockwise.
+    let turned = page(json!({ "paper": "Letter", "landscape": true, "portraitMedia": true }));
+    assert_eq!(turned.media, [0.0, 0.0, 612.0, 792.0]);
+    assert!(cms(&turned).iter().any(|m| m == &[0.0, 1.0, -1.0, 0.0, 612.0, 0.0]), "{:?}", cms(&turned));
+    // A portrait sheet is not turned.
+    let portrait = page(json!({ "paper": "Letter", "landscape": false, "portraitMedia": true }));
+    assert_eq!(portrait.media, [0.0, 0.0, 612.0, 792.0]);
+    assert!(cms(&portrait).is_empty());
 }

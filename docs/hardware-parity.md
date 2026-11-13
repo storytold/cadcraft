@@ -28,7 +28,7 @@ requirements and graphics-performance documentation. Nothing was benchmarked in 
 | 3D mouse (3Dconnexion SpaceMouse) | yes | **no** | 2D pan and zoom through raw HID (#650, Tools ▸ 3D Mouse); not checked on a physical device in the PR | same (hidapi, udev) | no |
 | Pen tablet / digitizer (TABLET command, calibration) | yes (Windows) | **no** | **no** | **no** | no |
 | Screen magnifier following the cursor | yes | — | breaks (#39 is open; the option to keep the system cursor over the drawing area landed, #187) | — | — |
-| Plotters and printers (PC3 devices, system printers) | yes | **no** system printers: PDF, PNG and SVG plotter devices only (#564); the Plot dialog writes the file (#160); CUPS printing is open PR #755 | same | same | PDF bytes shown instead of a download (#134) |
+| Plotters and printers (PC3 devices, system printers) | yes | system printers through CUPS: PPD papers and printable areas (or `lpoptions` media for driverless queues), the default printer marked, copies, plot to file and print; PC3 files **no** | the spooler's printers through craft-print (vector, exact size), the default printer marked, copies, plot to file and print; PC3 files **no** | same as macOS (CUPS) | PDF bytes shown instead of a download (#134) |
 
 ## Performance on hardware (internal numbers only)
 
@@ -48,6 +48,7 @@ next step.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-12 | minor | System printers: CUPS on macOS and Linux (driverless queues too) and the Windows spooler, the default printer marked, copies, plot to file and print |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: SpaceMouse 2D pan/zoom (#650), magnifier option (#187), winit PRs #110–#119 closed in favour of open PR #668, system printers still open (PR #755); re-checked against main 41d9b5e95, percentage and hours not re-measured |
 | 2026-10-13 | minor | Re-audit against main e707ab4d: SpaceMouse 2D pan/zoom (#650), magnifier option (#187), winit PRs #110–#119 closed in favour of open PR #668, system printers still open (PR #755); percentage and hours not re-measured |
 | 2026-10-13 | minor | Zoom and pan regenerate in the background: 2–4.5 s stalls down to 26–64 ms on a hatched DWG |
