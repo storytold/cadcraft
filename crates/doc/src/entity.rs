@@ -597,6 +597,7 @@ impl EntityKind {
         }
     }
 
+
     /// Grip points (editable defining points), in display order.
     pub fn grips(&self) -> Vec<Vec2> {
         // A broken table has a grip for each part.

@@ -478,6 +478,7 @@ fn entity_types(drawing: &Drawing) -> HashMap<String, bool> {
     let mut types = HashMap::new();
     for entity in all_entities(drawing) {
         types.entry(entity.handle.hex()).or_insert(matches!(entity.kind, EntityKind::Unknown(_) | EntityKind::Tianzheng(_)));
+        types.entry(entity.handle.hex()).or_insert(matches!(entity.kind, EntityKind::Unknown(_)));
     }
     types
 }
