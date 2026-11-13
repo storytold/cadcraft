@@ -19,7 +19,7 @@
 
 5. **几何回写已实现（`encode_wall_segments` 逆操作）**：`encode_wall_segments(graphic_data, segments)` 把新 segments 反向构造成类型 6 图元（payload 重写为 `u32 2 + 6×f64`，其余图元原样保留；**段数必须等于类型 6 图元数**，否则拒绝）。保存路径：`cadcraft_io::move_tianzheng_wall`/`move_tianzheng_segment`/`set_tianzheng_segment` 改 `Tianzheng.segments` → `encode_wall_segments` 生成新 graphic_data → `sync_tianzheng_graphics` 写回 tags 的 `160`(i64)/`92`(i32) 长度 + 紧跟的 `310` 段（graphics 段在 `162`/`96` text bits 之前，与 data 的 `161`/`93`+`310` 段区分）。命令层经 `properties.set` 的 `tianzhengGeometry` 参数（`{"op":"moveWall|moveSegment|setSegment|setThickness", ...}`）接入，hook 为 `tianzheng_geometry_setter`。端到端已验证（真实图纸 52 墙，平移 (1000,2000) → 保存 → 再读坐标一致）。**`set_thickness` 已实现（仅直墙）**：`set_tianzheng_thickness` 改 2 段平行双线的间距（墙中线不动，双线各沿法线移动 `(new-old)/2`），端到端验证 240→300mm 落盘成功；拐角/开洞墙（3+ 段）返回 false，AI 用 `setSegment`/`moveSegment` 自算坐标。
 
-6. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@类名`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线。**纠正**：`T20d7`=OutCircleTextAlignment 属 `TDbSymbDrawingIndex`（图纸索引符号）、`T20d12`=SourceExtentY 属 `TDbSymbIndexPointer`（索引指针符号），**不是墙字段**（旧版误归 TDbWall）。故 binary 的 TCH_WALL 字段全是「填充/保温/材料」**属性**（T20b/s/u），**墙高/墙厚不在 T20 字段容器**（是 `TEntityBase` 加密固定字段 double@+0x08/+0x10），几何也不在 T20 字段（在加密固定字段 + proxy graphics）。
+6. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@类名`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线。**纠正**：`T20d7`=OutCircleTextAlignment 属 `TDbSymbDrawingIndex`（图纸索引符号）、`T20d12`=SourceExtentY 属 `TDbSymbIndexPointer`（索引指针符号），**不是墙字段**（旧版误归 TDbWall）。故 binary 的 TCH_WALL 字段全是「填充/保温/材料」**属性**（T20b/s/u）。**墙高/墙厚在 `TWallData` 子对象（`TDbWall+0x130`）的固定 double**：墙高 = `TWallData+0x70`（`TDbWall+0x1A0`，`GetHeight` 汇编 `movsd [rcx+0x70]`），墙厚 = `TWallData+0x60 + 0x68`（`TDbWall+0x190+0x198`，`GetWidth` 汇编 `[rcx+0x68]+[rcx+0x60]` 取绝对值 = 左右半厚之和）；几何（起点/终点/bulge）也在 TWallData。序列化版本>11 走 `TgDataEncrypt` 加密，≤11 明文。
 
 7. **天正文字在 proxy graphics 类型 38 图元**（实测 TCH_TEXT/TCH_DIMENSION/TCH_OPENING/TCH_ELEVATION）。payload 布局：`x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 16/24/32 是 0，偏移 40 是缩放因子（恒 1.0），**偏移 48/56 是旋转方向的**方向余弦** `(cos, sin)`**（单位向量：水平 `(1,0)`、垂直 `(0,1)`、坡度箭头 `(0.993,-0.118)`），旋转角 = `atan2(sin@56, cos@48)`；偏移 72 起是 UTF-16LE null 结尾的文字内容，其后 `char_count(u32，对齐到 4)`，再对齐到 8 后是 `height(f64)`（如 297.5）与 `width_factor(f64)`（如 0.70588），更后面是字体名 `SIMPLEX`/`GBCBIG`。**上标/下标文字**（`^U2^U` 控制码对应）的 height 字段布局不同（读到 0 = 继承主文字），已用「扫描 50..5000 范围 + 继承主文字高度」启发式处理。已实现 `extract_text_entities` 提取（含 rotation）+ 渲染层按 `Text` 画出（原「offset 48=旋转角」结论作废）。
 
@@ -246,6 +246,6 @@ DwgOut 写 9 个字段（几何数据）：
 ## 10. 待完成
 
 - [ ] 数值字段值（b/d/u）从 main 流位解码（需按字段顺序读取，字段名在 text 流、数值在 main 流交错对应）。
-- [ ] 各实体派生类（墙/柱/梁/管段…）的固定字段语义。
+- [x] 墙（TDbWall）的固定字段语义：墙高 `TWallData+0x70`（TDbWall+0x1A0）、墙厚 `TWallData+0x60+0x68`（TDbWall+0x190+0x198），见第 6 点。柱/梁/管段等其他派生类仍待逆。
 - [ ] 字段数据类型枚举（0..210）的完整映射（已确认 s/b/d/u 四类，其余类型待展开）。
-- [ ] `set_thickness`（改墙厚）：需逆向双线墙的「内/外线配对 + 法线方向」语义（`segments` 是扁平线段列表，直墙 2 段/环墙 4 段/环/拐角墙多段，无配对信息）。当前用 `setSegment`/`moveSegment` 原语让 AI 自算坐标。
+- [x] `set_thickness`（改墙厚，直墙 2 段）：`set_tianzheng_thickness` 已实现（中线不动、双线沿法线各移 (new-old)/2）；拐角/开洞墙用 `setSegment`/`moveSegment` 原语让 AI 自算坐标。
