@@ -1031,3 +1031,7 @@
 	Move to...	Переместить...
 	Move before layout:	Поместить перед листом:
 	(move to end)	(в конец)
+	Custom:	Свой:
+	By window	По рамке
+	Pick a window to fit in the viewport	Указать рамку, которая заполнит видовой экран
+	Not a scale: {text} (type 1:x)	Не масштаб: {text} (введите 1:x)

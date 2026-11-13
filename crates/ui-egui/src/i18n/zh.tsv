@@ -1478,3 +1478,7 @@ menu	View	视图
 	Move to...	移动到...
 	Move before layout:	移到布局之前：
 	(move to end)	（移到末尾）
+	Custom:	自定义:
+	By window	按窗口
+	Pick a window to fit in the viewport	选取要充满视口的窗口
+	Not a scale: {text} (type 1:x)	不是比例：{text}（请输入 1:x）
