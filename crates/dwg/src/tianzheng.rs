@@ -155,6 +155,31 @@ mod native {
         segs
     }
 
+    /// 把墙的几何线段反向编码回 proxy graphics 的类型 6 图元（[`extract_wall_segments`] 的逆操作）。
+    ///
+    /// 每个 segment 生成一个 `Unknown { record_type: 6, data }` 图元，payload 52 字节 =
+    /// u32 顶点数(2) + 起点 (X1,Y1,Z1) + 终点 (X2,Y2,Z2)，6 个 double（LE），与天正写入格式一致。
+    /// 替换原有 graphics 里**所有**类型 6 图元，其余图元原样保留；`segments` 数量必须等于
+    /// 类型 6 图元数，否则返回 `None`（拒绝错位替换）。graphics 里无类型 6 图元（几何不在
+    /// graphics 里，如 binary 格式）时也返回 `None`。
+    pub fn encode_wall_segments(graphic_data: &[u8], segments: &[(f64, f64, f64, f64, f64, f64)]) -> Option<Vec<u8>> {
+        let mut g = acadrust::entities::ProxyGraphics::decode(graphic_data)?;
+        let mut i = 0;
+        for r in &mut g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 6, data } = r {
+                let seg = *segments.get(i)?;
+                let mut payload = Vec::with_capacity(52);
+                payload.extend_from_slice(&2u32.to_le_bytes());
+                for v in [seg.0, seg.1, seg.2, seg.3, seg.4, seg.5] {
+                    payload.extend_from_slice(&v.to_le_bytes());
+                }
+                *data = payload;
+                i += 1;
+            }
+        }
+        (i == segments.len()).then(|| g.encode()).flatten()
+    }
+
     /// 从天正实体的 `raw_data` 提取 text 流（含字段容器明文 + 加密字段）。
     ///
     /// text 流在 DWG merged record 的布局 `[main][text][modular_short][flag][handles]` 中，
@@ -477,7 +502,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
 
 #[cfg(test)]
 mod tests {
@@ -587,5 +612,44 @@ mod tests {
         let encoded = encode_text_strings(&strings);
         let fields = parse_tianzheng_fields(&encoded);
         assert_eq!(fields, vec![("T20s14".to_string(), "砖墙".to_string()), ("T20s9".to_string(), "隔热层".to_string())]);
+    }
+
+    /// extract_wall_segments 与 encode_wall_segments 互为逆操作（类型 6 图元 round-trip）。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn wall_segments_round_trip() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        let seg: (f64, f64, f64, f64, f64, f64) = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5);
+        let mut payload = Vec::with_capacity(52);
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        for v in [seg.0, seg.1, seg.2, seg.3, seg.4, seg.5] {
+            payload.extend_from_slice(&v.to_le_bytes());
+        }
+        let g = ProxyGraphics { records: vec![ProxyGraphicRecord::Unknown { record_type: 6, data: payload }] };
+        let graphic_data = g.encode().unwrap();
+
+        assert_eq!(extract_wall_segments(&graphic_data), vec![seg]);
+
+        let seg2: (f64, f64, f64, f64, f64, f64) = (10.0, 20.0, 30.0, 40.0, 50.0, 60.0);
+        let new_g = encode_wall_segments(&graphic_data, &[seg2]).unwrap();
+        assert_eq!(extract_wall_segments(&new_g), vec![seg2]);
+    }
+
+    /// 段数不匹配时 encode_wall_segments 拒绝（返回 None），不会错位替换。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn wall_segments_rejects_mismatch() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        let seg: (f64, f64, f64, f64, f64, f64) = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
+        let mut payload = Vec::with_capacity(52);
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        for v in [seg.0, seg.1, seg.2, seg.3, seg.4, seg.5] {
+            payload.extend_from_slice(&v.to_le_bytes());
+        }
+        let g = ProxyGraphics { records: vec![ProxyGraphicRecord::Unknown { record_type: 6, data: payload }] };
+        let graphic_data = g.encode().unwrap();
+
+        assert!(encode_wall_segments(&graphic_data, &[]).is_none());
+        assert!(encode_wall_segments(&graphic_data, &[seg, seg]).is_none());
     }
 }

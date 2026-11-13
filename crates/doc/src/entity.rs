@@ -83,6 +83,9 @@ pub struct Tianzheng {
     /// 非墙实体或 binary 格式（几何在加密固定字段）为空。
     #[serde(default, skip)]
     pub segments: Vec<(f64, f64, f64, f64, f64, f64)>,
+    /// 原始 proxy graphics 字节（几何回写用；几何不在 graphics 里时为 None）。
+    #[serde(default, skip)]
+    pub graphic_data: Option<Vec<u8>>,
 }
 
 impl Unknown {

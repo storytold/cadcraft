@@ -279,6 +279,20 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(left_out.result(changed));
     }
+    // 天正墙几何：`tianzhengGeometry` 是操作对象，见 cadcraft_io::set_tianzheng_geometry 的 op。
+    if let Some(geom) = p.get("tianzhengGeometry") {
+        let Some(set_geom) = crate::cmd::file::tianzheng_geometry_setter() else {
+            return Ok(left_out.result(0));
+        };
+        let d = s.doc_mut()?;
+        let mut changed = 0;
+        for h in &hs {
+            if set_geom(d, *h, geom) {
+                changed += 1;
+            }
+        }
+        return Ok(left_out.result(changed));
+    }
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")

@@ -63,6 +63,20 @@ pub fn tianzheng_setter() -> Option<TianzhengSetter> {
     TIANZHENG_SETTER.get().copied()
 }
 
+/// Edit a Tangent (天正) wall's geometry, installed by the app with the DWG bridge. The JSON
+/// `op` carries the operation (see `properties.set`'s `tianzhengGeometry` parameter). `None` in
+/// builds without the native DWG bridge (e.g. web), where such entities are not read either.
+pub type TianzhengGeometrySetter = fn(&mut Drawing, cadcraft_doc::Handle, &serde_json::Value) -> bool;
+
+static TIANZHENG_GEOMETRY_SETTER: OnceLock<TianzhengGeometrySetter> = OnceLock::new();
+
+pub fn set_tianzheng_geometry_setter(f: TianzhengGeometrySetter) {
+    let _ = TIANZHENG_GEOMETRY_SETTER.set(f);
+}
+pub fn tianzheng_geometry_setter() -> Option<TianzhengGeometrySetter> {
+    TIANZHENG_GEOMETRY_SETTER.get().copied()
+}
+
 /// An entity as DXF groups and back, for AutoLISP's `entget`, `entmake` and `entmod`
 /// (installed by the app with the DXF reader and writer, a lower layer).
 pub struct EntityCodec {

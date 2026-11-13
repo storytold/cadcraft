@@ -233,6 +233,148 @@ pub fn set_tianzheng_field(d: &mut Drawing, handle: cadcraft_doc::Handle, field_
     true
 }
 
+/// 把修改后的 proxy graphics 写回 Tianzheng 的 tags（`160`/`92` 长度 + 紧跟的 `310` 段），供保存 DWG 用。
+///
+/// proxy DXF 里 graphics 在 AcDbProxyEntity 子类里：`160`（R2010+，i64 长度）或 `92`（更早，
+/// i32 长度）后紧跟若干 `310` binary 段，再后是 `162`/`96`（text bit 数）。本函数替换这段
+/// graphics，其余（payload/text 的 `161`/`93` + `310`）保持不变。天正 tags 里没有 graphics
+/// 长度 group（或其后没有 310 段）时返回 false。
+fn sync_tianzheng_graphics(tags: &mut Vec<RawTag>, new_graphics: &[u8]) -> bool {
+    let mut out: Vec<RawTag> = Vec::with_capacity(tags.len());
+    let mut i = 0;
+    let mut replaced = false;
+    while i < tags.len() {
+        let code = tags[i].code;
+        // graphics 长度 group（160 或 92），其后紧跟 310/319 段就是 graphics 数据。
+        if !replaced
+            && (code == 160 || code == 92)
+            && tags.get(i + 1).is_some_and(|t| t.code == 310 || t.code == 319)
+        {
+            out.push(RawTag { code, value: new_graphics.len().to_string() });
+            i += 1;
+            while i < tags.len() && (tags[i].code == 310 || tags[i].code == 319) {
+                i += 1;
+            }
+            for c in new_graphics.chunks(127) {
+                out.push(RawTag { code: 310, value: hex_encode(c) });
+            }
+            replaced = true;
+            continue;
+        }
+        out.push(tags[i].clone());
+        i += 1;
+    }
+    if !replaced {
+        return false;
+    }
+    *tags = out;
+    true
+}
+
+/// 用新 segments 重建 graphic_data 并同步回 tags（[`set_tianzheng_segment`] 与
+/// [`move_tianzheng_wall`] 共用）。实体非天正、无 graphic_data、或段数不匹配时返回 false。
+fn set_tianzheng_segments(d: &mut Drawing, handle: cadcraft_doc::Handle, new_segments: Vec<(f64, f64, f64, f64, f64, f64)>) -> bool {
+    use cadcraft_doc::EntityKind;
+    let t = match d.model.get(handle).map(|e| &e.kind) {
+        Some(EntityKind::Tianzheng(t)) => t.clone(),
+        _ => return false,
+    };
+    let Some(new_graphics) = t
+        .graphic_data
+        .as_deref()
+        .and_then(|g| cadcraft_dwg::tianzheng::encode_wall_segments(g, &new_segments))
+    else {
+        return false;
+    };
+    d.model.modify(handle, |entity| {
+        if let EntityKind::Tianzheng(t) = &mut entity.kind {
+            t.segments = new_segments;
+            t.graphic_data = Some(new_graphics.clone());
+            sync_tianzheng_graphics(&mut t.tags, &new_graphics);
+        }
+    });
+    true
+}
+
+/// 修改天正墙实体的第 `seg_index` 个几何线段，并把改动写回 graphic_data 和 tags（供保存 DWG）。
+/// 返回是否成功（实体非天正、无 graphic_data、段索引越界、或段数不匹配时返回 false）。
+pub fn set_tianzheng_segment(d: &mut Drawing, handle: cadcraft_doc::Handle, seg_index: usize, seg: (f64, f64, f64, f64, f64, f64)) -> bool {
+    use cadcraft_doc::EntityKind;
+    let t = match d.model.get(handle).map(|e| &e.kind) {
+        Some(EntityKind::Tianzheng(t)) => t.clone(),
+        _ => return false,
+    };
+    if seg_index >= t.segments.len() {
+        return false;
+    }
+    let mut segs = t.segments.clone();
+    segs[seg_index] = seg;
+    set_tianzheng_segments(d, handle, segs)
+}
+
+/// 平移天正墙实体的第 `seg_index` 段（起点和终点都加 `(dx, dy, dz)`），见 [`set_tianzheng_segment`]。
+pub fn move_tianzheng_segment(d: &mut Drawing, handle: cadcraft_doc::Handle, seg_index: usize, dx: f64, dy: f64, dz: f64) -> bool {
+    use cadcraft_doc::EntityKind;
+    let seg = match d.model.get(handle).map(|e| &e.kind) {
+        Some(EntityKind::Tianzheng(t)) => t.segments.get(seg_index).copied(),
+        _ => None,
+    };
+    let Some(seg) = seg else { return false };
+    set_tianzheng_segment(d, handle, seg_index, (seg.0 + dx, seg.1 + dy, seg.2 + dz, seg.3 + dx, seg.4 + dy, seg.5 + dz))
+}
+
+/// 平移天正墙实体的整面墙（所有段都加 `(dx, dy, dz)`）。
+pub fn move_tianzheng_wall(d: &mut Drawing, handle: cadcraft_doc::Handle, dx: f64, dy: f64, dz: f64) -> bool {
+    use cadcraft_doc::EntityKind;
+    let t = match d.model.get(handle).map(|e| &e.kind) {
+        Some(EntityKind::Tianzheng(t)) => t.clone(),
+        _ => return false,
+    };
+    if t.segments.is_empty() {
+        return false;
+    }
+    let segs = t
+        .segments
+        .iter()
+        .map(|s| (s.0 + dx, s.1 + dy, s.2 + dz, s.3 + dx, s.4 + dy, s.5 + dz))
+        .collect();
+    set_tianzheng_segments(d, handle, segs)
+}
+
+/// 改天正墙几何的 JSON 分发入口（供 engine 的 `properties.set` 通过 `tianzhengGeometry` 参数调用）。
+///
+/// `op` 支持的操作：
+/// - `{"op": "moveWall", "dx": f64, "dy": f64, "dz": f64}` → [`move_tianzheng_wall`]
+/// - `{"op": "moveSegment", "index": usize, "dx": f64, "dy": f64, "dz": f64}` → [`move_tianzheng_segment`]
+/// - `{"op": "setSegment", "index": usize, "x1": f64, "y1": f64, "z1": f64, "x2": f64, "y2": f64, "z2": f64}` → [`set_tianzheng_segment`]
+///
+/// 返回是否成功（未知 op、缺参数、或底层失败时返回 false）。
+pub fn set_tianzheng_geometry(d: &mut Drawing, handle: cadcraft_doc::Handle, op: &serde_json::Value) -> bool {
+    let f = |v: &serde_json::Value| v.as_f64().filter(|x| x.is_finite());
+    match op.get("op").and_then(|v| v.as_str()) {
+        Some("moveWall") => {
+            let dx = f(&op["dx"]).unwrap_or(0.0);
+            let dy = f(&op["dy"]).unwrap_or(0.0);
+            let dz = f(&op["dz"]).unwrap_or(0.0);
+            move_tianzheng_wall(d, handle, dx, dy, dz)
+        }
+        Some("moveSegment") => {
+            let Some(index) = op.get("index").and_then(|v| v.as_u64()) else { return false };
+            let dx = f(&op["dx"]).unwrap_or(0.0);
+            let dy = f(&op["dy"]).unwrap_or(0.0);
+            let dz = f(&op["dz"]).unwrap_or(0.0);
+            move_tianzheng_segment(d, handle, index as usize, dx, dy, dz)
+        }
+        Some("setSegment") => {
+            let Some(index) = op.get("index").and_then(|v| v.as_u64()) else { return false };
+            let coords = ["x1", "y1", "z1", "x2", "y2", "z2"].map(|k| f(&op[k]));
+            let [Some(x1), Some(y1), Some(z1), Some(x2), Some(y2), Some(z2)] = coords else { return false };
+            set_tianzheng_segment(d, handle, index as usize, (x1, y1, z1, x2, y2, z2))
+        }
+        _ => false,
+    }
+}
+
 /// 打开 DWG 后，把天正自定义实体（`TCH_*`）从 `Unknown` 解析成 `Tianzheng` 实体（含字段名和值）。
 fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
     let entities = match cadcraft_dwg::tianzheng::read_tianzheng(dwg_bytes) {
@@ -245,6 +387,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
             .unwrap_or_default();
         // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
         let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
+        let graphic_data = (!e.graphic_data.is_empty()).then(|| e.graphic_data.clone());
         let handle = cadcraft_doc::Handle(e.handle);
         let class_name = e.dxf_class.clone();
         let raw_data = e.raw_data.clone();
@@ -261,6 +404,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                     tags,
                     dxf_type,
                     segments: segments.clone(),
+                    graphic_data: graphic_data.clone(),
                 });
             }
         });
