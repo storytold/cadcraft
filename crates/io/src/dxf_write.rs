@@ -127,6 +127,50 @@ pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
     craft_dxf::write_ascii(&tags)
 }
 
+/// A block reference the saved DXF would not resolve: a record the file keeps — an entity type
+/// the writer keeps raw, an unmodelled dimension class — names, by its group 2, an anonymous
+/// `*D` block nothing the writer recognises claims, so the block is dropped as unreferenced
+/// while the record that points at it stays. The save still happens; SAVEAS reports these
+/// ([`dangling_block_refs`]) instead of writing a dangling reference silently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DanglingBlockRef {
+    /// The record's handle, as the file shows it.
+    pub handle: String,
+    /// The record's DXF type name.
+    pub entity: String,
+    /// The block it names.
+    pub block: String,
+}
+
+/// The [`DanglingBlockRef`]s of a drawing saved as DXF: geometry blocks only an unmodelled
+/// dimension class names — the modelled kinds claim theirs through [`blocks::dim_block_plan`],
+/// which this asks the same question. A block the drawing itself doesn't define is the reader's
+/// `missingBlock` finding, already there when the file was opened, not a save defect: left out.
+pub fn dangling_block_refs(d: &Drawing) -> Vec<DanglingBlockRef> {
+    let plan = blocks::dim_block_plan(d);
+    // A `*D` name a modelled dimension claims is written again, regenerated for it.
+    let claimed = plan.reuse.values().map(|b| b.name.to_ascii_uppercase()).collect::<std::collections::HashSet<_>>();
+    let dropped = |name: &str| {
+        let key = name.to_ascii_uppercase();
+        plan.skip.contains(&key) && !claimed.contains(&key)
+    };
+    // Entity classes whose group 2 names their geometry block, as DIMENSION's does.
+    const GEOMETRY_BLOCK: [&str; 3] = ["DIMENSION", "ARC_DIMENSION", "LARGE_RADIAL_DIMENSION"];
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    let mut out = Vec::new();
+    for e in stores.flat_map(|s| s.iter()) {
+        let EntityKind::Unknown(u) = &e.kind else { continue };
+        if !GEOMETRY_BLOCK.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) {
+            continue;
+        }
+        let Some(name) = u.tags.iter().find(|t| t.code == 2).map(|t| t.value.trim()) else { continue };
+        if !name.is_empty() && dropped(name) {
+            out.push(DanglingBlockRef { handle: e.handle.hex(), entity: u.dxf_type.clone(), block: name.to_string() });
+        }
+    }
+    out
+}
+
 /// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.
 /// Ordinary DXF output retains source spellings.
 fn bridge_markers(tags: &mut [Tag]) {
