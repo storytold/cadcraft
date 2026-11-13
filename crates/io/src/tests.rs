@@ -3692,3 +3692,47 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// A dimension class the writer keeps raw names its geometry block by group 2, but nothing
+/// modelled claims the block, so the writer drops it while the record stays: the file would
+/// hold a dangling reference. [`dangling_block_refs`] says so — and a modelled dimension
+/// (an ARC_DIMENSION read as one) that claims its block says nothing.
+#[test]
+fn dangling_block_refs_names_the_blocks_the_file_would_drop() {
+    let mut d = Drawing::new_metric();
+    let mut b = Block::new("*D500");
+    let h = d.new_handle();
+    b.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    d.blocks.insert("*D500".into(), std::sync::Arc::new(b));
+    let raw_dim = |name: &str| {
+        EntityKind::Unknown(Unknown {
+            dxf_type: name.into(),
+            tags: vec![RawTag { code: 2, value: "*D500".into() }, RawTag { code: 8, value: "0".into() }],
+        })
+    };
+    let raw = d.add(&Space::Model, Common::default(), raw_dim("LARGE_RADIAL_DIMENSION")).unwrap();
+    let refs = dangling_block_refs(&d);
+    assert_eq!(refs, [DanglingBlockRef { handle: raw.hex(), entity: "LARGE_RADIAL_DIMENSION".into(), block: "*D500".into() }]);
+    // The writer really leaves the block out while the record stays: the saved file names a
+    // block it doesn't define.
+    let text = write_dxf(&d);
+    assert!(text.contains("LARGE_RADIAL_DIMENSION"), "the record that names it is");
+    let saved = read_dxf(text.as_bytes()).unwrap();
+    assert!(saved.block("*D500").is_none(), "the dropped block is not in the file");
+    // A block the drawing itself doesn't define is a read finding, not a save defect.
+    let mut missing = d.clone();
+    missing.blocks.remove("*D500");
+    assert!(dangling_block_refs(&missing).is_empty());
+    // A modelled dimension claims the block: nothing dangles, the block is written.
+    let mut claimed = Drawing::new_metric();
+    let mut cb = Block::new("*D500");
+    let h = claimed.new_handle();
+    cb.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    claimed.blocks.insert("*D500".into(), std::sync::Arc::new(cb));
+    let mut dm = dim(DimKind::ArcLength, Vec3::new(0.0, 10.0, 0.0), Vec3::new(10.0, 10.0, 0.0));
+    dm.p15 = Vec3::new(5.0, 5.0, 0.0);
+    dm.block = Some("*D500".into());
+    claimed.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    assert!(dangling_block_refs(&claimed).is_empty());
+    assert!(write_dxf(&claimed).lines().any(|l| l.trim() == "*D500"), "a claimed block is written");
+}
