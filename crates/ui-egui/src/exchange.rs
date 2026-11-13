@@ -335,8 +335,8 @@ mod tests {
         let (mut app, asked, _) = deferred_app();
         app.run("close", json!({ "index": 0 })).unwrap();
         assert!(app.session.state().is_err());
-        app.start("ui.saveas");
-        let r = app.run("ui.saveas", json!(null));
+        app.start("ui.saveas.pick");
+        let r = app.run("ui.saveas.pick", json!(null));
         assert!(asked.borrow().is_empty(), "no dialog");
         assert!(app.pending_pick.is_none());
         assert!(r.is_err() && app.status.is_some(), "{r:?} {:?}", app.status);

@@ -1422,3 +1422,9 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+# Save As dialog: file type, version, binary DXF.
+	Save As (file picker)	Зберегти як (вибір файлу)
+	File type	Тип файлу
+	Save...	Зберегти...
+	Binary DXF	Двійковий DXF
+	An export of the drawing as shown: the drawing keeps its own file.	Експорт креслення як воно показане: креслення зберігає власний файл.

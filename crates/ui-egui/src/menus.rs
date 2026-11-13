@@ -85,6 +85,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.open", "Open...", &[], Some("Cmd+O")),
     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
     ("ui.saveas", "Save As...", &[], None),
+    ("ui.saveas.pick", "Save As (file picker)", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
     ("ui.toggle.toolsets", "Tool Sets", &["Window", "Tool Sets"], Some("Cmd+3")),
     ("ui.panel.properties", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
@@ -370,7 +371,7 @@ fn should_pick_file_path(id: &str, params: &Value) -> bool {
 /// they report the loss in their result instead.
 fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
-        return run_ui_command(app, "ui.saveas", &Value::Null);
+        return run_ui_command(app, "ui.saveas.pick", &Value::Null);
     }
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
@@ -446,11 +447,21 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 Ok(Value::Null)
             })
             .unwrap_or(Ok(Value::Null)),
+        // Save As from the menu, the tool bar, a shortcut or typed: the Save As dialog (file type,
+        // version, binary DXF) before the host's file picker.
         "ui.saveas" | "saveas" if no_path => {
+            crate::saveas::open(app);
+            Ok(Value::Null)
+        }
+        // The picker alone, in the default format and version: QSAVE of a drawing with no file
+        // yet, and the close prompt's Save, which must finish in this call.
+        "ui.saveas.pick" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
             let name = app.ui.save_format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), |app, p| {
+                // The default format is the format written, whatever extension the picker gave.
+                let p = crate::saveas::destination(&p, app.ui.save_format.as_str()).inspect_err(|e| app.session.echo(e.clone()))?;
                 app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
             })
             .unwrap_or(Ok(Value::Null))

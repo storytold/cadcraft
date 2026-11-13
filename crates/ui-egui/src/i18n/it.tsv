@@ -1398,3 +1398,13 @@ menu	Modify	Edita
 	ENTER	INVIO
 	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
+# Save As dialog: file type, version, binary DXF.
+	Save As (file picker)	Salva con nome (selezione file)
+	File type	Tipo di file
+	Save...	Salva...
+	Binary DXF	DXF binario
+	An export of the drawing as shown: the drawing keeps its own file.	Un'esportazione del disegno com'è mostrato: il disegno mantiene il proprio file.
+	Units of new drawings	Unità dei nuovi disegni
+	Imperial (inches)	Imperiali (pollici)
+	Metric (millimetres)	Metriche (millimetri)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nuovo e il primo disegno all'avvio usano queste unità, a meno che non sia impostato un modello predefinito (QNEWTEMPLATE).

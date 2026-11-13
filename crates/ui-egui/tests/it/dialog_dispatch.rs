@@ -39,6 +39,7 @@ fn drafting_settings_menu_opens_the_dialog() {
     assert_eq!(app.session.settings.gridmajor, 10);
 }
 
+/// The Properties menu item shows the Properties palette.
 #[test]
 fn properties_menu_shows_the_palette() {
     let (mut app, _) = app();
@@ -49,6 +50,8 @@ fn properties_menu_shows_the_palette() {
     assert!(app.ui.show_palettes);
 }
 
+/// File commands with JSON parameters never open a picker; typed or from a menu they ask, Save As
+/// with its dialog first and QSAVE of an untitled drawing with the picker straight away.
 #[test]
 fn json_file_commands_never_open_pickers() {
     let (mut app, picks) = app();
@@ -57,14 +60,18 @@ fn json_file_commands_never_open_pickers() {
     }
     app.cmdline("open {}");
     assert_eq!(picks.get(), 0);
-    // Typed, chosen from the menu or the ui.* shortcut commands: the pickers.
+    // Typed, chosen from the menu or the ui.* shortcut commands: the pickers — Save As first
+    // its dialog (file type, version), QSAVE of an untitled drawing the picker straight away.
     for c in ["open", "saveas", "qsave"] {
         app.start(c);
     }
-    assert_eq!(picks.get(), 3);
+    assert_eq!(picks.get(), 2);
+    assert_eq!(app.ui.dialog.as_deref(), Some("saveas"));
+    app.ui.dialog = None;
     app.run("ui.open", json!({})).unwrap();
     app.run("ui.saveas", json!({})).unwrap();
-    assert_eq!(picks.get(), 5);
+    assert_eq!(picks.get(), 3);
+    assert_eq!(app.ui.dialog.as_deref(), Some("saveas"));
 }
 
 #[test]
