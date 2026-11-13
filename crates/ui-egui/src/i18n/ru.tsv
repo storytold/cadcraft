@@ -1857,3 +1857,7 @@
 	Not a scale: {text} (type 1:x)	Не масштаб: {text} (введите 1:x)
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	The drawing changed. Close the window and open it again.	Чертёж изменился. Закройте окно и откройте его снова.
+	Saving...	Сохранение...
+	Plotting...	Печать...
+	Wait until the file is written.	Дождитесь, пока файл будет записан.
+	The file could not be written.	Не удалось записать файл.
