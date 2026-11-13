@@ -6,6 +6,7 @@ use serde_json::json;
 use crate::CadApp;
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
+use crate::window_controls;
 
 pub mod annoscale;
 
@@ -61,10 +62,28 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
-/// Title row (with the integrated macOS title bar) and the Tool Bar.
+/// Left edge of the window title in a GNOME title row: centred, but kept between the window
+/// buttons at the row's ends (`left_end`, `right_start`).
+fn header_title_left(left: f32, width: f32, text_w: f32, left_end: f32, right_start: f32) -> f32 {
+    let lo = left_end;
+    let hi = (right_start - text_w).max(lo);
+    (left + (width - text_w) / 2.0).clamp(lo, hi)
+}
+
+/// Title row (with the integrated macOS title bar, or as GNOME's header bar where the app draws
+/// the window frame) and the Tool Bar.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
+    // GNOME on Wayland: the title row carries the window buttons at its ends (`window_controls`),
+    // in the desktop's order; none in full screen.
+    let controls = app.shown_window_controls(ui.ctx());
+    let title_h = if app.integrated_titlebar {
+        MAC_TITLE_BAR
+    } else if controls.is_some() {
+        window_controls::HEADER
+    } else {
+        0.0
+    };
     let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
     egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
@@ -78,8 +97,53 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
             let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
-            let x = title_left(r.left(), r.width(), galley.size().x);
+            let tr = Rect::from_min_size(r.min, vec2(r.width(), title_h));
+            // The window buttons' strips at either end, inside the row's side margins.
+            let (left_end, right_start) = match &controls {
+                Some(c) => (
+                    tr.left() + window_controls::SIDE_GAP + window_controls::width(&c.left) + window_controls::SIDE_GAP,
+                    tr.right() - window_controls::SIDE_GAP - window_controls::width(&c.right) - window_controls::SIDE_GAP,
+                ),
+                None => (tr.left(), tr.right()),
+            };
+            let x = if controls.is_some() {
+                header_title_left(r.left(), r.width(), galley.size().x, left_end, right_start)
+            } else {
+                title_left(r.left(), r.width(), galley.size().x)
+            };
             ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
+            // `empty_area` moves the window once a press on the empty row turns into a drag; the
+            // desktop then keeps the release, so give it back on the next input (`desktop_grab`).
+            let strips = controls.as_ref().map(|c| {
+                let strip = |x: f32, buttons: &[window_controls::Button]| {
+                    Rect::from_min_size(pos2(x, tr.top()), vec2(window_controls::width(buttons), title_h))
+                };
+                [
+                    (strip(tr.left() + window_controls::SIDE_GAP, &c.left), c.left.as_slice()),
+                    (strip(right_start + window_controls::SIDE_GAP, &c.right), c.right.as_slice()),
+                ]
+            });
+            let on_buttons = |p: egui::Pos2| strips.as_ref().is_some_and(|s| s.iter().any(|(rect, b)| !b.is_empty() && rect.contains(p)));
+            let row_drag = ui.input(|i| {
+                let origin = i.pointer.press_origin().filter(|p| tr.contains(*p) && !on_buttons(*p));
+                (origin.is_some() && i.pointer.primary_down() && i.pointer.is_decidedly_dragging()).then(|| i.pointer.press_start_time()).flatten()
+            });
+            let grabbed = ui.scope_id().with("title_grab");
+            if let Some(press) = row_drag
+                && ui.data(|d| d.get_temp::<f64>(grabbed)) != Some(press)
+            {
+                ui.data_mut(|d| d.insert_temp(grabbed, press));
+                window_controls::mark_desktop_grab(ui.ctx());
+            }
+            // After the empty area, so the buttons take their own clicks.
+            if let Some(strips) = &strips {
+                for (rect, buttons) in strips {
+                    if !buttons.is_empty() {
+                        let layout = egui::Layout::left_to_right(egui::Align::Center);
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(*rect).layout(layout), |ui| window_controls::buttons(ui, buttons));
+                    }
+                }
+            }
         }
         if tb_h > 0.0 {
             let row = Rect::from_min_size(pos2(r.left(), r.top() + title_h), vec2(r.width(), tb_h));

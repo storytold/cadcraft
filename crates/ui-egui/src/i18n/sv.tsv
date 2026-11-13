@@ -1483,3 +1483,7 @@ menu	Modify	Ändra
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+	Minimize	Minimera
+	Maximize	Maximera
+	Use system title bar	Använd systemets namnlist
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Visar en enkel namnlist med fönsterknapparna ovanför CADCrafts egen. GNOME ritar inga namnlister åt appar, så den här följer inte dess tema.

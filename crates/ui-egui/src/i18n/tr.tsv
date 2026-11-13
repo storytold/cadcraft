@@ -1364,3 +1364,7 @@ menu	View	Görünüm
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Çizim değişti. Pencereyi kapatıp yeniden açın.
+	Minimize	Simge durumuna küçült
+	Maximize	Ekranı kapla
+	Use system title bar	Sistem başlık çubuğunu kullan
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	CADCraft'ın başlık çubuğunun üstünde pencere düğmelerini içeren basit bir başlık çubuğu gösterir. GNOME uygulamalar için başlık çubuğu çizmediğinden bu çubuk onun temasına uymaz.

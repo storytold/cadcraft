@@ -1422,3 +1422,7 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Minimize	Згорнути
+	Maximize	Розгорнути
+	Use system title bar	Використовувати системний заголовок вікна
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Показує простий заголовок вікна з кнопками над заголовком CADCraft. GNOME не малює заголовки для застосунків, тому цей не відповідає його темі.
