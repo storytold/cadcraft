@@ -141,6 +141,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let (mut ok, mut cancel) = (false, false);
     let mut pick_objects = false;
     let mut pick_base = false;
+    let mut pick_file: Option<String> = None;
 
     egui::Window::new(crate::tl!("Write Block"))
         .id(egui::Id::unique("Write Block"))
@@ -226,10 +227,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut app.wblock.path).desired_width(330.0).hint_text("/path/to/output.dxf"));
                     if ui.button("…").clicked() {
-                        let name = if app.wblock.path.trim().is_empty() { "untitled.dxf" } else { app.wblock.path.trim() };
-                        if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(name)) {
-                            app.wblock.path = p;
-                        }
+                        pick_file =
+                            Some(if app.wblock.path.trim().is_empty() { "untitled.dxf".to_string() } else { app.wblock.path.trim().to_string() });
                     }
                 });
             });
@@ -261,6 +260,16 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         cancel = true;
+    }
+
+    if let Some(name) = pick_file {
+        // Not `Services::pick_save` directly: on macOS a dialog run inside the frame aborts the app (#1527).
+        if let Some(Err(e)) = app.pick_then(crate::Pick::Save(name), |app, path| {
+            app.wblock.path = path;
+            Ok(serde_json::Value::Null)
+        }) {
+            app.wblock.error = Some(e);
+        }
     }
 
     if pick_objects {

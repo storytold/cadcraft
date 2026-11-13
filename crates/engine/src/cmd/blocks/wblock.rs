@@ -1,12 +1,16 @@
 //! WBLOCK (its JSON form) and -WBLOCK at the command line: objects, a block or the whole drawing
 //! written to a drawing file.
 
+use std::collections::BTreeMap;
+
 use cadcraft_doc::{Drawing, Entity, Handle};
 use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::super::curves::KW;
+use super::super::file::{drops_unknown, new_folder, not_saved, not_saved_message, report_new_folder, report_not_saved};
 use super::super::machines::{SelOutcome, SelectPhase};
+use super::super::modify::erase_kept;
 use super::super::{CommandSpec, bad, point_param, str_param, targets};
 use super::insert_file::stem;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
@@ -18,7 +22,7 @@ pub(super) fn wblock_spec() -> CommandSpec {
 }
 
 /// -WBLOCK erases the objects it writes, whatever its mOde option says: AutoCAD 2024 does, and
-/// keeps "Object conversion=Delete" as the setting.
+/// keeps "Object conversion=Delete" as the setting. OOPS brings them back, as after ERASE.
 pub(super) fn dash_wblock_spec() -> CommandSpec {
     CommandSpec::new("-wblock", "Write Block", run_dash_wblock)
         .params("{path, name? | handles?, base?} (the objects written are erased)")
@@ -41,12 +45,16 @@ enum Source<'a> {
 fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
-    let (entities, bytes) = match str_param(p, "name") {
+    let folder = new_folder(&path);
+    let (entities, bytes, lost) = match str_param(p, "name") {
         Some("*") => write(s, "wblock", &path, Source::Whole)?,
         Some(name) => write(s, "wblock", &path, Source::Block(name, base))?,
         None => write(s, "wblock", &path, Source::Objects(&targets(s, p)?, base.unwrap_or(Vec2::ZERO)))?,
     };
-    Ok(json!({ "path": path, "entities": entities, "bytes": bytes }))
+    let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
+    report_new_folder(s, &mut r, folder);
+    report_not_saved(s, &mut r, &lost);
+    Ok(r)
 }
 
 fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
@@ -55,7 +63,8 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let path = str_param(p, "path").ok_or_else(|| bad("-wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
-    let (entities, bytes) = match str_param(p, "name") {
+    let folder = new_folder(&path);
+    let (entities, bytes, lost) = match str_param(p, "name") {
         Some(name) => write(s, "-wblock", &path, Source::Block(name, base))?,
         None => {
             let hs = targets(s, p)?;
@@ -68,14 +77,18 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
             written
         }
     };
-    Ok(json!({ "path": path, "entities": entities, "bytes": bytes }))
+    let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
+    report_new_folder(s, &mut r, folder);
+    report_not_saved(s, &mut r, &lost);
+    Ok(r)
 }
 
-/// Write `what` to `path` through the io hooks; the objects written and the file's size. The
+/// Write `what` to `path` through the io hooks; the objects written, the file's size and what a
+/// DWG file left out, for the caller to report as a save does. The
 /// written drawing keeps the source's settings and styles, as AutoCAD's -WBLOCK does: its units
 /// ($INSUNITS, $MEASUREMENT), so a block from a metric drawing is not declared in inches and
 /// scaled on insert, and its defaults (text size, current styles, annotation scales).
-fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usize)> {
+fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usize, BTreeMap<String, usize>)> {
     let src = s.doc()?;
     // The base point becomes the written drawing's origin: by default 0,0 for objects and the
     // block's base point for a block.
@@ -95,11 +108,21 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     let bytes = (hooks.write)(&d, path).map_err(|e| bad(cmd, e))?;
     // Through a temporary file, as SAVE writes, so a failed write keeps the file it replaces.
     #[cfg(not(target_arch = "wasm32"))]
-    crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-    Ok((d.model.len(), bytes.len()))
+    crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    let lost = if drops_unknown(path) { not_saved(&d) } else { BTreeMap::new() };
+    Ok((d.model.len(), bytes.len(), lost))
 }
 
-/// A new drawing of `ents`, with `src`'s settings, styles and blocks; its insertion base 0,0.
+/// Say on the command line what the written DWG file left out.
+fn echo_not_saved(s: &mut Session, lost: &BTreeMap<String, usize>) {
+    if let Some(msg) = not_saved_message(lost) {
+        s.echo(msg);
+    }
+}
+
+/// A new drawing of `ents`, with `src`'s settings and the layers, linetypes, styles and blocks
+/// they use, as AutoCAD's WBLOCK writes them (#2423): what nothing in it uses is purged, and
+/// the defaults and the current ones stay. Its insertion base is 0,0.
 fn with_objects(src: &Drawing, ents: impl Iterator<Item = Entity>) -> Drawing {
     let mut d = Drawing::new_imperial();
     d.header = src.header.clone();
@@ -113,10 +136,16 @@ fn with_objects(src: &Drawing, ents: impl Iterator<Item = Entity>) -> Drawing {
     d.scales = src.scales.clone();
     d.blocks = src.blocks.clone();
     d.header.set("INSBASE", cadcraft_doc::HVal::Point(Vec3::ZERO));
+    // The copied blocks keep their objects' handles, so the new ones start above them.
+    let kept: Vec<Handle> = d.blocks.values().flat_map(|b| b.entities.iter().map(|e| e.handle)).collect();
+    for h in kept {
+        d.bump_handseed(h);
+    }
     for mut e in ents {
         e.handle = d.new_handle();
         d.model.push(e);
     }
+    super::purge::purge_unused(&mut d);
     d
 }
 
@@ -127,10 +156,7 @@ fn moved(e: &Entity, m: &Mat3) -> Entity {
 }
 
 fn erase(s: &mut Session, hs: &[Handle]) -> Result<()> {
-    let doc = s.doc_mut()?;
-    for h in hs {
-        doc.remove_entity(*h);
-    }
+    erase_kept(s, hs)?;
     s.set_selection(Vec::new());
     Ok(())
 }
@@ -307,8 +333,9 @@ impl DashWblockM {
     }
 
     fn write(&self, s: &mut Session, what: Source) -> Result<Step> {
-        if let Err(e) = write(s, "-wblock", &self.path, what) {
-            s.echo(e.to_string());
+        match write(s, "-wblock", &self.path, what) {
+            Ok((.., lost)) => echo_not_saved(s, &lost),
+            Err(e) => s.echo(e.to_string()),
         }
         Ok(Step::Done)
     }
@@ -318,7 +345,10 @@ impl DashWblockM {
             return Ok(Step::Done);
         }
         match write(s, "-wblock", &self.path, Source::Objects(hs, self.base)) {
-            Ok(_) => erase(s, hs)?,
+            Ok((.., lost)) => {
+                echo_not_saved(s, &lost);
+                erase(s, hs)?;
+            }
             Err(e) => s.echo(e.to_string()),
         }
         Ok(Step::Done)

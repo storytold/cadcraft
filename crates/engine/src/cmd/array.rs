@@ -159,6 +159,7 @@ pub(crate) fn make_assoc(s: &mut Session, objs: &[Handle], base: Vec2, mut p: Ar
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }))
 }
 
@@ -177,14 +178,34 @@ fn create(s: &mut Session, objs: &[Handle], base: Vec2, p: ArrayParams, assoc: b
     Ok(json!({ "created": n }))
 }
 
+/// The most objects EXPLODE of one associative array makes from its source objects (ten times the
+/// default MAXARRAY).
+const MAX_EXPLODED_OBJECTS: usize = 1_000_000;
+
 /// EXPLODE of an associative array: every item becomes the objects of its block (the source
 /// objects, or a replacement block's reference), in world coordinates. `None` for other objects.
+///
+/// An array that would explode into more than [`MAX_EXPLODED_OBJECTS`] objects (items times the
+/// objects of the source block, which a file sets freely) is not expanded here: `None`, so EXPLODE
+/// takes the array block's own items.
 pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
     let EntityKind::Insert(ins) = &e.kind else { return None };
     let p = d.array_params(e)?;
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
-    let mut out = Vec::new();
+    // Count first: a hostile array must be refused before any entity is cloned.
+    let total = blk
+        .entities
+        .iter()
+        .map(|it| match &it.kind {
+            EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&p.source) => d.block(&i.block).map_or(1, |b| b.entities.len()),
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add);
+    if total > MAX_EXPLODED_OBJECTS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(total);
     for item in blk.entities.iter() {
         let item = placed(e, item, &m);
         let source = match &item.kind {
@@ -192,7 +213,9 @@ pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
             _ => None,
         };
         match source {
-            Some((im, b)) => out.extend(b.entities.iter().map(|se| placed(&item, se, &im))),
+            Some((im, b)) => {
+                out.extend(b.entities.iter().map(|se| placed(&item, se, &im)));
+            }
             None => out.push(item),
         }
     }
@@ -247,9 +270,16 @@ fn max_count(s: &Session, others: u64, objs: usize) -> u64 {
 }
 
 fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) -> Result<usize> {
+    // Every copy is checked before the first is made: a refusal part way would leave the copies
+    // already added in the drawing (a failed command is not rolled back).
+    let mats: Vec<Mat3> = mats.collect();
+    // A matrix every frame accepts needs no look at the objects; otherwise they are looked at once.
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && super::modify::holds_ole_frame(s, hs, true)? {
+        return Err(super::modify::ole_refusal());
+    }
     let mut n = 0;
-    for m in mats {
-        n += transform_entities(s, hs, &m, true)?.len();
+    for m in &mats {
+        n += transform_entities(s, hs, m, true)?.len();
     }
     Ok(n)
 }
@@ -374,10 +404,14 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
     let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
     let row_spacing = f64_or(p, "rowSpacing", 1.0);
+    let fill = f64_or(p, "angle", 360.0);
+    if !(fill.abs() >= 1e-9 && fill.abs() <= 360.0 + 1e-9) {
+        return Err(other("Requires a fill angle between -360 and 360 degrees (not 0)."));
+    }
     let kind = ArrayKind::Polar(PolarArray {
         center: c - base,
         items: count32(n),
-        fill: f64_or(p, "angle", 360.0),
+        fill: fill.clamp(-360.0, 360.0),
         rotate: bool_or(p, "rotate", true),
         rows: count32(rows),
         row_spacing,
